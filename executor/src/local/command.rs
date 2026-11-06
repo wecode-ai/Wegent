@@ -11,16 +11,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{process::Command, time};
 
 use crate::process_environment;
-
-const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
-const MAX_TIMEOUT_SECONDS: f64 = 600.0;
-const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const MAX_OUTPUT_BYTES: usize = 5 * 1024 * 1024;
 
 pub(crate) const GIT_CURRENT_BRANCH_ARGV: &[&str] =
     &["git", "symbolic-ref", "--quiet", "--short", "HEAD"];
@@ -55,129 +49,9 @@ fn prepare_git_branch_query(request: &mut CommandRequest) -> bool {
     request.command_key.as_deref() == Some("git_branch") && request.argv == portable
 }
 
-pub trait DeviceCommandHandler: Send + Sync {
-    fn handle_execute_command<'a>(
-        &'a self,
-        request: CommandRequest,
-    ) -> Pin<Box<dyn Future<Output = CommandResult> + Send + 'a>>;
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CommandRequest {
-    #[serde(default)]
-    pub command_key: Option<String>,
-    pub command: String,
-    #[serde(default)]
-    pub argv: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-    pub timeout_seconds: f64,
-    pub max_output_bytes: usize,
-}
-
-impl CommandRequest {
-    pub fn from_value(value: Value) -> Self {
-        let command = string_field(&value, "command").unwrap_or_default();
-        let argv = value
-            .get("argv")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            })
-            .filter(|items| !items.is_empty() && !items[0].trim().is_empty())
-            .unwrap_or_default();
-        let cwd = string_field(&value, "cwd").filter(|path| !path.trim().is_empty());
-        let env = value
-            .get("env")
-            .and_then(Value::as_object)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter(|(key, _)| !key.is_empty())
-                    .map(|(key, value)| {
-                        (
-                            key.clone(),
-                            value
-                                .as_str()
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| value.to_string()),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default();
-
-        Self {
-            command_key: string_field(&value, "command_key"),
-            command,
-            argv,
-            cwd,
-            env,
-            timeout_seconds: normalized_f64(
-                value.get("timeout_seconds"),
-                DEFAULT_TIMEOUT_SECONDS,
-                MAX_TIMEOUT_SECONDS,
-            ),
-            max_output_bytes: normalized_usize(
-                value.get("max_output_bytes"),
-                DEFAULT_MAX_OUTPUT_BYTES,
-                MAX_OUTPUT_BYTES,
-            ),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CommandResult {
-    pub success: bool,
-    pub exit_code: Option<i32>,
-    pub stdout: Value,
-    pub stderr: String,
-    pub duration: f64,
-    pub timed_out: bool,
-    #[serde(default)]
-    pub stdout_truncated: bool,
-    #[serde(default)]
-    pub stderr_truncated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-impl CommandResult {
-    pub fn ok(stdout: impl Into<Value>) -> Self {
-        Self {
-            success: true,
-            exit_code: Some(0),
-            stdout: stdout.into(),
-            stderr: String::new(),
-            duration: 0.0,
-            timed_out: false,
-            stdout_truncated: false,
-            stderr_truncated: false,
-            error: None,
-        }
-    }
-
-    pub fn error(message: String, duration: f64, timed_out: bool) -> Self {
-        Self {
-            success: false,
-            exit_code: None,
-            stdout: Value::String(String::new()),
-            stderr: String::new(),
-            duration,
-            timed_out,
-            stdout_truncated: false,
-            stderr_truncated: false,
-            error: Some(message),
-        }
-    }
-}
+pub use wegent_execution_contracts::command::{
+    CommandRequest, CommandResult, DeviceCommandHandler,
+};
 
 #[derive(Debug, Default, Clone)]
 pub struct CommandHandler;
@@ -223,6 +97,10 @@ impl CommandHandler {
 
         #[cfg(windows)]
         if let Some(result) = execute_windows_builtin_command(&request) {
+            return result;
+        }
+
+        if let Some(result) = execute_directory_command(&request).await {
             return result;
         }
 
@@ -311,33 +189,63 @@ fn log_directory_command_phase(request: &CommandRequest, phase: &str, started_at
     );
 }
 
-pub(crate) fn configured_home_dir() -> Option<std::path::PathBuf> {
-    let configured = std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from);
-    #[cfg(windows)]
+async fn execute_directory_command(request: &CommandRequest) -> Option<CommandResult> {
+    let expected: &[&str] = match request.command_key.as_deref() {
+        Some("home_dir") => &["printenv", "HOME"],
+        Some("ls_dirs") => &["ls", "-a", "-p"],
+        _ => return None,
+    };
+    // Explicit custom command definitions retain their command execution path.
+    if request.command != expected.join(" ")
+        || (!request.argv.is_empty() && request.argv != expected)
     {
-        configured
-            .map(normalize_windows_home_path)
-            .or_else(dirs::home_dir)
+        return None;
     }
-    #[cfg(not(windows))]
-    {
-        configured.or_else(dirs::home_dir)
-    }
+    let started_at = Instant::now();
+    let output = if request.command_key.as_deref() == Some("home_dir") {
+        match build_env(&request.env).get("HOME") {
+            Some(home) => Ok(format!("{home}\n")),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "HOME is not configured",
+            )),
+        }
+    } else {
+        directory_command_output(request.cwd.as_deref().unwrap_or(".")).await
+    };
+    let mut result = match output {
+        Ok(output) => {
+            let (text, truncated) =
+                decode_and_truncate(output.as_bytes(), request.max_output_bytes);
+            let mut result = CommandResult::ok(text);
+            result.stdout_truncated = truncated;
+            result
+        }
+        Err(error) => CommandResult::error(error.to_string(), 0.0, false),
+    };
+    result.duration = elapsed_seconds(started_at);
+    log_directory_command_phase(request, "native_completed", started_at);
+    Some(result)
 }
 
-#[cfg(any(windows, test))]
-fn normalize_windows_home_path(path: std::path::PathBuf) -> std::path::PathBuf {
-    let value = path.to_string_lossy();
-    let bytes = value.as_bytes();
-    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b'/' {
-        let drive = (bytes[1] as char).to_ascii_uppercase();
-        let suffix = value[3..].replace('/', "\\");
-        return std::path::PathBuf::from(format!("{drive}:\\{suffix}"));
+async fn directory_command_output(path: &str) -> std::io::Result<String> {
+    let mut entries = tokio::fs::read_dir(path).await?;
+    let mut names = vec!["./".to_owned(), "../".to_owned()];
+    while let Some(entry) = entries.next_entry().await? {
+        let mut name = entry.file_name().to_string_lossy().into_owned();
+        // Like `ls -p`, symbolic links are not treated as directories.
+        if entry.file_type().await?.is_dir() {
+            name.push('/');
+        }
+        names.push(name);
     }
-    path
+    names.sort();
+    Ok(format!("{}\n", names.join("\n")))
 }
+
+pub(crate) use wegent_runtime_config::home::configured_home_dir;
+#[cfg(any(windows, test))]
+use wegent_runtime_config::home::normalize_windows_home_path;
 
 #[cfg(windows)]
 fn execute_windows_builtin_command(request: &CommandRequest) -> Option<CommandResult> {
@@ -382,7 +290,7 @@ fn process_command(request: &CommandRequest) -> Command {
 
 #[cfg(windows)]
 fn shell_command(command_line: &str) -> Command {
-    crate::process::windows_shell_command(command_line)
+    wegent_subprocess::windows_shell_command(command_line)
 }
 
 #[cfg(not(windows))]
@@ -396,25 +304,6 @@ fn decode_and_truncate(data: &[u8], max_bytes: usize) -> (String, bool) {
     let truncated = data.len() > max_bytes;
     let bytes = if truncated { &data[..max_bytes] } else { data };
     (String::from_utf8_lossy(bytes).to_string(), truncated)
-}
-
-fn string_field(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(Value::as_str).map(str::to_owned)
-}
-
-fn normalized_usize(value: Option<&Value>, default: usize, upper_bound: usize) -> usize {
-    normalized_f64(value, default as f64, upper_bound as f64).round() as usize
-}
-
-fn normalized_f64(value: Option<&Value>, default: f64, upper_bound: f64) -> f64 {
-    let parsed = value
-        .and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()))
-        .unwrap_or(default);
-    if parsed <= 0.0 {
-        default
-    } else {
-        parsed.min(upper_bound)
-    }
 }
 
 fn elapsed_seconds(started_at: Instant) -> f64 {

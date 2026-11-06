@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar, inProjectCreateDialog } from '../modules/workspace-flows.mjs'
+import {
+  inCollaborationSidebar,
+  inProjectCreateDialog,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -153,7 +157,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: emptyProjectName,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
       await control.command(
         'click',
         scoped('[data-testid="collaboration-project-settings-agents"]')
@@ -241,7 +245,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'Issue creation must not redirect to execution environment settings'
       )
       await control.command('click', scoped('[data-testid="cloud-todo-modal-close"]'))
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
       await control.command(
         'click',
         scoped('[data-testid="collaboration-project-settings-agents"]')

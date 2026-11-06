@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const ACTIVITY = `${CONTENT} [data-testid="cloud-task-activity-list"]`
@@ -26,9 +27,23 @@ export async function verifyAssignmentActivityReceipts(control, status) {
     '1',
     'Current receipts must belong to exactly the latest assignment activity'
   )
+  // Issue status updates invalidate version-scoped receipts while they reload.
+  // Read both surfaces in one DOM turn instead of comparing different versions.
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let texts = []
+  while (Date.now() < deadline) {
+    texts = (await control.command('getText', `${header}, ${current}`)).split('\n')
+    if (texts.length === 2 && texts.every(text => text.includes(status))) break
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.equal(texts.length, 2, 'Both receipt surfaces must finish loading in the same snapshot')
+  assert.ok(
+    texts.every(text => text.includes(status)),
+    'Both receipts must show the saved status'
+  )
   assert.equal(
-    await control.command('getText', current),
-    await control.command('getText', header),
+    texts[0],
+    texts[1],
     'The assignment control and activity must display the same reception timestamps'
   )
 }

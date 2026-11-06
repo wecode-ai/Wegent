@@ -231,7 +231,7 @@ async fn native_completion_wakes_a_resume_waiting_for_thread_admission() {
         .state
         .lock()
         .await
-        .thread_mcp_configurations
+        .thread_context_configurations
         .insert("thread-1".into(), Map::new());
     let plan = CodexThreadPlan {
         start: CodexThreadStart::Request {
@@ -242,7 +242,8 @@ async fn native_completion_wakes_a_resume_waiting_for_thread_admission() {
         fork_requested: false,
     };
     let request = ExecutionRequest::default();
-    let mut admission = Box::pin(client.prepare_thread_admission(&plan, &request));
+    let launch = CodexLaunchConfig::default();
+    let mut admission = Box::pin(client.prepare_thread_admission(&plan, &request, &launch));
     assert!(futures_util::poll!(&mut admission).is_pending());
     hub.send(json!({"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-2","status":"completed"}}})).await;
     let admitted = timeout(Duration::from_secs(1), admission)
@@ -268,7 +269,7 @@ async fn reading_a_persisted_goal_does_not_block_its_recovery_admission() {
         .state
         .lock()
         .await
-        .thread_mcp_configurations
+        .thread_context_configurations
         .insert("thread-1".into(), Map::new());
     let plan = CodexThreadPlan {
         start: CodexThreadStart::Request {
@@ -279,9 +280,10 @@ async fn reading_a_persisted_goal_does_not_block_its_recovery_admission() {
         fork_requested: false,
     };
     let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
     let admitted = timeout(
         Duration::from_secs(1),
-        client.prepare_thread_admission(&plan, &request),
+        client.prepare_thread_admission(&plan, &request, &launch),
     )
     .await
     .expect("A persisted active Goal must be admitted before native work starts")

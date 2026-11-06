@@ -92,10 +92,11 @@ jobs:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
         run: node .github/scripts/balance-wework-windows-e2e.mjs >> "$GITHUB_OUTPUT"
 
-      - name: Isolate long Linux history work within existing Core shards
+      - name: Balance Linux Core checkpoints across additional runners
         id: linux-matrix
         env:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
+          CORE_RUNNER_SCALE: "1.5"
         run: node .github/scripts/order-wework-linux-e2e.mjs --balance-core >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
@@ -149,8 +150,8 @@ jobs:
         if: steps.classify.outputs.wework_desktop_e2e == 'true'
         id: runtime
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -1253,13 +1254,18 @@ jobs:
         env:
           CI: true
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          COMPONENT_UPDATE_E2E: ${{ contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'component-update') }}
         run: |
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
+          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design
+          if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
+            segments+=,component-update
+          fi
           node wework/e2e/desktop/run-checkpoints.mjs \
-            --parallel-segments browser-toolbar-actions,tray-lifecycle,browser-annotation-design
+            --parallel-segments "$segments"
 
       - name: Describe verified native macOS runtimes
         env:

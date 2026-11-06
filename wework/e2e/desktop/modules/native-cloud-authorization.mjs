@@ -17,10 +17,11 @@ if (clear) {
   process.exit(0)
 }
 await snapshot.capture()
+const prepared = await credentials.prepareAuthorization(apiBaseUrl)
 const created = await fetch(`${apiBaseUrl}/auth/wework/sessions`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ device_public_key: await credentials.devicePublicKey() }),
+  body: JSON.stringify({ device_public_key: prepared.publicKey }),
 })
 assert.equal(created.ok, true, 'The real Backend must create the native authorization session')
 const authorization = await created.json()
@@ -30,10 +31,16 @@ const approved = await fetch(
 )
 assert.equal(approved.ok, true, 'The fixture user must approve the native session')
 const claimed = await credentials.claimAuthorization({
-  apiBaseUrl,
+  authorizationId: prepared.authorizationId,
   sessionId: authorization.session_id,
   pollToken: authorization.poll_token,
 })
 assert.equal(claimed.status, 'success')
 assert.equal(claimed.credentialMode, 'desktop_refresh')
+const userResponse = await fetch(`${apiBaseUrl}/users/me`, {
+  headers: { Authorization: `Bearer ${claimed.accessToken}` },
+})
+assert.equal(userResponse.ok, true, 'The native fixture must validate the authorized owner')
+const user = await userResponse.json()
+await credentials.commitAuthorization(prepared.authorizationId, user.id)
 process.stdout.write('authorized')

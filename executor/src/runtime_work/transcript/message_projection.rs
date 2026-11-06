@@ -165,11 +165,11 @@ impl AssistantTurnAccumulation {
                 AssistantItemIdentity::Block(index) => {
                     let block = self.blocks.get(*index)?;
                     let id = string_field(block, "id")?;
-                    Some(json!({
-                        "id": id,
-                        "type": "block",
-                        "block": block,
-                    }))
+                    Some(Value::Object(Map::from_iter([
+                        ("id".to_owned(), Value::String(id)),
+                        ("type".to_owned(), Value::String("block".to_owned())),
+                        ("block".to_owned(), block.clone()),
+                    ])))
                 }
                 AssistantItemIdentity::Text(index) => {
                     self.assistant_parts.get(*index).map(|part| {
@@ -819,9 +819,9 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "subtaskId": draft.subtask_id,
         "turnId": draft.turn_id,
         "createdAt": draft.created_at,
-        "blocks": draft.blocks,
-        "runtimeItems": draft.runtime_items,
     });
+    message["blocks"] = Value::Array(draft.blocks.to_vec());
+    message["runtimeItems"] = Value::Array(draft.runtime_items.to_vec());
     if draft.options.truncate_content {
         limit_content_field(&mut message, MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS);
     }

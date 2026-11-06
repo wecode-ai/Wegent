@@ -23,7 +23,6 @@ import type {
   RuntimeTranscriptSearchResponse,
   RuntimeWorkSearchRequest,
   ModelSelectionConfig,
-  User,
 } from '@/types/api'
 import type {
   RuntimePaneTranscript,
@@ -68,7 +67,7 @@ import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
 interface UseWorkbenchRuntimeTasksOptions {
-  user: User
+  ownershipKey: string
   state: WorkbenchState
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
@@ -81,7 +80,7 @@ interface UseWorkbenchRuntimeTasksOptions {
 }
 
 export function useWorkbenchRuntimeTasks({
-  user,
+  ownershipKey,
   state,
   dispatch,
   executorClient,
@@ -100,7 +99,7 @@ export function useWorkbenchRuntimeTasks({
     () => () => {
       openGeneration.current += 1
     },
-    [user.id]
+    [ownershipKey]
   )
 
   useEffect(() => {
@@ -173,8 +172,10 @@ export function useWorkbenchRuntimeTasks({
       options: RuntimePaneTranscriptLoadOptions = {}
     ): Promise<RuntimePaneTranscript> => {
       const { threadOnly, isolated, ...requestOptions } = options
-      const read = (request: RuntimeTranscriptRequest) =>
-        executorClient.runtime.getRuntimeTranscript(request)
+      const read = (request: RuntimeTranscriptRequest, readOptions?: { signal?: AbortSignal }) =>
+        readOptions
+          ? executorClient.runtime.getRuntimeTranscript(request, readOptions)
+          : executorClient.runtime.getRuntimeTranscript(request)
       return threadOnly
         ? readRuntimeThreadConversation(read, address, requestOptions)
         : synchronizeRuntimeConversation(read, address, { ...requestOptions, isolated })
@@ -229,7 +230,7 @@ export function useWorkbenchRuntimeTasks({
       const listed = findRuntimeTask(state.runtimeWork, address)
       const cached = listed ?? lifecycleStore.getTask(address)?.task
 
-      writeLastProjectId(user.id, project?.id ?? null)
+      writeLastProjectId(ownershipKey, project?.id ?? null)
       openRuntimeTaskView(
         !listed && cached ? taskAddressWithMetadata(address, cached) : address,
         project,
@@ -278,7 +279,7 @@ export function useWorkbenchRuntimeTasks({
       state.projects,
       state.runtimeWork,
       t,
-      user.id,
+      ownershipKey,
     ]
   )
 
@@ -374,7 +375,6 @@ export function useWorkbenchRuntimeTasks({
       ]
       if (archivedAddresses.length > 0) {
         archivedAddresses.forEach(archiveRuntimeConversation)
-        archivedAddresses.forEach(address => lifecycleStore.remove(address))
         archivedAddresses.forEach(address => logRuntimeQueueStage(address, 'queue-archive-evicted'))
         markRuntimeTasksArchived(archivedAddresses)
         const worktreeCleanupSucceeded = await removeArchivedWorktrees(
@@ -404,7 +404,6 @@ export function useWorkbenchRuntimeTasks({
       clearCurrentRuntimeTaskIfArchived,
       dispatch,
       executorClient,
-      lifecycleStore,
       markRuntimeTasksArchived,
       refreshWorkLists,
       removeArchivedWorktrees,

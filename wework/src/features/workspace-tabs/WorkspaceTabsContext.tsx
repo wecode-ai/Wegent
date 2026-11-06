@@ -72,7 +72,11 @@ type WorkspaceTabsAction =
   | { type: 'restoreClosed'; restored: WorkspaceTab }
   | { type: 'move'; sourceId: string; targetId: string }
   | { type: 'syncFixed'; tabs: WorkspaceTab[] }
-  | { type: 'updateActive'; updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>> }
+  | {
+      type: 'update'
+      tabId: string
+      updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>
+    }
 
 interface WorkspaceTabsProviderProps {
   pathname: string
@@ -363,11 +367,11 @@ function workspaceTabsReducer(
           : (tabs[0]?.id ?? state.activeTabId),
       }
     }
-    case 'updateActive':
+    case 'update':
       return {
         ...state,
         tabs: state.tabs.map(tab =>
-          tab.id === state.activeTabId ? { ...tab, ...action.updates } : tab
+          tab.id === action.tabId ? { ...tab, ...action.updates } : tab
         ),
       }
   }
@@ -379,11 +383,15 @@ export function WorkspaceTabsProvider({
   storageScope,
   labels,
   startupTabKind,
-  fixedTabs = EMPTY_FIXED_TABS,
+  fixedTabs: restoredFixedTabs = EMPTY_FIXED_TABS,
   startupTabId,
   restoreSessionTabs = true,
   children,
 }: WorkspaceTabsProviderProps) {
+  const fixedTabs = useMemo(
+    () => restoredFixedTabs.map(tab => normalizePersistedTab(tab, labels)),
+    [restoredFixedTabs, labels]
+  )
   const startupTabApplied = useRef(false)
   const previousPathnameRef = useRef(pathname)
   const [state, dispatch] = useReducer(
@@ -620,15 +628,21 @@ export function WorkspaceTabsProvider({
     navigateTo(workspaceTabRoute(restored))
   }, [state.closedTabs, state.tabs])
 
-  const updateActiveTab = useCallback(
-    (updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => {
-      const currentTab = state.tabs.find(tab => tab.id === state.activeTabId)
+  const updateTab = useCallback(
+    (tabId: string, updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => {
+      const current = stateRef.current
+      const currentTab = current.tabs.find(tab => tab.id === tabId)
       if (!currentTab) return
       const updated = { ...currentTab, ...updates }
-      flushSync(() => dispatch({ type: 'updateActive', updates }))
-      replaceTo(workspaceTabRoute(updated))
+      flushSync(() => dispatch({ type: 'update', tabId, updates }))
+      if (tabId === current.activeTabId) replaceTo(workspaceTabRoute(updated))
     },
-    [state.activeTabId, state.tabs]
+    []
+  )
+  const updateActiveTab = useCallback(
+    (updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) =>
+      updateTab(state.activeTabId, updates),
+    [state.activeTabId, updateTab]
   )
 
   const activeTab =
@@ -646,6 +660,7 @@ export function WorkspaceTabsProvider({
       closeOtherTabs,
       restoreClosedTab,
       moveTab,
+      updateTab,
       updateActiveTab,
     }),
     [
@@ -658,6 +673,7 @@ export function WorkspaceTabsProvider({
       restoreClosedTab,
       selectTab,
       state,
+      updateTab,
       updateActiveTab,
     ]
   )

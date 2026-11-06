@@ -13,10 +13,17 @@ export function createEmailSender(accounts, storage, network = { imapSession, sm
     return accounts.use(input.source?.profile, account => deliver(input, account))
   }
   async function deliver(
-    { source, messageId, workId, from, to, subject, text, reply = true },
+    { source, messageId, workId, from, to, subject, text, reply = true, authorization },
     account
   ) {
-    if (source?.id !== 'INBOX' || source.kind !== 'inbox' || source.policy?.askBeforeAct !== true)
+    const authorizedReply =
+      source?.policy?.askBeforeAct === false &&
+      authorization === 'continuous_reply' &&
+      reply === true
+    const confirmed =
+      authorization === 'one_time' ||
+      (authorization === undefined && source?.policy?.askBeforeAct === true)
+    if (source?.id !== 'INBOX' || source.kind !== 'inbox' || (!confirmed && !authorizedReply))
       throw mailError('email_confirmation_required')
     if (
       ![to, subject, text, workId, messageId].every(

@@ -1,6 +1,7 @@
 import type { StandInHandlingPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInImmediateSwitch } from './StandInImmediateSwitch'
+import { StandInReplyAuthorization } from './StandInReplyAuthorization'
 
 export function StandInProcessingSettings({
   rows,
@@ -11,6 +12,7 @@ export function StandInProcessingSettings({
     name: string
     testId: string
     policy: StandInHandlingPolicy
+    outbound?: boolean
     onChange(policy: StandInHandlingPolicy): void
   }[]
   disabled: boolean
@@ -36,6 +38,15 @@ export function StandInProcessingSettings({
             testId={row.testId}
             onChange={row.onChange}
           />
+          {row.outbound && (
+            <StandInReplyAuthorization
+              name={row.name}
+              policy={row.policy}
+              disabled={disabled}
+              testId={row.testId}
+              onChange={row.onChange}
+            />
+          )}
         </div>
       ))}
     </section>

@@ -16,7 +16,9 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return;
         }
-        if let Err(error) = self.refresh_stand_in_confirmation(&mut turn.request) {
+        if let Err(error) =
+            self.refresh_stand_in_confirmation(&turn.local_task_id, &mut turn.request)
+        {
             self.retain_failed_runtime_task(&turn.local_task_id, &error);
             self.finish_prepared_command(&turn, super::command_journal::CommandState::Failed)
                 .await;
@@ -39,7 +41,7 @@ impl RuntimeWorkRpcHandler {
                 )
             })?;
         if self.backend_connection_snapshot()?.is_some() {
-            self.verify_stand_in_user(&json!({"userId":user})).await?;
+            self.verify_runtime_user(&json!({"userId":user})).await?;
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;

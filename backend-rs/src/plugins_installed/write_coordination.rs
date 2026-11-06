@@ -182,12 +182,13 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         if Instant::now() >= self.deadline {
             return Err(coordination_error("plugin_write_lease_lost"));
         }
-        // `_Lease.check` calls redis-py `lock.owned()`, which is a plain
-        // `GET key` compared with the stored token; the release path keeps
-        // the source's Lua script.
+        // Generic commands default to the primary. The typed GET reads a
+        // replica, which can lag behind the SET that acquired this lease.
+        let mut get = brz_redis::cmd("GET");
+        get.arg(self.key.as_str());
         let current: Option<brz_redis::RedisBytes> = self
             .redis
-            .get(self.key.as_str())
+            .command(get)
             .await
             .map_err(|_| coordination_error("plugin_write_unavailable"))?;
         if current.is_some_and(|value| value.as_ref() == self.token.as_bytes()) {

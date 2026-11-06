@@ -1,5 +1,6 @@
 import type { UserMessageServices } from './UserMessage'
 import { MessageListMessage } from './MessageListMessage'
+import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
 import {
   isCancelledAssistantMessage,
   shouldHideFailedAssistantContent,
@@ -118,6 +119,7 @@ export interface MessageListProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
+  onFillSelectionToAnswer?: (text: string) => void
   virtualScrollAdjustmentEnabled?: boolean
   virtualAnchor?: 'start' | 'end'
   virtualAnchorToEnd?: boolean
@@ -191,6 +193,7 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
+  onFillSelectionToAnswer,
   virtualAnchorToEnd = true,
   virtualAnchor = 'end',
   virtualScrollAdjustmentEnabled = true,
@@ -220,14 +223,40 @@ export const MessageList = memo(function MessageList({
     () => resolveAsyncRequestUserInputReplies(messages),
     [messages]
   )
-  const visibleMessages = useMemo(
-    () => resolvedMessages.filter(shouldRenderMessage),
-    [resolvedMessages]
-  )
   const runtimeTurnsById = useMemo(
     () => new Map(turns.flatMap(turn => (turn.id ? [[turn.id, turn] as const] : []))),
     [turns]
   )
+  const visibleMessages = useMemo(() => {
+    const userTurns = new Set(
+      resolvedMessages
+        .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
+        .map(message => message.turnId)
+    )
+    const activityTurns = new Set(
+      resolvedMessages
+        .filter(isStandInActivityMessage)
+        .map(message => message.turnId)
+        .filter(turnId => turnId && !userTurns.has(turnId))
+    )
+    return resolvedMessages.filter(message => {
+      if (isStandInActivityMessage(message)) return false
+      if (message.turnId && activityTurns.has(message.turnId) && message.role === 'assistant') {
+        const turn = runtimeTurnsById.get(message.turnId)
+        if (message.status !== 'done' || (turn && turn.status !== 'done')) return true
+        if (
+          turn?.error ||
+          turn?.stoppedNotice ||
+          turn?.fileChanges ||
+          turn?.references?.length ||
+          turn?.memoryCitations?.length
+        )
+          return true
+        if (isCompletedStandInActivityTrace(message)) return false
+      }
+      return shouldRenderMessage(message)
+    })
+  }, [resolvedMessages, runtimeTurnsById])
   // Native crash history may retain an open status; only its latest root turn is live.
   const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
   const lastAssistantMessageIdByTurn = useMemo(() => {
@@ -337,6 +366,7 @@ export const MessageList = memo(function MessageList({
     virtualizer: messageVirtualizer,
     tailHeight,
     scrollMargin,
+    viewportReady,
   } = useConversationVirtualizer({
     count: visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0),
     enabled: virtualLayoutReady,
@@ -560,8 +590,11 @@ export const MessageList = memo(function MessageList({
     )
   }, [layoutKey, measureRows, messageVirtualizer, virtualLayoutReady])
 
+  const hasSelectionActions = Boolean(
+    onAddSelectionToConversation || onAskSelectionInSidebar || onFillSelectionToAnswer
+  )
   useEffect(() => {
-    if (!useContentVisibility && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
+    if (!useContentVisibility && !hasSelectionActions) return
 
     const updateSelectionState = (
       preserveCapturedSelection = false,
@@ -594,7 +627,7 @@ export const MessageList = memo(function MessageList({
         return
       }
       setIsTextSelectionActive(useContentVisibility)
-      if (!onAddSelectionToConversation || !onAskSelectionInSidebar) return
+      if (!hasSelectionActions) return
 
       const range = selection.getRangeAt(0)
       const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
@@ -666,7 +699,14 @@ export const MessageList = memo(function MessageList({
       window.removeEventListener('scroll', handleScroll, true)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [conversationKey, useContentVisibility, onAddSelectionToConversation, onAskSelectionInSidebar])
+  }, [
+    conversationKey,
+    useContentVisibility,
+    hasSelectionActions,
+    onAddSelectionToConversation,
+    onAskSelectionInSidebar,
+    onFillSelectionToAnswer,
+  ])
 
   const applySelectionAction = (action: (text: string) => void) => {
     if (!textSelection) return
@@ -683,14 +723,45 @@ export const MessageList = memo(function MessageList({
     <div
       ref={listRef}
       className={cn(listLayoutClass, className, virtualMessages && 'relative gap-0 pb-0 pt-0')}
+      data-conversation-message-list=""
+      data-conversation-layout-width={layoutWidth}
+      data-conversation-message-count={messages.length}
+      data-conversation-visible-count={visibleMessages.length}
+      data-conversation-virtual-messages={virtualMessages}
+      data-conversation-viewport-ready={viewportReady}
+      data-conversation-virtualizer-enabled={messageVirtualizer.options.enabled}
+      data-conversation-virtual-row-count={virtualRows.length}
+      data-conversation-virtual-range={JSON.stringify(messageVirtualizer.range ?? null)}
+      data-conversation-scroll-rect={JSON.stringify(messageVirtualizer.scrollRect ?? null)}
+      data-conversation-scroll-connected={messageVirtualizer.scrollElement?.isConnected ?? false}
+      data-conversation-scroll-element={
+        messageVirtualizer.scrollElement
+          ? (messageVirtualizer.scrollElement.dataset.testid ?? 'unmarked')
+          : 'none'
+      }
     >
-      {textSelection && textSelection.conversationKey === conversationKey && (
-        <SelectionActionsPopover
-          position={{ left: textSelection.left, top: textSelection.top }}
-          onAddToConversation={() => applySelectionAction(onAddSelectionToConversation!)}
-          onAskInSidebar={() => applySelectionAction(onAskSelectionInSidebar!)}
-        />
-      )}
+      {hasSelectionActions &&
+        textSelection &&
+        textSelection.conversationKey === conversationKey && (
+          <SelectionActionsPopover
+            position={{ left: textSelection.left, top: textSelection.top }}
+            onAddToConversation={
+              onAddSelectionToConversation
+                ? () => applySelectionAction(onAddSelectionToConversation)
+                : undefined
+            }
+            onAskInSidebar={
+              onAskSelectionInSidebar
+                ? () => applySelectionAction(onAskSelectionInSidebar)
+                : undefined
+            }
+            onFillAnswer={
+              onFillSelectionToAnswer
+                ? () => applySelectionAction(onFillSelectionToAnswer)
+                : undefined
+            }
+          />
+        )}
       {(virtualMessages
         ? virtualRows.map((virtualRow, position) => ({
             index: virtualRow.index,

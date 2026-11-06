@@ -1,4 +1,5 @@
 import { FileReferenceIcon } from '../composer/FileReferenceIcon'
+import { isStandInActivityMessage } from './standInActivity'
 import { MessageHoverActions } from './MessageHoverActions'
 import { useMemo, useState } from 'react'
 import {
@@ -65,7 +66,7 @@ export interface UserMessageServices {
   transfers?: ComposerTransferServices
   resolveMentionIconUrl?: (href: string) => string | null
   onOpenPlugin?: (reference: PluginReference) => void
-  openLocalAttachment?: (path: string, onOpenFile?: (path: string) => void) => Promise<void>
+  openAttachment?: (attachment: Attachment) => void
   getCommentPreviewRightBoundary?: () => number
 }
 
@@ -168,6 +169,8 @@ export function UserMessage({
   const showGoalRequestBadge = message.runtimeGoalRequest === true
   const codeCommentCount = message.codeComments?.length ?? 0
 
+  if (isStandInActivityMessage(message)) return null
+
   return (
     <div
       className={[
@@ -249,7 +252,7 @@ export function UserMessage({
             ))}
             {documentAttachments.map(attachment => (
               <MessageDocumentAttachment
-                openLocalAttachment={services.openLocalAttachment}
+                openAttachment={services.openAttachment}
                 key={attachment.id}
                 attachment={attachment}
                 onOpenFile={onOpenWorkspaceFile}
@@ -388,7 +391,10 @@ export function getUserMessageTextProjection(content: string) {
   const request = projectRuntimeUserText(content)
   const mentions = parseCodexLocalFileMentions(content)
   if (mentions && !mentions.requestText) return { content: '', sourceStart: 0, sourceEnd: 0 }
-  return { ...request, content: normalizeCodexUserMessageContent(request.content) }
+  return {
+    ...request,
+    content: normalizeCodexUserMessageContent(request.content),
+  }
 }
 
 function normalizeCodexUserMessageContent(content: string): string {
@@ -506,18 +512,18 @@ function openableAttachmentPath(attachment: Attachment): string | null {
 }
 
 function MessageDocumentAttachment({
-  openLocalAttachment,
+  openAttachment,
   attachment,
   onOpenFile,
 }: {
-  openLocalAttachment?: UserMessageServices['openLocalAttachment']
+  openAttachment?: UserMessageServices['openAttachment']
   attachment: Attachment
   onOpenFile?: (path: string) => void
 }) {
   if (isTextAttachment(attachment)) {
     return (
       <MessageTextAttachment
-        openLocalAttachment={openLocalAttachment}
+        openAttachment={openAttachment}
         attachment={attachment}
         onOpenFile={onOpenFile}
       />
@@ -544,17 +550,17 @@ function MessageDocumentAttachment({
 }
 
 function MessageTextAttachment({
-  openLocalAttachment,
+  openAttachment,
   attachment,
   onOpenFile,
 }: {
-  openLocalAttachment?: UserMessageServices['openLocalAttachment']
+  openAttachment?: UserMessageServices['openAttachment']
   attachment: Attachment
   onOpenFile?: (path: string) => void
 }) {
   const preview = getAttachmentTextPreview(attachment) ?? attachment.filename
   const attachmentPath = openableAttachmentPath(attachment)
-  const clickable = Boolean(attachmentPath && (openLocalAttachment || onOpenFile))
+  const clickable = Boolean(openAttachment || (attachmentPath && onOpenFile))
   const className =
     'inline-flex h-9 max-w-[min(360px,100%)] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
   const content = (
@@ -570,7 +576,7 @@ function MessageTextAttachment({
     </>
   )
 
-  if (clickable && attachmentPath) {
+  if (clickable) {
     return (
       <button
         type="button"
@@ -579,8 +585,8 @@ function MessageTextAttachment({
         aria-label={preview}
         title={preview}
         onClick={() => {
-          if (openLocalAttachment) void openLocalAttachment(attachmentPath, onOpenFile)
-          else onOpenFile?.(attachmentPath)
+          if (openAttachment) openAttachment(attachment)
+          else if (attachmentPath) onOpenFile?.(attachmentPath)
         }}
       >
         {content}

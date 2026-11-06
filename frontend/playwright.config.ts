@@ -4,6 +4,7 @@ const EXECUTOR_REGRESSION_SPEC =
   /(tasks\/(agent-conversation-regression|claude-background-lifecycle|claudecode-compaction|pipeline-session-archive|provider-native-claudecode|device-artifact-declaration)|collaboration\/(collaboration-agent-execution|issue-dispatch-executor))\.spec\.ts/
 const EXECUTOR_INDEPENDENT_SPEC =
   /tasks\/(claude-background-lifecycle|pipeline-session-archive|provider-native-claudecode)\.spec\.ts/
+const STALLED_CHAT_SPEC = /tasks\/chat-stalled-execution\.spec\.ts/
 // Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
   /(tasks\/provider-native-(chat|dingtalk|state-and-contract)|knowledge\/dingtalk-import)\.spec\.ts/
@@ -84,6 +85,7 @@ export default defineConfig({
       testIgnore: [
         /api\/.*\.spec\.ts/,
         EXECUTOR_REGRESSION_SPEC, // Run executor-heavy coverage in a dedicated CI job.
+        STALLED_CHAT_SPEC, // Requires the dedicated short-threshold Backend phase.
         PROVIDER_NATIVE_CHAT_SPEC, // Shared provider configuration requires serial execution.
       ],
       use: {
@@ -121,6 +123,16 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',
+      },
+      dependencies: ['setup'],
+    },
+    {
+      name: 'executor-stalled-chromium',
+      testMatch: STALLED_CHAT_SPEC,
+      workers: 1,
+      fullyParallel: false,
+      use: {
+        ...devices['Desktop Chrome'],
       },
       dependencies: ['setup'],
     },

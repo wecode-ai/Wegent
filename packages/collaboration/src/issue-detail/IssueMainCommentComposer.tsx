@@ -5,7 +5,14 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { useId, useRef, useState, type Ref, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Ref,
+  type ReactNode,
+} from "react";
 import { ComposerAutocompleteInput } from "../composer/ComposerAutocompleteInput";
 import type { ComposerExternalMentionCandidate } from "../composer/composerAutocompleteInputTypes";
 import type { ComposerInputHandle } from "../composer/composerInputTypes";
@@ -92,6 +99,10 @@ export function IssueMainCommentComposer({
   const transfer = useCommentAssignment(value, assignment, onSubmit);
   const blocked = disabled || sending || transfer.busy;
   const inlineError = transfer.error || error;
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useLayoutEffect(() => {
+    if (inlineError) errorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [inlineError]);
   const canSend =
     !blocked && !uploading && Boolean(value.trim() || transfer.target);
   const sendLabel = transfer.target
@@ -260,7 +271,11 @@ export function IssueMainCommentComposer({
             </div>
           ) : null}
           {inlineError ? (
-            <p role="alert" className="task-detail-comment-inline-error">
+            <p
+              ref={errorRef}
+              role="alert"
+              className="task-detail-comment-inline-error"
+            >
               {inlineError}
             </p>
           ) : null}

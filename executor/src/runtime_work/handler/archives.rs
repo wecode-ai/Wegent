@@ -107,6 +107,7 @@ impl RuntimeWorkRpcHandler {
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
         log_runtime_archive_link("runtime task archive stored link", &link, true);
+        emit_runtime_work_changed(&self.event_tx, &self.device_id, &link.local_task_id);
         Ok(task_action_success(&link))
     }
 

@@ -11,7 +11,6 @@ import {
   createCollaborationTranslator,
   boardDropHint,
   saveProjectBoardViews,
-  matchesBoardView,
 } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
@@ -100,6 +99,7 @@ import {
   ProjectBoardBody,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useBoardTagFilter,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
   type StandardCloudBoardMutation,
@@ -1981,7 +1981,13 @@ export function CloudTodoWorkspace({
   const canManageViews =
     selectedProject?.location === 'local' ||
     ['Owner', 'Maintainer'].includes(selectedProject?.access_role ?? '')
+  const tagFilter = useBoardTagFilter({
+    scope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
+    tags: availableTags,
+    translate: boardTranslate,
+  })
   const standardBoardController = useStandardCloudBoardController({
+    tagFilter: tagFilter.tags,
     tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
     view: savedViews.view,
     viewScope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
@@ -2060,8 +2066,8 @@ export function CloudTodoWorkspace({
     resetProjectViewState()
   }, [activeProjectKey, resetProjectViewState])
 
-  const boardLayerCount = boardItems.filter(
-    item => item.parent_id === boardParentId && matchesBoardView(item, savedViews.view)
+  const boardLayerCount = standardBoardController.filteredItems.filter(
+    item => item.parent_id === boardParentId
   ).length
   const rootBoardItems = boardItems.filter(item => item.parent_id === null)
   const firstRootBoardItem = rootBoardItems[0] ?? null
@@ -4711,6 +4717,11 @@ export function CloudTodoWorkspace({
                   ) : null,
                   board: (
                     <ProjectBoardBody<LocatedLoopItem>
+                      filterAction={
+                        !isAITableProject && !isExternalGitBoard && !isMyTasksBoard
+                          ? tagFilter.control
+                          : undefined
+                      }
                       toolbarAction={parentIssueBoard.toggle}
                       parentRows={
                         parentIssueBoard.active

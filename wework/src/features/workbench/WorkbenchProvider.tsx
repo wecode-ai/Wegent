@@ -75,6 +75,7 @@ import {
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
+import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscussionScope'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import {
   createLocalDevicePluginApi,
@@ -199,6 +200,7 @@ import {
   resolveProjectWorkPreferenceScope,
 } from './projectWorkPreferences'
 import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
+import { resolveWorkbenchOwnership } from './workbenchOwnership'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
@@ -230,7 +232,23 @@ function findFirstSelectableProject(
   return null
 }
 
-export function WorkbenchProvider({
+export function WorkbenchProvider(props: WorkbenchProviderProps) {
+  const cloudConnection = useOptionalCloudConnection()
+  const { user: workbenchIdentity, key: ownershipKey } = resolveWorkbenchOwnership(
+    cloudConnection,
+    props.user
+  )
+  return (
+    <OwnedWorkbenchProvider
+      key={ownershipKey}
+      {...props}
+      workbenchIdentity={workbenchIdentity}
+      ownershipKey={ownershipKey}
+    />
+  )
+}
+
+function OwnedWorkbenchProvider({
   children,
   user,
   services,
@@ -246,7 +264,9 @@ export function WorkbenchProvider({
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
   workspaceTabRevealRevision = 0,
-}: WorkbenchProviderProps) {
+  workbenchIdentity,
+  ownershipKey,
+}: WorkbenchProviderProps & { workbenchIdentity: User; ownershipKey: string }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const isWorkspaceTabActive = useOptionalWorkspaceTabActivity()
@@ -256,8 +276,6 @@ export function WorkbenchProvider({
   // Preferences can change while a turn is running. Runtime transports only
   // need the account identity, so keep their service graph stable across those
   // updates and avoid an event-subscription gap during terminal delivery.
-  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   const runtimeServiceUser = useMemo<User>(
     () => ({
       id: workbenchIdentity.id,
@@ -293,8 +311,8 @@ export function WorkbenchProvider({
     return createExecutorClientForWorkbenchServices(resolvedServices)
   }, [resolvedServices])
   const sharedLifecycleStore = useMemo(
-    () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(user.id),
-    [providedLifecycleStore, user.id]
+    () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(ownershipKey),
+    [ownershipKey, providedLifecycleStore]
   )
   const canSyncRuntimeTaskLifecycle = useStableEvent(() => syncRuntimeTaskLifecycle)
   const lifecycleStore = useMemo(
@@ -464,6 +482,8 @@ export function WorkbenchProvider({
     inputs: draftInputByScope,
     setInput: writeDraftInputForScope,
     getRevision: getInputRevisionForScope,
+    goalDraftActiveByScope,
+    setGoalDraftActiveForScope,
   } = useWorkspaceTabDraftInput(workspaceTabId)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
@@ -625,7 +645,7 @@ export function WorkbenchProvider({
             : null))
 
       if (project) {
-        writeLastProjectId(user.id, project.id)
+        writeLastProjectId(ownershipKey, project.id)
         dispatch({
           type: 'project_workspace_selected',
           project,
@@ -633,7 +653,7 @@ export function WorkbenchProvider({
           startFreshChat: true,
         })
       } else {
-        writeLastProjectId(user.id, null)
+        writeLastProjectId(ownershipKey, null)
         dispatch({
           type: 'project_cleared',
           standaloneDeviceId:
@@ -661,6 +681,7 @@ export function WorkbenchProvider({
       state.standaloneChatKey,
       state.standaloneDeviceId,
       user,
+      ownershipKey,
     ]
   )
   const consumeQueuedPluginTrial = useCallback(() => {
@@ -1006,7 +1027,7 @@ export function WorkbenchProvider({
       setDraftInputForScope(nextChatScopeKey, nextDraft)
 
       if (state.currentProject) {
-        writeLastProjectId(currentUser.id, state.currentProject.id)
+        writeLastProjectId(ownershipKey, state.currentProject.id)
         dispatch({
           type: 'project_workspace_selected',
           project: state.currentProject,
@@ -1014,7 +1035,7 @@ export function WorkbenchProvider({
           startFreshChat: true,
         })
       } else {
-        writeLastProjectId(currentUser.id, null)
+        writeLastProjectId(ownershipKey, null)
         dispatch({
           type: 'project_cleared',
           standaloneDeviceId: sourceTask.deviceId || state.standaloneDeviceId,
@@ -1043,6 +1064,7 @@ export function WorkbenchProvider({
       state.standaloneWorkspacePath,
       t,
       workspaceTabId,
+      ownershipKey,
     ]
   )
   const {
@@ -1086,7 +1108,7 @@ export function WorkbenchProvider({
     cloudWorkStatus,
     getRuntimeWorkSnapshot,
     updateRuntimeProject,
-    markRuntimeTasksArchived,
+    markRuntimeTasksArchived: markRuntimeTasksArchivedInView,
     markRuntimeProjectRemoved,
     refreshWorkLists,
     refreshRuntimeTask,
@@ -1098,12 +1120,22 @@ export function WorkbenchProvider({
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
-    user,
+    user: workbenchIdentity,
+    ownershipKey,
     state,
     dispatch,
     executorClient,
     services: resolvedServices,
   })
+
+  const markRuntimeTasksArchived = useCallback(
+    (addresses: RuntimeTaskAddress[]) => {
+      // Successful explicit archival is authoritative even when another pane owns snapshot writes.
+      addresses.forEach(address => sharedLifecycleStore.remove(address))
+      markRuntimeTasksArchivedInView(addresses)
+    },
+    [markRuntimeTasksArchivedInView, sharedLifecycleStore]
+  )
 
   const sidebarDevicesRef = useRef(state.devices)
   useLayoutEffect(() => {
@@ -1269,7 +1301,7 @@ export function WorkbenchProvider({
       lastProjectRestoreAttemptedRef.current = true
       return
     }
-    const lastProjectId = readLastProjectId(user.id)
+    const lastProjectId = readLastProjectId(ownershipKey)
     const candidateProjectIds =
       lastProjectId === undefined
         ? [findActiveRuntimeProjectId(state.runtimeWork)]
@@ -1287,7 +1319,7 @@ export function WorkbenchProvider({
     state.projects,
     state.runtimeWork,
     state.standaloneWorkspacePath,
-    user.id,
+    ownershipKey,
   ])
 
   useEffect(() => {
@@ -1368,7 +1400,7 @@ export function WorkbenchProvider({
     (projectId: number | null) => {
       projectSelectionStartedRef.current = true
       if (projectId === null) {
-        writeLastProjectId(user.id, null)
+        writeLastProjectId(ownershipKey, null)
         dispatch({
           type: 'project_cleared',
           standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -1383,12 +1415,12 @@ export function WorkbenchProvider({
       }
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (project) {
-        writeLastProjectId(user.id, project.id)
+        writeLastProjectId(ownershipKey, project.id)
         dispatch({ type: 'project_selected', project })
         navigateTo('/')
       }
     },
-    [state.devices, state.projects, state.runtimeWork, state.standaloneDeviceId, user]
+    [state.devices, state.projects, state.runtimeWork, state.standaloneDeviceId, user, ownershipKey]
   )
 
   const selectProjectWorkspace = useCallback(
@@ -1396,7 +1428,7 @@ export function WorkbenchProvider({
       projectSelectionStartedRef.current = true
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (!project) return
-      writeLastProjectId(user.id, project.id)
+      writeLastProjectId(ownershipKey, project.id)
       dispatch({
         type: 'project_workspace_selected',
         project,
@@ -1404,13 +1436,13 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [state.projects, state.runtimeWork, user.id]
+    [state.projects, state.runtimeWork, ownershipKey]
   )
 
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
       projectSelectionStartedRef.current = true
-      writeLastProjectId(user.id, null)
+      writeLastProjectId(ownershipKey, null)
       const standaloneDeviceId = getPreferredStandaloneDeviceId(
         state.devices,
         deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
@@ -1423,7 +1455,12 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [state.devices, state.standaloneDeviceId, user.id, user.preferences?.default_execution_target]
+    [
+      state.devices,
+      state.standaloneDeviceId,
+      user.preferences?.default_execution_target,
+      ownershipKey,
+    ]
   )
 
   const openStandaloneWorkspace = useCallback(
@@ -1485,7 +1522,7 @@ export function WorkbenchProvider({
           projectKey: response.projectKey,
         })
         writeLastProjectId(
-          user.id,
+          ownershipKey,
           runtimeProjectUiId({
             key: response.projectKey,
             stateDeviceId: response.deviceId,
@@ -1541,7 +1578,7 @@ export function WorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
-      writeLastProjectId(user.id, null)
+      writeLastProjectId(ownershipKey, null)
       if (launchOptions) {
         queueWorkbenchWorkspaceLaunch(openedDeviceId, openedWorkspacePath, launchOptions)
       }
@@ -1553,7 +1590,7 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists, state.devices, user.id]
+    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists, state.devices, ownershipKey]
   )
 
   const startNewChat = useCallback(() => {
@@ -1566,7 +1603,7 @@ export function WorkbenchProvider({
       ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
       : null
     if (project) {
-      writeLastProjectId(user.id, project.id)
+      writeLastProjectId(ownershipKey, project.id)
       dispatch({
         type: 'project_workspace_selected',
         project,
@@ -1576,7 +1613,7 @@ export function WorkbenchProvider({
       return
     }
 
-    writeLastProjectId(user.id, null)
+    writeLastProjectId(ownershipKey, null)
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -1596,6 +1633,7 @@ export function WorkbenchProvider({
     state.standaloneDeviceId,
     user,
     workspaceTabId,
+    ownershipKey,
   ])
 
   useEffect(() => {
@@ -1699,7 +1737,7 @@ export function WorkbenchProvider({
         const input = `${references.join(' ')} `
         setDraftInputForScope(nextScopeKey, input)
       }
-      writeLastProjectId(user.id, null)
+      writeLastProjectId(ownershipKey, null)
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -1724,11 +1762,12 @@ export function WorkbenchProvider({
       state.standaloneDeviceId,
       user,
       workspaceTabId,
+      ownershipKey,
     ]
   )
 
   const startStandaloneChat = useCallback(() => {
-    writeLastProjectId(user.id, null)
+    writeLastProjectId(ownershipKey, null)
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -1740,7 +1779,7 @@ export function WorkbenchProvider({
       startFreshChat: true,
     })
     navigateTo('/')
-  }, [state.devices, state.standaloneDeviceId, user])
+  }, [state.devices, state.standaloneDeviceId, user, ownershipKey])
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
@@ -1761,7 +1800,7 @@ export function WorkbenchProvider({
             blankAttachmentState.errors.size > 0)
         )
       projectSelectionStartedRef.current = true
-      writeLastProjectId(user.id, project.id)
+      writeLastProjectId(ownershipKey, project.id)
       dispatch({
         type: 'project_workspace_selected',
         project,
@@ -1778,13 +1817,13 @@ export function WorkbenchProvider({
       state.projects,
       state.runtimeWork,
       state.standaloneChatKey,
-      user.id,
       workspaceTabId,
+      ownershipKey,
     ]
   )
 
   const runtimeTasks = useWorkbenchRuntimeTasks({
-    user,
+    ownershipKey,
     state,
     dispatch,
     executorClient,
@@ -1875,7 +1914,7 @@ export function WorkbenchProvider({
   )
 
   const projectActions = useWorkbenchProjectActions({
-    user,
+    ownershipKey,
     state,
     dispatch,
     executorClient,
@@ -2674,6 +2713,7 @@ export function WorkbenchProvider({
       projects: state.projects,
       devices: state.devices,
       runtimeWork: state.runtimeWork,
+      runtimeWorkLoad: state.runtimeWorkLoad,
       standaloneDeviceId: state.standaloneDeviceId,
       standaloneWorkspacePath: state.standaloneWorkspacePath,
       selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
@@ -2688,6 +2728,7 @@ export function WorkbenchProvider({
       state.pendingProjectWorkspaceProjectId,
       state.projects,
       state.runtimeWork,
+      state.runtimeWorkLoad,
       state.selectedDeviceWorkspaceId,
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,
@@ -2698,6 +2739,8 @@ export function WorkbenchProvider({
     () => ({
       scopeKey: projectChatScopeKey,
       inputByScope: draftInputByScope,
+      goalDraftActiveByScope,
+      setGoalDraftActiveForScope,
       getInputRevisionForScope,
       models: conversationModels,
       skills: skillSelection.skills,
@@ -2776,6 +2819,8 @@ export function WorkbenchProvider({
       requestTaskComposerCatalogs,
       draftInput,
       draftInputByScope,
+      goalDraftActiveByScope,
+      setGoalDraftActiveForScope,
       getInputRevisionForScope,
       composerError,
       composerErrorByScope,
@@ -3036,7 +3081,7 @@ export function WorkbenchProvider({
                 services={resolvedServices}
               />
               <RunnerSelectionHost />
-              {children}
+              <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>
         </WorkspaceFileReaderProvider>

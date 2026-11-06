@@ -116,10 +116,15 @@ class PluginDeviceInstallationService:
                 )
                 db.add(row)
             desired_changed = row.desired_release_id != desired_release_id
+            reinstalling = row.state == "uninstalling" or (
+                row.state == "failed" and row.actual_release_id == desired_release_id
+            )
             row.desired_release_id = desired_release_id
-            if desired_changed or reset_failures:
+            if desired_changed or reset_failures or reinstalling:
                 row.attempt_count = 0
-            if row.actual_release_id != desired_release_id:
+            # The active Kind was re-read under the write lease. Its new install
+            # intent supersedes removal even when the release has not changed.
+            if row.actual_release_id != desired_release_id or reinstalling:
                 if self._auto_update_blocked(row) and not reset_failures:
                     continue
                 row.state = "pending"
@@ -327,7 +332,8 @@ class PluginDeviceInstallationService:
         result = result.model_copy(
             update={"device_id": plugin_device_id(db, user_id, result.device_id)}
         )
-        if result.desired_plugin_snapshot is not None:
+        snapshot = result.desired_plugin_snapshot
+        if snapshot is not None and snapshot.get("plugin_sync"):
             from app.services.device.plugin_sync_recording import (
                 record_versioned_result,
             )
@@ -335,16 +341,27 @@ class PluginDeviceInstallationService:
             record_versioned_result(self, db, user_id, result)
             return
         installs = self._desired_installs(db, user_id)
+        if snapshot is not None:
+            from app.services.device.plugin_sync_recording import (
+                current_legacy_plugin_ids,
+            )
+
+            confirmed = current_legacy_plugin_ids(db, user_id, result)
+        else:
+            confirmed = None
         desired_ids = {installed.id for installed in installs}
         plugin_results = {
             int(item.id): item
             for item in result.plugins
             if item.id is not None and str(item.id).isdigit()
         }
-        self._record_removed_installs(
-            db, user_id, result, desired_ids, set(plugin_results)
-        )
+        if snapshot is None or snapshot.get("mode") == "replace":
+            self._record_removed_installs(
+                db, user_id, result, desired_ids, set(plugin_results)
+            )
         for installed in installs:
+            if confirmed is not None and installed.id not in confirmed:
+                continue
             self._record_desired_install(
                 db,
                 user_id=user_id,

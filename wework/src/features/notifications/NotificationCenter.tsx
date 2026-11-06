@@ -47,6 +47,7 @@ import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import {
   cacheNotificationPreferences,
+  mergeNotificationPreferences,
   migrateLegacyTaskSystemNotification,
   OPEN_NOTIFICATION_SETTINGS_EVENT,
   readCachedNotificationPreferences,
@@ -145,6 +146,7 @@ function NotificationSettings({
     title: string
   }> = [
     { id: 'tasks', title: t('notifications.category_tasks') },
+    { id: 'stand_in', title: t('notifications.category_stand_in') },
     { id: 'collaboration', title: t('notifications.category_collaboration') },
     { id: 'general', title: t('notifications.category_general') },
   ]
@@ -327,7 +329,7 @@ function ConnectedNotificationCenter({
     if (taskImSession !== undefined) setTaskImSessionKey(taskImSession)
     setPreferences(current => {
       const merged = {
-        ...next,
+        ...mergeNotificationPreferences({ ...next, stand_in: next.stand_in ?? current.stand_in }),
         tasks: {
           ...next.tasks,
           im: taskIm === undefined ? current.tasks.im : taskIm,
@@ -601,10 +603,10 @@ function ConnectedNotificationCenter({
         cacheNotificationPreferences(accountKey, next)
         return
       }
-      if (preferenceCategory === 'tasks' && !api) {
+      if ((preferenceCategory === 'tasks' || preferenceCategory === 'stand_in') && !api) {
         const next = {
           ...preferences,
-          tasks: { ...preferences.tasks, [channel]: enabled },
+          [preferenceCategory]: { ...preferences[preferenceCategory], [channel]: enabled },
         }
         setPreferences(next)
         cacheNotificationPreferences(accountKey, next)
@@ -617,7 +619,10 @@ function ConnectedNotificationCenter({
         enabled,
       })
       const next = {
-        ...updated,
+        ...mergeNotificationPreferences({
+          ...updated,
+          stand_in: updated.stand_in ?? preferences.stand_in,
+        }),
         tasks: { ...updated.tasks, im: preferences.tasks.im },
       }
       setPreferences(next)
@@ -803,7 +808,10 @@ function ConnectedNotificationCenter({
               <NotificationSettings
                 preferences={preferences}
                 isDisabled={(preferenceCategory, channel) =>
-                  busy || (preferenceCategory === 'tasks' ? channel === 'im' && !runtimeApi : !api)
+                  busy ||
+                  (preferenceCategory === 'tasks' || preferenceCategory === 'stand_in'
+                    ? channel === 'im' && !runtimeApi
+                    : !api)
                 }
                 connected={Boolean(api)}
                 onChange={updatePreference}

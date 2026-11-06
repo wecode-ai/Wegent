@@ -87,6 +87,20 @@ function installedItem(
 }
 
 describe('findMarketplaceItemForInstalled', () => {
+  test('does not associate a legacy installation directory with another marketplace listing', () => {
+    const item = marketplaceItem({
+      id: 4,
+      name: 'documents',
+      manifest: { marketplaceId: 'wegent' },
+    })
+    const plugin = installedItem({
+      id: '99-wework-personal-documents-0.1.3',
+      pluginKey: 'documents',
+      marketplace: 'wework-personal',
+    })
+    expect(findMarketplaceItemForInstalled(plugin, [item])).toBeNull()
+  })
+
   test('matches by installedPluginId when no cloud identity is known', () => {
     const items = [
       marketplaceItem({ id: 4, name: 'dingtalk', installedPluginId: '62' }),

@@ -204,7 +204,7 @@ export async function runCurrentDevicePluginAutoUpdate({
   const deviceId = local.deviceId?.trim() ?? ''
   if (!deviceId) return null
 
-  const finishDeviceSync = await acquirePluginDeviceSync(deviceId, signal)
+  const finishDeviceSync = await acquirePluginDeviceSync(deviceId, signal, 'auto-update')
 
   try {
     if (local.partial) {

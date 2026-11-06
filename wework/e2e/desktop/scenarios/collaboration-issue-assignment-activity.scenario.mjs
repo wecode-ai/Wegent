@@ -4,7 +4,11 @@ import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity
 import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  reloadMainWindow,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = '负责人分配动态验收'
@@ -79,6 +83,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   async function changeAssignee(control, userId, historyLength, notify = true) {
     await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
+    const notifyToggle = '[data-testid="cloud-todo-assignee-notify"]'
+    await control.command('waitFor', notifyToggle)
+    const enabled = Number(await control.command('getElementCount', `${notifyToggle}:checked`)) > 0
+    if (enabled !== notify) await control.command('click', notifyToggle)
     const target = userId ? `user:${userId}` : 'empty'
     await control.command('click', `[data-testid="cloud-todo-detail-assignee-option-${target}"]`)
     assert.equal(
@@ -86,22 +94,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('getElementCount', '[data-testid="wework-assignment-notify-confirm"]')
       ),
       0,
-      'Assignee selection must use the save menu instead of a notification dialog'
+      'Assignee selection must save directly without a notification confirmation dialog'
     )
-    if (notify) {
-      await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-    } else {
-      await control.command('click', scoped('[data-testid="cloud-todo-save-options"]'))
-      await control.command('click', '[data-testid="cloud-todo-save-without-notification"]', {
-        visible: true,
-      })
-    }
-    await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
-      visible: false,
-      timeoutMs: uiTimeoutMs,
-    })
     await control.command('waitFor', assignmentEvent(historyLength - 1), {
       timeoutMs: uiTimeoutMs,
     })
@@ -138,7 +132,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   async function verifyLocalProject(control) {
     await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
     await createLocalCollaborationProject(control, CONTENT, LOCAL_PROJECT)
-    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
     await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
       value: LOCAL_ISSUE,
@@ -161,9 +155,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
     await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
     await control.command('click', '[data-testid="cloud-todo-detail-assignee-option-empty"]')
-    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-      timeoutMs: uiTimeoutMs,
-    })
     await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
       visible: false,
       timeoutMs: uiTimeoutMs,

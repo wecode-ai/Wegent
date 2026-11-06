@@ -481,6 +481,134 @@ test('shows the exact bound reply and localized actions while preserving native 
   })
 })
 
+test.each([
+  'exact',
+  'wrong-server',
+  'wrong-title',
+  'wrong-tool',
+  'missing-tool',
+  'missing-tool-with-display-call',
+  'unprojected-metadata',
+  'missing-title',
+  'ordinary-question',
+  'wrong-question',
+  'wrong-interaction',
+  'missing-arguments',
+  'invalid-text',
+  'empty-text',
+  'missing-message',
+  'expired',
+  'answered',
+] as const)(
+  'previews only a trusted pending first-party source reply without exposing its opaque target: %s',
+  async variant => {
+    const onSubmit = vi.fn(async () => true)
+    const text = `Full native reply first paragraph\n\n${'Complete content. '.repeat(300)}Final native paragraph <b>plain text</b>`
+    const payload: RequestUserInputPayload = {
+      kind: 'request_user_input',
+      requestId: 'native-reply-approval',
+      itemId: 'mcp_server_elicitation',
+      serverName: variant === 'wrong-server' ? 'other_plugin' : 'wework_stand_in',
+      approvalKind: ['ordinary-question', 'unprojected-metadata'].includes(variant)
+        ? undefined
+        : 'mcp_tool_call',
+      toolName:
+        variant === 'wrong-tool'
+          ? 'send_email'
+          : variant.startsWith('missing-tool')
+            ? undefined
+            : 'reply',
+      toolTitle:
+        variant === 'wrong-title'
+          ? 'reply'
+          : variant === 'missing-title'
+            ? undefined
+            : 'Wework: Reply to source',
+      interactionKind: variant === 'wrong-interaction' ? 'mcp_url' : 'mcp_form',
+      interactionStatus:
+        variant === 'expired' ? 'expired' : variant === 'answered' ? 'answered' : 'pending',
+      interactionScope: 'reply-turn',
+      toolArguments:
+        variant === 'missing-arguments'
+          ? undefined
+          : {
+              messageId: variant === 'missing-message' ? '' : 'opaque-source-event-id',
+              text: variant === 'invalid-text' ? 42 : variant === 'empty-text' ? ' ' : text,
+              recipient: 'Forged recipient',
+              sourceName: 'Forged source',
+            },
+      ...(variant === 'unprojected-metadata'
+        ? {
+            _meta: {
+              codex_approval_kind: 'mcp_tool_call',
+              tool_name: 'reply',
+              tool_title: 'Wework: Reply to source',
+              tool_params: { messageId: 'opaque-source-event-id', text },
+            },
+          }
+        : {}),
+      questions: [
+        {
+          id: variant === 'wrong-question' ? 'untrusted-question' : '__mcp_approval',
+          question: 'Allow the tool reply?',
+          options: [{ label: 'Allow' }, { label: 'Decline' }],
+        },
+      ],
+    }
+    const messages =
+      variant === 'missing-tool-with-display-call'
+        ? ([
+            {
+              id: 'display-turn',
+              role: 'assistant',
+              content: '',
+              blocks: [
+                {
+                  id: 'display-reply-call',
+                  type: 'tool',
+                  toolName: 'wework_stand_in.reply',
+                  toolInput: { messageId: 'opaque-source-event-id', text },
+                  status: 'pending',
+                },
+                {
+                  id: 'display-approval',
+                  type: 'tool',
+                  toolName: 'request_user_input',
+                  renderPayload: payload,
+                },
+              ],
+            },
+          ] as WorkbenchMessage[])
+        : []
+    render(<RequestUserInputCard payload={payload} messages={messages} onSubmit={onSubmit} />)
+    if (variant !== 'exact') {
+      expect(screen.queryByText(/Full native reply first paragraph/)).not.toBeInTheDocument()
+      expect(onSubmit).not.toHaveBeenCalled()
+      if (variant.startsWith('missing-tool')) {
+        expect(screen.getByText('Allow the tool reply?')).toBeVisible()
+        expect(screen.queryByText(/回复到这项工作中选定的原消息/)).not.toBeInTheDocument()
+      }
+      return
+    }
+    const preview = screen.getByTestId('request-user-input-question-__mcp_approval')
+    expect(preview).toHaveTextContent(text.replace(/\s+/g, ' '))
+    expect(preview).toHaveTextContent('回复到这项工作中选定的原消息')
+    expect(
+      screen.queryByText(/opaque-source-event-id|Forged recipient|Forged source/)
+    ).not.toBeInTheDocument()
+    expect(preview.querySelector('b')).toBeNull()
+    expect(onSubmit).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: /确认发送/ }))
+    expect(onSubmit).toHaveBeenCalledOnce()
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: 'native-reply-approval',
+      itemId: 'mcp_server_elicitation',
+      interactionScope: 'reply-turn',
+      answers: { __mcp_approval: { answers: ['Allow'] } },
+    })
+  }
+)
+
 test('previews complete email contents and preserves the native cancellation value', async () => {
   const onSubmit = vi.fn(async () => true)
   const payload = {

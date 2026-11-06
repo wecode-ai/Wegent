@@ -91,7 +91,7 @@ export function MarkdownTable({
         </span>
       </div>
       <div className="max-w-full overflow-x-auto">
-        <table className="w-full min-w-max border-collapse text-chat">
+        <table className="w-full border-collapse text-chat">
           {children}
         </table>
       </div>

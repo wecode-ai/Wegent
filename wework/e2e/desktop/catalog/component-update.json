@@ -2,6 +2,7 @@
   "order": 164000,
   "scenario": "./scenarios/component-update.scenario.mjs",
   "scenarioOnly": true,
+  "resources": ["macos-inspector-foreground"],
   "ci": {
     "core": {
       "order": 110000,

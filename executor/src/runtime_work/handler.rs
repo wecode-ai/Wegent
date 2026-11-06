@@ -121,12 +121,14 @@ impl RestoreStartupGate {
 }
 
 mod active_text;
+mod active_transcript;
 mod archives;
 mod assignment_receipts;
 mod async_questions;
 mod automatic_turns;
 mod automation_rpc;
 mod background_terminals;
+mod bounded_history;
 mod claude_turns;
 mod codex_accounts;
 mod codex_config;
@@ -136,9 +138,17 @@ mod command_journal;
 mod concurrency;
 mod connections;
 mod context_compaction;
+mod control;
+mod control_metadata;
+mod creation;
+mod execution_control;
 mod fork_transfer;
+mod git_connections;
+mod git_source_workspace;
+mod git_webhook_setup;
 mod hooks;
 pub(super) mod lifecycle;
+mod mcp_approval_context;
 mod mcp_apps;
 mod notifications;
 mod personal_stand_in;
@@ -151,28 +161,36 @@ mod project_coordinator;
 mod project_preparation;
 mod project_router;
 mod queries;
+mod queries_projection;
 mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
+mod runtime_owner;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
 mod stand_in_arrangements;
 mod stand_in_assignment_intake;
 mod stand_in_calendar;
+mod stand_in_connection_guidance;
 mod stand_in_conversations;
 mod stand_in_diagnostics;
 mod stand_in_events;
 mod stand_in_execution;
+mod stand_in_history;
 mod stand_in_ingress;
 mod stand_in_memory;
 mod stand_in_processing;
+mod stand_in_proposal_continuations;
+mod stand_in_read_sources;
 mod stand_in_review;
 mod stand_in_schedules;
+mod stand_in_task_results;
 mod stand_in_tasks;
 mod stand_in_telemetry;
 mod stand_in_work;
 mod stand_in_workspace;
+mod submitted_model;
 mod supervisor;
 use concurrency::{RuntimeSettings, RuntimeTaskKind, RuntimeTurnScheduler};
 
@@ -181,6 +199,7 @@ mod tasks;
 mod text_generation;
 mod transcript_diagnostics;
 mod transcript_overlays;
+mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
 mod turns;
@@ -227,10 +246,7 @@ use super::{
         transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{
-        full_transcript_messages, normalized_user_request_content, notification_item,
-        project_transcript, transcript_messages,
-    },
+    transcript::{normalized_user_request_content, notification_item, transcript_messages},
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
@@ -509,6 +525,8 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    #[cfg(test)]
+    transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
@@ -533,6 +551,10 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    creation_model_profiles: Arc<Mutex<Vec<Value>>>,
+    submitted_model_bindings:
+        Arc<Mutex<HashMap<String, submitted_model::SubmittedInterfaceBinding>>>,
+    local_runner_models: Arc<Mutex<Vec<Value>>>,
     active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     codex_notification_delivery: Arc<Mutex<()>>,
@@ -760,10 +782,13 @@ impl RuntimeWorkRpcHandler {
                 turns::RuntimeTurnQueueState::default()
             });
         for command in persisted_turns.commands.values_mut() {
-            if matches!(
-                command.state,
-                command_journal::CommandState::Dispatching | command_journal::CommandState::Started
-            ) {
+            if command.is_owner_abandoned()
+                || matches!(
+                    command.state,
+                    command_journal::CommandState::Dispatching
+                        | command_journal::CommandState::Started
+                )
+            {
                 command.state = command_journal::CommandState::RecoveryRequired;
             }
         }
@@ -782,10 +807,13 @@ impl RuntimeWorkRpcHandler {
             else {
                 return false;
             };
-            if matches!(
-                command.state,
-                command_journal::CommandState::Cancelled | command_journal::CommandState::Failed
-            ) {
+            if command.is_owner_abandoned()
+                || matches!(
+                    command.state,
+                    command_journal::CommandState::Cancelled
+                        | command_journal::CommandState::Failed
+                )
+            {
                 return false;
             }
             let known_native = command.native.is_some()
@@ -860,6 +888,8 @@ impl RuntimeWorkRpcHandler {
             );
         }
         let handler = Self {
+            #[cfg(test)]
+            transcript_test_workers: None,
             device_id,
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
@@ -890,13 +920,18 @@ impl RuntimeWorkRpcHandler {
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            creation_model_profiles: Arc::new(Mutex::new(Vec::new())),
+            submitted_model_bindings: Arc::new(Mutex::new(HashMap::new())),
+            local_runner_models: Arc::new(Mutex::new(Vec::new())),
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             codex_notification_delivery: Arc::new(Mutex::new(())),
             notification_router: Arc::new(Mutex::new(None)),
             local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
-            automation_store: AutomationStore::from_env(),
+            automation_store: AutomationStore::new(
+                super::store::runtime_work_dir().join("automations.json"),
+            ),
             task_store_path: Arc::new(LocalTaskStore::default_path()),
             store,
             worktrees,
@@ -905,7 +940,10 @@ impl RuntimeWorkRpcHandler {
             )),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
-            hook_service: HookService::from_env(),
+            hook_service: HookService::new(
+                crate::hooks::registry::HookRegistryStore::from_env(),
+                crate::agents::wework_codex_home(),
+            ),
             backend_connection: Arc::new(Mutex::new(None)),
         };
         for (local_task_id, turn) in handler
@@ -931,6 +969,7 @@ impl RuntimeWorkRpcHandler {
         }
         handler.reconcile_command_recovery();
         handler.spawn_archived_delete_worker(archived_delete_rx);
+        crate::workbench_control::register(&handler.device_id, Arc::new(handler.clone()));
         handler
     }
 
@@ -971,6 +1010,7 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
@@ -1083,6 +1123,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn forget_runtime_model_config(&self, local_task_id: &str) {
+        self.forget_submitted_interfaces(local_task_id);
         self.runtime_model_configs
             .lock()
             .expect("runtime model config map lock should not be poisoned")
@@ -1192,4 +1233,4 @@ use runtime_rpc::is_allowed_plugin_app_server_method;
 
 #[cfg(test)]
 #[path = "handler/tests.rs"]
-mod tests;
+pub(super) mod tests;

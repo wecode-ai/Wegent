@@ -5,11 +5,9 @@
 use std::{
     collections::HashMap,
     env, fs,
-    future::Future,
     io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
-    pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -17,12 +15,11 @@ use std::{
 
 #[cfg(test)]
 mod artifact_tests;
-pub(crate) mod codex_model_catalog;
-mod codex_responses_proxy_transform;
+pub(crate) use wegent_model_proxy::codex_model_catalog;
 mod config;
-pub(crate) mod harness_context;
-pub(crate) mod local_decision_proxy;
-pub(crate) mod local_model_proxy;
+pub(crate) use wegent_model_proxy::harness_context;
+pub(crate) use wegent_model_proxy::local_decision_proxy;
+pub(crate) use wegent_model_proxy::local_model_proxy;
 
 use axum::{
     body::{Body, Bytes},
@@ -50,41 +47,14 @@ use crate::{
     local::session::terminal_metrics_snapshot,
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
     process_environment,
-    protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
+    protocol::{ExecutionRequest, OpenAIResponsesRequest, TaskStatus},
     runner::BackgroundTaskRunner,
     workspace_paths::{task_workspace_dir, workspace_root},
 };
 
 pub use config::{ServerConfig, ServerConfigError};
 
-pub trait TaskRunner: Clone + Send + Sync + 'static {
-    type SubmitFuture: Future<Output = RunnerResult> + Send + 'static;
-
-    fn submit(&self, request: ExecutionRequest) -> Self::SubmitFuture;
-
-    fn cancel(
-        &self,
-        _task_id: String,
-        _subtask_id: Option<String>,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
-        Box::pin(async { false })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunnerResult {
-    pub status: TaskStatus,
-    pub message: Option<String>,
-}
-
-impl RunnerResult {
-    pub fn accepted(status: TaskStatus) -> Self {
-        Self {
-            status,
-            message: None,
-        }
-    }
-}
+pub use wegent_execution_contracts::{RunnerResult, TaskRunner};
 
 #[derive(Debug, Clone)]
 pub struct AppState<R> {
@@ -1174,13 +1144,7 @@ fn is_sensitive_log_key(key: &str) -> bool {
         || normalized == "authorization"
 }
 
-fn truncate_log_value(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_owned();
-    }
-    let truncated = value.chars().take(max_chars).collect::<String>();
-    format!("{truncated}...")
-}
+use wegent_runtime_logging::truncate_log_value;
 
 #[derive(Debug, Serialize)]
 struct OpenAIBackgroundResponse {
@@ -2156,20 +2120,7 @@ fn header_value(headers: &HeaderMap, name: header::HeaderName) -> String {
         .to_owned()
 }
 
-#[derive(Debug)]
-struct HttpError {
-    status: StatusCode,
-    detail: String,
-}
-
-impl From<ProtocolError> for HttpError {
-    fn from(error: ProtocolError) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            detail: error.to_string(),
-        }
-    }
-}
+use wegent_model_proxy::HttpError;
 
 impl From<RuntimeHeartbeatActivationError> for HttpError {
     fn from(error: RuntimeHeartbeatActivationError) -> Self {
@@ -2186,19 +2137,6 @@ impl From<RuntimeHeartbeatActivationError> for HttpError {
             status,
             detail: error.to_string(),
         }
-    }
-}
-
-impl IntoResponse for HttpError {
-    fn into_response(self) -> Response {
-        log_executor_event(
-            "http error response",
-            &[
-                ("status", self.status.as_u16().to_string()),
-                ("detail", self.detail.clone()),
-            ],
-        );
-        (self.status, Json(json!({ "detail": self.detail }))).into_response()
     }
 }
 
@@ -2302,3 +2240,12 @@ mod tests {
         assert!(preview.chars().count() <= 19);
     }
 }
+
+impl<R> axum::extract::FromRef<AppState<R>> for local_decision_proxy::DecisionProxyState {
+    fn from_ref(state: &AppState<R>) -> Self {
+        Self::new(Arc::clone(&state.decision_runtime))
+    }
+}
+
+#[cfg(test)]
+mod decision_state_tests;

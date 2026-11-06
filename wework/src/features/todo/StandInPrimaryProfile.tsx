@@ -24,6 +24,7 @@ import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
+/** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
   settings,
   saving,
@@ -59,9 +60,16 @@ export function StandInPrimaryProfile({
 }) {
   const { t } = useTranslation('common')
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
+  const defaultCollaboration = {
+    ...newStandInRole(settings.executionDeviceId).collaboration,
+    policy: { automatic: true, askBeforeAct: true, immediate: false },
+  }
   // Consolidate the old two-field profile without dropping either saved value.
   const original = {
     ...saved,
+    collaboration: saved.collaboration ?? defaultCollaboration,
+    calendar: saved.calendar,
+    connections: saved.connections ?? [],
     prompt: '',
     preferences: [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
   }
@@ -109,13 +117,10 @@ export function StandInPrimaryProfile({
   }, [services.runtimeWorkApi, settings.executionDeviceId, reload])
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const dirty = !dequal(original, draft) || scheduleDirty
+
   const role = {
     ...newStandInRole(settings.executionDeviceId, '@primary'),
     ...draft,
-    collaboration: draft.collaboration ?? {
-      ...newStandInRole(settings.executionDeviceId).collaboration,
-      policy: { automatic: true, askBeforeAct: true, immediate: false },
-    },
   }
   const navigation = useStandInPanelNavigation(!dequal(original, draft), saving, () =>
     setDiscard(true)
@@ -196,7 +201,7 @@ export function StandInPrimaryProfile({
         </>
       )}
       {connections && (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'flex flex-1 flex-col'}>
           <StandInConnectionSettings
             ref={connectionRef}
             onNavigate={navigation.requestLeave}
@@ -205,6 +210,11 @@ export function StandInPrimaryProfile({
             onCalendarViewChange={calendarViewChanged}
             onDetailViewChange={setConnectionDetailOpen}
             role={role}
+            savedConfiguration={{
+              connections: original.connections,
+              collaboration: original.collaboration,
+              calendar: original.calendar,
+            }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
             onScheduleDirtyChange={setScheduleDirty}
             projects={projects}
@@ -217,7 +227,7 @@ export function StandInPrimaryProfile({
                 ...draft,
                 collaboration: value.collaboration,
                 calendar: value.calendar,
-                connections: value.connections,
+                connections: value.connections ?? [],
               })
             }
           />
@@ -237,7 +247,6 @@ export function StandInPrimaryProfile({
           <StandInComposer
             draft={role}
             showPrompt={false}
-            controls={null}
             onChange={update => {
               setDraft(current => {
                 const next = typeof update === 'function' ? update({ ...role, ...current }) : update
@@ -281,22 +290,6 @@ export function StandInPrimaryProfile({
           )}
         </section>
       )}
-      {error && (
-        <div role="alert" className="mt-4 text-sm text-error">
-          <p>{error}</p>
-          {onReload && (
-            <button
-              type="button"
-              data-testid="stand-in-primary-settings-retry"
-              disabled={saving}
-              onClick={onReload}
-              className="min-h-8 underline"
-            >
-              {t('standIn.reload')}
-            </button>
-          )}
-        </div>
-      )}
       <ConfirmDialog
         open={discard}
         destructive
@@ -322,7 +315,24 @@ export function StandInPrimaryProfile({
           saveDisabled={saving || !dirty || scheduleDirty}
           onCancel={close}
           onSave={() => void onSave({ ...settings, primary: draft })}
-        />
+        >
+          {error && (
+            <div role="alert" className="w-full text-sm text-destructive">
+              <p>{error}</p>
+              {onReload && (
+                <button
+                  type="button"
+                  data-testid="stand-in-primary-settings-retry"
+                  disabled={saving}
+                  onClick={onReload}
+                  className="min-h-8 underline"
+                >
+                  {t('standIn.reload')}
+                </button>
+              )}
+            </div>
+          )}
+        </StandInSettingsActions>
       )}
     </div>
   )

@@ -26,6 +26,7 @@ import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
 import {
   registerRuntimeTaskLifecycleAutomation,
   RuntimeTaskLifecycleStore,
@@ -568,10 +569,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
+  const { user: workbenchIdentity, key: ownershipKey } = resolveWorkbenchOwnership(
+    cloudConnection,
+    user
+  )
+  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(ownershipKey), [ownershipKey])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
-  const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   const workbenchIdentityId = workbenchIdentity?.id
   const workbenchIdentityName = workbenchIdentity?.user_name
   const workbenchIdentityEmail = workbenchIdentity?.email
@@ -935,13 +938,7 @@ function AppShell() {
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
-  const initialCloudConnection = {
-    apiBaseUrl: cloudConnection.apiBaseUrl,
-    backendUrl: cloudConnection.backendUrl,
-    socketBaseUrl: cloudConnection.socketBaseUrl,
-    isConnected: cloudConnection.isConnected,
-    token: cloudConnection.token,
-  }
+  const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
   const isDesktop = isDesktopRuntime()
@@ -949,6 +946,17 @@ function AppShell() {
   const currentWindowLabel = isElectron ? getDesktopWindowLabel() : null
   const isMainWindow = currentWindowLabel === 'main'
   const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
+  const localExecutorCloudBridge =
+    !isPopoutWindow && !isWorkspaceWindow ? (
+      <LocalExecutorCloudBridge
+        apiBaseUrl={cloudConnection.apiBaseUrl}
+        backendUrl={cloudConnection.backendUrl}
+        socketBaseUrl={cloudConnection.socketBaseUrl}
+        isConnected={cloudConnection.isConnected}
+        token={cloudConnection.token}
+        preferencesLoaded={appPreferences?.loaded ?? false}
+      />
+    ) : null
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
@@ -1274,10 +1282,8 @@ function AppShell() {
     )
     return (
       <CodexHomeInitializer>
-        <LocalRuntimeInitializer
-          initialCloudConnection={initialCloudConnection}
-          startupReady={workbenchStartupReady}
-        >
+        <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+          {localExecutorCloudBridge}
           {isolatedShell}
         </LocalRuntimeInitializer>
       </CodexHomeInitializer>
@@ -1285,7 +1291,7 @@ function AppShell() {
   }
 
   const shell = (
-    <NotificationTaskSourceProvider key={user.id}>
+    <NotificationTaskSourceProvider key={ownershipKey}>
       <WorkspaceTabsProvider
         pathname={path}
         search={search}
@@ -1295,9 +1301,7 @@ function AppShell() {
         startupTabId={startupWorkspaceTabId}
         restoreSessionTabs={!isMainWindow}
       >
-        <RuntimeInteractionsProvider
-          accountKey={`${cloudConnection.apiBaseUrl ?? 'local'}:${user.id}`}
-        >
+        <RuntimeInteractionsProvider accountKey={ownershipKey}>
           <ElectronWorkbenchTabBridge />
           <WeworkSchemeBridge />
           {isElectron && !isPopoutWindow ? (
@@ -1324,16 +1328,6 @@ function AppShell() {
               />
             )}
             {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
-            {!isPopoutWindow && !isWorkspaceWindow ? (
-              <LocalExecutorCloudBridge
-                apiBaseUrl={cloudConnection.apiBaseUrl}
-                backendUrl={cloudConnection.backendUrl}
-                socketBaseUrl={cloudConnection.socketBaseUrl}
-                isConnected={cloudConnection.isConnected}
-                token={cloudConnection.token}
-                preferencesLoaded={appPreferences?.loaded ?? false}
-              />
-            ) : null}
             {isMainWindow && isElectron ? (
               <>
                 <IdleTaskCoordinator active={workbenchStartupReady} />
@@ -1369,10 +1363,8 @@ function AppShell() {
 
   return (
     <CodexHomeInitializer>
-      <LocalRuntimeInitializer
-        initialCloudConnection={initialCloudConnection}
-        startupReady={workbenchStartupReady}
-      >
+      <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+        {localExecutorCloudBridge}
         {shell}
       </LocalRuntimeInitializer>
     </CodexHomeInitializer>

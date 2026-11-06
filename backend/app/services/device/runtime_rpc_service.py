@@ -13,6 +13,7 @@ import logging
 import time
 from typing import Any, Optional
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from socketio.exceptions import BadNamespaceError, DisconnectedError
 from socketio.exceptions import TimeoutError as SocketTimeoutError
@@ -57,6 +58,7 @@ RUNTIME_MODEL_CONFIG_METHODS = frozenset(
     {
         "runtime.text.generate",
         "runtime.tasks.create",
+        "runtime.tasks.create_from_intent",
         "runtime.tasks.send",
         "runtime.tasks.rollback",
         "runtime.tasks.interrupt_and_send",
@@ -154,6 +156,9 @@ async def _enforce_remote_runtime_proxy(
         return payload
 
     proxy_url = await asyncio.to_thread(_load_remote_runtime_proxy_url, user_id)
+    if method == "runtime.tasks.create_from_intent":
+        # Target-side model compilation must apply this policy after resolving profiles.
+        next_payload["creationProxyPolicy"] = {"url": proxy_url or None}
     for model_config in model_configs:
         _set_runtime_proxy(model_config, proxy_url)
     logger.info(
@@ -252,11 +257,14 @@ class RuntimeRpcService:
                 details={"deviceId": route.logical_device_id},
             )
 
-        if method == "runtime.tasks.create":
+        if method in {"runtime.tasks.create", "runtime.tasks.create_from_intent"}:
             try:
                 payload = negotiate_runtime_task_create_payload(
                     payload,
                     route.online_info.get("runtime_features"),
+                    require_intent_compilation=(
+                        method == "runtime.tasks.create_from_intent"
+                    ),
                 )
             except RuntimeTaskCreateProtocolError as exc:
                 raise RuntimeRpcError(
@@ -293,6 +301,49 @@ class RuntimeRpcService:
 
         sio = get_sio()
         request = {"method": method, "payload": payload}
+        if method in {
+            "runtime.tasks.create",
+            "runtime.tasks.send",
+            "runtime.tasks.rollback",
+            "runtime.tasks.interrupt_and_send",
+        }:
+            execution = payload.get("executionRequest", {})
+            if not isinstance(execution, dict):
+                raise RuntimeRpcError(
+                    "executionRequest must be an object", code="bad_request"
+                )
+            config = execution.get("model_config", {})
+            if not isinstance(config, dict):
+                raise RuntimeRpcError(
+                    "model_config must be an object", code="bad_request"
+                )
+            if config.get("wework_model_kind") == "model-interface":
+                payload = copy.deepcopy(payload)
+                task_id = payload.get("taskId") or payload.get("task_id")
+                if not task_id:
+                    address = payload.get("address", {})
+                    if not isinstance(address, dict):
+                        raise RuntimeRpcError(
+                            "address must be an object", code="bad_request"
+                        )
+                    task_id = address.get("taskId") or address.get("task_id")
+                if not task_id and method == "runtime.tasks.create":
+                    task_id = f"remote-task-{uuid4()}"
+                    payload["taskId"] = task_id
+                command_id = payload.get("commandId") or f"remote-command-{uuid4()}"
+                payload["commandId"] = command_id
+                request = {
+                    "method": method,
+                    "payload": payload,
+                    "modelBinding": {
+                        "kind": "submitted_interface",
+                        "actorUserId": user_id,
+                        "deviceId": route.runtime_device_id,
+                        "taskId": task_id,
+                        "commandId": command_id,
+                        "modelConfig": copy.deepcopy(config),
+                    },
+                }
         started_at = time.perf_counter()
         logger.info(
             "[RuntimeRpcService] Sending runtime RPC: user_id=%s "

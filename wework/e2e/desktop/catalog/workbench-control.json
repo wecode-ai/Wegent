@@ -1,0 +1,12 @@
+{
+  "order": 181500,
+  "scenario": "./scenarios/workbench-control.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 119500,
+      "shard": 5,
+      "position": 18500
+    }
+  }
+}

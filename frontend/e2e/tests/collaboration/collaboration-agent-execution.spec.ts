@@ -230,8 +230,13 @@ test.describe('Collaboration agent execution', () => {
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     await capture(page, testInfo, 'wegent-02-issue-created')
     await page.getByTestId('cloud-todo-detail-assignee').click()
+    const assignmentSaved = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
+    )
     await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agentCase.agent.id}`).click()
-    await page.getByTestId('cloud-todo-save').click()
+    expect((await assignmentSaved).ok()).toBe(true)
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
       'data-value',
@@ -258,7 +263,11 @@ test.describe('Collaboration agent execution', () => {
 
     const modelBodies = await getScenarioModelBodies(request, scenarioMatch)
     expect(modelBodies.length).toBeGreaterThan(1)
-    expect(modelToolNames(modelBodies.slice(0, 1))).toContain('exec_command')
+    expect(modelToolNames(modelBodies.slice(0, 1))).toContain('exec')
+    expect(modelToolNames(modelBodies.slice(0, 1))).not.toContain('exec_command')
+    expect(
+      modelToolNames(modelBodies.slice(0, 1)).some(name => name.endsWith('get_document_info'))
+    ).toBe(false)
     expect(modelRequestText(modelBodies.slice(1))).toContain(SKILL_MARKER)
     expect(modelRequestText(modelBodies.slice(1))).toContain(PLUGIN_MARKER)
     expect(modelToolNames(modelBodies).some(name => name.endsWith('get_document_info'))).toBe(true)

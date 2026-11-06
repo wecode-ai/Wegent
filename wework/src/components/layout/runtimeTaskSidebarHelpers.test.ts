@@ -4,11 +4,56 @@ import type { RuntimeDeviceWorkspace } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import {
   getRuntimeSidebarTaskItems,
+  getRuntimeChatSidebarTaskItems,
   getVisibleRuntimeSidebarTaskItems,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
 
 describe('runtimeTaskSidebarHelpers', () => {
+  test('omits the primary identity without changing stored work or hiding delegated tasks', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/chats',
+      workspaceKind: 'chat',
+      available: true,
+      tasks: [
+        {
+          taskId: 'stand-in-chat-7-primary',
+          workspacePath: '/chats',
+          title: 'Primary identity',
+          runtime: 'codex',
+          pinned: true,
+          runtimeHandle: {
+            origin: { type: 'stand_in_identity', userId: 7, standInId: null },
+          },
+        },
+        {
+          taskId: 'delegated-work',
+          workspacePath: '/chats',
+          title: 'Delegated work',
+          runtime: 'codex',
+          runtimeHandle: { origin: { type: 'stand_in_task', userId: 7 } },
+        },
+        {
+          taskId: 'ordinary-conversation',
+          workspacePath: '/chats',
+          title: '我的分身',
+          runtime: 'codex',
+        },
+      ],
+    }
+
+    const expected = ['delegated-work', 'ordinary-conversation']
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual(expected)
+    expect(getRuntimeChatSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual(
+      expected
+    )
+    expect(workspace.tasks.map(task => task.taskId)).toEqual([
+      'stand-in-chat-7-primary',
+      ...expected,
+    ])
+  })
+
   test('places a newly created unordered task before manually ordered project tasks', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',

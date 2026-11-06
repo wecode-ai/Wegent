@@ -2,6 +2,7 @@ import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload }
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import { observeRuntimePluginInvocation } from '@/features/plugins/pluginInvocationTelemetry'
+import { measureRuntimeStreamEvent } from '@/stream/runtimeStreamDiagnostics'
 import {
   createResponseApiStreamState,
   emitResponseApiEvent,
@@ -83,6 +84,14 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       }
       if (event.event === 'executor.event_lagged') {
         const payload = runtimeEventLaggedPayload(event.payload)
+        if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+          console.debug('[Wework] Runtime lag recovery dispatch', {
+            sequence: event.sequence,
+            subscriptionId,
+            validPayload: payload !== null,
+            hasRecoveryHandler: Boolean(subscription.handlers.onRuntimeEventLagged),
+          })
+        }
         if (payload) subscription.handlers.onRuntimeEventLagged?.(payload)
         continue
       }
@@ -106,7 +115,22 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         subscription.eventCount,
         subscription.textDeltaCount
       )
-      emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
+      try {
+        measureRuntimeStreamEvent(event.event, () => {
+          emitResponseApiEvent(
+            subscription.handlers,
+            event.event,
+            event.payload,
+            subscription.state
+          )
+        })
+      } catch (error) {
+        console.error('[Wework] Runtime chat stream handler failed', {
+          event: event.event,
+          subscriptionId,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        })
+      }
     }
   }
 
@@ -130,6 +154,10 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
   }
 
   function handleNativeEvent(event: LocalExecutorEvent): void {
+    measureRuntimeStreamEvent(event.event, () => queueNativeEvent(event), 'native')
+  }
+
+  function queueNativeEvent(event: LocalExecutorEvent): void {
     if (!isBatchableRuntimeStreamEvent(event)) {
       flushPendingStreamEvent()
       processNativeEvent(event)
@@ -439,6 +467,7 @@ function mergeRuntimeBlockContentSnapshots(
   if ((currentData.blockId ?? currentData.block_id) !== (nextData.blockId ?? nextData.block_id)) {
     return null
   }
+  if (asRecord(currentData.updates).status !== asRecord(nextData.updates).status) return null
   return next
 }
 

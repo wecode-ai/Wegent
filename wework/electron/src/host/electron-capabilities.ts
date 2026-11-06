@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import type { ModelConfigurationStore } from './model-configuration-store.js'
 import {
   acknowledgeNotificationReply,
   enqueueNotificationReply,
@@ -8,6 +9,7 @@ import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
 import { focusE2EWindow } from './e2e-window-focus.js'
+import { setE2EWindowSize } from './e2e-window-size.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
 import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
@@ -139,6 +141,8 @@ function assertE2EEnabled(control: string): void {
 export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
+  modelConfiguration?: ModelConfigurationStore
+  syncLocalModels?: () => Promise<void>
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
   executorPid?: () => number | null
   requestMcpApp?: (payload: Record<string, unknown>) => Promise<unknown>
@@ -430,7 +434,9 @@ export function createElectronCapabilityRouter(
     router,
     window,
     desktopServices.secureStorage,
-    desktopServices.events
+    desktopServices.events,
+    desktopServices.modelConfiguration,
+    desktopServices.syncLocalModels
   )
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
@@ -829,13 +835,11 @@ export function createElectronCapabilityRouter(
     }
   })
   router.register('e2e.setMainWindowSize', params => {
-    const target = requiredWindow(window)
-    const [width, height] = target.getContentSize()
-    target.setContentSize(
+    return setE2EWindowSize(
+      requiredWindow(window),
       requiredIntegerParam(params, 'width'),
       requiredIntegerParam(params, 'height')
     )
-    return { width, height }
   })
   // Windows restores precision-touchpad input only while the native window
   // keeps Chromium's default visibility lifecycle; see window-background-policy.

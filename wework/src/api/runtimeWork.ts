@@ -136,9 +136,14 @@ export function createRuntimeWorkApi(client: HttpClient) {
       })
       return client.delete(`/runtime-work/device-workspaces?${params.toString()}`)
     },
-    getRuntimeTranscript(request: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
+    getRuntimeTranscript(
+      request: RuntimeTranscriptRequest,
+      options?: Pick<HttpRequestOptions, 'signal'>
+    ): Promise<RuntimeTranscriptResponse> {
       return readRuntimeTranscript({ ...request }, query =>
-        client.post('/runtime-work/transcript', query)
+        options
+          ? client.post('/runtime-work/transcript', query, options)
+          : client.post('/runtime-work/transcript', query)
       )
     },
     searchRuntimeTranscript(

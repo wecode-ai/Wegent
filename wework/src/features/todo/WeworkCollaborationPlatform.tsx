@@ -5,6 +5,8 @@ import { StandInIcon } from '@wegent/collaboration'
 import { bindProjectStandInApi } from '@/api/standIn'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
+import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
+import { MessageSquare } from 'lucide-react'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
@@ -356,6 +358,7 @@ function projectWorkspaceRoots(project: CollaborationProject): string[] {
     : []
 }
 
+/** Adapts a project to desktop services, separating public stand-in and experimental coordinator actions. */
 export function WeworkSharedProject({
   api,
   projectCatalogApi,
@@ -374,6 +377,8 @@ export function WeworkSharedProject({
   onOpenRuntimeTask,
   onCancelRuntimeTask,
   project,
+  conversationRequestKey,
+  onOpenProjectConversation,
   runtimeTaskLifecycle,
   runtimeWork,
   runtimePort,
@@ -400,6 +405,8 @@ export function WeworkSharedProject({
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   project: CollaborationProject
+  conversationRequestKey?: string
+  onOpenProjectConversation?(): void
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
   runtimePort?: IssueRuntimeBindingPort
@@ -411,6 +418,10 @@ export function WeworkSharedProject({
   const { t } = useTranslation('common')
   const preferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const [closedConversationRequestKey, setClosedConversationRequestKey] = useState<string>()
+  const projectChatOpen = Boolean(
+    conversationRequestKey && conversationRequestKey !== closedConversationRequestKey
+  )
   const issueChangeRequestMonitor =
     services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
       ? getChangeRequestMonitor(services.deviceApi)
@@ -536,9 +547,26 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
-      renderProjectHeaderAction: currentProject =>
-        experimentalFeaturesEnabled ? (
-          <div className="flex items-center gap-2">
+      renderBoardToolbarAction: onOpenProjectConversation
+        ? () => (
+            <button
+              type="button"
+              data-testid="project-space-chat-open"
+              aria-expanded={projectChatOpen}
+              onClick={() => {
+                if (projectChatOpen) setClosedConversationRequestKey(conversationRequestKey)
+                else onOpenProjectConversation()
+              }}
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+            >
+              <MessageSquare className="h-4 w-4" aria-hidden="true" />
+              {t('workbench.project_space_chat.open')}
+            </button>
+          )
+        : undefined,
+      renderProjectHeaderAction: currentProject => (
+        <div className="flex items-center gap-2">
+          {experimentalFeaturesEnabled && (
             <ProjectCoordinatorConversation
               key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
               api={scopedApi}
@@ -563,19 +591,20 @@ export function WeworkSharedProject({
                 if (focusedItemId) onFocusedItemHandled?.()
               }}
             />
-            <StandInPopover
-              key={currentProject.id}
-              api={standInWorkspaceApi}
-              project={currentProject}
-              devices={devices}
-              readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
-              services={services}
-              userId={Number(userId)}
-              onOpenPersonalSettings={onOpenStandInSettings}
-              initialDeviceId={standInDeviceId}
-            />
-          </div>
-        ) : null,
+          )}
+          <StandInPopover
+            key={currentProject.id}
+            api={standInWorkspaceApi}
+            project={currentProject}
+            devices={devices}
+            readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
+            services={services}
+            userId={Number(userId)}
+            onOpenPersonalSettings={onOpenStandInSettings}
+            initialDeviceId={standInDeviceId}
+          />
+        </div>
+      ),
       capabilities: {
         automation: true,
         dingtalkAitable: true,
@@ -628,6 +657,10 @@ export function WeworkSharedProject({
       focusedItemId,
       devices,
       experimentalFeaturesEnabled,
+      onOpenProjectConversation,
+      projectChatOpen,
+      conversationRequestKey,
+      t,
       standInWorkspaceApi,
       scopedApi,
       onOpenRuntimeTask,
@@ -1112,7 +1145,7 @@ export function WeworkSharedProject({
 
   return (
     <div
-      className="issue-drawer-workspace flex h-full min-h-0 min-w-0"
+      className="issue-drawer-workspace relative flex h-full min-h-0 min-w-0"
       data-testid="issue-drawer-workspace"
     >
       <TransientNotice
@@ -1338,6 +1371,16 @@ export function WeworkSharedProject({
           }}
         />
       </div>
+      {projectChatOpen && (
+        <ProjectSpaceChatSidebar
+          key={`${project.project_store}:${project.id}:${conversationRequestKey}`}
+          project={editorProject}
+          localProjects={localProjects}
+          localExecution
+          startNew
+          onClose={() => setClosedConversationRequestKey(conversationRequestKey)}
+        />
+      )}
     </div>
   )
 }
@@ -1351,9 +1394,9 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
 }
 
+/** Binds project navigation and stand-in indicators to the current account and project catalog. */
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const templateOwnerId =
@@ -1387,6 +1430,23 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     ]
   )
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
+  const [conversationRequest, setConversationRequest] = useState<{
+    projectId: string
+    projectStore: CollaborationProject['project_store']
+    accountScope: string
+    key: string
+  }>()
+  const openProjectConversation = useCallback(
+    (project: CollaborationProject) => {
+      setConversationRequest({
+        projectId: project.id,
+        projectStore: project.project_store,
+        accountScope: templateScope,
+        key: crypto.randomUUID(),
+      })
+    },
+    [templateScope]
+  )
   const api = props.services.sharedWorkspaceApi
   const locale = useMemo(() => (i18n.language.startsWith('zh') ? 'zh-CN' : 'en'), [i18n.language])
   const collaborationUserName =
@@ -1653,10 +1713,11 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          accountScope: templateScope,
           templateStore,
           templateNavigation: true,
+          openProjectConversation,
           renderProjectSidebarBadge: project => {
-            if (!experimentalFeaturesEnabled) return null
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
             )
@@ -1968,6 +2029,14 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               onOpenRuntimeTask={props.onOpenRuntimeTask}
               sendRuntimePaneMessage={props.sendRuntimePaneMessage}
               project={project}
+              onOpenProjectConversation={() => openProjectConversation(project)}
+              conversationRequestKey={
+                conversationRequest?.projectId === project.id &&
+                conversationRequest.projectStore === project.project_store &&
+                conversationRequest.accountScope === templateScope
+                  ? conversationRequest.key
+                  : undefined
+              }
               runtimeTaskLifecycle={props.runtimeTaskLifecycle}
               runtimeWork={props.runtimeWork}
               runtimePort={runtimePort}

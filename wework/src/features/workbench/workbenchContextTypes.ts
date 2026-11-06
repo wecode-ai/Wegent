@@ -215,6 +215,8 @@ export interface WorkbenchContextValue {
   projectChat: {
     scopeKey: string
     inputByScope: Readonly<Record<string, string>>
+    goalDraftActiveByScope: Readonly<Record<string, boolean>>
+    setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
@@ -505,6 +507,7 @@ export type WorkbenchPaneState = Pick<
   | 'projects'
   | 'devices'
   | 'runtimeWork'
+  | 'runtimeWorkLoad'
   | 'standaloneDeviceId'
   | 'standaloneWorkspacePath'
   | 'selectedDeviceWorkspaceId'

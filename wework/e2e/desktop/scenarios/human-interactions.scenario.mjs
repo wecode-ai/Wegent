@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -26,6 +27,11 @@ import {
   verifyInteractionArchiving,
 } from '../modules/human-interaction-dismiss.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import {
+  handleArchivedTaskInteractionModel,
+  verifyArchivedTaskInteractionCleanup,
+} from '../modules/human-interaction-archived-task.mjs'
+import { verifyPendingAnswerComposition } from '../modules/human-interaction-composition.mjs'
 import { createPersistentInteractionNoticeCase } from '../modules/human-interaction-persistent-notice.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
@@ -77,7 +83,7 @@ export function createDesktopScenario({
       createSse([
         responseCreated(responseId),
         context,
-        ...functionCall(callId, held.tool.name, held.tool.arguments, 1),
+        ...selectedToolCall(callId, held.tool, 1),
         responseCompleted(responseId),
       ])
     )
@@ -107,6 +113,7 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(PROMPT), 'Unexpected model request')
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      if (handleArchivedTaskInteractionModel(body, response)) return true
       if (persistentNotice.handleModel(body, response)) return true
       if (handleArchiveInteractionModel(body, response)) return true
       if (JSON.stringify(body.input).includes(FOLLOWUP)) {
@@ -429,6 +436,7 @@ export function createDesktopScenario({
         JSON.stringify(focusDiagnostics.initialContext, null, 2)
       )
       assert.equal(await control.command('getValue', input), ANSWER)
+      if (!issueFixture) await verifyPendingAnswerComposition(control, input, ANSWER)
       assert.equal(
         Number(
           await control.command('getElementCount', `${ACTIVE} [data-testid="desktop-sidebar"]`)
@@ -883,6 +891,7 @@ export function createDesktopScenario({
         await verifyInteractionArchiving(control, modelResponseTimeoutMs, originalTaskId)
         await control.command('click', `${page} [data-testid="interaction-open-original"]`)
         await persistentNotice.verify(control, modelResponseTimeoutMs)
+        await verifyArchivedTaskInteractionCleanup(control, modelResponseTimeoutMs)
       }
     },
   }

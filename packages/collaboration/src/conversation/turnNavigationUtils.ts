@@ -1,4 +1,5 @@
 import type { RefObject } from 'react'
+import { isStandInActivityMessage } from './standInActivity'
 import type { RuntimeTurnNavigationItem } from '@wegent/chat-core/runtime'
 import { visibleRuntimeUserMessage } from '@wegent/chat-core/runtime-user-message'
 import {
@@ -28,7 +29,27 @@ export function buildUserTurnsForNavigation(
   if (navigation === undefined) return buildUserTurns(messages)
   if (navigation.length === 0) return []
 
-  return buildUserTurnsFromNavigation(navigation, messages)
+  const activityMessages = messages.filter(isStandInActivityMessage)
+  const activityIds = new Set(activityMessages.map(message => message.id))
+  const activityTurns = new Set(activityMessages.map(message => message.turnId).filter(Boolean))
+  const userTurns = new Set(
+    messages
+      .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
+      .map(message => message.turnId)
+  )
+  return buildUserTurnsFromNavigation(
+    navigation.filter(
+      item =>
+        !activityIds.has(item.userMessageId ?? item.id) &&
+        !(
+          item.userMessageId == null &&
+          item.turnId &&
+          activityTurns.has(item.turnId) &&
+          !userTurns.has(item.turnId)
+        )
+    ),
+    messages
+  )
 }
 
 export function getUserTurnsSignature(turns: UserTurn[]) {
@@ -39,6 +60,7 @@ function buildUserTurns(messages: NavigationMessage[]): UserTurn[] {
   const turns: UserTurn[] = []
   const pendingResponsePreviewTurnIndexes: number[] = []
   messages.forEach((message, index) => {
+    if (isStandInActivityMessage(message)) return
     if (message.role !== 'user') {
       if (message.role === 'assistant' && pendingResponsePreviewTurnIndexes.length > 0) {
         const responsePreview = getAssistantPreview(message)

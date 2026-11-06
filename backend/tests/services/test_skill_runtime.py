@@ -35,13 +35,20 @@ def test_package_shell_binding_survives_task_and_device_distribution():
     assert payload["installed_skill_id"] == 9
 
 
-def test_team_runtime_payload_preserves_selected_sandbox(mocker):
+@pytest.mark.parametrize(
+    ("schema_version", "team_id", "compile_on_device"),
+    [(3, 42, False), (2, None, True)],
+    ids=["team", "device-intent"],
+)
+def test_runtime_payload_preserves_selected_sandbox(
+    mocker, schema_version, team_id, compile_on_device
+):
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
 
     reference = {"skill_id": 1286, "bind_shells": ["Chat"]}
     execution_request = ExecutionRequest(
-        team_id=42,
+        team_id=team_id or 0,
         bot=[
             {
                 "shell_type": "ClaudeCode",
@@ -65,10 +72,11 @@ def test_team_runtime_payload_preserves_selected_sandbox(mocker):
         db=None,
         user_id=2,
         request=RuntimeTaskCreateRequest(
-            schemaVersion=3,
-            wegentTeamId=42,
+            schemaVersion=schema_version,
+            wegentTeamId=team_id,
             deviceId="fixture-device",
             runtime="claude_code",
+            compileOnDevice=compile_on_device,
             message="Use the selected sandbox",
         ),
         target=runtime_work_service.RuntimeTaskTarget(
@@ -76,7 +84,7 @@ def test_team_runtime_payload_preserves_selected_sandbox(mocker):
         ),
     )
 
-    assert compiled.team_id == 42
+    assert compiled.team_id == team_id
     assert compiled.payload["runtime"] == "claude_code"
     payload = compiled.payload["executionRequest"]
     assert payload["skill_names"] == ["sandbox"]

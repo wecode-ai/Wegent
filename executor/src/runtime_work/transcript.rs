@@ -8,6 +8,7 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::{
     agents::executor_home,
@@ -34,6 +35,7 @@ const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
 pub(crate) struct TranscriptBuildOptions {
     truncate_content: bool,
     materialize_artifacts: bool,
+    immutable_artifacts: bool,
 }
 
 impl TranscriptBuildOptions {
@@ -41,6 +43,7 @@ impl TranscriptBuildOptions {
         Self {
             truncate_content: true,
             materialize_artifacts: true,
+            immutable_artifacts: false,
         }
     }
 
@@ -48,6 +51,7 @@ impl TranscriptBuildOptions {
         Self {
             truncate_content: false,
             materialize_artifacts: true,
+            immutable_artifacts: false,
         }
     }
 }
@@ -56,6 +60,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
     transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::truncated())
 }
 
+#[cfg(test)]
 pub(crate) fn full_transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
     transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::full_content())
 }
@@ -68,6 +73,7 @@ pub(super) fn search_transcript_messages(thread: &Value) -> Vec<Value> {
         TranscriptBuildOptions {
             truncate_content: false,
             materialize_artifacts: false,
+            immutable_artifacts: false,
         },
     )
 }
@@ -85,6 +91,61 @@ pub(crate) struct TranscriptProjection {
     pub turns: Vec<Value>,
 }
 
+/// Presentation ownership needs page identities and time bounds, never tool bodies.
+pub(super) fn transcript_page_identity(thread: &Value) -> Vec<Value> {
+    let mut identities = Vec::new();
+    for (index, turn) in thread["turns"].as_array().into_iter().flatten().enumerate() {
+        let turn_id = stable_indexed_id(turn, "turn", index);
+        let started_at = turn_started_at(turn);
+        identities.push(json!({"turnId":turn_id,"createdAt":started_at}));
+        for item in turn["items"].as_array().into_iter().flatten() {
+            if let Some(timestamp) = item_timestamp(item) {
+                identities.push(json!({"turnId":turn_id,"createdAt":timestamp}));
+            }
+        }
+    }
+    identities
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn a_long_turn_observes_cancellation_between_native_items() {
+        let items = (0..7_001)
+            .map(|index| {
+                json!({
+                    "id":format!("item-{index}"),"type":"reasoning","summary":[{"text":"working"}]
+                })
+            })
+            .collect::<Vec<_>>();
+        let thread =
+            json!({"id":"thread","turns":[{"id":"long","status":"completed","items":items}]});
+        let checkpoints = std::cell::Cell::new(0);
+        let result = project_transcript_checked(
+            &thread,
+            "device",
+            TranscriptBuildOptions::full_content(),
+            &|| {
+                let next = checkpoints.get() + 1;
+                checkpoints.set(next);
+                if next == 32 {
+                    Err(crate::local::app_ipc::AppIpcError::new(
+                        "request_cancelled",
+                        "cancelled",
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(result.err().unwrap().code, "request_cancelled");
+        assert_eq!(checkpoints.get(), 32);
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn project_transcript(
     thread: &Value,
     device_id: &str,
@@ -106,6 +167,32 @@ fn project_transcript_with_options(
     device_id: &str,
     options: TranscriptBuildOptions,
 ) -> TranscriptProjection {
+    project_transcript_checked(thread, device_id, options, &|| Ok(()))
+        .expect("uncancelled transcript projection cannot fail")
+}
+
+pub(super) fn project_transcript_cancellable(
+    thread: &Value,
+    device_id: &str,
+    full_content: bool,
+    immutable_artifacts: bool,
+    cancellation: &super::transcript_work::Cancellation,
+) -> Result<TranscriptProjection, crate::local::app_ipc::AppIpcError> {
+    let mut options = if full_content {
+        TranscriptBuildOptions::full_content()
+    } else {
+        TranscriptBuildOptions::truncated()
+    };
+    options.immutable_artifacts = immutable_artifacts;
+    project_transcript_checked(thread, device_id, options, &|| cancellation.check())
+}
+
+fn project_transcript_checked(
+    thread: &Value,
+    device_id: &str,
+    options: TranscriptBuildOptions,
+    checkpoint: &dyn Fn() -> Result<(), crate::local::app_ipc::AppIpcError>,
+) -> Result<TranscriptProjection, crate::local::app_ipc::AppIpcError> {
     let workspace_path = string_field(thread, "cwd").unwrap_or_default();
     let root_thread_id = string_field(thread, "id");
     let mut messages = Vec::new();
@@ -117,6 +204,7 @@ fn project_transcript_with_options(
         .flatten()
         .enumerate()
     {
+        checkpoint()?;
         if !is_root_transcript_item(turn)
             || !is_root_thread_transcript_item(turn, root_thread_id.as_deref())
         {
@@ -132,16 +220,19 @@ fn project_transcript_with_options(
             root_thread_id.as_deref(),
             options,
         )
-        .project();
+        .project(checkpoint)?;
         let mut normalized = json!({
             "id": stable_indexed_id(turn, "turn", turn_index),
-            "items": items,
             "status": turn_assistant_status(turn),
             "startedAt": turn_started_at(turn),
             "completedAt": turn_completed_at(turn, turn_started_at(turn)),
             "error": turn_error_message(turn),
             "position": turn.get("position"),
         });
+        normalized["items"] = Value::Array(items);
+        if let Some(item_merge) = turn.get("itemMerge") {
+            normalized["itemMerge"] = item_merge.clone();
+        }
         for message in &messages[message_start..] {
             for key in [
                 "fileChanges",
@@ -164,7 +255,7 @@ fn project_transcript_with_options(
         turns.push(normalized);
     }
     make_transcript_ids_unique(&mut messages);
-    TranscriptProjection { messages, turns }
+    Ok(TranscriptProjection { messages, turns })
 }
 
 struct TurnTranscriptProjector<'a> {
@@ -222,11 +313,15 @@ impl<'a> TurnTranscriptProjector<'a> {
         }
     }
 
-    fn project(mut self) -> Vec<Value> {
+    fn project(
+        mut self,
+        checkpoint: &dyn Fn() -> Result<(), crate::local::app_ipc::AppIpcError>,
+    ) -> Result<Vec<Value>, crate::local::app_ipc::AppIpcError> {
         let message_start = self.messages.len();
         let mut positions = HashMap::new();
         let items = std::mem::take(&mut self.items);
         for (item_index, item) in items.into_iter().enumerate() {
+            checkpoint()?;
             let previous_block_count = self.assistant.blocks.len();
             let previous_assistant_part_count = self.assistant.assistant_part_count();
             self.project_item(&item, self.later_process[item_index]);
@@ -263,7 +358,7 @@ impl<'a> TurnTranscriptProjector<'a> {
                 item["position"] = json!(position);
             }
         }
-        self.normalized_items
+        Ok(self.normalized_items)
     }
 
     fn project_item(&mut self, item: &Value, has_later_process: bool) {
@@ -318,7 +413,7 @@ impl<'a> TurnTranscriptProjector<'a> {
                 }
                 let summary = file_changes_from_file_change_item(
                     item,
-                    &self.turn_id,
+                    &self.artifact_turn_id(item),
                     self.device_id,
                     self.workspace_path,
                 );
@@ -330,7 +425,7 @@ impl<'a> TurnTranscriptProjector<'a> {
                 }
                 let summary = file_changes_from_patch_apply_end(
                     item,
-                    &self.turn_id,
+                    &self.artifact_turn_id(item),
                     self.device_id,
                     self.workspace_path,
                 );
@@ -457,9 +552,19 @@ impl<'a> TurnTranscriptProjector<'a> {
             return;
         };
         if self.fold_commentary {
-            self.push_workbench_block(item);
+            self.assistant
+                .blocks
+                .push(file_changes_block(item, &summary, self.created_at));
         }
         self.merge_file_changes(summary);
+    }
+
+    fn artifact_turn_id(&self, item: &Value) -> String {
+        if !self.options.immutable_artifacts {
+            return self.turn_id.clone();
+        }
+        let bytes = serde_json::to_vec(item).expect("JSON values always serialize");
+        format!("{}-{:x}", self.turn_id, Sha256::digest(bytes))
     }
 
     fn push_workbench_block(&mut self, item: &Value) {

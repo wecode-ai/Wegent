@@ -106,10 +106,8 @@ describe('local model requests with PAC', () => {
       apiFormat: 'openai-responses',
       catalogReady: true,
     })
-    const resolveProxy = vi
-      .fn()
-      .mockResolvedValueOnce('http://proxy-one:3128')
-      .mockResolvedValueOnce(null)
+    let currentProxy: string | null = 'http://proxy-one:3128'
+    const resolveProxy = vi.fn(async () => currentProxy)
     window.weworkElectronNetwork = { resolveProxy }
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -126,6 +124,7 @@ describe('local model requests with PAC', () => {
       title: 'PAC',
       modelId: 'local-model:pac-custom',
     })
+    currentProxy = null
     await services.runtimeWorkApi!.sendRuntimeMessage({
       address: { deviceId: 'device-1', workspacePath: '/tmp/project', taskId: 'custom-task' },
       message: 'continue',
@@ -136,6 +135,10 @@ describe('local model requests with PAC', () => {
     expect(create.executionRequest.model_config.proxy).toEqual({ url: 'http://proxy-one:3128' })
     expect(send.executionRequest.model_config.proxy).toBeUndefined()
     expect(resolveProxy.mock.calls).toEqual([
+      ['https://custom.example/v1/custom-responses'],
+      ['https://custom.example/v1/custom-responses'],
+      ['https://custom.example/v1/custom-responses'],
+      ['https://custom.example/v1/custom-responses'],
       ['https://custom.example/v1/custom-responses'],
       ['https://custom.example/v1/custom-responses'],
     ])

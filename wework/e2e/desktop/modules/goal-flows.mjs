@@ -12,6 +12,7 @@ import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 
 import { snapshotHasAssistantActivity } from './response-protocol.mjs'
+import { findRuntimeWorkTask, waitForRunningRuntimeTask } from './runtime-task-evidence.mjs'
 
 import {
   COMPOSER_READY_STABILITY_MS,
@@ -58,6 +59,7 @@ import {
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { prepareGoalCompletionRace } from './goal-completion-race.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
+import { verifyGoalDraftNavigation } from './goal-draft-flows.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -500,6 +502,12 @@ async function verifyActiveGoalIdleUnreadLifecycle({
       completedDebugSnapshot.workbench?.runningState ?? null
     )}`
   )
+  assert.equal(completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalStatus, 'complete')
+  assert.equal(
+    completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalExecutionStatus,
+    null,
+    'The completed Goal retained its obsolete autonomous execution hint'
+  )
   await waitForSnapshot(
     control,
     snapshot =>
@@ -611,6 +619,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({
     ACTIVE_WORKBENCH_SELECTOR
   )
   await completionRace?.reset()
+  await verifyGoalDraftNavigation({ composerSelector, control, taskRowTestId: goalTaskRowTestId })
 }
 
 async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {
@@ -727,7 +736,7 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
   )
 }
 
-async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
+async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRuntimeTask }) {
   await ensureExperimentalFeaturesEnabled(control)
   control.setScenario('supervisor')
   const taskRowsBeforeSupervisor = new Set(
@@ -815,8 +824,32 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const beforeStaleSettlement = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const readOwnerTask =
+    readRuntimeTask ??
+    (async taskId =>
+      findRuntimeWorkTask(JSON.parse(await control.command('getLocalRuntimeWork', 'body')), taskId))
+  // Read the owner's wire response independently of the UI's last cached summary.
+  const runningWireTask = await waitForRunningRuntimeTask(
+    readOwnerTask,
+    supervisorTaskId,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const beforeStaleSettlement = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === supervisorTaskId &&
+      snapshot.workbench?.activeLifecycle?.execution.running === true,
+    'The supervisor correction was not represented as running'
+  )
+  assert.equal(
+    beforeStaleSettlement.workbench?.activeLifecycle?.execution.running,
+    true,
+    'The autonomous supervisor correction was not recognized before its first model output'
+  )
+  assert.equal(
+    runningWireTask.completedAt,
+    null,
+    'The running correction wire summary retained the preceding turn completion'
   )
   assert.equal(
     beforeStaleSettlement.workbench?.currentRuntimeTask?.taskId,

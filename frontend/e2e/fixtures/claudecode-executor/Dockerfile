@@ -17,6 +17,11 @@ ENV PATH=/root/.cargo/bin:${PATH}
 FROM builder-base AS builder-deps
 
 COPY executor/Cargo.toml executor/Cargo.lock ./
+COPY executor/crates ./crates
+COPY shared/rust /workspace/src/shared/rust
+COPY shared/assets /workspace/src/shared/assets
+COPY sdk/plugin-creator /workspace/src/sdk/plugin-creator
+COPY sdk/plugin-auth /workspace/src/sdk/plugin-auth
 COPY executor/vendor ./vendor
 RUN mkdir -p src/bin \
     && printf 'pub fn placeholder() {}\n' > src/lib.rs \
@@ -26,9 +31,7 @@ RUN mkdir -p src/bin \
 FROM ${DEPS_IMAGE} AS builder
 
 COPY executor/src ./src
-COPY sdk/plugin-auth /workspace/src/sdk/plugin-auth
-COPY sdk/plugin-creator /workspace/src/sdk/plugin-creator
-COPY shared/assets /workspace/src/shared/assets
+COPY shared/protocol /workspace/src/shared/protocol
 RUN find src -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-executor
 

@@ -103,7 +103,7 @@ describe('device project settings save', () => {
     })
     const refreshWorkLists = vi.fn(async () => events.push('refresh'))
     const options = {
-      user: { id: 1 },
+      ownershipKey: JSON.stringify(['', 1]),
       state: {
         devices: [
           { id: 0, device_id: 'local', device_type: 'local', status: 'online' },

@@ -1,3 +1,4 @@
+import { assertMatrixReports } from './model-matrix-audit.mjs'
 import { access, readFile } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
@@ -11,7 +12,9 @@ import {
 } from './conversation-navigation.mjs'
 
 import {
+  setMatrixUpstreamProtocol,
   verifyCloudProjectFlow,
+  verifyConnectedModelsOnLocalExecution,
   verifyModelProtocolMatrix,
   verifyRetryFailureRestoration,
 } from './desktop-build-flows.mjs'
@@ -66,6 +69,7 @@ import {
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  createSingleRootLocalProject,
   fetchJson,
   join,
   mkdir,
@@ -817,6 +821,25 @@ async function verifyCloudCheckpoint({
     return
   }
 
+  if (checkpoint === 'model-routing') {
+    setPhase('local-connected-model-routing')
+    await verifyConnectedModelsOnLocalExecution({
+      control,
+      cloudEnvironment,
+      workspacePath,
+      collectFailures: true,
+      setCodexUpstreamProtocol: protocol => setMatrixUpstreamProtocol(codexHome, protocol),
+    })
+  }
+
+  if (checkpoint === 'embedded-browser') {
+    assert.ok(desktopScenario, 'embedded-browser requires its desktop scenario module')
+    setPhase('cloud-connected-local-browser')
+    await createSingleRootLocalProject(control, workspacePath, 'embedded-browser-local-executor')
+    await desktopScenario.verify(control)
+    return
+  }
+
   const { composerSelector, projectRowSelector, projectUiId } = await createCloudProjectFixture(
     control,
     workspacePath
@@ -864,9 +887,12 @@ async function verifyCloudCheckpoint({
         newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
         readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
         screenshotPrefix: 'cloud-model-routing',
+        startIndex: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length,
+        collectFailures: true,
         setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
         workspacePath,
       })
+      assertMatrixReports(control)
       return
     case 'window-lifecycle':
       setPhase('cloud-window-lifecycle')
@@ -904,7 +930,11 @@ async function verifyCloudCheckpoint({
       return
     case 'supervisor-lifecycle':
       setPhase('cloud-supervisor-lifecycle')
-      await verifyTaskSupervisorLifecycle({ composerSelector, control })
+      await verifyTaskSupervisorLifecycle({
+        composerSelector,
+        control,
+        readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
+      })
       return
     case 'resilience':
       setPhase('cloud-send-rejection')
@@ -987,7 +1017,6 @@ async function verifyCloudCheckpoint({
       await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
       return
     case 'browser-multi-tabs':
-    case 'embedded-browser':
       assert.ok(desktopScenario, `${checkpoint} requires its desktop scenario module`)
       setPhase(`cloud-${checkpoint}`)
       await desktopScenario.verify(control)

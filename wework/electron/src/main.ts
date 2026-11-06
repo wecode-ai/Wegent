@@ -1,4 +1,9 @@
-import { McpAppRuntime, readMcpAppConnection } from './host/mcp-app-runtime.js'
+import { ModelConfigurationStore } from './host/model-configuration-store.js'
+import { McpAppRuntime } from './host/mcp-app-runtime.js'
+import {
+  readCloudConnection,
+  requireCloudCredentialOwner,
+} from './host/cloud-connection-profile.js'
 import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
 import './host/process-output-bootstrap.js'
 import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
@@ -16,6 +21,7 @@ import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
+import { VerificationDevtools } from './host/verification-devtools.js'
 
 import {
   app,
@@ -83,14 +89,18 @@ import {
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { requestE2ERuntime } from './host/e2e-runtime-request.js'
-import { dshBrowserAuthenticationCookies } from './runtime/dsh-browser-auth.js'
+import {
+  dshBrowserAuthenticationCookies,
+  dshBrowserRequestHeaders,
+} from './runtime/dsh-browser-auth.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { captureProcessExplorerWindowSnapshot } from './host/process-explorer-window-snapshot.js'
-import { desktopWindowFrameOptions } from './host/window-layout.js'
+import { desktopWindowFrameOptions, startupWindowLayout } from './host/window-layout.js'
+import { maximizeStartupWindow, prepareStartupMainWindow } from './host/startup-window-handoff.js'
 import {
   POPOUT_WINDOW_SIZES,
   popoutWindowBounds,
@@ -384,7 +394,7 @@ let lastStartupFailure: StartupFailureSnapshot | null = null
 const startupTiming = desktopE2EStartupTiming(process.env)
 const startupProgress = new StartupProgressReporter(
   update => {
-    logStartupStep('startup-progress', 'started', {
+    logStartupStep('startup-progress', update.completed ? 'completed' : 'started', {
       stage: update.stage.id,
       index: update.index,
     })
@@ -933,9 +943,12 @@ function installDshWindowLabelHeaders(): void {
         ? dshWindowLabels.get(details.webContentsId)
         : undefined
     callback({
-      requestHeaders: label
-        ? { ...details.requestHeaders, 'X-Wework-Window-Label': label }
-        : details.requestHeaders,
+      requestHeaders: dshBrowserRequestHeaders(
+        details.url,
+        label
+          ? { ...details.requestHeaders, 'X-Wework-Window-Label': label }
+          : details.requestHeaders
+      ),
     })
   })
 }
@@ -1417,7 +1430,9 @@ async function updateDesktopPreferences(
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
-  logStartupStep('windows-create', 'started', { theme: startupTheme })
+  const startupDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const startupLayout = startupWindowLayout(startupDisplay.workArea)
+  logStartupStep('windows-create', 'started', { theme: startupTheme, layout: startupLayout })
   const developmentTitle = process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim()
   const windowTitle =
     pluginDevelopmentInstance && developmentTitle
@@ -1425,8 +1440,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       : (developmentDockIdentity?.displayName ?? 'Wework')
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
-    width: 1440,
-    height: 960,
+    ...startupLayout.bounds,
     title: windowTitle,
     backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
     show: false,
@@ -1442,12 +1456,12 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   installE2ERendererCpuProfiling(mainWindow.webContents)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
-    width: 1440,
-    height: 960,
+    ...startupLayout.bounds,
     title: windowTitle,
-    backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
+    backgroundColor: startupTheme === 'dark' ? '#05070d' : '#fafafa',
     show: false,
     webPreferences: {
+      backgroundThrottling: false,
       preload: startupSplashPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1461,9 +1475,14 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       isVisible: () => startupSplashWindow?.isVisible() ?? false,
       on: (_event, listener) => startupSplashWindow?.on('close', listener),
       once: (_event, listener) => startupSplashWindow?.once('closed', listener),
-      show: () => {
-        if (!keepE2EWindowInBackground) startupSplashWindow?.show()
+      show: async () => {
+        if (keepE2EWindowInBackground) return
+        const target = startupSplashWindow
+        if (!target) throw new Error('Startup splash window is unavailable')
+        if (startupLayout.maximized) await maximizeStartupWindow(target)
+        else target.show()
       },
+      setOpacity: opacity => startupSplashWindow?.setOpacity(opacity),
       webContents: {
         capturePage: async () => {
           if (!startupSplashWindow) throw new Error('Startup splash window is unavailable')
@@ -1617,30 +1636,91 @@ async function cancelMainWindowClose(): Promise<void> {
 }
 
 const rendererStartupReady = createStartupReadyHandler(async (source: string) => {
-  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (quitting) return
+    throw new Error('The main window is unavailable during startup')
+  }
   logStartupStep('renderer-startup-ready', 'completed', { source })
-  startupTelemetrySuccess.markRendererReady()
   await holdStartupSplashForDesktopE2e()
   // A quit request during startup owns the exit: never present the
   // workbench while shutdown is already tearing the app down.
-  if (quitting || lastStartupFailure || !mainWindow || mainWindow.isDestroyed()) return
-  if (!keepE2EWindowInBackground) mainWindow.show()
-  logStartupStep('main-window-show', 'completed')
-  await startupSplash?.close({
-    capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
-  })
+  if (quitting) return
+  if (lastStartupFailure) throw new Error(lastStartupFailure.message)
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('The main window closed before startup handoff')
+  }
+  const target = mainWindow
+  const splash = startupSplash
+  const splashWindow = startupSplashWindow
+  if (!splash || !splashWindow) throw new Error('Startup splash is unavailable for handoff')
+  const shouldContinue = () => !quitting && !lastStartupFailure && !target.isDestroyed()
+  try {
+    const snapshot = await splash.handoff({
+      update: startupProgress.complete(),
+      capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+      shouldContinue,
+      prepareMainWindow: async () => {
+        const bounds = await prepareStartupMainWindow(
+          target,
+          splashWindow,
+          !keepE2EWindowInBackground,
+          {
+            main: screen.getDisplayMatching(target.getBounds()).id,
+            splash: screen.getDisplayMatching(splashWindow.getBounds()).id,
+          },
+          event => {
+            const geometry = event.splash ?? event.main
+            const display = geometry ? screen.getDisplayMatching(geometry.bounds) : null
+            logStartupStep('startup-window-handoff', event.error ? 'failed' : 'completed', {
+              ...event,
+              display: display
+                ? {
+                    id: display.id,
+                    scaleFactor: display.scaleFactor,
+                    bounds: display.bounds,
+                    workArea: display.workArea,
+                  }
+                : null,
+            })
+          }
+        )
+        logStartupStep('main-window-show', 'completed')
+        return bounds
+      },
+    })
+    if (!shouldContinue() || snapshot.state !== 'closed') {
+      if (!target.isDestroyed()) target.hide()
+      if (quitting) return
+      throw new Error('Startup window handoff was interrupted')
+    }
+  } catch (error) {
+    if (!target.isDestroyed()) target.hide()
+    if (quitting) return
+    if (!lastStartupFailure) {
+      recordStartupFailure(error, 'startup_handoff')
+      startupTelemetry.fail('renderer_initialize')
+      await splash.showError()
+    }
+    throw error
+  }
   logStartupStep('startup-splash-close', 'completed')
   if (!keepE2EWindowInBackground) {
-    mainWindow.focus()
-    mainWindow.webContents.focus()
+    target.focus()
+    target.webContents.focus()
   }
+  startupTelemetrySuccess.markRendererReady()
   scheduleComputerUseStartup()
 })
 
 async function reactivateMainWindow(): Promise<void> {
   focusStartupSplashIfActive()
   await rendererStartupReady.whenReady
-  if (quitting) return
+  if (
+    quitting ||
+    lastStartupFailure ||
+    startupSplashBlocksMainWindowActivation(startupSplash?.snapshot() ?? null)
+  )
+    return
   const target = mainWindow
   if (!target || target.isDestroyed()) return
   if (keepE2EWindowInBackground) {
@@ -1890,9 +1970,18 @@ function installIpc(): void {
       throw error
     }
   })
-  ipcMain.handle('cloud-credentials:get-device-public-key', () =>
-    requiredCloudCredentials().devicePublicKey()
-  )
+  ipcMain.handle('cloud-credentials:prepare-authorization', async (_event, apiBaseUrl: unknown) => {
+    try {
+      return {
+        ok: true,
+        value: await requiredCloudCredentials().prepareAuthorization(
+          requiredText(apiBaseUrl, 'apiBaseUrl')
+        ),
+      }
+    } catch (error) {
+      return cloudCredentialFailure(error)
+    }
+  })
   ipcMain.handle('cloud-credentials:claim-authorization', async (_event, input: unknown) => {
     try {
       if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -1902,7 +1991,7 @@ function installIpc(): void {
       return {
         ok: true,
         value: await requiredCloudCredentials().claimAuthorization({
-          apiBaseUrl: requiredText(value.apiBaseUrl, 'apiBaseUrl'),
+          authorizationId: requiredText(value.authorizationId, 'authorizationId'),
           sessionId: requiredText(value.sessionId, 'sessionId'),
           pollToken: requiredText(value.pollToken, 'pollToken'),
         }),
@@ -1911,18 +2000,55 @@ function installIpc(): void {
       return cloudCredentialFailure(error)
     }
   })
-  ipcMain.handle('cloud-credentials:refresh-access-token', async (_event, apiBaseUrl: unknown) => {
-    try {
-      return {
-        ok: true,
-        value: await requiredCloudCredentials().refreshAccessToken(
-          requiredText(apiBaseUrl, 'apiBaseUrl')
-        ),
+  ipcMain.handle(
+    'cloud-credentials:commit-authorization',
+    async (_event, authorizationId: unknown, ownerUserId: unknown) => {
+      try {
+        if (typeof ownerUserId !== 'number') throw new Error('Cloud credential owner is invalid')
+        return {
+          ok: true,
+          value: await requiredCloudCredentials().commitAuthorization(
+            requiredText(authorizationId, 'authorizationId'),
+            ownerUserId
+          ),
+        }
+      } catch (error) {
+        return cloudCredentialFailure(error)
       }
-    } catch (error) {
-      return cloudCredentialFailure(error)
     }
-  })
+  )
+  ipcMain.handle(
+    'cloud-credentials:discard-authorization',
+    async (_event, authorizationId: unknown) => {
+      try {
+        return {
+          ok: true,
+          value: await requiredCloudCredentials().discardAuthorization(
+            requiredText(authorizationId, 'authorizationId')
+          ),
+        }
+      } catch (error) {
+        return cloudCredentialFailure(error)
+      }
+    }
+  )
+  ipcMain.handle(
+    'cloud-credentials:refresh-access-token',
+    async (_event, apiBaseUrl: unknown, expectedUserId: unknown) => {
+      try {
+        if (typeof expectedUserId !== 'number') throw new Error('Cloud credential owner is invalid')
+        return {
+          ok: true,
+          value: await requiredCloudCredentials().refreshAccessToken(
+            requiredText(apiBaseUrl, 'apiBaseUrl'),
+            expectedUserId
+          ),
+        }
+      } catch (error) {
+        return cloudCredentialFailure(error)
+      }
+    }
+  )
   ipcMain.handle('cloud-credentials:clear', () => requiredCloudCredentials().clear())
   ipcMain.handle('runtime:get-state', () => ({
     ...(desktopRuntime?.state() ?? {
@@ -2147,6 +2273,10 @@ async function configureDesktopRuntime(): Promise<void> {
     logDirectories: runtimeLogDirectories,
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
+  const modelConfiguration = new ModelConfigurationStore(
+    join(app.getPath('userData'), 'model-connections'),
+    secureStorage
+  )
   embeddedBrowser = new EmbeddedBrowserManager(
     app.getPath('userData'),
     event => {
@@ -2184,6 +2314,9 @@ async function configureDesktopRuntime(): Promise<void> {
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
     smartApps: () => smartApps,
+    ...(process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
+      ? { devtools: new VerificationDevtools(() => webContents.getAllWebContents()) }
+      : {}),
   })
   logStartupStep('desktop-control-bridge', 'started')
   await desktopControlBridge.start()
@@ -2232,6 +2365,7 @@ async function configureDesktopRuntime(): Promise<void> {
     )
   })
   desktopRuntime = new DesktopRuntime({
+    modelConfiguration,
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
@@ -2316,15 +2450,20 @@ async function configureDesktopRuntime(): Promise<void> {
                 if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
                 return desktopRuntime.requestExecutor('runtime.mcp_apps.request', request)
               },
-              async apiBaseUrl => {
-                const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+              async (apiBaseUrl, expectedUserId) => {
+                const credential = await requiredCloudCredentials().refreshAccessToken(
+                  apiBaseUrl,
+                  expectedUserId
+                )
                 return credential.accessToken
               },
-              () => readMcpAppConnection(rendererStorage!)
+              () => readCloudConnection(rendererStorage!)
             )
             return mcpAppRuntime.request(payload)
           },
           executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
+          modelConfiguration,
+          syncLocalModels: () => desktopRuntime!.syncLocalModels(),
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
@@ -2332,7 +2471,14 @@ async function configureDesktopRuntime(): Promise<void> {
           updatePreferences: updateDesktopPreferences,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
-            const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+            const expectedUserId = requireCloudCredentialOwner(
+              await readCloudConnection(rendererStorage!),
+              apiBaseUrl
+            )
+            const credential = await requiredCloudCredentials().refreshAccessToken(
+              apiBaseUrl,
+              expectedUserId
+            )
             return requestWeworkSync(request, `${credential.tokenType} ${credential.accessToken}`)
           },
         },
@@ -2537,7 +2683,7 @@ function scheduleComputerUseStartup(): void {
     void restoreComputerUseAfterStartup({
       isShuttingDown: () => quitting || computerUse !== service,
       readPreferences: () => store.read(),
-      setEnabled: enabled => service.setEnabled(enabled),
+      setEnabled: enabled => service.restoreEnabled(enabled),
     }).catch(error => {
       console.error('[computer-use] lazy startup failed', error)
     })

@@ -1,4 +1,5 @@
 import type { TaskSource } from './NotificationTaskSourceContext'
+import { logInteractionLoadFailure } from './interactionDiagnostics'
 import {
   collectRuntimeTaskReminderItems,
   type RuntimeTaskReminderItem,
@@ -8,12 +9,19 @@ import {
 export async function readInteractionTaskInventory(source: TaskSource): Promise<{
   items: RuntimeTaskReminderItem[]
   failedDevices: Set<string>
+  failedRequests: Set<string>
   refreshedDevices: Set<string>
 }> {
   const api = source.services?.runtimeWorkApi
-  if (!api) return { items: [], failedDevices: new Set(), refreshedDevices: new Set() }
+  if (!api)
+    return {
+      items: [],
+      failedDevices: new Set(),
+      failedRequests: new Set(),
+      refreshedDevices: new Set(),
+    }
   const localIdentity = await source.services?.getLocalRuntimeSidebarIdentity?.().catch(error => {
-    console.error('[Wework] Could not discover local runtime identity for pending work', { error })
+    logInteractionLoadFailure('local-identity', error)
     return null
   })
   const devices: Array<string | undefined> = [
@@ -27,6 +35,7 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
   if (!devices.length) devices.push(undefined)
   const items: RuntimeTaskReminderItem[] = []
   const refreshedDevices = new Set<string>()
+  const failedRequests = new Set<string>()
   const failedDevices = new Set(
     source.devices
       ?.filter(
@@ -40,17 +49,22 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
       while (index < devices.length) {
         const deviceId = devices[index++]
         try {
-          const work = await api.listRuntimeWork({ pendingOnly: true, deviceId })
+          const work = await api.listRuntimeWork({
+            pendingOnly: true,
+            preferCached: true,
+            deviceId,
+          })
           const found = collectRuntimeTaskReminderItems(work)
           items.push(...found)
           if (deviceId) refreshedDevices.add(deviceId)
           for (const item of found) refreshedDevices.add(item.address.deviceId)
         } catch (error) {
-          console.error('[Wework] Could not discover pending runtime work', { deviceId, error })
+          logInteractionLoadFailure('inventory', error, { deviceId })
           failedDevices.add(deviceId ?? '')
+          failedRequests.add(deviceId ?? '')
         }
       }
     })
   )
-  return { items, failedDevices, refreshedDevices }
+  return { items, failedDevices, failedRequests, refreshedDevices }
 }

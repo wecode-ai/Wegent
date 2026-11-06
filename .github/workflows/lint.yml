@@ -171,13 +171,13 @@ jobs:
         run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs .github/scripts/pnpm-install-report.test.mjs
 
       - name: Test E2E resource cleanup
-        run: node --test .github/scripts/test-e2e-resource-reuse.mjs
+        run: node --test .github/scripts/test-e2e-resource-reuse.mjs .github/scripts/backend-delivery-image.test.mjs
 
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
 
       - name: Test Windows E2E package caching and scheduling
-        run: node --test .github/scripts/wework-windows-e2e-build-key.test.mjs .github/scripts/balance-wework-windows-e2e.test.mjs .github/scripts/order-wework-linux-e2e.test.mjs .github/scripts/balance-wework-unit-tests.test.mjs
+        run: node --test .github/scripts/wework-windows-e2e-build-key.test.mjs .github/scripts/balance-wework-windows-e2e.test.mjs .github/scripts/order-wework-linux-e2e.test.mjs .github/scripts/balance-wework-unit-tests.test.mjs .github/scripts/core-runner-slots.test.mjs
 
       - name: Test shared E2E runtime revisions
         run: bash .github/scripts/test-wework-core-e2e-runtimes.sh

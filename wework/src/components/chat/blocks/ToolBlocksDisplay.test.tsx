@@ -59,7 +59,7 @@ describe('ToolBlocksDisplay', () => {
   })
 
   test('keeps tool output truncation invisible while rendering the retained output', () => {
-    render(
+    const { container } = render(
       <ToolBlocksDisplay
         blocks={[
           {
@@ -73,6 +73,7 @@ describe('ToolBlocksDisplay', () => {
       />
     )
 
+    expect(container.firstElementChild).not.toHaveClass('border-b')
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
     fireEvent.click(screen.getByText('运行 pwd'))
 

@@ -10,6 +10,7 @@ import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
   mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
@@ -21,12 +22,55 @@ const PANEL = '[data-testid="stand-in-primary-profile"]'
 const marker = `STAND_IN_MODEL_EXECUTION_${process.pid}`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
 
+export function executionModelEvents(body, { marker, cases, completed }) {
+  const latestUser = (body.input ?? []).filter(item => item.role === 'user').at(-1)
+  const message = JSON.stringify(latestUser?.content ?? '')
+  const delegatedTaskId = message.match(/Wework delegated task result:.*?taskId=([^,\s]+)/)?.[1]
+  const name = delegatedTaskId
+    ? [...completed].find(([, taskId]) => taskId === delegatedTaskId)?.[0]
+    : [...cases.keys()].find(name =>
+        ['CHAT', 'WORK'].some(kind => message.includes(`${marker}_${kind}_${name}`))
+      )
+  assert.ok(name, 'The model request must identify its own execution case')
+  assert.equal(
+    body.model,
+    cases.get(name).upstream,
+    'The selected upstream model must receive the call'
+  )
+  const resultEvents = delegatedTaskResultEvents(body)
+  if (resultEvents) return { name, events: resultEvents }
+  const callId = `create-${name}`
+  if (message.includes(`${marker}_WORK_${name}`)) {
+    return { name, events: [assistantMessage(`${marker}_DONE_${name}`)] }
+  }
+  if (requestContainsToolOutput(body, callId)) {
+    const result = JSON.parse(readMcpToolOutput(body, callId))
+    assert.equal(result.success, true, 'The real primary stand-in must create its work')
+    completed.set(name, result.taskId)
+    return { name, events: [assistantMessage(`工作已创建：${name}`)] }
+  }
+  return {
+    name,
+    events: mcpToolRequestEvents(body, {
+      toolName: 'create_task',
+      directToolName: 'mcp__wework_stand_in__create_task',
+      argumentsValue: {
+        requestId: callId,
+        title: `模型调用验证 ${name}`,
+        message: `${marker}_WORK_${name}`,
+      },
+      searchCallId: `${callId}-search`,
+      toolCallId: callId,
+    }).events,
+  }
+}
+
 // Extend the existing checkpoint without another Backend or Electron lifecycle.
 export function createDesktopScenario(options) {
   const catalog = createCatalogScenario(options)
   let userId
   let current
-  let upstreamModel
+  const executionCases = new Map()
   const completed = new Map()
   const calls = new Map()
   return {
@@ -47,31 +91,12 @@ export function createDesktopScenario(options) {
       const input = JSON.stringify(body.input ?? [])
       if (!current || !input.includes(marker)) return false
       assert.equal(request.headers.authorization, `Bearer ${MODEL_API_KEY}`)
-      assert.equal(body.model, upstreamModel, 'The selected upstream model must receive the call')
-      calls.set(current, (calls.get(current) ?? 0) + 1)
-      const callId = `create-${current}`
-      let events
-      if (!input.includes(`${marker}_CHAT_${current}`)) {
-        assert.ok(input.includes(`${marker}_WORK_${current}`))
-        events = [assistantMessage(`${marker}_DONE_${current}`)]
-      } else if (requestContainsToolOutput(body, callId)) {
-        const result = JSON.parse(readMcpToolOutput(body, callId))
-        assert.equal(result.success, true, 'The real primary stand-in must create its work')
-        completed.set(current, result.taskId)
-        events = [assistantMessage(`工作已创建：${current}`)]
-      } else {
-        events = mcpToolRequestEvents(body, {
-          toolName: 'create_task',
-          directToolName: 'mcp__wework_stand_in__create_task',
-          argumentsValue: {
-            requestId: callId,
-            title: `模型调用验证 ${current}`,
-            message: `${marker}_WORK_${current}`,
-          },
-          searchCallId: `${callId}-search`,
-          toolCallId: callId,
-        }).events
-      }
+      const { name, events } = executionModelEvents(body, {
+        marker,
+        cases: executionCases,
+        completed,
+      })
+      calls.set(name, (calls.get(name) ?? 0) + 1)
       const id = `model-execution-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
@@ -105,10 +130,10 @@ export function createDesktopScenario(options) {
           type: 'runtime',
         },
       ]
+      for (const testCase of cases) executionCases.set(testCase.name, testCase)
       try {
         for (const testCase of cases) {
           current = testCase.name
-          upstreamModel = testCase.upstream
           await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
           await control.command('waitFor', PANEL)
           await control.command(
@@ -166,6 +191,17 @@ export function createDesktopScenario(options) {
           }
           const transcript = await rpc('runtime.tasks.transcript', { taskId: task.taskId })
           assert.ok(JSON.stringify(transcript).includes(`${marker}_DONE_${current}`))
+          await until(
+            () => rpc('runtime.tasks.transcript', { taskId: address.taskId }),
+            result =>
+              result.messages.some(
+                message =>
+                  message.role === 'assistant' &&
+                  JSON.stringify(message.content).includes(`${marker}_DONE_${current}`)
+              ),
+            `Primary stand-in did not report the actual ${current} work result`,
+            options.modelResponseTimeoutMs
+          )
           assert.ok(
             calls.get(current) >= 3,
             'Both primary conversation and concrete work must reach the authenticated model'

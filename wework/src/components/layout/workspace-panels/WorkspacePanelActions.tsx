@@ -86,6 +86,7 @@ interface WorkspacePanelActionsProps {
   onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
+  rightPanelDisabled?: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
   onToggleRightPanelExpanded: () => void
@@ -126,6 +127,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onRunSupervisorNow,
   rightPanelOpen,
   rightPanelExpanded,
+  rightPanelDisabled = false,
   bottomPanelOpen,
   onToggleRightPanel,
   onToggleRightPanelExpanded,
@@ -446,9 +448,11 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               <button
                 type="button"
                 data-testid="toggle-right-workspace-panel-expanded-button"
+                disabled={rightPanelDisabled}
                 onClick={onToggleRightPanelExpanded}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  'disabled:opacity-50',
                   rightPanelExpanded && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelExpandedTitle}
@@ -487,9 +491,11 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               <button
                 type="button"
                 data-testid="toggle-right-workspace-panel-button"
+                disabled={rightPanelDisabled}
                 onClick={onToggleRightPanel}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  'disabled:opacity-50',
                   rightPanelOpen && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelTitle}

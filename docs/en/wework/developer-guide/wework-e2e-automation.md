@@ -36,6 +36,16 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
+The `stand-in-email` checkpoint uses an isolated GreenMail IMAP/SMTP service and requires Java 11 or newer; CI uses Java 21. Ensure that `java` and `keytool` on `PATH` come from a supported JDK before running it.
+
+Run only the Codex cloud-config recovery regression:
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
+```
+
+This checkpoint uses real Electron, executor, and Codex processes, with an isolated model subscription service simulating enterprise cloud-config bundle failures. It covers existing-thread continuation, new threads, configuration and model reads, Goal recovery after restart, official subscription authentication recovery, and concurrent authentication protection while a cloud-model turn runs. Assertions include the final reply, native transcripts, and task state after reload. The fixture creates its own account and directories. Existing desktop CI Core shards run this checkpoint.
+
 Run only the cloud-project desktop E2E:
 
 ```bash
@@ -199,7 +209,12 @@ CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
 Core and Cloud matrix jobs also provide suite-level parallelism across runners.
-Core uses 10 shards, with Windows sharing the same matrix, and Cloud uses 8.
+The classifier provides 10 logical Core shards. Windows retains 10 runners;
+Linux sets `CORE_RUNNER_SCALE=1.5` and redistributes a full selection across
+15 runners using historical durations. Partial selections scale with their selected
+matrix, bounded by assignable checkpoints; selections without the history checkpoint
+retain their original matrix. The two Core benchmarks keep dedicated runners.
+Cloud uses 8 shards.
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
 within a runner. The two Core benchmark shards and three Cloud account-auth and
@@ -211,6 +226,23 @@ Lint, unit-test, platform E2E, and desktop E2E summary jobs use
 `always() && !cancelled()`: failures still produce a summary, while cancellation
 stops superseded summaries from waiting for runners and blocking newer runs.
 Cleanup and diagnostic upload steps retain their existing cancellation handling.
+
+PR Wework renderer unit tests use 4 runners with the existing measured file
+balancing. Electron and auxiliary checks still execute once. Platform browser/API
+and provider-native E2E each use 8 complete, nonoverlapping logical shards,
+reusing shared builds with independent services and users per runner. Additional
+DingTalk protocol integration, knowledge, and attachment checks retain their
+designated shards. Historical Linux Core timing replay reduces the test-stage
+critical path from 614 to 478 seconds. This estimate excludes builds, preparation,
+and queueing; subsequent CI runs must establish actual savings. Additional runners
+increase preparation overhead.
+
+Device folder selection uses native Executor home lookup and directory enumeration
+for the default `home_dir` and `ls_dirs` commands, without spawning `printenv` or `ls`.
+CI recorded process creation taking 6.2 and 8.1 seconds where the preceding run
+took tens of milliseconds. Native queries remove this startup dependency while
+preserving hidden directories, symlinks, output limits, and error handling.
+Explicit custom commands retain command execution; the ten-second E2E assertion is unchanged.
 
 Step timings from successful runs `39920301020` and `39920742402` separate test
 work from setup overhead. In the first sample, non-test steps across 42 shards
@@ -350,8 +382,15 @@ further investigation. When a checkpoint step fails, the runner also captures
 `failure-followup.json` three seconds after the failure with a repeated UI
 snapshot and workbench debug state, distinguishing a slow asynchronous update
 that settled after the timeout from a stuck state. Set
-`WEWORK_E2E_FAILURE_FOLLOWUP_MS` to adjust the observation delay or `0` to
-disable the capture.
+`WEWORK_E2E_FAILURE_FOLLOWUP_MS` to adjust the observation delay, capped at
+5000 milliseconds, or `0` to disable the capture.
+Ordinary fixed E2E waits must not exceed five seconds. Exceptions such as negative
+observation across a complete polling interval, cancellation, or concurrent model
+responses may use up to ten seconds with an explanation; observing a five-second
+polling interval uses a 5.5-second window. UI, startup, and execution waits must
+check the actual condition and return as soon as it is satisfied; their operation
+timeouts are separate from fixed delays. Prefer the existing response release gate
+when a model request must remain pending instead of using a long delay.
 Drawer animation checks sample from before the action until movement is observed
 and the track animation completes, then stop explicitly within the shared step
 timeout. Command transport and rendering delays cannot exhaust a fixed 800ms
@@ -862,7 +901,15 @@ The desktop E2E build additionally injects `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`
 
 When a built-in action does not handle a command, the public controller delegates it through `@extensions/desktop-control` to a product extension. Without a product extension, unknown actions fail explicitly; public automation does not recognize concrete product protocols.
 
-The controller uses short polling: the server returns `204` when no command is available, and the frontend waits briefly before polling again. This prevents a stale long-poll connection, left behind by a WebView reload, task switch, or stream completion, from consuming later commands. When `fill` targets a Lexical editor, the controller uses the editor's exposed `value` setter so the React/Lexical state is actually committed; do not replace it with raw DOM insertion. Failure diagnostics include delivered `commandHistory` in `scenario-state.json` to aid control-channel debugging.
+The control channel binds commands to the window's current client. The frontend acknowledges each result before starting its next long poll, keeping command requests out of the result acknowledgement path. A ready event after a WebView reload confirms transport reconnection, not that the application shell has mounted. Notification entry uses `clickWhenEnabled` for the button and category, retaining the shared ten-second UI step budget. When `fill` targets a Lexical editor, the controller uses the editor's exposed `value` setter so the React/Lexical state is actually committed; do not replace it with raw DOM insertion.
+
+Failure diagnostics retain delivered `commandHistory` in `scenario-state.json`, including `queuedAt`, `deliveredAt`, `startedAt`, `resultReceivedAt`, and `failedAt`. Compare these timestamps to distinguish queueing, start acknowledgement, and result return delays. The last interval includes both UI execution and result transport; a timeout alone does not prove a missing UI element. A late result for a finished command still returns `404`; it only adds `lateResultAt` and a console timeline without the result body, never converting a failed command into a pass.
+
+Paging diagnostics in `background-terminals` capture the real xterm buffer position alongside accessibility row positions, window focus, and native key modifiers. Successful initial and restored history checks save `background-terminal-keys-initial.json` and `background-terminal-keys-restored.json`; failures retain `nativeTerminalKeys` in `workbench-debug.json`. Diagnostics only read positions and event metadata: they do not change scrolling or retain terminal text, and the read-only buffer bridge exists only in E2E builds. Assertions compare buffer positions around the same trusted native key, then wait for the accessible top row and verify the first twelve output lines. Accessibility rows can lag behind the buffer, so an older row number alone is not the real position immediately before a native key executes.
+
+`responseFinishedAt` records when the control server finishes writing a command response. `desktopControlTransport` in `workbench-debug.json` provides a bounded renderer timeline for receiving response headers, decoding commands, acknowledging start, completing actions, and acknowledging results, including window visibility and focus. Compare both sides to locate delivery-to-start delays without extending timeouts or replaying commands. Diagnostics omit selectors, input values, and result bodies. `reply-predictions` enables existing Composer submission diagnostics only in its isolated environment to distinguish native Enter delivery, input policy, and business submission gates.
+
+Executor-owned turns such as supervisor corrections retain the previous completion internally for ordering and stale-provider recovery, but task wire summaries explicitly return `completedAt: null` while `running=true`. Omitting the field cannot clear the old value in patch-merged frontend caches. `supervisor-lifecycle` checks running state and this wire boundary while deliberately holding the model response. The frontend still rejects active snapshots carrying stale completion data and requires a genuinely new running projection to advance time. Do not relax these stale-state guards or hide autonomous admission behind frontend state activated only after model output.
 
 The desktop controller uses Electron `webContents.capturePage()` for native renderer screenshots. The capability is available only when `VITE_WEWORK_E2E=true`; selector captures crop the native image by the element bounds, so diagnostics preserve the actual Electron rendering.
 

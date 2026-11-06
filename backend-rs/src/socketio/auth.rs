@@ -182,7 +182,7 @@ async fn verify_api_key(state: &AppState, token: &str) -> Result<Identity, AuthE
 
 pub(super) async fn verify_jwt(state: &AppState, token: &str) -> Result<Identity, AuthError> {
     let user_name = crate::auth::verify_token(&state.auth, token)
-        .map_err(|()| AuthError::Refused("Invalid or expired token"))?;
+        .map_err(|_| AuthError::Refused("Invalid or expired token"))?;
     let Some(user) = active_user_by_name(state, &user_name).await else {
         return Err(AuthError::Refused("Invalid or expired token"));
     };

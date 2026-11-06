@@ -116,4 +116,39 @@ describe('runtime pane status from task lifecycle machine', () => {
     expect(status.isBusy).toBe(false)
     expect(status.canSendQueuedMessage).toBe(true)
   })
+  test('stops thinking after a plain turn settles while awaiting authoritative execution state', () => {
+    const machine = new RuntimeTaskMachine(runtimeAddress)
+    machine.dispatch({
+      type: 'executor_snapshot_received',
+      address: runtimeAddress,
+      task: task({ running: true, status: 'active', goalStatus: null }),
+    })
+    machine.dispatch({ type: 'turn_started', turnId: 'turn-1' })
+    machine.dispatch({ type: 'turn_settled', turnId: 'turn-1', outcome: 'succeeded' })
+    const settled = statusFor(machine, [assistantMessage('done')])
+    expect(settled.isWaitingForAssistantIndicator).toBe(false)
+    expect(settled.isAssistantStreaming).toBe(false)
+    expect(settled.taskExecution.running).toBe(true)
+    expect(settled.isBusy).toBe(true)
+    expect(settled.canSendQueuedMessage).toBe(false)
+
+    machine.dispatch({ type: 'send_requested' })
+    expect(statusFor(machine).isWaitingForAssistantIndicator).toBe(true)
+  })
+
+  test('preserves active Goal waiting after a successful intermediate turn', () => {
+    const machine = new RuntimeTaskMachine(runtimeAddress)
+    machine.dispatch({
+      type: 'executor_snapshot_received',
+      address: runtimeAddress,
+      task: task({ running: true, status: 'active', goalStatus: 'active' }),
+    })
+    machine.dispatch({ type: 'turn_started', turnId: 'goal-turn-1' })
+    machine.dispatch({ type: 'turn_settled', turnId: 'goal-turn-1', outcome: 'succeeded' })
+    const status = statusFor(machine, [assistantMessage('done')])
+    expect(status.isWaitingForAssistantIndicator).toBe(true)
+    expect(status.taskExecution.running).toBe(true)
+    expect(status.isBusy).toBe(true)
+    expect(status.canSendQueuedMessage).toBe(false)
+  })
 })

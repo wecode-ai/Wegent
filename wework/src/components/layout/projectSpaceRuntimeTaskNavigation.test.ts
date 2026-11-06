@@ -43,6 +43,7 @@ describe('openProjectSpaceRuntimeTaskInTab', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     } as WorkspaceTabsContextValue
 

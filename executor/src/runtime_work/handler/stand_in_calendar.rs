@@ -2,6 +2,43 @@
 use super::*;
 use crate::runtime_work::automations::{Automation, AutomationRun};
 
+/// Keep later deadlines pending while the same arrangement owns an execution.
+pub(super) fn serialize_calendar_intake(events: Vec<Value>, busy: HashSet<String>) -> Vec<Value> {
+    let mut earliest = HashMap::new();
+    for (index, event) in events.iter().enumerate() {
+        let Some(id) = event["automationId"]
+            .as_str()
+            .filter(|id| !busy.contains(*id))
+        else {
+            continue;
+        };
+        let Some(deadline) = event["notBefore"]
+            .as_str()
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        else {
+            continue;
+        };
+        if event["kind"] == "calendar" {
+            let selected = earliest.entry(id.to_owned()).or_insert((deadline, index));
+            if deadline < selected.0 {
+                *selected = (deadline, index);
+            }
+        }
+    }
+    events
+        .into_iter()
+        .enumerate()
+        .filter(|(index, event)| {
+            event["kind"] != "calendar"
+                || event["automationId"]
+                    .as_str()
+                    .and_then(|id| earliest.get(id))
+                    .is_some_and(|(_, selected)| selected == index)
+        })
+        .map(|(_, event)| event)
+        .collect()
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn queue_calendar_run(
         &self,
@@ -63,5 +100,51 @@ impl RuntimeWorkRpcHandler {
             return Err(invalid());
         }
         Ok((automation, run))
+    }
+}
+
+#[cfg(test)]
+mod serialization_tests {
+    use super::*;
+
+    #[test]
+    fn deadlines_wait_for_the_previous_run_without_blocking_other_arrangements() {
+        let events = vec![
+            json!({"id":"a-first","kind":"calendar","automationId":"a","status":"pending","notBefore":"2026-11-04T10:00:00Z"}),
+            json!({"id":"a-next","kind":"calendar","automationId":"a","status":"pending","notBefore":"2026-11-04T10:01:00Z"}),
+            json!({"id":"b-first","kind":"calendar","automationId":"b","status":"pending","notBefore":"2026-11-04T10:00:00Z"}),
+            json!({"id":"work","kind":"work_state","taskId":"original"}),
+        ];
+        let ids = |rows: Vec<Value>| {
+            rows.into_iter()
+                .map(|row| row["id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(serialize_calendar_intake(events.clone(), HashSet::new())),
+            vec!["a-first", "b-first", "work"]
+        );
+        assert_eq!(
+            ids(serialize_calendar_intake(
+                events.clone(),
+                HashSet::from(["a".to_owned()])
+            )),
+            vec!["b-first", "work"]
+        );
+        assert_eq!(
+            ids(serialize_calendar_intake(
+                events[1..].to_vec(),
+                HashSet::new()
+            )),
+            vec!["a-next", "b-first", "work"]
+        );
+        assert!(events[..3].iter().all(|event| event["status"] == "pending"));
+        assert_eq!(
+            ids(serialize_calendar_intake(
+                events.into_iter().rev().collect(),
+                HashSet::new()
+            )),
+            vec!["work", "b-first", "a-first"]
+        );
     }
 }

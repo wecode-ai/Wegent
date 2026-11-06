@@ -42,6 +42,13 @@ test('distinguishes recoverable IMAP transport from authentication, TLS and mess
   const invalid = mailError('email_message_invalid')
   assert.equal(imapError(invalid), invalid)
   assert.equal(imapError(new Error('private account details')).message, 'email_connection_failed')
+  assert.equal(imapError({ code: 'ECONNRESET' }).retryAfterMs, 30000)
+  assert.equal(
+    imapError({ authenticationFailed: true, code: 'ECONNRESET' }).retryAfterMs,
+    undefined
+  )
+  assert.equal(imapError({ code: 'CERT_HAS_EXPIRED' }).retryAfterMs, undefined)
+  assert.equal(imapError(invalid).retryAfterMs, undefined)
 })
 
 function storage() {
@@ -222,4 +229,83 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
     code: 'email_account_missing',
   })
   assert.equal(deliveries, 4)
+})
+
+async function continuousReplyFixture() {
+  const f = setup()
+  const { id } = await f.accounts.save(config)
+  const deliveries = []
+  const reads = []
+  const sender = createEmailSender(f.accounts, storage(), {
+    imapSession: async (_account, action) =>
+      action({
+        mailboxOpen: async () => {},
+        mailbox: { uidValidity: 123n },
+        fetchOne: async uid => {
+          reads.push(uid)
+          return {
+            envelope: {
+              from: [{ address: 'original-sender@example.com' }],
+              messageId: '<bound-message@example.com>',
+            },
+          }
+        },
+      }),
+    smtpTransport: async () => ({
+      verify: async () => {},
+      close() {},
+      sendMail: async mail => {
+        deliveries.push(mail)
+        return { accepted: [mail.to], rejected: [] }
+      },
+    }),
+  })
+  const input = {
+    source: { id: 'INBOX', kind: 'inbox', profile: id, policy: { askBeforeAct: false } },
+    authorization: 'continuous_reply',
+    reply: true,
+    messageId: '123:7',
+    workId: 'continuous-reply-work',
+    from: config.email,
+    to: 'original-sender@example.com',
+    subject: 'Re: Existing conversation',
+    text: 'Reply within the confirmed source scope',
+  }
+  return { sender, input, deliveries, reads }
+}
+
+test('continuous source authorization replies only inside the verified original mail thread', async () => {
+  const { sender, input, deliveries, reads } = await continuousReplyFixture()
+  assert.deepEqual(await sender(input), { status: 'sent' })
+  assert.deepEqual(reads, [7])
+  assert.equal(deliveries.length, 1)
+  assert.equal(deliveries[0].from, config.email)
+  assert.equal(deliveries[0].to, 'original-sender@example.com')
+  assert.equal(deliveries[0].inReplyTo, '<bound-message@example.com>')
+  assert.equal(deliveries[0].references, '<bound-message@example.com>')
+})
+
+test('continuous reply authorization does not authorize a new outgoing email', async () => {
+  const { sender, input, deliveries, reads } = await continuousReplyFixture()
+  await assert.rejects(sender({ ...input, reply: false }), { code: 'email_confirmation_required' })
+  assert.equal(deliveries.length, 0)
+  assert.equal(reads.length, 0)
+})
+
+test('continuous authorization cannot replace the original email sender with a new recipient', async () => {
+  const { sender, input, deliveries, reads } = await continuousReplyFixture()
+  await assert.rejects(sender({ ...input, to: 'another-person@example.com' }), {
+    code: 'email_reply_recipient_changed',
+  })
+  assert.deepEqual(reads, [7])
+  assert.equal(deliveries.length, 0)
+})
+
+test('revoking continuous source authorization blocks an in-flight automatic reply', async () => {
+  const { sender, input, deliveries } = await continuousReplyFixture()
+  await assert.rejects(
+    sender({ ...input, source: { ...input.source, policy: { askBeforeAct: true } } }),
+    { code: 'email_confirmation_required' }
+  )
+  assert.equal(deliveries.length, 0)
 })

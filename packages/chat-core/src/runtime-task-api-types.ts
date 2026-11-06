@@ -241,6 +241,12 @@ export interface RuntimeGoalCreateInput {
 }
 
 export type RuntimeTaskOrigin = {
+  type: 'project_chat'
+  cloudProjectId: string
+  projectStore: 'local' | 'backend'
+  loopItemId?: never
+  [key: string]: unknown
+} | {
   type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
   cloudProjectId: string
   loopItemId: string

@@ -460,7 +460,8 @@ export async function loadPluginInventory(options: {
     cloud,
     local,
     options.deviceId,
-    cloudRead !== undefined && options.cloudMembershipAuthoritative
+    // A disk refresh may reuse an already verified account snapshot.
+    options.cloudMembershipAuthoritative
   )
   publishPluginInvocationCatalog(options.deviceId, local, cloud)
   return writePluginInventory(options.cacheKey, options.deviceId, {

@@ -40,6 +40,7 @@ const LEGACY_ERROR_CODES: Record<string, string> = {
   'Cloud model namespace is required': 'model_unavailable',
   'Cloud model owner is required': 'model_unavailable',
   'Select an available Codex model for this conversation': 'model_unavailable',
+  "Reselect the task's submitted model interface to restore its credentials": 'model_unavailable',
   'Missing connection events': 'connection_response_invalid',
   'Missing connection checkpoint': 'connection_response_invalid',
   'Connection event is missing required fields': 'connection_response_invalid',
@@ -81,6 +82,7 @@ const LEGACY_ERROR_CODES: Record<string, string> = {
 }
 
 const TRANSPORT_ERROR_CODES: Record<string, string> = {
+  RUNNER_MODEL_UNAVAILABLE: 'model_unavailable',
   executor_disconnected: 'executor_unavailable',
   protocol_mismatch: 'executor_update_required',
   unsupported_method: 'executor_update_required',
@@ -127,6 +129,12 @@ export function getStandInErrorMessage(
 ): string {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
   const message = getErrorMessage(error, '').replace(/^Error: /, '')
+  if (
+    typeof code === 'string' &&
+    !i18n.exists('common:standIn.errors.' + code) &&
+    i18n.exists('common:standIn.git.errors.' + code)
+  )
+    return i18n.t('common:standIn.git.errors.' + code)
   const knownCode = (value: unknown): value is string =>
     typeof value === 'string' && i18n.exists('common:standIn.errors.' + value)
   const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined

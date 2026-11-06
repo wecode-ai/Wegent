@@ -599,6 +599,50 @@ describe('WorkspaceTabsProvider routing', () => {
     }
   )
 
+  test.each(['协作 (Beta)', 'Collaboration (Beta)'])(
+    'normalizes fixed collaboration preferences (%s) on startup and delayed loading',
+    title => {
+      const fixedTabs = [
+        { id: 'fixed-board', kind: 'board' as const, title, contentRoute: '/todo', fixed: true },
+        {
+          id: 'named-board',
+          kind: 'board' as const,
+          title: '产品规划',
+          contentRoute: '/todo?projectId=project-1',
+          fixed: true,
+        },
+      ]
+      let current!: WorkspaceTabsContextValue
+      const onContextValue = (value: WorkspaceTabsContextValue) => {
+        current = value
+      }
+      const { unmount } = render(
+        <RoutingHarness
+          fixedTabs={fixedTabs}
+          restoreSessionTabs={false}
+          onContextValue={onContextValue}
+        />
+      )
+      expect(current.tabs.find(tab => tab.id === 'fixed-board')?.title).toBe('协作')
+      expect(current.tabs.find(tab => tab.id === 'named-board')?.title).toBe('产品规划')
+      unmount()
+
+      window.history.replaceState({}, '', '/')
+      const { rerender } = render(
+        <RoutingHarness fixedTabs={[]} restoreSessionTabs={false} onContextValue={onContextValue} />
+      )
+      rerender(
+        <RoutingHarness
+          fixedTabs={fixedTabs}
+          restoreSessionTabs={false}
+          onContextValue={onContextValue}
+        />
+      )
+      expect(current.tabs.find(tab => tab.id === 'fixed-board')?.title).toBe('协作')
+      expect(current.tabs.find(tab => tab.id === 'named-board')?.title).toBe('产品规划')
+    }
+  )
+
   test('the explicit new-tab action still opens a separate tab', () => {
     render(<RoutingHarness />)
 
@@ -702,6 +746,41 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(params.get('workspaceTab')).toBe('auxiliary-apps')
     expect(params.get('workspaceTabTitle')).toBe('应用')
     window.removeEventListener('popstate', onPopState)
+  })
+
+  test('retains late project navigation in its owning tab without changing the active task', () => {
+    window.history.replaceState({}, '', '/todo?workspaceTab=fixed-board')
+    let context: WorkspaceTabsContextValue | undefined
+    render(
+      <RoutingHarness
+        onContextValue={value => {
+          context = value
+        }}
+      />
+    )
+    const board = context!.activeTab
+    const finishProjectLookup = context!.updateTab
+    act(() => {
+      context!.openTab('task')
+    })
+    const taskId = context!.activeTabId
+    const taskUrl = window.location.href
+    const projectRoute = '/todo?projectStore=local&projectId=late-project'
+
+    act(() => finishProjectLookup(board.id, { title: 'Late project', contentRoute: projectRoute }))
+
+    expect(context!.activeTabId).toBe(taskId)
+    expect(window.location.href).toBe(taskUrl)
+    expect(context!.tabs.find(tab => tab.id === board.id)?.contentRoute).toBe(projectRoute)
+    act(() => context!.selectTab(board.id))
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('late-project')
+    act(() => context!.closeTab(board.id))
+    const remainingIds = context!.tabs.map(tab => tab.id)
+    expect(remainingIds).not.toContain(board.id)
+    const remainingUrl = window.location.href
+    act(() => finishProjectLookup(board.id, { contentRoute: '/todo?projectId=closed-project' }))
+    expect(context!.tabs.map(tab => tab.id)).toEqual(remainingIds)
+    expect(window.location.href).toBe(remainingUrl)
   })
 
   test('does not restore a stale route when route labels change after active-tab navigation', () => {

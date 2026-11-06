@@ -134,6 +134,15 @@ requests run outside write transactions; result writes validate current business
 state. Savepoint rollback restores expected versions without releasing the root
 lock.
 
+Rust automatic update batches run the existing bounded operation in an owned
+Tokio task that inherits the request tracing context. An HTTP disconnect or
+desktop restart does not cancel the transaction and release sequence. The
+operation retains its existing time budget and releases its token-checked lease
+after commit or rollback, so subsequent authentication and device reconciliation
+do not wait for an abandoned lease's TTL. The cancellation regression verifies
+that the lease remains held before completion, is released afterward, and can
+be acquired by the next operation.
+
 For transactions referring to the same policy row, CAS protects commit order:
 once a successor commits, an older revision cannot overwrite it. A worker paused
 after checking Redis ownership can still resume and win CAS before its successor
@@ -226,3 +235,9 @@ only the target `users` row and plugin resources and dependencies remain healthy
 the plugin lifecycle should complete. Locks on plugin business rows still follow
 normal transaction rules. Evaluate extreme lease-expiration overlap during first
 policy creation within the limits described above.
+
+## Reinstall responses and concurrent cleanup acknowledgements
+
+An older uninstall cleanup can reload desired state after reinstall commits and send a newer install snapshot. The original reinstall RPC may succeed while its acknowledgement is fenced from persistence by that newer generation intent. Returning that acknowledgement as completed would expose both sync success and an `uninstalling` device row.
+
+Requesting-device synchronization now checks device convergence and the generation watermark after recording the acknowledgement. It redispatches current desired state only when the device has not converged and a newer generation has superseded the acknowledgement, using the existing three-attempt convergence budget. Actual device failures are not retried, and older-ACK fences remain intact. Continued supersession returns an auxiliary `plugin_sync_superseded` error while retaining the committed account install and reconciliation source. API regressions cover successful convergence and budget exhaustion; existing `plugin-write-coordination` E2E assertions remain unchanged.

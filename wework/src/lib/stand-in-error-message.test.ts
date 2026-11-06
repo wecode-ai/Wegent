@@ -121,14 +121,24 @@ describe('stand-in error localization', () => {
   })
 })
 
-it('preserves project-scoped agent connection guidance through repeated UI resolution', async () => {
+it('preserves recovery guidance for historical agent binding errors through repeated UI resolution', async () => {
   await i18n.changeLanguage('zh-CN')
   const error = {
     code: 'stand_in_project_connections',
     message: 'invalid task data: Project-scoped agents can only receive work from their project',
   }
   const message = getStandInErrorMessage(error)
-  expect(message).toBe('该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。')
+  expect(message).toBe('分身的旧智能体绑定已失效。请重新加载分身设置后重试。')
   expect(getStandInErrorMessage(new Error(message))).toBe(message)
   expect(getStandInErrorMessage(error.message)).toBe(message)
+})
+
+it('maps a submitted interface needing restoration to model selection guidance', async () => {
+  for (const language of ['zh-CN', 'en']) {
+    await i18n.changeLanguage(language)
+    const message = "Reselect the task's submitted model interface to restore its credentials"
+    const expected = i18n.t('common:standIn.errors.model_unavailable')
+    expect(getStandInErrorMessage({ code: 'RUNNER_MODEL_UNAVAILABLE', message })).toBe(expected)
+    expect(getStandInErrorMessage(new Error(message))).toBe(expected)
+  }
 })

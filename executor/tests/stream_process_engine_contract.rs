@@ -59,6 +59,8 @@ async fn stream_process_engine_parses_ndjson_stdout() {
             r#"printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'"#,
         ),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
 
     let outcome = engine.run(ExecutionRequest::default()).await;
@@ -78,6 +80,8 @@ async fn stream_process_engine_completes_with_slow_stream_callbacks() {
             r#"printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'"#,
         ),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
 
     let outcome = tokio::time::timeout(
@@ -117,6 +121,8 @@ async fn stream_process_engine_compacts_queued_text_callbacks_before_success() {
             assistant
         )),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
 
     let started = std::time::Instant::now();
@@ -153,6 +159,8 @@ async fn stream_process_engine_sends_remaining_text_delta_before_success() {
             assistant
         )),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
     let events = Arc::new(Mutex::new(Vec::new()));
 
@@ -205,6 +213,8 @@ async fn stream_process_engine_preserves_queued_non_text_events_before_success()
             assistant, tool_result
         )),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
     let events = Arc::new(Mutex::new(Vec::new()));
 
@@ -254,6 +264,8 @@ async fn stream_process_engine_emits_child_agent_text_as_nested_block() {
             child, root
         )),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
     let events = Arc::new(Mutex::new(Vec::new()));
 
@@ -344,6 +356,8 @@ async fn stream_process_engine_emits_claude_subagent_lifecycle() {
             agent_tool, task_started, task_notification, agent_result
         )),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
     let events = Arc::new(Mutex::new(Vec::new()));
 
@@ -432,6 +446,8 @@ async fn stream_process_engine_ignores_root_text_while_async_agent_is_running() 
             task_started, draft, task_notification, final_message
         )),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
     let events = Arc::new(Mutex::new(Vec::new()));
 
@@ -468,6 +484,8 @@ async fn stream_process_engine_fails_when_claude_stdout_ends_without_result() {
             r#"printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}'; printf '%s' '{"type":"user","message":{"content":[{"type":"tool_result","content":"broken"}'"#,
         ),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
 
     let outcome = engine.run(ExecutionRequest::default()).await;
@@ -485,6 +503,8 @@ async fn stream_process_engine_keeps_stderr_for_process_failures() {
             .arg("-c")
             .arg("printf process-failed >&2; exit 3"),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
 
     let outcome = engine.run(ExecutionRequest::default()).await;
@@ -514,7 +534,12 @@ fi
         .arg(script)
         .arg("--resume")
         .arg("stale-session");
-    let engine = StreamProcessEngine::new(spec, TEST_PROCESS_TIMEOUT_SECONDS);
+    let engine = StreamProcessEngine::new(
+        spec,
+        TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
+    );
     let request = ExecutionRequest {
         task_id: task_id.clone(),
         subtask_id: task_id,

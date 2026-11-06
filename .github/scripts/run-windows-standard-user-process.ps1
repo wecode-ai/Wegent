@@ -22,6 +22,12 @@ $stderrPath = Join-Path $logDirectory "stderr.log"
 $userSid = $null
 
 try {
+  & powershell.exe -NoProfile -NonInteractive -File (
+    Join-Path $PSScriptRoot "prepare-windows-e2e-display.ps1"
+  )
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to prepare the Windows desktop E2E display"
+  }
   $user = New-LocalUser `
     -Name $userName `
     -Password $password `

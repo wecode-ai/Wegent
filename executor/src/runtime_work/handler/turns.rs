@@ -165,13 +165,27 @@ fn write_runtime_turn_state(
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
     let key = load_or_create_runtime_turn_queue_key(queue_path)?;
-    let plaintext = serde_json::to_vec(&RuntimeTurnQueuePayload {
+    let mut payload = RuntimeTurnQueuePayload {
         version: RUNTIME_TURN_QUEUE_VERSION,
         turns: turns.clone(),
         active_goal_turns: active_goal_turns.clone(),
         commands: commands.clone(),
-    })
-    .map_err(|error| format!("Failed to serialize runtime turn queue: {error}"))?;
+    };
+    for turn in payload
+        .turns
+        .iter_mut()
+        .chain(payload.active_goal_turns.values_mut())
+        .chain(
+            payload
+                .commands
+                .values_mut()
+                .map(|command| &mut command.turn),
+        )
+    {
+        submitted_model::redact_persisted_submitted_interface(turn);
+    }
+    let plaintext = serde_json::to_vec(&payload)
+        .map_err(|error| format!("Failed to serialize runtime turn queue: {error}"))?;
     let mut nonce = [0_u8; 12];
     getrandom::fill(&mut nonce)
         .map_err(|error| format!("Failed to generate runtime turn queue nonce: {error}"))?;
@@ -347,6 +361,16 @@ impl RuntimeWorkRpcHandler {
             .clone();
         command_journal::project_queue(&mut commands, &turns, starting)?;
         let committed_commands = commands.clone();
+        let owner_admissions: Vec<_> = turns
+            .iter()
+            .chain(starting)
+            .filter_map(|turn| {
+                turn.request
+                    .extra
+                    .get("standInOwnerRequest")
+                    .map(|owner| (turn.local_task_id.clone(), owner.clone()))
+            })
+            .collect();
         let queue_path = Arc::clone(&self.turn_queue_path);
         let active_goal_turns = self
             .active_goal_turns
@@ -368,6 +392,9 @@ impl RuntimeWorkRpcHandler {
             .command_journal
             .lock()
             .expect("command journal lock should not be poisoned") = committed_commands;
+        for (task, owner) in &owner_admissions {
+            self.record_stand_in_owner_admission(task, owner);
+        }
         if let Some((previous, current)) = admissions {
             self.sync_native_queue_admissions(previous, current);
         }
@@ -960,6 +987,7 @@ impl RuntimeWorkRpcHandler {
         let preparation = async {
             self.prepare_project_environment(&mut turn).await?;
             self.prepare_deferred_worktree(&mut turn).await?;
+            self.prepare_creation_branch(&mut turn.request).await?;
             self.persist_prepared_project_workspace(&turn)?;
             self.store.update_task(&turn.local_task_id, |link| {
                 link.workspace_path = turn.request.cwd().unwrap_or_default().to_owned();
@@ -1185,6 +1213,16 @@ impl RuntimeWorkRpcHandler {
             });
             return;
         }
+        if !self.stand_in_owner_request_matches(&turn.request, &turn.local_task_id) {
+            let handler = self.clone();
+            tokio::spawn(async move {
+                handler
+                    .finish_prepared_command(&turn, command_journal::CommandState::Cancelled)
+                    .await;
+                handler.finish_scheduled_turn(&turn.local_task_id).await;
+            });
+            return;
+        }
         if let Err(error) =
             self.validate_stand_in_schedule_start(&turn.request, &turn.local_task_id)
         {
@@ -1220,17 +1258,20 @@ impl RuntimeWorkRpcHandler {
             "runtimeLocalTaskId".to_owned(),
             Value::String(turn.local_task_id.clone()),
         );
-        if is_claude_runtime(&turn.runtime) {
-            self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
-            return;
-        }
         self.apply_backend_connection(&mut turn.request);
-        let stand_in_context = self.refresh_stand_in_context(&mut turn.request);
+        let execution_context = self
+            .resolve_local_model_reference(&mut turn.request, &turn.local_task_id)
+            .map_err(|error| error.message)
+            .and_then(|_| self.refresh_stand_in_context(&mut turn.request));
         crate::runtime_work::api_context::inject_current_session(
             &mut turn.request,
             &self.device_id,
             &turn.local_task_id,
         );
+        if is_claude_runtime(&turn.runtime) {
+            self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
+            return;
+        }
         let SpawnTurnRequest {
             task_kind: _,
             local_task_id,
@@ -1457,7 +1498,7 @@ impl RuntimeWorkRpcHandler {
                 recovery_handler.record_overload_recovery_turn(&recovery_local_task_id, &turn_id);
             });
             let result = async {
-                stand_in_context?;
+                execution_context?;
                 handler
                     .validate_project_coordinator_request(&request)
                     .await?;
@@ -1674,6 +1715,11 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         _operation: tokio::sync::OwnedMutexGuard<()>,
     ) {
+        // A native Goal can outlive the local request that admitted it. Its
+        // task keeps the reservation until native execution actually settles.
+        if self.native_task_holds_capacity(local_task_id) {
+            return;
+        }
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
                 .turn_scheduler

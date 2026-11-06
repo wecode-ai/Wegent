@@ -1,7 +1,6 @@
 // @vitest-environment node
 
 import type { UnifiedModel } from '@/types/api'
-import { desktopModelControl } from '@wegent/collaboration/controls/model-selector-utils'
 import { describe, expect, test } from 'vitest'
 import {
   areModelsProtocolCompatible,
@@ -138,7 +137,6 @@ describe('model-ui', () => {
       ])
       expect(reasoning?.options.map(option => option.value)).toEqual(['low', 'high', 'max'])
       expect(reasoning?.defaultValue).toBe('high')
-      expect(desktopModelControl(reasoning, model)?.options).toEqual(reasoning?.options)
       expect(normalizeModelOptions(model, { reasoning: 'max' }).reasoning).toBe('max')
       expect(normalizeModelOptions(model, { reasoning: 'medium' }).reasoning).toBe('high')
       expect(inferModelFamily(model)).toBe(family)

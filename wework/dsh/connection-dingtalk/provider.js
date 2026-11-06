@@ -1,7 +1,10 @@
+import { createReadCursor } from './read-cursor.js'
+
 const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 
 export function createProvider() {
   const identities = new Map()
+  const readCursors = createReadCursor()
   return {
     async check(ctx) {
       let authTarget
@@ -70,37 +73,166 @@ export function createProvider() {
     async initialize(_ctx, input) {
       return { after: required(input, 'enabledAfter'), cursor: '0' }
     },
-    async collect(ctx, { source, checkpoint }) {
-      const profile = required(source, 'profile')
-      const id = required(source, 'id')
-      const selfId = await ownIdentity(ctx, profile, identities)
-      const start = checkpoint?.after ?? required(source, 'enabledAfter')
-      const until = checkpoint?.until ?? new Date().toISOString()
-      const cursor = checkpoint?.cursor ?? '0'
-      const args = { start, end: until, limit: '100', cursor, profile }
-      if (source.scope !== 'all') {
-        if (source.kind === 'group') args.group = id
-        else args.senderIds = id
-      }
-      const response = await readTool(
-        ctx,
-        source.kind === 'group' ? 'listMentions' : 'searchMessages',
-        args
+    async readSource(ctx, input) {
+      const { source } = input
+      if (
+        source?.providerId !== PROVIDER_ID ||
+        !['group', 'direct'].includes(source.kind) ||
+        source.scope !== undefined ||
+        required(source, 'id') === '*' ||
+        /[,\r\n]/.test(source.id)
       )
-      const events = normalizeMessages(source, response, selfId)
-      if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
-      const hasMore = response.result.hasMore
-      const next = hasMore ? required(response.result, 'nextCursor') : '0'
-      if (hasMore && next === cursor) throw invalid('Pagination cursor did not advance')
+        throw invalid('Read an exact connected conversation')
+      const state =
+        input.cursor === undefined
+          ? { ...readWindow(input.query ?? {}), issuedAt: Date.now() }
+          : readCursors.decode(source, { ...input.query, cursor: input.cursor })
+      const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
+      const page = await readTool(
+        ctx,
+        source.kind === 'group' ? 'listConversation' : 'listDirectConversation',
+        {
+          [source.kind === 'group' ? 'group' : 'peer']: source.id,
+          profile: source.profile,
+          time: state.time ?? state.end,
+          limit: String(state.limit),
+        }
+      )
+      if (
+        page.contractVersion !== 'im.message-list.v1' ||
+        !Array.isArray(page.messages) ||
+        page.messages.length > state.limit ||
+        page.paginationKnown !== true ||
+        typeof page.hasMore !== 'boolean' ||
+        page.failedCount !== 0 ||
+        page.partial === true
+      )
+        throw invalid('Incomplete native conversation response')
+      const since = Date.parse(state.start)
+      const until = Date.parse(state.end)
+      const messages = page.messages.map(message =>
+        nativeMessage(message, source, selfId, state.limit)
+      )
+      const reachedStart = messages.some(message => Date.parse(message.at) < since)
+      const items = messages.filter(
+        message => Date.parse(message.at) >= since && Date.parse(message.at) <= until
+      )
+      const hasMore = page.hasMore && !reachedStart
+      const time = hasMore ? required(page.nextPage, 'time') : undefined
+      if (hasMore && (!Number.isFinite(Date.parse(time)) || time === (state.time ?? state.end)))
+        throw invalid('Invalid native conversation pagination')
       return {
-        events,
-        nextCheckpoint: hasMore
-          ? { after: start, until, cursor: next }
-          : { after: until, cursor: '0' },
+        items,
+        range: { since: state.start, until: state.end },
         hasMore,
+        ...(hasMore ? { nextCursor: readCursors.encode(source, { ...state, time }) } : {}),
+        contextComplete: !hasMore,
+        readOnly: true,
+      }
+    },
+    async collect(ctx, { source, checkpoint }) {
+      try {
+        const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
+        const start = checkpoint?.after ?? required(source, 'enabledAfter')
+        const until = checkpoint?.until ?? new Date().toISOString()
+        const cursor = checkpoint?.cursor ?? '0'
+        const {
+          events,
+          hasMore,
+          nextCursor: next,
+        } = await readMessagePage(ctx, source, { start, end: until, limit: 100, cursor }, selfId)
+        return {
+          events,
+          nextCheckpoint: hasMore
+            ? { after: start, until, cursor: next }
+            : { after: until, cursor: '0' },
+          hasMore,
+        }
+      } catch (error) {
+        if (
+          [
+            'connection_cli_timeout',
+            'ECONNRESET',
+            'ECONNREFUSED',
+            'ETIMEDOUT',
+            'EHOSTUNREACH',
+            'ENETUNREACH',
+            'EAI_AGAIN',
+          ].includes(error.code)
+        )
+          error.retryAfterMs ??= 30000
+        throw error
       }
     },
   }
+}
+
+function nativeMessage(message, source, ownId, limit) {
+  const at = required(message, 'createTime')
+  if (!Number.isFinite(Date.parse(at))) throw invalid('Invalid native message time')
+  const text = required(message, 'text')
+  const budget = Math.min(20000, Math.floor(24000 / limit))
+  const conversationId = required(message, 'conversationId')
+  if (source.kind === 'group' && conversationId !== source.id)
+    throw invalid('Native message belongs to another conversation')
+  return {
+    id: required(message, 'messageId'),
+    eventType: 'message.received',
+    at,
+    text: text.slice(0, budget),
+    truncated: text.length > budget,
+    senderId: message.senderId ?? null,
+    senderName: message.sender ?? null,
+    isOwn: message.senderId === ownId,
+    conversationId,
+    topicId: message.threadId ?? null,
+    ...(message.quotedMessage ? { quotedMessage: boundedQuote(message.quotedMessage) } : {}),
+  }
+}
+
+function boundedQuote(value) {
+  const json = JSON.stringify(value)
+  return { text: json.slice(0, 2000), truncated: json.length > 2000 }
+}
+
+function readWindow(input) {
+  const now = Date.now()
+  const start = input.since === undefined ? new Date(now - 86400000).toISOString() : input.since
+  const since = typeof start === 'string' ? Date.parse(start) : NaN
+  const limit = input.limit === undefined ? 20 : input.limit
+  if (
+    !Number.isFinite(since) ||
+    since < now - 7 * 86400000 ||
+    since > now ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 20
+  )
+    throw invalid('Read at most twenty messages from the past seven days')
+  return { start, end: new Date(now).toISOString(), limit }
+}
+
+async function readMessagePage(ctx, source, window, ownId) {
+  const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
+  if (source.scope !== 'all') {
+    if (source.kind === 'group') args.group = required(source, 'id')
+    else args.senderIds = required(source, 'id')
+  }
+  const response = await readTool(
+    ctx,
+    source.kind === 'group' ? 'listMentions' : 'searchMessages',
+    args
+  )
+  return messagePage(source, response, ownId, window.cursor)
+}
+
+function messagePage(source, response, ownId, cursor) {
+  const events = normalizeMessages(source, response, ownId)
+  if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
+  const hasMore = response.result.hasMore
+  const nextCursor = hasMore ? required(response.result, 'nextCursor') : '0'
+  if (hasMore && nextCursor === cursor) throw invalid('Pagination cursor did not advance')
+  return { events, hasMore, nextCursor }
 }
 
 export function normalizeMessages(source, response, ownId) {

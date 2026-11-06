@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 const SHIMMER_TEXT_WIDTH = "--activity-shimmer-text-width";
 const SHIMMER_TEXT_OFFSET = "--activity-shimmer-text-offset";
@@ -14,20 +14,15 @@ export function ActivityShimmerText({
 }) {
   const textRef = useRef<HTMLSpanElement>(null);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const text = textRef.current;
-    if (!text) return;
-
-    const updateWidth = () => {
-      const width = text.getBoundingClientRect().width;
+    if (!text || typeof ResizeObserver === "undefined") return;
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      const width = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
       text.style.setProperty(SHIMMER_TEXT_WIDTH, `${width}px`);
       text.style.setProperty(SHIMMER_TEXT_OFFSET, `${-width}px`);
-    };
-
-    updateWidth();
-    if (typeof ResizeObserver === "undefined") return;
-
-    const resizeObserver = new ResizeObserver(updateWidth);
+    });
     resizeObserver.observe(text);
     return () => resizeObserver.disconnect();
   }, []);

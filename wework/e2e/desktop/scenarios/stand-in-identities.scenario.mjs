@@ -137,7 +137,7 @@ export function createDesktopScenario({
       await selectE2EModel(control, undefined, undefined, CHAT)
       await control.command('fill', INPUT, { value: PROPOSE })
       await control.command('press', INPUT, { key: 'Enter' })
-      await control.command('waitFor', '[data-testid="stand-in-proposal"]', {
+      await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal(
@@ -152,6 +152,8 @@ export function createDesktopScenario({
         saved.roles.length
       )
       assert.equal(sentProposal, true, 'The real managed MCP must create the draft')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-proposal-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-proposal"]')
       await captureScreenshot(control, '03-proposal-awaiting-confirmation.png', ROOT)
       await control.command('click', '[data-testid="stand-in-proposal-accept"]')
       await control.command('waitFor', `[data-testid="stand-in-overview-role-${ROLE}"]`)

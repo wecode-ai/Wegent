@@ -155,11 +155,10 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     const { api } = setup('backend')
     api.agents.create.mockRejectedValueOnce(new Error('Binding permission denied'))
     const user = await chooseSource()
-    await user.click(screen.getByTestId('cloud-todo-save'))
     expect(await screen.findByText('Binding permission denied')).toBeVisible()
     expect(api.issues.assign).not.toHaveBeenCalled()
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('空间代码助手')
-    await user.click(screen.getByTestId('cloud-todo-save'))
+    await user.click(screen.getByTestId('cloud-todo-field-retry'))
     await waitFor(() => expect(api.issues.assign).toHaveBeenCalledOnce())
   })
 
@@ -167,11 +166,46 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     const { api } = setup('local')
     api.issues.assign.mockRejectedValueOnce(new Error('Assignment unavailable'))
     const user = await chooseSource()
-    await user.click(screen.getByTestId('cloud-todo-save'))
     expect(await screen.findByText('Assignment unavailable')).toBeVisible()
-    await user.click(screen.getByTestId('cloud-todo-save'))
+    await user.click(screen.getByTestId('cloud-todo-field-retry'))
     await waitFor(() => expect(api.issues.assign).toHaveBeenCalledTimes(2))
     expect(api.agents.create).toHaveBeenCalledOnce()
+  })
+
+  it('shows the persisted project Agent after retrying a workspace resource assignment', async () => {
+    const { api } = setup('local')
+    api.issues.assign.mockRejectedValueOnce(new Error('Assignment unavailable'))
+    const user = await chooseSource()
+    expect(await screen.findByText('Assignment unavailable')).toBeVisible()
+    await user.click(screen.getByTestId('cloud-todo-field-retry'))
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        'agent:project-binding'
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('空间代码助手')
+    expect(api.agents.create).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a newer assignee selection while the resource assignment completes', async () => {
+    const { api, item } = setup('local')
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    api.issues.assign.mockImplementationOnce(() => pending.promise)
+    const user = await chooseSource()
+    await waitFor(() => expect(api.issues.assign).toHaveBeenCalledOnce())
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
+    await act(async () =>
+      pending.resolve({ ...item, assignee_agent_id: 'project-binding', version: 2 })
+    )
+    await waitFor(() =>
+      expect(api.issues.update).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ version: 2, assigneeAgentId: null })
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', '')
   })
 
   it('does not create an Issue if its selected workspace Agent cannot be enabled', async () => {

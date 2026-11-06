@@ -14,6 +14,11 @@ export interface AuthorizationPollResult {
   error?: string
 }
 
+export interface PreparedCloudAuthorization {
+  authorizationId: string
+  publicKey: DevicePublicKey
+}
+
 export interface RefreshedAccessToken {
   accessToken: string
   tokenType: string
@@ -39,13 +44,23 @@ type CloudCredentialResult<Value> = CloudCredentialSuccess<Value> | CloudCredent
 declare global {
   interface Window {
     weworkElectronCloudCredentials?: {
-      getDevicePublicKey(): Promise<DevicePublicKey>
-      claimAuthorization(input: {
+      prepareAuthorization(
         apiBaseUrl: string
+      ): Promise<CloudCredentialResult<PreparedCloudAuthorization>>
+      claimAuthorization(input: {
+        authorizationId: string
         sessionId: string
         pollToken: string
       }): Promise<CloudCredentialResult<AuthorizationPollResult>>
-      refreshAccessToken(apiBaseUrl: string): Promise<CloudCredentialResult<RefreshedAccessToken>>
+      commitAuthorization(
+        authorizationId: string,
+        ownerUserId: number
+      ): Promise<CloudCredentialResult<void>>
+      discardAuthorization(authorizationId: string): Promise<CloudCredentialResult<void>>
+      refreshAccessToken(
+        apiBaseUrl: string,
+        expectedUserId: number
+      ): Promise<CloudCredentialResult<RefreshedAccessToken>>
       clear(): Promise<void>
     }
   }
@@ -69,12 +84,14 @@ function bridge() {
   return value
 }
 
-export function getDesktopDevicePublicKey(): Promise<DevicePublicKey> {
-  return bridge().getDevicePublicKey()
+export async function prepareDesktopCloudAuthorization(
+  apiBaseUrl: string
+): Promise<PreparedCloudAuthorization> {
+  return unwrap(await bridge().prepareAuthorization(apiBaseUrl))
 }
 
 export async function claimDesktopCloudAuthorization(input: {
-  apiBaseUrl: string
+  authorizationId: string
   sessionId: string
   pollToken: string
 }): Promise<AuthorizationPollResult> {
@@ -82,9 +99,21 @@ export async function claimDesktopCloudAuthorization(input: {
 }
 
 export async function refreshDesktopCloudAccessToken(
-  apiBaseUrl: string
+  apiBaseUrl: string,
+  expectedUserId: number
 ): Promise<RefreshedAccessToken> {
-  return unwrap(await bridge().refreshAccessToken(apiBaseUrl))
+  return unwrap(await bridge().refreshAccessToken(apiBaseUrl, expectedUserId))
+}
+
+export async function commitDesktopCloudAuthorization(
+  authorizationId: string,
+  ownerUserId: number
+): Promise<void> {
+  unwrap(await bridge().commitAuthorization(authorizationId, ownerUserId))
+}
+
+export async function discardDesktopCloudAuthorization(authorizationId: string): Promise<void> {
+  unwrap(await bridge().discardAuthorization(authorizationId))
 }
 
 export async function clearDesktopCloudCredentials(): Promise<void> {

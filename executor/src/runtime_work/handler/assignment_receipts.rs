@@ -13,7 +13,7 @@ impl RuntimeWorkRpcHandler {
         let backend = if local {
             String::new()
         } else {
-            self.verify_stand_in_user(config).await?;
+            self.verify_runtime_user(config).await?;
             self.backend_connection_snapshot()?
                 .ok_or_else(|| {
                     AppIpcError::new("cloud_unavailable", "Cloud connection is unavailable")
@@ -38,7 +38,7 @@ impl RuntimeWorkRpcHandler {
                 )
                 .map_err(settings_error)?;
         } else {
-            self.stand_in_http(
+            self.runtime_http(
                 reqwest::Method::POST,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
                 Some(&binding),
@@ -142,7 +142,7 @@ impl RuntimeWorkRpcHandler {
             }
             // Keep identity verification and the write on the same connection snapshot.
             let identity =
-                Self::stand_in_request_on(&connection, reqwest::Method::GET, "/users/me", None)
+                Self::runtime_request_on(&connection, reqwest::Method::GET, "/users/me", None)
                     .await;
             let verified = match identity {
                 Ok(response) if response.status().is_success() => {
@@ -164,7 +164,7 @@ impl RuntimeWorkRpcHandler {
                 receipt["issueId"].as_str().unwrap_or_default(),
                 receipt["assignmentId"].as_str().unwrap_or_default()
             );
-            match Self::stand_in_request_on(&connection, reqwest::Method::POST, &path, Some(&json!({
+            match Self::runtime_request_on(&connection, reqwest::Method::POST, &path, Some(&json!({
                 "kind":"stand_in_received", "device_id":receipt["deviceId"], "task_id":receipt["taskId"],
             }))).await {
                 Ok(response) if response.status().is_success() || response.status() == reqwest::StatusCode::CONFLICT => {

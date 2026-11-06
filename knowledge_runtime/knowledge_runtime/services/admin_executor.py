@@ -10,15 +10,11 @@ import asyncio
 import logging
 from typing import Any
 
-from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import (
     create_storage_backend_from_config,
     create_storage_backend_from_runtime_config,
 )
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
-from knowledge_runtime.services.document_index_adapter import (
-    DocumentServiceIndexAdapter,
-)
 from shared.knowledge_module import (
     build_document_delete_request,
     delete_document,
@@ -61,6 +57,11 @@ class AdminExecutor:
         request: RemoteDeleteDocumentIndexRequest,
     ) -> dict[str, Any]:
         """Delete a document's index from a knowledge base."""
+        from knowledge_engine.services.document_service import DocumentService
+        from knowledge_runtime.services.document_index_adapter import (
+            DocumentServiceIndexAdapter,
+        )
+
         config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
             operation="delete",

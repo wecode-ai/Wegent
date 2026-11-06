@@ -39,6 +39,30 @@ describe('BufferedChatInput', () => {
     vi.useRealTimers()
   })
 
+  test('flushes the latest unacknowledged draft when navigation unmounts the composer', () => {
+    vi.useFakeTimers()
+    const save = vi.fn()
+    const view = render(
+      <BufferedChatInput
+        variant="desktop"
+        projectChat={createProjectChat('stand-in:primary')}
+        value=""
+        onChange={save}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />
+    )
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      input.value = '还未发布的最新草稿'
+    })
+    expect(save).not.toHaveBeenCalled()
+    view.unmount()
+    expect(save).toHaveBeenCalledWith('还未发布的最新草稿')
+    act(() => vi.runOnlyPendingTimers())
+    expect(save).toHaveBeenCalledOnce()
+  })
+
   test('restores an earlier draft after synchronous publications are batched', () => {
     vi.useFakeTimers()
     const publications: string[] = []

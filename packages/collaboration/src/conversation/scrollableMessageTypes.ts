@@ -53,6 +53,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   historyError?: ReactNode
   isWaitingForAssistant?: boolean
   hasMoreBefore?: boolean
+  beforeCursor?: string | null
   loadingMoreBefore?: boolean
   historyLoadingMode?: 'automatic' | 'manual'
   turnNavigation?: RuntimeTurnNavigationItem[]
@@ -106,6 +107,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
+  onFillSelectionToAnswer?: (text: string) => void
   autoScrollSuspended?: boolean
   searchTarget?: ConversationSearchTarget | null
   messageTarget?: ConversationMessageTarget

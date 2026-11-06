@@ -149,11 +149,18 @@ export function getRecognizedLink(url: string): RecognizedLink | undefined {
   return undefined;
 }
 
-const FIRST_URL_REGEX = /https?:\/\/[^\s)\]}]+/i;
 const TRAILING_PUNCTUATION_REGEX = /[),.;:]+$/;
 
+export function matchHttpUrls(
+  text: string,
+): IterableIterator<RegExpMatchArray> {
+  return text.matchAll(
+    /https?:\/\/[^\s)\]}（）【】《》「」『』，。；：！？、]+/gi,
+  );
+}
+
 export function extractFirstLink(text: string): LinkPreview | undefined {
-  const match = FIRST_URL_REGEX.exec(text);
+  const match = matchHttpUrls(text).next().value;
   if (!match) return undefined;
 
   const raw = match[0].replace(TRAILING_PUNCTUATION_REGEX, "");

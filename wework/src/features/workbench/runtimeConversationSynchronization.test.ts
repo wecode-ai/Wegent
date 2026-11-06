@@ -66,10 +66,13 @@ test.each([
   pending.resolve(response('The cached transcript is retained'))
   await first
   await failed
-  expect(issueRead).toHaveBeenCalledExactlyOnceWith({
-    ...address,
-    projectSession: { projectId: 'project', issueId: 'issue' },
-  })
+  expect(issueRead).toHaveBeenCalledExactlyOnceWith(
+    {
+      ...address,
+      projectSession: { projectId: 'project', issueId: 'issue' },
+    },
+    { signal: expect.any(AbortSignal) }
+  )
   expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({
     content: 'The cached transcript is retained',
   })

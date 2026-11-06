@@ -14,6 +14,7 @@ function preparationTasks(checkpoints) {
   for (const [preparation, group] of Object.entries({
     'local-harness': ['claude-runtime', 'local-harness', 'workbench-mode', 'native-window-startup'],
     'object-storage': ['collaboration-issue-mcp-comments', 'collaboration-delivery-editing'],
+    'dingtalk-protocol-fixture': ['stand-in-identities', 'stand-in-connections', 'stand-in-cli'],
   })) {
     const members = group.map(segment => pending.get(segment)).filter(Boolean)
     if (!members.length) continue

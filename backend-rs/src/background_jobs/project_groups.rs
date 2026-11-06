@@ -241,6 +241,7 @@ pub(crate) struct GroupAssignment {
     pub key: String,
     pub actor: i64,
     pub admission: Option<Admission>,
+    pub automation: Value,
 }
 
 pub(crate) async fn prepare_assignment(
@@ -251,6 +252,7 @@ pub(crate) async fn prepare_assignment(
     actor: i64,
     mut context: Value,
 ) -> Result<GroupAssignment> {
+    let automation = assignments::automation_actor(&context);
     let group = authorize(state, &project.id, id, actor).await?;
     authority::require_issue(state, project, &issue, actor).await?;
     let key = if issue.metadata.0["collaboration_group"]["id"].as_str() == Some(id) {
@@ -271,6 +273,7 @@ pub(crate) async fn prepare_assignment(
         id,
         group["name"].as_str().unwrap_or(""),
     );
+    assignments::attribute_history(&mut issue.metadata.0, "assignment_history", &automation);
     let mut admission = None;
     if group["leader"]["kind"] == "agent" {
         let leader = resolve_agent(state, &project.id, &member_id(&group["leader"])).await?;
@@ -350,6 +353,7 @@ pub(crate) async fn prepare_assignment(
         admission = Some(plan);
     }
     Ok(GroupAssignment {
+        automation,
         issue,
         group,
         key,
@@ -382,6 +386,7 @@ pub(crate) async fn apply_assignment_on(
     metadata["read_revisions"][actor.to_string()] = json!(revision);
     if issue.status != "in_progress" {
         assignments::status_history(&mut metadata, project, &issue.status, "in_progress", actor);
+        assignments::attribute_history(&mut metadata, "status_history", &assignment.automation);
         if let Some(last) = metadata["status_history"]
             .as_array_mut()
             .and_then(|rows| rows.last_mut())

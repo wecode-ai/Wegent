@@ -5,6 +5,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   expandCollaborationWorkspace,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -88,9 +89,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     return mcpToolRequestEvents(body, {
       toolName: step.name,
       argumentsValue: step.args,
-      directToolName: (body.tools ?? [])
-        .map(tool => tool.name)
-        .find(name => name?.endsWith(`__${step.name}`)),
+      directToolName: `mcp__wework_space__${step.name}`,
       searchCallId: `${callId()}-search`,
       toolCallId: callId(),
     }).events
@@ -262,7 +261,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         scoped(`collaboration-workspace-toggle-${workspace.id}`)
       )
       await control.command('click', scoped(`collaboration-workspace-project-${project.id}`))
-      await control.command('clickWhenEnabled', scoped('collaboration-tab-board'))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${manualIssue.id}`))
       await control.command('clickWhenEnabled', scoped('cloud-todo-personal-task-start'))
       const composer = `${scoped('work-item-new-task-chat-panel')} [data-testid="chat-message-input"]`

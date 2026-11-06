@@ -17,12 +17,9 @@ import {
   isResourceExclusiveCheckpoint,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
-import {
-  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
-  rejectFailedReleaseCheckpoint,
-} from './upgrade-suite.mjs'
+import { UPGRADE_DIAGNOSTIC_CHECKPOINTS, rejectFailedReleaseCheckpoint } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
-import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
+import { createXvfbDisplayAllocator, prepareXvfbSocketDirectory } from './xvfb-display.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -232,6 +229,9 @@ function requirePrebuiltUpgradePair(checkpoints, environment) {
 }
 
 async function sharedBuildEnvironment(environment = process.env, selectedCheckpoints) {
+  if (process.platform === 'linux' && environment.WEWORK_E2E_ISOLATED_XVFB === 'true') {
+    await prepareXvfbSocketDirectory()
+  }
   let nextEnvironment = environment
   const selected =
     selectedCheckpoints ??

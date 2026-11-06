@@ -213,8 +213,9 @@ describe('ComposerTextarea', () => {
     render(<Harness />)
     const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
     act(() => {
-      editor.value = '/github'
+      // Match real input order: native jsdom focus resets the DOM selection.
       editor.focus()
+      editor.value = '/github'
     })
     const option = await screen.findByTestId('slash-command-option-app-plugin-github')
     expect(option).toBeEnabled()

@@ -39,9 +39,9 @@ impl RuntimeWorkRpcHandler {
         if storage != "cloud" {
             return Err(AppIpcError::new("bad_request", "Invalid project storage"));
         }
-        self.verify_stand_in_user(&json!({"userId":user})).await?;
+        self.verify_runtime_user(&json!({"userId":user})).await?;
         let details = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/cloud-projects/{project}"),
                 None,
@@ -57,7 +57,7 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let groups = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/cloud-projects/{project}/collaboration-groups"),
                 None,
@@ -81,7 +81,7 @@ impl RuntimeWorkRpcHandler {
         }
         let agent = if group["leader"]["kind"] == "agent" {
             let rows = self
-                .stand_in_http(
+                .runtime_http(
                     reqwest::Method::GET,
                     &format!("/v1/cloud-projects/{project}/chat-agents"),
                     None,
@@ -254,7 +254,7 @@ impl RuntimeWorkRpcHandler {
                     .map_err(|error| error.message)?
                     .is_some()
                 {
-                    self.verify_stand_in_user(&json!({"userId":user}))
+                    self.verify_runtime_user(&json!({"userId":user}))
                         .await
                         .map_err(|error| error.message)?;
                 }

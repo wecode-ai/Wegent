@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createWindowsMarkdownFileLinks } from '../modules/windows-markdown-file-links.mjs'
+import { createTextAttachmentPreview } from '../modules/text-attachment-preview.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -91,7 +93,15 @@ async function waitForFileContent(filePath, expectedContent, timeoutMs) {
 }
 
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  const windowsLinks = createWindowsMarkdownFileLinks({ workspacePath, uiTimeoutMs })
+  const textAttachments = createTextAttachmentPreview({ workspacePath, captureScreenshot })
   return {
+    async handleHttp(request, response, url) {
+      return (
+        (await textAttachments.handleHttp(request, response, url)) ||
+        windowsLinks.handleHttp(request, response, url)
+      )
+    },
     async verify(control) {
       const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
       const breadcrumbDirectory = join(workspacePath, 'breadcrumb-fixture')
@@ -343,6 +353,8 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         { timeoutMs: uiTimeoutMs }
       )
       await captureScreenshot(control, 'local-file-preview-03-dark-review.png', 'body')
+      await windowsLinks.verify(control)
+      await textAttachments.verify(control)
     },
   }
 }

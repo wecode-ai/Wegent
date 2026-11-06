@@ -313,10 +313,11 @@ export function useConversationSearchTarget({
         recordPhase(3, behavior === 'smooth')
         navigationScrolling = true
         scroller.addEventListener('scrollend', finishNavigation)
+        const previousTop = scroller.scrollTop
         scrollToContentPosition(scroller, top, behavior)
         recordLayout(startedAt)
-        if (behavior === 'auto') finishNavigation()
-        else {
+        // Instant writes also need native read-back before resize anchoring resumes.
+        if (behavior === 'smooth' || scroller.scrollTop === previousTop) {
           const destination = Math.min(
             top,
             Math.max(0, scroller.scrollHeight - scroller.clientHeight)
@@ -428,7 +429,7 @@ export function useConversationSearchTarget({
     const stopNativeScroll = () => {
       if (!navigationScrolling) return
       scroller.removeEventListener('scrollend', finishNavigation)
-      scrollToContentPosition(scroller, scroller.scrollTop, 'auto')
+      if (behavior === 'smooth') scrollToContentPosition(scroller, scroller.scrollTop, 'auto')
       navigationScrolling = false
     }
     const cancelNavigation = (pauseHighlights = true) => {
@@ -456,7 +457,10 @@ export function useConversationSearchTarget({
     )
     for (const element of inputTargets)
       for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
-        element.addEventListener(type, cancelForInput, { capture: true, passive: true })
+        element.addEventListener(type, cancelForInput, {
+          capture: true,
+          passive: true,
+        })
     cancelNavigationRef.current = cancelNavigation
     if (navigationCancelled) {
       observer.disconnect()

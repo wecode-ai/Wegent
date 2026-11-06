@@ -42,6 +42,14 @@ case "$url" in
         fi
         ;;
       current-producer-*) state="${TEST_CASE#current-producer-}" ;;
+      current-cached)
+        state=in_progress
+        for argument in "$@"; do
+          if [[ "$argument" == 'Cache-Control: no-cache' ]]; then
+            state=success
+          fi
+        done
+        ;;
     esac
     if [[ "$state" == in_progress ]]; then
       printf '{"jobs":[{"name":"%s","status":"in_progress","conclusion":null}]}' "$TEST_PRODUCER_JOB"
@@ -181,6 +189,11 @@ cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/current-frontend/wegent-execu
 test "$(grep -Fc '/runs/7/jobs?' "$temp_dir/requests")" = 2
 test "$(grep -Fc '/runs/7/artifacts?' "$temp_dir/requests")" = 1
 grep -Eq 'phase=discovery-wait seconds=[0-9]+ polls=2$' "$temp_dir/current-timing"
+grep -Fq 'phase=discovery-pending producer=Build Frontend E2E Artifact state=in_progress ready=false' "$temp_dir/current-timing"
+
+TEST_CASE=current-cached \
+  "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$temp_dir/fresh-frontend"
+cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/fresh-frontend/wegent-executor"
 
 TEST_CASE=current-terminal-success \
   "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$temp_dir/terminal-frontend"

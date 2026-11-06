@@ -77,6 +77,52 @@ describe('createHttpClient', () => {
     expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal)
   })
 
+  test.each(['account', 'request'] as const)(
+    'preserves %s cancellation when a request has both lifetime and view signals',
+    async owner => {
+      const account = new AbortController()
+      const request = new AbortController()
+      fetchMock.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal.throwIfAborted()
+            init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })
+          })
+      )
+      const client = createHttpClient({ baseUrl: '/api', signal: account.signal })
+      const pending = client.post('/runtime-work/transcript', {}, { signal: request.signal })
+      const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      const active = owner === 'account' ? account : request
+      const other = owner === 'account' ? request : account
+      active.abort()
+      await rejected
+      expect(other.signal.aborted).toBe(false)
+      expect(fetchMock.mock.calls[0][1].signal.reason).toBe(active.signal.reason)
+    }
+  )
+
+  test('cancelling a view leaves another account-owned request usable', async () => {
+    const account = new AbortController()
+    const view = new AbortController()
+    const completions: Array<(value: unknown) => void> = []
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((resolve, reject) => {
+          completions.push(resolve)
+          init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })
+        })
+    )
+    const client = createHttpClient({ baseUrl: '/api', signal: account.signal })
+    const read = client.post('/runtime-work/transcript', {}, { signal: view.signal })
+    const readRejected = expect(read).rejects.toMatchObject({ name: 'AbortError' })
+    const control = client.get('/runtime-work')
+    view.abort()
+    await readRejected
+    expect(account.signal.aborted).toBe(false)
+    completions[1]({ ok: true, status: 200, json: async () => ({ tasks: [] }) })
+    await expect(control).resolves.toEqual({ tasks: [] })
+  })
+
   test('adds auth token and parses json responses', async () => {
     localStorage.setItem('auth_token', 'token-1')
     fetchMock.mockResolvedValueOnce({

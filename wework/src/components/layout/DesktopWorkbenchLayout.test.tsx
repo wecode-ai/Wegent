@@ -18,7 +18,10 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import type { RuntimeTaskReminderState } from '@/features/workbench/runtimeTaskReminders'
+import {
+  EMPTY_RUNTIME_TASK_REMINDERS,
+  type RuntimeTaskReminderState,
+} from '@/features/workbench/runtimeTaskReminders'
 import {
   resolveTemporaryChatActiveModel,
   resolveTemporaryChatModelSelection,
@@ -1073,6 +1076,12 @@ describe('DesktopWorkbenchLayout', () => {
       turnId: 'runtime-side-chat-turn',
     })
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
+    baseProps.projectChat.inputByScope = {}
+    baseProps.projectChat.setInputForScope.mockReset()
+    baseProps.projectChat.setInputForScope.mockImplementation((scope: string, value: string) => {
+      if (value) baseProps.projectChat.inputByScope[scope] = value
+      else delete baseProps.projectChat.inputByScope[scope]
+    })
   }, 60_000)
 
   const baseProps = {
@@ -1102,6 +1111,8 @@ describe('DesktopWorkbenchLayout', () => {
     onStartStandaloneChat: vi.fn(),
     onOpenPlugins: vi.fn(),
     projectChat: {
+      inputByScope: {} as Record<string, string>,
+      setInputForScope: vi.fn(),
       models: [],
       skills: [],
       selectedModel: null,
@@ -1963,6 +1974,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     } as unknown as WorkspaceTabsContextValue
 
@@ -2052,6 +2064,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     }
     const workspaceTabs = (activeTab: typeof boardTab | typeof taskTab) => ({
@@ -2159,6 +2172,7 @@ describe('DesktopWorkbenchLayout', () => {
         closeOtherTabs: vi.fn(),
         restoreClosedTab: vi.fn(),
         moveTab: vi.fn(),
+        updateTab: vi.fn(),
         updateActiveTab: vi.fn(),
       }) as unknown as WorkspaceTabsContextValue
 
@@ -2512,14 +2526,23 @@ describe('DesktopWorkbenchLayout', () => {
     }
   )
 
-  test('does not open a direct stand-in route while experimental features are disabled', () => {
+  test('opens a direct stand-in route while experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
     const original = window.location.href
     try {
       window.history.replaceState({}, '', '/stand-in?profileId=default')
-      render(<DesktopWorkbenchLayout {...baseProps} />)
-      expect(screen.queryByTestId('personal-stand-in-workspace')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('stand-in-overview')).not.toBeInTheDocument()
+      await act(async () => {
+        render(
+          <DesktopWorkbenchLayout
+            {...baseProps}
+            runtimeTaskReminders={EMPTY_RUNTIME_TASK_REMINDERS}
+          />
+        )
+      })
+      expect(screen.getByTestId('personal-stand-in-workspace')).toBeInTheDocument()
+      expect(screen.getByTestId('personal-stand-in-button')).toHaveAttribute('aria-current', 'page')
+      expect(screen.getByTestId('personal-stand-in-beta')).toHaveTextContent('Beta')
     } finally {
       window.history.replaceState({}, '', original)
     }
@@ -6603,6 +6626,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     } satisfies WorkspaceTabsContextValue
     const installed = {

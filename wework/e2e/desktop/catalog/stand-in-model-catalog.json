@@ -1,5 +1,5 @@
 {
   "order": 36000,
-  "scenario": "./scenarios/stand-in-model-execution.scenario.mjs",
+  "scenario": "./scenarios/stand-in-model-interface.scenario.mjs",
   "scenarioOnly": true
 }

@@ -3,19 +3,17 @@ import { access, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   assistantMessage,
-  codexRequestMetadata,
   createSse,
-  customToolCall,
-  functionCall,
   isReplyPredictionRequest,
   readRequestBody,
   requestContainsToolOutput,
-  requestAdvertisesProgrammaticExec,
   responseCompleted,
   responseCreated,
-  selectShellToolCommand,
-  selectProgrammaticExec,
 } from '../modules/response-protocol.mjs'
+import {
+  shellCommandResponse,
+  shellCommandRequestDiagnostic,
+} from '../modules/shell-command-response.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
@@ -125,35 +123,15 @@ export function createDesktopScenario(options) {
             sandbox_permissions: 'require_escalated',
             justification: '确认后创建隔离测试工作区中的验证文件。',
           }
-          if (requestAdvertisesProgrammaticExec(body)) {
-            const tool = selectProgrammaticExec(
-              body,
-              `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 1000, ...approval })}))`
-            )
-            const event = customToolCall('stand-in-file-write', tool.name, tool.input)
-            event.item.namespace = 'functions'
-            events = [event]
-          } else {
-            const tool = selectShellToolCommand(body, command, workspacePath)
-            Object.assign(tool.arguments, approval)
-            events = functionCall('stand-in-file-write', tool.name, tool.arguments)
-          }
+          events = shellCommandResponse(
+            body,
+            'stand-in-file-write',
+            command,
+            workspacePath,
+            approval
+          )
         } catch (error) {
-          const metadata = codexRequestMetadata(body)
-          failedShellRequest = {
-            model: body.model ?? null,
-            requestKind: metadata?.request_kind ?? null,
-            threadSource: metadata?.thread_source ?? null,
-            toolChoice: body.tool_choice ?? null,
-            tools: body.tools ?? null,
-            input: Array.isArray(body.input)
-              ? body.input.map(item => ({
-                  type: item?.type ?? null,
-                  role: item?.role ?? null,
-                  ...(item?.type === 'additional_tools' ? { tools: item.tools } : {}),
-                }))
-              : { type: typeof body.input },
-          }
+          failedShellRequest = shellCommandRequestDiagnostic(body)
           throw error
         }
       }

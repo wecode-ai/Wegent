@@ -12,6 +12,7 @@ import type {
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
 import type { Automation } from '@/types/automation'
+import { createRuntimeTaskCommandsApi, type RuntimeTaskCommandsApi } from './runtimeTaskCommands'
 
 export interface StandInOnboardingResult {
   settings?: PersonalStandInSettings | null
@@ -81,7 +82,7 @@ export interface StandInProcessingStatus {
   running: boolean
   nextCheckAt?: string
   lastCheckAt?: string
-  error?: { code: string; message: string } | null
+  error?: { code: string; message: string; taskId?: string; commandId?: string } | null
   actions: Array<{
     id: string
     kind: string
@@ -92,7 +93,6 @@ export interface StandInProcessingStatus {
 }
 import {
   publishPersonalStandIn,
-  type PersonalStandInAgent,
   type PersonalStandInSettings,
   type StandInSourceConnection,
 } from './personalStandIn'
@@ -176,6 +176,7 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
   onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
   completeOnboarding(
     userId: number,
@@ -197,6 +198,7 @@ export interface StandInExecutorApi {
     update?: ProjectCoordinationUpdate
   ): Promise<ProjectCoordinationState>
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
+  taskCommands: RuntimeTaskCommandsApi
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,
@@ -236,7 +238,12 @@ export interface StandInExecutorApi {
     deviceId: string,
     workId: string
   ): Promise<{ messages: StandInInboxMessage[] }>
-  runWork(userId: number, deviceId: string, workId: string): Promise<WorkspaceRuntimeTaskAddress>
+  runWork(
+    userId: number,
+    deviceId: string,
+    workId: string,
+    options?: { confirmThisRun?: boolean }
+  ): Promise<WorkspaceRuntimeTaskAddress>
   adjustMessage(
     userId: number,
     deviceId: string,
@@ -255,10 +262,22 @@ export interface StandInExecutorApi {
   ): Promise<{
     items: Pick<
       StandInSourceConnection,
-      'id' | 'name' | 'kind' | 'profile' | 'providerId' | 'scope'
+      | 'id'
+      | 'name'
+      | 'kind'
+      | 'profile'
+      | 'providerId'
+      | 'scope'
+      | 'collectionKey'
+      | 'configurationSummary'
     >[]
     hasMore?: boolean
     nextCursor?: string
+    availability?: {
+      status: string
+      code?: string
+      authTarget?: import('./local/localConnectorAuth').LocalConnectorAuthTarget
+    }
   }>
   conversation(
     userId: number,
@@ -290,7 +309,6 @@ export interface StandInExecutorApi {
     userId: number,
     deviceId: string
   ): Promise<void>
-  personalAgents(userId: number, deviceId: string): Promise<PersonalStandInAgent[]>
   personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
@@ -363,6 +381,25 @@ export function createStandInExecutorApi(
     }
   }
   return {
+    taskCommands: createRuntimeTaskCommandsApi(request),
+    gitConnection: (deviceId, input) => {
+      const { channel, ...payload } = input
+      if (channel === 'auth') {
+        const { authOperation, ...target } = payload
+        if (!['start', 'poll', 'cancel'].includes(String(authOperation)))
+          throw new Error('Invalid authorization operation')
+        return request(`runtime.local_connector_auth.${String(authOperation)}`, target, deviceId)
+      }
+      return request(
+        channel === 'webhooks'
+          ? 'runtime.connections.git.webhooks'
+          : channel === 'authTarget'
+            ? 'runtime.connections.git.authTarget'
+            : 'runtime.connections.git.read',
+        payload,
+        deviceId
+      )
+    },
     onboarding: (userId, deviceId, language) =>
       request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
     completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {
@@ -421,8 +458,8 @@ export function createStandInExecutorApi(
     inbox: (userId, deviceId) => request('runtime.stand_in.work.list', { userId }, deviceId),
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
-    runWork: (userId, deviceId, workId) =>
-      request('runtime.stand_in.work.run', { userId, workId }, deviceId),
+    runWork: (userId, deviceId, workId, options) =>
+      request('runtime.stand_in.work.run', { userId, workId, ...options }, deviceId),
     organizeWork: (userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) =>
       request(
         'runtime.stand_in.work.organize',
@@ -491,14 +528,6 @@ export function createStandInExecutorApi(
         deviceId
       )
     },
-    personalAgents: async (userId, deviceId) =>
-      (
-        await request<{ items: PersonalStandInAgent[] }>(
-          'runtime.stand_in.personal.agents',
-          { userId },
-          deviceId
-        )
-      ).items,
     personalGet: (userId, deviceId) =>
       request('runtime.stand_in.personal.get', { userId }, deviceId),
     personalSave: async (userId, settings, deviceId) => {
@@ -510,7 +539,25 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    readTask: (deviceId, taskId) => request('runtime.tasks.get', { taskId }, deviceId),
+    readTask: async (deviceId, taskId) => {
+      try {
+        return await request<Awaited<ReturnType<StandInExecutorApi['readTask']>>>(
+          'runtime.tasks.get',
+          { taskId },
+          deviceId
+        )
+      } catch (error) {
+        // A missing first conversation is an empty lookup on both transports.
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'task_not_found'
+        )
+          return { success: false, code: 'task_not_found' }
+        throw error
+      }
+    },
     assignmentTasks: (userId, deviceId, assignments) =>
       request('runtime.stand_in.assignment_tasks', { userId, assignments }, deviceId),
     catalog: deviceId => request('runtime.runner.catalog', {}, deviceId),

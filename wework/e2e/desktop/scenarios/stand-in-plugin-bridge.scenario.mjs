@@ -5,6 +5,8 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { withTimeout } from '../modules/shared.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
+import { verifyStandInEventVersions } from '../modules/stand-in-event-versions.mjs'
+import { createProjectVersionStory } from '../modules/stand-in-project-version-story.mjs'
 import {
   verifyStandInResourceScopes,
   verifyStandInCalendarPolicy,
@@ -14,13 +16,22 @@ const PACKAGE = '@test/connection-source'
 const PROVIDER = `${PACKAGE}/records`
 const MARKET = 'connection-fixture'
 const PLUGIN = `source@${MARKET}`
+const ASSISTANCE = {
+  observe: ['New authorized record versions'],
+  prepare: ['Read the selected record and identify the material change'],
+  notifyWhen: ['A personally relevant record change requires a user decision'],
+  confirmBefore: ['Changing a record requires native authorization'],
+}
 
-export function createDesktopScenario({
-  resultDir,
-  electronUserDataDirectory,
-  uiTimeoutMs,
-  workbenchReadyTimeoutMs,
-}) {
+export function createDesktopScenario(options) {
+  const {
+    resultDir,
+    electronUserDataDirectory,
+    executorHome,
+    uiTimeoutMs,
+    workbenchReadyTimeoutMs,
+  } = options
+  const story = createProjectVersionStory(options, PROVIDER)
   const root = join(resultDir, 'connection-marketplace')
   const source = join(root, 'source')
   const records = join(resultDir, 'records.json')
@@ -43,7 +54,9 @@ export function createDesktopScenario({
     return result.result
   }
   return {
+    reviewApproval: story.model.reviewApproval,
     async handleHttp(req, _response, url) {
+      if (story.model.active) return story.model.handleHttp(req, _response, url)
       if (req.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname))
         modelRequests++
       return false
@@ -114,6 +127,8 @@ export function createDesktopScenario({
                   allResourceKinds: ['record'],
                   resourceLabels: { record: 'Records' },
                   eventTypes: ['record.received'],
+                  versionedEventTypes: ['record.received'],
+                  assistance: ASSISTANCE,
                 },
               ],
             },
@@ -149,6 +164,7 @@ export function createDesktopScenario({
       const ready = await rpc(control, 'runtime.connections.catalog', {})
       const provider = ready.items.find(item => item.id === PROVIDER)
       assert.equal(provider.availability.status, 'ready')
+      assert.deepEqual(provider.assistance, ASSISTANCE)
       const page = await rpc(control, 'runtime.connections.resources', {
         providerId: PROVIDER,
         kind: 'record',
@@ -178,6 +194,7 @@ export function createDesktopScenario({
         calls.map(call => call.name),
         ['read_record']
       )
+      await verifyStandInEventVersions(control, rpc, PROVIDER, executorHome, records)
       await writeFile(
         records,
         JSON.stringify([
@@ -211,6 +228,60 @@ export function createDesktopScenario({
       await codex(control, 'marketplace/remove', { marketplaceName: MARKET })
       await host(control, 'runtime.uninstallCoreDshPlugin', { name: PACKAGE })
       assert.equal(modelRequests, 0, 'Background discovery and reads must not start a model turn')
+      // Independent business phase begins only after every original lifecycle assertion.
+      // Reinstall through the public host API; never rewrite native plugin state or grants.
+      await host(control, 'runtime.installCoreDshPlugin', {
+        spec: `file:${join(resultDir, 'connection-adapter')}`,
+      })
+      await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: true })
+      const storyReadyCount = control.readyCount
+      await host(control, 'runtime.restartCoreDsh', {})
+      await withTimeout(
+        control.awaitReadyAfter(storyReadyCount),
+        workbenchReadyTimeoutMs,
+        'Project story plugin did not reconnect the workbench'
+      )
+      await codex(control, 'marketplace/add', { source: root })
+      await rpc(control, 'runtime.connections.dependencies.install', {
+        providerId: PROVIDER,
+        aliases: ['source'],
+      })
+      let storyFailure
+      try {
+        await story.verify(control, (method, params) => rpc(control, method, params), records)
+      } catch (error) {
+        storyFailure = error
+        throw error
+      } finally {
+        try {
+          await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
+          const cleanupReadyCount = control.readyCount
+          await host(control, 'runtime.restartCoreDsh', {})
+          await withTimeout(
+            control.awaitReadyAfter(cleanupReadyCount),
+            workbenchReadyTimeoutMs,
+            'Project story cleanup did not reconnect the workbench'
+          )
+          await control.command('waitFor', '[data-testid="plugins-button"]', {
+            timeoutMs: workbenchReadyTimeoutMs,
+          })
+          const stopped = await rpc(control, 'runtime.connections.catalog', {})
+          assert.equal(
+            stopped.items.find(item => item.id === PROVIDER)?.availability.status,
+            'plugin_disabled'
+          )
+          await codex(control, 'plugin/uninstall', { pluginId: PLUGIN })
+          await codex(control, 'marketplace/remove', { marketplaceName: MARKET })
+          await host(control, 'runtime.uninstallCoreDshPlugin', { name: PACKAGE })
+        } catch (cleanupError) {
+          if (storyFailure)
+            throw new AggregateError(
+              [storyFailure, cleanupError],
+              'Project source verification and cleanup failed'
+            )
+          throw cleanupError
+        }
+      }
     },
   }
 }

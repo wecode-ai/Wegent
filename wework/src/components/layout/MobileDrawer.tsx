@@ -16,6 +16,8 @@ import {
 } from 'lucide-react'
 import { useContext, useMemo, useRef, useState } from 'react'
 import { MobileRuntimeTaskRunningStatus } from './MobileRuntimeTaskRunningStatus'
+import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
+import type { RuntimeWorkLoadState } from '@/types/workbench'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
@@ -68,6 +70,7 @@ interface MobileDrawerProps {
   devices?: DeviceInfo[]
   projects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
+  runtimeWorkLoad?: RuntimeWorkLoadState
   currentProjectId?: number
   currentRuntimeTask?: RuntimeTaskAddress | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
@@ -103,6 +106,7 @@ export function MobileDrawer({
   devices = [],
   projects,
   runtimeWork,
+  runtimeWorkLoad,
   currentProjectId,
   currentRuntimeTask,
   unreadRuntimeTaskKeys,
@@ -422,6 +426,11 @@ export function MobileDrawer({
             transition: refreshing || pullDistance === 0 ? 'transform 0.2s ease' : undefined,
           }}
         >
+          <RuntimeWorkLoadStatus
+            load={runtimeWorkLoad}
+            hasSnapshot={runtimeWork != null}
+            onRetry={onRefreshWorkLists}
+          />
           <section>
             <div className="space-y-1">
               <div className="relative">
@@ -442,12 +451,14 @@ export function MobileDrawer({
                 </div>
                 <div className="space-y-1">
                   {chatTaskItems.length === 0 ? (
-                    <div
-                      data-testid="mobile-runtime-chat-empty"
-                      className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-text-secondary"
-                    >
-                      {t('workbench.no_chats', '暂无会话')}
-                    </div>
+                    runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                      <div
+                        data-testid="mobile-runtime-chat-empty"
+                        className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-text-secondary"
+                      >
+                        {t('workbench.no_chats', '暂无会话')}
+                      </div>
+                    )
                   ) : (
                     chatTaskItems.map(({ workspace, task }) => {
                       const selectedTask = isRuntimeTaskSelected(

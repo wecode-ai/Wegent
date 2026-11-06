@@ -37,6 +37,7 @@ async function until(load, accept, timeoutMs, message) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+/** Verify independent cloud stand-ins execute on their authorized remote Executor without local leaks. */
 export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
@@ -193,7 +194,7 @@ export function createDesktopScenario({
           ),
           `Remote device must have an active project authorization: ${JSON.stringify(authorized.items.map(row => ({ device_key: row.device_key, app_device_id: row.app_device_id, can_use: row.can_use, status: row.status })))}`
         )
-        const agent = await request(`/v1/cloud-projects/${project.id}/chat-agents`, {
+        await request(`/v1/cloud-projects/${project.id}/chat-agents`, {
           name: '云端分身助手',
           runtime: 'codex',
           system_prompt: `${MARKER}_AGENT`,
@@ -253,21 +254,19 @@ export function createDesktopScenario({
         await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
         await verifyRemoteStandInProjectScope(control, localProject.id, String(project.id))
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
-        const agentValue = JSON.stringify(['cloud', String(project.id), String(agent.id)])
-        await control.command(
-          'waitFor',
-          `[data-testid="stand-in-agent"] option[value=${JSON.stringify(agentValue)}]`
+        assert.equal(
+          await control.command('getElementCount', '[data-testid="stand-in-agent"]'),
+          '0'
         )
-        await control.command('select', '[data-testid="stand-in-agent"]', { value: agentValue })
-        await control.command('waitFor', '[data-testid="stand-in-project-agent-scope"]', {
-          text: project.name,
-        })
         await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
         const remoteSettings = await rpc('runtime.stand_in.get', settingsParams())
         assert.equal(remoteSettings.enabled, true)
+        assert.equal(Object.hasOwn(remoteSettings, 'agentId'), false)
+        assert.equal(Object.hasOwn(remoteSettings, 'agentResourceId'), false)
+        assert.equal(Object.hasOwn(remoteSettings, 'agentProject'), false)
         assert.equal(remoteSettings.executionDeviceId, REMOTE_DOCKER_DEVICE_ID)
         const localSettings = await requestExecutor(
           control,
@@ -337,7 +336,11 @@ export function createDesktopScenario({
           'Remote task did not complete'
         )
         assert.equal(requests, 1)
-        assert.equal(agentRequests, 1, 'The remote agent prompt did not reach its model')
+        assert.equal(
+          agentRequests,
+          0,
+          'The independent remote stand-in must not inherit project agent prompts'
+        )
 
         // Stand-in progress belongs to the original human assignment notification.
         const inbox = await request('/v1/wework-notifications?category=collaboration')
@@ -404,7 +407,8 @@ export function createDesktopScenario({
           },
           uiTimeoutMs
         )
-        await new Promise(resolve => setTimeout(resolve, 11000))
+        // Observe a full five-second scheduler interval plus timer jitter.
+        await new Promise(resolve => setTimeout(resolve, 5500))
         assert.equal((await bindings(issue)).length, 1, 'Another device duplicated existing work')
         assert.equal(requests, 1)
         assert.equal(

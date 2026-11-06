@@ -1,142 +1,11 @@
 //! Personal review setup belongs to the current account on this Executor.
 use super::*;
 use crate::runtime_work::automations::weekly_review;
+#[cfg(test)]
 use crate::task_runtime::mcp::StandInMcpIdentity;
 
-fn review_owned(link: &RuntimeTaskLink, user: i64) -> bool {
-    link.runtime_handle["executionRequest"]["user_id"] == user
-        && !link.ephemeral
-        && !matches!(
-            link.runtime_handle["origin"]["type"].as_str(),
-            Some("stand_in_coordinator" | "stand_in_processing")
-        )
-}
-
-fn filter_review_page(page: &mut Value, start: i64, end: i64, previous: bool) {
-    let mut unknown = false;
-    if let Some(messages) = page["messages"].as_array_mut() {
-        messages.retain(|message| {
-            let at = timestamp_ms_field(message, "createdAt");
-            unknown |= at.is_none();
-            at.map_or(true, |at| (previous || at >= start) && at < end)
-        });
-    }
-    // Native navigation and canonical turns can contain unfiltered text.
-    if let Some(object) = page.as_object_mut() {
-        object.retain(|key, _| {
-            matches!(
-                key.as_str(),
-                "success"
-                    | "code"
-                    | "error"
-                    | "taskId"
-                    | "messages"
-                    | "fullContent"
-                    | "beforeCursor"
-                    | "afterCursor"
-                    | "hasMoreBefore"
-                    | "hasMoreAfter"
-            )
-        });
-    }
-    page["unknownTimestamps"] = json!(unknown);
-    page["contentMayBeTruncated"] = json!(page["fullContent"] != true);
-}
-
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn read_stand_in_review_history(
-        &self,
-        identity: &StandInMcpIdentity,
-        args: &Value,
-    ) -> Result<Value, AppIpcError> {
-        let denied = || {
-            AppIpcError::new(
-                "permission_denied",
-                "Review history requires a current primary identity or a bound review run",
-            )
-        };
-        if identity.device != self.device_id
-            || identity.work.is_some()
-            || identity.project.is_some()
-            || identity.coordinator_batch.is_some()
-            || !matches!(identity.role.as_deref(), None | Some("@primary"))
-        {
-            return Err(denied());
-        }
-        let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
-        if !review_owned(&actor, identity.user)
-            || actor.runtime_handle["origin"]["userId"] != identity.user
-        {
-            return Err(denied());
-        }
-        let end = if identity.review {
-            self.review_run_end(&actor, identity.user)?
-        } else {
-            if actor.runtime_handle["origin"]["type"] != "stand_in_identity" {
-                return Err(denied());
-            }
-            match args["windowEnd"].as_str() {
-                Some(value) => chrono::DateTime::parse_from_rfc3339(value)
-                    .map(|at| at.with_timezone(&chrono::Utc))
-                    .map_err(|_| AppIpcError::new("bad_request", "Invalid windowEnd"))?,
-                None => chrono::Utc::now(),
-            }
-        };
-        let start = end - chrono::Duration::days(7);
-        let previous = args["previousReviews"] == true;
-        if let Some(id) = args["taskId"].as_str() {
-            let link = self
-                .local_task_link(id)
-                .filter(|link| review_owned(link, identity.user))
-                .ok_or_else(denied)?;
-            if previous && link.runtime_handle["origin"]["weeklyReview"] != true {
-                return Err(AppIpcError::new(
-                    "bad_request",
-                    "previousReviews only reads review reports",
-                ));
-            }
-            if id == identity.task_id {
-                return Err(denied());
-            }
-            let mut page = self.transcript(json!({"taskId":id,"limit":50,"includeFullContent":false,"beforeCursor":args["beforeCursor"]})).await?;
-            filter_review_page(
-                &mut page,
-                start.timestamp_millis(),
-                end.timestamp_millis(),
-                previous,
-            );
-            page["windowStart"] = json!(start);
-            page["windowEnd"] = json!(end);
-            return Ok(page);
-        }
-        let mut links: Vec<_> = self
-            .local_task_links(true)
-            .into_iter()
-            .filter(|link| {
-                review_owned(link, identity.user)
-                    && link.local_task_id != identity.task_id
-                    && !self.archived_link_is_deleted(link)
-                    && if previous {
-                        link.runtime_handle["origin"]["weeklyReview"] == true
-                    } else {
-                        link.runtime_handle["origin"]["weeklyReview"] != true
-                            && (link.updated_at == 0 || link.updated_at >= start.timestamp_millis())
-                    }
-            })
-            .collect();
-        links.sort_by(|a, b| a.local_task_id.cmp(&b.local_task_id));
-        let cursor = args["taskCursor"].as_str().unwrap_or("");
-        let mut remaining = links
-            .into_iter()
-            .filter(|link| link.local_task_id.as_str() > cursor);
-        let items: Vec<_> = remaining.by_ref().take(50).map(|link| json!({"taskId":link.local_task_id,"title":link.title,"updatedAt":link.updated_at})).collect();
-        let next = remaining
-            .next()
-            .and_then(|_| items.last().map(|item| item["taskId"].clone()));
-        Ok(json!({"items":items,"nextTaskCursor":next,"windowStart":start,"windowEnd":end}))
-    }
-
-    fn review_run_end(
+    pub(super) fn review_run_end(
         &self,
         actor: &RuntimeTaskLink,
         user: i64,
@@ -283,7 +152,7 @@ mod tests {
             {"id":"inside","createdAt":end-1}, {"id":"end","createdAt":end},
             {"id":"unknown"}], "turns":[{"private":"unfiltered"}],
             "beforeCursor":"older", "hasMoreBefore":true, "fullContent":false});
-        filter_review_page(&mut page, start, end, false);
+        super::super::stand_in_history::filter_history_page(&mut page, Some(start), Some(end));
         assert_eq!(
             page["messages"]
                 .as_array()
@@ -299,7 +168,7 @@ mod tests {
         assert_eq!(page["beforeCursor"], "older");
         assert_eq!(page["hasMoreBefore"], true);
         let mut previous = json!({"messages":[{"createdAt":start-1},{"createdAt":end}]});
-        filter_review_page(&mut previous, start, end, true);
+        super::super::stand_in_history::filter_history_page(&mut previous, None, Some(end));
         assert_eq!(previous["messages"].as_array().unwrap().len(), 1);
     }
 
@@ -328,21 +197,22 @@ mod tests {
         let binding = run.coordination.as_ref().unwrap();
         identity.task_id = binding.task_id.clone();
         identity.review = true;
+        identity.role = Some("@primary".into());
         handler.upsert_local_task(RuntimeTaskLink {local_task_id:binding.task_id.clone(),runtime_handle:json!({
-            "origin":{"type":"stand_in_schedule","weeklyReview":true,"userId":7,"automationId":review.id},
+            "origin":{"type":"stand_in_schedule","weeklyReview":true,"userId":7,"deviceId":"mac","standInId":"@primary","automationId":review.id},
             "executionRequest":{"user_id":7,"standInSchedule":{"id":review.id,"version":review.version,"runId":run.id}}
         }),..Default::default()});
         let page = handler
-            .read_stand_in_review_history(&identity, &json!({"windowEnd":"2000-01-01T00:00:00Z"}))
+            .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
             .await
             .unwrap();
         let end =
             chrono::DateTime::parse_from_rfc3339(page["windowEnd"].as_str().unwrap()).unwrap();
-        assert_eq!(end.with_timezone(&chrono::Utc), run.scheduled_for);
+        assert_eq!(end.timestamp_millis(), run.scheduled_for.timestamp_millis());
         handler.automation_store.update(review).unwrap();
         assert_eq!(
             handler
-                .read_stand_in_review_history(&identity, &json!({}))
+                .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
                 .await
                 .unwrap_err()
                 .code,
@@ -356,9 +226,12 @@ mod tests {
         handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
         handler.automation_store =
             crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let settings = store.personal_stand_in(7, "mac").unwrap();
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id:"primary".into(),
-            runtime_handle:json!({"origin":{"type":"stand_in_identity","userId":7},"executionRequest":{"user_id":7}}),
+            runtime_handle:json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac","standInId":"@primary"},"executionRequest":{"user_id":7}}),
             ..Default::default()
         });
         (
@@ -367,12 +240,13 @@ mod tests {
                 task_id: "primary".into(),
                 user: 7,
                 device: "mac".into(),
-                role: None,
+                role: Some("@primary".into()),
                 work: None,
                 ask_before_act: true,
                 coordinator_batch: None,
                 project: None,
                 review: false,
+                readonly_worker: false,
             },
         )
     }
@@ -401,7 +275,7 @@ mod tests {
         let mut ids = Vec::new();
         loop {
             let page = handler
-                .read_stand_in_review_history(&identity, &args)
+                .read_stand_in_conversations(&identity, "list_tasks", &args)
                 .await
                 .unwrap();
             ids.extend(
@@ -411,21 +285,21 @@ mod tests {
                     .iter()
                     .map(|item| item["taskId"].as_str().unwrap().to_owned()),
             );
-            if page["nextTaskCursor"].is_null() {
+            if page["nextCursor"].is_null() {
                 break;
             }
-            args = json!({"taskCursor":page["nextTaskCursor"],"windowEnd":page["windowEnd"]});
+            args = json!({"cursor":page["nextCursor"]});
         }
-        assert_eq!(ids.len(), 122);
+        assert_eq!(ids.len(), 123);
         assert!(ids.contains(&"role-chat".into()));
         assert!(!ids.contains(&"other-user".into()));
         ids.sort();
         ids.dedup();
-        assert_eq!(ids.len(), 122);
+        assert_eq!(ids.len(), 123);
     }
 
     #[tokio::test]
-    async fn history_rejects_forged_runs_foreign_owners_roles_devices_and_previous_report_bypass() {
+    async fn history_rejects_forged_runs_foreign_owners_roles_and_devices() {
         let root = tempfile::tempdir().unwrap();
         let (handler, identity) = fixture(root.path());
         for forbidden in [
@@ -447,12 +321,13 @@ mod tests {
             },
             StandInMcpIdentity {
                 review: true,
+                readonly_worker: false,
                 ..identity.clone()
             },
         ] {
             assert_eq!(
                 handler
-                    .read_stand_in_review_history(&forbidden, &json!({}))
+                    .read_stand_in_conversations(&forbidden, "list_tasks", &json!({}))
                     .await
                     .unwrap_err()
                     .code,
@@ -461,18 +336,7 @@ mod tests {
         }
         assert_eq!(
             handler
-                .read_stand_in_review_history(
-                    &identity,
-                    &json!({"taskId":"primary","previousReviews":true})
-                )
-                .await
-                .unwrap_err()
-                .code,
-            "bad_request"
-        );
-        assert_eq!(
-            handler
-                .read_stand_in_review_history(&identity, &json!({"taskId":"missing"}))
+                .read_stand_in_conversations(&identity, "read_task", &json!({"taskId":"missing"}))
                 .await
                 .unwrap_err()
                 .code,

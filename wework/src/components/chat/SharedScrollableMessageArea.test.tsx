@@ -96,6 +96,52 @@ describe('shared conversation scroll area without desktop services', () => {
     expect(load).toHaveBeenCalledOnce()
   })
 
+  test('continues from an advanced native cursor when its items are already cached', async () => {
+    let intersect!: IntersectionObserverCallback
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersect = callback
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const load = vi.fn().mockResolvedValue(undefined)
+    const cachedMessages = [message]
+    const content = (beforeCursor: string) => (
+      <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+        <ScrollableMessageArea
+          messages={cachedMessages}
+          hasMoreBefore
+          beforeCursor={beforeCursor}
+          onLoadMoreBefore={load}
+        />
+      </ConversationTranslationProvider>
+    )
+    const view = render(content('native-item-750'))
+    const showBoundary = async () =>
+      act(async () =>
+        intersect(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      )
+    await showBoundary()
+    expect(load).toHaveBeenCalledOnce()
+
+    // A latest-page read can retain earlier cached items while moving its native cursor.
+    view.rerender(content('native-item-250'))
+    await showBoundary()
+    expect(load).toHaveBeenCalledTimes(2)
+
+    // A completed read that advances neither cursor nor displayed history must not loop.
+    await showBoundary()
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeEnabled()
+  })
+
   test('shows missing history without enabling an unavailable action', () => {
     renderArea({ messages: [message, { ...message, id: 'later', runtimeMessageIndex: 8 }] })
     expect(screen.getByTestId('load-runtime-transcript-gap-button')).toBeDisabled()

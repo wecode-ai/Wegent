@@ -1,3 +1,14 @@
+export async function sendStandInNotificationFollowUp(control, content, prompt) {
+  const pane = `${content} [data-active-workbench-pane="true"]`
+  const composer = `${pane} [data-testid="chat-message-input"][contenteditable="true"]`
+  await control.command('waitFor', composer, { visible: true })
+  await control.command('fill', composer, { value: prompt })
+  // This flow verifies session routing; IME Enter handling has separate coverage.
+  await control.command('clickWhenEnabled', `${pane} [data-testid="send-message-button"]`, {
+    visible: true,
+  })
+}
+
 /** Open the project picker, follow the explicit link into personal settings. */
 export async function openProjectStandIn(
   control,
@@ -43,6 +54,15 @@ export async function discardStandInDraft(control) {
   await control.command('click', '[data-testid="stand-in-close"]')
   await control.command('click', '[data-testid="stand-in-discard"]')
   await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+}
+
+/** Control-channel readiness precedes the notification shell after reload. */
+export async function openCollaborationNotifications(control) {
+  await control.command('clickWhenEnabled', '[data-testid="wework-notifications-button"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="wework-notifications-category-collaboration"]'
+  )
 }
 
 /** Empty settings show connection types immediately; populated settings use Add connection. */

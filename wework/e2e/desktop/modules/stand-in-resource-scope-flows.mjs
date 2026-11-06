@@ -16,6 +16,10 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
       'clickWhenEnabled',
       `[data-testid="stand-in-add-${providerId}-connection"]`
     )
+    await control.command('waitFor', `[data-testid="${prefix}-connections"]`)
+    if (Number(await control.command('getElementCount', `[data-testid="${prefix}-add"]`)) > 0)
+      await control.command('clickWhenEnabled', `[data-testid="${prefix}-add"]`)
+    await control.command('waitFor', `[data-testid="${prefix}-scope-all"]`)
   }
   try {
     await ensureExperimentalFeaturesEnabled(control)
@@ -35,7 +39,6 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
       [['*', 'all', 'fixture', 'record']]
     )
     await open()
-    await control.command('click', `[data-testid="${prefix}-add"]`)
     await control.command('click', `[data-testid="${prefix}-scope-selected"]`)
     await control.command('fill', `[data-testid="${prefix}-query"]`, { value: 'batch' })
     await control.command('click', `[data-testid="${prefix}-search"]`)

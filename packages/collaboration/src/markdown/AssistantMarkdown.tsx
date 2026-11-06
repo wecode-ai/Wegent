@@ -50,6 +50,7 @@ import {
   type AssistantFileCitation,
 } from './assistantAnnotations'
 import { AssistantFollowup } from './AssistantFollowup'
+import { preprocessCjkEmphasis } from './preprocessCjkEmphasis'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -86,39 +87,30 @@ const MarkdownCustomLinkContext = createContext<AssistantMarkdownProps['renderLi
 
 const MARKDOWN_HEADING_CLASSES = {
   default: {
-    h1: 'mb-4 mt-6 text-lg font-semibold text-text-primary',
-    h2: 'mb-3 mt-5 text-base font-semibold text-text-primary',
-    h3: 'mb-2 mt-4 text-sm font-semibold text-text-primary',
+    h1: 'mb-4 mt-6 text-lg font-medium text-text-primary',
+    h2: 'mb-3 mt-5 text-base font-medium text-text-primary',
+    h3: 'mb-2 mt-4 text-sm font-medium text-text-primary',
+    h4: 'mb-2 mt-4 text-sm font-medium text-text-primary',
+    h5: 'mb-2 mt-3 text-sm font-medium text-text-primary',
+    h6: 'mb-2 mt-3 text-sm font-medium text-text-secondary',
   },
   document: {
     h1: 'mb-5 mt-8 text-heading-lg font-semibold tracking-[-0.02em] text-text-primary',
     h2: 'mb-4 mt-7 text-heading-md font-semibold tracking-[-0.01em] text-text-primary',
     h3: 'mb-3 mt-6 text-heading-sm font-semibold text-text-primary',
+    h4: 'mb-2 mt-5 text-lg font-semibold text-text-primary',
+    h5: 'mb-2 mt-4 text-base font-semibold text-text-primary',
+    h6: 'mb-2 mt-4 text-sm font-semibold text-text-secondary',
   },
   process: {
-    h1: 'mb-2 mt-3 text-base font-semibold text-text-primary',
-    h2: 'mb-1.5 mt-3 text-sm font-semibold text-text-primary',
-    h3: 'mb-1 mt-2 text-sm font-semibold text-text-primary',
+    h1: 'mb-2 mt-3 text-base font-medium text-text-primary',
+    h2: 'mb-1.5 mt-3 text-sm font-medium text-text-primary',
+    h3: 'mb-1 mt-2 text-sm font-medium text-text-primary',
+    h4: 'mb-1 mt-2 text-sm font-medium text-text-primary',
+    h5: 'mb-1 mt-2 text-sm font-medium text-text-primary',
+    h6: 'mb-1 mt-2 text-sm font-medium text-text-secondary',
   },
 } as const
-
-const DOCUMENT_MARKDOWN_HEADING_COMPONENTS = {
-  h4: ({ children }: { children?: ReactNode }) => (
-    <h4 data-scroll-anchor className="mb-2 mt-5 text-lg font-semibold text-text-primary">
-      {children}
-    </h4>
-  ),
-  h5: ({ children }: { children?: ReactNode }) => (
-    <h5 data-scroll-anchor className="mb-2 mt-4 text-base font-semibold text-text-primary">
-      {children}
-    </h5>
-  ),
-  h6: ({ children }: { children?: ReactNode }) => (
-    <h6 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-secondary">
-      {children}
-    </h6>
-  ),
-}
 
 type AssistantMarkdownPart =
   | {
@@ -147,10 +139,12 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   // independent blocks; a marker may span more than one Markdown paragraph.
   const displayContent = useMemo(
     () =>
-      normalizeMathDelimiters(
-        variant === 'user'
-          ? bufferedContent
-          : stripUnsupportedContentReferenceCitations(bufferedContent)
+      preprocessCjkEmphasis(
+        normalizeMathDelimiters(
+          variant === 'user'
+            ? bufferedContent
+            : stripUnsupportedContentReferenceCitations(bufferedContent)
+        )
       ),
     [bufferedContent, variant]
   )
@@ -215,7 +209,21 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           {children}
         </h3>
       ),
-      ...(variant === 'document' ? DOCUMENT_MARKDOWN_HEADING_COMPONENTS : {}),
+      h4: ({ children }: { children?: ReactNode }) => (
+        <h4 data-scroll-anchor className={headingClasses.h4}>
+          {children}
+        </h4>
+      ),
+      h5: ({ children }: { children?: ReactNode }) => (
+        <h5 data-scroll-anchor className={headingClasses.h5}>
+          {children}
+        </h5>
+      ),
+      h6: ({ children }: { children?: ReactNode }) => (
+        <h6 data-scroll-anchor className={headingClasses.h6}>
+          {children}
+        </h6>
+      ),
       p: ({ children }: { children?: ReactNode }) => (
         <p
           data-scroll-anchor
@@ -248,7 +256,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         </li>
       ),
       strong: ({ children }: { children?: ReactNode }) => (
-        <strong className="font-semibold">{children}</strong>
+        <strong className={variant === 'document' ? 'font-semibold' : 'font-medium'}>
+          {children}
+        </strong>
       ),
       code: (props: MarkdownCodeProps) => (
         <MarkdownCode {...props} compact={variant === 'process'} />
@@ -266,7 +276,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       ),
       table: MarkdownTable,
       th: ({ children, style }: HTMLAttributes<HTMLTableCellElement>) => (
-        <th style={style} className="border-b border-border px-3 py-2 text-left font-semibold">
+        <th
+          style={style}
+          className={`border-b border-border px-3 py-2 text-left ${variant === 'document' ? 'font-semibold' : 'font-medium'}`}
+        >
           {children}
         </th>
       ),

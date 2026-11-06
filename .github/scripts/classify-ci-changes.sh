@@ -127,6 +127,7 @@ classify_path() {
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
+      .github/scripts/core-runner-slots.* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
@@ -168,6 +169,12 @@ classify_path() {
     executor_manager/*)
       changed[executor_manager]=true
       changed[platform_e2e]=true
+      ;;
+    shared/rust/*)
+      changed[backend_rs]=true
+      changed[executor]=true
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
       ;;
     shared/*)
       changed[backend]=true

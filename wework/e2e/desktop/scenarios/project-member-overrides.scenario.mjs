@@ -5,6 +5,7 @@ import {
   expandCollaborationWorkspace,
   inCollaborationSidebar,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -151,7 +152,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   async function openMembers(control) {
     await openProject(control)
-    await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'manage')
     await control.command('click', scoped('[data-testid="collaboration-project-settings-members"]'))
     await control.command('waitFor', memberControl('role'))
   }
@@ -442,7 +443,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         })
         await control.command(
           'waitFor',
-          scoped('[data-testid="collaboration-tab-board"][aria-current="page"]')
+          `${scoped('[data-testid="collaboration-tab-board"][aria-current="page"]')}, ${scoped('[data-testid="collaboration-project-view-select"]:has(option[value="board"]:checked)')}`
+        )
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="collaboration-project-view-select"] option[value="manage"]')
+            )
+          ),
+          0,
+          'Self-demotion must remove management from compact navigation too'
         )
         await assertViewerDenials()
         await captureScreenshot(control, 'project-member-overrides-self-demoted.png', CONTENT)

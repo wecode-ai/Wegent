@@ -7,6 +7,7 @@ import {
 } from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
+import { waitForClosedStartupSplash } from './native-window-state.mjs'
 
 import {
   ensureExperimentalFeaturesDisabled,
@@ -230,17 +231,21 @@ export async function selectAgentEnvironment(
   await control.command('waitFor', `${trigger}[data-value=${JSON.stringify(value)}]`, { timeoutMs })
 }
 
-export async function selectCollaborationProjectView(control, contentSelector, view) {
+export async function selectCollaborationProjectView(
+  control,
+  contentSelector,
+  view,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
-  if (Number(await control.command('getElementCount', compact)) > 0) {
-    await control.command('select', compact, { value: view })
-  } else {
-    await control.command(
-      'clickWhenEnabled',
-      `${contentSelector} [data-testid="collaboration-tab-${view}"]`,
-      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-    )
-  }
+  const tabId = view === 'milestones' ? 'collaboration-milestones-tab' : `collaboration-tab-${view}`
+  const tab = `${contentSelector} [data-testid="${tabId}"]`
+  // Resolve and activate the mounted control in one renderer task: the header
+  // can switch between tabs and a select after its responsive widths settle.
+  await control.command('chooseWhenEnabled', `${compact}, ${tab}`, {
+    value: view,
+    timeoutMs,
+  })
 }
 
 /** Native fixtures require an explicit environment; automatic routing is cloud-only. */
@@ -381,11 +386,7 @@ export async function configureFirstProjectExecutionEnvironment(
   timeoutMs,
   deviceId = null
 ) {
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-manage"]`, {
-    visible: true,
-    timeoutMs,
-  })
-  await control.command('click', `${contentSelector} [data-testid="collaboration-tab-manage"]`)
+  await selectCollaborationProjectView(control, contentSelector, 'manage', timeoutMs)
   await control.command(
     'click',
     `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
@@ -554,12 +555,10 @@ export async function createLocalCollaborationProject(control, contentSelector, 
   await control.command(
     'waitFor',
     `${contentSelector} [data-testid="cloud-project-header-title"]`,
-    { text: projectName, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    // The project identity remains in the DOM when compact navigation hides its title.
+    { text: projectName, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-board"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await selectCollaborationProjectView(control, contentSelector, 'board')
 }
 
 export async function completeLocalCollaborationFolderImport(control, projectName) {
@@ -867,6 +866,8 @@ async function verifyWorkspaceDocumentTabs(control) {
 }
 
 async function reloadMainWindow(control, errorMessage) {
+  // Reloading during the native handoff invalidates its pending compositor capture.
+  await waitForClosedStartupSplash(control)
   const readyCountBeforeReload = control.readyCount
   await control.command('reloadMainWindow', 'body')
   await withTimeout(
@@ -1179,10 +1180,7 @@ async function verifyWorkspaceIssueCreation(control) {
   )
   await control.command(
     'clickWhenEnabled',
-    `${boardContentSelector} [data-testid="cloud-todo-save"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    `${boardContentSelector} [data-testid="cloud-todo-save"]`
   )
   await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-save"]`, {
     visible: false,
@@ -1543,13 +1541,7 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
   })
   await control.command('click', titleSelector)
   await control.command('fill', titleSelector, { value: title })
-  await control.command(
-    'clickWhenEnabled',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('press', titleSelector, { key: 'Enter' })
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
@@ -1849,7 +1841,6 @@ async function verifyExistingTaskBoardAssociation(
     `${movedBoardContentSelector} [data-testid="cloud-project-header-title"]`,
     {
       text: targetProjectName,
-      visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )

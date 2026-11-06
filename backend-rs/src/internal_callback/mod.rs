@@ -20,7 +20,7 @@ pub(crate) mod emitter;
 pub(crate) mod event;
 pub(crate) mod parser;
 mod pipeline;
-pub(crate) mod py_json;
+pub(crate) use wegent_python_compat::py_json;
 pub(crate) mod session;
 mod socketio;
 

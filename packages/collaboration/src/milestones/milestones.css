@@ -10,7 +10,7 @@
 }
 
 :where(html:not([data-input-modality="pointer"]))
-  .milestone-picker-filter:has(select:focus-visible) {
+  .milestone-picker-filter:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }

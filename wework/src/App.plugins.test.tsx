@@ -1,18 +1,35 @@
 import { composerSchema } from '@/components/chat/composer/composerProseMirrorModel'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
+import {
+  CloudConnectionContext,
+  DISCONNECTED_STATE,
+  type CloudConnectionContextValue,
+} from '@/features/cloud-connection/CloudConnectionContext'
+import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { LOCAL_USER } from '@/api/local/localSession'
+import {
+  NotificationTaskContext,
+  type TaskSource,
+} from '@/features/notifications/NotificationTaskSourceContext'
+import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
+import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
+import {
+  interactionTask,
+  interactionTranscript,
+} from '@/features/notifications/runtimeInteractions.fixtures'
 import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
 import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import type { InstalledPlugin } from '@/types/api'
+import type { InstalledPlugin, User } from '@/types/api'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
-import { useEffect } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import ApplicationsRoute from '../dsh/ui-applications/src/route'
 import CoreAppSurface from '../dsh/ui-core-apps/src/app-surface'
@@ -25,6 +42,46 @@ import { telemetryFeatureForLocation } from './telemetry/routes'
 
 function TestIsolatedExtensionRoute() {
   return <div data-testid="test-isolated-extension-route" />
+}
+
+const appOwnerFixture = vi.hoisted(() => ({
+  user: null as User | null,
+  connection: null as CloudConnectionContextValue | null,
+  source: null as TaskSource | null,
+}))
+
+function TestAppOwnerRoute() {
+  const cloudConnection = useCloudConnection()
+  const notificationSource = useContext(NotificationTaskContext)
+  const registerTaskSource = notificationSource?.registerTaskSource
+  const source = appOwnerFixture.source
+  const interactions = useRuntimeInteractions()
+  const [mountState, setMountState] = useState(0)
+  useEffect(() => {
+    registerTaskSource?.('app-owner-fixture', source, true)
+    return () => registerTaskSource?.('app-owner-fixture', null, true)
+  }, [registerTaskSource, source])
+  return (
+    <>
+      <output data-testid="app-owner-account">{cloudConnection.user?.id}</output>
+      <output data-testid="app-owner-backend">{cloudConnection.apiBaseUrl}</output>
+      <output data-testid="app-owner-pending-count">{interactions?.pending.length ?? 0}</output>
+      <output data-testid="app-owner-drafts">
+        {Object.values(interactions?.drafts ?? {}).join('|')}
+      </output>
+      <output data-testid="app-owner-mount-state">{mountState}</output>
+      <button
+        data-testid="app-owner-edit-draft"
+        onClick={() => {
+          const pending = interactions?.pending[0]
+          if (pending) interactions?.setDraft(pending.id, 'Owner A private reply')
+          setMountState(value => value + 1)
+        }}
+      >
+        Edit owner reply
+      </button>
+    </>
+  )
 }
 
 const telemetryMocks = vi.hoisted(() => ({ track: vi.fn(), trackEvent: vi.fn() }))
@@ -59,6 +116,13 @@ vi.mock('@extensions/device-surface', () => ({
 }))
 
 const TEST_DSH_ROUTES = [
+  {
+    id: 'test-app-owner.root',
+    module: 'plugins/wework-ui-test-app-owner.js',
+    path: '/test-app-owner',
+    restorePolicy: 'session',
+    title: 'App owner',
+  },
   {
     id: 'test-isolated-surface.root',
     icon: 'monitor',
@@ -164,6 +228,7 @@ function installTestDshUiPlugins() {
     }),
   }
   window.__WEWORK_DSH_UI_MODULES__ = {
+    'plugins/wework-ui-test-app-owner.js': { default: TestAppOwnerRoute },
     'plugins/wework-ui-test-isolated-surface.js': { default: TestIsolatedExtensionRoute },
     'plugins/wework-ui-applications.js': { default: ApplicationsRoute },
     'plugins/wework-ui-core-apps.js': { default: CoreAppSurface },
@@ -188,6 +253,7 @@ const desktopHostMocks = vi.hoisted(() => {
         if (capability === 'executor.plugins.personal.list') return { items: [] }
         if (capability === 'runtime.listCoreDshPlugins') return []
         if (capability === 'navigation.pendingSchemes') return []
+        if (capability === 'notification.pendingReplies') return []
         if (capability === 'systemDrag.takePending') return []
         return {}
       }
@@ -693,7 +759,7 @@ vi.mock('@/features/auth/AuthProvider', () => ({
 
 vi.mock('@/features/auth/useAuth', () => ({
   useAuth: () => ({
-    user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
+    user: appOwnerFixture.user ?? { id: 1, user_name: 'alice', email: 'alice@example.com' },
     isLoading: false,
     adminPasswordSetupRequired: false,
     adminUsername: 'admin',
@@ -704,6 +770,22 @@ vi.mock('@/features/auth/useAuth', () => ({
     setupAdminPassword: vi.fn(),
   }),
 }))
+
+vi.mock('@/features/cloud-connection/CloudConnectionProvider', async importOriginal => {
+  const actual =
+    await importOriginal<typeof import('@/features/cloud-connection/CloudConnectionProvider')>()
+  return {
+    ...actual,
+    CloudConnectionProvider: ({ children }: { children: React.ReactNode }) =>
+      appOwnerFixture.connection ? (
+        <CloudConnectionContext.Provider value={appOwnerFixture.connection}>
+          {children}
+        </CloudConnectionContext.Provider>
+      ) : (
+        <actual.CloudConnectionProvider>{children}</actual.CloudConnectionProvider>
+      ),
+  }
+})
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
@@ -734,13 +816,72 @@ vi.mock('@/hooks/useIsMobile', () => ({
 
 async function renderApp() {
   const lifecycleStore = new RuntimeTaskLifecycleStore('app-plugins-test')
+  let view!: ReturnType<typeof render>
   await act(async () => {
-    render(
+    view = render(
       <RuntimeTaskLifecycleProvider store={lifecycleStore}>
         <App />
       </RuntimeTaskLifecycleProvider>
     )
   })
+  return {
+    ...view,
+    rerenderApp: () =>
+      view.rerender(
+        <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+          <App />
+        </RuntimeTaskLifecycleProvider>
+      ),
+  }
+}
+
+function connectedAppOwner(
+  userId = 7,
+  apiBaseUrl = 'https://cloud-a.example.com/api',
+  token = 'owner-token'
+): CloudConnectionContextValue {
+  return {
+    ...DISCONNECTED_STATE,
+    status: 'connected',
+    user: { id: userId, user_name: `owner-${userId}`, email: `owner-${userId}@example.com` },
+    isConnected: true,
+    apiBaseUrl,
+    token,
+    serviceKey: `${apiBaseUrl}:${userId}:${token}`,
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+  }
+}
+
+function appOwnerTaskSource(pending: boolean): TaskSource {
+  return {
+    userId: appOwnerFixture.connection?.user?.id,
+    items: pending ? [interactionTask] : [],
+    unreadTaskKeys: new Set(),
+    markRuntimeTaskRead: vi.fn(),
+    services: {
+      runtimeWorkApi: {
+        listRuntimeWork: vi.fn().mockResolvedValue({
+          projects: [],
+          chats: pending ? [{ ...interactionTask.workspace, tasks: [interactionTask.task] }] : [],
+          totalTasks: pending ? 1 : 0,
+        }),
+        getRuntimeTranscript: pending
+          ? vi.fn().mockResolvedValue(interactionTranscript())
+          : vi.fn().mockRejectedValue(new Error('Task belongs to another account')),
+      },
+    } as WorkbenchContextValue['services'],
+  }
+}
+
+function pendingInteractionStorageKeys(): string[] {
+  return Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+    .filter(
+      (key): key is string =>
+        key !== null && key.startsWith('wework.interactions:') && key.endsWith(':pending')
+    )
+    .sort()
 }
 
 async function createSiteFromMenu() {
@@ -1031,7 +1172,13 @@ function mockSystemSkillsFetch() {
     'fetch',
     vi.fn((url: string, init?: RequestInit) => {
       let payload: unknown
-      if (url.includes('/mcp-providers/mcp_router/servers')) {
+      if (url.includes('/v1/wework-notifications/preferences')) {
+        payload = defaultNotificationPreferences
+      } else if (url.includes('/v1/wework-notifications')) {
+        payload = { items: [], total: 0, unread_count: 0 }
+      } else if (url.endsWith('/runtime-work/im-notifications')) {
+        payload = { global: { enabled: false, sessionKey: null }, tasks: [] }
+      } else if (url.includes('/mcp-providers/mcp_router/servers')) {
         payload = providerServersResponse
       } else if (url.includes('/mcp-providers/keys')) {
         payload = { success: true, message: 'ok' }
@@ -1075,6 +1222,9 @@ function mockSystemSkillsFetch() {
 
 describe('App plugins route', () => {
   beforeEach(async () => {
+    appOwnerFixture.user = null
+    appOwnerFixture.connection = null
+    appOwnerFixture.source = null
     installTestDshUiPlugins()
     await Promise.all(
       Object.keys(window.__WEWORK_DSH_UI_MODULES__ ?? {}).map(module => importDshUiModule(module))
@@ -1139,6 +1289,95 @@ describe('App plugins route', () => {
 
     await screen.findByTestId('app-shell')
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
+  })
+
+  test.each([
+    { change: 'cloud account', userId: 8, apiBaseUrl: 'https://cloud-a.example.com/api' },
+    { change: 'cloud backend', userId: 7, apiBaseUrl: 'https://cloud-b.example.com/api' },
+  ])(
+    'isolates AppShell notification state when the $change changes under LOCAL_USER',
+    async next => {
+      appOwnerFixture.user = LOCAL_USER
+      appOwnerFixture.connection = connectedAppOwner()
+      appOwnerFixture.source = appOwnerTaskSource(true)
+      window.history.pushState({}, '', '/test-app-owner')
+      const view = await renderApp()
+      await waitFor(() =>
+        expect(screen.getByTestId('app-owner-pending-count')).toHaveTextContent('1')
+      )
+      await userEvent.click(screen.getByTestId('app-owner-edit-draft'))
+      expect(screen.getByTestId('app-owner-drafts')).toHaveTextContent('Owner A private reply')
+      expect(screen.getByTestId('app-owner-mount-state')).toHaveTextContent('1')
+      const previousKeys = pendingInteractionStorageKeys()
+      expect(previousKeys).toHaveLength(1)
+
+      appOwnerFixture.connection = connectedAppOwner(next.userId, next.apiBaseUrl)
+      const nextSource = appOwnerTaskSource(false)
+      appOwnerFixture.source = nextSource
+      await act(async () => view.rerenderApp())
+
+      expect(screen.getByTestId('app-owner-account')).toHaveTextContent(String(next.userId))
+      expect(screen.getByTestId('app-owner-backend')).toHaveTextContent(next.apiBaseUrl)
+      expect(screen.getByTestId('app-owner-pending-count')).toHaveTextContent('0')
+      expect(screen.getByTestId('app-owner-drafts')).toBeEmptyDOMElement()
+      expect(screen.getByTestId('app-owner-mount-state')).toHaveTextContent('0')
+      await waitFor(() =>
+        expect(nextSource.services?.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalled()
+      )
+      expect(nextSource.services?.runtimeWorkApi?.getRuntimeTranscript).not.toHaveBeenCalled()
+      expect(pendingInteractionStorageKeys()).toHaveLength(2)
+      expect(localStorage.getItem(previousKeys[0])).toContain('Order review')
+    }
+  )
+
+  test('preserves AppShell notification state when the same owner refreshes its token', async () => {
+    appOwnerFixture.user = LOCAL_USER
+    appOwnerFixture.connection = connectedAppOwner()
+    appOwnerFixture.source = appOwnerTaskSource(true)
+    window.history.pushState({}, '', '/test-app-owner')
+    const view = await renderApp()
+    await waitFor(() =>
+      expect(screen.getByTestId('app-owner-pending-count')).toHaveTextContent('1')
+    )
+    await userEvent.click(screen.getByTestId('app-owner-edit-draft'))
+    const previousKeys = pendingInteractionStorageKeys()
+
+    appOwnerFixture.connection = connectedAppOwner(7, undefined, 'refreshed-owner-token')
+    await act(async () => view.rerenderApp())
+
+    expect(screen.getByTestId('app-owner-pending-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('app-owner-drafts')).toHaveTextContent('Owner A private reply')
+    expect(screen.getByTestId('app-owner-mount-state')).toHaveTextContent('1')
+    expect(pendingInteractionStorageKeys()).toEqual(previousKeys)
+  })
+
+  test('rebuilds AppShell for the local owner when retained cloud credentials expire', async () => {
+    appOwnerFixture.user = LOCAL_USER
+    appOwnerFixture.connection = connectedAppOwner()
+    appOwnerFixture.source = appOwnerTaskSource(true)
+    window.history.pushState({}, '', '/test-app-owner')
+    const view = await renderApp()
+    await waitFor(() =>
+      expect(screen.getByTestId('app-owner-pending-count')).toHaveTextContent('1')
+    )
+    await userEvent.click(screen.getByTestId('app-owner-edit-draft'))
+    const previousKeys = pendingInteractionStorageKeys()
+
+    appOwnerFixture.connection = {
+      ...connectedAppOwner(),
+      status: 'expired',
+      isConnected: false,
+      token: null,
+      serviceKey: 'expired',
+    }
+    appOwnerFixture.source = { ...appOwnerTaskSource(false), userId: LOCAL_USER.id }
+    await act(async () => view.rerenderApp())
+
+    expect(screen.getByTestId('app-owner-pending-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('app-owner-drafts')).toBeEmptyDOMElement()
+    expect(screen.getByTestId('app-owner-mount-state')).toHaveTextContent('0')
+    expect(pendingInteractionStorageKeys()).toHaveLength(2)
+    expect(localStorage.getItem(previousKeys[0])).toContain('Order review')
   })
 
   test('renders an isolated extension child without the global navigation shell', async () => {
@@ -1336,7 +1575,9 @@ describe('App plugins route', () => {
       })
     )
     window.weworkElectronCloudCredentials = {
-      getDevicePublicKey: vi.fn(),
+      prepareAuthorization: vi.fn(),
+      commitAuthorization: vi.fn(),
+      discardAuthorization: vi.fn(),
       claimAuthorization: vi.fn(),
       refreshAccessToken: vi.fn().mockResolvedValue({
         ok: true,

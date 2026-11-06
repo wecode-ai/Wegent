@@ -652,7 +652,12 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
     write_default_codex_state_db_thread(&sqlite_home, false);
     let log_path = temp_path("wegent-app-runtime-archive-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
-    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
 
     let archived = handler
         .handle_runtime_rpc(json!({
@@ -669,6 +674,11 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
     assert_eq!(archived["accepted"], true);
     assert_eq!(archived["taskId"], "thread-1");
     assert_eq!(archived["workspacePath"], "/tmp/project");
+    let changed = std::iter::from_fn(|| event_rx.try_recv().ok())
+        .find(|event| event["event"] == "runtime.work.changed")
+        .expect("successful archival must invalidate every subscribed task source");
+    assert_eq!(changed["payload"]["deviceId"], "device-1");
+    assert_eq!(changed["payload"]["taskId"], "thread-1");
 
     let listed = handler
         .handle_runtime_rpc(json!({

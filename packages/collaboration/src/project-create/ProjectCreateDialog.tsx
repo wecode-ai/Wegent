@@ -274,6 +274,7 @@ function CollaborationGroupWorkflow({
   );
 }
 
+/** Show template resource loading and recovery alongside the controller's submission boundary. */
 export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const {
     targets,
@@ -944,7 +945,8 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   );
                 }
               }}
-              onChange={(drafts, selected) => {
+              onChange={(drafts, selected, document) => {
+                if (document) commands.setTemplateDocument(document);
                 setTemplateSelected(selected);
                 commands.setTemplatePending(selected && drafts === null);
                 commands.setCollaborationGroupDrafts(drafts ?? []);
@@ -976,7 +978,10 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             />
           )}
           {templateSelected &&
-            resourceSetup?.requiresTemplateEnvironmentSelection && (
+            resourceSetup &&
+            (resourceSetup.requiresTemplateEnvironmentSelection ||
+              resourceSetup.executionEnvironmentLoading ||
+              resourceSetup.executionEnvironmentError) && (
               <TemplateEnvironmentSelection
                 environments={resourceSetup.executionEnvironments ?? []}
                 selected={state.executionEnvironmentDeviceIds}

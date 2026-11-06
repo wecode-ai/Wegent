@@ -15,12 +15,15 @@ const groups = [
   `${component}/Cargo.toml`,
   `${component}/Cargo.lock`,
   `${component}/src`,
+  "shared/rust",
+  `${component}/crates`,
   ...(component === "executor"
     ? [
         "executor/vendor",
         "sdk/plugin-auth",
         "sdk/plugin-creator",
         "shared/assets",
+        "shared/protocol",
       ]
     : []),
   ".github/ci/rust-toolchain",

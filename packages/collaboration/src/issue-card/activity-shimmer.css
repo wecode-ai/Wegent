@@ -1,4 +1,6 @@
 .activity-shimmer-text {
+  --activity-shimmer-text-width: 0px;
+  --activity-shimmer-text-offset: 0px;
   position: relative;
   display: inline-block;
   color: rgb(var(--color-text-muted));

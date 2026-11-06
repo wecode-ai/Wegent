@@ -45,6 +45,7 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_EXECUTOR_BINARY: '/tmp/foreign-executor',
         WEGENT_EXECUTOR_SOURCE_DIR: '/tmp/foreign-source',
         WEGENT_APP_IPC_ENDPOINT: '/tmp/foreign-app-ipc.sock',
+        WEGENT_APP_IPC_DEVICE_ID: 'electron-parent-device',
         WEGENT_APP_IPC_TOKEN: 'foreign-app-ipc-token',
         WEGENT_TASK_ID: 'runtime-parent-task',
         WEGENT_TASK_WORKSPACE: '/tmp/parent-workspace',
@@ -92,6 +93,8 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.DEVICE_SESSION_GATEWAY_HOST).toBe('127.0.0.1')
     expect(environment.DEVICE_SESSION_GATEWAY_PORT).toBe('0')
     expect(environment.WEGENT_EXECUTOR_HOME).toBe('/tmp/session/executor-home')
+    expect(environment.DEVICE_ID).toBe('device-1')
+    expect(environment.WEGENT_APP_IPC_DEVICE_ID).toBe(environment.DEVICE_ID)
     expect(environment.WEGENT_EXECUTOR_PROJECTS_DIR).toBe(
       path.join('/tmp/session/executor-home', 'workspace', 'projects')
     )

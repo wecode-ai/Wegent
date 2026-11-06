@@ -28,7 +28,7 @@ import type { CloudWorkStatus } from '@/types/workbench'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import { DesktopSidebar } from './DesktopSidebar'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
@@ -205,6 +205,86 @@ async function waitForSidebarPointerSensorCleanup() {
 await preloadDefaultDshUiTestModules()
 
 describe('DesktopSidebar', () => {
+  test('keeps worktree details in hover content and allows partially expanded tasks to collapse', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    renderSidebar({
+      onOpenRuntimeTask,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 26,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/workspace/Wegent',
+                tasks: Array.from({ length: 26 }, (_, index) => ({
+                  taskId: `worktree-${index}`,
+                  workspacePath: `/workspace/worktrees/${index}/Wegent`,
+                  workspaceKind: 'worktree' as const,
+                  worktreeId: String(index),
+                  title: `Task ${index}`,
+                  runtime: 'codex',
+                  updatedAt: '2026-06-20T06:00:00Z',
+                })),
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 26,
+      },
+    })
+    expect(screen.getByTestId('desktop-sidebar')).not.toHaveClass('font-normal')
+    expect(screen.getByText('Wework')).toHaveClass('font-medium')
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
+    const row = screen.getAllByTestId(/^runtime-local-task-row-/)[0]
+    const taskId = row.dataset.testid!.replace('runtime-local-task-row-', '')
+    expect(row).toHaveAccessibleName(`Task ${taskId.replace('worktree-', '')} · Git worktree`)
+    expect(
+      screen.queryByTestId(`runtime-local-task-worktree-icon-${taskId}`)
+    ).not.toBeInTheDocument()
+    await userEvent.hover(row)
+    await waitFor(() =>
+      expect(screen.getByTestId(`runtime-local-task-worktree-icon-${taskId}`)).toBeInTheDocument()
+    )
+    await userEvent.click(row)
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      workspacePath: `/workspace/worktrees/${taskId.replace('worktree-', '')}/Wegent`,
+      taskId,
+    })
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
+  })
+
+  test.each(['loading', 'error'] as const)(
+    'does not present a %s task list as empty',
+    async phase => {
+      const onRetryRuntimeWork = vi.fn().mockResolvedValue(undefined)
+      renderSidebar({
+        runtimeWork: null,
+        runtimeWorkLoad: { phase, error: phase === 'error' ? 'Request timed out' : null },
+        onRetryRuntimeWork,
+      })
+      expect(screen.getByTestId('runtime-work-load-status')).toBeInTheDocument()
+      expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+      if (phase === 'error') {
+        await userEvent.click(screen.getByTestId('runtime-work-load-retry'))
+        expect(onRetryRuntimeWork).toHaveBeenCalledOnce()
+      }
+    }
+  )
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
@@ -1010,16 +1090,18 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
   })
 
-  test('gates My stand-in behind the experimental features preference', async () => {
+  test('shows My stand-in with a Beta badge regardless of the experimental preference', async () => {
     const onOpenStandIn = vi.fn()
     experimentalFeatures.enabled = false
     const view = renderSidebar({ onOpenStandIn })
-    expect(screen.queryByTestId('personal-stand-in-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('personal-stand-in-button')).toBeVisible()
+    expect(screen.getByTestId('personal-stand-in-beta')).toHaveTextContent('Beta')
+    await userEvent.click(screen.getByTestId('personal-stand-in-button'))
     view.unmount()
     experimentalFeatures.enabled = true
     renderSidebar({ onOpenStandIn })
     await userEvent.click(screen.getByTestId('personal-stand-in-button'))
-    expect(onOpenStandIn).toHaveBeenCalledTimes(1)
+    expect(onOpenStandIn).toHaveBeenCalledTimes(2)
   })
 
   test('opens independent schedules from the sidebar when experimental features are disabled', async () => {
@@ -3065,5 +3147,161 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getAllByTestId('project-item-button')).toHaveLength(1)
     expect(screen.getByTestId('project-item-button')).toHaveTextContent('Repo')
+  })
+  test('preserves manual task-list scrolling across runtime refreshes', async () => {
+    localStorage.setItem('wework:debug-runtime', '1')
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    onTestFinished(() => debug.mockRestore())
+    const autoScrollEntries = () =>
+      debug.mock.calls.flatMap(([prefix, entry]) =>
+        prefix === '[Wework] Runtime sidebar state' && entry?.event === 'active-task-auto-scroll'
+          ? [entry]
+          : []
+      )
+    const chatPath = '/Users/alice/.wework/workspace/chats/sidebar-scroll'
+    const runtimeWork = (status: string) => ({
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online' as const,
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'active-task',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Active task',
+              runtime: 'codex' as const,
+              status,
+              running: status === 'running',
+              interactionStatus:
+                status === 'waiting_for_user_input' ? ('waitingForUserInput' as const) : null,
+            },
+            {
+              taskId: 'other-task',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Other task',
+              runtime: 'codex' as const,
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    })
+    const currentRuntimeTask = {
+      deviceId: 'local-device',
+      taskId: 'active-task',
+      workspacePath: chatPath,
+    }
+    const initialProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('running'),
+      currentRuntimeTask,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-scroll-refresh-test')
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    scrollIntoView.mockClear()
+    const initialAutoScrollCount = autoScrollEntries().length
+    expect(autoScrollEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'before', willScroll: true }),
+        expect.objectContaining({ phase: 'after', willScroll: true }),
+      ])
+    )
+
+    const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
+    scrollContainer.scrollTop = 180
+    fireEvent.scroll(scrollContainer)
+
+    const refreshedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('waiting_for_user_input'),
+      currentRuntimeTask: { ...currentRuntimeTask },
+    })
+    act(() => lifecycleStore.syncRuntimeWork(refreshedProps.runtimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...refreshedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(scrollContainer.scrollTop).toBe(180)
+    expect(autoScrollEntries()).toHaveLength(initialAutoScrollCount)
+    expect(screen.getByTestId('runtime-local-task-waiting-active-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-hover-actions-active-task')).toHaveClass(
+      'right-full',
+      'mr-1'
+    )
+
+    const resumedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('running'),
+      currentRuntimeTask,
+    })
+    act(() => lifecycleStore.syncRuntimeWork(resumedProps.runtimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...resumedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    expect(screen.queryByTestId('runtime-local-task-waiting-active-task')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-running-active-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-hover-actions-active-task')).toHaveClass(
+      'right-0'
+    )
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(scrollContainer.scrollTop).toBe(180)
+    expect(autoScrollEntries()).toHaveLength(initialAutoScrollCount)
+
+    const switchedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: resumedProps.runtimeWork,
+      currentRuntimeTask: {
+        deviceId: 'local-device',
+        taskId: 'other-task',
+        workspacePath: chatPath,
+      },
+    })
+    scrollIntoView.mockImplementationOnce(() => {
+      scrollContainer.scrollTop = 50
+    })
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...switchedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView.mock.contexts[0]).toBe(
+      screen.getByTestId('runtime-local-task-row-other-task')
+    )
+    expect(autoScrollEntries().slice(-2)).toEqual([
+      expect.objectContaining({
+        phase: 'before',
+        changedDependencies: ['taskId', 'taskKey'],
+        previousDependencies: expect.objectContaining({ taskId: 'active-task', rowVisible: true }),
+        dependencies: expect.objectContaining({ taskId: 'other-task', rowVisible: true }),
+        metrics: expect.objectContaining({ scrollTop: 180 }),
+      }),
+      expect.objectContaining({
+        phase: 'after',
+        changedDependencies: ['taskId', 'taskKey'],
+        metrics: expect.objectContaining({ scrollTop: 50 }),
+      }),
+    ])
   })
 })

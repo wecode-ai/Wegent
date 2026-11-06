@@ -91,6 +91,8 @@ Choose a template through **Discover templates** when creating a project. Bundle
 
 If the current execution device is unavailable, check its cloud connection and use permissions. If multiple online records match the same desktop, resolve the execution-device ambiguity before continuing.
 
+After selecting a template, creation waits for the execution-device list to finish loading. If loading fails, the execution environment section shows the error and a **Retry** action; creation becomes available after a successful refresh.
+
 ### Configure local project collaborators
 
 Wework automatically maintains a **Current device agent** in the local space, so users do not need to create an agent first. A new local project includes **Me** and the **Current device agent** by default. You can remove the agent before creation or add it again through **Add collaborator**. Creating a project does not automatically create a collaboration group.
@@ -194,16 +196,35 @@ Each Issue and the tag catalog saved in project settings allow up to 20 distinct
 
 Renaming or deleting a tag in a native project saves the catalog, tags on undeleted Issues, lane bindings, and filter references together. A project version conflict or any Issue update failure rolls back the entire operation so it can be retried after resolving the error. Externally hosted Issues do not support this transaction across records. Failed bulk status changes in the table list the affected Issues and reasons; successful Issues are deselected while failed Issues stay selected for retry.
 
-| Drag direction | Issue changes |
-| --- | --- |
-| Status → Status | Update status and keep tags |
-| Status → Tag | Add the destination tag and keep status |
-| Tag → Status | Update status and keep tags |
-| Tag → Tag | Remove the source tag, add the destination tag, and keep other tags and status |
+| Drag direction  | Issue changes                                                                  |
+| --------------- | ------------------------------------------------------------------------------ |
+| Status → Status | Update status and keep tags                                                    |
+| Status → Tag    | Add the destination tag and keep status                                        |
+| Tag → Status    | Update status and keep tags                                                    |
+| Tag → Tag       | Remove the source tag, add the destination tag, and keep other tags and status |
 
 An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
 
 Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
+
+## Quick tag filters
+
+Choose **All tags** in the board toolbar, type to find tags, and select one or more.
+An Issue matches if it contains any selected tag. The filter preserves lane grouping
+and combines with board search and saved-view conditions. Clear the selection to show
+all tags; switching projects or views resets it. Filtering does not change shared views.
+
+## Edit Issue properties
+
+Tags, status, priority, assignee, parent, date range, and milestone save immediately
+for existing Issues. Press Enter or leave the title field to save a title change.
+Type in the milestone picker to search; choose **Not set** to remove its association.
+New Issue properties are still submitted together when creating the Issue.
+
+Only the description requires **Save**. Saving properties never submits an unsaved
+description, and cancelling description editing does not revert saved properties.
+Failures display an error and a retry action. Consecutive changes are saved in order;
+submitted changes continue to finish after leaving the detail view.
 
 ## Sub-issue progress on cards
 
@@ -239,7 +260,11 @@ The **Human processing** settings page only explains the direct-assignment and r
 
 ## Message AI
 
-Use **Message AI** in the project-space header for project exploration and temporary questions. It opens the project conversation sidebar, where you can start or switch conversations and select an execution project. For work that needs formal execution, create a board task and assign a robot so its owner, status, and deliverables remain trackable.
+Select the always-visible **Chat** button on the right of the board to expand its conversation sidebar. The **New conversation** icon next to a project in the collaboration sidebar also opens it. No collaboration group, AI leader, or experimental feature is required. Both local and cloud projects are supported. New conversations run on the current computer with the current project board as their default context, subject to the user's actual access and execution permissions.
+
+Send a message directly without selecting another project or working directory. The sidebar header identifies the current project. Start new conversations, switch between existing conversations, or reopen the sidebar and choose a previous conversation to continue it. Local and cloud project histories are kept separate. If the local execution environment is unavailable, the sidebar reports the error; send again after recovery.
+
+Opening a conversation does not enable background project coordination. For work that needs a tracked owner, status, and deliverables, create a board task and assign a member, robot, or collaboration group.
 
 ## Issue details and execution tasks
 
@@ -295,6 +320,8 @@ Automation rules can run on a schedule or be triggered by project events such as
 
 When a collaboration group handles an issue, its manager agent always reads the issue and eligible members before creating a workflow plan. The manager writes a specific execution prompt for each child task; members receive that assignment prompt rather than the static role description in group settings. After members report their outcomes, the manager decides whether to continue work, request review, or complete the issue. This flow does not depend on preset stages or a collaboration-mode option.
 
+Issue activity describes assignments as “Project manager assigned ‘Task title’ to Member” without repeating a manager role label. When a linked execution is available, select **View execution** to open its details.
+
 Each rule selects one assignment strategy:
 
 - **Manual selection** fixes one project robot. When the rule fires, the original board task is assigned directly to that robot through the same execution flow used by an ordinary human assignment.
@@ -326,7 +353,6 @@ For worktree tasks, the file tree, terminal, and development tools use the task'
 A project can reference a different folder on each local, cloud, or remote device. Select the device that contains the code when starting a task. Copying a task to another device requires a project folder on that device.
 
 On macOS, open a folder from a terminal with `wework .` or `wework /path/to/project`.
-
 
 ## Editing deliveries
 

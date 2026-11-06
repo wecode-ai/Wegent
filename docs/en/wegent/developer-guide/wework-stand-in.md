@@ -4,21 +4,29 @@ sidebar_position: 42
 
 # Wework Stand-in
 
+After connecting to an enterprise Backend, first-use primary setup and personal/cloud-project role creation default to an available cloud or remote device, preferring its default flag, or to the local device when neither is usable. The form allows explicitly selecting local or another device; changes reuse the unsaved-edit confirmation. Existing configured local profiles remain selected on first open; an unsaved placeholder role does not count as configuration. Explicit cloud-device choices are remembered per enterprise Backend and account without moving existing profiles when a device goes offline. Inventory changes never silently move an editor already opened. Saving and conversations use the selected Executor’s existing Runtime channels. Standalone usage and local projects retain their execution flow. No plugin, provider configuration or host provisioning is added.
+
+My stand-in retains access to profiles created locally before enterprise connection and offers to view them after connecting. A selected local role can be explicitly migrated to a cloud device. Confirmation transfers its name, instructions, model settings, tags, role memories and shared memories into a separate cloud role without overwriting existing target profiles. Conversations, active work, local directories and credentials stay local. Project/data-source grants and schedules require configuration on the target, which starts paused. Local intake pauses only after copying succeeds and its profile version remains unchanged. Local configuration, memories and history remain available; retries deduplicate matching imported memories. A primary profile migrates as a separate role rather than overwriting the target primary profile.
+
 Role creation and Stand-in settings share the header, save actions, intake switch and connection entry, without a separate nested settings card. The primary profile has one Stand-in instructions field for responsibilities, background and preferences shared with scenario roles. Existing two-field content is consolidated without loss on save. Connections initially shows connected objects with their scope and handling summary; Add connection opens project, DingTalk or Calendar selection. Scope, exclusions, tags and handling policies live in the connection editor. Device, working directory and model remain visible in Execution environment. Switching devices loads that Executor’s independent profile and is blocked while edits are unsaved. Directory and model defaults apply to new work; existing conversations retain their environment. The Issue composer has no separate stand-in toggle; receive scopes are managed in My stand-in.
 
-My stand-in is experimental. Enable experimental features in Settings to show its Tasks sidebar entry; its page stays unavailable while the preference is off. The primary identity opens persistent chat; scenario roles retain work/chat navigation. The work list aggregates personal work, with optional role filtering. Work cards open original Runtime conversations, where questions and native approvals remain. There is no separate decision inbox. Settings preserve intake enablement, instructions, connections, device, model, workspace and role agent configuration. Connection timing lives inside Settings.
+My stand-in is available as Beta without the experimental preference. The Tasks sidebar and collaboration project buttons carry a Beta badge; direct navigation and project indicators also remain available. Project coordinator conversations retain their experimental gate. The primary identity opens persistent chat; scenario roles retain work/chat navigation. The work list aggregates personal work, with optional role filtering. Work cards open original Runtime conversations, where questions and native approvals remain. There is no separate decision inbox. Settings preserve intake enablement, instructions, connections, device, model, workspace and independent role instructions. Connection timing lives inside Settings.
 
-The project toolbar opens Project stand-in. It selects an already connected stand-in first, otherwise the first eligible personal stand-in. Existing instructions, agent and automatic-handling status are shown read-only. For an enabled project, the primary action is exclusively Disable for this project. Saving disconnects every matching stand-in from this project, using exclusions for all-project sources and disabling the collaboration source of project-bound agents. Global enablement, other projects and existing executions remain unchanged. For a disabled project, the primary action is exclusively Enable and use for this project, enabling the selected stand-in and connecting the project. The UI explains that enablement also applies to its other connected projects and only new assignments after enablement are handled. Agent selection and instructions remain unchanged. A separate link explicitly opens personal settings and explains their cross-project effect. Personal settings open in Tasks and preserve an explicitly saved execution device. A first connection enables only the current project rather than all projects.
+The project toolbar opens Project stand-in. It selects an already connected stand-in first, otherwise the first eligible personal stand-in. Existing instructions and automatic-handling status are shown read-only. For an enabled project, the primary action is exclusively Disable for this project. Saving disconnects every matching stand-in from this project, using exclusions for all-project sources. Global enablement, other projects and existing executions remain unchanged. For a disabled project, the primary action is exclusively Enable and use for this project, enabling the selected stand-in and connecting the project. The UI explains that enablement also applies to its other connected projects and only new assignments after enablement are handled. Role responsibilities and instructions remain unchanged. A separate link explicitly opens personal settings and explains their cross-project effect. Personal settings open in Tasks and preserve an explicitly saved execution device. A first connection enables only the current project rather than all projects.
 
-Create a stand-in for this project creates a personally owned stand-in with the project name and a single-project connection, also visible in personal settings. Instructions are expanded; execution settings are collapsed. Secondary views stay scoped to the selected stand-in without another picker. Choosing a project agent connects its owning project and limits the stand-in to it. While signed out, no cloud personal-agent catalog is requested and no login or load-failure hint is shown; the general assistant and eligible project agents remain available. Genuine catalog failures retain an explicit retry action.
+Create a stand-in for this project creates a personally owned stand-in with the project name and a single-project connection, also visible in personal settings. Instructions are expanded; execution settings are collapsed. Secondary views stay scoped to the selected stand-in. A stand-in is an independent special agent: creation and editing do not select personal or project agents or request their catalogs. It uses its own instructions, model, device and connections without inheriting another agent’s prompt, skills, plugins or execution policy.
 
-Instructions reuse the normal composer, skills, plugins and Goal mode. Device, model and code workspace live under More settings. Saving does not depend on cloud catalogs, project device bindings or model readiness; dispatch validates the current actor, Issue permission and the agent's device and model policies.
+Instructions reuse the normal composer, skills, plugins and Goal mode. Device, model and code workspace live under More settings. Saving does not depend on cloud catalogs, project device bindings or model readiness; dispatch validates the current actor, Issue permission and the stand-in's device and model configuration.
 
 Every edit, including the automatic handling toggle, takes effect only after Save. Prompt and execution changes merge into the current role through functional updates, so delayed composer callbacks cannot overwrite newer toggle, device or workspace values. Failed saves retain the draft; version conflicts cannot overwrite another editor. Clicking the drawer backdrop, closing, or pressing Escape requests dismissal. Unsaved changes open a centered confirmation dialog; Keep editing preserves the draft and drawer, while Discard closes it. Back from a secondary page discards that page's edits. Disabling stops new assignments while existing Runtime tasks continue.
 
 A role can cover all participating collaboration projects, including future projects, with individual exclusions, or a selected project list. Optional tags narrow its scope. Settings are account-scoped in the selected Executor's SQLite database; devices remain independent. Settings belong to the Executor that stores them. After a desktop device identity change, reads and scheduling bind the document and its stand-ins to the current Executor, preserving instructions, scopes, versions and assignment cutoffs. Saves still reject settings addressed to another device. The frontend passes the selected Executor explicitly as the request target, without deriving routing from stored device fields, duplicating local-device or project-access validation, or rewriting device ownership in responses. The Executor validates ownership and permissions. Local projects are displayed only on their owning device.
 
-One personal document owns stand-in configurations and versions. Legacy project configurations migrate transactionally into roles preserving project scopes, assignment cutoffs and original project-agent authority. Project-addressed RPCs are projections over this document, with no duplicate project persistence.
+One personal document owns stand-in configurations and versions. Legacy project configurations migrate transactionally into roles. Old personal and project agent references are removed. Before removing a project reference, migration intersects its former project boundary with the selected project scope and preserves exclusions, retaining effective grants, identity, versions and assignment cutoffs. Explicit models and source connections remain intact; an unspecified model follows the independent stand-in default. Project-addressed RPCs are projections over this document, with no duplicate project persistence.
+
+Automatic project intake uses each project's connection time rather than the stand-in's activation time in other projects. Both personal and project settings transactions maintain Executor-owned `projectBoundaries`, keyed by project ID and storage type. Project projections expose that boundary as `enabledAfter` for local polling, cloud assignments and durable intake validation. Continuously connected projects retain their boundaries; new connections, reconnections, removed exclusions and re-enabled identities reset the affected scope. Ordinary settings edits preserve it. Reassigning an old Issue to the user after connection remains eligible. The existing CI `stand-in` checkpoint adds a user story covering historical assignments, new assignments, disconnected-period assignments, reassignment and duplicate prevention across later polling. Desktop, storage and Executor remain real; only model services are replaced.
+
+Email E2E uses hash-pinned GreenMail 2.1.15 with Java 11+ (OpenJDK 21 in existing Linux CI), preserving exact IMAP APPEND timestamp assertions. Version 1.6.15 parsed noon protocol timestamps as midnight, shifting them by 12 hours. Upstream [#1086](https://github.com/greenmail-mail-test/greenmail/pull/1086) fixes that defect; do not work around it by changing business time filters or weakening assertions.
 
 ## Connection timing and background coordination
 
@@ -30,7 +38,15 @@ Settings writes and dispatch serialize per user. Configuration changes cancel un
 
 ### Plugin and host transaction boundary
 
-Executor advertises `runtime.coordination-v1`. The plugin calls `runtime.coordination.contexts`, `snapshot`, `commit`, `wake` and `status` through the existing executor-runtime client. Host snapshots bind the current user, device, configuration, wake revision and event revisions. A plugin decision can select only snapshot facts. One existing SQLite transaction commits all intents, state and the immutable receipt. Invalid or multiply consumed events, stale snapshots, changed configuration and another device are rejected. Replaying the same snapshot and plan returns its original receipt without another dispatch.
+Executor advertises `runtime.coordination-v1`. The plugin calls `runtime.coordination.contexts`, `snapshot`, `commit`, `wake` and `status` through the existing executor-runtime client. Host snapshots bind the current user, device, configuration, wake revision and event revisions. A plugin decision can select only snapshot facts.
+
+The batch `snapshot.works` inventory contains metadata validated against current owner, role and source authority; it never eagerly loads conversations. Temporary history-read saturation cannot remove an existing responsibility. `read_work` supplies batch work metadata and original source messages, not proof that its conversation has been read. The coordinator uses the general bounded `read_task` API on demand for the matching original request and results, following page/content cursors and reading only work IDs in the current batch. Temporary busy errors remain recoverable reads, not missing work or justification for duplicate tasks. Continuation preserves the original task ID, read grants, approvals and result-return binding. One existing SQLite transaction commits all intents, state and the immutable receipt. Invalid or multiply consumed events, stale snapshots, changed configuration and another device are rejected. Replaying the same snapshot and plan returns its original receipt without another dispatch.
+
+One upstream event ID may have multiple immutable versions. To read a selected version, pass its `recordId` from the `read_work` summary as `messageId`, then follow `payloadOffset` / `nextOffset` through the original event. An exact `recordId` takes precedence within the current work. An upstream `id` is accepted only when it identifies one record; shared IDs return an explicit ambiguity error rather than silently selecting an older version. Other works and revoked source connections remain unreadable. `reply` and `send_email` use the same exact record selection and retain current work-owner, role and source-authority checks before execution. External reply targets and idempotency keys continue to use the selected original record’s upstream ID.
+
+Plugin CLI actions use one exact installed and enabled plugin from the native inventory. The Executor obtains its declared `connectorSlug` from the unique matching `localAuth.tool.id`; the plugin name cannot replace connector identity. Inventory errors, duplicate plugin names, missing or ambiguous tools reject execution without choosing an older cache, a different identity, or running extra login or health checks.
+
+When native MCP approvals omit a tool name, the host correlates one unfinished native call in the same task, thread and turn using the exact server and complete JSON arguments. Only a unique match supplies tool and call identity for the preview. Missing or ambiguous matches remain unidentified; question text, titles and recency never establish identity. Live approvals and recovered conversations share the result without changing native approval, authorization or sending policy.
 
 The Router has no separate database, model runner or permission system. Assessment instructions and routing rules belong to the plugin; Rust retains source eligibility, batch allowlists, role permissions, current-account checks and execution. Snapshot and commit both revalidate the background conversation lifecycle and cannot rotate an active or waiting batch. The old native business poller and immediate connection dispatch branches are removed; Automation scheduling and connection providers remain.
 
@@ -40,7 +56,7 @@ When MCP batch authority changes, Executor waits for the active execution to fin
 
 ## Scheduled work
 
-Settings → Connections → Add connection → Calendar is the single entry for arranging work; scheduled work is no longer a peer tab of the work list. Calendar records an event and its trigger time, reusing the existing Automation store, scheduler and execution history. The identity’s `calendar.policy` controls the whole calendar connection; `taskRequest.standInCalendar` identifies calendar entries. Entries inherit the connection policy. Due entries first produce durable personal intake; background mode does not automatically create an execution task. The calendar editor no longer exposes per-event processing overrides, goals, existing-task targets or independent execution settings. Work → Scheduled independently opens `/automations`, preserving task scheduling, execution environment, goals and continuation settings. Calendar is entered through stand-in connections. The `taskRequest.standInCalendar` marker separates their lists and editing without implicit conversion. Calendar saves independently and reuses the arrangement editor’s draft guard for returning and closing. Execution history links to the original work. taskRequest.standInOwner binds ownership. The current identity model, workspace and agent policies resolve when due rather than copying credentials at creation. Older schedules remain in Scheduled; calendar lists contain only the current identity’s calendar events.
+Settings → Connections → Add connection → Calendar is the single entry for arranging work; scheduled work is no longer a peer tab of the work list. Calendar records an event and its trigger time, reusing the existing Automation store, scheduler and execution history. The identity’s `calendar.policy` controls the whole calendar connection; `taskRequest.standInCalendar` identifies calendar entries. Entries inherit the connection policy. Due entries first produce durable personal intake; background mode does not automatically create an execution task. The calendar editor no longer exposes per-event processing overrides, goals, existing-task targets or independent execution settings. Work → Scheduled independently opens `/automations`, preserving task scheduling, execution environment, goals and continuation settings. Calendar is entered through stand-in connections. The `taskRequest.standInCalendar` marker separates their lists and editing without implicit conversion. Calendar saves independently and reuses the arrangement editor’s draft guard for returning and closing. Execution history links to the original work. taskRequest.standInOwner binds ownership. The current identity model and workspace resolve when due rather than copying credentials at creation. Older schedules remain in Scheduled; calendar lists contain only the current identity’s calendar events.
 
 The primary chat can also list, record and cancel calendar events through the same connection policy, without selecting an execution conversation. Assessment and execution retain current-user, role and source boundaries, never automatically messaging coordinator or identity conversations. Pausing/deleting an identity or modifying/cancelling an arrangement invalidates prepared requests. Existing questions and confirmations remain intact. Busy work or unavailable capacity produces Needs attention rather than entering a stale delayed queue. Version checks distinguish the system claiming a one-time job from a later user cancellation. Unsaved arrangements inside settings also require discard confirmation.
 
@@ -76,6 +92,8 @@ Each isolated case restores original profiles, removes its events and test plugi
 
 ## Connection plugin sources
 
+Connections are supplied by DSH plugins. See the [connection extension point](./wework-connection-plugins.md) for the shared host, Provider contract and default event handling.
+
 Connection dependencies declare exact marketplace and plugin IDs through `source` and optional `alternateSources`. Resolution reuses an installed source first, choosing declaration order when several sources are installed. Disabled or incompatible installations still require explicit action; they are never enabled, upgraded, or replaced automatically. Tool calls carry the selected source's actual ID and version, and the Executor verifies that the connection plugin declared that source.
 
 DingTalk supports both `dingtalk@wegent` and `dingtalk@wework`, preserving existing installations and account configuration without migration or reinstallation. Undeclared marketplaces do not participate in resolution.
@@ -86,11 +104,17 @@ Stand-ins and ordinary tasks share the model picker, classification, sorting, an
 
 Display models and `RunnerModelIdentity` are stored separately. Display models serve the UI; execution references contain only the actual runtime, provider, model ID, and the cloud resource name, type, namespace, and owner. Saving submits only the execution reference, not model configurations or credentials. The `public` resource type means a public resource, not a public-network endpoint. Intranet, public-network, and overseas labels come from the original catalog; unmarked models are not automatically labeled public-network.
 
+The native host's `ModelConfigurationStore` owns custom interfaces in `model.yml`. After Executor starts and before Core starts, and after reading, saving, or binding the configuration file, the host serially rebuilds the Executor's in-memory interface catalog. Stand-ins select a device-owned provider and `local-model:<id>` reference. Public catalogs and stand-in settings contain no endpoints, API keys, or complete execution configurations. Dispatch resolves the current configuration by full device model identity; disabling or deleting an interface rejects new executions instead of switching to a Codex subscription. Ordinary tasks and stand-ins share protocol conversion, and concrete work inherits the saved model reference. Persisted tasks contain no credentials; each actual turn, including restored, queued, and continued work, resolves the original task’s stable model identity against the current device configuration. Missing references and disabled models reject execution before an unauthenticated request is sent.
+
 Desktop and mobile use the same complete model identity comparison, distinguishing same-name providers, namespaces, and owners. Option identifiers are independent of display names and preserve existing identifiers. Changing the device or runtime invalidates old catalog requests; unavailable saved models retain the recovery entry.
 
 The existing CI `stand-in-profile` checkpoint group includes the original `stand-in-profile-settings` scenario and the new `stand-in-model-catalog` scenario. The latter compares ordinary and stand-in labels for real Backend intranet, public-network, and unmarked models sharing an upstream model ID, then validates persisted execution references. The runner and CI catalog validator share checkpoint-group expansion so registered scenarios cannot be left outside CI.
 
+The same `stand-in-model-catalog` checkpoint loads the `stand-in-model-interface` extension while retaining the original scenario, Backend, and desktop lifecycle. It checks native `model.yml` interface selection, credential-free saved settings, and authenticated calls to the same model service from both the primary stand-in and its concrete work. It also restarts the app and continues the original work, verifying the same conversation and authenticated model calls. Existing model-service scenarios and assertions remain unchanged.
+
 ## Multiple stand-ins handling work
+
+When a local collaboration manager assigns an Issue to a human through `submit_workflow_plan`, persist the Issue assignment history and its receipt in the same SQLite transaction, reusing the ordinary assignment path’s `sync_assignment_receipt`. The receipt uses the owning Issue assignment event ID, not the collaboration round member-work ID. Stand-in reception and human reads update separate timestamps that survive reopening the store. Reception does not complete the work or settle human delivery. A subsequent round assigned to the same human also creates a new assignment event and unacknowledged receipt; resubmitting the same round remains idempotent. This synchronization applies to new assignments; it does not fabricate missing historical receipts.
 
 Sources, tags, handling policy and enable-time cutoffs determine eligible roles. Project assignments first pass native assignment validation, then follow the saved connection policy: direct processing dispatches natively, while other assignments enter background intake. Each connected matching role handles an assignment once, sharing the active-assignment check. Manual role delegation retains its existing entry. The coordination plugin collects ordinary source events, resolves ownership and reuses existing work.
 
@@ -138,6 +162,10 @@ Cover the status/history overview and secondary settings, default selection of a
 
 The primary stand-in keeps a persistent chat entry while individual work items retain separate Runtime tasks. Local Codex reuses thread resume and automatic compaction without timed thread rotation. The composer keeps model selection and hides execution controls such as context compaction, permissions, and planning.
 
+Each primary turn refreshes its orchestration contract: discover task tools, inspect existing work, create or continue an independent task with the complete requirements, sources, deliverables and authorization limits, then read actual results before reporting. This also applies to direct turns on loaded threads; concrete tasks and scenario roles do not receive this primary-only restriction. Configuration proposals remain in the identity conversation. `propose_profile` declares required settings fields, project reference objects, and independent automatic-processing, action-confirmation and timing policies. New roles preserve existing roles, and proposals are saved only after native confirmation. The identity conversation also creates or cancels schedules directly; concrete workers prepare reports and perform each execution without receiving identity configuration tools.
+
+When configuration blocks a current explicit business request, a proposal may set `continueCurrentRequest`. The host binds the actual identity conversation and an independent owner-request identifier, rather than accepting model-supplied actor ownership. The returned `willContinueCurrentRequest` reports whether that binding was established. Acceptance atomically saves settings and a pending continuation, then idempotently wakes the original conversation through the existing durable queue. Background results do not replace the owner request. A new owner message or cancellation invalidates the old continuation, including while queued. Ordinary settings edits do not generate business reminders. Continuations reread current settings, never elevate existing worker permissions, and preserve external-operation approvals.
+
 Independent `stand_in_memory` records live in the selected Executor's SQLite database, scoped to the person, a role, a collaboration project, or a DingTalk connection. They are separate from Codex threads, responsibilities, and connection permissions. Records retain their source task, timestamps, and version; edits and deletion require the current version. Devices keep independent memories.
 
 Before every execution, including follow-ups, queued turns, and restored executions, the Executor reloads current responsibilities, preferences, and applicable memories through one `additionalContext` source. Injection is limited to 20 records and 12KB; identity-bound `search_memories` provides further retrieval. Identity chats receive personal and their own role memories. External work receives only memories for its exact source, without private preferences or personal/role memories. The primary stand-in can query all records when managing memory. Stand-in execution disables Codex's global memory reading and generation to avoid mixing unrelated `CODEX_HOME` memories.
@@ -147,6 +175,24 @@ The first phase saves memories only when explicitly requested through `remember`
 Automatic extraction and consolidation, cross-device synchronization, and execution-thread rotation are not enabled in this phase.
 
 Scene roles can be deleted with confirmation from role settings, including the last scene role. The primary identity, work records, and memories remain. Deletion removes the selected role from saved settings without applying unrelated draft edits.
+
+### Codex policy and progressive skill loading
+
+The default-installed `wework-runtime@wework-personal` plugin owns detailed host workflows. Initial context contains a short capability entrypoint and skill names, descriptions, and paths. Browser, desktop, GitHub, connector authentication, conversations, visualizations, and artifact instructions are read only for the relevant task. Project spaces retain `wework-space`. Installation, enablement, updates, and discovery reuse the existing marketplace, plugin synchronization, and native skill reload paths without another plugin service or changes to tool permissions.
+
+User preferences, task system rules, explicit application `runtimePolicy` contributions, and required authority boundaries have one complete native `developerInstructions` baseline. `turn/start.additionalContext` no longer duplicates the policy in chunks: it supplies only the current revision and a policy-skill reference. An already retained baseline or loaded skill with that revision needs no reread. Changed or removed contributions resolve to the current immutable snapshot and supersede historical host policy. Content-addressed snapshots live in the execution's isolated Codex Home at `runtime-policies/<sha>/SKILL.md`, outside global skill discovery. Publication failures stop admission; tool-disabled requests publish neither action-policy files nor references.
+
+Resume configuration identity still includes the policy SHA and uses the existing close/reload gate. Native compaction rebuilds the current developer baseline, including its revision and skill entrypoint. Missing task-specific skill instructions are reread only when needed. Known policy changes on directly loaded temporary threads still require a new temporary session without rewriting history. Historical chunks are not physically deleted; the current reference explicitly supersedes them. Only explicit application entries contribute runtime policy; untrusted content cannot elevate itself. Ordinary application data and CLI context remain independent, and policy contributions do not grant permissions.
+
+The shared `runtime-policy` desktop checkpoint mocks only model responses. Electron, bundled plugin installation, Executor, Codex, shell reads, and compaction remain real:
+
+| User story                       | Acceptance                                                                                                        |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Start an ordinary conversation   | Default skills are discoverable; user rules appear once; browser and visualization bodies are absent.             |
+| Start browser work               | A real model tool reads the discovered browser skill.                                                             |
+| Continue after changing rules    | The current reference reaches the model; a real tool reads the new snapshot without removed content.              |
+| Continue after compaction        | The real summary and exactly one current native policy survive; old rules and eager browser bodies do not return. |
+| Resume an unloaded native thread | The same conversation retains its current policy and compacted summary.                                           |
 
 ## Merge and split work
 
@@ -182,6 +228,10 @@ Pending requests, command identity, and queue changes share the existing encrypt
 
 After restart, recovery checks the exact native thread and turn for a real timeline completion boundary. `thread/turns/list` can synthesize `interrupted`; that status alone cannot prove cancellation. Unconfirmed execution returns `recovery_required`, retains the request for inspection in the original work, and never resends automatically. Autonomous Goal recovery does not resubmit its original user command. Actual execution outcomes and generation checks determine settlement; late callbacks cannot settle a later command.
 
+When a native outcome remains unknown and no runner is active, the device owner can explicitly review and abandon that uncertain execution. Read `runtime.tasks.commands.get` for the current `commandFingerprint`, exact `native` tuple and acceptance time, then call `runtime.tasks.commands.resolve` with `{ taskId, commandId, userId, expectedFingerprint, expectedNative, decision: "abandon", requestId }`. `userId` is only a selector. The same controlled device-write transport as stopping a task applies, together with fresh connected-account and original command/current task owner/device checks. Missing device ownership, an active execution or a changed fingerprint/native binding fails closed. An explicit native `notLoaded` status proves no loaded runner, never historical turn completion. Only this owner-disposition flow uses that fact, with no local active, queued or preparing work, active Goal or known pending transition. Unknown native status remains unavailable; stop and historical completion predicates retain their original semantics.
+
+The stored native command state remains `recovery_required`; the owner disposition is persisted separately and projected as `abandoned` in public receipts. Older readers ignore the optional disposition and still reject replay of the uncertain command. An `abandoned` receipt retains `nativeOutcome: "unknown"`, the original command/thread/turn and the owner's decision. It never claims completion, native cancellation or successful external delivery. The same `requestId` reads the original decision idempotently; the original `commandId` can never replay. The decision is persisted atomically with the encrypted command queue. The coordinator consumes only that durable receipt, marks the exact old assessment as owner-abandoned and clears its recovery gate in one transaction. Existing actions and receipts remain intact; pending events enter subsequent batches. If the UI's following processing check is interrupted, restart consumes the durable receipt without resolving again or resending the old command.
+
 New coordination callers must check the capability and must not fall back to sending without command IDs. Acceptance receipts never replace source, role, project authorization, or native operation confirmation, and cannot answer or approve requests for the user.
 
 ## Durable arrangements
@@ -198,38 +248,80 @@ Calendar due runs use the existing per-automation history budget of 100 as their
 
 `runtime.stand_in.onboarding.get/complete` reads and submits feature choices for
 the current account on the selected Executor. Reads require no model, cloud
-catalog or execution preparation. Completion and the review arrangement share
-one Automation storage write. Opting out also records completion; closing does
-not. Existing users see onboarding once. Confirming a selected review materializes
-the UI's implicit primary profile only when absent, preserving explicit pauses
-and the calendar connection policy.
+catalog or execution preparation. The two-step introduction reuses StandInConnectionSettings for app authorization and scope editing. Continue remains available without connections. Final confirmation saves personal settings and enables the primary identity before recording completion. Failed saves retain drafts; retrying completion does not resubmit already saved settings. Closing protects unsaved connection drafts. No arrangement is created. The question-mark examples retain their equivalent buttons without inline scheduling. Weekly reviews are scheduled through the conversation after
+scope and time confirmation, preserving paused identities and calendar policy.
 
 Onboarding and the calendar share the Executor's `weekly_review` template,
 defaulting to Monday 09:00 in Asia/Shanghai. Deleting an arrangement retains the
 completion record, preventing recreation on repeat submissions. Users may
 explicitly add it again through the primary calendar template.
 
-Review executions expose only the read-only `read_review_history` stand-in tool.
-The host verifies account, device, actor task, current arrangement version and
-the actual run binding before paginating task discovery and native transcripts
-over a fixed seven-day window. Prior reports are read separately. Primary
-identity management conversations may also use this tool; external work,
-scenario roles and project coordinators cannot. Native permissions and approvals
-remain in force, and history conveys no authority. Reports disclose missing
-timestamps, failed reads and truncation without automatically changing memories,
-settings or sending externally.
+The question-mark examples modal offers daily briefings, meeting preparation, project follow-up, DingTalk mention replies and weekly work reviews. Choosing
+an example selects the primary conversation and appends the business request to
+its editable draft without sending, replacing existing notes or creating schedules.
+A single-person icon distinguishes the primary identity from scenario roles;
+the selected identity has an inverse-neutral background and checkmark. Conversation
+surfaces use the light theme's white background, and processing notices use a bounded bar.
+
+The host injects source discovery instructions into system prompts, including
+continuations of existing identity conversations, rather than user drafts.
+The AI inspects the profile and provider catalog, then attempts discovery using
+`connect_source`, or `list_projects` for projects. The tool returns actual provider
+status, declared authorization identity or secure account setup requirements.
+It never collects passwords, expands scope or claims message access merely because
+a provider is available. Subscription changes require `propose_profile` confirmation;
+sign-in uses native authorization. Missing inputs block aggregation until connected
+and confirmed, rather than producing fabricated summaries or unusable tasks.
+
+Identity conversations restored with an earlier desktop device identifier are
+rebound to the current host only after their persisted task ID, owner and role
+match. Owner and role stay unchanged. Ordinary tasks, external work and background
+batches retain their existing boundaries and task tools retain all permission checks.
+
+Review executions reuse the general read-only `list_tasks` and `read_task` tools
+instead of a review-specific batch reader. The existing run binding verifies
+account, local device, actor task, current arrangement version and run state,
+fixing the scope to the seven days before that run. Explicit out-of-window time
+bounds are rejected. Every task page, message page and content chunk revalidates
+access. Follow `nextCursor`, `beforeCursor`, `afterCursor` and
+`messageContentCursor` for the required evidence. Complete message content does
+not imply complete history; `sourceContentMayBeIncomplete` denotes actual source
+incompleteness. Prior reports use ordinary conversation reads and are not
+independent evidence. This identity cannot continue other tasks, create delegates,
+configure settings, write memories or send externally. Native permissions and
+approvals remain unchanged, and history grants no authority. Results return to
+the original primary conversation, with material evidence gaps explained in
+business terms.
+
+Personal stand-ins and scenario roles use the general `list_tasks` and `read_task`
+tools to read permitted conversations belonging to the current account, including
+identity conversations and ordinary tasks. Lists and native transcripts support
+pagination and optional time bounds. List entries distinguish `kind` and
+`canContinue`: reading identity evidence does not authorize dispatching work to it.
+Direct primary-delegated workers inherit these two read-only tools by default.
+Explicit `readSources` selected at creation additionally grants only the chosen
+concrete source catalog and reads, without configuration, orchestration,
+scheduling, memory writes or external actions. Every read revalidates
+the persisted owner, device, existing role and delegation source. Pausing new-work
+intake does not revoke reads of existing conversations. Source tasks can read only
+associated conversations in the same role and exact currently connected scope;
+removing the connection denies subsequent reads. Other accounts, unknown owners,
+deleted or ephemeral tasks and private coordinators are excluded. Project
+coordinators receive no personal history. History never grants execution authority.
 
 ### User stories and acceptance coverage
 
-| User story                            | Acceptance behavior                                                                                                                 | Automated coverage                                                                                             |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Understand the feature on first use   | Review checked by default; device scope, seven days, Beijing time and management entry are visible; no creation before confirmation | Component tests and the existing `stand-in-profile-settings` desktop checkpoint                                |
-| Decide later or opt out               | Closing saves nothing; reopening shows choices; confirming an unchecked review saves only completion                                | Desktop deferred/unchecked states, component tests and durable Executor opt-out tests                          |
-| Adjust the schedule                   | Save a custom Monday time and inspect the calendar entry                                                                            | Desktop onboarding at 10:30 and template editor tests                                                          |
-| Stop reviews                          | Pause or delete without restoration on repeated completion or restart                                                               | Desktop operations, Automation reload and concurrency tests                                                    |
-| Restart reviews and read results      | Add the calendar template and open the report in its original work conversation                                                     | The same desktop checkpoint with real Executor, native MCP and transcripts; only model responses are simulated |
-| Trust evidence boundaries             | Paginate over 100 tasks and 50 messages, fix the seven-day window, reject other accounts, roles and forged runs                     | Executor native protocol pagination and permission tests, plus desktop history reads                           |
-| Use different themes and window sizes | No horizontal overflow; legible light/dark states; keyboard selection; no duplicate pending submissions                             | Desktop captures/geometry checks and component pending/failure recovery tests                                  |
+| User story                            | Acceptance behavior                                                                                                    | Automated coverage                                                                                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Connect apps on first use             | Continue with or without apps; confirm before saving connections and enabling the primary identity; create no schedule | Component tests and the existing `stand-in-profile-settings` desktop checkpoint                                |
+| Protect connection drafts             | Closing saves nothing; returning preserves selected scope; discarding is explicit                                      | Desktop draft checks and component navigation tests                                                            |
+| Recover from concurrent edits         | A real version conflict keeps setup incomplete; reload and confirm without overwriting the other edit                  | Same desktop checkpoint and component failure tests                                                            |
+| Connect apps later                    | Enable the stand-in without apps, then add a connection through existing settings                                      | Same desktop checkpoint                                                                                        |
+| Adjust the schedule                   | Save a custom Monday time and inspect the calendar entry                                                               | Calendar template editor tests                                                                                 |
+| Stop reviews                          | Pause or delete without restoration on repeated completion or restart                                                  | Desktop operations, Automation reload and concurrency tests                                                    |
+| Restart reviews and read results      | Add the calendar template and open the report in its original work conversation                                        | The same desktop checkpoint with real Executor, native MCP and transcripts; only model responses are simulated |
+| Trust evidence boundaries             | Paginate over 100 tasks and 50 messages, fix the seven-day window, reject other accounts, roles and forged runs        | Executor native protocol pagination and permission tests, plus desktop history reads                           |
+| Use different themes and window sizes | No horizontal overflow; legible light/dark states; keyboard selection; no duplicate pending submissions                | Desktop captures/geometry checks and component pending/failure recovery tests                                  |
 
 Review coverage composes with the existing profile checkpoint, retaining every
 original assertion and sharing its build, startup and model protocol fixtures.

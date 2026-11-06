@@ -348,7 +348,7 @@
           "description": "适合 Anthropic 模型。"
         },
         "custom": {
-          "title": "高级自定义",
+          "title": "自定义",
           "description": "使用你创建的运行环境，适合特殊需求。"
         }
       }

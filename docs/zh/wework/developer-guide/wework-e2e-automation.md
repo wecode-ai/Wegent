@@ -30,6 +30,16 @@ pnpm --filter wework e2e
 pnpm --filter wework e2e:desktop
 ```
 
+邮件检查点 `stand-in-email` 使用隔离的 GreenMail IMAP/SMTP 服务，需要 Java 11 或更高版本；CI 使用 Java 21。运行前确认 `PATH` 中的 `java` 和 `keytool` 来自符合要求的 JDK。
+
+仅运行 Codex cloud-config 故障恢复回归：
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
+```
+
+该检查点使用真实 Electron、executor 和 Codex，仅在隔离的模型订阅服务中模拟企业账号的 cloud-config bundle 失败。它覆盖已有线程续聊、新线程、配置和模型读取、Goal 重启恢复、官方订阅认证恢复，以及云模型运行期间的认证并发保护；同时检查最终回复、原生会话记录和重载后的任务状态。测试账号与目录均由 fixture 创建。该检查点通过现有桌面 CI 的 Core 分片执行。
+
 仅运行云端项目桌面 E2E：
 
 ```bash
@@ -180,8 +190,11 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 `split-workbench` 含固定 3 秒的拖拽交互性能断言，使用独立 Linux 分片，
 避免其他全栈实例争抢 CPU 改变性能基准。它仍保留完整功能断言，并记录拖拽移动、
 松开事件分发和分屏就绪的分阶段耗时；其他功能分片仍可运行最多 4 个实例。
-各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。Core 使用 10 个分片（Windows
-复用相同矩阵），Cloud 使用 8 个分片。合并短分片可复用容器初始化、代码检出、
+各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分类器提供 10 个 Core 逻辑分片，
+Windows 保持 10 台 runner；Linux 设置 `CORE_RUNNER_SCALE=1.5`，完整选择时按历史耗时
+重排到 15 台 runner。部分选择按所选矩阵扩容，且不超过可分配的 checkpoint 数；
+不含历史检查点的部分选择保留原矩阵。两个 Core 性能基准分片仍独占 runner。
+Cloud 使用 8 个分片。合并短分片可复用容器初始化、代码检出、
 构建产物下载和运行时准备，不增加每台 runner 内的 checkpoint 并发数。性能基准的
 2 个 Core 分片以及账号认证和长插件列表的 3 个 Cloud 分片仍独立运行。
 并发上限必须不低于完整矩阵的分片数，避免配置强制分批；分类器回归测试同时检查
@@ -189,6 +202,18 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 Lint、单元测试、平台 E2E 和桌面 E2E 的汇总 job 使用 `always() && !cancelled()`：
 测试失败时仍汇总结果，workflow 被新提交取消后停止排队，避免旧汇总阻塞新提交。
 清理和诊断上传步骤继续使用原有的取消处理方式。
+
+PR 的 Wework renderer 单测使用 4 台 runner，继续按已有文件耗时均衡分配；
+Electron 和其他辅助测试仍只执行一次。平台浏览器/API 和 provider-native E2E
+均使用 8 个完整且无重复的逻辑分片，复用共享构建产物，每台 runner 保持独立服务与用户。
+钉钉协议集成、知识库和附件等额外检查继续只在指定分片执行。
+Linux Core 的历史耗时回放中，测试阶段最长路径由 614 秒降至 478 秒；此估算不包含
+构建、环境准备和排队时间，实际收益需由后续 CI 记录确认。扩容会增加 runner 的准备开销。
+
+设备目录选择使用执行器原生 home 查询与目录枚举，不再为默认的 `home_dir`、`ls_dirs`
+启动 `printenv`、`ls` 子进程。CI 日志曾记录两次进程创建分别耗时 6.2、8.1 秒，
+而相同路径在前一轮仅耗时数十毫秒；原生查询消除这项启动依赖，保留隐藏目录、
+符号链接、输出上限和错误处理语义。自定义命令仍走原命令路径，E2E 的 10 秒断言不变。
 
 成功 CI 记录 `39920301020` 和 `39920742402` 的逐步骤耗时用于拆分环境开销。
 前者 42 个分片的非测试步骤合计约 60 机器分钟，占分片执行量约 31%；后者的
@@ -245,7 +270,11 @@ runner 本地时间，把两类记录对齐后，可以把每次崩溃归因为�
 调查的未解释事件。checkpoint 步骤失败时，运行器还会在失败三秒后采集
 `failure-followup.json`，包含重复的 UI 快照和工作台调试状态，用于区分超时后
 自行收敛的慢速异步更新和卡死状态。可通过 `WEWORK_E2E_FAILURE_FOLLOWUP_MS`
-调整观察延迟，设为 `0` 关闭采集。
+调整观察延迟，最大为 5000 毫秒，超出时按 5000 毫秒处理；设为 `0` 关闭采集。
+E2E 的普通固定等待不得超过 5 秒。完整轮询周期的负向观察、取消或并发模型响应等
+特殊场景可保留最多 10 秒，并说明用途；5 秒轮询周期的观察窗口为 5.5 秒。
+等待 UI、启动或执行状态应持续检查实际条件，条件满足后立即返回，其操作超时不受
+固定等待上限影响。需要保持模型请求未完成时优先使用已有的响应释放闸门，避免长延迟。
 抽屉动画逐帧检查从操作前持续采样，观察到位移且轨道动画结束后主动停止；采样上限沿用
 共享单步超时。这样命令传输和渲染延迟不会耗尽固定的 800ms 采样窗口；位移、连续性、
 中间帧和减弱动态效果的断言仍完整执行。
@@ -712,7 +741,15 @@ pnpm --filter wework ai:verify paste-paths \
 
 公共控制器在内置动作未处理命令时，通过 `@extensions/desktop-control` 委派给产品扩展。没有产品扩展时，未知动作会明确失败；公共自动化层不识别具体产品协议。
 
-控制器使用短轮询：没有待执行指令时服务端返回 `204`，前端短暂等待后再次请求。这避免了 WebView 刷新、任务切换或流结束时遗留的长轮询连接吞掉后续指令。对 Lexical 编辑器执行 `fill` 时，控制器会使用编辑器暴露的 `value` setter，以便真实提交 React/Lexical 状态；不要用原始 DOM 插入来替代它。失败诊断中的 `scenario-state.json` 会记录已投递的 `commandHistory`，用于定位控制通道问题。
+控制通道将命令绑定到窗口当前的 client；前端确认执行结果后才开始下一次长轮询，避免待收取命令的请求阻塞结果回执。WebView 重载后的 ready 事件只表示控制通道重连，不表示应用外壳已挂载；通知入口使用 `clickWhenEnabled` 等待按钮和分类可用，仍保留共享的 10 秒 UI 步骤预算。对 Lexical 编辑器执行 `fill` 时，控制器会使用编辑器暴露的 `value` setter，以便真实提交 React/Lexical 状态；不要用原始 DOM 插入来替代它。
+
+失败诊断中的 `scenario-state.json` 会记录已投递的 `commandHistory`，包括 `queuedAt`、`deliveredAt`、`startedAt`、`resultReceivedAt` 和 `failedAt`。对照这些时间区分命令排队、开始确认及结果返回阶段的延迟；最后一段同时包含 UI 执行和结果传输，不能仅凭超时判断 UI 元素不存在。已结束命令的迟到回执仍返回 `404`，只额外记录 `lateResultAt` 和不含结果正文的控制台时间线，不会把失败改成通过。
+
+`responseFinishedAt` 记录控制服务写完命令响应的时间；`workbench-debug.json` 中的 `desktopControlTransport` 记录 renderer 收到响应头、解码命令、确认开始、完成动作和确认结果的有界时间线，并附带窗口可见性和焦点。对照两端时间定位送达后未开始的延迟，不增加超时或重新执行命令；诊断不保留选择器、输入值或结果正文。`reply-predictions` 仅在自身隔离环境启用既有 Composer 提交诊断，用于区分原生 Enter 到达、输入策略和业务发送门禁。
+
+`background-terminals` 的翻页诊断同时采集 xterm 真实 buffer 位置、可访问性行号、窗口焦点和原生按键修饰符。初次打开和重载后的成功检查分别保存 `background-terminal-keys-initial.json`、`background-terminal-keys-restored.json`；失败时查看 `workbench-debug.json` 的 `nativeTerminalKeys`。诊断只读取位置及事件元数据，不修改滚动位置，不保存终端正文；只读 buffer 桥仅在 E2E 构建中开放。翻页断言比较同一次真实按键前后的 buffer 位移，再等待可访问性顶部行并检查最早 12 行输出。可访问性行号可能滞后，不能把旧行号当作按键执行前的真实位置。
+
+监督纠正等 executor 自主轮次在内部保留上一轮完成时间供排序及陈旧 provider 状态恢复使用，但 `running=true` 的对外任务摘要显式返回 `completedAt: null`。只省略该字段不能清除前端增量合并缓存中的旧值。`supervisor-lifecycle` 在故意挂起模型响应时检查运行状态和此摘要边界。前端仍拦截携带旧完成时间的活跃快照，并要求真正的新运行快照推进时间；不放宽这些防陈旧规则，也不用有输出后才启动的前端状态掩盖自主启动。
 
 桌面控制器通过 Electron `webContents.capturePage()` 获取原生 renderer 截图。该能力只在 `VITE_WEWORK_E2E=true` 时开放；选择器截图按元素边界裁剪原生图像，因此诊断会保留真实 Electron 渲染结果。
 

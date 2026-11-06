@@ -39,13 +39,17 @@ import {
   NOTIFICATION_PREFERENCES_CHANGED_EVENT,
 } from './notificationPreferences'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
+import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
 import { weworkInteractionScheme } from './scheme'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { replyToInteractionProject } from './interactionProjectReply'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
+import { logInteractionLoadFailure } from './interactionDiagnostics'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
   archiveInteraction,
   readInteractionDrafts,
@@ -54,6 +58,8 @@ import {
   readPendingInteractionCache,
   pendingInteractionCache,
 } from './interactionStorage'
+
+type RuntimeInteractionSnapshot = Omit<RuntimeInteractionsValue, 'drafts' | 'setDraft'>
 
 export function RuntimeInteractionsProvider({
   accountKey,
@@ -64,19 +70,53 @@ export function RuntimeInteractionsProvider({
 }) {
   const [snapshot, setSnapshot] = useState<{
     accountKey: string
-    value: RuntimeInteractionsValue
+    value: RuntimeInteractionSnapshot
   } | null>(null)
+  const draftKey = `wework.interactions:${accountKey}:drafts`
+  const [draftState, setDraftState] = useState(() => ({
+    key: draftKey,
+    values: readInteractionDrafts(draftKey),
+  }))
+  if (draftState.key !== draftKey) {
+    setDraftState({ key: draftKey, values: readInteractionDrafts(draftKey) })
+  }
+  // Controlled inputs must receive edits directly, without the snapshot's
+  // effect-driven publication round trip interrupting native IME composition.
+  const setDraft = useCallback(
+    (id: string, text: string) => {
+      setDraftState(current => {
+        if (current.key !== draftKey) return current
+        const values = { ...current.values }
+        if (text) values[id] = text
+        else delete values[id]
+        return { key: draftKey, values }
+      })
+    },
+    [draftKey]
+  )
+  useEffect(() => {
+    saveInteractionState(draftState.key, draftState.values)
+  }, [draftState])
   const publish = useCallback(
-    (value: RuntimeInteractionsValue) => setSnapshot({ accountKey, value }),
+    (value: RuntimeInteractionSnapshot) => setSnapshot({ accountKey, value }),
     [accountKey]
   )
   return (
     <RuntimeInteractionsContext.Provider
-      value={snapshot?.accountKey === accountKey ? snapshot.value : null}
+      value={
+        snapshot?.accountKey === accountKey
+          ? { ...snapshot.value, drafts: draftState.values, setDraft }
+          : null
+      }
     >
       {/* Reset only interaction state; connection dialogs and other application UI stay mounted. */}
-      <RuntimeInteractionsState key={accountKey} accountKey={accountKey} publish={publish} />
-      {children}
+      <RuntimeInteractionsState
+        key={accountKey}
+        accountKey={accountKey}
+        publish={publish}
+        setDraft={setDraft}
+      />
+      <QuestionDiscussionProvider accountKey={accountKey}>{children}</QuestionDiscussionProvider>
     </RuntimeInteractionsContext.Provider>
   )
 }
@@ -84,9 +124,11 @@ export function RuntimeInteractionsProvider({
 function RuntimeInteractionsState({
   accountKey,
   publish,
+  setDraft,
 }: {
   accountKey: string
-  publish: (value: RuntimeInteractionsValue) => void
+  publish: (value: RuntimeInteractionSnapshot) => void
+  setDraft: RuntimeInteractionsValue['setDraft']
 }) {
   const source = useNotificationTaskSource()
   const tabs = useWorkspaceTabs()
@@ -114,17 +156,14 @@ function RuntimeInteractionsState({
   const successfulReads = useRef(new Map<string, { signature: string; readAt: number }>())
   const successfulReadApi = useRef(source?.services?.runtimeWorkApi)
   const fetching = useRef(false)
+  const reportedOfflineDevices = useRef(new Set<string>())
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
   const acceptancePrefix = `wework.interactions:${accountKey}:accepted:`
   const historyKey = `wework.interactions:${accountKey}:history`
-  const draftKey = `wework.interactions:${accountKey}:drafts`
   const [history, setHistory] = useState<InteractionHistory[]>(() =>
     readInteractionHistory(historyKey)
-  )
-  const [drafts, setDrafts] = useState<Record<string, string>>(() =>
-    readInteractionDrafts(draftKey)
   )
   const [submitted, setSubmitted] = useState<Set<string>>(
     () => new Set(history.map(item => item.id))
@@ -160,9 +199,6 @@ function RuntimeInteractionsState({
     window.addEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, update)
     return () => window.removeEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, update)
   }, [])
-  useEffect(() => {
-    saveInteractionState(draftKey, drafts)
-  }, [draftKey, drafts])
 
   const archive = useCallback(
     async (item: RuntimeInteraction, answeredAt = item.createdAt) => {
@@ -233,39 +269,73 @@ function RuntimeInteractionsState({
         const retained = inventoryRef.current.filter(
           item => !discovered.refreshedDevices.has(item.address.deviceId)
         )
+        const archivedKeys = new Set(
+          current.items
+            .filter(
+              item => item.task.status === 'archived' || isRuntimeConversationArchived(item.address)
+            )
+            .map(item => item.key)
+        )
+        const currentItems = current.items.filter(item => !archivedKeys.has(item.key))
         const nextInventory = [
           ...new Map([...retained, ...discovered.items].map(item => [item.key, item])).values(),
-        ]
+        ].filter(
+          item =>
+            item.task.status !== 'archived' &&
+            !archivedKeys.has(item.key) &&
+            !isRuntimeConversationArchived(item.address)
+        )
         setInventory(nextInventory)
+        const failedInventoryDevices = [...discovered.failedDevices].filter(
+          deviceId =>
+            discovered.failedRequests.has(deviceId) ||
+            nextInventory.some(item => item.address.deviceId === deviceId) ||
+            currentItems.some(
+              item => item.address.deviceId === deviceId && item.task.interactionStatus
+            ) ||
+            deviceId === ''
+        )
+        const offlineDevices = new Set(
+          failedInventoryDevices.filter(deviceId =>
+            current.devices?.some(
+              device => device.device_id === deviceId && device.status === 'offline'
+            )
+          )
+        )
+        for (const deviceId of offlineDevices) {
+          if (!reportedOfflineDevices.current.has(deviceId))
+            logInteractionLoadFailure('inventory', 'Device is marked offline', { deviceId })
+        }
+        reportedOfflineDevices.current = offlineDevices
+        // Current sources own membership; cached questions must not resurrect archived tasks.
+        const candidates = new Map(
+          [...currentItems, ...nextInventory].map(item => [item.key, item])
+        )
+        const removedErrorKeys = new Set<string>()
+        for (const [key, requests] of Object.entries(loadedRef.current)) {
+          if (candidates.has(key)) continue
+          removedErrorKeys.add(key)
+          for (const request of requests) removedErrorKeys.add(request.id)
+          successfulReads.current.delete(key)
+        }
+        setLoaded(value =>
+          Object.fromEntries(Object.entries(value).filter(([key]) => candidates.has(key)))
+        )
         setErrors(value => {
           const next = Object.fromEntries(
-            Object.entries(value).filter(([key]) => !key.startsWith('inventory:'))
-          )
-          for (const deviceId of discovered.failedDevices) {
-            if (
-              inventoryRef.current.some(item => item.address.deviceId === deviceId) ||
-              current.items.some(
-                item => item.address.deviceId === deviceId && item.task.interactionStatus
-              ) ||
-              deviceId === ''
+            Object.entries(value).filter(
+              ([key]) => !key.startsWith('inventory:') && !removedErrorKeys.has(key)
             )
-              next[`inventory:${deviceId}`] = t('interactions.load_failed')
+          )
+          for (const deviceId of failedInventoryDevices) {
+            next[`inventory:${deviceId}`] = t('interactions.load_failed')
           }
           return next
         })
-        const candidates = new Map(
-          [
-            ...Object.values(loadedRef.current)
-              .flat()
-              .filter(item => !item.answered)
-              .map(item => item.task),
-            ...current.items,
-            ...nextInventory,
-          ].map(item => [item.key, item])
-        )
         // Discovery owns persisted pending state; live sources supply turn identity.
-        for (const item of current.items) {
-          const candidate = candidates.get(item.key)!
+        for (const item of currentItems) {
+          const candidate = candidates.get(item.key)
+          if (!candidate) continue
           if (item.lifecycle) candidates.set(item.key, { ...candidate, lifecycle: item.lifecycle })
         }
         const items = [...candidates.values()].filter(
@@ -305,6 +375,7 @@ function RuntimeInteractionsState({
                 Date.now() - previousRead.readAt < 30_000
               )
                 continue
+              let operation: 'transcript' | 'archive' = 'transcript'
               try {
                 stage = `transcript:${item.address.taskId}`
                 const requests = await readRuntimeInteractions(item, api)
@@ -320,6 +391,7 @@ function RuntimeInteractionsState({
                   return next
                 })
                 for (const answered of requests.filter(request => request.answered)) {
+                  operation = 'archive'
                   stage = `archive:${answered.requestKey}`
                   await archive(answered)
                   localStorage.removeItem(acceptancePrefix + answered.id)
@@ -327,9 +399,9 @@ function RuntimeInteractionsState({
               } catch (error) {
                 successfulReads.current.delete(item.key)
                 if (!mounted.current) return
-                console.error('[Wework] Could not read pending interaction', {
+                logInteractionLoadFailure(operation, error, {
+                  deviceId: item.address.deviceId,
                   taskId: item.address.taskId,
-                  error,
                 })
                 setErrors(value => ({ ...value, [item.key]: t('interactions.load_failed') }))
                 if (item.lifecycle?.interactionStatus ?? item.task.interactionStatus) {
@@ -367,6 +439,7 @@ function RuntimeInteractionsState({
   const signature = JSON.stringify(
     source?.items.map(item => [
       item.key,
+      item.task.status,
       item.lifecycle?.interactionStatus,
       item.task.interactionStatus,
       item.task.updatedAt,
@@ -410,14 +483,6 @@ function RuntimeInteractionsState({
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
   }, [cacheKey, pending])
 
-  const setDraft = useCallback((id: string, text: string) => {
-    setDrafts(current => {
-      const next = { ...current }
-      if (text) next[id] = text
-      else delete next[id]
-      return next
-    })
-  }, [])
   const markHandled = useCallback(
     (id: string) => {
       submittedRef.current = new Set(submittedRef.current).add(id)
@@ -439,8 +504,8 @@ function RuntimeInteractionsState({
       setBusy(new Set(inFlight.current))
       try {
         await navigator.locks.request(historyKey + ':' + item.id, async () => {
-          saveInteractionState(acceptancePrefix + item.id, true)
           await archive(item, Date.now())
+          saveInteractionState(acceptancePrefix + item.id, true)
           if (!mounted.current) return
           markHandled(item.id)
         })
@@ -591,7 +656,11 @@ function RuntimeInteractionsState({
     for (const item of pending) {
       if (records[item.id]) continue
       const alreadyViewed = focused && [...views.current.values()].includes(item.id)
-      const category = interactionSource(item) === 'task' ? 'tasks' : 'collaboration'
+      const category = isPersonalStandInTask(item.task)
+        ? 'stand_in'
+        : interactionSource(item) === 'task'
+          ? 'tasks'
+          : 'collaboration'
       // An inactive window with system notifications disabled has delivered nothing.
       // Keep the request eligible for its in-app reminder when the user returns.
       const systemAvailable = isElectronRuntime() && preferences[category].system
@@ -714,10 +783,8 @@ function RuntimeInteractionsState({
       pending,
       history,
       errors,
-      drafts,
       busy,
       loading,
-      setDraft,
       respond,
       dismiss,
       refresh,
@@ -730,10 +797,8 @@ function RuntimeInteractionsState({
       pending,
       history,
       errors,
-      drafts,
       busy,
       loading,
-      setDraft,
       respond,
       dismiss,
       refresh,

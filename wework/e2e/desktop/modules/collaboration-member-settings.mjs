@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
+import { selectCollaborationProjectView } from './workspace-flows.mjs'
 
 // Called by the existing shared-core checkpoint after creating its own project.
 export async function verifyCollaborationMemberSettings(
   control,
   { scoped, owner, request, project }
 ) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'manage')
   await control.command('click', scoped('[data-testid="collaboration-project-settings-members"]'))
   const row = scoped(`[data-testid="cloud-project-member-${owner.id}"]`)
   await control.command('waitFor', row)
@@ -57,5 +58,5 @@ export async function verifyCollaborationMemberSettings(
     )
   }
   await control.command('waitFor', scoped('[data-testid="cloud-project-members-inheritance-note"]'))
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'board')
 }

@@ -778,6 +778,7 @@ async function change(
 }
 
 function PlatformHarness({
+  accountScope = "backend:account-7",
   templateStore,
   projectTemplateRequest,
   refreshKey,
@@ -795,6 +796,7 @@ function PlatformHarness({
   renderProject,
   renderIssueComposer,
   renderStandInPage,
+  openProjectConversation,
   currentUser,
   workspaceOwnerOptions,
   defaultAssistant,
@@ -802,11 +804,13 @@ function PlatformHarness({
   loadProjectCollaborationGroupGenerationModels,
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
+  accountScope?: string;
   templateStore?: CollaborationPlatformHostAdapter["templateStore"];
   projectTemplateRequest?: CollaborationPlatformHostAdapter["projectTemplateRequest"];
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
+  openProjectConversation?: CollaborationPlatformHostAdapter["openProjectConversation"];
   currentUser?: CollaborationPlatformHostAdapter["currentUser"];
   api: SharedWorkspaceApi;
   navigationApis?: SharedWorkspaceApi[];
@@ -828,11 +832,13 @@ function PlatformHarness({
 }) {
   const [location, setLocation] = useState(start);
   const host: CollaborationPlatformHostAdapter = {
+    accountScope,
     templateStore,
     projectTemplateRequest,
     cloudAccess,
     renderIssueComposer,
     renderStandInPage,
+    openProjectConversation,
     currentUser,
     location,
     capabilities,
@@ -1982,6 +1988,33 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("test-location").textContent).toContain('"projectId":null');
   });
 
+  it("opens a host project conversation from the sidebar without creating an Issue", async () => {
+    const { api } = createApi();
+    const openProjectConversation = vi.fn();
+    await render(
+      <PlatformHarness
+        api={api}
+        openProjectConversation={openProjectConversation}
+      />,
+    );
+    await click(
+      byTestId(`collaboration-project-new-conversation-${project.id}`),
+    );
+    expect(openProjectConversation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: project.id }),
+    );
+    expect(byTestId("test-location").textContent).toContain(
+      `"projectId":"${project.id}"`,
+    );
+    expect(byTestId("test-location").textContent).toContain(
+      '"projectView":"board"',
+    );
+    expect(
+      container.querySelector('[data-testid="collaboration-issue-home"]'),
+    ).toBeNull();
+    expect(api.issues.create).not.toHaveBeenCalled();
+  });
+
   it("starts the first project from collaboration home and preserves its workspace", async () => {
     const { api } = createApi({ initialProjects: [] });
     await render(<PlatformHarness api={api} />);
@@ -2685,6 +2718,112 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
   });
 
+  it("preserves workspace creation DOM and drafts while templates initialize and refresh in the same account scope", async () => {
+    const { api } = createApi();
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId("collaboration-workspace-create"));
+    const name = byTestId(
+      "collaboration-workspace-name-input",
+    ) as HTMLInputElement;
+    const description = byTestId(
+      "collaboration-workspace-description-input",
+    ) as HTMLTextAreaElement;
+    await change(name, "Unsaved workspace");
+    await change(
+      description,
+      "Keep this draft while optional templates initialize",
+    );
+
+    for (const refreshKey of ["templates-ready", "templates-refreshed"]) {
+      const templateStore = new CollaborationTemplateStore({
+        scope: "backend:7",
+        ownerId: 7,
+        persistence: { read: async () => [], write: async () => {} },
+      });
+      await render(
+        <PlatformHarness
+          api={api}
+          templateStore={templateStore}
+          refreshKey={refreshKey}
+        />,
+      );
+      expect(byTestId("collaboration-workspace-name-input")).toBe(name);
+      expect(byTestId("collaboration-workspace-description-input")).toBe(
+        description,
+      );
+      expect(name.value).toBe("Unsaved workspace");
+      expect(description.value).toBe(
+        "Keep this draft while optional templates initialize",
+      );
+      expect(name.closest("dialog")?.open).toBe(true);
+    }
+  });
+
+  it.each(["backend:account-8", "other-backend:account-7"])(
+    "clears workspace drafts when the account scope changes to %s before templates are ready",
+    async (accountScope) => {
+      const { api } = createApi();
+      await render(<PlatformHarness api={api} />);
+      await click(byTestId("collaboration-workspace-create"));
+      const oldName = byTestId(
+        "collaboration-workspace-name-input",
+      ) as HTMLInputElement;
+      await change(oldName, "Previous account draft");
+
+      await render(<PlatformHarness api={api} accountScope={accountScope} />);
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-workspace-name-input"]',
+        ),
+      ).toBeNull();
+      expect(oldName.isConnected).toBe(false);
+      await click(byTestId("collaboration-workspace-create"));
+      expect(
+        (byTestId("collaboration-workspace-name-input") as HTMLInputElement)
+          .value,
+      ).toBe("");
+    },
+  );
+
+  it("clears the previous account's selected template and project draft when its scope changes", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    const templateStore = new CollaborationTemplateStore({
+      scope: "backend:7",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    const page = (accountScope: string) => (
+      <PlatformHarness
+        api={api}
+        accountScope={accountScope}
+        templateStore={templateStore}
+        start={{ ...initialLocation, rootView: "templates" }}
+      />
+    );
+    await render(page("backend:account-7"));
+    await click(byTestId("template-details-product-lifecycle"));
+    await click(byTestId("template-use"));
+    const name = byTestId(
+      "collaboration-project-name-input",
+    ) as HTMLInputElement;
+    await change(name, "Previous account's template project");
+    expect(byTestId("project-create-template-section")).toBeTruthy();
+
+    await render(page("backend:account-8"));
+    expect(name.isConnected).toBe(false);
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-project-name-input"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="project-create-template-section"]',
+      ),
+    ).toBeNull();
+    expect(container.querySelector('[data-testid="template-use"]')).toBeNull();
+  });
+
   it("opens the host Stand-in settings page from the sidebar", async () => {
     const { api } = createApi();
     const renderStandInPage = vi.fn(({ projects, onClose }) => (
@@ -2817,6 +2956,29 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       container.querySelector('[data-testid="stand-in-run-error"]'),
     ).toBeNull();
+  });
+
+  it("preserves mention candidates when reselecting the current Issue project", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        renderIssueComposer={(props) => (
+          <button
+            data-testid="reselect-issue-project"
+            onClick={() => props.onSelectProject(props.projectId)}
+          >
+            {props.members.map((candidate) => candidate.id).join(",")}
+          </button>
+        )}
+      />,
+    );
+    const candidates = byTestId("reselect-issue-project").textContent;
+    expect(candidates).not.toBe("");
+    await click(byTestId("reselect-issue-project"));
+    expect(byTestId("reselect-issue-project").textContent).toBe(candidates);
+    await click(byTestId("reselect-issue-project"));
+    expect(byTestId("reselect-issue-project").textContent).toBe(candidates);
   });
 
   it("uses collaboration home as a guided new Issue entry", async () => {
@@ -5609,6 +5771,7 @@ describe("CollaborationPlatformApp real component flow", () => {
           <CollaborationPlatformApp
             api={api}
             host={{
+              accountScope: "backend:account-7",
               location,
               capabilities: {
                 automation: false,
@@ -5865,7 +6028,6 @@ describe("CollaborationPlatformApp real component flow", () => {
         '[data-testid="wework-assignment-notify-confirm"]',
       ),
     ).toBeNull();
-    await click(byTestId("cloud-todo-save"));
     expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
       version: issue.version,
       assigneeType: "user",
@@ -5890,7 +6052,6 @@ describe("CollaborationPlatformApp real component flow", () => {
         `cloud-todo-detail-assignee-option-user:${member.user_id}`,
       ),
     );
-    await click(byTestId("cloud-todo-save"));
     expect(
       container.querySelector('[data-testid="cloud-todo-save"]'),
     ).toBeNull();
@@ -5913,7 +6074,6 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(
       portalByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`),
     );
-    await click(byTestId("cloud-todo-save"));
     expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
       version: issue.version,
       assigneeType: "agent",
@@ -5923,6 +6083,12 @@ describe("CollaborationPlatformApp real component flow", () => {
 
   it("assigns a collaboration group and displays its name", async () => {
     const api = await renderIssueWithCollaborationGroup();
+    api.issues.update.mockResolvedValueOnce({
+      ...issue,
+      version: issue.version + 1,
+      assignee_group_id: collaborationGroup.id,
+      assignee_group_name: collaborationGroup.name,
+    });
     await click(byTestId("cloud-todo-detail-assignee"));
     await click(
       portalByTestId(
@@ -5935,7 +6101,6 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("cloud-todo-state-assignee").textContent).not.toContain(
       "未指派",
     );
-    await click(byTestId("cloud-todo-save"));
     expect(api.issues.update).toHaveBeenLastCalledWith(issue.id, {
       version: issue.version,
       assigneeGroupId: collaborationGroup.id,

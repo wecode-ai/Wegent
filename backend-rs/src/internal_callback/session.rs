@@ -25,6 +25,11 @@ const STREAMING_KEY_PREFIX: &str = "chat:streaming:";
 const TASK_STREAMING_KEY_PREFIX: &str = "chat:task_streaming:";
 const CONTEXT_METRICS_KEY_PREFIX: &str = "chat:context_metrics:";
 const CALLBACK_CHANNEL_PREFIX: &str = "callback:channel:";
+const TOUCH_TASK_STREAMING_ACTIVITY: &str = r#"
+if (redis.call('GET', KEYS[1]) or '') ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
+"#;
 /// Internal field stored in block metadata and stripped before returning.
 pub(crate) const BLOCK_CONTENT_KEY_FIELD: &str = "_content_key";
 
@@ -99,29 +104,47 @@ pub(crate) async fn set_task_streaming_status<R: Redis>(
     Ok(())
 }
 
-/// `touch_task_streaming_activity`: refresh `last_activity_at` on an existing
-/// status object. A missing or non-object value is left untouched.
-///
-/// The source re-reads the stored dict and preserves every other field,
-/// including `started_at`, exactly as Redis returns it.
+/// Refresh this subtask's activity, recovering missing metadata after a failed
+/// START write or expiration. Compare raw bytes before writing so a concurrent
+/// START cannot be replaced by the previously read marker.
 pub(crate) async fn touch_task_streaming_activity<R: Redis>(
     redis: &R,
     task_id: i64,
+    subtask_id: i64,
+    observed_started_at: &str,
 ) -> RedisResult<bool> {
     let key = task_streaming_key(task_id);
-    let Some(raw) = redis.get::<_, String>(&key).await? else {
-        return Ok(false);
-    };
-    let Ok(Value::Object(mut value)) = serde_json::from_str::<Value>(&raw) else {
-        return Ok(false);
+    let raw = redis.get::<_, String>(&key).await?;
+    let mut value = match raw.as_deref() {
+        Some(raw) => {
+            let Ok(Value::Object(value)) = serde_json::from_str::<Value>(raw) else {
+                return Ok(false);
+            };
+            if value.get("subtask_id").and_then(Value::as_i64) != Some(subtask_id) {
+                return Ok(false);
+            }
+            value
+        }
+        None => Map::from_iter([
+            ("subtask_id".into(), json!(subtask_id)),
+            ("user_id".into(), json!(0)),
+            ("username".into(), json!("")),
+            ("started_at".into(), json!(observed_started_at)),
+        ]),
     };
     value.insert(
         "last_activity_at".into(),
         Value::String(utc_isoformat(chrono::Utc::now())),
     );
     let payload = orjson_dumps(&Value::Object(value));
-    redis.set_with(key, payload, set_ex_options()).await?;
-    Ok(true)
+    let updated: i64 = redis
+        .eval(
+            TOUCH_TASK_STREAMING_ACTIVITY,
+            [key],
+            [raw.unwrap_or_default(), payload, STREAMING_TTL.to_string()],
+        )
+        .await?;
+    Ok(updated == 1)
 }
 
 /// `save_context_metrics`: cache the latest context-metrics snapshot.

@@ -187,9 +187,11 @@ export function createDesktopScenario({
         )
         assert.equal(pending.running, false)
         assert.equal(assessments, 0)
-        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
-          timeoutMs: PROCESSING_NOTICE_TIMEOUT_MS,
-        })
+        assert.equal(
+          await control.command('getElementCount', '[data-testid="stand-in-processing-notice"]'),
+          '0',
+          'Routine background feedback without a question or failure must remain silent'
+        )
         await captureScreenshot(control, 'router-03-feedback-silent-intake.png')
         await rpc(control, 'runtime.stand_in.processing.check', { userId: USER })
         const failed = await until(
@@ -207,6 +209,8 @@ export function createDesktopScenario({
           userId: USER,
         })
         assert.equal(failedReceipt.state, 'failed')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-status-open"]')
+        await control.command('waitFor', '[data-testid="stand-in-status-dialog"]')
         await control.command('waitFor', '[data-testid="stand-in-processing-check"]', {
           timeoutMs: PROCESSING_NOTICE_TIMEOUT_MS,
         })
@@ -267,6 +271,7 @@ export function createDesktopScenario({
           visible: false,
           timeoutMs: PROCESSING_NOTICE_TIMEOUT_MS,
         })
+        await control.command('click', '[data-testid="stand-in-status-dialog-close"]')
         await captureScreenshot(control, 'router-05-explicit-recovery-completed.png')
         assert.equal((await rpc(control, 'todos.bindings', { task_id: issue.id })).length, 1)
         const listed = await rpc(control, 'runtime.tasks.list', { preferCached: true })

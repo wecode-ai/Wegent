@@ -8,7 +8,28 @@ import {
   openProjectAgentCreator,
   expandCollaborationWorkspace,
   selectCollaborationIssueAgent,
+  selectCollaborationProjectView,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
+
+test.each([
+  ['manage', 'collaboration-tab-manage'],
+  ['milestones', 'collaboration-milestones-tab'],
+])('selects navigation view %s without a separate layout probe', async (view, tabId) => {
+  const calls = []
+  const control = {
+    command: async (...args) => {
+      calls.push(args)
+    },
+  }
+  await selectCollaborationProjectView(control, 'main', view)
+  assert.deepEqual(calls, [
+    [
+      'chooseWhenEnabled',
+      'main [data-testid="collaboration-project-view-select"], main [data-testid="' + tabId + '"]',
+      { value: view, timeoutMs: 10000 },
+    ],
+  ])
+})
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {
   const calls = []
@@ -245,9 +266,12 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
           assigneeClickAction = action
         }
       }
-      if (action === 'click' && selector === option) selected = true
-      if (action === 'clickWhenEnabled' && selector.endsWith('[data-testid="cloud-todo-save"]')) {
-        assert.ok(rendered && selected, 'Assignment must be saved through the detail editor')
+      if (action === 'click' && selector === option) {
+        selected = true
+        assert.ok(
+          rendered && selected,
+          'Assignment must be selected through the persisted detail editor'
+        )
         saved = true
       }
     },

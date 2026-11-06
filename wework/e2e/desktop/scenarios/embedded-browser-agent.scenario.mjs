@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
+import { createSetupRenderingEvidence } from '../modules/setup-rendering-evidence.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   handleBrowserHistoryModelRequest,
@@ -680,34 +681,62 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
       const redirectUrl = `${control.url}${REDIRECT_PATH}`
       control.setScenario('embedded_browser_setup')
-      await control.command(
-        'waitFor',
-        '[data-testid="chat-message-input"][contenteditable="true"]',
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command('fill', '[data-testid="chat-message-input"][contenteditable="true"]', {
-        value: EMBEDDED_BROWSER_SETUP_PROMPT,
-      })
-      await control.command('press', '[data-testid="chat-message-input"][contenteditable="true"]', {
-        key: 'Enter',
-      })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
-        timeoutMs: uiTimeoutMs,
-      })
-      const taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
-      const browserLabel = await readBrowserPanelLabel(
+      const captureSetupRendering = createSetupRenderingEvidence(
         control,
-        ACTIVE_WORKBENCH_SELECTOR,
-        uiTimeoutMs
+        join(resultDir, 'embedded-browser-setup-rendering.json')
       )
-      assert.equal(
-        browserLabel,
-        `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
-        'The fresh local task did not expose its task-scoped embedded browser label'
-      )
+      let taskId
+      let browserLabel
+      let setupCompleted = false
+      try {
+        await control.command(
+          'waitFor',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        await captureSetupRendering('input-ready')
+        await control.command(
+          'fill',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            value: EMBEDDED_BROWSER_SETUP_PROMPT,
+          }
+        )
+        await control.command(
+          'press',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            key: 'Enter',
+          }
+        )
+        await captureSetupRendering('submitted')
+        taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
+        browserLabel = await readBrowserPanelLabel(control, ACTIVE_WORKBENCH_SELECTOR, uiTimeoutMs)
+        assert.equal(
+          browserLabel,
+          `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+          'The fresh local task did not expose its task-scoped embedded browser label'
+        )
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
+          timeoutMs: uiTimeoutMs,
+        })
+        setupCompleted = true
+      } finally {
+        try {
+          await captureSetupRendering(setupCompleted ? 'assistant-visible' : 'setup-failed')
+        } catch (error) {
+          console.error(
+            '[desktop-e2e] Failed to persist embedded-browser setup rendering evidence',
+            {
+              name: error instanceof Error ? error.name : 'Error',
+            }
+          )
+          if (setupCompleted) throw error
+        }
+      }
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const originalBridgeRuntime = await readFile(bridgeIdentity.runtimePath, 'utf8')
       const stopForeignBridge = await startForeignBridgeRuntime(bridgeIdentity.runtimePath)

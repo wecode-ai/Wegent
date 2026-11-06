@@ -32,6 +32,7 @@ import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
@@ -53,13 +54,13 @@ async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeNa
     visible: false,
     timeoutMs,
   })
-  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table')
   await control.command(
     'waitFor',
     scoped(`[data-testid="collaboration-issue-table-row-${issueId}"]`),
     { text: assigneeName, timeoutMs }
   )
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'board')
   await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
     timeoutMs,
   })
@@ -632,7 +633,7 @@ export function createDesktopScenario({
           text: project.name,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        await selectCollaborationProjectView(control, scoped('').trim(), 'board')
         const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
         assert.equal(maintainerProject.access_role, 'Maintainer')
         await verifyPersonalBoardGrouping(control, {

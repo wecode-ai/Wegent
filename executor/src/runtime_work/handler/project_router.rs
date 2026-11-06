@@ -71,7 +71,7 @@ impl RuntimeWorkRpcHandler {
         }
         if matches!(self.backend_connection_snapshot(), Ok(Some(_))) {
             match self
-                .stand_in_http(
+                .runtime_http(
                     reqwest::Method::GET,
                     "/v1/me/project-coordinator-bindings",
                     None,
@@ -223,7 +223,7 @@ impl RuntimeWorkRpcHandler {
                 } else {
                     let encoded =
                         url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>();
-                    self.stand_in_http(
+                    self.runtime_http(
                         reqwest::Method::GET,
                         &format!("/v1/loop-items/{encoded}/comments"),
                         None,
@@ -266,7 +266,7 @@ impl RuntimeWorkRpcHandler {
             serde_json::to_value(store.list_tasks(project_id).map_err(settings_error)?)
                 .map_err(|error| AppIpcError::new("source_invalid", error.to_string()))?
         } else {
-            self.stand_in_http(
+            self.runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/cloud-projects/{project_id}/loop-items"),
                 None,

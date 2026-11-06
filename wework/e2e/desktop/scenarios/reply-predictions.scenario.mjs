@@ -97,6 +97,9 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
     },
     async verify(control) {
       active = true
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-composer', value: '1' }),
+      })
       const capture = name => captureScreenshot(control, name, 'body')
       await control.command('navigate', 'body', { value: '/settings/general' })
       await control.command('waitFor', '[data-testid="reply-prediction-enabled"]')

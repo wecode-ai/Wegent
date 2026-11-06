@@ -749,7 +749,11 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
         "recencyAt".to_owned(),
         Value::Number(link.recency_at.into()),
     );
-    if let Some(completed_at) = link.completed_at {
+    // Explicitly clear completion in patch-merged clients while retaining the
+    // historical timestamp internally for ordering and stale-provider recovery.
+    if link.running {
+        task.insert("completedAt".to_owned(), Value::Null);
+    } else if let Some(completed_at) = link.completed_at {
         task.insert("completedAt".to_owned(), Value::Number(completed_at.into()));
     }
     if let Some(parent) = link.parent {
@@ -861,7 +865,7 @@ fn runtime_handle_with_thread_id(link: &RuntimeTaskLink) -> Map<String, Value> {
 }
 
 pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<String, Value> {
-    runtime_handle
+    let mut summary: Map<String, Value> = runtime_handle
         .as_object()
         .map(|object| {
             object
@@ -870,7 +874,23 @@ pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<Str
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(presentations) = runtime_handle["userMessagePresentations"].as_array() {
+        summary.remove("latestUserMessageSource");
+        if let Some(turn) = runtime_handle["lastTurnId"].as_str() {
+            if let Some(source) = presentations.iter().rev().find_map(|presentation| {
+                (presentation["turnId"] == turn)
+                    .then(|| presentation["source"]["source"].as_str())
+                    .flatten()
+            }) {
+                summary.insert(
+                    "latestUserMessageSource".into(),
+                    json!({"source":source,"turnId":turn}),
+                );
+            }
+        }
+    }
+    summary
 }
 
 fn runtime_handle_list_payload_key(key: &str) -> bool {
@@ -1012,7 +1032,7 @@ pub(super) fn runtime_status_is_running(status: &str) -> bool {
     )
 }
 
-fn codex_thread_status_type(thread: &Value) -> Option<String> {
+pub(super) fn codex_thread_status_type(thread: &Value) -> Option<String> {
     let status = thread.get("status")?;
     status.as_str().map(str::to_owned).or_else(|| {
         status

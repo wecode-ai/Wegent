@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
@@ -37,6 +38,7 @@ import {
 import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
   waitForControlValue,
 } from '../modules/workspace-flows.mjs'
 
@@ -165,9 +167,6 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
     visible: false,
-    timeoutMs,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
   })
   return { issue, rule }
@@ -340,7 +339,7 @@ async function verifyConfiguredExecutionEnvironment(
   timeoutMs,
   captureScreenshot
 ) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -558,6 +557,13 @@ export function createDesktopScenario({
   const modelStarted = new Promise(resolve => {
     resolveModelStarted = resolve
   })
+  const completeModelTurn = async (response, responseId, serialized) => {
+    resolveModelStarted()
+    await modelRelease
+    writeEvents(response, responseId, [
+      assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
+    ])
+  }
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const dispatchBoundary = createDispatchIssueBoundaryRegression(request)
 
@@ -603,7 +609,7 @@ export function createDesktopScenario({
         'Direct agent dispatch incorrectly entered the collaboration manager path'
       )
       const toolNames = advertisedToolNames(body)
-      if (requestAdvertisesProgrammaticExec(body)) {
+      if (requestAdvertisesProgrammaticExec(body) && modelRequests >= 3) {
         if (!requestContainsToolOutput(body, MANUAL_READ_CALL)) {
           const selection = selectProgrammaticExec(
             body,
@@ -620,8 +626,7 @@ export function createDesktopScenario({
               `text(${JSON.stringify(MANUAL_READ_OK)})`,
             ].join('\n')
           )
-          const event = customToolCall(MANUAL_READ_CALL, selection.name, selection.input)
-          event.item.namespace = 'functions'
+          const event = selectedToolCall(MANUAL_READ_CALL, { codeMode: selection }).at(-1)
           writeEvents(response, responseId, [event])
           return true
         }
@@ -633,9 +638,7 @@ export function createDesktopScenario({
           `The real bound Issue read did not succeed: ${JSON.stringify(output)}`
         )
         await dispatchBoundary.verify()
-        writeEvents(response, responseId, [
-          assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
-        ])
+        await completeModelTurn(response, responseId, serialized)
         return true
       }
       for (const toolName of MANAGEMENT_TOOLS) {
@@ -684,11 +687,7 @@ export function createDesktopScenario({
           'The real MCP read did not return the bound Issue'
         )
       }
-      resolveModelStarted()
-      await modelRelease
-      writeEvents(response, responseId, [
-        assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
-      ])
+      await completeModelTurn(response, responseId, serialized)
       return true
     },
 

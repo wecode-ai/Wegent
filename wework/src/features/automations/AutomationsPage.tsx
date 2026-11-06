@@ -734,7 +734,13 @@ export function AutomationsPage({
                 onSelect={selectAutomation}
                 onCreate={openCreate}
                 onReviewTemplate={
-                  standInOwner?.roleId === '@primary' && services.standInApi && !loading && !error
+                  standInOwner?.roleId === '@primary' &&
+                  services.standInApi &&
+                  !loading &&
+                  !error &&
+                  !automations.some(
+                    item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
+                  )
                     ? () => void openReviewTemplate()
                     : undefined
                 }

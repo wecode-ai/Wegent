@@ -139,6 +139,17 @@ assert_warmup_case "Executor source warms desktop sidecar" "$executor_lock" \
   "executor/src/main.rs"
 assert_warmup_case "Executor dependency source warms desktop sidecar" "$executor_lock" \
   "executor/vendor/tf-rust-socketio/src/ack_id.rs"
+shared_protocol="${warmup_all_false/docker=false/docker=true}"
+shared_protocol="${shared_protocol/wework_target=false/wework_target=true}"
+assert_warmup_case "Shared protocol warms runtime images and desktop sidecar" "$shared_protocol" \
+  "shared/protocol/runtime_task_create_request_v2.schema.json"
+
+shared_rust="${executor_lock/backend_rs_rust=false/backend_rs_rust=true}"
+assert_warmup_case "Shared Rust warms both runtimes" "$shared_rust" \
+  "shared/rust/crypto/src/lib.rs"
+if ! grep -q '"shared/rust/\*\*"' "$workflow_dir/ci-cache-warmup.yml"; then
+  fail "Shared Rust changes must trigger cache warmup"
+fi
 
 if ! ruby - "$workflow_dir" "$script_dir/../.." <<'RUBY'
 workflow_dir, root = ARGV
@@ -146,6 +157,7 @@ workflow_dir, root = ARGV
   File.read(File.join(workflow_dir, name)).scan(/hashFiles\([^)]*\)/).each do |expression|
     next unless expression.include?("'executor/src/")
     abort "#{name} omits vendored Executor dependencies from its source digest" unless expression.include?("'executor/vendor/**'")
+    abort "#{name} omits shared Executor protocols from its source digest" unless expression.include?("'shared/protocol/**'")
   end
 end
 [
@@ -158,6 +170,10 @@ end
   copy = lines.index { |line| line.start_with?('COPY executor/vendor ') }
   build = lines.index { |line| line.include?('cargo build') }
   abort "#{name} must copy Executor dependencies before compiling" unless copy && build && copy < build
+  source = lines.index { |line| line.start_with?('COPY executor/src ') }
+  protocol = lines.index { |line| line.start_with?('COPY shared/protocol ') }
+  source_build = lines.each_index.find { |index| index > source && lines[index].include?('cargo build') }
+  abort "#{name} must copy shared protocols before compiling Executor source" unless protocol && source_build && protocol < source_build
 end
 RUBY
 then

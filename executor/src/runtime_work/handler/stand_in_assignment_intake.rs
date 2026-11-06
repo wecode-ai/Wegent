@@ -1,6 +1,10 @@
 use super::*;
 use crate::task_runtime::personal_stand_in::{project_role, role_project_matches};
 
+#[cfg(test)]
+#[path = "project_intake_boundary_tests.rs"]
+mod tests;
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn read_assignment_intake(
         &self,
@@ -84,13 +88,13 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         event: &Value,
     ) -> Result<(Value, Value), AppIpcError> {
-        self.verify_stand_in_user(&json!({"userId":user})).await?;
+        self.verify_runtime_user(&json!({"userId":user})).await?;
         let id = super::stand_in_tasks::required(event, "issueId")?;
         let issue = self
-            .stand_in_http(reqwest::Method::GET, &format!("/v1/loop-items/{id}"), None)
+            .runtime_http(reqwest::Method::GET, &format!("/v1/loop-items/{id}"), None)
             .await?;
         let assignments = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{id}/assignments"),
                 None,

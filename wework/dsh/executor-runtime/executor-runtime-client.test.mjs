@@ -9,6 +9,35 @@ import { once } from 'node:events'
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
 import { LocalEndpointTransport } from './local-endpoint-transport.js'
 
+test('preserves only bounded collection retry metadata from native responses', () => {
+  const client = new ExecutorRuntimeClient({ transport: { on() {} } })
+  for (const retryAfterMs of [30000, 3600000, 0, -1, 3600001, '30000']) {
+    let observed
+    let cleanupCount = 0
+    client.pending.set('retry', {
+      cleanup() {
+        cleanupCount++
+      },
+      reject: error => {
+        observed = error
+      },
+    })
+    client.handleMessage({
+      type: 'response',
+      id: 'retry',
+      ok: false,
+      error: { code: 'native_failure', message: 'Failed', retryAfterMs },
+    })
+    assert.equal(cleanupCount, 1)
+    assert.equal(client.pending.has('retry'), false)
+    assert.equal(
+      observed.retryAfterMs,
+      [30000, 3600000].includes(retryAfterMs) ? retryAfterMs : undefined
+    )
+    assert.equal(observed.retryable, false, 'Metadata does not authorize an operation retry')
+  }
+})
+
 test('negotiates local endpoint RPC without owning event history', async () => {
   const fixture = await executorFixture()
   const client = new ExecutorRuntimeClient({
@@ -189,6 +218,81 @@ test('rejects a duplicate caller-provided request id while the first request is 
   }
 })
 
+test('aborts a read on the same socket without interrupting unrelated control requests', async () => {
+  const fixture = await executorFixture({ holdHistoryReads: true })
+  const client = new ExecutorRuntimeClient({
+    transport: new LocalEndpointTransport({ endpoint: fixture.endpoint, token: fixture.token }),
+  })
+  try {
+    await client.start()
+    const controller = new AbortController()
+    const read = client.request('runtime.tasks.transcript', {}, undefined, 'cancelled-read', {
+      signal: controller.signal,
+    })
+    const rejected = assert.rejects(read, { code: 'request_cancelled' })
+    await waitFor(() => fixture.heldRequestIds().includes('cancelled-read'))
+    controller.abort()
+    await rejected
+    await waitFor(() => fixture.cancelledIds().includes('cancelled-read'))
+    assert.deepEqual(await client.request('executor.health'), { healthy: true })
+    assert.equal(client.pending.size, 0)
+    assert.equal(fixture.connectionCount(), 1)
+  } finally {
+    await client.stop()
+    await fixture.stop()
+  }
+})
+
+test('read timeout cancels executor work and pre-aborted reads never reach the socket', async () => {
+  const fixture = await executorFixture({ holdHistoryReads: true })
+  const client = new ExecutorRuntimeClient({
+    transport: new LocalEndpointTransport({ endpoint: fixture.endpoint, token: fixture.token }),
+  })
+  try {
+    await client.start()
+    await assert.rejects(client.request('runtime.tasks.transcript', {}, 20, 'timed-out-read'), {
+      code: 'request_timeout',
+    })
+    await waitFor(() => fixture.cancelledIds().includes('timed-out-read'))
+    const controller = new AbortController()
+    controller.abort()
+    await assert.rejects(
+      client.request('runtime.tasks.transcript', {}, undefined, 'never-sent', {
+        signal: controller.signal,
+      }),
+      { code: 'request_cancelled' }
+    )
+    await client.request('executor.health')
+    assert.ok(!fixture.requestIds().includes('never-sent'))
+  } finally {
+    await client.stop()
+    await fixture.stop()
+  }
+})
+
+test('an abort signal never cancels a mutating request', async () => {
+  const fixture = await executorFixture({ holdSends: true })
+  const client = new ExecutorRuntimeClient({
+    transport: new LocalEndpointTransport({ endpoint: fixture.endpoint, token: fixture.token }),
+  })
+  try {
+    await client.start()
+    const controller = new AbortController()
+    const send = client.request('runtime.tasks.send', {}, undefined, 'accepted-send', {
+      signal: controller.signal,
+    })
+    await waitFor(() => fixture.heldRequestIds().includes('accepted-send'))
+    controller.abort()
+    assert.deepEqual(await client.request('executor.health'), { healthy: true })
+    assert.deepEqual(fixture.cancelledIds(), [])
+    fixture.release('accepted-send')
+    await assert.doesNotReject(send)
+  } finally {
+    await client.stop()
+    await fixture.stop()
+  }
+})
+
 async function executorFixture(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-executor-runtime-'))
   const endpoint =
@@ -199,6 +303,9 @@ async function executorFixture(options = {}) {
   const clients = new Set()
   let connectionCount = 0
   let lastRequestId = null
+  const requestIds = []
+  const cancelledIds = []
+  const heldRequests = new Map()
   let listening = false
   const server = createServer(socket => {
     connectionCount += 1
@@ -232,6 +339,11 @@ async function executorFixture(options = {}) {
           if (!authenticated) socket.end()
           continue
         }
+        if (message.type === 'cancel') {
+          cancelledIds.push(message.id)
+          heldRequests.delete(message.id)
+          continue
+        }
         if (message.method === 'executor.protocol.describe') {
           setTimeout(() => {
             socket.write(
@@ -243,7 +355,11 @@ async function executorFixture(options = {}) {
                   protocol_version: 1,
                   device_id: 'local-device',
                   capabilities: ['executor.health'],
-                  renderer_methods: ['codex.app_server_request', 'executor.health'],
+                  renderer_methods: [
+                    'codex.app_server_request',
+                    'executor.health',
+                    'runtime.tasks.*',
+                  ],
                   transports: ['local-endpoint-ndjson'],
                   features: {
                     request_response: true,
@@ -258,6 +374,14 @@ async function executorFixture(options = {}) {
           }, options.descriptionDelayMs ?? 0)
         } else {
           lastRequestId = message.id
+          requestIds.push(message.id)
+          if (
+            (options.holdHistoryReads && message.method.startsWith('runtime.tasks.transcript')) ||
+            (options.holdSends && message.method === 'runtime.tasks.send')
+          ) {
+            heldRequests.set(message.id, socket)
+            continue
+          }
           const result = options.compressedHealthResponse
             ? {
                 __runtimeRpcEncoding: 'gzip+base64+json',
@@ -296,6 +420,17 @@ async function executorFixture(options = {}) {
   return {
     endpoint,
     token,
+    requestIds: () => [...requestIds],
+    heldRequestIds: () => [...heldRequests.keys()],
+    cancelledIds: () => [...cancelledIds],
+    release(id) {
+      const socket = heldRequests.get(id)
+      assert.ok(socket, 'held request must exist')
+      heldRequests.delete(id)
+      socket.write(
+        `${JSON.stringify({ type: 'response', id, ok: true, result: { accepted: true } })}\n`
+      )
+    },
     listen,
     broadcast(message) {
       for (const client of clients) {

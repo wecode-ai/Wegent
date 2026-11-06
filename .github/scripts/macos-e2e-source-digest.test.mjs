@@ -35,6 +35,7 @@ for (const component of Object.keys(incompleteDigests)) {
         "src/a.rs": "mod a;\n",
         "src/a/inner.rs": "pub fn nested() {}\n",
         "src/.hidden.rs": "pub fn hidden() {}\n",
+        "crates/library/src/lib.rs": "pub fn library() {}\n",
         "src/schema.json": '{"type":"object"}\n',
         ...(component === "executor"
           ? {
@@ -58,12 +59,15 @@ for (const component of Object.keys(incompleteDigests)) {
       );
       mkdirSync(join(root, ".github/scripts"), { recursive: true });
       const contextInputs = {
+        "shared/rust/crypto/src/lib.rs": "pub fn shared_crypto() {}\n",
         ".github/scripts/build-macos-e2e-runtimes.sh": "cargo build --locked\n",
         ...(component === "executor"
           ? {
               "sdk/plugin-auth/auth.ts": "export const auth = true\n",
               "sdk/plugin-creator/README.md": "Embedded SDK guide\n",
               "shared/assets/instructions.md": "Embedded instructions\n",
+              "shared/protocol/runtime_task_create_request_v2.schema.json":
+                '{"type":"object"}\n',
             }
           : {}),
       };

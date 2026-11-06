@@ -61,7 +61,7 @@ async function openEditor(
 }
 
 describe('workspace Issue tag editing', () => {
-  it('shows typed text, commits unique tags, removes them and saves the draft', async () => {
+  it('immediately saves unique tag additions and removals without a content save', async () => {
     const { updateLoopItem, onUpdated } = await openEditor()
     const input = screen.getByRole('textbox', { name: '添加标签' })
     expect(input).toBeVisible()
@@ -76,12 +76,10 @@ describe('workspace Issue tag editing', () => {
     await userEvent.type(input, '临时标签,')
     await userEvent.click(screen.getByTestId('cloud-todo-detail-tag-tag-remove-临时标签'))
     expect(screen.queryByTestId('cloud-todo-detail-tag-tag-临时标签')).not.toBeInTheDocument()
-    expect(updateLoopItem).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
       expect(updateLoopItem).toHaveBeenCalledWith(
         item.id,
-        expect.objectContaining({ version: 1, tags: ['新标签'] })
+        expect.objectContaining({ tags: ['新标签'] })
       )
     )
     expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ tags: ['新标签'] }))
@@ -132,11 +130,9 @@ describe('workspace Issue tag editing', () => {
   it('keeps tags available for retry after a rejected save', async () => {
     const { updateLoopItem } = await openEditor({ saveError: new Error('保存标签失败') })
     await userEvent.type(screen.getByTestId('cloud-todo-detail-tag-input'), '验证{Enter}')
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
     expect(await screen.findByText('保存标签失败')).toBeVisible()
-    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-验证')).toBeVisible()
-    expect(screen.getByTestId('cloud-todo-save')).toBeEnabled()
+    expect(screen.getByTestId('cloud-todo-field-retry')).toBeEnabled()
     expect(updateLoopItem).toHaveBeenCalledTimes(1)
   })
 

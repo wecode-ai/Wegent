@@ -236,18 +236,36 @@ describe('resolveDeviceListWithCache', () => {
 
   test('accepts an authoritative empty device list and clears stale cache', () => {
     const cachedDevice = device({ device_id: 'stale-device' })
-    resolveDeviceListWithCache([cachedDevice])
+    resolveDeviceListWithCache('owner-a', [cachedDevice])
 
-    expect(readCachedDeviceList()).toHaveLength(1)
-    expect(resolveDeviceListWithCache([], { useCacheFallback: false })).toEqual([])
-    expect(readCachedDeviceList()).toEqual([])
+    expect(readCachedDeviceList('owner-a')).toHaveLength(1)
+    expect(resolveDeviceListWithCache('owner-a', [], { useCacheFallback: false })).toEqual([])
+    expect(readCachedDeviceList('owner-a')).toEqual([])
   })
 
   test('retains cached devices when the caller explicitly permits fallback', () => {
     const cachedDevice = device({ device_id: 'cached-device' })
-    resolveDeviceListWithCache([cachedDevice])
+    resolveDeviceListWithCache('owner-a', [cachedDevice])
 
-    expect(resolveDeviceListWithCache([]).map(item => item.device_id)).toEqual(['cached-device'])
+    expect(resolveDeviceListWithCache('owner-a', []).map(item => item.device_id)).toEqual([
+      'cached-device',
+    ])
+  })
+
+  test('isolates fallback and authoritative removal by owner and ignores unscoped entries', () => {
+    const cachedDevice = device({ device_id: 'owner-a-device' })
+    resolveDeviceListWithCache('owner-a', [cachedDevice])
+    sessionStorage.setItem(
+      'wework.workbench.lastNonEmptyDevices',
+      JSON.stringify({ devices: [cachedDevice], updatedAt: Date.now() })
+    )
+
+    expect(readCachedDeviceList('owner-b')).toEqual([])
+    expect(resolveDeviceListWithCache('owner-b', [])).toEqual([])
+    resolveDeviceListWithCache('owner-b', [], { useCacheFallback: false })
+    expect(readCachedDeviceList('owner-a').map(device => device.device_id)).toEqual([
+      'owner-a-device',
+    ])
   })
 })
 

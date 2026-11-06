@@ -11,6 +11,70 @@ import {
 import type { WorkbenchMessage } from '@/types/workbench'
 
 describe('local connector authorization recovery messages', () => {
+  const gitlabTarget = {
+    pluginKey: 'gitlab',
+    connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
+    instance: 'https://gitlab.company.example:8443',
+  }
+
+  test('preserves the reported GitLab instance from structured resource discovery', () => {
+    const message: WorkbenchMessage = {
+      id: 'gitlab-auth',
+      role: 'assistant',
+      content: '',
+      blocks: [
+        {
+          id: 'discovery',
+          type: 'tool',
+          status: 'done',
+          toolOutput: {
+            code: 'connector_auth_required',
+            authTarget: gitlabTarget,
+          },
+        },
+      ],
+    }
+    const candidate = latestConnectorAuthMessage([message])
+    expect(resolveLocalConnectorAuthHint(candidate?.text)).toEqual({
+      ...gitlabTarget,
+      displayName: 'gitlab',
+    })
+  })
+
+  test('preserves a Markdown-formatted public GitLab instance', () => {
+    expect(
+      resolveLocalConnectorAuthHint(
+        `connector_auth_required\npluginKey=gitlab\nconnectorSlug=${gitlabTarget.connectorSlug}\n- **instance**: **${gitlabTarget.instance}**`
+      )
+    ).toEqual({
+      ...gitlabTarget,
+      displayName: 'gitlab',
+    })
+  })
+
+  test.each([
+    undefined,
+    'http://gitlab.example',
+    'https://user:secret@gitlab.example',
+    'https://gitlab.example/project',
+    'https://gitlab.example?token=secret',
+    'https://gitlab.example#other',
+  ])('does not recover a native GitLab identity with invalid or missing instance: %s', instance => {
+    expect(
+      resolveLocalConnectorAuthHint(
+        JSON.stringify({ code: 'connector_auth_required', ...gitlabTarget, instance })
+      )
+    ).toBeNull()
+  })
+
+  test('does not convert a Git permission failure into a login request', () => {
+    expect(
+      resolveLocalConnectorAuthHint(
+        JSON.stringify({ code: 'git_permission_denied', status: 403, ...gitlabTarget })
+      )
+    ).toBeNull()
+  })
+
   test('detects connector_auth_required payloads', () => {
     expect(
       messageRequiresConnectorAuth(

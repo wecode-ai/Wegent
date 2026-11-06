@@ -62,6 +62,8 @@ test('uploads, reopens and removes a Chinese-named Issue image with decoded prev
     await page.getByTestId('cloud-todo-detail-title').click()
     await expect(page.getByTestId('cloud-todo-detail-title')).toBeEditable()
 
+    await page.getByTestId('cloud-todo-detail-description').click()
+
     // Observe the real thumbnail request, rather than accepting an upload badge.
     const contentResponse = page.waitForResponse(response =>
       /\/loop-item-attachments\/[^/]+\/content$/.test(new URL(response.url()).pathname)
@@ -106,8 +108,8 @@ test('uploads, reopens and removes a Chinese-named Issue image with decoded prev
     await page.getByTestId('browser-attachment-preview-close').click()
     await expect(page.getByTestId('browser-attachment-preview-dialog')).toHaveCount(0)
 
-    await page.getByTestId('cloud-todo-detail-title').click()
-    await expect(page.getByTestId('cloud-todo-detail-title')).toBeEditable()
+    await page.getByTestId('cloud-todo-detail-description').click()
+    await expect(page.getByTestId('cloud-todo-attachment-input')).toBeEnabled()
     await page.getByTestId(`cloud-todo-attachment-delete-${attachment.id}`).click()
     await expect(thumbnail).toHaveCount(0)
     await page.reload()

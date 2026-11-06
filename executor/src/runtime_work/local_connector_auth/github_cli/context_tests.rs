@@ -12,7 +12,14 @@ async fn wait_for_file(path: &Path) {
         }
     })
     .await
-    .expect("CLI fixture must reach its synchronization barrier");
+    .unwrap_or_else(|error| {
+        let root = path.parent().unwrap();
+        panic!(
+            "CLI fixture must reach its synchronization barrier: {error:?}; entered={}, calls={}",
+            path.exists(),
+            root.join("calls").exists()
+        )
+    });
 }
 
 fn publish_sync(root: &Path) -> PathBuf {
@@ -28,8 +35,12 @@ async fn verify_case(case: &str, root: &Path) {
     let managed = root.join("home/.wegent/workbench/git-auth/current/gh");
     let result = if case == "initial_health" {
         fs::write(native.join("ready"), "synthetic-native-account").unwrap();
-        let operation = tokio::spawn(start());
-        wait_for_file(&root.join("entered")).await;
+        let mut operation = tokio::spawn(start());
+        let entered = root.join("entered");
+        tokio::select! {
+            _ = wait_for_file(&entered) => {}
+            result = &mut operation => panic!("Health finished before its barrier: {result:?}"),
+        }
         publish_sync(root);
         fs::write(root.join("release"), "").unwrap();
         operation.await.unwrap().unwrap()

@@ -48,7 +48,30 @@ export async function apply(ctx) {
       async initialize() {
         return { cursor: '0' }
       },
-      async collect() {
+      async collect(context, { source, checkpoint }) {
+        if (source.id === 'versioned-record') {
+          const result = await context.mcp.callTool('source', {
+            server: source.server,
+            tool: 'read_record',
+            arguments: { query: source.id },
+          })
+          if (result.isError) throw new Error('Versioned source record read failed')
+          const record = result.structuredContent
+          return {
+            events: [
+              {
+                id: 'stable-versioned-record-event',
+                objectId: `record:${record.id}`,
+                version: record.version,
+                eventType: 'record.received',
+                text: record.value,
+                at: new Date().toISOString(),
+              },
+            ],
+            nextCheckpoint: { cursor: String(Number(checkpoint.cursor) + 1) },
+            hasMore: false,
+          }
+        }
         return { events: [], nextCheckpoint: { cursor: '0' }, hasMore: false }
       },
     },

@@ -10,8 +10,9 @@ import { createServer, connect } from 'node:net'
 import { reservePort } from '../port-reservation.mjs'
 
 const run = promisify(execFile)
-const VERSION = '1.6.15'
-const SHA256 = 'e93dc3ed2db0175a4d6e168743bde3c8ac8a7435490bdab3f12da33d491ee24e'
+// GreenMail 2.1.15 fixes APPEND noon timestamps being parsed as midnight.
+const VERSION = '2.1.15'
+const SHA256 = '91d58798698cac357f015365240383b936ced2f2a1a9f7db37d9e3e1a31391b1'
 
 async function startImapProxy(port, targetPort) {
   let online = true
@@ -55,6 +56,12 @@ async function startImapProxy(port, targetPort) {
 
 // GreenMail is a real, isolated IMAP/SMTP service. No production mailboxes are used.
 export async function startRealMailServer(directory, runtimeRoot) {
+  const { stdout, stderr } = await run('java', ['-version'])
+  const version = `${stdout}\n${stderr}`.match(/version "(?:1\.)?(\d+)/)?.[1]
+  assert.ok(
+    Number(version) >= 11,
+    `GreenMail ${VERSION} requires Java 11 or newer on PATH; select a supported JDK before running the mail checkpoint. Detected: ${stdout.trim()} ${stderr.trim()}`
+  )
   await mkdir(directory, { recursive: true })
   const jar = join(directory, 'greenmail.jar')
   const response = await fetch(
@@ -209,6 +216,32 @@ export async function startRealMailServer(directory, runtimeRoot) {
     stop,
     pauseImap: () => proxy.pause(),
     resumeImap: () => proxy.resume(),
+    async append(subject, text, messageId, internalDate) {
+      assert.ok(internalDate instanceof Date && Number.isFinite(internalDate.getTime()))
+      const transport = nodemailer.createTransport({ streamTransport: true, buffer: true })
+      const encoded = await transport.sendMail({
+        from: 'sender@example.com',
+        to: config.email,
+        subject,
+        text,
+        messageId,
+        date: internalDate,
+      })
+      return imap('owner', async client => {
+        const added = await client.append('INBOX', encoded.message, [], internalDate)
+        assert.ok(added.uid, 'Real IMAP APPEND must return a UID')
+        const stored = await client.fetchOne(
+          added.uid,
+          { uid: true, internalDate: true },
+          { uid: true }
+        )
+        assert.equal(
+          new Date(stored.internalDate).getTime(),
+          Math.floor(internalDate.getTime() / 1000) * 1000
+        )
+        return { uid: added.uid, internalDate: new Date(stored.internalDate).toISOString() }
+      })
+    },
     async deliver(subject, text, messageId) {
       const smtp = nodemailer.createTransport({
         ...config.smtp,

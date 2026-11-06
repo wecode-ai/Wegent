@@ -1,0 +1,39 @@
+[package]
+name = "wegent-model-proxy"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Local model routing, protocol translation, and model contexts"
+
+[package.metadata.wegent]
+source-inputs = ["../../../shared/assets"]
+
+[features]
+test-support = []
+
+[dependencies]
+regex = "1.11"
+wegent-runtime-config = { path = "../config" }
+wegent-runtime-logging = { path = "../logging" }
+wegent-execution-contracts = { path = "../execution-contracts" }
+wegent-protocol = { path = "../../../shared/rust/protocol" }
+axum = { version = "0.8", features = ["multipart", "ws"] }
+base64 = "0.22"
+futures-util = "0.3"
+getrandom = "0.3"
+httpdate = "1"
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tokio = { version = "1.48", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+toml_edit = { version = "0.22", features = ["serde"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.23"
+tower = { version = "0.5", features = ["util"] }
+tokio = { version = "1.48", features = ["test-util"] }

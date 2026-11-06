@@ -1522,6 +1522,27 @@ async fn app_ipc_resolves_configured_device_command() {
 }
 
 #[tokio::test]
+async fn app_ipc_native_directory_listing_preserves_directory_projection() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("visible")).unwrap();
+    fs::create_dir(root.path().join(".hidden")).unwrap();
+    fs::write(root.path().join("file.txt"), "file").unwrap();
+    let response = AppIpcServer::new()
+        .handle_line(
+            &json!({
+                "type": "request", "id": "native-directories", "method": "device.execute_command",
+                "params": { "command_key": "ls_dirs", "path": root.path(),
+                    "env": { "PATH": root.path() } }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response["result"]["success"], true);
+    assert_eq!(response["result"]["stdout"], json!([".hidden", "visible"]));
+}
+
+#[tokio::test]
 async fn app_ipc_runtime_auth_status_uses_executor_codex_home() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();

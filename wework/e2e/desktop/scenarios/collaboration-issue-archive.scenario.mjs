@@ -7,6 +7,7 @@ import {
   captureVerificationScreenshot,
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -88,7 +89,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
 
       const firstIssueId = await createIssue(control, FIRST_ISSUE, 'completed', uiTimeoutMs)
       const secondIssueId = await createIssue(control, SECOND_ISSUE, 'completed', uiTimeoutMs)

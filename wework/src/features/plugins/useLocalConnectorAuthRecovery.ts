@@ -36,6 +36,7 @@ export function useLocalConnectorAuthRecovery(options: {
   const messageStatus = candidate?.message.status
   const pluginKey = hint?.pluginKey
   const connectorSlug = hint?.connectorSlug
+  const instance = hint?.instance
 
   useEffect(() => {
     optionsRef.current = options
@@ -101,7 +102,7 @@ export function useLocalConnectorAuthRecovery(options: {
       version === recoveryVersionRef.current &&
       !pendingRef.current &&
       !handledMessageIdsRef.current.has(messageId)
-    const identifiedTarget = { pluginKey, connectorSlug }
+    const identifiedTarget = { pluginKey, connectorSlug, ...(instance ? { instance } : {}) }
     const githubCli = isGithubCliTarget(identifiedTarget)
     const target = githubCli ? GITHUB_CLI_TARGET : identifiedTarget
     const probe = { messageId }
@@ -137,7 +138,7 @@ export function useLocalConnectorAuthRecovery(options: {
     return () => {
       cancelled = true
     }
-  }, [active, pending, messageId, messageStatus, pluginKey, connectorSlug, t])
+  }, [active, pending, messageId, messageStatus, pluginKey, connectorSlug, instance, t])
 
   const completePending = useCallback(async () => {
     const current = pendingRef.current

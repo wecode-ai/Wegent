@@ -4,6 +4,7 @@
 
 import asyncio
 import time
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -12,9 +13,129 @@ from fastapi import HTTPException
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.models.delivery import CloudProject, LoopItem
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.task import TaskResource
+from tests.utils.collaboration import authorize_project
+
+
+@pytest.fixture
+def authorized_issue(test_db, test_user):
+    project = CloudProject(
+        public_id=str(uuid.uuid4()),
+        project_key="RUNTIME",
+        name="Runtime execution",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    authorize_project(test_db, project)
+    issue = LoopItem(
+        cloud_project_id=project.id,
+        title="Authorized runtime execution",
+        created_by_user_id=test_user.id,
+        metadata_json={"security_level": "open"},
+    )
+    test_db.add(issue)
+    test_db.commit()
+    return project, issue
+
+
+@pytest.fixture
+def runtime_send_history(monkeypatch):
+    """Existing authorized read returns a complete native session identity."""
+    from app.schemas.runtime_work import RuntimeTranscriptResponse
+    from app.services import runtime_work_service
+
+    async def read(**kwargs):
+        address = kwargs["address"]
+        return RuntimeTranscriptResponse(
+            taskId=address.local_task_id,
+            workspacePath=(
+                "/project"
+                if address.local_task_id == "original-task"
+                else "/repo/Wegent"
+            ),
+            runtime="codex",
+            turns=[],
+        )
+
+    monkeypatch.setattr(runtime_work_service, "get_runtime_transcript", read)
+
+
+@pytest.mark.asyncio
+async def test_device_compiled_creation_keeps_native_models_on_target(
+    test_db, test_user, monkeypatch
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service as service
+
+    project = _local_path_project(test_db, test_user.id)
+    monkeypatch.setattr(
+        service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    compiled_identities = []
+
+    def build_identity(**kwargs):
+        compiled_identities.append(kwargs["request"])
+        return SimpleNamespace(
+            to_dict=lambda: {"user_id": test_user.id, "model_config": {}}
+        )
+
+    monkeypatch.setattr(service, "_build_runtime_execution_request", build_identity)
+    rpc = AsyncMock(
+        return_value={
+            "accepted": True,
+            "success": True,
+            "taskId": "intent-task",
+            "runtime": "codex",
+            "workspacePath": "/repo/Wegent",
+        }
+    )
+    monkeypatch.setattr(service.runtime_rpc_service, "call", rpc)
+    result = await service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            compileOnDevice=True,
+            projectId=project.id,
+            taskId="intent-task",
+            runtime="codex",
+            message="Create with options",
+            modelId="local-model:target",
+            modelType="runtime",
+            modelSelection={
+                "modelName": "local-model:target",
+                "modelType": "runtime",
+                "options": {"reasoningEffort": "high"},
+            },
+            runtimePermissionMode="plan",
+            initialSupervisor={
+                "mode": "suggest",
+                "intervalSeconds": 30,
+                "modelSelection": {
+                    "modelName": "local-model:review",
+                    "modelType": "runtime",
+                },
+            },
+        ),
+    )
+    assert result.accepted is True
+    assert compiled_identities[0].model_id is None
+    assert compiled_identities[0].model_selection is None
+    assert rpc.await_args.kwargs["method"] == "runtime.tasks.create_from_intent"
+    payload = rpc.await_args.kwargs["payload"]
+    assert payload["schemaVersion"] == 2
+    assert payload["modelSelection"]["modelName"] == "local-model:target"
+    assert payload["runtimePermissionMode"] == "plan"
+    assert payload["initialSupervisor"]["modelConfig"] == {}
+    assert (
+        payload["initialSupervisor"]["modelSelection"]["modelName"]
+        == "local-model:review"
+    )
 
 
 def _project(test_db, user_id: int, name: str = "Wegent") -> Project:
@@ -2093,10 +2214,13 @@ async def test_delete_archived_conversations_bulk_groups_by_device(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("queue_if_busy", [False, True])
 async def test_send_runtime_message_preserves_executor_queue_status(
     test_db,
     test_user,
     monkeypatch,
+    queue_if_busy,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service
@@ -2134,12 +2258,15 @@ async def test_send_runtime_message_preserves_executor_queue_status(
                 localTaskId="codex-1",
             ),
             message="continue",
+            queueIfBusy=queue_if_busy,
         ),
     )
 
     assert response.accepted is True
     assert response.status == "queued"
     assert response.queue_position == 2
+    payload = runtime_work_service.runtime_rpc_service.call.await_args.kwargs["payload"]
+    assert payload.get("queueIfBusy", False) is queue_if_busy
 
 
 @pytest.mark.asyncio
@@ -2147,6 +2274,7 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
     test_db,
     test_user,
     monkeypatch,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import (
         DeviceWorkspaceUpsert,
@@ -2217,6 +2345,12 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         payload={
             "deviceId": "device-1",
             "taskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "runtimeHandle": {
+                "runtime": "codex",
+                "origin": None,
+                "cloudProjectId": None,
+            },
             "message": "continue",
             "modelSelection": {
                 "modelName": "selected-gpt",
@@ -2242,6 +2376,7 @@ async def test_send_runtime_message_forwards_external_user_message_identity(
     test_db,
     test_user,
     monkeypatch,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import (
         RuntimeMessageSource,
@@ -2431,6 +2566,7 @@ async def test_send_runtime_message_forwards_ready_attachments_without_task_rows
     test_db,
     test_user,
     monkeypatch,
+    runtime_send_history,
 ):
     from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
     from app.schemas.runtime_work import (
@@ -2777,10 +2913,12 @@ def test_compile_explicit_bot_request_resolves_backend_project_workspace(
     test_db,
     test_user,
     monkeypatch,
+    authorized_issue,
 ):
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
 
+    cloud_project, issue = authorized_issue
     project = _local_path_project(
         test_db,
         test_user.id,
@@ -2807,8 +2945,8 @@ def test_compile_explicit_bot_request_resolves_backend_project_workspace(
             bot=[{"id": "robot-1", "name": "Robot", "shell_type": "Codex"}],
             origin={
                 "type": "board_task",
-                "cloudProjectId": "9",
-                "loopItemId": "issue-1",
+                "cloudProjectId": str(cloud_project.id),
+                "loopItemId": str(issue.id),
             },
         ),
     )
@@ -3103,25 +3241,79 @@ def test_runtime_create_merges_agent_and_project_plugins() -> None:
     ]
 
 
-def test_materialize_runtime_task_requires_team_intent(
+@pytest.mark.parametrize("new_session", [True, False])
+def test_materialize_owned_direct_task_without_remote_dispatch(
     test_db,
     test_user,
+    monkeypatch,
+    new_session,
 ) -> None:
     from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
     from app.services import runtime_work_service
 
-    with pytest.raises(HTTPException, match="wegentTeamId is required"):
+    owned = MagicMock(return_value=object())
+    monkeypatch.setattr(
+        runtime_work_service.device_service, "get_device_by_device_id", owned
+    )
+    dispatch = AsyncMock()
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", dispatch)
+    compiled = runtime_work_service.materialize_runtime_task_create(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskMaterializeRequest(
+            schemaVersion=2,
+            compileOnDevice=True,
+            newSession=new_session,
+            deviceId="local-device-1",
+            taskId="direct-local-task",
+            workspacePath="/srv/workspaces/Wegent",
+            runtime="codex",
+            message="Run the default assistant",
+            modelId="device-owned-model",
+            modelType="runtime",
+        ),
+    )
+    owned.assert_called_once_with(test_db, test_user.id, "local-device-1")
+    assert compiled.team_id is None
+    assert compiled.target.device_id == "local-device-1"
+    assert compiled.payload["taskId"] == "direct-local-task"
+    assert compiled.payload["executionRequest"]["new_session"] is new_session
+    assert compiled.payload["executionRequest"]["model_config"] == {}
+    dispatch.assert_not_awaited()
+
+
+def test_materialize_direct_task_rejects_unowned_device(
+    test_db, test_user, monkeypatch
+):
+    from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda *args: None,
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "resolve_runtime_route_identity",
+        lambda *args, **kwargs: None,
+    )
+    compiler = MagicMock()
+    monkeypatch.setattr(runtime_work_service, "_compile_runtime_task_create", compiler)
+    with pytest.raises(HTTPException) as error:
         runtime_work_service.materialize_runtime_task_create(
             db=test_db,
             user_id=test_user.id,
             request=RuntimeTaskMaterializeRequest(
                 schemaVersion=2,
-                deviceId="local-device-1",
-                workspacePath="/srv/workspaces/Wegent",
+                deviceId="unowned-app",
+                workspacePath="/private",
                 runtime="codex",
-                message="Run the default assistant",
+                message="Denied",
             ),
         )
+    assert error.value.status_code == 404
+    compiler.assert_not_called()
 
 
 def test_compile_rejects_project_bound_to_another_device(
@@ -5504,6 +5696,7 @@ async def test_send_runtime_message_does_not_dispatch_when_request_build_fails(
     test_db,
     test_user,
     monkeypatch,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service
@@ -5674,6 +5867,7 @@ def test_runtime_address_team_binding_is_additive() -> None:
 @pytest.mark.asyncio
 async def test_send_preserves_desktop_task_binding_and_compiles_continuation(
     monkeypatch,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service as service
@@ -5714,7 +5908,12 @@ async def test_send_preserves_desktop_task_binding_and_compiles_continuation(
     assert intent.new_session is False
     assert compiled.new_session is False
     assert rpc.await_args.kwargs["method"] == "runtime.tasks.send"
-    assert rpc.await_args.kwargs["payload"]["runtimeHandle"] == handle
+    assert rpc.await_args.kwargs["payload"]["runtimeHandle"] == {
+        **handle,
+        "runtime": "codex",
+        "origin": None,
+        "cloudProjectId": None,
+    }
 
 
 def test_build_runtime_send_execution_request_includes_valid_task_token(
@@ -5829,25 +6028,27 @@ def test_build_runtime_execution_request_resolves_crd_model_id(
 def test_build_runtime_execution_request_uses_managed_project_space_tools_for_issue(
     test_db,
     test_user,
+    authorized_issue,
 ) -> None:
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
 
+    project, issue = authorized_issue
     request = RuntimeTaskCreateRequest(
         runtime="codex",
         message="处理当前 Issue",
         deviceId="device-1",
         workspacePath="/repo/Wegent",
-        cloudProjectId="project-1",
+        cloudProjectId=str(project.id),
         origin={
             "type": "board_task",
-            "cloudProjectId": "project-1",
-            "loopItemId": "ISSUE-1",
+            "cloudProjectId": str(project.id),
+            "loopItemId": str(issue.id),
         },
         additionalContext={
             "projectSpaceIssue": {
                 "kind": "application",
-                "value": "Current project project-1 and Issue ISSUE-1.",
+                "value": f"Current project {project.id} and Issue {issue.id}.",
             }
         },
     )
@@ -5872,26 +6073,28 @@ def test_build_runtime_execution_request_uses_managed_space_tools_for_dispatch_r
     test_db,
     test_user,
     dispatch_role,
+    authorized_issue,
 ) -> None:
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
 
+    project, issue = authorized_issue
     request = RuntimeTaskCreateRequest(
         runtime="codex",
         message="处理当前 Issue",
         deviceId="device-1",
         workspacePath="/repo/Wegent",
-        cloudProjectId="project-1",
+        cloudProjectId=str(project.id),
         origin={
             "type": "board_task",
-            "cloudProjectId": "project-1",
-            "loopItemId": "ISSUE-1",
+            "cloudProjectId": str(project.id),
+            "loopItemId": str(issue.id),
             "dispatchRole": dispatch_role,
         },
         additionalContext={
             "projectSpaceIssue": {
                 "kind": "application",
-                "value": "Current project project-1 and Issue ISSUE-1.",
+                "value": f"Current project {project.id} and Issue {issue.id}.",
             }
         },
     )

@@ -19,7 +19,7 @@ impl RuntimeWorkRpcHandler {
             return Err(AppIpcError::new("bad_request", "Invalid project storage"));
         }
         if storage == "cloud" || self.backend_connection_snapshot()?.is_some() {
-            self.verify_stand_in_user(&json!({"userId":user})).await?;
+            self.verify_runtime_user(&json!({"userId":user})).await?;
         }
         let save = method == "runtime.project_coordinator.binding.save";
         let mut input = payload["binding"].clone();

@@ -18,7 +18,7 @@ use super::{
     util::{item_type, string_field},
 };
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use super::transcript_search_text::codex_turn_search_sources;
 
 const SEARCH_CURSOR_PREFIX: &str = "wework-codex-search:";

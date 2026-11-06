@@ -15,6 +15,7 @@ use brz_redis::{Redis, RedisResult};
 use serde_json::{Map, Value, json};
 
 use super::event::ExecutionEvent;
+use super::py_json::utc_isoformat;
 use super::session;
 use super::socketio::{publish_chat_start, publish_emit, publish_emit_in_room};
 
@@ -54,6 +55,7 @@ pub(crate) struct StatusUpdatingEmitter<R: Redis> {
     redis: R,
     task_id: i64,
     subtask_id: i64,
+    observed_started_at: String,
     buffer: Vec<BufferedStreamContent>,
     first_buffered_at: Option<Instant>,
     last_activity_touch: Option<Instant>,
@@ -65,6 +67,7 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
             redis,
             task_id,
             subtask_id,
+            observed_started_at: utc_isoformat(chrono::Utc::now()),
             buffer: Vec::new(),
             first_buffered_at: None,
             last_activity_touch: None,
@@ -175,7 +178,13 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         {
             return;
         }
-        if let Err(error) = session::touch_task_streaming_activity(&self.redis, self.task_id).await
+        if let Err(error) = session::touch_task_streaming_activity(
+            &self.redis,
+            self.task_id,
+            self.subtask_id,
+            &self.observed_started_at,
+        )
+        .await
         {
             tracing::warn!(%error, "callback streaming activity touch failed");
         }
@@ -213,6 +222,7 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
     async fn persist(&mut self, event: &mut ExecutionEvent) -> RedisResult<()> {
         match event.event_type.as_str() {
             "start" => {
+                self.observed_started_at = utc_isoformat(chrono::Utc::now());
                 session::set_task_streaming_status(
                     &self.redis,
                     self.task_id,
@@ -814,3 +824,7 @@ pub(crate) fn chunk_payload_for_test(
 #[cfg(test)]
 #[path = "emitter_tests.rs"]
 mod done_frame_tests;
+
+#[cfg(test)]
+#[path = "streaming_activity_redis_tests.rs"]
+mod streaming_activity_redis_tests;

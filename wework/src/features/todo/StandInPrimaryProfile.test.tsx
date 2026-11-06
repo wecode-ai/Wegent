@@ -115,8 +115,6 @@ it('consumes a menu calendar deep link once and returns to the connection list o
   await user.click(screen.getByTestId('stand-in-connections-back'))
   await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
   await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  if (screen.queryByTestId('stand-in-add-connection'))
-    await user.click(screen.getByTestId('stand-in-add-connection'))
   expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
   expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
 })
@@ -134,7 +132,6 @@ it('protects an unsaved mailbox when returning from the primary connections head
   const user = userEvent.setup()
   render(<StandInPrimaryProfile {...props} api={api} />)
   await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await user.click(screen.getByTestId('stand-in-add-connection'))
   await user.click(await screen.findByTestId(`stand-in-add-${provider}-connection`))
   await user.click(screen.getByTestId('stand-in-email-add'))
   fireEvent.change(screen.getByTestId('stand-in-email-email'), {
@@ -269,4 +266,21 @@ it('shows existing local connection names on a remote device while limiting new 
       }),
     })
   )
+})
+
+it('marks first-time collaboration edits pending against the fixed default scope', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  expect(screen.queryByTestId('stand-in-connections-pending')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  expect(screen.getByTestId('stand-in-connections-pending')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  expect(screen.queryByTestId('stand-in-connections-pending')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  await user.click(screen.getByTestId('stand-in-primary-cancel'))
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(props.onClose).toHaveBeenCalledExactlyOnceWith()
 })

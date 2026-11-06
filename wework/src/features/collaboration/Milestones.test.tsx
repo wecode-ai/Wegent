@@ -45,6 +45,13 @@ function api() {
   }
 }
 
+async function chooseMilestone(testId: string, value: string) {
+  await waitFor(() => expect(screen.getByTestId(testId)).toBeEnabled())
+  fireEvent.click(screen.getByTestId(testId))
+  fireEvent.click(await screen.findByTestId(`${testId}-option-${value || 'empty'}`))
+  await waitFor(() => expect(screen.getByTestId(testId)).toBeEnabled())
+}
+
 describe('Milestones', () => {
   it.each(['success', 'error'] as const)(
     'hides prior permission counters immediately on downgrade, including %s recovery',
@@ -225,6 +232,8 @@ describe('Milestones', () => {
     }
     const view = render(<MilestonePicker {...props} projectId="p1" />)
     view.rerender(<MilestonePicker {...props} projectId="p2" />)
+    await waitFor(() => expect(screen.getByTestId('issue-milestone')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('issue-milestone'))
     await screen.findByText('Project two')
     await act(async () => resolveFirst([milestone]))
     expect(screen.queryByText('Release one')).toBeNull()
@@ -343,6 +352,8 @@ describe('Milestones', () => {
     await waitFor(() => expect(client.milestones.list).toHaveBeenCalledTimes(1))
     scope = 'second-user'
     view.rerender(<MilestonePicker {...props} />)
+    await waitFor(() => expect(screen.getByTestId('issue-milestone')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('issue-milestone'))
     await screen.findByText('Second user release')
     await act(async () => resolveOld([milestone]))
     expect(screen.queryByText('Release one')).toBeNull()
@@ -370,10 +381,7 @@ describe('Milestones', () => {
       />
     )
     expect(screen.getByTestId('milestone-bulk-apply')).toBeDisabled()
-    await screen.findByText('Release one')
-    fireEvent.change(screen.getByTestId('milestone-bulk-select'), {
-      target: { value: milestone.id },
-    })
+    await chooseMilestone('milestone-bulk-select', milestone.id)
     fireEvent.click(screen.getByTestId('milestone-bulk-apply'))
     expect((await screen.findByRole('alert')).textContent).toContain('Second delivery')
     await waitFor(() => expect(updated).toHaveBeenCalledTimes(2))
@@ -429,10 +437,7 @@ describe('Milestones', () => {
         onUpdated={updated}
       />
     )
-    await screen.findByText('Release one')
-    fireEvent.change(screen.getByTestId('milestone-bulk-select'), {
-      target: { value: milestone.id },
-    })
+    await chooseMilestone('milestone-bulk-select', milestone.id)
     fireEvent.click(screen.getByTestId('milestone-bulk-apply'))
     await waitFor(() => expect(resolvers).toHaveLength(2))
     await act(async () => resolvers[0]({ ...issues[0], milestone_id: milestone.id }))
@@ -454,10 +459,7 @@ describe('Milestones', () => {
       onUpdated: vi.fn(),
     }
     const view = render(<MilestoneBulkAction {...props} />)
-    await screen.findByText('Release one')
-    fireEvent.change(screen.getByTestId('milestone-bulk-select'), {
-      target: { value: milestone.id },
-    })
+    await chooseMilestone('milestone-bulk-select', milestone.id)
     fireEvent.click(screen.getByTestId('milestone-bulk-apply'))
     await screen.findByRole('alert')
     view.rerender(<MilestoneBulkAction {...props} issues={[{ ...failed, id: 'I-2' }]} />)

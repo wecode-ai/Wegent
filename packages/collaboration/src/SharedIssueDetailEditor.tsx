@@ -2,6 +2,7 @@ import { MilestonePicker } from "./milestones/MilestonePicker";
 import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
+import { useIssueFieldSaves } from "./issue-detail/useIssueFieldSaves";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import * as Popover from "@radix-ui/react-popover";
 import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
@@ -58,9 +59,9 @@ import {
   Tooltip,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
-  persistIssueDetailDraft,
   useIssueDetailDraft,
   type DueDateSourceContext,
+  type IssueDetailDraftValue,
   type IssueDetailAttachment,
   type IssueAssigneeTarget,
   type SharedIssueDetailAgent,
@@ -89,6 +90,7 @@ import type {
   CollaborationStatus,
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
+import { stripLocalFileUrlsFromClipboardText } from "./issue-detail/clipboardText";
 import { TagEditor, type TagEditorHandle } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
@@ -110,23 +112,6 @@ function cn(...values: Array<string | false | null | undefined>): string {
 }
 
 export interface SharedEditorIssue extends CollaborationIssue {
-  assignment_history?: Array<{
-    by_user_id: number;
-    to_type: "user" | "agent" | "team" | "group" | null;
-    to_id: string | null;
-    to_name?: string | null;
-    action: "assign" | "reassign" | "unassign";
-    at: string;
-  }>;
-  status_history?: Array<{
-    from_status: string;
-    from_status_name?: string | null;
-    to_status: string;
-    to_status_name?: string | null;
-    trigger: string;
-    by_user_id: number | null;
-    at: string;
-  }>;
   automation?: { trigger?: string } | null;
   execution_error?: string | null;
   source_record_id?: string | null;
@@ -164,6 +149,7 @@ export interface SharedIssueDetailExtensionContext {
 }
 
 export interface SharedIssueDetailExtensions {
+  onSaveError?(error: unknown): void;
   normalizeDescription?(value: string): string;
   dueDateInputType?: "date" | "datetime-local";
   startDateFromSource?(value: string | null): string;
@@ -742,29 +728,25 @@ export function TodoEditor(props: TodoEditorProps) {
   );
   const [editingContent, setEditingContent] = useState(!readFirst);
 
-  const {
-    draft: issueDraft,
-    setDraft: setIssueDraft,
-    setField: setIssueDraftField,
-    dirty,
-  } = useIssueDetailDraft({
-    source: item,
-    initial: {
-      title: createProps?.initialTitle ?? draft?.title ?? "",
-      description: draft?.markdown ?? "",
-      status: createProps?.initialStatus ?? "inbox",
-      priority: draft?.priority ?? "none",
-      parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
-      startDate: draft?.startDate ?? "",
-      dueDate: draft?.dueDate ?? "",
-      assigneeTarget: draft?.assigneeTarget ?? "",
-      tags: draft?.tags ?? createProps?.initialTags ?? [],
-    },
-    normalizeDescription: extensions?.normalizeDescription,
-    startDateFromSource:
-      extensions?.startDateFromSource ?? todoDueDateFromSource,
-    dueDateFromSource: extensions?.dueDateFromSource ?? todoDueDateFromSource,
-  });
+  const { draft: issueDraft, setField: setIssueDraftField } =
+    useIssueDetailDraft({
+      source: item,
+      initial: {
+        title: createProps?.initialTitle ?? draft?.title ?? "",
+        description: draft?.markdown ?? "",
+        status: createProps?.initialStatus ?? "inbox",
+        priority: draft?.priority ?? "none",
+        parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
+        startDate: draft?.startDate ?? "",
+        dueDate: draft?.dueDate ?? "",
+        assigneeTarget: draft?.assigneeTarget ?? "",
+        tags: draft?.tags ?? createProps?.initialTags ?? [],
+      },
+      normalizeDescription: extensions?.normalizeDescription,
+      startDateFromSource:
+        extensions?.startDateFromSource ?? todoDueDateFromSource,
+      dueDateFromSource: extensions?.dueDateFromSource ?? todoDueDateFromSource,
+    });
   const {
     title,
     description,
@@ -776,41 +758,123 @@ export function TodoEditor(props: TodoEditorProps) {
     assigneeTarget,
     tags,
   } = issueDraft;
+  const draftRef = useRef(issueDraft);
+  useLayoutEffect(() => {
+    draftRef.current = issueDraft;
+  }, [issueDraft]);
   const setTitle = (value: SetStateAction<string>) =>
     setIssueDraftField("title", value);
   const setDescription = (value: SetStateAction<string>) =>
     setIssueDraftField("description", value);
-  const setStatus = (value: SetStateAction<CloudLoopItem["status"]>) => {
-    setIssueDraftField("status", value);
-    if (readFirst) setEditingContent(true);
-  };
-  const setPriority = (value: SetStateAction<CloudLoopItem["priority"]>) => {
-    setIssueDraftField("priority", value);
-    if (readFirst) setEditingContent(true);
-  };
+  const [notifyAssignee, setNotifyAssignee] = useState(true);
+  function changeProperty<K extends keyof IssueDetailDraftValue>(
+    field: K,
+    value: SetStateAction<IssueDetailDraftValue[K]>,
+  ) {
+    const next =
+      typeof value === "function"
+        ? (
+            value as (
+              current: IssueDetailDraftValue[K],
+            ) => IssueDetailDraftValue[K]
+          )(draftRef.current[field])
+        : value;
+    setIssueDraftField(field, next);
+    if (
+      !item ||
+      (!editable && field !== "assigneeTarget") ||
+      (field === "assigneeTarget" && !canAssign)
+    )
+      return;
+    if (field === "assigneeTarget") {
+      void fieldSaves.save(field, async (source) => {
+        const updated = await persistAssignee(
+          source,
+          next as IssueAssigneeTarget,
+          notifyAssignee,
+        );
+        if (latestItemRef.current?.id === source.id) {
+          setIssueDraftField("assigneeTarget", (current) =>
+            current === next ? issueAssigneeTarget(updated) : current,
+          );
+        }
+        return updated;
+      });
+      return;
+    }
+    if (field === "startDate" || field === "dueDate") {
+      const start = field === "startDate" ? (next as string) : startDate;
+      const due = field === "dueDate" ? (next as string) : dueDate;
+      if (isScheduleRangeInvalid(start, due)) return;
+      void fieldSaves.save("schedule", (source) => {
+        const convert = (
+          value: string,
+          original: string | null,
+          from: typeof todoDueDateFromSource,
+          to?: (value: string, context: DueDateSourceContext) => string,
+        ) =>
+          value
+            ? (to?.(value, {
+                sourceValue: original,
+                sourceInputValue: from(original),
+              }) ?? value)
+            : null;
+        return persistIssueDetailFields(
+          source,
+          {
+            start_at: convert(
+              start,
+              source.start_at ?? null,
+              extensions?.startDateFromSource ?? todoDueDateFromSource,
+              extensions?.startDateToSource,
+            ),
+            due_at: convert(
+              due,
+              source.due_at,
+              extensions?.dueDateFromSource ?? todoDueDateFromSource,
+              extensions?.dueDateToSource,
+            ),
+          },
+          editorPort.issues,
+        );
+      });
+      return;
+    }
+    const key = field === "parentId" ? "parent_id" : field;
+    void fieldSaves.save(field, async (source) => {
+      try {
+        return await persistIssueDetailFields(
+          source,
+          { [key]: field === "parentId" ? next || null : next },
+          editorPort.issues,
+        );
+      } catch (error) {
+        if (field === "status" && runnerEnvironmentError(error, t)) {
+          const latest = latestItemRef.current;
+          if (latest?.id === source.id)
+            setIssueDraftField("status", (current) =>
+              current === next ? latest.status : current,
+            );
+        }
+        throw error;
+      }
+    });
+  }
+  const setStatus = (value: SetStateAction<CloudLoopItem["status"]>) =>
+    changeProperty("status", value);
+  const setPriority = (value: SetStateAction<CloudLoopItem["priority"]>) =>
+    changeProperty("priority", value);
   const setParentId = useCallback(
-    (value: SetStateAction<string>) => {
-      setIssueDraftField("parentId", value);
-      if (readFirst) setEditingContent(true);
-    },
-    [readFirst, setIssueDraftField],
+    (value: SetStateAction<string>) => setIssueDraftField("parentId", value),
+    [setIssueDraftField],
   );
-  const setDueDate = (value: SetStateAction<string>) => {
-    setIssueDraftField("dueDate", value);
-    if (readFirst) setEditingContent(true);
-  };
-  const setStartDate = (value: SetStateAction<string>) => {
-    setIssueDraftField("startDate", value);
-    if (readFirst) setEditingContent(true);
-  };
+  const setDueDate = (value: SetStateAction<string>) =>
+    changeProperty("dueDate", value);
+  const setStartDate = (value: SetStateAction<string>) =>
+    changeProperty("startDate", value);
   const scheduleRangeInvalid = isScheduleRangeInvalid(startDate, dueDate);
-  const setAssigneeTarget = (value: SetStateAction<IssueAssigneeTarget>) =>
-    setIssueDraftField("assigneeTarget", value);
-  const setTags = (value: SetStateAction<string[]>) => {
-    setIssueDraftField("tags", value);
-    if (readFirst) setEditingContent(true);
-  };
-  const [tagDraft, setTagDraft] = useState("");
+  const setTags = (value: SetStateAction<string[]>) =>
+    changeProperty("tags", value);
   // A create draft or initial parent can reference a task that was archived
   // since; a deleted parent is not in the live item list, so fall back to a
   // top-level task instead of sending a parent id the backend rejects.
@@ -871,23 +935,39 @@ export function TodoEditor(props: TodoEditorProps) {
   >({});
   const [saving, setSaving] = useState(false);
   const persistedIssueRef = useRef<CloudLoopItem | null>(null);
-  useEffect(() => {
-    const persisted = persistedIssueRef.current;
-    if (!item || !persisted || saving || item.id !== persisted.id) return;
-    if (item.version < persisted.version) {
-      console.warn(
-        "[Collaboration] Issue detail source trails a successful save",
-        {
-          issueId: item.id,
-          sourceVersion: item.version,
-          persistedVersion: persisted.version,
-          sourceAssignee: issueAssigneeTarget(item),
-          persistedAssignee: issueAssigneeTarget(persisted),
-        },
-      );
-    }
-  }, [item, saving]);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const fieldSaves = useIssueFieldSaves(
+    item,
+    (updated) => {
+      persistedIssueRef.current = updated;
+      if (props.mode === "edit") props.onUpdated(updated);
+    },
+    extensions?.onSaveError,
+  );
+  const descriptionDirty = Boolean(
+    item &&
+    description !==
+      (extensions?.normalizeDescription ?? ((value: string) => value))(
+        item.description ?? "",
+      ),
+  );
+  async function saveTitle() {
+    if (!item || !editable || !title.trim()) return;
+    const next = title.trim();
+    setTitle(next);
+    if (
+      next ===
+      (persistedIssueRef.current?.id === item.id
+        ? persistedIssueRef.current
+        : item
+      ).title
+    )
+      return;
+    await fieldSaves.save("title", (source) =>
+      persistIssueDetailFields(source, { title: next }, editorPort.issues),
+    );
+  }
+
   const workspaceAgents = useIssueAssigneeResources(
     editorPort,
     project,
@@ -1633,134 +1713,28 @@ export function TodoEditor(props: TodoEditorProps) {
     });
   }
 
-  async function saveDetails(notifyAssignee = true) {
-    if (
-      props.mode !== "edit" ||
-      (!editable && !canAssign) ||
-      !dirty ||
-      !title.trim() ||
-      scheduleRangeInvalid ||
-      saving
-    )
-      return;
-    const current = props.item;
-    if (!editable && assigneeTarget === issueAssigneeTarget(current)) return;
-    setSaving(true);
-    setSaveError(null);
-    let fieldsPersisted = false;
-    try {
-      if (!editable) {
-        const updated = await persistAssignee(
-          current,
-          assigneeTarget,
-          notifyAssignee,
-        );
-        acceptSavedIssue(updated);
-        return;
-      }
-      const sourceDueDate = (
-        extensions?.dueDateFromSource ?? todoDueDateFromSource
-      )(current.due_at);
-      const sourceStartDate = (
-        extensions?.startDateFromSource ?? todoDueDateFromSource
-      )(current.start_at ?? null);
-      const startAt = startDate
-        ? (extensions?.startDateToSource?.(startDate, {
-            sourceValue: current.start_at ?? null,
-            sourceInputValue: sourceStartDate,
-          }) ?? startDate)
-        : null;
-      const dueAt = dueDate
-        ? (extensions?.dueDateToSource?.(dueDate, {
-            sourceValue: current.due_at,
-            sourceInputValue: sourceDueDate,
-          }) ?? dueDate)
-        : null;
-      const updated = await persistIssueDetailDraft<CloudLoopItem>(
-        current,
-        issueDraft,
-        notifyAssignee,
-        {
-          getAssigneeTarget: issueAssigneeTarget,
-          update: async (source, values) => {
-            const saved = await persistIssueDetailFields(
-              source,
-              {
-                title: values.title.trim(),
-                description: values.description,
-                status: values.status,
-                priority: values.priority,
-                parent_id: values.parentId || null,
-                start_at: startAt,
-                due_at: dueAt,
-                tags: values.tags,
-              },
-              editorPort.issues,
-            );
-            fieldsPersisted = true;
-            return saved;
-          },
-          clearAssignment: (source) =>
-            editorPort.issues.update(source.id, {
-              version: source.version,
-              assignee_user_id: null,
-              assignee_agent_id: null,
-              assignee_team_id: null,
-            }),
-          assign: persistAssignee,
-        },
-      );
-      acceptSavedIssue(updated);
-      if (readFirst) {
-        setEditingContent(false);
-        setDescriptionExpanded(false);
-      }
-    } catch (cause) {
-      const environmentError = runnerEnvironmentError(cause, t);
-      const latest = latestItemRef.current;
-      if (environmentError && !fieldsPersisted && latest?.id === current.id) {
-        setIssueDraft((draft) =>
-          draft.status === status ? { ...draft, status: latest.status } : draft,
-        );
-      }
-      setSaveError(
-        environmentError ??
-          (cause instanceof Error
-            ? cause.message
-            : t("todo.save_issue_failed", "保存任务失败")),
-      );
-    } finally {
-      setSaving(false);
+  async function saveDetails() {
+    if (!item || !editable || !descriptionDirty || saving) return;
+    const updated = await fieldSaves.save("description", (source) =>
+      persistIssueDetailFields(source, { description }, editorPort.issues),
+    );
+    if (updated && readFirst && draftRef.current.description === description) {
+      setEditingContent(false);
+      setDescriptionExpanded(false);
     }
-  }
-
-  function acceptSavedIssue(updated: CloudLoopItem) {
-    persistedIssueRef.current = updated;
-    setAssigneeTarget(issueAssigneeTarget(updated));
-    if (props.mode === "edit") props.onUpdated(updated);
   }
 
   function cancelContentEditing() {
     if (!item) return;
-    setIssueDraft({
-      title: item.title ?? "",
-      description: (extensions?.normalizeDescription ?? ((value) => value))(
-        item.description ?? "",
+    const source =
+      persistedIssueRef.current?.id === item.id
+        ? persistedIssueRef.current
+        : item;
+    setDescription(
+      (extensions?.normalizeDescription ?? ((value: string) => value))(
+        source.description ?? "",
       ),
-      status: item.status,
-      priority: item.priority,
-      parentId: item.parent_id ?? "",
-      startDate: (extensions?.startDateFromSource ?? todoDueDateFromSource)(
-        item.start_at ?? null,
-      ),
-      dueDate: (extensions?.dueDateFromSource ?? todoDueDateFromSource)(
-        item.due_at,
-      ),
-      tags: item.tags ?? [],
-      assigneeTarget: issueAssigneeTarget(item),
-      workflow: null,
-    });
-    setTagDraft("");
+    );
     setSaveError(null);
     setEditingContent(false);
     setDescriptionExpanded(false);
@@ -2002,16 +1976,6 @@ export function TodoEditor(props: TodoEditorProps) {
     event.preventDefault();
     if (isCreate) void stageFiles(event.dataTransfer.files);
     else if (editable) void addAttachments(event.dataTransfer.files);
-  }
-
-  function commitTagDraft() {
-    const tag = tagDraft.trim().replace(/,/g, "");
-    if (tag) {
-      setTags((current) =>
-        current.includes(tag) ? current : [...current, tag],
-      );
-    }
-    setTagDraft("");
   }
 
   if (selectedDelivery && item) {
@@ -2257,8 +2221,8 @@ export function TodoEditor(props: TodoEditorProps) {
       }
       accessibleLabel={t("todo.assignee", "负责人")}
       value={assigneeTarget}
-      onChange={setAssigneeTarget}
-      disabled={!canAssign || saving}
+      onChange={(value) => changeProperty("assigneeTarget", value)}
+      disabled={!canAssign}
       className={cn(
         "relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default",
         workspacePanel && "min-w-0 max-w-full",
@@ -2318,6 +2282,19 @@ export function TodoEditor(props: TodoEditorProps) {
       showAllLabel={(_group, count) =>
         t("todo.view_all_count", "查看全部 {{count}} 个", { count })
       }
+      footer={
+        !isCreate && canAssign ? (
+          <label className="flex min-h-8 items-center gap-2 text-sm text-text-secondary max-md:min-h-11">
+            <input
+              type="checkbox"
+              data-testid="cloud-todo-assignee-notify"
+              checked={notifyAssignee}
+              onChange={(event) => setNotifyAssignee(event.target.checked)}
+            />
+            {t("todo.notify_assignee")}
+          </label>
+        ) : undefined
+      }
       options={assigneeOptions}
     />
   );
@@ -2331,22 +2308,6 @@ export function TodoEditor(props: TodoEditorProps) {
     ),
     options: t("todo.save_options", "保存选项"),
   };
-  const assigneeSaveButton =
-    assigneeChanged && (editable || canAssign) ? (
-      <IssueSaveButton
-        testId="cloud-todo-save"
-        disabled={!title.trim() || saving || scheduleRangeInvalid}
-        saving={saving}
-        notificationAvailable={notificationAvailable}
-        labels={notificationSaveLabels}
-        onSave={saveDetails}
-        className="task-detail-assignment-save"
-      >
-        {saving
-          ? t("todo.saving", "保存中…")
-          : t("todo.save_assignment", "保存分配")}
-      </IssueSaveButton>
-    ) : null;
   const parentSelect = (
     <IssueDetailSearchableSelect
       testId={
@@ -2354,7 +2315,7 @@ export function TodoEditor(props: TodoEditorProps) {
       }
       accessibleLabel={t("todo.parent_issue", "父任务")}
       value={parentId}
-      onChange={setParentId}
+      onChange={(value) => changeProperty("parentId", value)}
       disabled={!editable}
       className={overlayControlClass}
       searchPlaceholder={t("todo.search_parent_issue", "搜索父任务")}
@@ -2460,54 +2421,25 @@ export function TodoEditor(props: TodoEditorProps) {
     </span>
   );
   const tagControls = (
-    <>
-      {editable ? (
-        <span className="task-detail-pill">
-          <Plus className="h-3.5 w-3.5" />
-          <input
-            data-testid={
-              isCreate
-                ? "cloud-todo-create-tag-input"
-                : "cloud-todo-detail-tag-input"
-            }
-            value={tagDraft}
-            onChange={(event) => setTagDraft(event.target.value)}
-            onBlur={commitTagDraft}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === ",") {
-                event.preventDefault();
-                commitTagDraft();
-              }
-            }}
-            placeholder={t("todo.add_tag", "添加标签")}
-          />
-        </span>
-      ) : null}
-      {tags.map((tag) => (
-        <span
-          key={tag}
-          data-testid={`${isCreate ? "cloud-todo-create-tag" : "cloud-todo-detail-tag"}-tag-${tag}`}
-          className="task-detail-pill"
-        >
-          # {tag}
-          {editable ? (
-            <button
-              type="button"
-              aria-label={t("todo.remove_name", "删除 {{name}}", { name: tag })}
-              data-testid={`${isCreate ? "cloud-todo-create-tag" : "cloud-todo-detail-tag"}-tag-remove-${tag}`}
-              onClick={() =>
-                setTags((current) =>
-                  current.filter((candidate) => candidate !== tag),
-                )
-              }
-              className="flex h-4 w-4 items-center justify-center rounded-full text-text-muted transition hover:bg-muted hover:text-text-primary"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          ) : null}
-        </span>
-      ))}
-    </>
+    <TagEditor
+      ref={propertyTagsRef}
+      testIdPrefix={
+        isCreate ? "cloud-todo-create-tag" : "cloud-todo-detail-tag"
+      }
+      tags={tags}
+      onChange={setTags}
+      disabled={!editable}
+      suggestions={tagSuggestions}
+      lengthErrorLabel={t("todo.tag_name_too_long")}
+      tagLimit={{
+        max: MAX_TAGS_PER_ITEM,
+        errorLabel: t("todo.tag_limit_exceeded"),
+      }}
+      placeholder={t("todo.add_tag", "添加标签")}
+      removeLabel={(tag) =>
+        t("todo.remove_name", "删除 {{name}}", { name: tag })
+      }
+    />
   );
   // Single-column layout: all props stay as one wrapping chip row.
   const propChips = (
@@ -2520,7 +2452,6 @@ export function TodoEditor(props: TodoEditorProps) {
           {assigneeSelect}
         </span>
       ) : null}
-      {!twoColumn ? assigneeSaveButton : null}
       {item && (
         <span
           data-testid="cloud-todo-detail-creator"
@@ -2680,23 +2611,7 @@ export function TodoEditor(props: TodoEditorProps) {
             wrapValue
           >
             <span className="task-detail-workspace-tags w-full">
-              <TagEditor
-                ref={propertyTagsRef}
-                testIdPrefix="cloud-todo-detail-tag"
-                tags={tags}
-                onChange={setTags}
-                disabled={!editable}
-                suggestions={tagSuggestions}
-                lengthErrorLabel={t("todo.tag_name_too_long")}
-                tagLimit={{
-                  max: MAX_TAGS_PER_ITEM,
-                  errorLabel: t("todo.tag_limit_exceeded"),
-                }}
-                placeholder={t("todo.add_tag", "添加标签")}
-                removeLabel={(tag) =>
-                  t("todo.remove_name", "删除 {{name}}", { name: tag })
-                }
-              />
+              {tagControls}
             </span>
           </RailProp>
           {railProps}
@@ -2748,6 +2663,8 @@ export function TodoEditor(props: TodoEditorProps) {
         onMissingValue={isCreate ? () => setCreateMilestoneId(null) : undefined}
         disabled={!editable || saving}
         label={t("todo.milestone", "里程碑")}
+        searchLabel={t("todo.search_milestone")}
+        emptyLabel={t("todo.no_matching_milestone")}
         noneLabel={t("todo.not_set", "未设置")}
         errorLabel={t("todo.milestone_error", "里程碑操作失败，请重试")}
         retryLabel={t("todo.milestone_retry", "重试")}
@@ -2756,19 +2673,13 @@ export function TodoEditor(props: TodoEditorProps) {
             setCreateMilestoneId(value);
             return;
           }
-          const current = latestItemRef.current;
-          if (!current || !editProps) return;
-          setSaving(true);
-          try {
-            editProps.onUpdated(
-              await editorPort.issues.update(current.id, {
-                version: current.version,
-                milestone_id: value,
-              }),
-            );
-          } finally {
-            setSaving(false);
-          }
+          await fieldSaves.save("milestone", (source) =>
+            persistIssueDetailFields(
+              source,
+              { milestone_id: value },
+              editorPort.issues,
+            ),
+          );
         }}
       />
     ) : null;
@@ -2882,13 +2793,11 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : null}
           {twoColumn && !isCreate && !workspacePanel ? (
             <>
-              {(editable || canAssign) &&
-              (dirty || saving) &&
-              !assigneeChanged ? (
+              {(editable || canAssign) && (descriptionDirty || saving) ? (
                 <button
                   type="button"
                   data-testid="cloud-todo-save"
-                  disabled={!title.trim() || saving}
+                  disabled={saving}
                   onClick={() => void saveDetails()}
                   className="mr-2 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                 >
@@ -3019,8 +2928,19 @@ export function TodoEditor(props: TodoEditorProps) {
                     autoFocus={isCreate}
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
-                    onClick={() => beginContentEditing("title")}
-                    readOnly={!editable || (readFirst && !editingContent)}
+                    onBlur={() => void saveTitle()}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === "Enter" &&
+                        !event.shiftKey &&
+                        !event.nativeEvent.isComposing &&
+                        event.keyCode !== 229
+                      ) {
+                        event.preventDefault();
+                        void saveTitle();
+                      }
+                    }}
+                    readOnly={!editable}
                     rows={1}
                     maxLength={255}
                     placeholder={t(
@@ -3108,7 +3028,6 @@ export function TodoEditor(props: TodoEditorProps) {
                       </div>
                     </dl>
                     <div className="task-detail-property-secondary">
-                      {assigneeSaveButton}
                       {item &&
                       project?.project_store === "backend" &&
                       canManageIssueSecurity ? (
@@ -3139,14 +3058,16 @@ export function TodoEditor(props: TodoEditorProps) {
                                 setSecurityBusy(true);
                                 setSaveError(null);
                                 try {
-                                  const updated =
-                                    await editorPort.issues.update(item.id, {
-                                      version: item.version,
-                                      security_level: event.target.value as
-                                        | "open"
-                                        | "related",
-                                    });
-                                  editProps.onUpdated(updated);
+                                  const security = event.target.value as
+                                    | "open"
+                                    | "related";
+                                  await fieldSaves.save("security", (source) =>
+                                    persistIssueDetailFields(
+                                      source,
+                                      { security_level: security },
+                                      editorPort.issues,
+                                    ),
+                                  );
                                 } catch (cause) {
                                   setSaveError(
                                     cause instanceof Error
@@ -3247,26 +3168,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     <Tag className="h-3.5 w-3.5" />
                     {t("todo.project_tags", "标签")}
                   </span>
-                  <TagEditor
-                    testIdPrefix={
-                      isCreate
-                        ? "cloud-todo-create-tag"
-                        : "cloud-todo-detail-tag"
-                    }
-                    tags={tags}
-                    onChange={setTags}
-                    disabled={!editable}
-                    suggestions={tagSuggestions}
-                    lengthErrorLabel={t("todo.tag_name_too_long")}
-                    tagLimit={{
-                      max: MAX_TAGS_PER_ITEM,
-                      errorLabel: t("todo.tag_limit_exceeded"),
-                    }}
-                    placeholder={t("todo.add_tag", "添加标签")}
-                    removeLabel={(tag) =>
-                      t("todo.remove_name", "删除 {{name}}", { name: tag })
-                    }
-                  />
+                  {tagControls}
                 </div>
               ) : null}
 
@@ -3299,7 +3201,6 @@ export function TodoEditor(props: TodoEditorProps) {
                       ) : null}
                     </span>
                   ) : null}
-                  {assigneeSaveButton}
                   {scheduleRangeControl(
                     "task-detail-meta-item relative cursor-pointer",
                   )}
@@ -3307,12 +3208,7 @@ export function TodoEditor(props: TodoEditorProps) {
               ) : null}
 
               {!isAITableEdit &&
-              !(
-                workspacePanel &&
-                readFirst &&
-                !editingContent &&
-                !description.trim()
-              ) ? (
+              (!readFirst || editable || Boolean(description.trim())) ? (
                 <div
                   onClick={(event) => {
                     if (
@@ -3365,7 +3261,23 @@ export function TodoEditor(props: TodoEditorProps) {
                         onPaste={(event) => {
                           if (!editable) return;
                           const files = Array.from(event.clipboardData.files);
-                          if (files.length > 0) pasteAttachments(files);
+                          if (files.length === 0) return;
+                          const pastedText =
+                            stripLocalFileUrlsFromClipboardText(
+                              event.clipboardData.getData("text/plain"),
+                            );
+                          event.preventDefault();
+                          if (pastedText) {
+                            const target = event.currentTarget;
+                            target.setRangeText(
+                              pastedText,
+                              target.selectionStart,
+                              target.selectionEnd,
+                              "end",
+                            );
+                            setDescription(target.value);
+                          }
+                          void pasteAttachments(files);
                         }}
                         className={cn(
                           "min-h-[240px] w-full resize-y rounded-lg border border-border bg-transparent p-3 text-sm text-text-primary outline-none focus:border-text-muted",
@@ -3430,14 +3342,9 @@ export function TodoEditor(props: TodoEditorProps) {
                             testId="cloud-todo-save"
                             className="task-detail-assignment-save"
                             saving={saving}
-                            notificationAvailable={notificationAvailable}
+                            notificationAvailable={false}
                             labels={notificationSaveLabels}
-                            disabled={
-                              !dirty ||
-                              !title.trim() ||
-                              saving ||
-                              scheduleRangeInvalid
-                            }
+                            disabled={!descriptionDirty || saving}
                             onSave={saveDetails}
                           >
                             {saving
@@ -3459,13 +3366,27 @@ export function TodoEditor(props: TodoEditorProps) {
                   translate={t}
                 />
               ) : null}
-              {saveError && (
+              {Boolean(saveError || fieldSaves.error) && (
                 <p
                   role="alert"
                   data-testid="cloud-todo-save-error"
                   className="mt-2 text-xs text-destructive"
                 >
-                  {saveError}
+                  {saveError ??
+                    runnerEnvironmentError(fieldSaves.error, t) ??
+                    (fieldSaves.error instanceof Error
+                      ? fieldSaves.error.message
+                      : t("todo.save_issue_failed", "保存任务失败"))}
+                  {fieldSaves.error ? (
+                    <button
+                      type="button"
+                      data-testid="cloud-todo-field-retry"
+                      onClick={fieldSaves.retry}
+                      className="ml-2 underline"
+                    >
+                      {t("todo.milestone_retry", "重试")}
+                    </button>
+                  ) : null}
                 </p>
               )}
               {workspacePanel && item ? (
@@ -4274,13 +4195,11 @@ export function TodoEditor(props: TodoEditorProps) {
                   </>
                 ) : (
                   <>
-                    {(editable || canAssign) && dirty && !assigneeChanged && (
+                    {(editable || canAssign) && descriptionDirty && (
                       <button
                         type="button"
                         data-testid="cloud-todo-save"
-                        disabled={
-                          !title.trim() || saving || scheduleRangeInvalid
-                        }
+                        disabled={saving}
                         onClick={() => void saveDetails()}
                         className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                       >

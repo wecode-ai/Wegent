@@ -137,11 +137,30 @@ impl brz_redis::Redis for RecordingRedis {
         command.arg_encoded(keys.num_args())?;
         keys.encode_args(&mut command)?;
         arguments.encode_args(&mut command)?;
-        let captured = (1..command.arg_count())
+        let captured: Vec<String> = (1..command.arg_count())
             .filter_map(|index| command.arg_at(index))
             .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
             .collect();
-        self.state.lock().expect("state").evals.push(captured);
+        let mut state = self.state.lock().expect("state");
+        state.evals.push(captured.clone());
+        if captured[2].starts_with("chat:task_streaming:") {
+            let key = &captured[2];
+            state.calls.push(format!("EVAL {key}"));
+            let current = state
+                .sets
+                .iter()
+                .rev()
+                .find(|(stored_key, _)| stored_key == key)
+                .map(|(_, value)| String::from_utf8(value.clone()).expect("marker JSON"))
+                .or_else(|| state.task_streaming.clone())
+                .unwrap_or_default();
+            if current != captured[3] {
+                return R::from_redis_value(&brz_redis::Value::Int(0));
+            }
+            state
+                .sets
+                .push((key.clone(), captured[4].as_bytes().to_vec()));
+        }
         R::from_redis_value(&brz_redis::Value::Int(1))
     }
 
@@ -484,8 +503,14 @@ async fn identified_text_flush_preserves_unicode_offsets_and_callback_replays() 
     }
     emitter.flush_stream_storage().await;
     let state = redis.state.lock().expect("state");
-    assert_eq!(state.evals.len(), 3);
-    for (call, id) in state.evals.iter().zip(["one", "one", "two"]) {
+    // The task marker now uses its own CAS script after the content batch.
+    let content_appends: Vec<_> = state
+        .evals
+        .iter()
+        .filter(|call| call[2] == "chat:streaming:9")
+        .collect();
+    assert_eq!(content_appends.len(), 3);
+    for (call, id) in content_appends.into_iter().zip(["one", "one", "two"]) {
         assert_eq!(call[1], "6");
         assert_eq!(call[3], format!("chat:streaming:block_content:9:{id}"));
         assert_eq!(
@@ -573,7 +598,7 @@ async fn the_flush_reads_the_task_streaming_marker_after_the_batch() {
     };
     let append = position("APPEND chat:streaming:block_content:");
     let marker_read = position("GET chat:task_streaming:7");
-    let marker_write = position("SET chat:task_streaming:7");
+    let marker_write = position("EVAL chat:task_streaming:7");
     assert!(append < marker_read, "{calls:?}");
     assert!(marker_read < marker_write, "{calls:?}");
     assert_eq!(
@@ -622,7 +647,7 @@ async fn touch_preserves_the_stored_object_and_refreshes_activity() {
     // Keep the refreshed clock distinguishable from the created one.
     std::thread::sleep(std::time::Duration::from_millis(2));
     assert!(
-        session::touch_task_streaming_activity(&redis, 7)
+        session::touch_task_streaming_activity(&redis, 7, 9, "2026-10-26T15:11:07+00:00")
             .await
             .expect("touch")
     );

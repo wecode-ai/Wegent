@@ -6,31 +6,6 @@ use crate::task_runtime::personal_stand_in::{
 };
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn personal_stand_in_agents(
-        &self,
-        payload: Value,
-    ) -> Result<Value, AppIpcError> {
-        self.verify_stand_in_user(&payload).await?;
-        let resources = self
-            .stand_in_http(reqwest::Method::GET, "/v1/resources", None)
-            .await?;
-        let items: Vec<Value> = resources["agents"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|agent| {
-                agent["owner_type"] == "user"
-                    && agent["owner_id"].as_str()
-                        == payload["userId"]
-                            .as_i64()
-                            .map(|id| id.to_string())
-                            .as_deref()
-                    && agent["status"] == "available"
-            })
-            .map(|agent| json!({"id":agent["team_id"],"name":agent["name"]}))
-            .collect();
-        Ok(json!({"items":items}))
-    }
     pub(super) async fn personal_stand_in_projects(&self) -> Result<Vec<Value>, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let personal = store
@@ -50,7 +25,7 @@ impl RuntimeWorkRpcHandler {
         }) && self.backend_connection_snapshot()?.is_some()
         {
             match self
-                .stand_in_http(reqwest::Method::GET, "/v1/cloud-projects", None)
+                .runtime_http(reqwest::Method::GET, "/v1/cloud-projects", None)
                 .await
             {
                 Ok(value) => value["items"].as_array().cloned().unwrap_or_default(),
@@ -233,11 +208,16 @@ impl RuntimeWorkRpcHandler {
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
+            store
+                .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
+                .map_err(settings_error)?;
+            self.preflight_git_connections(&settings, &previous).await?;
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
-            store
+            let saved = store
                 .save_personal_stand_in(user, &self.device_id, settings)
-                .map_err(settings_error)
+                .map_err(settings_error)?;
+            Ok(saved)
         } else {
             store
                 .personal_stand_in(user, &self.device_id)
@@ -246,6 +226,29 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn prepare_connection_boundaries(
+        &self,
+        settings: &mut Value,
+        previous: &Value,
+    ) -> Result<(), AppIpcError> {
+        self.prepare_connection_boundaries_inner(settings, previous)
+            .await
+            .map_err(|error| {
+                let has_git = stand_in_identities(settings).iter().any(|role| {
+                    role["connections"].as_array().into_iter().flatten().any(|source| {
+                        source["providerId"].as_str().is_some_and(|provider| {
+                            provider.starts_with(super::super::git_connections::PACKAGE)
+                        })
+                    })
+                });
+                if has_git {
+                    AppIpcError::new("git_connection_save_incomplete", format!("Cloud connection changes may be partially applied; retry this draft or recover existing receivers ({})", error.code))
+                } else {
+                    error
+                }
+            })
+    }
+
+    async fn prepare_connection_boundaries_inner(
         &self,
         settings: &mut Value,
         previous: &Value,
@@ -278,14 +281,28 @@ impl RuntimeWorkRpcHandler {
             {
                 if crate::task_runtime::personal_stand_in::source_provider(source)
                     != crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+                    && !(crate::task_runtime::personal_stand_in::source_provider(source)
+                        .starts_with(super::super::git_connections::PACKAGE)
+                        && super::super::git_connections::uses_webhook(source))
                 {
                     continue;
                 }
+                if crate::task_runtime::personal_stand_in::source_provider(source)
+                    .starts_with(super::super::git_connections::PACKAGE)
+                {
+                    self.prepare_git_connection(source).await?;
+                }
                 let existing = before.and_then(|row| {
-                    crate::task_runtime::personal_stand_in::stand_in_connection(row, source)
+                    crate::task_runtime::personal_stand_in::stand_in_collection_connection(
+                        row, source,
+                    )
                 });
                 let boundary = existing
-                    .filter(|_| preserve)
+                    .filter(|row| {
+                        preserve
+                            && row["generation"] == source["generation"]
+                            && row["subscriptionId"] == source["subscriptionId"]
+                    })
                     .map(|row| row["boundary"].clone())
                     .filter(Value::is_object);
                 source.as_object_mut().unwrap().remove("boundary");

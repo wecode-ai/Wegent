@@ -365,6 +365,9 @@ describe('shared IssueDetail', () => {
   ])('uses the latest callbacks after a $name', async ({ error, conflict }) => {
     const api = createApi()
     jest.mocked(api.issues.update).mockRejectedValue(error)
+    jest
+      .mocked(api.issues.get)
+      .mockResolvedValue({ ...issue, title: 'Concurrent title', version: 2 })
     const original = { onError: jest.fn(), onConflict: jest.fn() }
     const latest = { onError: jest.fn(), onConflict: jest.fn() }
     const view = renderDetail(api, original)
@@ -374,7 +377,7 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '修改标题' },
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
     await waitFor(() =>
       expect(conflict ? latest.onConflict : latest.onError).toHaveBeenCalledTimes(1)
     )
@@ -382,6 +385,42 @@ describe('shared IssueDetail', () => {
     expect(original.onError).not.toHaveBeenCalled()
     expect(original.onConflict).not.toHaveBeenCalled()
     expect(api.attachments.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('rebases an unrelated version change before reporting a conflict to the host', async () => {
+    const api = createApi()
+    const conflict = Object.assign(new Error('Save failed'), {
+      status: 409,
+      detail: { code: 'version_conflict' },
+    })
+    jest
+      .mocked(api.issues.update)
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValue({ ...issue, title: 'New title', version: 3 })
+    jest.mocked(api.issues.get).mockResolvedValue({ ...issue, version: 2, is_unread: false })
+    const onError = jest.fn()
+    const onConflict = jest.fn()
+    const onChange = jest.fn()
+    renderDetail(api, { onError, onConflict, onChange })
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
+      target: { value: 'New title' },
+    })
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'New title', version: 3 })
+      )
+    )
+    expect(api.issues.update).toHaveBeenNthCalledWith(1, issue.id, {
+      version: 1,
+      title: 'New title',
+    })
+    expect(api.issues.update).toHaveBeenNthCalledWith(2, issue.id, {
+      version: 2,
+      title: 'New title',
+    })
+    expect(onConflict).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
   })
 
   it('wires the PC approval toolbar through the complete Web Issue host', async () => {
@@ -615,9 +654,12 @@ describe('shared IssueDetail', () => {
   }, 30_000)
 
   it('persists content and assigns through the shared assignee control', async () => {
-    const updated = { ...issue, version: 2, description: '新描述', priority: 'high' as const }
-    const update = jest.fn().mockResolvedValue(updated)
-    const assign = jest.fn().mockResolvedValue({ ...updated, assignee_user_id: 5, version: 3 })
+    const updated = { ...issue, version: 3, description: '新描述', priority: 'high' as const }
+    const update = jest
+      .fn()
+      .mockResolvedValueOnce({ ...issue, priority: 'high', version: 2 })
+      .mockResolvedValueOnce(updated)
+    const assign = jest.fn().mockResolvedValue({ ...updated, assignee_user_id: 5, version: 4 })
     const onChange = jest.fn()
     const onAssignmentsChange = jest.fn()
     const onCommentsChange = jest.fn()
@@ -651,24 +693,30 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
       target: { value: 'high' },
     })
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
-
     await waitFor(() =>
-      expect(update).toHaveBeenCalledWith('issue-1', {
+      expect(update).toHaveBeenNthCalledWith(1, 'issue-1', {
         version: 1,
-        description: '新描述',
         priority: 'high',
+      })
+    )
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ description: issue.description })
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(update).toHaveBeenNthCalledWith(2, 'issue-1', {
+        version: 2,
+        description: '新描述',
       })
     )
     await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
     fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
     fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
-        version: 2,
+        version: 3,
         assigneeType: 'user',
         assigneeId: '5',
         notifyAssignee: true,
@@ -686,19 +734,13 @@ describe('shared IssueDetail', () => {
       const update = jest.fn()
       const api = createApi({ issues: { assign, update } })
       renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
-      fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
-      fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+      await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+      const notify = screen.getByTestId('cloud-todo-assignee-notify')
+      expect(notify).toBeChecked()
+      if (!notifyAssignee) await userEvent.click(notify)
+      await userEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
       expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
-      expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
-      if (notifyAssignee) {
-        await userEvent.click(screen.getByTestId('cloud-todo-save'))
-      } else {
-        await userEvent.click(screen.getByTestId('cloud-todo-save-options'))
-        expect(screen.getByTestId('cloud-todo-save-without-notification')).toHaveTextContent(
-          '仅保存不通知'
-        )
-        await userEvent.click(screen.getByTestId('cloud-todo-save-without-notification'))
-      }
+      expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
       await waitFor(() =>
         expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
           version: 1,
@@ -742,9 +784,9 @@ describe('shared IssueDetail', () => {
 
     const emptyIssue = { ...issue, description: '' }
     renderDetail(api, { issue: emptyIssue, allIssues: [emptyIssue] })
-    expect(screen.queryByTestId('cloud-todo-detail-description')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail-description')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-attachment-input')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     expect(screen.getByTestId('cloud-todo-detail-title')).not.toHaveAttribute('readonly')
     expect(screen.getByTestId('cloud-todo-attachment-input')).toBeEnabled()
     fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
@@ -918,6 +960,7 @@ describe('shared IssueDetail', () => {
     fireEvent.paste(screen.getByTestId('cloud-todo-detail-description'), {
       clipboardData: {
         files: [new File(['race'], uploaded.display_name, { type: uploaded.content_type })],
+        getData: () => '',
       },
     })
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
@@ -944,6 +987,119 @@ describe('shared IssueDetail', () => {
     })
     expect(screen.queryByText(uploaded.display_name)).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue(issue.description)
+  })
+
+  it('does not paste a screenshot file URL into the description', async () => {
+    const screenshot = new File(['tiff'], '2026-11-06_17-46-02.tiff', {
+      type: 'image/tiff',
+    })
+    const upload = jest.fn().mockResolvedValue({
+      id: 'pasted-screenshot',
+      loop_item_id: issue.id,
+      display_name: screenshot.name,
+      content_type: null,
+      size_bytes: screenshot.size,
+      created_by_user_id: 1,
+      created_at: '2026-11-06T09:46:58Z',
+      markdown_url: 'wegent://attachments/pasted-screenshot',
+      markdown: '![2026-11-06_17-46-02.tiff](wegent://attachments/pasted-screenshot)',
+    })
+    const api = createApi({
+      attachments: {
+        list: jest.fn().mockResolvedValue([]),
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    renderDetail(api)
+
+    const editor = screen.getByTestId('cloud-todo-detail-description')
+    const pasteAccepted = fireEvent.paste(editor, {
+      clipboardData: {
+        files: [screenshot],
+        types: ['Files', 'text/plain'],
+        getData: (type: string) =>
+          type === 'text/plain'
+            ? 'file:///Users/alice/Library/Metadata/CoreSpotlight/PasteboardHistory/2026-11-06_17-46-02.tiff'
+            : '',
+      },
+    })
+
+    expect(pasteAccepted).toBe(false)
+    await waitFor(() => expect(upload).toHaveBeenCalledWith(issue.id, screenshot))
+    expect(editor).toHaveValue(issue.description)
+  })
+
+  it('preserves clipboard text while stripping a pasted screenshot file URL', async () => {
+    const screenshot = new File(['tiff'], '2026-11-06_17-46-02.tiff', {
+      type: 'image/tiff',
+    })
+    const upload = jest.fn().mockResolvedValue({
+      id: 'mixed-paste-screenshot',
+      loop_item_id: issue.id,
+      display_name: screenshot.name,
+      content_type: null,
+      size_bytes: screenshot.size,
+      created_by_user_id: 1,
+      created_at: '2026-11-06T09:46:58Z',
+      markdown_url: 'wegent://attachments/mixed-paste-screenshot',
+      markdown: '![mixed](wegent://attachments/mixed-paste-screenshot)',
+    })
+    const api = createApi({
+      attachments: {
+        list: jest.fn().mockResolvedValue([]),
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    renderDetail(api)
+
+    const editor = screen.getByTestId('cloud-todo-detail-description') as HTMLTextAreaElement
+    editor.setSelectionRange(2, 2)
+    const pasteAccepted = fireEvent.paste(editor, {
+      clipboardData: {
+        files: [screenshot],
+        types: ['Files', 'text/plain'],
+        getData: (type: string) =>
+          type === 'text/plain'
+            ? '截图说明\nfile:///Users/alice/Library/Metadata/CoreSpotlight/PasteboardHistory/2026-11-06_17-46-02.tiff'
+            : '',
+      },
+    })
+
+    expect(pasteAccepted).toBe(false)
+    expect(editor).toHaveValue('原描截图说明述')
+    await waitFor(() => expect(upload).toHaveBeenCalledWith(issue.id, screenshot))
+  })
+
+  it('leaves a text-only paste to the browser', async () => {
+    const upload = jest.fn()
+    const api = createApi({
+      attachments: {
+        list: jest.fn().mockResolvedValue([]),
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    renderDetail(api)
+
+    const editor = screen.getByTestId('cloud-todo-detail-description')
+    const pasteAccepted = fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        types: ['text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? '普通文字' : ''),
+      },
+    })
+
+    expect(pasteAccepted).toBe(true)
+    expect(upload).not.toHaveBeenCalled()
   })
 
   it('keeps Issue editing, comments, assignment and starting work as separate permissions', async () => {
@@ -1114,7 +1270,7 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '仅修改标题' },
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith('issue-1', {
@@ -1145,7 +1301,6 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-due-date'), {
       target: { value: editedLocalValue },
     })
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith(

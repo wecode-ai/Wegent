@@ -41,12 +41,10 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+/// Map persistence errors to stable settings failures while retaining version-conflict recovery.
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
     let code = match &error {
         crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
-        crate::task_runtime::TaskRuntimeError::StandInProjectConnections => {
-            "stand_in_project_connections"
-        }
         _ => "stand_in_settings",
     };
     AppIpcError::new(code, error.to_string())
@@ -74,83 +72,6 @@ pub(super) fn issue_assignment_event_id(binding: &Value) -> Result<&str, AppIpcE
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn stand_in_request(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<&Value>,
-    ) -> Result<reqwest::Response, AppIpcError> {
-        let connection = self
-            .backend_connection_snapshot()?
-            .filter(|value| !value.backend_url.is_empty() && !value.auth_token.is_empty())
-            .ok_or_else(|| {
-                AppIpcError::new(
-                    "cloud_unavailable",
-                    "Connect this Executor to your cloud account",
-                )
-            })?;
-        Self::stand_in_request_on(&connection, method, path, body).await
-    }
-
-    pub(super) async fn stand_in_request_on(
-        connection: &ConnectionConfig,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<&Value>,
-    ) -> Result<reqwest::Response, AppIpcError> {
-        let client = crate::agents::backend_url::backend_http_client()
-            .map_err(|error| AppIpcError::new("cloud_unavailable", error.to_string()))?;
-        let mut request = client
-            .request(
-                method,
-                format!("{}/api{path}", connection.backend_url.trim_end_matches('/')),
-            )
-            .bearer_auth(&connection.auth_token)
-            .timeout(Duration::from_secs(10));
-        if let Some(body) = body {
-            request = request.json(body);
-        }
-        request
-            .send()
-            .await
-            .map_err(|error| AppIpcError::new("cloud_unavailable", error.to_string()))
-    }
-
-    pub(super) async fn stand_in_http(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<&Value>,
-    ) -> Result<Value, AppIpcError> {
-        let response = self.stand_in_request(method, path, body).await?;
-        if !response.status().is_success() {
-            return Err(AppIpcError::new(
-                "cloud_request_failed",
-                format!("Issue synchronization returned {}", response.status()),
-            ));
-        }
-        if response.status() == reqwest::StatusCode::NO_CONTENT {
-            return Ok(Value::Null);
-        }
-        response
-            .json()
-            .await
-            .map_err(|error| AppIpcError::new("cloud_response_invalid", error.to_string()))
-    }
-
-    pub(super) async fn verify_stand_in_user(&self, config: &Value) -> Result<(), AppIpcError> {
-        let user = self
-            .stand_in_http(reqwest::Method::GET, "/users/me", None)
-            .await?;
-        if user["id"] != config["userId"] {
-            return Err(AppIpcError::new(
-                "permission_denied",
-                "Stand-in can only handle the connected user's assignments",
-            ));
-        }
-        Ok(())
-    }
-
     pub(super) async fn stand_in_settings(
         &self,
         payload: Value,
@@ -208,6 +129,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let mut prepared = json!({"roles":[settings]});
+        self.preflight_git_connections(&prepared, &previous).await?;
         self.prepare_connection_boundaries(&mut prepared, &previous)
             .await?;
         let settings = prepared["roles"][0].clone();
@@ -243,7 +165,7 @@ impl RuntimeWorkRpcHandler {
         config["executionDeviceId"] = json!(self.device_id);
         config["manual"] = json!(true);
         if !local {
-            self.verify_stand_in_user(&config).await?;
+            self.verify_runtime_user(&config).await?;
         }
         let gate = self.task_send_gate(&format!("stand-in-issue:{project}:{issue_id}"));
         let _guard = gate.lock().await;
@@ -255,7 +177,7 @@ impl RuntimeWorkRpcHandler {
             )
             .unwrap()
         } else {
-            self.stand_in_http(
+            self.runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{issue_id}"),
                 None,
@@ -283,7 +205,7 @@ impl RuntimeWorkRpcHandler {
                 )
                 .unwrap()
             } else {
-                self.stand_in_http(reqwest::Method::POST, &format!("/v1/cloud-projects/{project}/loop-items/{issue_id}/assign"), Some(&json!({"version":issue["version"],"assigneeType":"user","assigneeId":user.to_string(),"notifyAssignee":false}))).await?
+                self.runtime_http(reqwest::Method::POST, &format!("/v1/cloud-projects/{project}/loop-items/{issue_id}/assign"), Some(&json!({"version":issue["version"],"assigneeType":"user","assigneeId":user.to_string(),"notifyAssignee":false}))).await?
             };
         }
         if issue["cloud_project_id"] != project || issue["assignee_user_id"] != user {
@@ -399,6 +321,16 @@ impl RuntimeWorkRpcHandler {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
+                receipt_handler.flush_stand_in_task_results().await;
+                if let Err(error) = receipt_handler
+                    .flush_stand_in_proposal_continuations()
+                    .await
+                {
+                    log_executor_event(
+                        "stand-in proposal continuation failed",
+                        &[("code", error.code)],
+                    );
+                }
                 if let Err(error) = receipt_handler.flush_assignment_receipts().await {
                     log_executor_event(
                         "Assignment receipt synchronization failed",
@@ -591,7 +523,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let assignments = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{issue_id}/assignments"),
                 None,
@@ -632,7 +564,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let existing = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
                 None,
@@ -757,7 +689,7 @@ impl RuntimeWorkRpcHandler {
                     .and_then(|store| store.unbind_task(&self.device_id, &task_id, Some(issue_id)))
                     .map_err(settings_error)
             } else {
-                self.stand_in_http(
+                self.runtime_http(
                     reqwest::Method::DELETE,
                     &format!("/v1/loop-items/{issue_id}/tasks"),
                     Some(&binding),
@@ -823,7 +755,7 @@ impl RuntimeWorkRpcHandler {
         binding: &Value,
     ) -> Result<Value, AppIpcError> {
         if config["projectStore"] == "cloud" {
-            self.verify_stand_in_user(config).await?;
+            self.verify_runtime_user(config).await?;
         }
         let project = config["projectId"].as_str().unwrap_or_default();
         let issue_id = issue["id"].as_str().unwrap_or_default();
@@ -849,18 +781,19 @@ impl RuntimeWorkRpcHandler {
         self.prepare_stand_in_execution(payload, config).await
     }
 
+    /// Prepare an independent stand-in profile using only its own explicit model selection.
     pub(super) async fn prepare_stand_in_execution(
         &self,
         payload: Value,
         config: &Value,
     ) -> Result<Value, AppIpcError> {
-        let agent = self.stand_in_agent(config).await?.or_else(|| {
+        let agent = {
             config["model"].is_object().then(|| json!({
                 "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"],
                 "execution_policy":{"mode":"fixed","environment_id":self.device_id},
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
-        });
+        };
         self.prepare_stand_in_execution_with_agent(payload, config, agent)
             .await
     }
@@ -904,9 +837,19 @@ impl RuntimeWorkRpcHandler {
         if payload["modelId"].is_string() {
             payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
         }
-        // Project agents are direct Wework profiles, not backend Teams.
+        // Stand-ins and direct Wework profiles do not execute as Backend Teams.
         payload["executionRequest"]["team_id"] = json!(0);
         payload["executionRequest"]["user_id"] = config["userId"].clone();
+        if matches!(
+            payload["origin"]["type"].as_str(),
+            Some("connection_work" | "dingtalk_work" | "stand_in_schedule")
+        ) {
+            if let Some(user) = config["userId"].as_i64() {
+                payload["executionRequest"]["standInReportTo"] = json!({
+                    "userId":user,"taskId":super::stand_in_conversations::conversation_task_id(user,None)
+                });
+            }
+        }
         if config["handlingPolicy"]["askBeforeAct"] == true {
             if payload["runtime"] == "claude_code" {
                 return Err(AppIpcError::new(

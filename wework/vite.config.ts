@@ -7,6 +7,7 @@ import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { excalidrawAssets } from './vite/excalidrawAssets'
 import { lucideIconChunks } from './vite/lucideIconChunks'
+import { verificationSourceMaps } from './vite/verificationSourceMaps'
 import {
   parseTelemetryIdentity,
   parseTelemetryContextFields,
@@ -120,6 +121,7 @@ export default defineConfig({
   base: appBasePath,
   customLogger: logger,
   plugins: [
+    ...(process.env.VITE_WEWORK_E2E === 'true' ? [verificationSourceMaps()] : []),
     {
       name: 'telemetry-collection-policy',
       configResolved(config) {
@@ -152,6 +154,7 @@ export default defineConfig({
     include: ['mermaid', 'plantuml-encoder'],
   },
   build: {
+    sourcemap: process.env.VITE_WEWORK_E2E === 'true',
     // File-viewer renderers are split into dedicated chunks; the desktop shell
     // intentionally remains a single entry bundle.
     chunkSizeWarningLimit: 5_000,

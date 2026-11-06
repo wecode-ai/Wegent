@@ -87,6 +87,7 @@ const pendingConversationOperations = new Set<{
   requestUserInputKey?: string | null
 }>()
 let nextRuntimeGoalSnapshotVersion = 1
+export const EMPTY_RUNTIME_QUEUED_MESSAGES: RuntimePaneQueuedMessage[] = []
 
 export function beginRuntimeConversationOperation(
   address: RuntimeTaskAddress,
@@ -103,7 +104,7 @@ export function beginRuntimeConversationOperation(
   }
 }
 
-const EMPTY_RUNTIME_CONVERSATION_METADATA: RuntimeConversationMetadata = {
+export const EMPTY_RUNTIME_CONVERSATION_METADATA: RuntimeConversationMetadata = {
   goal: null,
   taskPlan: null,
   subagentStatuses: [],
@@ -494,7 +495,7 @@ export function getRuntimeConversationQueuedMessages(
 }
 
 export function getRuntimeConversationQueuedMessagesByKey(key: string): RuntimePaneQueuedMessage[] {
-  return touchEntry(queuedMessagesByConversation, key) ?? []
+  return touchEntry(queuedMessagesByConversation, key) ?? EMPTY_RUNTIME_QUEUED_MESSAGES
 }
 
 export function getRuntimeConversationQueueDiagnosticSnapshotByKey(
@@ -539,13 +540,16 @@ export function settleRuntimeConversationAcceptedMessage(
 
 export function reconcileRuntimeConversationQueueAfterTransportReplacement(
   address: RuntimeTaskAddress,
-  snapshotTurns: RuntimeConversationTurn[]
+  snapshotTurns: RuntimeConversationTurn[],
+  confirmation: {
+    acceptedClientUserMessageIds: string[]
+  }
 ): void {
   const key = runtimeConversationKey(address)
   const queuedMessages = queuedMessagesByConversation.get(key)
   if (!queuedMessages) return
 
-  const acceptedMessageIds = new Set<string>()
+  const acceptedMessageIds = new Set(confirmation.acceptedClientUserMessageIds)
   for (const turn of snapshotTurns) {
     if (turn.clientUserMessageId) acceptedMessageIds.add(turn.clientUserMessageId)
     for (const item of turn.items) {
@@ -553,26 +557,9 @@ export function reconcileRuntimeConversationQueueAfterTransportReplacement(
     }
   }
 
-  const nextQueuedMessages = queuedMessages.flatMap(message => {
-    if (acceptedMessageIds.has(message.id)) return []
-    if (message.status !== 'sending') return [message]
-    return [
-      {
-        ...message,
-        status: 'queued' as const,
-        deliveryMode: undefined,
-        awaitingTurnStart: undefined,
-        error: undefined,
-        notice: undefined,
-      },
-    ]
-  })
-  if (
-    nextQueuedMessages.length === queuedMessages.length &&
-    nextQueuedMessages.every((message, index) => message === queuedMessages[index])
-  ) {
-    return
-  }
+  // Missing turn bindings cannot prove rejection: accepted work may still be queued.
+  const nextQueuedMessages = queuedMessages.filter(message => !acceptedMessageIds.has(message.id))
+  if (nextQueuedMessages.length === queuedMessages.length) return
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
 }
@@ -931,20 +918,21 @@ function scheduleStreamingConversationNotification(key: string): void {
 
   const flush = () => {
     pendingStreamingNotifications.delete(key)
-    notifyRuntimeConversation(key)
+    notifyRuntimeConversation(key, undefined, true)
   }
-  if (typeof requestAnimationFrame === 'function') {
-    const frame = requestAnimationFrame(flush)
-    pendingStreamingNotifications.set(key, () => cancelAnimationFrame(frame))
-    return
-  }
-
-  const timer = globalThis.setTimeout(flush, 16)
+  // Leave time for queued native events before another expensive transcript layout.
+  // Completion and interactive actions cancel this timer and publish immediately.
+  const timer = globalThis.setTimeout(flush, 100)
   pendingStreamingNotifications.set(key, () => globalThis.clearTimeout(timer))
 }
 
 function isStreamingConversationAction(action: RuntimePaneMessageAction): boolean {
-  return action.type === 'assistant_chunk' || action.type === 'block_updated'
+  return (
+    action.type === 'assistant_chunk' ||
+    action.type === 'block_updated' ||
+    (action.type === 'block_created' &&
+      (action.block.type === 'text' || action.block.type === 'thinking'))
+  )
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {

@@ -4,13 +4,11 @@ import { join } from 'node:path'
 import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
 import { waitForLogPattern } from './shared.mjs'
 
-const STORAGE_KEY = 'wework.localModelSettings.v1'
-
 /** Interrupt a real catalog restart, then reconcile without the failure cooldown. */
 export async function verifyModelCatalogRecovery(control, { resultDir, uiTimeoutMs }) {
   if (process.platform === 'win32') return
   await control.command('ensureLocalModelCatalogReady', 'body')
-  const original = await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY })
+  const original = await control.command('getNativeModelFixtureConfigs', 'body')
   const models = JSON.parse(original)
   const pending = models.filter(model => model.catalogEntry)
   assert.ok(pending.length > 0, 'The recovery fixture needs real custom catalog entries')
@@ -28,17 +26,20 @@ export async function verifyModelCatalogRecovery(control, { resultDir, uiTimeout
         phase: 'before-dispatch',
       }),
     })
-    await control.command('setLocalStorageItem', 'body', {
-      value: JSON.stringify({
-        key: STORAGE_KEY,
-        value: JSON.stringify(
-          models.map(model =>
-            model.catalogEntry
-              ? { ...model, catalogReady: false, updatedAt: new Date().toISOString() }
-              : model
-          )
-        ),
-      }),
+    await control.command('setNativeModelFixtureConfigs', 'body', {
+      value: JSON.stringify(
+        models.map(model =>
+          model.catalogEntry
+            ? {
+                ...model,
+                catalogEntry: {
+                  ...model.catalogEntry,
+                  description: `${model.catalogEntry.description} — E2E interrupted update`,
+                },
+              }
+            : model
+        )
+      ),
     })
     await control.command('dispatchLocalModelSettingsChanged', 'body')
     const held = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
@@ -60,11 +61,7 @@ export async function verifyModelCatalogRecovery(control, { resultDir, uiTimeout
       timeoutMs: uiTimeoutMs,
     })
     await control.command('ensureLocalModelCatalogReady', 'body', { timeoutMs: uiTimeoutMs })
-    const restored = JSON.parse(
-      await control.command('getLocalStorageItem', 'body', {
-        value: STORAGE_KEY,
-      })
-    )
+    const restored = JSON.parse(await control.command('getNativeModelFixtureConfigs', 'body'))
     assert.ok(
       pending.every(model => restored.find(row => row.id === model.id)?.catalogReady),
       'The next synchronization must restore every pending catalog entry'

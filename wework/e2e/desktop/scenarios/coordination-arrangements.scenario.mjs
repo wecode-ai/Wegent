@@ -7,6 +7,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
   isReplyPredictionRequest,
   readRequestBody,
   responseCompleted,
@@ -49,6 +50,13 @@ export function createDesktopScenario({
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
+      const resultEvents = delegatedTaskResultEvents(body)
+      if (resultEvents) {
+        const id = `arrangement-result-${Date.now()}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...resultEvents, responseCompleted(id)]))
+        return true
+      }
       if (isReplyPredictionRequest(body) || !JSON.stringify(body.input ?? []).includes(MARKER))
         return false
       calls++

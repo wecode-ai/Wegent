@@ -6,6 +6,48 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import '@/i18n'
 import { StandInSourceConnections } from './StandInSourceConnections'
 
+it('preserves plugin collection configuration when selecting a discovered resource', async () => {
+  const item = {
+    providerId: 'fixture',
+    id: 'resource',
+    profile: 'account',
+    kind: 'item',
+    name: 'Resource',
+    collectionKey: 'opaque-selected',
+    configurationSummary: 'Selected items #1, #2',
+    selection: { items: [1, 2] },
+  }
+  const onChange = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <StandInSourceConnections
+      provider={{
+        id: 'fixture',
+        displayName: 'Provider',
+        resourceKinds: ['item'],
+        resourceLabels: { item: 'Item' },
+        dependencies: [],
+        availability: { status: 'ready' },
+      }}
+      role={newStandInRole('device', 'default')}
+      api={
+        {
+          searchConnectionResources: vi.fn().mockResolvedValue({ items: [item] }),
+        } as unknown as StandInExecutorApi
+      }
+      deviceId="device"
+      localDeviceId="device"
+      disabled={false}
+      onChange={onChange}
+    />
+  )
+  await user.type(screen.getByTestId('stand-in-connection-fixture-query'), 'resource')
+  await user.click(screen.getByTestId('stand-in-connection-fixture-search'))
+  await user.click(await screen.findByTestId('stand-in-connection-fixture-result-resource'))
+  await user.click(screen.getByTestId('stand-in-connection-fixture-add-selected'))
+  expect(onChange.mock.calls[0][0].connections[0]).toMatchObject(item)
+})
+
 it.each(['resolve', 'reject'] as const)(
   'ignores a stale search %s after the visible query changes',
   async outcome => {
@@ -411,4 +453,49 @@ it('keeps all groups when selected contacts replace the all-contacts scope', asy
     allGroups,
     expect.objectContaining({ id: 'contact', kind: 'direct', profile: 'corp' }),
   ])
+})
+
+it('retains removable scope when an expired authorization is detected during search', async () => {
+  const role = {
+    ...newStandInRole('device'),
+    connections: [
+      {
+        providerId: 'example',
+        id: 'saved',
+        name: 'Saved group',
+        profile: 'corp',
+        kind: 'group',
+        policy: { automatic: true, askBeforeAct: true },
+      },
+    ],
+  }
+  const onChange = vi.fn()
+  const searchConnectionResources = vi.fn().mockRejectedValue({ code: 'connector_auth_required' })
+  render(
+    <StandInSourceConnections
+      provider={{
+        id: 'example',
+        displayName: 'Example',
+        resourceKinds: ['group'],
+        dependencies: [],
+        availability: { status: 'ready' },
+        authTarget: { pluginKey: 'example-plugin', connectorSlug: 'work-account' },
+      }}
+      role={role}
+      api={{ searchConnectionResources } as unknown as StandInExecutorApi}
+      deviceId="device"
+      localDeviceId="device"
+      disabled={false}
+      onChange={onChange}
+    />
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('stand-in-connection-example-add'))
+  await user.type(screen.getByTestId('stand-in-connection-example-query'), 'Other')
+  await user.click(screen.getByTestId('stand-in-connection-example-search'))
+  expect(await screen.findByTestId('stand-in-connection-example-authorization')).toHaveTextContent(
+    'Saved group'
+  )
+  await user.click(screen.getByTestId('stand-in-connection-example-remove-saved'))
+  expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ connections: [] }))
 })

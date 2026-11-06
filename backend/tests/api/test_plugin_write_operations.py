@@ -7,6 +7,7 @@ import time
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -652,3 +653,108 @@ def test_background_coordination_failure_preserves_account_and_recovery(
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["sync"]["success"] is True
     assert assert_account_write(context, entry).json == account.json
+
+
+@pytest.mark.parametrize("superseded_attempts", [1, 3])
+def test_reinstall_waits_for_an_ack_that_survives_a_newer_cleanup_intent(
+    plugin_requests, monkeypatch, superseded_attempts
+):
+    """A confirmed but fenced RPC must not return an uninstalling device row."""
+    from copy import deepcopy
+
+    from app.services.device.plugin_sync_protocol import register_plugin_snapshot_intent
+
+    context = plugin_requests
+    assert context.write("marketplace").status_code == 200
+    account = context.account()
+    with context.sessions.begin() as db:
+        row = (
+            db.query(PluginDeviceInstallation)
+            .filter_by(
+                user_id=context.user_id,
+                installed_kind_id=account.id,
+                device_id=DEVICE_ID,
+            )
+            .one()
+        )
+        row.state = "uninstalling"
+    generations = []
+    service = endpoints.device_capability_sync_service
+    monkeypatch.setattr(
+        "app.services.device.capability_payloads.plugin_package_storage.presign_download",
+        lambda *_args, **_kwargs: ("https://packages.test/plugin.zip", datetime.now()),
+    )
+
+    async def sync_with_concurrent_cleanup(_db, **kwargs):
+        generation = 7 + len(generations) * 2
+        generations.append(generation)
+        with context.sessions() as db:
+            payload = plugin_change_sync.build_plugin_delta(
+                service,
+                db,
+                user_id=context.user_id,
+                device_id=DEVICE_ID,
+                installed_plugin_ids=[account.id],
+            )
+        payload["plugin_sync"] = {
+            "version": 2,
+            "generation": generation,
+            "complete": False,
+        }
+        register_plugin_snapshot_intent(
+            context.sessions,
+            user_id=context.user_id,
+            device_id=DEVICE_ID,
+            payload=payload,
+        )
+        if len(generations) <= superseded_attempts:
+            newer = deepcopy(payload)
+            newer["plugin_sync"]["generation"] += 1
+            register_plugin_snapshot_intent(
+                context.sessions,
+                user_id=context.user_id,
+                device_id=DEVICE_ID,
+                payload=newer,
+            )
+        plugin = payload["plugins"][0]
+        result = DeviceCapabilitySyncResult(
+            device_id=DEVICE_ID,
+            success=True,
+            acknowledged=True,
+            desired_plugin_snapshot=payload,
+            plugin_sync=payload["plugin_sync"],
+            plugins=[
+                {
+                    "id": account.id,
+                    "status": "synced",
+                    "generation": generation,
+                    "operation": "upsert",
+                    "version": plugin["version"],
+                    "checksum": plugin["checksum"],
+                }
+            ],
+        )
+        return DeviceCapabilitySyncResponse(
+            success=True, synced=1, results=[result], plugins=result.plugins
+        )
+
+    monkeypatch.setattr(
+        service, "sync_installed_plugin_to_device_result", sync_with_concurrent_cleanup
+    )
+
+    response = context.write("marketplace")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["sync"]["success"] is (superseded_attempts == 1)
+    device = next(
+        row
+        for row in response.json()["plugin"]["status"]["devices"]
+        if row["deviceId"] == DEVICE_ID
+    )
+    assert device["state"] == ("installed" if superseded_attempts == 1 else "pending")
+    assert device["actualReleaseId"] == context.release_id
+    assert generations == ([7, 9] if superseded_attempts == 1 else [7, 9, 11])
+    if superseded_attempts == 3:
+        assert response.json()["sync"]["errors"] == [
+            {"code": "plugin_write_conflict", "stage": "plugin_ack"}
+        ]

@@ -19,7 +19,7 @@ from app.services.execution import chat_shell_sse
 from app.services.execution.chat_shell_client import ChatShellClientPool
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
-from shared.models import EventType, ExecutionRequest
+from shared.models import EventType, ExecutionEvent, ExecutionRequest
 
 _COMPLETED = b'data: {"type":"response.completed","response":{"output":[]}}\n\n'
 _DELTA = b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
@@ -213,6 +213,114 @@ async def test_cancelled_response_does_not_close_shared_client() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_during_chunk_delivery_cannot_emit_buffered_completion() -> None:
+    delivery_started = asyncio.Event()
+    release_delivery = asyncio.Event()
+    cancellation_consumed = asyncio.Event()
+    cancellation_observed = asyncio.Event()
+    wait_for_cancellation = chat_shell_sse._wait_for_sse_cancellation
+    delivered = []
+
+    async def observe_cancellation(*args):
+        source = await wait_for_cancellation(*args)
+        cancellation_observed.set()
+        return source
+
+    async def emit(event: ExecutionEvent) -> None:
+        delivered.append(event.type)
+        if event.type == EventType.CHUNK.value:
+            delivery_started.set()
+            try:
+                await release_delivery.wait()
+            except asyncio.CancelledError:
+                # A delivery dependency can finish normally after consuming cancellation.
+                cancellation_consumed.set()
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_DELTA + _COMPLETED,
+        )
+
+    emitter = AsyncMock()
+    emitter.emit.side_effect = emit
+    async with _environment(handler) as (dispatcher, request, target, client, session):
+        with patch.object(
+            chat_shell_sse, "_wait_for_sse_cancellation", observe_cancellation
+        ):
+            task = asyncio.create_task(
+                dispatcher._dispatch_sse(request, target, emitter)
+            )
+            try:
+                await asyncio.wait_for(delivery_started.wait(), timeout=2)
+                session.register_stream.return_value.set()
+                await asyncio.wait_for(cancellation_observed.wait(), timeout=2)
+                assert not cancellation_consumed.is_set()
+                assert not task.done()
+                release_delivery.set()
+                await asyncio.wait_for(asyncio.shield(task), timeout=2)
+            finally:
+                release_delivery.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+        assert not cancellation_consumed.is_set()
+        assert delivered == [EventType.CHUNK.value, EventType.CANCELLED.value]
+        assert not client.is_closed()
+        session.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+class _CancellationResistantStream(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.read_started = asyncio.Event()
+        self.cancellation_consumed = asyncio.Event()
+        self.closed = False
+
+    async def __aiter__(self):
+        yield _DELTA
+        self.read_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            self.cancellation_consumed.set()
+        yield _COMPLETED
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_read_cannot_emit_buffered_completion() -> None:
+    body = _CancellationResistantStream()
+
+    def handler(_request):
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=body
+        )
+
+    emitter = AsyncMock()
+    async with _environment(handler) as (dispatcher, request, target, client, session):
+        task = asyncio.create_task(dispatcher._dispatch_sse(request, target, emitter))
+        try:
+            await asyncio.wait_for(body.read_started.wait(), timeout=2)
+            session.register_stream.return_value.set()
+            await asyncio.wait_for(asyncio.shield(task), timeout=2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        assert body.cancellation_consumed.is_set()
+        assert [call.args[0].type for call in emitter.emit.await_args_list] == [
+            EventType.CHUNK.value,
+            EventType.CANCELLED.value,
+        ]
+        assert body.closed
+        assert not client.is_closed()
+        session.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+@pytest.mark.asyncio
 async def test_start_event_failure_unregisters_stream() -> None:
     handler = AsyncMock()
     emitter = AsyncMock()
@@ -266,12 +374,15 @@ async def test_exhausted_dispatch_emits_one_classified_terminal_error() -> None:
 
 
 class _UnfinishedTerminalStream(httpx.AsyncByteStream):
-    def __init__(self, failure: str):
+    def __init__(self, failure: str, first_byte_delay: float = 0) -> None:
         self.failure = failure
+        self.first_byte_delay = first_byte_delay
         self.closed = False
         self.tail_started = asyncio.Event()
 
     async def __aiter__(self):
+        if self.first_byte_delay:
+            await asyncio.sleep(self.first_byte_delay)
         yield _COMPLETED
         self.tail_started.set()
         if self.failure == "read_error":
@@ -283,9 +394,14 @@ class _UnfinishedTerminalStream(httpx.AsyncByteStream):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["timeout", "read_error", "cancel"])
-async def test_terminal_cleanup_preserves_completion(failure, caplog) -> None:
-    body = _UnfinishedTerminalStream(failure)
+@pytest.mark.parametrize(
+    "failure,first_byte_delay",
+    [("timeout", 0), ("read_error", 0), ("cancel", 0), ("cancel", 2.1)],
+)
+async def test_terminal_cleanup_preserves_completion(
+    failure: str, first_byte_delay: float, caplog: pytest.LogCaptureFixture
+) -> None:
+    body = _UnfinishedTerminalStream(failure, first_byte_delay)
     requests = []
 
     def handler(request):
@@ -298,7 +414,14 @@ async def test_terminal_cleanup_preserves_completion(failure, caplog) -> None:
             200, headers={"content-type": "text/event-stream"}, stream=body
         )
 
+    terminal_delivered = asyncio.Event()
+
+    async def record_terminal(event: ExecutionEvent) -> None:
+        if event.type == EventType.DONE.value:
+            terminal_delivered.set()
+
     emitter = AsyncMock()
+    emitter.emit.side_effect = record_terminal
     async with _environment(handler) as (dispatcher, request, target, client, session):
         with patch(
             "app.services.execution.chat_shell_sse._SSE_TERMINAL_DRAIN_TIMEOUT_SECONDS",
@@ -316,12 +439,12 @@ async def test_terminal_cleanup_preserves_completion(failure, caplog) -> None:
                         assert task.cancel()
 
                     cancel_task = asyncio.create_task(cancel_when_cleanup_starts())
-                # Bound hangs without treating request setup/SDK parsing as
-                # cleanup latency. Shield keeps this watchdog's cancellation
-                # separate from the cancellation injected at the tail event.
+                # Keep request startup separate from the two-second cleanup bound.
                 await asyncio.wait_for(
-                    asyncio.shield(task), timeout=_TEST_TIMEOUT_SECONDS
+                    terminal_delivered.wait(), timeout=_TEST_TIMEOUT_SECONDS
                 )
+                # Shield separates the watchdog from the cancellation under test.
+                await asyncio.wait_for(asyncio.shield(task), timeout=2)
                 if cancel_task is not None:
                     assert cancel_task.done()
                     await cancel_task

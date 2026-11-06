@@ -2,9 +2,67 @@ import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifec
 import { EMPTY_CLOUD_WORK_STATUS } from '@/features/workbench/workbenchCloudStatus'
 import { initialWorkbenchState } from '@/features/workbench/workbenchReducer'
 import { describe, expect, it } from 'vitest'
-import { getWorkbenchDebugSnapshot, updateWorkbenchDebugSnapshot } from './debugPanel'
+import {
+  getWorkbenchDebugSnapshot,
+  summarizeMessages,
+  updateWorkbenchDebugSnapshot,
+} from './debugPanel'
+import type { WorkbenchMessage } from '@/types/workbench'
 
 describe('device debug snapshot security', () => {
+  it('distinguishes image payload loss without recording file references or generated content', () => {
+    const message = {
+      id: 'image-message',
+      role: 'assistant',
+      status: 'done',
+      content: '',
+      blocks: [
+        {
+          id: 'image',
+          type: 'tool',
+          toolName: 'image_generation',
+          status: 'done',
+          renderPayload: {
+            kind: 'image_generation',
+            mimeType: 'image/png',
+            imageBase64: 'private-image',
+            source: {
+              type: 'workspace_file',
+              deviceId: 'private-device',
+              workspacePath: '/private-workspace',
+              path: 'private-image.png',
+            },
+          },
+        },
+      ],
+    } as WorkbenchMessage
+    const full = summarizeMessages([message])
+    expect(full.lastMessage?.generatedImages).toEqual([
+      {
+        id: 'image',
+        status: 'done',
+        hasPayload: true,
+        hasWorkspaceSource: true,
+        hasInlineData: true,
+        hasMimeType: true,
+      },
+    ])
+    expect(JSON.stringify(full)).not.toContain('private-')
+    message.blocks![0] = {
+      ...message.blocks![0],
+      renderPayload: { kind: 'image_generation' },
+    } as (typeof message.blocks)[number]
+    expect(summarizeMessages([message]).lastMessage?.generatedImages).toEqual([
+      {
+        id: 'image',
+        status: 'done',
+        hasPayload: true,
+        hasWorkspaceSource: false,
+        hasInlineData: false,
+        hasMimeType: false,
+      },
+    ])
+  })
   it('exports device diagnostics without raw connection configuration', () => {
     const device = {
       id: 1,

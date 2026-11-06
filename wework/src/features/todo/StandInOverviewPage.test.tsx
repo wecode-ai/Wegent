@@ -4,7 +4,7 @@ import {
   type PersonalStandInSettings,
   type StandInRole,
 } from '@/api/personalStandIn'
-import type { StandInInboxWork } from '@/api/standIn'
+import type { StandInInboxWork, StandInProposal } from '@/api/standIn'
 import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -48,8 +48,17 @@ function requestScheduledWork() {
 vi.mock('./StandInWorkConfirmation', () => ({ StandInWorkConfirmation: () => null }))
 
 vi.mock('./StandInConversation', () => ({
-  StandInConversation: ({ roleId }: { roleId?: string }) => (
-    <div data-testid="identity-conversation">{roleId ?? 'primary'}</div>
+  StandInConversation: ({
+    roleId,
+    draftRequest,
+  }: {
+    roleId?: string
+    draftRequest?: { text: string }
+  }) => (
+    <div data-testid="identity-conversation">
+      {roleId ?? 'primary'}
+      {draftRequest?.text}
+    </div>
   ),
 }))
 
@@ -92,11 +101,70 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
   return { props, personalAgents, personalSave }
 }
 
+async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) {
+  const api = props.services.standInApi!
+  const settings = await api.personalGet(7, 'device')
+  let resolveInitial!: (value: typeof settings) => void
+  vi.mocked(api.personalGet).mockReturnValueOnce(
+    new Promise<typeof settings>(done => {
+      resolveInitial = done
+    })
+  )
+  render(<StandInOverviewPage {...props} />)
+  try {
+    await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
+    expect(await screen.findByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-overview-role-default')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
+    // Install the device-scoped subscription before publishing a reload event.
+    await act(async () => resolveInitial(settings))
+    expect(await screen.findByTestId('stand-in-overview')).toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-overview-status')).toBeInTheDocument()
+    return { api, settings, conversation: screen.getByTestId('identity-conversation') }
+  } finally {
+    await act(async () => resolveInitial(settings))
+  }
+}
+
 async function openRoles() {
   const selector = await screen.findByTestId('stand-in-role-selector')
   await waitFor(() => expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled())
   expect(selector).toBeVisible()
 }
+
+it('reopens usage examples after onboarding without recreating a scheduled review', async () => {
+  const { props } = fixture([])
+  render(<StandInOverviewPage {...props} />)
+  await openRoles()
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('stand-in-guide-open'))
+  expect(await screen.findByRole('dialog', { name: '分身使用示例' })).toBeVisible()
+  expect(screen.getByTestId('stand-in-onboarding-example-daily_brief')).toBeVisible()
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-onboarding-example-weekly_review')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-onboarding-complete')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-onboarding-close'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled()
+})
+
+it('selects the primary conversation and inserts the chosen example as an editable draft', async () => {
+  const { props } = fixture()
+  render(<StandInOverviewPage {...props} />)
+  await openRoles()
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('stand-in-overview-role-default'))
+  expect(screen.getByTestId('stand-in-overview-role-default')).toHaveAttribute(
+    'aria-current',
+    'page'
+  )
+  await user.click(screen.getByTestId('stand-in-guide-open'))
+  await user.click(await screen.findByTestId('stand-in-onboarding-example-meeting_prep'))
+  expect(screen.getByTestId('stand-in-primary-open')).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByTestId('identity-conversation')).toHaveTextContent('下一场会议')
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
 
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
   const role = newStandInRole('device', 'default')
@@ -157,23 +225,12 @@ it('opens settings for the selected stand-in and reflects its renamed identity',
 
 it('keeps the active conversation mounted while settings reload', async () => {
   const { props } = fixture()
-  const api = props.services.standInApi!
-  const settings = await api.personalGet(7, 'device')
-  let resolveInitial!: (value: typeof settings) => void
-  const initial = new Promise<typeof settings>(done => {
-    resolveInitial = done
-  })
+  const { api, settings, conversation } = await renderLoadedOverview(props)
   let resolve!: (value: typeof settings) => void
   const pending = new Promise<typeof settings>(done => {
     resolve = done
   })
-  vi.mocked(api.personalGet).mockReturnValueOnce(initial)
-  render(<StandInOverviewPage {...props} />)
   try {
-    await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
-    // Settle initialization and its device-scoped subscription before reloading.
-    await act(async () => resolveInitial(settings))
-    const conversation = await screen.findByTestId('identity-conversation')
     vi.mocked(api.personalGet).mockReturnValueOnce(pending)
     act(() => publishPersonalStandIn(settings))
     await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
@@ -181,10 +238,7 @@ it('keeps the active conversation mounted while settings reload', async () => {
     await act(async () => resolve(settings))
     expect(screen.getByTestId('identity-conversation')).toBe(conversation)
   } finally {
-    await act(async () => {
-      resolveInitial(settings)
-      resolve(settings)
-    })
+    await act(async () => resolve(settings))
   }
 })
 
@@ -396,20 +450,20 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
 
 it('preserves the mounted conversation when settings refresh fails', async () => {
   const { props } = fixture()
-  const api = props.services.standInApi!
-  const settings = await api.personalGet(7, 'device')
-  render(<StandInOverviewPage {...props} />)
-  const conversation = await screen.findByTestId('identity-conversation')
+  const { api, settings, conversation } = await renderLoadedOverview(props)
   await openRoles()
   await screen.findByTestId('stand-in-overview-role-default')
   vi.mocked(api.personalGet).mockRejectedValue(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
+  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
+  await userEvent.click(await screen.findByTestId('stand-in-status-open'))
   expect(await screen.findByRole('alert')).toHaveTextContent(
     '未能加载分身设置。请检查执行设备是否在线，再点击「重新加载」。'
   )
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
   vi.mocked(api.personalGet).mockResolvedValue(settings)
   await userEvent.click(screen.getByTestId('stand-in-overview-inline-retry'))
+  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(4))
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
@@ -430,6 +484,7 @@ it('routes a pending background confirmation to its real Runtime task', async ()
   })
   const onOpenTask = vi.fn()
   render(<StandInOverviewPage {...props} onOpenTask={onOpenTask} />)
+  await userEvent.click(await screen.findByTestId('stand-in-status-open'))
   await userEvent.click(await screen.findByTestId('stand-in-processing-open-task'))
   expect(onOpenTask).toHaveBeenCalledWith({
     taskId: 'stand-in-coordinator-7',
@@ -461,7 +516,13 @@ it('shows plugin installation guidance for a failed source and clears it after r
   props.services.standInApi.retrySource = retrySource
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
-  const guidance = await screen.findByText(/Example group · 来源所需插件尚未安装/)
+  const conversation = await screen.findByTestId('identity-conversation')
+  const status = await screen.findByTestId('stand-in-status-open')
+  expect(screen.queryByText(/来源所需插件尚未安装/)).not.toBeInTheDocument()
+  expect(screen.queryByText('Example group')).not.toBeInTheDocument()
+  await user.click(status)
+  expect(screen.getByText('Example group')).toBeInTheDocument()
+  const guidance = await screen.findByText(/来源所需插件尚未安装/)
   expect(guidance).toHaveTextContent('「连接」')
   expect(guidance).toHaveTextContent('「安装所需插件」')
   expect(guidance).toHaveTextContent('安装后重新加载')
@@ -469,9 +530,78 @@ it('shows plugin installation guidance for a failed source and clears it after r
   expect(retrySource).not.toHaveBeenCalled()
   await user.click(screen.getByTestId('stand-in-source-retry-group-1'))
   expect(retrySource).toHaveBeenCalledWith(7, 'device', source)
-  await waitFor(() =>
-    expect(screen.queryByText(/Example group · 来源所需插件尚未安装/)).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.queryByText(/来源所需插件尚未安装/)).not.toBeInTheDocument())
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  expect(screen.queryByTestId('stand-in-status-open')).not.toBeInTheDocument()
+})
+
+it('keeps attention work in the work list instead of stacking duplicate cards above the conversation', async () => {
+  const { props } = fixture()
+  const waiting = {
+    ...runtimeItem,
+    task: { ...runtimeItem.task, interactionStatus: 'awaitingUserReply' as const },
+  }
+  const context = {
+    runtimeTaskReminders: { items: [waiting] },
+  } as unknown as WorkbenchContextValue
+  render(
+    <WorkbenchContext.Provider value={context}>
+      <StandInOverviewPage {...props} />
+    </WorkbenchContext.Provider>
   )
+  const conversation = await screen.findByTestId('identity-conversation')
+  expect(screen.getByTestId('stand-in-work-attention-count')).toHaveTextContent('1')
+  expect(screen.queryByTestId('stand-in-important-work')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-attention-task')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('stand-in-role-chat'))
+  expect(await screen.findByTestId('stand-in-activity-task-task')).toBeVisible()
+  expect(conversation).not.toBeInTheDocument()
+})
+
+it('opens a pending configuration explicitly without resolving it when the dialog is closed', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const current = await api.personalGet(7, 'device')
+  const proposal = {
+    id: 'pending-configuration',
+    summary: 'Follow only projects with a confirmed owner',
+    settings: { ...current, roles: [] },
+  } as StandInProposal
+  vi.mocked(api.proposal).mockResolvedValue(proposal)
+  api.resolveProposal = vi.fn(async () => ({ ...current }))
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await screen.findByTestId('identity-conversation')
+  const entry = await screen.findByTestId('stand-in-proposal-open')
+  expect(screen.queryByTestId('stand-in-proposal')).not.toBeInTheDocument()
+  expect(screen.queryByText(proposal.summary)).not.toBeInTheDocument()
+  await user.click(entry)
+  expect(await screen.findByTestId('stand-in-proposal')).toHaveTextContent(proposal.summary)
+  await user.click(screen.getByTestId('stand-in-proposal-dialog-close'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(api.resolveProposal).not.toHaveBeenCalled()
+  expect(entry).toHaveFocus()
+  await user.click(entry)
+  await user.click(screen.getByTestId('stand-in-proposal-accept'))
+  expect(api.resolveProposal).toHaveBeenCalledWith(7, 'device', proposal.id, true)
+})
+
+it('keeps an outdated configuration visibly unconfirmable inside the review dialog', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const current = await api.personalGet(7, 'device')
+  vi.mocked(api.proposal).mockResolvedValue({
+    id: 'old-configuration',
+    summary: 'An outdated proposal',
+    settings: { ...current, version: current.version - 1 },
+  } as StandInProposal)
+  api.resolveProposal = vi.fn()
+  render(<StandInOverviewPage {...props} />)
+  await userEvent.click(await screen.findByTestId('stand-in-proposal-open'))
+  expect(screen.getByTestId('stand-in-proposal-accept')).toBeDisabled()
+  expect(screen.getByTestId('stand-in-proposal-reject')).toBeEnabled()
+  await userEvent.click(screen.getByTestId('stand-in-proposal-dialog-close'))
+  expect(api.resolveProposal).not.toHaveBeenCalled()
 })
 
 it('keeps unsaved settings mounted when the menu requests scheduled work', async () => {
@@ -614,7 +744,6 @@ it('refreshes external configuration and returns to the primary identity on expl
     )
   })
   await openRoles()
-  await openRoles()
   expect(await screen.findByTestId('stand-in-overview-role-external')).toHaveTextContent(
     'External configuration'
   )
@@ -647,4 +776,66 @@ it('keeps saved settings accessible while explicit navigation refreshes configur
   await user.click(screen.getByTestId('stand-in-settings-open'))
   expect(screen.getByTestId('stand-in-profile-panel')).toBeVisible()
   await act(async () => finish(settings))
+})
+
+it('saves the primary identity through the existing settings flow before finishing first-use setup', async () => {
+  const { props, personalSave } = fixture([])
+  const api = props.services.standInApi!
+  vi.mocked(api.onboarding).mockImplementation(
+    async () =>
+      ({ state: { version: 1, completed: false } }) as Awaited<ReturnType<typeof api.onboarding>>
+  )
+  const completeOnboarding = vi.fn(async () => ({ state: { version: 1, completed: true } }))
+  Object.assign(api, { completeOnboarding })
+  render(<StandInOverviewPage {...props} />)
+  const user = userEvent.setup()
+  await user.click(await screen.findByTestId('stand-in-onboarding-continue'))
+  expect(personalSave).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+  await screen.findByTestId('identity-conversation')
+  expect(personalSave).toHaveBeenCalledWith(
+    7,
+    expect.objectContaining({
+      executionDeviceId: 'device',
+      primary: expect.objectContaining({ enabled: true }),
+      roles: [],
+    }),
+    'device'
+  )
+  expect(completeOnboarding).toHaveBeenCalledWith(7, 'device', false, '09:00', expect.any(String))
+  expect(personalSave.mock.invocationCallOrder[0]).toBeLessThan(
+    completeOnboarding.mock.invocationCallOrder[0]
+  )
+})
+
+it('keeps first-use setup open when the existing settings save fails and allows retry', async () => {
+  const { props, personalSave } = fixture([])
+  const api = props.services.standInApi!
+  vi.mocked(api.onboarding).mockImplementation(
+    async () =>
+      ({ state: { version: 1, completed: false } }) as Awaited<ReturnType<typeof api.onboarding>>
+  )
+  const completeOnboarding = vi.fn(async () => ({ state: { version: 1, completed: true } }))
+  Object.assign(api, { completeOnboarding })
+  personalSave.mockRejectedValueOnce(new Error('Settings save unavailable'))
+  render(<StandInOverviewPage {...props} />)
+  const user = userEvent.setup()
+  await user.click(await screen.findByTestId('stand-in-onboarding-continue'))
+  await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+  expect(await screen.findByTestId('stand-in-onboarding-settings-retry')).toBeVisible()
+  expect(completeOnboarding).not.toHaveBeenCalled()
+  expect(screen.getByTestId('stand-in-onboarding-summary')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+  await screen.findByTestId('identity-conversation')
+  expect(completeOnboarding).toHaveBeenCalledOnce()
+})
+
+it('keeps profile recovery and creation reachable when the selected device and onboarding are offline', async () => {
+  const { props } = fixture()
+  vi.mocked(props.services.standInApi!.personalGet).mockRejectedValue(new Error('Executor offline'))
+  vi.mocked(props.services.standInApi!.onboarding).mockRejectedValue(new Error('Executor offline'))
+  render(<StandInOverviewPage {...props} initialDeviceId="offline-cloud" />)
+  await screen.findByTestId('stand-in-overview-retry')
+  expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-create-role')).toBeEnabled()
 })

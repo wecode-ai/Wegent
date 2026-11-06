@@ -13,6 +13,19 @@ pub(super) fn mcp_thread_configuration(params: &Value) -> Map<String, Value> {
         .collect()
 }
 
+/// Admission identity covers both tool authority and compaction's live policy baseline.
+pub(super) fn thread_context_configuration(params: &Value) -> Map<String, Value> {
+    use sha2::{Digest, Sha256};
+    let mut configuration = mcp_thread_configuration(params);
+    if let Some(instructions) = params["developerInstructions"].as_str() {
+        configuration.insert(
+            "developerInstructions.sha256".into(),
+            json!(format!("{:x}", Sha256::digest(instructions.as_bytes()))),
+        );
+    }
+    configuration
+}
+
 pub(super) fn config_reload_resume_thread_id<'a>(
     thread_plan: &'a CodexThreadPlan,
     request: &ExecutionRequest,
@@ -25,7 +38,7 @@ pub(super) fn config_reload_resume_thread_id<'a>(
     else {
         return None;
     };
-    (loaded != Some(&mcp_thread_configuration(params))
+    (loaded != Some(&thread_context_configuration(params))
         || crate::runtime_work::stand_in_requires_confirmation(request)
         || crate::runtime_work::external_work_kind(request).is_some())
     .then(|| params.get("threadId").and_then(Value::as_str))
@@ -37,7 +50,24 @@ impl CodexAppServerClient {
         &self,
         plan: &CodexThreadPlan,
         request: &ExecutionRequest,
+        launch_config: &CodexLaunchConfig,
     ) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, String> {
+        if let CodexThreadStart::Direct(thread_id) = &plan.start {
+            let gate = self.thread_lifecycle_gate(thread_id).await;
+            let _guard = gate.lock().await;
+            let desired = thread_context_configuration(&json!({"developerInstructions":
+                effective_instructions::native_instructions(request, launch_config)}));
+            let state = self.state.lock().await;
+            if state
+                .thread_context_configurations
+                .get(thread_id)
+                .and_then(|current| current.get("developerInstructions.sha256"))
+                .is_some_and(|current| Some(current) != desired.get("developerInstructions.sha256"))
+            {
+                return Err("The loaded temporary session's runtime instructions changed. Open a new temporary session to apply them; the existing history was preserved.".into());
+            }
+            return Ok(None);
+        }
         let Some(thread_id) = thread_id_to_activate_before_start(plan) else {
             return Ok(None);
         };
@@ -75,12 +105,23 @@ impl CodexAppServerClient {
                     .state
                     .lock()
                     .await
-                    .thread_mcp_configurations
+                    .thread_context_configurations
                     .get(thread_id)
                     .cloned();
                 if config_reload_resume_thread_id(plan, request, loaded.as_ref()).is_some() {
-                    self.release_thread_subscription_under_admission(thread_id, true)
-                        .await?;
+                    if let Err(error) = self
+                        .release_thread_subscription_under_admission(thread_id, true)
+                        .await
+                    {
+                        if !super::is_codex_cloud_config_error(&error) {
+                            return Err(error);
+                        }
+                        // Resume owns recovery when cloud configuration prevented unloading.
+                        log_executor_event(
+                            "codex thread unsubscribe skipped after cloud config failure",
+                            &[("thread_id", thread_id.to_owned()), ("error", error)],
+                        );
+                    }
                 }
                 self.mark_thread_active_under_admission(thread_id).await;
                 return Ok(Some(guard));
@@ -138,10 +179,10 @@ mod tests {
     async fn stopping_a_process_forgets_loaded_mcp_configuration() {
         let mut state = CodexAppServerSharedState::default();
         state
-            .thread_mcp_configurations
+            .thread_context_configurations
             .insert("thread-1".into(), Map::new());
         stop_codex_app_server_process(&mut state, None).await;
-        assert!(state.thread_mcp_configurations.is_empty());
+        assert!(state.thread_context_configurations.is_empty());
     }
 
     #[test]
@@ -189,8 +230,9 @@ mod tests {
         let request = ExecutionRequest::default();
         let waker = noop_waker();
         let mut context = Context::from_waker(&waker);
-        let mut first = Box::pin(client.prepare_thread_admission(&first_plan, &request));
-        let mut second = Box::pin(client.prepare_thread_admission(&second_plan, &request));
+        let launch = CodexLaunchConfig::default();
+        let mut first = Box::pin(client.prepare_thread_admission(&first_plan, &request, &launch));
+        let mut second = Box::pin(client.prepare_thread_admission(&second_plan, &request, &launch));
         assert!(first.as_mut().poll(&mut context).is_pending());
         assert!(second.as_mut().poll(&mut context).is_pending());
         let responses = std::mem::take(&mut *pending.lock().await);
@@ -207,13 +249,18 @@ mod tests {
             .await;
         let admission = first.await.unwrap().unwrap();
         assert!(second.as_mut().poll(&mut context).is_pending());
-        client.state.lock().await.thread_mcp_configurations.insert(
-            "thread-1".into(),
-            mcp_thread_configuration(match &first_plan.start {
-                CodexThreadStart::Request { params, .. } => params,
-                _ => unreachable!(),
-            }),
-        );
+        client
+            .state
+            .lock()
+            .await
+            .thread_context_configurations
+            .insert(
+                "thread-1".into(),
+                mcp_thread_configuration(match &first_plan.start {
+                    CodexThreadStart::Request { params, .. } => params,
+                    _ => unreachable!(),
+                }),
+            );
         drop(admission);
         assert!(second.as_mut().poll(&mut context).is_pending());
         assert!(
@@ -292,5 +339,77 @@ mod tests {
         release.await.unwrap();
         admission.await;
         client.restart().await;
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    #[test]
+    fn policy_changes_reload_resume_even_when_mcp_authority_is_unchanged() {
+        let previous = json!({"threadId":"thread","developerInstructions":"Previous runtime policy","config":{"mcp_servers.tools.url":"http://localhost/mcp"}});
+        let current = json!({"threadId":"thread","developerInstructions":"Current runtime policy","config":{"mcp_servers.tools.url":"http://localhost/mcp"}});
+        let loaded = thread_context_configuration(&previous);
+        let request = ExecutionRequest::default();
+        let unchanged = CodexThreadPlan {
+            start: CodexThreadStart::Request {
+                operation: "thread/resume",
+                params: previous,
+            },
+            resume_requested: true,
+            fork_requested: false,
+        };
+        assert!(config_reload_resume_thread_id(&unchanged, &request, Some(&loaded)).is_none());
+        let changed = CodexThreadPlan {
+            start: CodexThreadStart::Request {
+                operation: "thread/resume",
+                params: current,
+            },
+            resume_requested: true,
+            fork_requested: false,
+        };
+        assert_eq!(
+            config_reload_resume_thread_id(&changed, &request, Some(&loaded)),
+            Some("thread")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_known_direct_policy_change_stops_without_rebuilding_or_blocking_legacy_unknown_threads(
+    ) {
+        let client = CodexAppServerClient::new("unused");
+        let launch = CodexLaunchConfig::default();
+        let mut request = ExecutionRequest {
+            system_prompt: "Original policy".into(),
+            ..Default::default()
+        };
+        let plan = codex_thread_plan(Some("temporary"), None, None, None, &request, &launch);
+        assert!(client
+            .prepare_thread_admission(&plan, &request, &launch)
+            .await
+            .unwrap()
+            .is_none());
+        let saved = thread_context_configuration(
+            &json!({"developerInstructions":effective_instructions::native_instructions(&request,&launch)}),
+        );
+        client
+            .state
+            .lock()
+            .await
+            .thread_context_configurations
+            .insert("temporary".into(), saved);
+        assert!(client
+            .prepare_thread_admission(&plan, &request, &launch)
+            .await
+            .unwrap()
+            .is_none());
+        request.system_prompt = "Changed policy".into();
+        let error = client
+            .prepare_thread_admission(&plan, &request, &launch)
+            .await
+            .unwrap_err();
+        assert!(error.contains("runtime instructions changed"));
+        assert!(client.state.lock().await.process.is_none());
     }
 }

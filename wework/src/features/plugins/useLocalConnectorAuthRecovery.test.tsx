@@ -54,6 +54,51 @@ afterEach(() => {
 })
 
 describe('authorization after plugin use', () => {
+  test('retains the exact GitLab instance for native health and the user-initiated card', async () => {
+    const gitlab = {
+      pluginKey: 'gitlab',
+      connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
+      instance: 'https://gitlab.company.example:8443',
+    }
+    const { result } = renderRecovery([
+      {
+        ...authMessage,
+        content: JSON.stringify({ code: 'connector_auth_required', authTarget: gitlab }),
+      },
+    ])
+    await waitFor(() => expect(result.current.pending?.target).toEqual(gitlab))
+    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(gitlab, { bypassCache: true })
+  })
+
+  test('does not offer a card when native health rejects the instance binding', async () => {
+    mocks.health.mockRejectedValue(new Error('Invalid native instance binding'))
+    const { result } = renderRecovery([
+      {
+        ...authMessage,
+        content: JSON.stringify({
+          code: 'connector_auth_required',
+          pluginKey: 'gitlab',
+          connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
+          instance: 'https://different.company.example',
+        }),
+      },
+    ])
+    await waitFor(() => expect(mocks.health).toHaveBeenCalledOnce())
+    await act(async () => undefined)
+    expect(result.current.pending).toBeNull()
+  })
+
+  test('does not probe a native GitLab login failure that omitted its instance', () => {
+    const { result } = renderRecovery([
+      {
+        ...authMessage,
+        content: `connector_auth_required pluginKey=gitlab connectorSlug=wework-gitlab-cli-${'a'.repeat(64)}`,
+      },
+    ])
+    expect(mocks.health).not.toHaveBeenCalled()
+    expect(result.current.pending).toBeNull()
+  })
+
   test.each(['empty', 'ordinary', 'plugin-reference'])(
     '%s chat performs no authorization reads',
     kind => {

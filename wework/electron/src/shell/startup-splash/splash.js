@@ -21,50 +21,16 @@ const FALLBACK_UPDATE = {
   },
 }
 
-const MORPH_PATHS = [
-  [
-    [2, 7, 9, 7, 11, 9, 22, 9, 22, 20, 2, 20, 2, 7],
-    [4, 12, 20, 12, 20, 12],
-    [12, 16, 12, 16],
-  ],
-  [
-    [2, 4, 22, 4, 22, 20, 2, 20, 2, 4, 2, 4, 2, 4],
-    [7, 9, 10, 12, 7, 15],
-    [13, 15, 18, 15],
-  ],
-  [
-    [13, 2, 5, 13, 11, 13, 9, 22, 20, 9, 14, 9, 13, 2],
-    [12, 12, 12, 12, 12, 12],
-    [12, 12, 12, 12],
-  ],
-  [
-    [4, 4, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20],
-    [4, 20, 20, 4, 20, 4],
-    [12, 12, 12, 12],
-  ],
-  [
-    [4, 12, 8, 16, 20, 6, 20, 6, 20, 6, 20, 6, 20, 6],
-    [12, 12, 12, 12, 12, 12],
-    [12, 12, 12, 12],
-  ],
-  [
-    [12, 3, 3, 20, 21, 20, 12, 3, 12, 3, 12, 3, 12, 3],
-    [12, 9, 12, 15, 12, 15],
-    [12, 18, 12, 18],
-  ],
-]
-
-const pathElements = [
-  document.querySelector('#morph-primary'),
-  document.querySelector('#morph-secondary'),
-  document.querySelector('#morph-tertiary'),
-]
 const splashRoot = document.querySelector('#splash-root')
 const titleElement = document.querySelector('#splash-title')
+const percentageElement = document.querySelector('#splash-percentage')
 const stepCountElement = document.querySelector('#splash-step-count')
 const elapsedElement = document.querySelector('#splash-elapsed')
 const progressElement = document.querySelector('#splash-progress')
+const progressSvg = document.querySelector('.startup-progress-svg')
+const progressTrackElement = document.querySelector('#splash-progress-track')
 const progressFillElement = document.querySelector('#splash-progress-fill')
+const progressGradient = document.querySelector('#startup-progress-gradient')
 const activityElement = document.querySelector('#splash-activity')
 const slowElement = document.querySelector('#startup-slow')
 const slowTitleElement = document.querySelector('#startup-slow-title')
@@ -92,16 +58,16 @@ const confirmationTitle = document.querySelector('#startup-confirmation-title')
 const confirmationDescription = document.querySelector('#startup-confirmation-description')
 const confirmationCancel = document.querySelector('#startup-confirmation-cancel')
 const confirmationSubmit = document.querySelector('#startup-confirmation-submit')
-const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
+const brandAnimation = window.createStartupBrandAnimation(
+  document.querySelector('#startup-brand-canvas'),
+  document.querySelector('#startup-status')
+)
 const isChinese = navigator.language.toLowerCase().startsWith('zh')
-const currentPaths = MORPH_PATHS[0].map(path => [...path])
-const velocities = MORPH_PATHS[0].map(path => path.map(() => 0))
 
 document.documentElement.lang = isChinese ? 'zh-CN' : 'en'
 
 let currentUpdate = FALLBACK_UPDATE
-let morphTargetIndex = 0
-let previousTime = performance.now()
 const splashStartedAt = Date.now()
 let slowActive = false
 let timeoutActive = false
@@ -111,23 +77,15 @@ let pendingResetMode = null
 let actionPending = false
 let confirmationTrigger = null
 let toastTimer = 0
+let progressTimer = 0
+let progressFrame = null
+let displayedProgress = 0
+let completionPromise = null
+let completionController = null
+let disposed = false
 
 function localized(copy) {
   return copy ? (isChinese ? copy.zh : copy.en) : ''
-}
-
-function pathData(points) {
-  let data = `M${points[0]} ${points[1]}`
-  for (let index = 2; index < points.length; index += 2) {
-    data += `L${points[index]} ${points[index + 1]}`
-  }
-  return data
-}
-
-function paintPaths(paths) {
-  paths.forEach((path, index) => {
-    pathElements[index]?.setAttribute('d', pathData(path))
-  })
 }
 
 function formatSeconds(milliseconds) {
@@ -194,7 +152,7 @@ function activityText() {
 }
 
 function animateSwap(element) {
-  if (prefersReducedMotion || typeof element?.animate !== 'function') return
+  if (motionPreference.matches || typeof element?.animate !== 'function') return
   element.animate(
     [
       { opacity: 0, transform: 'translateY(2px)' },
@@ -220,21 +178,14 @@ function showToast(message) {
   }, 2200)
 }
 
-async function copyStartupDiagnostics(button) {
+async function copyStartupDiagnostics() {
   const diagnostics = window.weworkStartupDiagnostics
   if (!diagnostics || typeof diagnostics.copy !== 'function') {
     showToast(isChinese ? '诊断信息暂不可用' : 'Diagnostics are unavailable')
     return
   }
-  const originalLabel = button?.textContent ?? ''
   try {
     await diagnostics.copy()
-    if (button) {
-      button.textContent = isChinese ? '已复制' : 'Copied'
-      window.setTimeout(() => {
-        button.textContent = originalLabel
-      }, 1600)
-    }
     showToast(
       isChinese
         ? '诊断信息已复制，可直接发给技术支持'
@@ -303,14 +254,39 @@ function renderActivity() {
 }
 
 function renderProgress(now) {
-  const value = computeProgress(now)
-  progressFillElement.style.width = `${value.toFixed(2)}%`
-  progressElement.setAttribute('aria-valuenow', String(Math.round(value)))
+  if (!completionPromise) displayedProgress = computeProgress(now)
+  paintProgress()
   progressElement.classList.toggle('is-running', !startupFailed)
   progressElement.classList.toggle('is-failed', startupFailed)
 }
 
+function paintProgress() {
+  const width = progressSvg.clientWidth
+  if (width > 2) {
+    progressTrackElement.setAttribute('x2', String(width - 1))
+    progressFillElement.setAttribute('x2', String(1 + ((width - 2) * displayedProgress) / 100))
+    progressGradient.setAttribute('x2', String(width - 1))
+  }
+  progressElement.setAttribute('aria-valuenow', String(Math.round(displayedProgress)))
+  setText(percentageElement, `${Math.floor(displayedProgress)}%`)
+}
+
+function animateProgress() {
+  progressFrame = null
+  if (disposed || startupFailed || completionPromise || motionPreference.matches) return
+  renderProgress(Date.now())
+  progressFrame = window.requestAnimationFrame(animateProgress)
+}
+
+function stopProgressUpdates() {
+  window.clearInterval(progressTimer)
+  progressTimer = 0
+  if (progressFrame !== null) window.cancelAnimationFrame(progressFrame)
+  progressFrame = null
+}
+
 function renderStates(now) {
+  if (completionPromise && !startupFailed) return
   const elapsed = stageElapsedMs(now)
   const startupElapsed = Math.max(0, now - splashStartedAt)
   slowActive = !startupFailed && (startupElapsed >= SLOW_AFTER_MS || elapsed >= SLOW_AFTER_MS)
@@ -320,7 +296,10 @@ function renderStates(now) {
   renderActivity()
   renderNotes()
   renderProgress(now)
-  document.body.dataset.stage = startupFailed ? '0' : currentUpdate.index > 0 ? '1' : '0'
+  brandAnimation.setPaused(startupFailed || !confirmationElement.hidden)
+  if (!startupFailed && !motionPreference.matches && progressFrame === null) {
+    progressFrame = window.requestAnimationFrame(animateProgress)
+  }
 }
 
 function tick() {
@@ -337,12 +316,120 @@ function applyUpdate(update) {
   ) {
     return
   }
+  if (update.completed === true) {
+    void completeStartup(update).catch(error => {
+      console.error('[startup] Could not complete the splash handoff', error)
+    })
+    return
+  }
+  if (completionPromise) return
   const stageChanged = currentUpdate.stage?.id !== update.stage.id
   currentUpdate = update
-  morphTargetIndex = update.index % MORPH_PATHS.length
   if (stageChanged) renderLocalizedStaticCopy()
   renderStates(Date.now())
 }
+
+function waitForCompletionStep(signal, delay) {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted()
+    const done = timestamp => {
+      signal.removeEventListener('abort', cancel)
+      resolve(timestamp)
+    }
+    const id =
+      delay === undefined ? window.requestAnimationFrame(done) : window.setTimeout(done, delay)
+    const cancel = () => {
+      if (delay === undefined) window.cancelAnimationFrame(id)
+      else window.clearTimeout(id)
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', cancel, { once: true })
+  })
+}
+
+async function completeProgress(signal, duration) {
+  const initial = displayedProgress
+  const startedAt = performance.now()
+  let fraction = duration === 0 ? 1 : 0
+  while (fraction < 1) {
+    const timestamp = await waitForCompletionStep(signal)
+    fraction = motionPreference.matches ? 1 : Math.min(1, (timestamp - startedAt) / duration)
+    const eased = fraction * fraction * (3 - 2 * fraction)
+    displayedProgress = initial + (100 - initial) * eased
+    paintProgress()
+  }
+  displayedProgress = 100
+  paintProgress()
+}
+
+function completionEvidence() {
+  const canvas = document.querySelector('#startup-brand-canvas').getBoundingClientRect()
+  const wordmark = document.querySelector('.startup-brand-name')
+  const rootStyle = window.getComputedStyle(document.documentElement)
+  return {
+    reducedMotion: motionPreference.matches,
+    progressNow: Number(progressElement.getAttribute('aria-valuenow')),
+    fillEnd: Number(progressFillElement.getAttribute('x2')),
+    trackEnd: Number(progressTrackElement.getAttribute('x2')),
+    wordmarkVisible: wordmark?.checkVisibility() ?? false,
+    appearance: {
+      theme: document.documentElement.dataset.theme,
+      colorScheme: rootStyle.colorScheme,
+      background: rootStyle.backgroundColor,
+      footerBackground: window.getComputedStyle(document.querySelector('#startup-status'))
+        .backgroundColor,
+    },
+    canvas: { x: canvas.x, y: canvas.y, width: canvas.width, height: canvas.height },
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+  }
+}
+
+async function finishStartup(signal) {
+  slowActive = false
+  timeoutActive = false
+  renderNotes()
+  confirmationElement.hidden = true
+  delete document.documentElement.dataset.confirmationVisible
+  brandAnimation.setPaused(false)
+  const duration = motionPreference.matches ? 0 : 200
+  try {
+    await Promise.all([completeProgress(signal, duration), brandAnimation.complete(duration)])
+    signal.throwIfAborted()
+    setText(titleElement, isChinese ? '准备完成' : 'Ready')
+    setText(activityElement, isChinese ? '工作台已就绪' : 'Your workbench is ready.')
+    progressElement.classList.remove('is-running')
+    await waitForCompletionStep(signal)
+    await waitForCompletionStep(signal)
+    if (!motionPreference.matches) {
+      await waitForCompletionStep(signal, 50)
+    }
+    signal.throwIfAborted()
+    return completionEvidence()
+  } catch (error) {
+    completionController.abort(error)
+    throw signal.reason
+  }
+}
+
+function completeStartup(update) {
+  if (completionPromise) return completionPromise
+  if (startupFailed || disposed) {
+    completionPromise = Promise.reject(
+      new Error('Startup splash cannot complete after failure or disposal')
+    )
+    return completionPromise
+  }
+  if (update) currentUpdate = update
+  stopProgressUpdates()
+  if (toastTimer) window.clearTimeout(toastTimer)
+  toastTimer = 0
+  toastElement.hidden = true
+  completionController = new AbortController()
+  completionPromise = finishStartup(completionController.signal)
+  return completionPromise
+}
+
+window.weworkStartupSplash = { complete: completeStartup }
 
 function setLocalizedActionCopy() {
   if (failedPluginName) {
@@ -391,6 +478,7 @@ function showConfirmation(mode) {
   confirmationTrigger = document.activeElement
   confirmationElement.hidden = false
   document.documentElement.dataset.confirmationVisible = 'true'
+  brandAnimation.setPaused(true)
   if (mode === 'recover') {
     confirmationTitle.textContent = isChinese ? '修复启动？' : 'Repair startup?'
     confirmationDescription.textContent = isChinese
@@ -417,6 +505,7 @@ function hideConfirmation() {
   pendingResetMode = null
   confirmationElement.hidden = true
   delete document.documentElement.dataset.confirmationVisible
+  brandAnimation.setPaused(startupFailed)
   if (confirmationTrigger instanceof HTMLElement) confirmationTrigger.focus()
   confirmationTrigger = null
 }
@@ -453,26 +542,6 @@ async function runRecoveryAction(action, ...args) {
   }
 }
 
-function animateMorph(time) {
-  const delta = Math.min((time - previousTime) / 1000, 0.032)
-  const targetPaths = MORPH_PATHS[morphTargetIndex]
-  previousTime = time
-
-  currentPaths.forEach((path, pathIndex) => {
-    path.forEach((value, coordinateIndex) => {
-      const displacement = targetPaths[pathIndex][coordinateIndex] - value
-      const acceleration = displacement * 190
-      const damping = Math.exp(-24 * delta)
-      velocities[pathIndex][coordinateIndex] =
-        (velocities[pathIndex][coordinateIndex] + acceleration * delta) * damping
-      path[coordinateIndex] += velocities[pathIndex][coordinateIndex] * delta
-    })
-  })
-
-  paintPaths(currentPaths)
-  requestAnimationFrame(animateMorph)
-}
-
 setLocalizedActionCopy()
 renderLocalizedStaticCopy()
 disablePluginButton.addEventListener('click', () => {
@@ -489,13 +558,13 @@ retryButton.addEventListener('click', () => {
 recoverButton.addEventListener('click', () => showConfirmation('recover'))
 resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
 copyDiagnosticsButton.addEventListener('click', () => {
-  void copyStartupDiagnostics(copyDiagnosticsButton)
+  void copyStartupDiagnostics()
 })
 openLogsButton.addEventListener('click', () => {
   void openStartupLogs()
 })
 timeoutCopyButton.addEventListener('click', () => {
-  void copyStartupDiagnostics(timeoutCopyButton)
+  void copyStartupDiagnostics()
 })
 timeoutOpenLogsButton.addEventListener('click', () => {
   void openStartupLogs()
@@ -518,6 +587,8 @@ window.addEventListener('wework-startup-error', event => {
   failedPluginName = typeof pluginName === 'string' && pluginName ? pluginName : null
   disablePluginButton.hidden = failedPluginName === null
   startupFailed = true
+  stopProgressUpdates()
+  completionController?.abort(new Error('Startup failed before the splash handoff completed'))
   setLocalizedActionCopy()
   renderLocalizedStaticCopy()
   renderStates(Date.now())
@@ -528,18 +599,18 @@ if (progressApi && typeof progressApi.onUpdate === 'function') {
   progressApi.onUpdate(update => applyUpdate(update))
 }
 
-if (prefersReducedMotion) {
-  currentPaths.forEach((path, pathIndex) => {
-    path.splice(0, path.length, ...MORPH_PATHS[morphTargetIndex][pathIndex])
-  })
-  paintPaths(currentPaths)
-} else {
-  paintPaths(currentPaths)
-  requestAnimationFrame(animateMorph)
-}
-
 renderStates(Date.now())
-window.setInterval(tick, 100)
+if (!completionPromise) progressTimer = window.setInterval(tick, 100)
+const progressObserver = new ResizeObserver(paintProgress)
+progressObserver.observe(progressSvg)
+window.addEventListener('pagehide', () => {
+  disposed = true
+  completionController?.abort(new Error('Startup splash was disposed before handoff completed'))
+  progressObserver.disconnect()
+  brandAnimation.destroy()
+  stopProgressUpdates()
+  if (toastTimer) window.clearTimeout(toastTimer)
+})
 
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {

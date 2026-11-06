@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -45,4 +45,52 @@ it('returns failure to the pane rollback path and permits retrying the same conv
     })
   })
   expect(conversation).toHaveBeenCalledTimes(2)
+})
+
+it('clears a previous read failure when the executor API is replaced', async () => {
+  const failed = {
+    readTask: vi.fn().mockRejectedValue(new Error('network changed')),
+  } as unknown as StandInExecutorApi
+  const { rerender } = render(<StandInConversation api={failed} userId={7} deviceId="device" />)
+  await screen.findByRole('alert')
+  let resolveRead!: (value: { success: boolean }) => void
+  const recovered = {
+    readTask: vi.fn(() => new Promise(resolve => (resolveRead = resolve))),
+  } as unknown as StandInExecutorApi
+  rerender(<StandInConversation api={recovered} userId={7} deviceId="device" />)
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByRole('status')).toBeInTheDocument()
+  await act(async () => resolveRead({ success: true }))
+  expect(await screen.findByTestId('conversation-pane')).toBeInTheDocument()
+  expect(recovered.readTask).toHaveBeenCalledWith('device', 'stand-in-chat-7-primary')
+})
+
+it('ignores a late read failure from the replaced executor API', async () => {
+  let rejectRead!: (error: Error) => void
+  const pending = {
+    readTask: vi.fn(() => new Promise((_resolve, reject) => (rejectRead = reject))),
+  } as unknown as StandInExecutorApi
+  const recovered = {
+    readTask: vi.fn(async () => ({ success: true })),
+  } as unknown as StandInExecutorApi
+  const { rerender } = render(<StandInConversation api={pending} userId={7} deviceId="device" />)
+  rerender(<StandInConversation api={recovered} userId={7} deviceId="device" />)
+  await screen.findByTestId('conversation-pane')
+  await act(async () => rejectRead(new Error('previous connection closed')))
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByTestId('conversation-pane')).toBeInTheDocument()
+})
+
+it('recovers an initial read failure through the existing reload action', async () => {
+  const readTask = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('network changed'))
+    .mockResolvedValueOnce({ success: true })
+  const api = { readTask } as unknown as StandInExecutorApi
+  render(<StandInConversation api={api} userId={7} deviceId="device" />)
+  await screen.findByRole('alert')
+  fireEvent.click(screen.getByTestId('stand-in-conversation-retry'))
+  await screen.findByTestId('conversation-pane')
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(readTask).toHaveBeenCalledTimes(2)
 })

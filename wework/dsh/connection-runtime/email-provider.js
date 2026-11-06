@@ -1,9 +1,30 @@
+import { randomUUID } from 'node:crypto'
 import { imapSession, parseMail, mailError } from './email-client.js'
 
 export const EMAIL_PROVIDER = '@wegent/dsh-connection-runtime/email'
 const PAGE_SIZE = 20
+const DAY_MS = 24 * 60 * 60 * 1000
+
+function readWindow({ since, limit = PAGE_SIZE }) {
+  const now = Date.now()
+  const start = since === undefined ? now - DAY_MS : Date.parse(since)
+  if (
+    (since !== undefined && typeof since !== 'string') ||
+    !Number.isFinite(start) ||
+    start < now - 7 * DAY_MS ||
+    start > now ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > PAGE_SIZE
+  )
+    throw mailError('email_read_range_invalid')
+  return { since: new Date(start), until: new Date(now), limit }
+}
 
 export function createEmailProvider(accounts, network = { imapSession, parseMail }) {
+  const readCursors = new Map()
+  const binding = source =>
+    JSON.stringify([source.providerId, source.profile, source.kind, source.id, source.enabledAfter])
   const session = async (ctx, source, action) =>
     network.imapSession(
       await accounts.get(source.profile),
@@ -41,6 +62,90 @@ export function createEmailProvider(accounts, network = { imapSession, parseMail
         partition: String(client.mailbox.uidValidity),
         sequence: client.mailbox.uidNext - 1,
       }))
+    },
+    async readSource(ctx, input) {
+      const { source } = input
+      if (source?.providerId !== EMAIL_PROVIDER || source.kind !== 'inbox' || source.id !== 'INBOX')
+        throw mailError()
+      let state
+      if (input.cursor !== undefined) {
+        state = readCursors.get(input.cursor)
+        if (
+          !state ||
+          state.binding !== binding(source) ||
+          state.expiresAt < Date.now() ||
+          (input.query?.since !== undefined &&
+            Date.parse(input.query.since) !== state.window.since.getTime()) ||
+          (input.query?.limit !== undefined && input.query.limit !== state.window.limit)
+        )
+          throw mailError('source_read_cursor_invalid')
+      }
+      const window = state?.window ?? readWindow(input.query ?? {})
+      return session(ctx, source, async client => {
+        const partition = String(client.mailbox.uidValidity)
+        if (state && state.partition !== partition) throw mailError('email_mailbox_reset')
+        const ceiling = state?.ceiling ?? client.mailbox.uidNext - 1
+        const uids =
+          ceiling < 1
+            ? []
+            : await client.search({ since: window.since, uid: '1:' + ceiling }, { uid: true })
+        const selected = [...uids]
+          .filter(uid => uid <= ceiling)
+          .sort((a, b) => b - a)
+          .slice(0, window.limit)
+        const rows = selected.length
+          ? await client.fetchAll(
+              selected,
+              {
+                uid: true,
+                internalDate: true,
+                size: true,
+                source: { start: 0, maxLength: 262144 },
+              },
+              { uid: true }
+            )
+          : []
+        const items = []
+        for (const row of rows) {
+          const at = new Date(row.internalDate)
+          if (!Number.isFinite(at.getTime())) throw mailError('email_message_invalid')
+          if (at < window.since || at > window.until) continue
+          const mail = await network.parseMail(row.source)
+          const sender = mail.from?.value?.[0]
+          items.push({
+            id: `${client.mailbox.uidValidity}:${row.uid}`,
+            at: at.toISOString(),
+            subject: mail.subject ?? '',
+            from: sender?.address ?? '',
+            senderName: sender?.name ?? '',
+            text: (mail.text ?? '').slice(0, 20000),
+            truncated: row.size > 262144 || (mail.text?.length ?? 0) > 20000,
+          })
+        }
+        items.sort((left, right) => right.at.localeCompare(left.at))
+        const hasMore = uids.some(uid => uid < selected.at(-1))
+        let nextCursor
+        if (hasMore) {
+          for (const [key, value] of readCursors)
+            if (value.expiresAt < Date.now()) readCursors.delete(key)
+          if (readCursors.size >= 1000) readCursors.delete(readCursors.keys().next().value)
+          nextCursor = randomUUID()
+          readCursors.set(nextCursor, {
+            binding: binding(source),
+            partition,
+            window,
+            ceiling: selected.at(-1) - 1,
+            expiresAt: state?.expiresAt ?? Date.now() + 30 * 60 * 1000,
+          })
+        }
+        return {
+          items: items.slice(0, window.limit),
+          range: { since: window.since.toISOString(), until: window.until.toISOString() },
+          hasMore,
+          ...(nextCursor ? { nextCursor } : {}),
+          readOnly: true,
+        }
+      })
     },
     async collect(ctx, { source, checkpoint }) {
       return session(ctx, source, async client => {

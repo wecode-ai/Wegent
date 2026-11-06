@@ -91,6 +91,7 @@ export interface RuntimePaneDebugSnapshot {
     loading: boolean
     hasMoreBefore: boolean
     loadingMoreBefore: boolean
+    beforeCursor: string | null
     turnNavigationCount: number
     loadedRanges: RuntimePaneLoadedRange[]
   }
@@ -221,6 +222,14 @@ interface MessageSummaryItem {
   hasFileChanges: boolean
   referenceCount: number
   memoryCitationCount: number
+  generatedImages?: Array<{
+    id: string
+    status: string
+    hasPayload: boolean
+    hasWorkspaceSource: boolean
+    hasInlineData: boolean
+    hasMimeType: boolean
+  }>
 }
 
 interface RuntimePaneMemoryDiagnostics {
@@ -625,6 +634,35 @@ function sanitizeRuntimeWorkspace(
 }
 
 function createMessageSummaryItem(message: WorkbenchMessage): MessageSummaryItem {
+  const generatedImages = (message.blocks ?? []).flatMap(block => {
+    if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
+    const payload =
+      block.renderPayload &&
+      typeof block.renderPayload === 'object' &&
+      !Array.isArray(block.renderPayload)
+        ? (block.renderPayload as Record<string, unknown>)
+        : null
+    const source = payload?.source
+    const workspaceSource =
+      source && typeof source === 'object' && !Array.isArray(source)
+        ? (source as Record<string, unknown>)
+        : null
+    return [
+      {
+        id: block.id,
+        status: block.status,
+        hasPayload: payload?.kind === 'image_generation',
+        hasWorkspaceSource:
+          workspaceSource?.type === 'workspace_file' &&
+          ['deviceId', 'workspacePath', 'path'].every(
+            key =>
+              typeof workspaceSource[key] === 'string' && workspaceSource[key].trim().length > 0
+          ),
+        hasInlineData: typeof payload?.imageBase64 === 'string' && payload.imageBase64.length > 0,
+        hasMimeType: typeof payload?.mimeType === 'string' && payload.mimeType.length > 0,
+      },
+    ]
+  })
   return {
     id: message.id,
     role: message.role,
@@ -638,6 +676,7 @@ function createMessageSummaryItem(message: WorkbenchMessage): MessageSummaryItem
     hasFileChanges: Boolean(message.fileChanges),
     referenceCount: message.references?.length ?? 0,
     memoryCitationCount: message.memoryCitations?.length ?? 0,
+    ...(generatedImages.length ? { generatedImages } : {}),
   }
 }
 

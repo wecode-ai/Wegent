@@ -54,7 +54,7 @@ export function parseProcessSnapshotLine(line: string): RawProcessInfo | null {
 }
 
 export function collectDescendantProcessIds(
-  processes: RawProcessInfo[],
+  processes: Pick<RawProcessInfo, 'pid' | 'ppid'>[],
   roots: number[]
 ): Set<number> {
   const childrenByParent = new Map<number, number[]>()
@@ -157,12 +157,22 @@ export async function getElectronProcessSnapshot(
   if (process.platform !== 'darwin') {
     throw new Error('Process diagnostics are currently available only on macOS')
   }
-  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,rss=,pcpu=,command='])
+  const { stdout: topology } = await execFileAsync('ps', ['-axo', 'pid=,ppid='])
+  const parents = topology.split('\n').flatMap(line => {
+    const match = line.trim().match(/^(\d+)\s+(\d+)$/)
+    return match ? [{ pid: Number(match[1]), ppid: Number(match[2]) }] : []
+  })
+  const relatedProcessIds = collectDescendantProcessIds(parents, [mainPid])
+  const { stdout } = await execFileAsync('ps', [
+    '-p',
+    [...relatedProcessIds].join(','),
+    '-o',
+    'pid=,ppid=,rss=,pcpu=,command=',
+  ])
   const allProcesses = stdout
     .split('\n')
     .map(parseProcessSnapshotLine)
     .filter((value): value is RawProcessInfo => value !== null)
-  const relatedProcessIds = collectDescendantProcessIds(allProcesses, [mainPid])
   const footprints = await readPhysicalFootprints([...relatedProcessIds])
   for (const pid of relatedProcessIds) {
     if (footprints.has(pid)) continue

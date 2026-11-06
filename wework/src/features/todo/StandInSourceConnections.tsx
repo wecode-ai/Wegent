@@ -12,7 +12,14 @@ import { StandInProcessingSettings } from './StandInProcessingSettings'
 
 type Connection = Pick<
   StandInSourceConnection,
-  'id' | 'name' | 'kind' | 'profile' | 'providerId' | 'scope'
+  | 'id'
+  | 'name'
+  | 'kind'
+  | 'profile'
+  | 'providerId'
+  | 'scope'
+  | 'collectionKey'
+  | 'configurationSummary'
 >
 
 export function StandInSourceConnections({
@@ -203,6 +210,35 @@ export function StandInSourceConnections({
       }}
     />
   )
+  const connectedScope = (
+    <div className="space-y-2">
+      {rows.map(row => (
+        <div
+          key={`${row.profile}:${row.kind}:${row.id}`}
+          className="flex flex-wrap items-center gap-2 border-b border-border/50 py-2"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm">{row.name}</p>
+            <p className="text-xs text-text-muted">
+              {provider.resourceLabels?.[row.kind] ?? row.kind}
+              {' · '}
+              {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid={`${prefix}-remove-${row.id}`}
+            aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
+            disabled={disabled}
+            onClick={() => updateRows(rows.filter(value => value !== row))}
+            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
   if (provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required')
     return (
       <section className="space-y-4" data-testid={`${prefix}-authorization`}>
@@ -227,6 +263,7 @@ export function StandInSourceConnections({
         ) : (
           <p className="text-sm text-text-muted">{t('standIn.workspace.authorize_on_device')}</p>
         )}
+        {connectedScope}
         {authorization}
       </section>
     )
@@ -238,29 +275,7 @@ export function StandInSourceConnections({
         title={provider.displayName}
         description={t('standIn.workspace.message_connection_help')}
       />
-      {rows.map(row => (
-        <div
-          key={`${row.profile}:${row.kind}:${row.id}`}
-          className="flex flex-wrap items-center gap-2 border-b border-border/50 py-2"
-        >
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm">{row.name}</p>
-            <p className="text-xs text-text-muted">
-              {provider.resourceLabels?.[row.kind] ?? row.kind}
-            </p>
-          </div>
-          <button
-            type="button"
-            data-testid={`${prefix}-remove-${row.id}`}
-            aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
-            disabled={disabled}
-            onClick={() => updateRows(rows.filter(value => value !== row))}
-            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      ))}
+      {connectedScope}
       {!showAdding && (
         <button
           type="button"
@@ -504,6 +519,7 @@ export function StandInSourceConnections({
                 key: identity(row),
                 name: row.name,
                 policy: row.policy,
+                outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
                 testId: `${prefix}-policy-${row.id}`,
                 onChange: policy =>
                   updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
@@ -513,6 +529,7 @@ export function StandInSourceConnections({
                   key: 'new',
                   name: provider.displayName,
                   policy: newPolicy,
+                  outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
                   testId: `${prefix}-new-policy`,
                   onChange: policy =>
                     setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),

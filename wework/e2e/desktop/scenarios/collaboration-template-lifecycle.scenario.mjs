@@ -15,6 +15,7 @@ import {
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
+  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import {
@@ -284,7 +285,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await click('collaboration-tab-manage')
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
       await click('collaboration-project-settings-agents')
       await addAgent(
         control,
@@ -362,7 +363,7 @@ export function createDesktopScenario({
       await click('collaboration-project-settings-groups')
       await wait('collaboration-project-groups-page', '产品全流程小组')
       await capture('04-group', '实际持久化的协作小组')
-      await click('collaboration-tab-board')
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await capture('05-board', '默认看板按六个阶段标签分列')
       active = true
       await control.command('clickWhenEnabled', selector('collaboration-issue-create'), {
