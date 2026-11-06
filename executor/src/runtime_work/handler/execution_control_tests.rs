@@ -4,6 +4,44 @@
 
 use super::*;
 
+#[tokio::test]
+async fn reconciled_native_completion_releases_its_retained_capacity_without_a_notification() {
+    let (handler, root, execution) = running_execution("reconciled-native-capacity");
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task-1".into(), RuntimeTaskKind::Personal);
+    handler.store.update_task("task-1", |link| {
+        link.execution_state.as_mut().unwrap().process_generation = Some(0);
+    });
+    assert!(handler.finish_local_task_execution("task-1", execution));
+    handler.finish_scheduled_turn("task-1").await;
+    assert_eq!(handler.get_runtime_capacity().await.unwrap()["active"], 1);
+    let expected = handler
+        .local_execution_reconciliation_guard("task-1")
+        .unwrap();
+    assert!(handler.reconcile_terminal_local_execution(
+        "task-1",
+        "thread-1",
+        "done",
+        "confirmed-provider-completion",
+        &expected,
+        "turn-1",
+    ));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while handler.get_runtime_capacity().await.unwrap()["active"] != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let operation = handler.turn_queue_operation.lock().await;
+    drop(operation);
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn running_execution(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, u64) {
     let (mut handler, root) = isolated_runtime_work_handler(label);
     handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
