@@ -1731,6 +1731,17 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      taskCommands: {
+        async get(deviceId, target) {
+          return (await standInApiForDevice(deviceId)).taskCommands.get(deviceId, target)
+        },
+        async resolve(deviceId, resolution) {
+          return (await standInApiForDevice(deviceId)).taskCommands.resolve(deviceId, resolution)
+        },
+      },
+      async gitConnection(deviceId, input) {
+        return (await standInApiForDevice(deviceId)).gitConnection(deviceId, input)
+      },
       async onboarding(userId, deviceId, language) {
         return (await standInApiForDevice(deviceId)).onboarding(userId, deviceId, language)
       },

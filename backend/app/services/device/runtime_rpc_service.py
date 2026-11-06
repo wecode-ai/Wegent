@@ -13,6 +13,7 @@ import logging
 import time
 from typing import Any, Optional
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from socketio.exceptions import BadNamespaceError, DisconnectedError
 from socketio.exceptions import TimeoutError as SocketTimeoutError
@@ -300,6 +301,49 @@ class RuntimeRpcService:
 
         sio = get_sio()
         request = {"method": method, "payload": payload}
+        if method in {
+            "runtime.tasks.create",
+            "runtime.tasks.send",
+            "runtime.tasks.rollback",
+            "runtime.tasks.interrupt_and_send",
+        }:
+            execution = payload.get("executionRequest", {})
+            if not isinstance(execution, dict):
+                raise RuntimeRpcError(
+                    "executionRequest must be an object", code="bad_request"
+                )
+            config = execution.get("model_config", {})
+            if not isinstance(config, dict):
+                raise RuntimeRpcError(
+                    "model_config must be an object", code="bad_request"
+                )
+            if config.get("wework_model_kind") == "model-interface":
+                payload = copy.deepcopy(payload)
+                task_id = payload.get("taskId") or payload.get("task_id")
+                if not task_id:
+                    address = payload.get("address", {})
+                    if not isinstance(address, dict):
+                        raise RuntimeRpcError(
+                            "address must be an object", code="bad_request"
+                        )
+                    task_id = address.get("taskId") or address.get("task_id")
+                if not task_id and method == "runtime.tasks.create":
+                    task_id = f"remote-task-{uuid4()}"
+                    payload["taskId"] = task_id
+                command_id = payload.get("commandId") or f"remote-command-{uuid4()}"
+                payload["commandId"] = command_id
+                request = {
+                    "method": method,
+                    "payload": payload,
+                    "modelBinding": {
+                        "kind": "submitted_interface",
+                        "actorUserId": user_id,
+                        "deviceId": route.runtime_device_id,
+                        "taskId": task_id,
+                        "commandId": command_id,
+                        "modelConfig": copy.deepcopy(config),
+                    },
+                }
         started_at = time.perf_counter()
         logger.info(
             "[RuntimeRpcService] Sending runtime RPC: user_id=%s "

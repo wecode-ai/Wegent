@@ -87,3 +87,11 @@ test('every group member is registered and no unknown checkpoint is silently dis
   }
   assert.deepEqual(expandDesktopCheckpoints(['unknown']), ['unknown'])
 })
+
+test('Git connection checkpoint exposes the runner verification contract', async () => {
+  assert.ok(DESKTOP_CHECKPOINTS.includes('stand-in-git'))
+  const { createDesktopScenario } = await import('./scenarios/stand-in-git.scenario.mjs')
+  const scenario = createDesktopScenario({ uiTimeoutMs: 10000, captureScreenshot: () => {} })
+  assert.equal(typeof scenario.verify, 'function')
+  assert.equal(scenario.requiresCloudEnvironment, true)
+})

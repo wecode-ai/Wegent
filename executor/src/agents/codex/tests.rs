@@ -1341,19 +1341,32 @@ fn native_mcp_approval_preserves_its_exact_tool_arguments() {
     let mut params = json!({
         "serverName": "wework_stand_in", "mode": "form",
         "message": "Allow the tool?", "requestedSchema": {"properties": {}},
-        "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_title": "Wework: Send email", "tool_params": {
+        "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_name":"send_email", "tool_title": "Wework: Send email", "tool_params": {
             "from": "owner@example.com", "to": "sender@example.com",
             "subject": "Re: Review", "text": "Complete reply\nFinal paragraph"
         }}
     });
     let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
     assert_eq!(payload["approvalKind"], "mcp_tool_call");
+    assert_eq!(payload["toolName"], "send_email");
     assert_eq!(payload["toolTitle"], "Wework: Send email");
     assert_eq!(payload["toolArguments"], params["_meta"]["tool_params"]);
+    assert_eq!(payload["questions"][0]["id"], "__mcp_approval");
+    params["_meta"]["tool_name"] = json!("reply");
+    params["_meta"]["tool_title"] = json!("Wework: Reply to source");
+    params["_meta"]["tool_params"] = json!({"messageId":"source-message", "text":"Exact reply"});
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert_eq!(payload["serverName"], "wework_stand_in");
+    assert_eq!(payload["approvalKind"], "mcp_tool_call");
+    assert_eq!(payload["toolName"], "reply");
+    assert_eq!(payload["toolTitle"], "Wework: Reply to source");
+    assert_eq!(payload["toolArguments"], params["_meta"]["tool_params"]);
+    assert_eq!(payload["interactionKind"], "mcp_form");
     assert_eq!(payload["questions"][0]["id"], "__mcp_approval");
     params["_meta"]["codex_approval_kind"] = json!("other");
     let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
     assert!(payload.get("toolArguments").is_none());
+    assert!(payload.get("toolName").is_none());
     assert!(payload.get("toolTitle").is_none());
     assert!(payload.get("approvalKind").is_none());
 }
@@ -4523,7 +4536,6 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
 #[test]
 fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
     let mut request = ExecutionRequest::default();
-    let loaded = Map::new();
     let plan = codex_thread_plan(
         None,
         None,
@@ -4532,6 +4544,12 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
+    let loaded = match &plan.start {
+        CodexThreadStart::Request { params, .. } => {
+            mcp_reload::thread_context_configuration(params)
+        }
+        CodexThreadStart::Direct(_) => panic!("expected a resume configuration"),
+    };
     assert_eq!(
         config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
         None
@@ -6519,6 +6537,79 @@ fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
 }
 
 #[test]
+fn owner_identity_uses_native_guardian_without_bypassing_tool_review() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":"stand-in-chat-7-primary",
+        "origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity",
+            "userId":7,"standInId":"@primary","deviceId":"device","askBeforeAct":true}
+    }))
+    .unwrap();
+    let launch = build_codex_launch_config(&request).unwrap();
+    assert_eq!(launch.thread_config["approvals_reviewer"], "auto_review");
+    assert!(launch.thread_config["auto_review.extra_policy"]
+        .as_str()
+        .unwrap()
+        .contains(external_work::SOURCE_CONTENT_INSTRUCTIONS));
+    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    assert!(launch.config_overrides.contains(
+        &"mcp_servers.wework_stand_in.tools.schedule_task.approval_mode=\"writes\"".into()
+    ));
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+        turn_start_params("thread", &request, &launch, Vec::new()),
+    ] {
+        assert_eq!(params["approvalsReviewer"], "auto_review");
+        assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
+    }
+    for params in [
+        json!({"mode":"url","url":"https://example.test/login"}),
+        json!({"mode":"form","requestedSchema":{"properties":{"decision":{"type":"string"}}}}),
+        json!({"mode":"form","requestedSchema":{"properties":{}},
+            "_meta":{"codex_approval_kind":"mcp_tool_call","tool_name":"schedule_task"}}),
+    ] {
+        let mut notification =
+            json!({"id":1,"method":"mcpServer/elicitation/request","params":params});
+        assert!(prepare_codex_runtime_notification(
+            &request,
+            &mut notification
+        ));
+    }
+}
+
+#[test]
+fn identity_guardian_keeps_external_source_and_delegation_review_policies() {
+    for (kind, ask, expected) in [
+        ("connection_work", true, "user"),
+        ("dingtalk_work", true, "user"),
+        ("stand_in_task", true, "user"),
+        ("connection_work", false, "auto_review"),
+    ] {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask}
+        }))
+        .unwrap();
+        assert_eq!(stand_in_approval::native_reviewer(&request), Some(expected));
+    }
+    let delegated: ExecutionRequest = serde_json::from_value(json!({
+        "origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity","askBeforeAct":true},
+        "standInDelegation":{"askBeforeAct":true}
+    }))
+    .unwrap();
+    assert_eq!(stand_in_approval::native_reviewer(&delegated), Some("user"));
+    assert_eq!(
+        stand_in_approval::native_reviewer(&ExecutionRequest::default()),
+        None
+    );
+}
+
+#[test]
 fn stand_in_mcp_answers_decline_malformed_entries_without_panicking() {
     for malformed in [
         Value::Null,
@@ -6616,4 +6707,93 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
         "decline"
     );
     client.restart().await;
+}
+
+#[tokio::test]
+async fn stand_in_worker_cold_and_loaded_resume_register_only_general_read_tools() {
+    let _environment = environment::LaunchEnvironment::new();
+    ensure_codex_mcp_endpoints().await.unwrap();
+    let request:ExecutionRequest=serde_json::from_value(json!({"task_id":"worker","origin":{"type":"stand_in_task","userId":7,"deviceId":"mac","standInId":"@primary","sourceTaskId":"primary"}})).unwrap();
+    let mut previous = None;
+    for _ in 0..2 {
+        let mut launch = CodexLaunchConfig::default();
+        mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
+        let mut params = Map::from_iter([("threadId".into(), json!("worker-thread"))]);
+        append_thread_launch_params(&mut params, &launch);
+        let configuration =
+            mcp_reload::thread_context_configuration(&Value::Object(params.clone()));
+        let plan = CodexThreadPlan {
+            start: CodexThreadStart::Request {
+                operation: "thread/resume",
+                params: Value::Object(params),
+            },
+            resume_requested: true,
+            fork_requested: false,
+        };
+        assert_eq!(
+            config_reload_resume_thread_id(&plan, &request, previous.as_ref()),
+            Some("worker-thread")
+        );
+        let field = |suffix: &str| {
+            configuration
+                .iter()
+                .find(|(key, _)| key.contains("wework_stand_in") && key.ends_with(suffix))
+                .unwrap()
+                .1
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let url = field(".url");
+        let context = configuration
+            .iter()
+            .find(|(key, _)| {
+                key.contains("wework_stand_in") && key.contains("X-Wework-Mcp-Context")
+            })
+            .unwrap()
+            .1
+            .as_str()
+            .unwrap();
+        let client = reqwest::Client::new();
+        let initialized=client.post(&url).header("Authorization",&launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"]).header("X-Wework-Mcp-Context",context)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})).send().await.unwrap();
+        assert!(initialized.status().is_success());
+        let session = initialized.headers()["Mcp-Session-Id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let catalog = client
+            .post(&url)
+            .header(
+                "Authorization",
+                &launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
+            )
+            .header("Mcp-Session-Id", &session)
+            .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+        let names: Vec<_> = catalog["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "list_tasks",
+                "read_task",
+                "list_connection_providers",
+                "read_source"
+            ]
+        );
+        let denied=client.post(&url).header("Authorization",&launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"]).header("Mcp-Session-Id",&session)
+            .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_task","arguments":{}}})).send().await.unwrap().json::<Value>().await.unwrap();
+        assert_eq!(denied["result"]["isError"], true);
+        previous = Some(configuration);
+    }
 }

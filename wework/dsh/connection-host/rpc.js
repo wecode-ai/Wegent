@@ -1,4 +1,13 @@
 import { timingSafeEqual } from 'node:crypto'
+const PERMANENT_ERRORS = new Set([
+  'connector_auth_required',
+  'connection_response_invalid',
+  'invalid_connection',
+  'forbidden',
+  'connection_tool_denied',
+  'connection_cli_request_failed',
+  'connection_cli_response_invalid',
+])
 export async function handleConnectionRpc(req, res, token, request) {
   const authorization = req.headers.authorization
   const expected = Buffer.from(`Bearer ${token}`)
@@ -6,6 +15,7 @@ export async function handleConnectionRpc(req, res, token, request) {
   const loopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket?.remoteAddress)
   let status = 200
   let response
+  let collection = false
   try {
     if (!loopback || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
       status = 403
@@ -24,12 +34,23 @@ export async function handleConnectionRpc(req, res, token, request) {
       chunks.push(Buffer.from(chunk))
     }
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    collection = body.method === 'collect'
     response = { ok: true, result: await request(body) }
   } catch (error) {
     if (status === 200) status = 400
     response = {
       ok: false,
-      error: { code: error.code ?? 'connection_failed', message: error.message },
+      error: {
+        code: error.code ?? 'connection_failed',
+        message: error.message,
+        ...(collection &&
+        !PERMANENT_ERRORS.has(error.code) &&
+        Number.isSafeInteger(error.retryAfterMs) &&
+        error.retryAfterMs >= 1 &&
+        error.retryAfterMs <= 3600000
+          ? { retryAfterMs: error.retryAfterMs }
+          : {}),
+      },
     }
   }
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })

@@ -230,8 +230,8 @@ fn creation_persists_the_resolved_origin_for_follow_up_ownership() {
                     RuntimeTaskKind::Agent,
                 ),
                 (
-                    "stand-in",
-                    json!({"type":"stand_in_identity","userId":9001}),
+                    "stand-in-chat-9001-primary",
+                    json!({"type":"stand_in_identity","userId":9001,"deviceId":"origin-concurrency","standInId":null}),
                     None,
                     RuntimeTaskKind::StandIn,
                 ),
@@ -252,6 +252,7 @@ fn creation_persists_the_resolved_origin_for_follow_up_ownership() {
                         "task_id": id,
                         "subtask_id": format!("{id}-initial"),
                         "prompt": "queued origin fixture",
+                        "user_id": 9001,
                         "origin": nested_origin,
                     },
                 });

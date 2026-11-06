@@ -180,6 +180,7 @@ impl RuntimeWorkRpcHandler {
                     Utc::now().timestamp_millis()
                 );
                 set_payload_string(&mut payload, "taskId", &task_id);
+                set_payload_string(&mut payload, "title", &automation.name);
                 task_id
             }
             ConversationMode::ContinueThread => string_field(&payload, "taskId")

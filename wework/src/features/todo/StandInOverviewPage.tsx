@@ -2,7 +2,17 @@ import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/li
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
-import { Brain, MessageSquare, Plus, Settings } from 'lucide-react'
+import {
+  Brain,
+  Check,
+  CircleAlert,
+  FileCheck,
+  HelpCircle,
+  MessageSquare,
+  Plus,
+  Settings,
+  UserRound,
+} from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { StandInIcon } from '@wegent/collaboration'
 import {
@@ -26,9 +36,15 @@ import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInOnboarding } from './StandInOnboarding'
 import { StandInProposalCard } from './StandInProposalCard'
+import { StandInReviewDialog } from './StandInReviewDialog'
+import { useStandInProcessingStatus } from './useStandInProcessingStatus'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
+
+function roleTabClass(selected: boolean) {
+  return `inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
+}
 
 export function StandInOverviewPage({
   onOpenTask,
@@ -65,6 +81,10 @@ export function StandInOverviewPage({
           : null
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
+  const [review, setReview] = useState<'proposal' | 'status' | null>(null)
+  const [guideOpen, setGuideOpen] = useState(false)
+  const [exampleDraft, setExampleDraft] = useState<{ id: number; text: string }>()
+  const exampleSequence = useRef(0)
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
@@ -120,6 +140,12 @@ export function StandInOverviewPage({
   const pressedInPanel = useRef(false)
   const deviceId = saved?.executionDeviceId ?? props.initialDeviceId
   const api = props.services.standInApi
+  const processing = useStandInProcessingStatus(
+    api,
+    props.userId,
+    deviceId ?? '',
+    active && !!deviceId
+  )
   const inbox = useStandInInbox(api, props.userId, deviceId)
   useEffect(
     () =>
@@ -194,12 +220,24 @@ export function StandInOverviewPage({
     leavePanel(() => {
       setCalendarRequest(0)
       setRoleId(id)
+      setReview(null)
       setChatting(false)
       setProfile(null)
     })
+  const overviewError = (profile === 'primary' ? null : state.error) || proposalError || inbox.error
+  const currentProposal = proposal && (proposal.roleId ?? undefined) === roleId ? proposal : null
+  const roleAttentionCount = needsAttention.filter(
+    item => !roleId || standInWorkRole(item) === roleId
+  ).length
+  const processingIssue = !!(
+    processing.error ||
+    processing.status?.error ||
+    processing.status?.awaitingUser
+  )
+  const issueCount = inbox.sourceErrors.length + (overviewError ? 1 : 0) + (processingIssue ? 1 : 0)
   const content = (
     <section
-      className="relative flex h-full min-h-0 min-w-0 text-base text-text-primary"
+      className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
       data-testid="stand-in-overview"
     >
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -215,13 +253,11 @@ export function StandInOverviewPage({
                 data-testid="stand-in-primary-open"
                 aria-current={!roleId ? 'page' : undefined}
                 onClick={() => chooseRole()}
-                className={`inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm ${!roleId ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+                className={roleTabClass(!roleId)}
               >
-                <StandInIcon
-                  enabled={state.draft?.primary?.enabled !== false}
-                  className="h-4 w-4"
-                />
+                <UserRound aria-hidden="true" className="h-4 w-4" />
                 {t('standIn.title')}
+                {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
               </button>
               {roles.map((value, index) => {
                 const projects = props.projects.filter(project =>
@@ -245,12 +281,16 @@ export function StandInOverviewPage({
                       t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
                     }
                     onClick={() => chooseRole(value.id)}
-                    className={`inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm ${roleId === value.id ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+                    className={roleTabClass(roleId === value.id)}
                   >
-                    <StandInIcon enabled={value.enabled} className="h-4 w-4" />
+                    <StandInIcon
+                      enabled={value.enabled}
+                      className={`h-4 w-4 ${roleId === value.id ? '[&_g]:text-background' : ''}`}
+                    />
                     <span className="max-w-40 truncate">
                       {standInRoleName(value, index, t('standIn.personal.default_role'))}
                     </span>
+                    {roleId === value.id && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
                     <span className="sr-only">{scope}</span>
                     <span className="sr-only">
                       {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
@@ -273,6 +313,28 @@ export function StandInOverviewPage({
               </button>
             </div>
           </nav>
+          {currentProposal && state.saved && (
+            <button
+              type="button"
+              data-testid="stand-in-proposal-open"
+              onClick={() => setReview('proposal')}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted md:min-h-8"
+            >
+              <FileCheck aria-hidden="true" className="h-4 w-4" />
+              {t('standIn.workspace.pending_configuration')}
+            </button>
+          )}
+          {issueCount > 0 && (
+            <button
+              type="button"
+              data-testid="stand-in-status-open"
+              onClick={() => setReview('status')}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-muted md:min-h-8"
+            >
+              <CircleAlert aria-hidden="true" className="h-4 w-4" />
+              {t('standIn.workspace.status_issues', { count: issueCount })}
+            </button>
+          )}
           {
             <button
               type="button"
@@ -284,11 +346,17 @@ export function StandInOverviewPage({
               {t(
                 conversation
                   ? 'standIn.workspace.work_list'
-                  : proposal && (proposal.roleId ?? undefined) === roleId
-                    ? 'standIn.workspace.review_pending_changes'
-                    : role
-                      ? 'standIn.workspace.role_chat'
-                      : 'standIn.title'
+                  : role
+                    ? 'standIn.workspace.role_chat'
+                    : 'standIn.title'
+              )}
+              {conversation && roleAttentionCount > 0 && (
+                <span
+                  data-testid="stand-in-work-attention-count"
+                  className="rounded bg-muted px-1.5 text-xs tabular-nums"
+                >
+                  {roleAttentionCount}
+                </span>
               )}
             </button>
           }
@@ -316,6 +384,16 @@ export function StandInOverviewPage({
             <Settings className="h-4 w-4" />
             {t(role ? 'standIn.workspace.role_profile' : 'standIn.workspace.primary_profile')}
           </button>
+          <button
+            type="button"
+            data-testid="stand-in-guide-open"
+            aria-label={t('standIn.onboarding.guide')}
+            disabled={!api || !deviceId || state.loading}
+            onClick={() => setGuideOpen(true)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-40"
+          >
+            <HelpCircle aria-hidden="true" className="h-4 w-4" />
+          </button>
         </header>
         {state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-muted">
@@ -335,8 +413,9 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
-            {deviceId && !profile && (
+            {deviceId && !profile && processing.status?.error?.code === 'model_unavailable' && (
               <StandInProcessingNotice
+                snapshot={processing}
                 key={`${props.userId}:${deviceId}`}
                 api={api}
                 userId={props.userId}
@@ -351,77 +430,12 @@ export function StandInOverviewPage({
                 }
               />
             )}
-            {(state.error || proposalError || inbox.error) && (
-              <div role="alert" className="flex items-center gap-3 px-5 py-2 text-sm text-error">
-                <span className="flex-1">{state.error || proposalError || inbox.error}</span>
-                {state.error && (
-                  <button
-                    type="button"
-                    data-testid="stand-in-overview-inline-retry"
-                    onClick={reload}
-                    className="min-h-11 min-w-11 underline"
-                  >
-                    {t('standIn.reload')}
-                  </button>
-                )}
-              </div>
-            )}
-            {inbox.sourceErrors.map(value => (
-              <div
-                key={`${value.source.profile}:${value.source.kind}:${value.source.id}`}
-                role="alert"
-                className="flex items-center gap-3 px-5 py-2 text-sm text-error"
-              >
-                <span className="flex-1">
-                  {value.source.name} · {getStandInErrorMessage(value.error)}
-                </span>
-                <button
-                  type="button"
-                  data-testid={`stand-in-source-retry-${value.source.id}`}
-                  className="min-h-9 underline"
-                  onClick={async () => {
-                    try {
-                      await api?.retrySource(props.userId, deviceId!, value.source)
-                      inbox.refresh()
-                    } catch (cause) {
-                      setProposalError(getStandInErrorMessage(cause))
-                    }
-                  }}
-                >
-                  {t('standIn.reload')}
-                </button>
-              </div>
-            ))}
-            {!roleId && conversation && !!needsAttention.length && (
-              <div className="space-y-2 px-5 pt-3" data-testid="stand-in-important-work">
-                {needsAttention.slice(0, 3).map(item => {
-                  const sourceName = inbox.items.find(work => work.taskId === item.task.taskId)
-                    ?.source.name
-                  return (
-                    <button
-                      type="button"
-                      key={item.key}
-                      data-testid={`stand-in-attention-${item.task.taskId}`}
-                      onClick={() => {
-                        if (onOpenTask) void onOpenTask(item.address)
-                      }}
-                      className="flex min-h-14 w-full items-center gap-3 rounded-md border border-border px-3 py-2 text-left text-sm hover:bg-muted"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{item.task.title}</span>
-                        <span className="mt-1 block truncate text-text-muted">
-                          {sourceName && `${sourceName} · `}
-                          {t(`standIn.personal.activity_${standInState(item).status}`)}
-                        </span>
-                      </span>
-                      <span className="shrink-0">{t('standIn.workspace.review_work')}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
             {conversation && api && deviceId ? (
               <StandInConversation
+                draftRequest={!roleId ? exampleDraft : undefined}
+                onDraftRequestConsumed={id =>
+                  setExampleDraft(current => (current?.id === id ? undefined : current))
+                }
                 active={active && conversation}
                 hasPendingWork={!roleId && needsAttention.length > 0}
                 key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
@@ -429,29 +443,6 @@ export function StandInOverviewPage({
                 userId={props.userId}
                 deviceId={deviceId}
                 roleId={roleId}
-                pendingConfiguration={
-                  proposal && (proposal.roleId ?? undefined) === roleId && state.saved ? (
-                    <StandInProposalCard
-                      proposal={proposal}
-                      projects={props.projects}
-                      current={state.saved}
-                      busy={resolving}
-                      onResolve={async accept => {
-                        if (!api || !deviceId) return
-                        setResolving(true)
-                        try {
-                          await api.resolveProposal(props.userId, deviceId, proposal.id, accept)
-                          setProposal(null)
-                          reload()
-                        } catch (cause) {
-                          setProposalError(getStandInErrorMessage(cause))
-                        } finally {
-                          setResolving(false)
-                        }
-                      }}
-                    />
-                  ) : null
-                }
                 onOpenTask={onOpenTask}
               />
             ) : (
@@ -473,6 +464,117 @@ export function StandInOverviewPage({
             )}
           </>
         )}
+        <StandInReviewDialog
+          open={active && review === 'proposal' && !!currentProposal && !!state.saved}
+          title={t('standIn.workspace.pending_configuration')}
+          testId="stand-in-proposal-dialog"
+          busy={resolving}
+          onClose={() => setReview(null)}
+        >
+          {currentProposal && state.saved && (
+            <StandInProposalCard
+              proposal={currentProposal}
+              projects={props.projects}
+              current={state.saved}
+              busy={resolving}
+              onResolve={async accept => {
+                if (!api || !deviceId) return
+                setResolving(true)
+                try {
+                  await api.resolveProposal(props.userId, deviceId, currentProposal.id, accept)
+                  setProposal(null)
+                  setReview(null)
+                  reload()
+                } catch (cause) {
+                  setProposalError(getStandInErrorMessage(cause))
+                } finally {
+                  setResolving(false)
+                }
+              }}
+            />
+          )}
+          {proposalError && (
+            <p role="alert" className="mt-3 text-sm text-error">
+              {proposalError}
+            </p>
+          )}
+        </StandInReviewDialog>
+        <StandInReviewDialog
+          open={active && review === 'status'}
+          title={t('standIn.workspace.status_details')}
+          testId="stand-in-status-dialog"
+          onClose={() => setReview(null)}
+        >
+          {deviceId && processingIssue && (
+            <StandInProcessingNotice
+              snapshot={processing}
+              api={api}
+              userId={props.userId}
+              deviceId={deviceId}
+              onOpen={() => {
+                setReview(null)
+                setProfile('primary')
+              }}
+              onOpenTask={
+                onOpenTask
+                  ? taskId => {
+                      setReview(null)
+                      void onOpenTask({ taskId, deviceId, runtime: 'codex' })
+                    }
+                  : undefined
+              }
+            />
+          )}
+          {overviewError && (
+            <div role="alert" className="mb-4 flex items-center gap-3 text-sm">
+              <span className="min-w-0 flex-1">{overviewError}</span>
+              <button
+                type="button"
+                data-testid="stand-in-overview-inline-retry"
+                onClick={() => {
+                  reload()
+                  inbox.refresh()
+                }}
+                className="min-h-11 shrink-0 rounded-md px-3 hover:bg-muted md:min-h-8"
+              >
+                {t('standIn.reload')}
+              </button>
+            </div>
+          )}
+          <div className="divide-y divide-border">
+            {inbox.sourceErrors.map(value => (
+              <div
+                key={`${value.source.providerId}:${value.source.profile}:${value.source.kind}:${value.source.id}`}
+                className="flex items-start gap-3 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{value.source.name}</p>
+                  <p role="alert" className="mt-1 text-sm text-text-secondary">
+                    {getStandInErrorMessage(value.error)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-testid={`stand-in-source-retry-${value.source.id}`}
+                  className="min-h-11 shrink-0 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
+                  onClick={async () => {
+                    try {
+                      await api?.retrySource(props.userId, deviceId!, value.source)
+                      inbox.refresh()
+                    } catch (cause) {
+                      setProposalError(getStandInErrorMessage(cause))
+                    }
+                  }}
+                >
+                  {t('standIn.reload')}
+                </button>
+              </div>
+            ))}
+          </div>
+          {!issueCount && (
+            <p className="text-sm text-text-secondary">{t('standIn.workspace.status_clear')}</p>
+          )}
+        </StandInReviewDialog>
         {profile &&
           (profile !== 'primary' || state.draft) &&
           createPortal(
@@ -580,6 +682,17 @@ export function StandInOverviewPage({
       userId={props.userId}
       deviceId={deviceId ?? ''}
       active={active}
+      guideOpen={guideOpen}
+      onGuideClose={() => setGuideOpen(false)}
+      onExampleSelect={text =>
+        leavePanel(() => {
+          setRoleId(undefined)
+          setChatting(false)
+          setProfile(null)
+          setGuideOpen(false)
+          setExampleDraft({ id: ++exampleSequence.current, text })
+        })
+      }
       bypass={Boolean(props.initialProfileId || profile || chatting || (!deviceId && state.error))}
       onClose={props.onCancel}
     >

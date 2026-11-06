@@ -49,7 +49,11 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
       while (index < devices.length) {
         const deviceId = devices[index++]
         try {
-          const work = await api.listRuntimeWork({ pendingOnly: true, deviceId })
+          const work = await api.listRuntimeWork({
+            pendingOnly: true,
+            preferCached: true,
+            deviceId,
+          })
           const found = collectRuntimeTaskReminderItems(work)
           items.push(...found)
           if (deviceId) refreshedDevices.add(deviceId)
