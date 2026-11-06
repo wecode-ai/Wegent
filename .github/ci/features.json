@@ -347,6 +347,7 @@
         "core:change-request-status",
         "core:claude-runtime",
         "core:cloud-space-mention",
+        "core:codex-cloud-config-recovery",
         "core:codex-invalid-launch-cwd",
         "core:codex-notification-isolation",
         "core:context-compaction",

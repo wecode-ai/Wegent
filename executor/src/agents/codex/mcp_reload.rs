@@ -79,8 +79,19 @@ impl CodexAppServerClient {
                     .get(thread_id)
                     .cloned();
                 if config_reload_resume_thread_id(plan, request, loaded.as_ref()).is_some() {
-                    self.release_thread_subscription_under_admission(thread_id, true)
-                        .await?;
+                    if let Err(error) = self
+                        .release_thread_subscription_under_admission(thread_id, true)
+                        .await
+                    {
+                        if !super::is_codex_cloud_config_error(&error) {
+                            return Err(error);
+                        }
+                        // Resume owns recovery when cloud configuration prevented unloading.
+                        log_executor_event(
+                            "codex thread unsubscribe skipped after cloud config failure",
+                            &[("thread_id", thread_id.to_owned()), ("error", error)],
+                        );
+                    }
                 }
                 self.mark_thread_active_under_admission(thread_id).await;
                 return Ok(Some(guard));
