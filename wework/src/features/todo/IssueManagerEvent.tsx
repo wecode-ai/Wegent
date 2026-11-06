@@ -47,12 +47,7 @@ export function IssueManagerEvent({
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2 text-sm">
           <div className="min-w-0 flex-1">
-            <span className="font-medium">{message.sender.name}</span>{' '}
-            <span className="text-xs text-text-muted">
-              {t('activity.task_activity_manager_role')}
-            </span>
-            {' · '}
-            {presentation.label}
+            <span className="font-medium">{message.sender.name}</span> {presentation.label}
           </div>
           {onOpenExecution || onCancel ? (
             <div className="flex shrink-0 items-center gap-3">

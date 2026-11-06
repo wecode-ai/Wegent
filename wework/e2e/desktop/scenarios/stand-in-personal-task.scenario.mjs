@@ -89,9 +89,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     return mcpToolRequestEvents(body, {
       toolName: step.name,
       argumentsValue: step.args,
-      directToolName: (body.tools ?? [])
-        .map(tool => tool.name)
-        .find(name => name?.endsWith(`__${step.name}`)),
+      directToolName: `mcp__wework_space__${step.name}`,
       searchCallId: `${callId()}-search`,
       toolCallId: callId(),
     }).events

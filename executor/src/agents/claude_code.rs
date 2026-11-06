@@ -477,12 +477,15 @@ fn execution_system_prompt(request: &ExecutionRequest) -> Option<String> {
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
         return base_prompt.map(ToOwned::to_owned);
     }
+    let control_instructions = crate::workbench_control::ControlContext::from_request(request)
+        .map(|_| crate::workbench_control::INSTRUCTIONS);
     Some(
         [
             base_prompt,
             crate::python_runtime::managed_python_bridge_configured()
                 .then_some(crate::plugin_python::INSTRUCTIONS),
             Some(crate::artifact_cli::AGENT_INSTRUCTIONS),
+            control_instructions,
         ]
         .into_iter()
         .flatten()
@@ -1274,6 +1277,36 @@ mod tests {
 
         assert_eq!(prompt, "Generate text only");
         assert!(!prompt.contains("artifact declare --path"));
+    }
+
+    #[test]
+    fn execution_prompt_preserves_artifact_and_personal_control_instructions() {
+        let mut request = ExecutionRequest {
+            system_prompt: "Follow the project rules".to_owned(),
+            extra: serde_json::Map::from_iter([
+                ("runtimeDeviceId".into(), json!("prompt-device")),
+                ("runtimeLocalTaskId".into(), json!("prompt-task")),
+            ]),
+            ..Default::default()
+        };
+        let prompt = execution_system_prompt(&request).unwrap();
+        assert!(prompt.starts_with("Follow the project rules"));
+        assert!(prompt.contains(crate::artifact_cli::AGENT_INSTRUCTIONS));
+        assert!(prompt.contains(crate::workbench_control::INSTRUCTIONS));
+
+        request
+            .extra
+            .insert("origin".into(), json!({"dispatchRole":"executor"}));
+        let prompt = execution_system_prompt(&request).unwrap();
+        assert!(prompt.contains(crate::artifact_cli::AGENT_INSTRUCTIONS));
+        assert!(!prompt.contains(crate::workbench_control::INSTRUCTIONS));
+
+        request.extra.remove("origin");
+        request.extra.insert("enable_tools".into(), json!(false));
+        assert_eq!(
+            execution_system_prompt(&request).unwrap(),
+            "Follow the project rules"
+        );
     }
 
     #[test]

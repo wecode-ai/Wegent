@@ -406,6 +406,11 @@ path = "/api/tasks/:task_id/skills"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id"
+# The archived listing remains Python-owned; the detail template must not
+# interpret its literal path segment as a numeric task ID.
+[[exclude]]
+methods = ["GET"]
+path = "/api/tasks/archived"
 # `/api/tasks/bulk` is a literal sibling of `/api/tasks/:task_id`; the static
 # route wins dispatch, but the rule keeps the cutover inventory explicit.
 #[[routes]]

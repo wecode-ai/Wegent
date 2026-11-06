@@ -12,6 +12,7 @@ import {
   selectCollaborationProjectView,
   waitForLocalProjectNavigation,
 } from './collaboration-project-navigation.mjs'
+import { waitForClosedStartupSplash } from './native-window-state.mjs'
 
 import {
   ensureExperimentalFeaturesDisabled,
@@ -847,6 +848,8 @@ async function verifyWorkspaceDocumentTabs(control) {
 }
 
 async function reloadMainWindow(control, errorMessage) {
+  // Reloading during the native handoff invalidates its pending compositor capture.
+  await waitForClosedStartupSplash(control)
   const readyCountBeforeReload = control.readyCount
   await control.command('reloadMainWindow', 'body')
   await withTimeout(

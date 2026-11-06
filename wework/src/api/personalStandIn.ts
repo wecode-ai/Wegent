@@ -52,6 +52,7 @@ export interface StandInIdentity extends Partial<
 export interface StandInRole extends WorkspaceStandInSettings {
   id: string
   name: string
+  migrationSource?: string
   agentResourceId?: number | null
   agentProject?: StandInProjectRef
   calendar?: { policy: StandInHandlingPolicy }

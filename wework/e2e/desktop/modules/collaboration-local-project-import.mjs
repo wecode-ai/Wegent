@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { runChecked } from './shared.mjs'
-import { createLocalCollaborationProject, inCollaborationSidebar } from './workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  inCollaborationSidebar,
+  reloadMainWindow,
+} from './workspace-flows.mjs'
 
 async function waitForLocalProject(control, projectId, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -73,9 +77,7 @@ export async function verifyCollaborationLocalProjectImport(
   })
   const row = inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${projectId}"]`)
   for (let pass = 0; pass < 2; pass += 1) {
-    const readyCount = control.readyCount
-    await control.command('reloadApp', 'body')
-    await control.awaitReadyAfter(readyCount)
+    await reloadMainWindow(control, 'The imported local project renderer did not reconnect')
     await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
       timeoutMs: workbenchReadyTimeoutMs,
     })

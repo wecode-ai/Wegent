@@ -447,14 +447,17 @@ mod tests {
         (root, handler, identity)
     }
 
-    async fn read(
-        handler: &RuntimeWorkRpcHandler,
-        identity: &StandInMcpIdentity,
+    fn read<'a>(
+        handler: &'a RuntimeWorkRpcHandler,
+        identity: &'a StandInMcpIdentity,
         args: Value,
-    ) -> Result<Value, AppIpcError> {
-        handler
-            .read_stand_in_conversations(identity, "read_task", &args)
-            .await
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        // Repeated reads must not inline every native transcript future into one test frame.
+        super::super::dispatch::boxed_rpc(move || async move {
+            handler
+                .read_stand_in_conversations(identity, "read_task", &args)
+                .await
+        })
     }
 
     #[tokio::test]

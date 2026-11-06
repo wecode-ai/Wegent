@@ -12,12 +12,17 @@ import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
+import {
+  assertOfflinePluginCodexStayedStopped,
+  readCodexStartCount,
+  stopCodexForOfflinePluginProbe,
+  waitForOfflinePluginSetupSockets,
+} from './plugin-offline-probe.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SEND_BUTTON_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
-  BlockingNetworkProxy,
   COMPOSER_READY_STABILITY_MS,
   CONNECTOR_AUTH_MARKER_NAME,
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
@@ -53,6 +58,7 @@ import {
   mkdir,
   pathExists,
   readFile,
+  resultDir,
   rm,
   selectE2EModel,
   writeFile,
@@ -1028,6 +1034,7 @@ async function waitForMarketplaceInstallStateAfterUninstall(control, pluginId) {
 }
 
 async function verifyMarketplacePluginLifecycle({
+  blockingNetworkProxy,
   codexHome,
   control,
   executorHome,
@@ -1098,14 +1105,16 @@ async function verifyMarketplacePluginLifecycle({
   await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
   await control.command('click', '[data-testid="plugin-import-close"]')
 
-  const blockingNetworkProxy = new BlockingNetworkProxy()
-  await blockingNetworkProxy.start()
   try {
     const setupStartedAt = Date.now()
+    blockingNetworkProxy.release()
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-    // Updating the proxy awaits the old Codex process exit. Keep these disk-only
-    // operations independent of a new app-server and its background catalog sync.
     const proxyConfiguredAt = Date.now()
+    // Local-first mutations need no app-server. Stop its startup work before measuring egress.
+    const codexStopped = await stopCodexForOfflinePluginProbe(control)
+    const setupSocketsClosed = await waitForOfflinePluginSetupSockets(blockingNetworkProxy)
+    const executorLogPath = join(resultDir, 'executor.log')
+    const codexStartsBefore = await readCodexStartCount(executorLogPath)
     blockingNetworkProxy.block()
     const blockedRequestCount = blockingNetworkProxy.requests.length
     const blockedConnectionCount = blockingNetworkProxy.connections.length
@@ -1162,6 +1171,13 @@ async function verifyMarketplacePluginLifecycle({
       false,
       'The offline delete left the personal plugin source behind'
     )
+    const codexStayedStopped = await assertOfflinePluginCodexStayedStopped(control, codexStopped)
+    const codexStartsAfter = await readCodexStartCount(executorLogPath)
+    assert.equal(
+      codexStartsAfter,
+      codexStartsBefore,
+      'Local plugin import or deletion started a Codex app-server during the offline probe'
+    )
     const startupProbeHost = new URL(STARTUP_NETWORK_PROBE_MARKETPLACE_URL).hostname
     const startupProbeConnections = blockingNetworkProxy.connections.filter(
       connection =>
@@ -1172,6 +1188,11 @@ async function verifyMarketplacePluginLifecycle({
     const networkEvidence = {
       setupStartedAt,
       proxyConfiguredAt,
+      codexStopped,
+      setupSocketsClosed,
+      codexStayedStopped,
+      codexStartsBefore,
+      codexStartsAfter,
       blockedRequestCount,
       blockedConnectionCount,
       importStartedAt,
@@ -1201,7 +1222,6 @@ async function verifyMarketplacePluginLifecycle({
   } finally {
     blockingNetworkProxy.release()
     await control.command('setLocalProxyUrl', 'body', { value: '' })
-    await blockingNetworkProxy.stop()
   }
 
   await control.command('click', '[data-testid="plugins-create-button"]')

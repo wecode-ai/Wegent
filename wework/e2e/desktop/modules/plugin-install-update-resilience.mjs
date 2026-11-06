@@ -315,15 +315,28 @@ export async function verifyPluginInstallUpdateResilience({
   async function visibleUpgradeFailure(item) {
     await openDetail(item)
     const header = 'header:has([data-testid="plugin-detail-logo"])'
-    await control.command('waitFor', header, { text: '失败' })
+    await control.command('waitFor', testId('plugin-detail-action-error'))
     const headerText = await control.command('getText', header)
     assert.ok(headerText.includes(item.slug), 'Failure summary belongs to another plugin')
-    assert.match(headerText, /[1-9]\d* 失败/, 'The device failure is not visible in the detail')
+    const errorText = await control.command('getText', testId('plugin-detail-action-error'))
+    const account = await membership(item)
+    const failure = account.status.devices.find(row => row.deviceId === deviceId)
+    assert.equal(failure.state, 'failed')
+    assert.ok(failure.errorMessage, 'The failed receipt must retain its cause')
+    assert.ok(
+      errorText.includes(failure.errorMessage),
+      'The latest device failure is not visible in the detail'
+    )
+    assert.doesNotMatch(
+      headerText,
+      /[1-9]\d* 失败/,
+      'Device counts must not replace the actionable failure'
+    )
     const action = '[data-testid^="plugin-detail-toggle-"]'
     await control.command('waitFor', action, { enabled: true })
     const actionText = await control.command('getText', action)
     assert.match(actionText, /更新|Update/, 'A failed upgrade must retain an enabled update action')
-    return { headerText, actionText }
+    return { headerText, errorText, actionText }
   }
 
   async function setPolicy(item, policy, ui = false) {

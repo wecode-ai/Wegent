@@ -5440,11 +5440,29 @@ fn python_plugin_routing_is_present_only_on_managed_desktop_executors() {
         .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
     request
         .extra
+        .insert("runtimeDeviceId".into(), json!("python-control"));
+    request
+        .extra
+        .insert("runtimeLocalTaskId".into(), json!("caller"));
+    let claude = crate::agents::build_claude_command(&request, "claude");
+    for instructions in [
+        crate::plugin_python::INSTRUCTIONS,
+        crate::workbench_control::INSTRUCTIONS,
+        crate::artifact_cli::AGENT_INSTRUCTIONS,
+    ] {
+        assert!(claude.args().iter().any(|arg| arg.contains(instructions)));
+    }
+    request
+        .extra
         .insert("enable_tools".to_owned(), json!(false));
     assert!(!crate::agents::build_claude_command(&request, "claude")
         .args()
         .iter()
         .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::workbench_control::INSTRUCTIONS)));
 }
 
 #[test]
@@ -5760,6 +5778,44 @@ fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn()
             let turn = turn_start_params("thread", &request, &launch, vec![]);
             assert_eq!(turn["approvalsReviewer"], external_work::reviewer(&request));
         }
+    }
+}
+
+#[test]
+fn control_mcp_deadline_overrides_the_default_for_start_resume_and_fork() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest {
+        task_id: "control-deadline".into(),
+        ..Default::default()
+    };
+    let mut launch = build_codex_launch_config(&request).unwrap();
+    for server in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+    ] {
+        append_managed_mcp_config(
+            server,
+            crate::task_runtime::mcp::SpaceMcpClientConfig {
+                url: "http://127.0.0.1/control/mcp".into(),
+                headers: BTreeMap::new(),
+                auto_approve: true,
+            },
+            &mut launch.config_overrides,
+        );
+    }
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+    ] {
+        assert_eq!(
+            params["config"]["mcp_servers.wework_control.tool_timeout_sec"],
+            180
+        );
+        assert_eq!(
+            params["config"]["mcp_servers.wework_space.tool_timeout_sec"],
+            60
+        );
     }
 }
 

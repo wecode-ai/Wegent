@@ -68,7 +68,6 @@ import {
   getModelCategoryTypeForBindMode,
   isCodingAgentShell,
   matchesAutomaticSimpleBindMode,
-  normalizeExecutorForBindMode,
   resolveSimpleBindMode,
   resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
@@ -433,6 +432,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     setBindMode,
     initializeBotFields,
     initializeNewDraft,
+    normalizeExecutor,
   } = useSimpleTeamDraft()
   const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
   const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
@@ -766,24 +766,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   useEffect(() => {
     if (!useSimpleEditor) return
 
-    const normalized = normalizeExecutorForBindMode(
-      simpleExecutorMode,
-      bindMode,
-      shells,
-      simpleCustomShellName,
-      simpleCodingRuntime
-    )
-
-    if (normalized.mode !== simpleExecutorMode) {
-      setSimpleField('simpleExecutorMode', normalized.mode, { userEdited: false })
-    }
-    if (normalized.codingRuntime !== simpleCodingRuntime) {
-      setSimpleField('simpleCodingRuntime', normalized.codingRuntime, { userEdited: false })
-    }
+    normalizeExecutor(shells)
   }, [
     bindMode,
+    normalizeExecutor,
     shells,
-    setSimpleField,
     simpleCodingRuntime,
     simpleCustomShellName,
     simpleExecutorMode,
@@ -922,7 +909,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const handleSimpleExecutorModeChange = (nextMode: SimpleExecutorMode) => {
     if (nextMode === 'simple' && bindMode.some(item => item === 'code' || item === 'task')) {
       handleSimpleBindModeChange(['chat'])
-    } else if (nextMode === 'complex' && bindMode.length === 1 && bindMode[0] === 'chat') {
+    } else if (
+      nextMode === 'complex' &&
+      simpleExecutorMode === 'simple' &&
+      bindMode.length === 1 &&
+      bindMode[0] === 'chat'
+    ) {
       handleSimpleBindModeChange(DEFAULT_NEW_AGENT_BIND_MODE)
     }
     setSimpleField('simpleExecutorMode', nextMode)

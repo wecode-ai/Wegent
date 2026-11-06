@@ -9,6 +9,26 @@ import {
 } from './startup-progress.js'
 
 describe('startup progress', () => {
+  test('publishes one terminal completion and rejects completion before renderer readiness', () => {
+    const publish = vi.fn()
+    const reporter = new StartupProgressReporter(publish, () => 1234)
+    expect(() => reporter.complete()).toThrow('before the renderer stage')
+    reporter.report('launch')
+    expect(() => reporter.complete()).toThrow('before the renderer stage')
+    reporter.report('renderer')
+    reporter.reportActivity('load', 'tasks')
+    const completed = reporter.complete()
+    expect(completed).toMatchObject({ completed: true, completedWeight: 100 })
+    expect(completed.activity).toBeUndefined()
+    const calls = publish.mock.calls.length
+    reporter.complete()
+    reporter.report('renderer')
+    reporter.reportActivity('load', 'late-task')
+    expect(publish).toHaveBeenCalledTimes(calls)
+    completed.stage.label.en = 'Changed outside the reporter'
+    expect(reporter.currentUpdate()?.stage.label.en).toBe('Loading tasks and projects')
+    expect(reporter.history().map(update => update.stage.id)).toEqual(['launch', 'renderer'])
+  })
   test('shortens only real timers in a controlled desktop E2E process', () => {
     const environment = {
       VITE_WEWORK_E2E: 'true',

@@ -3,6 +3,7 @@ import {
   matchHttpUrls,
   type RecognizedLink,
 } from "../markdown/link-preview";
+import { COMPOSER_LINK_LABEL_CLASS } from "../markdown/linkPresentation";
 
 export interface ComposerLinkPayload {
   url: string;
@@ -96,7 +97,7 @@ export function createComposerLinkElement(
   iconSlot.append(icon);
 
   const label = document.createElement("span");
-  label.className = "composer-mention-label";
+  label.className = COMPOSER_LINK_LABEL_CLASS;
   label.textContent = payload.label;
 
   element.append(iconSlot, label);

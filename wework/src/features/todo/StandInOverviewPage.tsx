@@ -1,7 +1,17 @@
 import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/lib/navigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
-import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { StandInMigration } from './StandInMigration'
+import {
+  useContext,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ComponentProps,
+  type Ref,
+} from 'react'
 import {
   Brain,
   Check,
@@ -46,26 +56,36 @@ function roleTabClass(selected: boolean) {
   return `inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
 }
 
+/** Hosts personal conversations, work and settings on the selected Executor. */
 export function StandInOverviewPage({
   onOpenTask,
   initialPrimaryProfile = false,
   initialWorkView = 'work',
   settingsRequestKey,
   active = true,
+  ref,
+  onSelectLocation,
+  initialSelectedRoleId,
   ...props
-}: SettingsProps & {
+}: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   initialPrimaryProfile?: boolean
   initialWorkView?: 'work' | 'scheduled'
   settingsRequestKey?: string
   active?: boolean
+  ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
+  onSelectLocation?(deviceId: string, roleId?: string, openSettings?: boolean): void
+  initialSelectedRoleId?: string
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
+  const cloud = useContext(CloudConnectionContext)
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId, false)
   const { saved, setDraft, reload } = state
   const [roleId, setRoleId] = useState<string | undefined>(
-    props.initialProfileId === '@primary' ? undefined : props.initialProfileId
+    props.initialProfileId === '@primary'
+      ? undefined
+      : (props.initialProfileId ?? initialSelectedRoleId)
   )
   const [chatting, setChatting] = useState(false)
   const [calendarRequest, setCalendarRequest] = useState(initialWorkView === 'scheduled' ? 1 : 0)
@@ -88,6 +108,9 @@ export function StandInOverviewPage({
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
+  useImperativeHandle(ref, () => ({
+    requestLeave: action => (panelRef.current ? panelRef.current.requestLeave(action) : action()),
+  }))
   const previousSettingsRequest = useRef(settingsRequestKey)
   useEffect(() => {
     if (previousSettingsRequest.current === settingsRequestKey) return
@@ -395,6 +418,34 @@ export function StandInOverviewPage({
             <HelpCircle aria-hidden="true" className="h-4 w-4" />
           </button>
         </header>
+        {api &&
+          deviceId === state.currentDeviceId &&
+          !state.loading &&
+          cloud?.isConnected &&
+          cloud.user &&
+          saved &&
+          (roleId ||
+            saved.primary?.enabled ||
+            saved.primary?.prompt ||
+            saved.primary?.preferences) && (
+            <StandInMigration
+              key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
+              api={api}
+              devices={props.devices}
+              sourceUser={props.userId}
+              sourceDevice={deviceId!}
+              roleId={roleId}
+              targetUser={Number(cloud.user.id)}
+              requestLeave={leavePanel}
+              onMigrated={(device, role) => {
+                if (onSelectLocation) onSelectLocation(device, role, true)
+                else {
+                  reload()
+                  state.setDeviceId(device)
+                }
+              }}
+            />
+          )}
         {state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-muted">
             {t('standIn.loading')}
@@ -627,7 +678,10 @@ export function StandInOverviewPage({
                     saving={state.saving || state.loading}
                     services={props.services}
                     devices={props.devices}
-                    onSelectDevice={state.setDeviceId}
+                    onSelectDevice={device => {
+                      if (onSelectLocation) onSelectLocation(device, '@primary', true)
+                      else state.setDeviceId(device)
+                    }}
                     onClose={() => {
                       setProfile(null)
                       if (initialPrimaryProfile) props.onCancel?.()
@@ -661,9 +715,10 @@ export function StandInOverviewPage({
                     }}
                     onCancel={() => setProfile(null)}
                     onSaved={value => {
-                      if (value.executionDeviceId && value.executionDeviceId !== deviceId)
-                        state.setDeviceId(value.executionDeviceId)
-                      else reload()
+                      if (value.executionDeviceId && value.executionDeviceId !== deviceId) {
+                        if (onSelectLocation) onSelectLocation(value.executionDeviceId, value.id)
+                        else state.setDeviceId(value.executionDeviceId)
+                      } else reload()
                       setProfile(null)
                     }}
                   />
@@ -682,6 +737,20 @@ export function StandInOverviewPage({
       userId={props.userId}
       deviceId={deviceId ?? ''}
       active={active}
+      configuration={{
+        settings: saved,
+        loading: state.loading,
+        error: state.error,
+        projects: props.projects,
+        localDeviceId: state.currentDeviceId,
+        devices: props.devices,
+        onSelectDevice: device => {
+          if (onSelectLocation) onSelectLocation(device)
+          else state.setDeviceId(device)
+        },
+        onSave: state.save,
+        onReload: state.reload,
+      }}
       guideOpen={guideOpen}
       onGuideClose={() => setGuideOpen(false)}
       onExampleSelect={text =>
@@ -693,7 +762,7 @@ export function StandInOverviewPage({
           setExampleDraft({ id: ++exampleSequence.current, text })
         })
       }
-      bypass={Boolean(props.initialProfileId || profile || chatting || (!deviceId && state.error))}
+      bypass={Boolean(props.initialProfileId || profile || chatting || (!saved && state.error))}
       onClose={props.onCancel}
     >
       {content}

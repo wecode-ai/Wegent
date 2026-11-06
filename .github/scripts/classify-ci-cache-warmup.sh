@@ -127,6 +127,10 @@ classify_path() {
       changed[executor_rust]=true
       changed[wework_target]=true
       ;;
+    shared/protocol/*)
+      changed[wework_target]=true
+      changed[docker]=true
+      ;;
     shared/assets/*)
       changed[node]=true
       changed[wework_target]=true
