@@ -193,6 +193,83 @@ describe('preparing the native startup destination', () => {
     expect(main.setBounds).not.toHaveBeenCalled()
   })
 
+  test('observes exact maximized state settling after the last native window event', async () => {
+    vi.useFakeTimers()
+    try {
+      const { prepare, main, splash, bounds, nativeEvents, setMainBounds, setMaximized } = fixture()
+      splash.isMaximized = () => true
+      setMainBounds({ ...bounds, x: bounds.x + 4 })
+      main.maximize.mockImplementationOnce(() => {})
+      const preparing = prepare()
+      nativeEvents.emit('move')
+      await vi.advanceTimersByTimeAsync(16)
+      expect(main.webContents.capturePage).not.toHaveBeenCalled()
+
+      setMainBounds(bounds)
+      setMaximized(true)
+      await vi.advanceTimersByTimeAsync(16)
+      expect(await preparing).toEqual({ main: bounds, splash: bounds })
+      expect(main.maximize).toHaveBeenCalledOnce()
+      expect(main.hide).not.toHaveBeenCalled()
+      expect(main.setBounds).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+      for (const event of ['maximize', 'resize', 'move', 'closed']) {
+        expect(nativeEvents.listenerCount(event)).toBe(0)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('checks exact native state at the existing deadline before rejecting', async () => {
+    vi.useFakeTimers()
+    try {
+      const { main, bounds, nativeEvents, setMaximized } = fixture()
+      main.maximize.mockImplementationOnce(() => {})
+      const pending = maximizeStartupWindow(main as unknown as BrowserWindow, bounds)
+      await vi.advanceTimersByTimeAsync(4999)
+      setMaximized(true)
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+      expect(main.maximize).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(0)
+      for (const event of ['maximize', 'resize', 'move', 'closed']) {
+        expect(nativeEvents.listenerCount(event)).toBe(0)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test.each([
+    { phase: 'sampling', before: 0, remaining: 16 },
+    { phase: 'deadline', before: 4999, remaining: 1 },
+  ])(
+    'rejects a native getter exception during $phase and cleans up',
+    async ({ before, remaining }) => {
+      vi.useFakeTimers()
+      try {
+        const { main, bounds, nativeEvents } = fixture()
+        main.maximize.mockImplementationOnce(() => {})
+        const failure = expect(
+          maximizeStartupWindow(main as unknown as BrowserWindow, bounds)
+        ).rejects.toThrow('Native geometry unavailable')
+        await vi.advanceTimersByTimeAsync(before)
+        main.getBounds = () => {
+          throw new Error('Native geometry unavailable')
+        }
+        await vi.advanceTimersByTimeAsync(remaining)
+        await failure
+        expect(vi.getTimerCount()).toBe(0)
+        for (const event of ['maximize', 'resize', 'move', 'closed']) {
+          expect(nativeEvents.listenerCount(event)).toBe(0)
+        }
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
   test('requests native presentation even when a hidden maximized window already matches', async () => {
     const { main, bounds, setMaximized, nativeEvents } = fixture()
     setMaximized(true)

@@ -171,22 +171,35 @@ export async function maximizeStartupWindow(main: MainWindow, bounds: Rectangle)
   await new Promise<void>((resolve, reject) => {
     const cleanup = () => {
       clearTimeout(timeout)
+      clearInterval(poll)
       main.removeListener('maximize', changed)
       main.removeListener('resize', changed)
       main.removeListener('move', changed)
       main.removeListener('closed', closed)
     }
     const changed = () => {
-      if (main.isDestroyed()) return closed()
-      if (!maximizedAtBounds(main, bounds)) return
-      cleanup()
-      resolve()
+      try {
+        if (main.isDestroyed()) {
+          closed()
+          return true
+        }
+        if (!maximizedAtBounds(main, bounds)) return false
+        cleanup()
+        resolve()
+      } catch (error) {
+        cleanup()
+        reject(error)
+      }
+      return true
     }
     const closed = () => {
       cleanup()
       reject(new Error('The startup destination closed before maximizing'))
     }
+    // Native bounds/state can settle without another Electron window event.
+    const poll = setInterval(changed, 16)
     const timeout = setTimeout(() => {
+      if (changed()) return
       cleanup()
       reject(
         new Error('The startup destination did not maximize to the splash bounds within 5000ms')
