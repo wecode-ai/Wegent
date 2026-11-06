@@ -112,23 +112,6 @@ function cn(...values: Array<string | false | null | undefined>): string {
 }
 
 export interface SharedEditorIssue extends CollaborationIssue {
-  assignment_history?: Array<{
-    by_user_id: number;
-    to_type: "user" | "agent" | "team" | "group" | null;
-    to_id: string | null;
-    to_name?: string | null;
-    action: "assign" | "reassign" | "unassign";
-    at: string;
-  }>;
-  status_history?: Array<{
-    from_status: string;
-    from_status_name?: string | null;
-    to_status: string;
-    to_status_name?: string | null;
-    trigger: string;
-    by_user_id: number | null;
-    at: string;
-  }>;
   automation?: { trigger?: string } | null;
   execution_error?: string | null;
   source_record_id?: string | null;
