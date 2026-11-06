@@ -283,9 +283,6 @@ export function useConversationScrollController({
     [cancelMotion, save, writeOffset]
   )
   const handleContentLayoutChange = useCallback(() => {
-    setScrollTailHeight(
-      (contentFooterRef.current?.offsetHeight ?? 0) + (stickyFooterRef.current?.offsetHeight ?? 0)
-    )
     if (initializedKeyRef.current !== currentScrollKey) return
     if (
       latestRef.current.autoScrollSuspended ||
@@ -485,12 +482,28 @@ export function useConversationScrollController({
     const viewport = scrollRef.current
     const content = contentRef.current
     if (!viewport || !content) return
-    const observer = new ResizeObserver(handleContentLayoutChange)
+    const measureFooterHeight = () => {
+      setScrollTailHeight(
+        (contentFooterRef.current?.offsetHeight ?? 0) + (stickyFooterRef.current?.offsetHeight ?? 0)
+      )
+    }
+    const observer = new ResizeObserver(entries => {
+      if (
+        entries.some(
+          entry =>
+            entry.target === stickyFooterRef.current || entry.target === contentFooterRef.current
+        )
+      ) {
+        measureFooterHeight()
+      }
+      handleContentLayoutChange()
+    })
     observer.observe(viewport)
     observer.observe(content)
     if (stickyFooterRef.current) observer.observe(stickyFooterRef.current)
     if (contentFooterRef.current) observer.observe(contentFooterRef.current)
     // External host refs are attached after the child's layout effects.
+    measureFooterHeight()
     handleContentLayoutChange()
     return () => observer.disconnect()
   }, [handleContentLayoutChange, scrollRef])
