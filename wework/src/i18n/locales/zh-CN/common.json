@@ -5462,7 +5462,7 @@
     "prompt_placeholder": "例如：先给出处理思路，完成后说明做了什么、验证了什么；遇到不确定的地方先问我。",
     "current_device": "当前设备",
     "device": "在哪里处理",
-    "select_device": "选择设备",
+    "select_device": "选择云设备",
     "device_unavailable": "已选设备不可用，请重新选择",
     "offline": "离线",
     "cancel": "取消",
@@ -6039,7 +6039,9 @@
       "allow_description": "保存后，分身可在「{{name}}」已连接的范围内，按你设定的职责直接回复。邮箱仅限回复原邮件发件人，新收件人仍需确认。涉及不确定信息或承诺时先询问你。可随时打开此开关撤销持续授权。",
       "allow": "允许此范围内回复",
       "confirm_once": "本次确认后执行"
-    }
+    },
+    "cloud_device_description": "分身在所选云设备上运行，档案与工作记录保存在该设备。",
+    "no_cloud_device": "没有可用的云设备，请在云端工作中连接设备后再创建分身。"
   },
   "workbench_error": {
     "startup_title": "Wework 启动失败",

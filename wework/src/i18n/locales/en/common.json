@@ -5467,7 +5467,7 @@
     "prompt_placeholder": "For example: Start with a plan, then explain what changed and how it was verified. Ask me when unsure.",
     "current_device": "Current device",
     "device": "Where to work",
-    "select_device": "Select a device",
+    "select_device": "Choose a cloud device",
     "device_unavailable": "Selected device unavailable; select again",
     "offline": "Offline",
     "cancel": "Cancel",
@@ -6044,7 +6044,9 @@
       "allow_description": "After saving, the stand-in may reply within the connected scope “{{name}}” under your configured responsibilities. Email automation is limited to replies to the original sender; new recipients still require confirmation. Uncertain facts and commitments require your input. Turn this switch on at any time to revoke this permission.",
       "allow": "Allow replies in this scope",
       "confirm_once": "Run with confirmation this time"
-    }
+    },
+    "cloud_device_description": "The stand-in runs on the selected cloud device, where its profile and work records are stored.",
+    "no_cloud_device": "No cloud device is available. Connect a device in Cloud work before creating a stand-in."
   },
   "workbench_error": {
     "startup_title": "Wework could not start",

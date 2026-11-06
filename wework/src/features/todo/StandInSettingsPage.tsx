@@ -50,6 +50,8 @@ import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { findStandInProject } from './standInProjects'
+import { StandInCreationDevice } from './StandInCreationDevice'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 
 type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
@@ -57,25 +59,7 @@ export interface StandInSettingsHandle {
   requestLeave(action: () => void): void
 }
 
-export function StandInSettingsPage({
-  api,
-  projects,
-  services,
-  devices,
-  userId,
-  initialDeviceId,
-  initialProfileId,
-  initialCreate = false,
-  initialProject,
-  onCancel,
-  onSaved,
-  onDeleted,
-  onSavingChange,
-  onOpenPersonalSettings,
-  initialCalendar = false,
-  onCalendarViewChange,
-  ref,
-}: {
+interface StandInSettingsPageProps {
   api: SharedWorkspaceApi
   projects: CollaborationProject[]
   services: WorkbenchServices
@@ -93,7 +77,57 @@ export function StandInSettingsPage({
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   ref?: Ref<StandInSettingsHandle>
-}) {
+  onRequestCreate?(): void
+}
+
+export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps) {
+  const cloud = useContext(CloudConnectionContext)
+  const [creating, setCreating] = useState(props.initialCreate ?? false)
+  const editor = useRef<StandInSettingsHandle>(null)
+  useImperativeHandle(ref, () => ({
+    requestClose: () => (editor.current ? editor.current.requestClose() : props.onCancel?.()),
+    requestLeave: action => (editor.current ? editor.current.requestLeave(action) : action()),
+  }))
+  const cloudCreation =
+    cloud?.isConnected === true && props.initialProject?.project_store !== 'local'
+  const renderEditor = (deviceId = props.initialDeviceId) => (
+    <StandInSettingsEditor
+      {...props}
+      ref={editor}
+      initialDeviceId={deviceId}
+      initialCreate={creating}
+      onRequestCreate={cloudCreation ? () => setCreating(true) : undefined}
+    />
+  )
+  return creating && cloudCreation ? (
+    <StandInCreationDevice devices={props.devices} onCancel={props.onCancel}>
+      {renderEditor}
+    </StandInCreationDevice>
+  ) : (
+    renderEditor()
+  )
+}
+
+function StandInSettingsEditor({
+  api,
+  projects,
+  services,
+  devices,
+  userId,
+  initialDeviceId,
+  initialProfileId,
+  initialCreate = false,
+  initialProject,
+  onCancel,
+  onSaved,
+  onDeleted,
+  onSavingChange,
+  onOpenPersonalSettings,
+  initialCalendar = false,
+  onCalendarViewChange,
+  onRequestCreate,
+  ref,
+}: StandInSettingsPageProps) {
   useStandInOpened('settings', initialProfileId === '@primary' ? 'primary' : 'role')
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
@@ -234,11 +268,11 @@ export function StandInSettingsPage({
     saving,
     () => setConfirmDiscard(true)
   )
-  const requestLeave = (action: () => void) => {
+  const requestLeave = useStableEvent((action: () => void) => {
     if (connectionRef.current)
       connectionRef.current.requestLeave(() => navigation.requestLeave(action))
     else navigation.requestLeave(action)
-  }
+  })
   const close = () =>
     connectionRef.current ? connectionRef.current.requestLeave(closeView) : closeView()
   const closeSettings = () => requestLeave(() => onCancel?.())
@@ -302,6 +336,10 @@ export function StandInSettingsPage({
     else onSaved?.(result.roles.find(row => row.id === role.id) ?? result.roles[0])
   }
   const createRole = useCallback(() => {
+    if (!initialCreate && onRequestCreate) {
+      requestLeave(onRequestCreate)
+      return
+    }
     if (!draft) return
     const added = newStandInRole(draft.executionDeviceId)
     if (projectRef && initialProject) {
@@ -327,7 +365,17 @@ export function StandInSettingsPage({
     setSelectedId(added.id)
     setView('create')
     setNotice(false)
-  }, [draft, initialProject, projectRef, setDraft, t, view])
+  }, [
+    draft,
+    initialCreate,
+    initialProject,
+    onRequestCreate,
+    projectRef,
+    requestLeave,
+    setDraft,
+    t,
+    view,
+  ])
   const createdInitialRole = useRef(false)
   useEffect(() => {
     if (initialCreate && draft && !loading && !createdInitialRole.current) {
