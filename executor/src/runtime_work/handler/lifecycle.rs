@@ -24,7 +24,11 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or(false)
     }
 
-    fn release_settled_native_capacity(&self, task_id: &str, state: &NativeExecutionState) {
+    pub(super) fn release_settled_native_capacity(
+        &self,
+        task_id: &str,
+        state: &NativeExecutionState,
+    ) {
         if state.phase != NativeExecutionPhase::Idle || self.is_active_local_task(task_id) {
             return;
         }
