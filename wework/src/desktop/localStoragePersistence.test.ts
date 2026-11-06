@@ -94,6 +94,30 @@ describe('desktop localStorage persistence', () => {
     })
   })
 
+  it('does not broadcast a transient preference reset when another window initializes', async () => {
+    mocks.isElectronRuntime.mockReturnValue(true)
+    const appearance = '{"schemaVersion":2,"mode":"dark","darkThemeId":"tokyo-night"}'
+    localStorage.setItem('wework.appearance', appearance)
+    localStorage.setItem('shared', 'current')
+    mocks.invokeDesktopHost.mockResolvedValueOnce({
+      'wework.appearance': appearance,
+      shared: 'durable',
+    })
+    const { initializeDesktopLocalStoragePersistence } = await loadPersistence()
+    const prototype = Object.getPrototypeOf(localStorage)
+    const methods = prototype[Symbol.for('wework.desktop.localStoragePersistence.methods')]
+    const clear = vi.spyOn(methods ?? prototype, 'clear')
+    const setItem = vi.spyOn(methods ?? prototype, 'setItem')
+
+    await initializeDesktopLocalStoragePersistence()
+
+    expect(clear).not.toHaveBeenCalled()
+    expect(setItem).toHaveBeenCalledExactlyOnceWith('shared', 'durable')
+    expect(localStorage.getItem('wework.appearance')).toBe(appearance)
+    clear.mockRestore()
+    setItem.mockRestore()
+  })
+
   it('rejects flushes after a failed write and retries the complete update later', async () => {
     mocks.isElectronRuntime.mockReturnValue(true)
     const failure = new Error('disk unavailable')

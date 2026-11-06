@@ -538,6 +538,9 @@ export const MessageList = memo(function MessageList({
             (Number.parseFloat(style.paddingRight) || 0)
         )
       )
+      // Hidden retained workspaces have no layout. Keep their last measurement
+      // so opening settings does not unmount stateful conversation content.
+      if (width === 0) return
       const typography = readMessageLayoutTypography(element)
       setLayout(previous => {
         if (

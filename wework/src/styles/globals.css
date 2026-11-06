@@ -653,7 +653,8 @@ body,
   overflow: hidden;
 }
 
-body {
+body,
+html[data-appearance-theme] body {
   font-family: var(--font-ui);
   font-size: var(--text-base);
   font-weight: var(--font-weight-ui);

@@ -183,7 +183,7 @@ function PluginPublicationRiskStep({
             type="checkbox"
             checked={riskDeclaration.externalNetworkAccess}
             data-testid="plugin-publication-risk-network"
-            className="mt-1 h-4 w-4 accent-neutral-900"
+            className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
             onChange={event =>
               setRiskDeclaration(current => ({
                 ...current,
@@ -228,7 +228,7 @@ function PluginPublicationRiskStep({
                   type="checkbox"
                   checked={riskDeclaration[row.key]}
                   data-testid={testId}
-                  className="mt-1 h-4 w-4 accent-neutral-900"
+                  className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
                   onChange={event =>
                     setRiskDeclaration(current => ({
                       ...current,
@@ -272,7 +272,7 @@ function PluginPublicationRiskStep({
               type="checkbox"
               checked={applicationAuthorization}
               data-testid="plugin-publication-risk-application"
-              className="mt-1 h-4 w-4 accent-neutral-900"
+              className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
               onChange={event => setApplicationAuthorization(event.target.checked)}
             />
           </label>
@@ -716,7 +716,7 @@ export function PluginPublishDialog({
                     type="checkbox"
                     checked={declarationAccepted}
                     data-testid="plugin-publication-declaration"
-                    className="mt-1 h-4 w-4 accent-neutral-900"
+                    className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
                     onChange={event => setDeclarationAccepted(event.target.checked)}
                   />
                   <span className="text-sm leading-5 text-text-secondary">
@@ -1042,7 +1042,7 @@ export function PluginPublishDialog({
                 type="checkbox"
                 checked={allowCopy}
                 data-testid="plugin-share-allow-copy"
-                className="h-4 w-4 accent-neutral-900"
+                className="h-4 w-4 accent-[rgb(var(--color-text-primary))]"
                 onChange={event => setAllowCopy(event.target.checked)}
               />
             </label>
