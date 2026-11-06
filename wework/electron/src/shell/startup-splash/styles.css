@@ -19,6 +19,20 @@
   --startup-error-background: #25191c;
   --startup-error-border: #633137;
   --startup-link: #83baff;
+  --startup-progress-start: #4a91ff;
+  --startup-progress-middle: #8ed6ff;
+  --startup-progress-end: #e2f6ff;
+  --startup-progress-filter: drop-shadow(0 0 3px rgb(94 186 255 / 65%));
+  --startup-logo-angle: 110deg;
+  --startup-logo-highlight: 47%;
+  --startup-logo-gradient: linear-gradient(
+    var(--startup-logo-angle),
+    #1764bd 0%,
+    #187ad0 36%,
+    #459fe8 var(--startup-logo-highlight),
+    #187ad0 58%,
+    #1764bd 100%
+  );
   font-family:
     ui-sans-serif,
     -apple-system,
@@ -26,6 +40,37 @@
     'Segoe UI',
     sans-serif;
   background: var(--startup-brand-background);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --startup-brand-background: #fafafa;
+  --startup-text: #1a1c1f;
+  --startup-muted: #4f4f4f;
+  --startup-activity: #5d5d5d;
+  --startup-border: rgb(26 28 31 / 12%);
+  --startup-track: rgb(26 28 31 / 18%);
+  --startup-button-background: #ededed;
+  --startup-primary-text: #fff;
+  --startup-primary-background: #1a1c1f;
+  --startup-note-background: #ededed;
+  --startup-error: #b91c1c;
+  --startup-error-background: #fef2f2;
+  --startup-error-border: #fecaca;
+  --startup-link: #0867b5;
+  --startup-progress-start: #247dcc;
+  --startup-progress-middle: #147bd1;
+  --startup-progress-end: #1456b8;
+  --startup-progress-filter: none;
+  --startup-logo-highlight: 48%;
+  --startup-logo-gradient: linear-gradient(
+    var(--startup-logo-angle),
+    #165bb8 0%,
+    #1962bf 43%,
+    #2e8fe3 var(--startup-logo-highlight),
+    #1962bf 53%,
+    #165bb8 100%
+  );
 }
 
 * {
@@ -89,20 +134,34 @@ body {
   transform-origin: 50% 50%;
 }
 
-.startup-brand.is-breathing canvas {
-  animation: startup-brand-breathe 3.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-  will-change: transform, filter;
+.startup-brand::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  opacity: var(--startup-logo-opacity, 0);
+  background: var(--startup-logo-gradient);
+  background-position: var(--startup-logo-position, var(--startup-logo-sweep-start));
+  background-size: 200% 100%;
+  mask-image: var(--startup-logo-mask);
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
 }
 
-.startup-brand.is-paused canvas {
+.startup-brand.is-waiting-gradient::after {
+  animation: startup-brand-gradient 6s linear infinite;
+}
+
+.startup-brand.is-paused::after {
   animation-play-state: paused;
 }
 
 .startup-status {
   position: relative;
   grid-row: 2;
+  width: 100%;
   max-height: 60vh;
-  padding: 16px 28px 20px;
+  padding: 16px max(28px, calc((100% - 48rem) / 2 + 28px)) 24px;
   overflow-y: auto;
   background: var(--startup-status-background);
   scrollbar-width: thin;
@@ -190,7 +249,19 @@ body {
 
 .startup-progress-fill {
   stroke: url('#startup-progress-gradient');
-  filter: drop-shadow(0 0 3px rgb(94 186 255 / 65%));
+  filter: var(--startup-progress-filter);
+}
+
+.startup-progress-stop-start {
+  stop-color: var(--startup-progress-start);
+}
+
+.startup-progress-stop-middle {
+  stop-color: var(--startup-progress-middle);
+}
+
+.startup-progress-stop-end {
+  stop-color: var(--startup-progress-end);
 }
 
 .is-failed .startup-progress-fill {
@@ -361,6 +432,7 @@ body {
 .startup-toast {
   pointer-events: none;
   position: fixed;
+  pointer-events: none;
   bottom: 24px;
   left: 50%;
   z-index: 30;
@@ -376,16 +448,13 @@ body {
   transform: translateX(-50%);
 }
 
-@keyframes startup-brand-breathe {
-  0%,
-  100% {
-    transform: scale(1);
-    filter: brightness(1);
+@keyframes startup-brand-gradient {
+  from {
+    background-position: var(--startup-logo-sweep-start);
   }
 
-  50% {
-    transform: scale(1.018);
-    filter: brightness(1.14);
+  to {
+    background-position: var(--startup-logo-sweep-end);
   }
 }
 
@@ -401,8 +470,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .startup-brand.is-breathing canvas {
+  .startup-brand::after {
     animation: none;
-    will-change: auto;
   }
 }

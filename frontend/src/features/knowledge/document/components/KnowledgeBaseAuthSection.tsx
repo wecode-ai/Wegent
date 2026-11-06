@@ -30,19 +30,23 @@ import type { Group } from '@/types/group'
 export type { AuthEntry }
 
 interface KnowledgeBaseAuthSectionProps {
+  defaultOpen?: boolean
   value: AuthEntry[]
   onChange: (entries: AuthEntry[]) => void
   /** Namespace ID to exclude from group search (the KB's owning namespace) */
   excludedNamespaceId?: string
+  boundNamespaceIds?: string[]
 }
 
 export function KnowledgeBaseAuthSection({
+  defaultOpen = false,
   value,
   onChange,
   excludedNamespaceId,
+  boundNamespaceIds,
 }: KnowledgeBaseAuthSectionProps) {
   const { t } = useTranslation('knowledge')
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   // Per-section role state, keyed by entity type
   const [roles, setRoles] = useState<Record<string, MemberRole>>({
     user: 'Reporter' as MemberRole,
@@ -70,8 +74,8 @@ export function KnowledgeBaseAuthSection({
 
   const totalCount = value.length
 
-  const removeEntry = (id: string) => {
-    onChange(value.filter(e => e.id !== id))
+  const removeEntry = (entry: AuthEntry) => {
+    onChange(value.filter(e => e.entityType !== entry.entityType || e.entityId !== entry.entityId))
   }
 
   const getRoleForType = (type: string): MemberRole => {
@@ -90,7 +94,7 @@ export function KnowledgeBaseAuthSection({
       <CollapsibleTrigger asChild>
         <button
           type="button"
-          className="flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors w-full text-left"
+          className="min-h-11 min-w-11 flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors w-full text-left"
           data-testid="auth-section-trigger"
         >
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -117,16 +121,18 @@ export function KnowledgeBaseAuthSection({
                 <div className="flex flex-wrap gap-2">
                   {entries.map(entry => (
                     <div
-                      key={entry.id}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
+                      key={JSON.stringify([entry.entityType, entry.entityId])}
+                      className="inline-flex items-center gap-1.5 pl-2.5 pr-1 rounded-full bg-muted/70 border border-border text-sm"
                     >
                       <span className="truncate max-w-[120px]">{entry.label}</span>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
-                        onClick={() => removeEntry(entry.id)}
+                        className="min-h-11 min-w-11 md:h-8 md:w-8 md:min-h-8 md:min-w-8 text-text-muted hover:text-error flex-shrink-0 p-0"
+                        data-testid={`remove-auth-${entry.entityType}-${entry.entityId}`}
+                        aria-label={t('document.permission.remove')}
+                        onClick={() => removeEntry(entry)}
                       >
                         <X className="w-3 h-3" />
                       </Button>
@@ -135,10 +141,11 @@ export function KnowledgeBaseAuthSection({
                 </div>
               )}
               {/* Search box + Role selector inline */}
-              <div className="flex items-center gap-2">
-                <div className="flex-1">
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
                   {section.renderSearch({
                     role,
+                    selectedEntries: entries,
                     onSelect: (entry: AuthEntry) => {
                       const exists = value.some(
                         e => e.entityType === entry.entityType && e.entityId === entry.entityId
@@ -149,13 +156,17 @@ export function KnowledgeBaseAuthSection({
                     },
                     excludedEntityId:
                       section.type === 'namespace' ? excludedNamespaceId : undefined,
+                    boundEntityIds: section.type === 'namespace' ? boundNamespaceIds : undefined,
                   })}
                 </div>
                 <Select
                   value={role}
                   onValueChange={v => setRoleForType(section.type, v as MemberRole)}
                 >
-                  <SelectTrigger className="w-28 h-11 min-w-[44px] flex-shrink-0">
+                  <SelectTrigger
+                    data-testid={`auth-role-${section.type}`}
+                    className="w-28 h-11 min-w-[44px] flex-shrink-0"
+                  >
                     <span className="truncate">{t(`document.permission.role.${role}`)}</span>
                   </SelectTrigger>
                   <SelectContent>
@@ -211,9 +222,11 @@ export function KnowledgeBaseAuthSection({
 function UserAuthSearch({
   role,
   onSelect,
+  selectedEntries = [],
 }: {
   role: MemberRole
   onSelect: (entry: AuthEntry) => void
+  selectedEntries?: AuthEntry[]
 }) {
   const { t } = useTranslation('knowledge')
 
@@ -224,7 +237,10 @@ function UserAuthSearch({
 
   return (
     <UserSearchSelect
-      selectedUsers={[]}
+      selectedUsers={selectedEntries.map(entry => ({
+        id: Number(entry.entityId),
+        user_name: entry.label,
+      }))}
       onSelectedUsersChange={(users: SearchUser[]) => {
         if (users.length > 0) {
           const user = users[users.length - 1]
@@ -238,8 +254,11 @@ function UserAuthSearch({
         }
       }}
       placeholder={loc('document.permission.searchUserPlaceholder', '搜索用户...')}
-      multiple={false}
+      resultsLayout="inline"
+      clearSearchOnSelect={false}
       hideSelectedUsers
+      inputTestId="knowledge-auth-user-search"
+      className="[&_input]:min-h-11 [&_button]:min-h-11 [&_button]:min-w-11"
     />
   )
 }
@@ -248,10 +267,14 @@ function NamespaceAuthSearch({
   role,
   onSelect,
   excludedEntityId,
+  boundEntityIds,
+  selectedEntries = [],
 }: {
   role: MemberRole
   onSelect: (entry: AuthEntry) => void
   excludedEntityId?: string
+  boundEntityIds?: string[]
+  selectedEntries?: AuthEntry[]
 }) {
   const { t } = useTranslation('knowledge')
   const { user: currentUser } = useUser()
@@ -262,50 +285,43 @@ function NamespaceAuthSearch({
   }
   const [groups, setGroups] = useState<Group[]>([])
   const [searching, setSearching] = useState(false)
+  const [searchFailed, setSearchFailed] = useState(false)
+  const searchRevision = useRef(0)
   const [searchQuery, setSearchQuery] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const performSearch = useCallback(async (query: string) => {
+    const revision = ++searchRevision.current
     setSearching(true)
+    setSearchFailed(false)
     try {
       const result = await searchGroups({ q: query, limit: 20 })
-      setGroups(result.items || [])
+      if (searchRevision.current === revision) setGroups(result.items || [])
     } catch (_err) {
-      // silently fail
+      if (searchRevision.current === revision) setSearchFailed(true)
     } finally {
-      setSearching(false)
+      if (searchRevision.current === revision) setSearching(false)
     }
   }, [])
 
-  // Load initial groups on mount
-  useEffect(() => {
-    performSearch('')
-  }, [performSearch])
+  useEffect(
+    () => () => {
+      searchRevision.current++
+    },
+    []
+  )
 
   // Debounced search when query changes
   useEffect(() => {
+    // Invalidate old requests and hide stale results during the debounce window.
+    searchRevision.current++
+    setSearching(true)
+    setSearchFailed(false)
     const timer = setTimeout(() => {
       performSearch(searchQuery)
     }, 300)
     return () => clearTimeout(timer)
   }, [searchQuery, performSearch])
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node) &&
-        inputRef.current &&
-        !inputRef.current.contains(event.target as Node)
-      ) {
-        setShowDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
 
   // Sort groups: owned by current user first, then by display_name
   const filteredGroups = [...groups].sort((a, b) => {
@@ -324,8 +340,6 @@ function NamespaceAuthSearch({
       entityId: String(group.id),
       role,
     })
-    setSearchQuery('')
-    setShowDropdown(false)
   }
 
   return (
@@ -333,7 +347,7 @@ function NamespaceAuthSearch({
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
         <Input
-          ref={inputRef}
+          data-testid="add-namespace-group-search"
           value={searchQuery}
           onChange={e => {
             setSearchQuery(e.target.value)
@@ -344,17 +358,30 @@ function NamespaceAuthSearch({
             setShowDropdown(true)
           }}
           placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
-          className="pl-9"
+          className="min-h-11 pl-9"
         />
       </div>
       {showDropdown && (
         <div
-          ref={dropdownRef}
-          className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+          data-testid="knowledge-auth-namespace-results"
+          className="w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto overscroll-contain"
         >
           {searching ? (
             <div className="flex items-center justify-center p-3">
               <Spinner className="w-4 h-4" />
+            </div>
+          ) : searchFailed ? (
+            <div role="alert" className="p-3 text-sm text-error">
+              <p>{t('document.permission.groupSearchFailed')}</p>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="retry-auth-group-search"
+                onClick={() => void performSearch(searchQuery)}
+              >
+                {t('document.navigation.retry')}
+              </Button>
             </div>
           ) : filteredGroups.length === 0 ? (
             <div className="p-3 text-sm text-text-muted text-center">
@@ -364,15 +391,21 @@ function NamespaceAuthSearch({
             </div>
           ) : (
             filteredGroups.map(group => {
-              const isBound = excludedEntityId ? group.name === excludedEntityId : false
+              const isBound =
+                group.name === excludedEntityId || !!boundEntityIds?.includes(String(group.id))
+              const isSelected = selectedEntries.some(entry => entry.entityId === String(group.id))
               return (
                 <button
                   key={group.id}
+                  data-testid={`auth-select-namespace-${group.id}`}
                   type="button"
-                  onClick={() => !isBound && handleSelect(group)}
-                  disabled={isBound}
-                  className={`w-full flex items-center justify-between gap-3 p-3 text-left ${
-                    isBound ? 'opacity-50 cursor-not-allowed' : 'hover:bg-surface cursor-pointer'
+                  onClick={() => handleSelect(group)}
+                  disabled={isBound || isSelected}
+                  aria-pressed={isSelected}
+                  className={`w-full min-h-11 flex items-center justify-between gap-3 p-3 text-left ${
+                    isBound || isSelected
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-surface cursor-pointer'
                   }`}
                 >
                   <span
@@ -406,13 +439,21 @@ function NamespaceAuthSearch({
 registerAuthSection({
   type: 'user',
   labelKey: 'document.permission.individual',
-  renderSearch: ({ role, onSelect }) => <UserAuthSearch role={role} onSelect={onSelect} />,
+  renderSearch: ({ role, onSelect, selectedEntries }) => (
+    <UserAuthSearch role={role} onSelect={onSelect} selectedEntries={selectedEntries} />
+  ),
 })
 
 registerAuthSection({
   type: 'namespace',
   labelKey: 'document.permission.namespace',
-  renderSearch: ({ role, onSelect, excludedEntityId }) => (
-    <NamespaceAuthSearch role={role} onSelect={onSelect} excludedEntityId={excludedEntityId} />
+  renderSearch: ({ role, onSelect, excludedEntityId, boundEntityIds, selectedEntries }) => (
+    <NamespaceAuthSearch
+      role={role}
+      onSelect={onSelect}
+      excludedEntityId={excludedEntityId}
+      boundEntityIds={boundEntityIds}
+      selectedEntries={selectedEntries}
+    />
   ),
 })

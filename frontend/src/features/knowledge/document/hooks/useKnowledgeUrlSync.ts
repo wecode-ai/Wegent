@@ -21,6 +21,7 @@ import {
 import type { KnowledgeBase } from '@/types/knowledge'
 
 interface UseKnowledgeUrlSyncParams {
+  scopeKey?: string
   initialKbNamespace?: string
   initialKbName?: string
   organizationKnowledgeBases: KnowledgeBase[]
@@ -35,6 +36,7 @@ interface UseKnowledgeUrlSyncParams {
 }
 
 export function useKnowledgeUrlSync({
+  scopeKey,
   initialKbNamespace,
   initialKbName,
   allKnowledgeBases,
@@ -53,7 +55,7 @@ export function useKnowledgeUrlSync({
   const [initialUrlSyncDone, setInitialUrlSyncDone] = useState(false)
   const lastSyncedUrlRef = useRef<string | null>(null)
   const requestedKbId = searchParams.get('kb')
-  const routeKey = JSON.stringify([pathname, requestedKbId])
+  const routeKey = JSON.stringify([scopeKey, pathname, requestedKbId])
   const [lastResolved, setLastResolved] = useState<{ routeKey: string; id: number } | null>(null)
   const retainedKbId = lastResolved?.routeKey === routeKey ? lastResolved.id : undefined
 
@@ -103,7 +105,7 @@ export function useKnowledgeUrlSync({
     navParams.delete('taskId')
     navParams.delete('task_id')
     navParams.delete('taskid')
-    const navUrlKey = `${pathname}?${navParams.toString()}`
+    const navUrlKey = `${scopeKey ?? ''}:${pathname}?${navParams.toString()}`
     if (kbResolution) {
       if (kbResolution.status === 'loading') return
       const selectionKey = `${navUrlKey}:${kbResolution.status}:${kbResolution.status === 'resolved' ? kbResolution.knowledgeBase.id : ''}`
@@ -145,6 +147,7 @@ export function useKnowledgeUrlSync({
     lastSyncedUrlRef.current = navUrlKey
     setInitialUrlSyncDone(true)
   }, [
+    scopeKey,
     kbResolution,
     routeKey,
     retainedKbId,

@@ -610,6 +610,9 @@ class DesktopE2EServer {
     this.asyncRequestUserInputKeepsRunningRelease = new Promise(resolvePromise => {
       this.releaseAsyncRequestUserInputKeepsRunning = resolvePromise
     })
+    this.asyncRequestUserInputAnswerRelease = new Promise(resolvePromise => {
+      this.releaseAsyncRequestUserInputAnswer = resolvePromise
+    })
     this.taskPlanCompletionRelease = new Promise(resolvePromise => {
       this.releaseTaskPlanCompletion = resolvePromise
     })
@@ -1087,6 +1090,10 @@ class DesktopE2EServer {
 
   releaseAsyncRequestUserInputHold() {
     this.releaseAsyncRequestUserInputKeepsRunning()
+  }
+
+  releaseAsyncRequestUserInputAnswerHold() {
+    this.releaseAsyncRequestUserInputAnswer()
   }
 
   releaseTaskPlanResponse() {
@@ -4113,12 +4120,23 @@ class DesktopE2EServer {
           'The async request-user-input tool must acknowledge without an answer'
         )
         if (keepsRunning) {
-          // Keep the turn running until the test has answered the live question,
-          // then let the model finish with its completion message.
-          await this.asyncRequestUserInputKeepsRunningRelease
+          const answered = hasUserReplyAfterToolOutput(
+            body,
+            callId,
+            REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER
+          )
+          // Guidance acceptance precedes application. Release the original response
+          // so Codex can apply the answer, then hold its next real model request.
+          await (answered
+            ? this.asyncRequestUserInputAnswerRelease
+            : this.asyncRequestUserInputKeepsRunningRelease)
           this.writeSse(response, [
             responseCreated(responseId),
-            assistantMessage(REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT),
+            assistantMessage(
+              answered
+                ? REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT
+                : REQUEST_USER_INPUT_ASYNC_WAITING_TEXT
+            ),
             responseCompleted(responseId),
           ])
           return

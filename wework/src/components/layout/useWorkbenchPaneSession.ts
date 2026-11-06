@@ -1,4 +1,5 @@
 import { SupersededConversationRead } from '@/features/workbench/runtimeConversationSynchronization'
+import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   useRuntimeConversationMetadata,
   useRuntimeConversationQueue,
@@ -111,6 +112,7 @@ import {
 } from '@/lib/browser-annotation-context'
 import {
   applyRuntimeConversationAction,
+  appendAcceptedRuntimeConversationMessage,
   appendOptimisticRuntimeConversationGuidance,
   beginRuntimeConversationOperation,
   beginRuntimeGoalSnapshot,
@@ -119,6 +121,7 @@ import {
   clearInterruptedRuntimeConversationGuidanceExcept,
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
+  getRuntimeConversationTurnIds,
   getRuntimeConversationMetadata,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueueDiagnosticSnapshotByKey,
@@ -1087,7 +1090,12 @@ export function useWorkbenchPaneSession({
       if (!currentRuntimeTask) return { accepted: false, queued: false }
       const operation = beginRuntimeConversationOperation(currentRuntimeTask)
       try {
-        const appendedLocalMessage = options.appendLocalMessage !== false
+        const appendedLocalMessage =
+          options.appendLocalMessage !== false &&
+          !pendingRequestUserInputPayload(
+            getRuntimeConversationMessages(currentRuntimeTask),
+            answeredRequestUserInputIds
+          )
         if (appendedLocalMessage) {
           applyRuntimeConversationAction(currentRuntimeTask, {
             type: 'user_added',
@@ -1119,7 +1127,13 @@ export function useWorkbenchPaneSession({
         operation.dispose()
       }
     },
-    [currentRuntimeTask, lifecycleStore, sendRuntimePaneMessage, setError]
+    [
+      currentRuntimeTask,
+      lifecycleStore,
+      sendRuntimePaneMessage,
+      setError,
+      answeredRequestUserInputIds,
+    ]
   )
 
   const retainRuntimeQueuedMessage = useCallback(
@@ -1134,6 +1148,13 @@ export function useWorkbenchPaneSession({
       if (!currentRuntimeTask) return false
       if (interruptAndSendInFlightRef.current) return false
       interruptAndSendInFlightRef.current = true
+      const deferLocalMessage = Boolean(
+        pendingRequestUserInputPayload(
+          getRuntimeConversationMessages(currentRuntimeTask),
+          answeredRequestUserInputIds
+        )
+      )
+      const turnIdsBeforeSend = getRuntimeConversationTurnIds(currentRuntimeTask)
       const interruptedGuidanceIds = new Set<string>()
       const interruptedGuidances = queuedMessages.filter(isInterruptedGuidance)
       interruptedGuidances.forEach(guidance => {
@@ -1152,12 +1173,15 @@ export function useWorkbenchPaneSession({
       const attachments = localRuntimeAttachments(messageAttachments)
       const terminalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
       const additionalContext = { ...message.additionalContext, ...terminalContext }
-      appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
-        id: message.id,
-        createdAt: message.createdAt,
-        runtimeGoalRequest: message.runtimeGoalRequest,
-        codeComments: message.codeComments,
-      })
+      if (!deferLocalMessage) {
+        appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
+          id: message.id,
+          createdAt: message.createdAt,
+          runtimeGoalRequest: message.runtimeGoalRequest,
+          codeComments: message.codeComments,
+        })
+      }
+      let queued = false
       const sent = await interruptAndSendRuntimePaneMessage(
         {
           address: currentRuntimeTask,
@@ -1171,7 +1195,12 @@ export function useWorkbenchPaneSession({
           ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
           ...(message.origin ? { origin: message.origin } : {}),
         },
-        { onError: setError }
+        {
+          onError: setError,
+          onQueued: () => {
+            queued = true
+          },
+        }
       )
       interruptAndSendInFlightRef.current = false
       if (!sent) {
@@ -1197,12 +1226,22 @@ export function useWorkbenchPaneSession({
                 : item
             )
         )
-        removeRuntimeConversationTurn(currentRuntimeTask, {
-          clientUserMessageId: message.id,
-        })
+        if (!deferLocalMessage) {
+          removeRuntimeConversationTurn(currentRuntimeTask, {
+            clientUserMessageId: message.id,
+          })
+        }
         return false
       }
 
+      if (deferLocalMessage && !queued) {
+        appendAcceptedRuntimeConversationMessage(
+          currentRuntimeTask,
+          createRuntimeQueuedUserMessage(message),
+          lifecycleStore.getTask(currentRuntimeTask)?.turn.id ?? null,
+          turnIdsBeforeSend
+        )
+      }
       markRuntimeTerminalAdditionalContextDelivered(terminalContext)
       setQueuedMessages(messages =>
         messages.filter(item => item.id !== message.id && !interruptedGuidanceIds.has(item.id))
@@ -1211,8 +1250,10 @@ export function useWorkbenchPaneSession({
     },
     [
       appendLocalUserMessage,
+      answeredRequestUserInputIds,
       currentRuntimeTask,
       interruptAndSendRuntimePaneMessage,
+      lifecycleStore,
       queuedMessages,
       setError,
       setQueuedMessages,

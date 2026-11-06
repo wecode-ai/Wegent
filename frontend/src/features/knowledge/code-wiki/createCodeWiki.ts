@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import client from '@/apis/client'
 import { codeWikiApi } from '@/apis/code-wiki'
 import type { CodeWikiSummary } from '@/types/code-wiki'
 import type { KnowledgeBaseCreate } from '@/types/knowledge'
@@ -11,6 +12,7 @@ type CodeWikiFormData = Omit<KnowledgeBaseCreate, 'namespace'> & {
 }
 
 interface CreateCodeWikiParams {
+  isCurrent?: () => boolean
   namespace: string
   data: CodeWikiFormData
 }
@@ -28,9 +30,11 @@ export type CreateCodeWikiResult = CodeWikiSummary & {
  * knowledge-base endpoint and losing the repository or execution-model contract.
  */
 export async function createCodeWiki({
+  isCurrent,
   namespace,
   data,
 }: CreateCodeWikiParams): Promise<CreateCodeWikiResult> {
+  const creationScope = client.getCacheScope()
   const {
     name,
     description,
@@ -58,7 +62,7 @@ export async function createCodeWiki({
     source_url,
     execution_model_ref,
   })
-  if (scheduled_update) {
+  if (scheduled_update && client.getCacheScope() === creationScope && (!isCurrent || isCurrent())) {
     try {
       await codeWikiApi.configureScheduledUpdate(created.id, scheduled_update)
     } catch (error) {

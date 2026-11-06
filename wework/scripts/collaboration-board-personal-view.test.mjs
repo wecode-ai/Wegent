@@ -5,36 +5,19 @@ import { openProjectBoard } from '../e2e/desktop/modules/collaboration-board-per
 const content = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${content} ${selector}`
 
-test.each([true, false])(
-  'opens the board using the mounted navigation control (compact=%s)',
-  async compact => {
-    const command = vi.fn(async (action, selector) => {
-      if (action === 'getAttribute') return 'true'
-      if (action === 'getElementCount') return compact ? '1' : '0'
-      if (
-        compact &&
-        action === 'clickWhenEnabled' &&
-        selector.endsWith('[data-testid="collaboration-tab-board"]')
-      ) {
-        throw new Error('Expanded tabs are not mounted in compact layout')
-      }
-      return ''
-    })
-    await openProjectBoard({ command }, scoped, {
-      id: 'project',
-      name: 'Project',
-      workspace_id: 'workspace',
-    })
-    expect(command).toHaveBeenCalledWith(
-      compact ? 'select' : 'clickWhenEnabled',
-      compact
-        ? scoped('[data-testid="collaboration-project-view-select"]')
-        : scoped('[data-testid="collaboration-tab-board"]'),
-      compact ? { value: 'board' } : { timeoutMs: expect.any(Number) }
-    )
-    expect(command).toHaveBeenLastCalledWith(
-      'waitFor',
-      scoped('[data-testid="collaboration-board"]')
-    )
-  }
-)
+test('opens the board through the responsive navigation choice', async () => {
+  const command = vi.fn(async action => (action === 'getAttribute' ? 'true' : ''))
+  await openProjectBoard({ command }, scoped, {
+    id: 'project',
+    name: 'Project',
+    workspace_id: 'workspace',
+  })
+  expect(command).toHaveBeenCalledWith(
+    'chooseWhenEnabled',
+    scoped('[data-testid="collaboration-project-view-select"]') +
+      ', ' +
+      scoped('[data-testid="collaboration-tab-board"]'),
+    { value: 'board', timeoutMs: expect.any(Number) }
+  )
+  expect(command).toHaveBeenLastCalledWith('waitFor', scoped('[data-testid="collaboration-board"]'))
+})
