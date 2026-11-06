@@ -2742,6 +2742,7 @@ function OwnedWorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
+      modelSelectionDiagnostics: modelSelection.modelSelectionDiagnostics,
       isModelCatalogReady: modelSelection.isCatalogReady,
       isModelSelectionReady:
         modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
@@ -2836,6 +2837,7 @@ function OwnedWorkbenchProvider({
       activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
+      modelSelection.modelSelectionDiagnostics,
       modelSelection.setSelectedModel,
       modelSelection.setSelectedModelAndOptions,
       continueInNewConversation,

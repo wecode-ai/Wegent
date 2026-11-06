@@ -132,6 +132,42 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     )
   }
 
+  async function assertFeedbackModelSnapshot(control, identity, expectedModelName) {
+    await control.command('click', '[data-testid="task-feedback-button"]')
+    try {
+      await control.command('fill', '[data-testid="task-feedback-note"]', {
+        value: 'Inspect the saved and restored task model identities.',
+      })
+      await control.command('click', '[data-testid="task-feedback-group-full-task-checkbox"]')
+      await control.command('click', '[data-testid="task-feedback-export-button"]')
+      await control.command('waitFor', '[data-testid="task-feedback-preview-list"]')
+      await control.command('click', '[data-testid="task-feedback-preview-category-task"]')
+      await control.command(
+        'click',
+        '[data-testid="task-feedback-preview-entry-context/task.json"]'
+      )
+      await control.command('waitFor', '[data-testid="task-feedback-preview-content"]')
+      const context = JSON.parse(
+        await control.command('getText', '[data-testid="task-feedback-preview-content"]')
+      )
+      assert.equal(context.task.taskId, identity.taskId)
+      assert.equal(typeof context.modelSelection?.scopeFingerprint, 'number')
+      for (const source of ['configured', 'effective', 'selected']) {
+        assert.equal(
+          context.modelSelection[source]?.modelName,
+          expectedModelName,
+          `The feedback preview omitted the ${source} task model identity`
+        )
+        assert.equal(Object.hasOwn(context.modelSelection[source], 'options'), false)
+      }
+    } finally {
+      await control.command('click', '[data-testid="task-feedback-close-button"]')
+      await control.command('waitFor', '[data-testid="task-feedback-dialog-overlay"]', {
+        visible: false,
+      })
+    }
+  }
+
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
@@ -193,6 +229,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         const row = snapshot.testIds.find(id => id.startsWith('runtime-local-task-row-'))
         const taskSelector = `[data-testid="${row}"]`
         const identity = await conversationIdentity(control)
+        await assertFeedbackModelSnapshot(control, identity, `local-model:${localModelId}`)
 
         // Delete the local configuration through the actual settings UI and reopen the task.
         await control.command('navigate', 'body', { value: '/settings/personal/models' })

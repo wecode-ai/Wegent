@@ -1370,6 +1370,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       if (!currentRuntimeTask) {
         return {
           task: { state: 'new-conversation' },
+          modelSelection: projectChat.modelSelectionDiagnostics,
           runtime: {
             status: paneSession.status,
             goal: paneSession.goal,
@@ -1378,6 +1379,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       const messages = await paneSession.loadFullTranscriptForExport()
       return {
+        modelSelection: projectChat.modelSelectionDiagnostics,
         task: {
           taskId: currentRuntimeTask.taskId ?? null,
           deviceId: currentRuntimeTask.deviceId ?? null,
