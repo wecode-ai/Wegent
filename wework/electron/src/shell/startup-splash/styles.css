@@ -164,10 +164,8 @@ body {
   position: relative;
   grid-row: 2;
   width: 100%;
-  max-width: 48rem;
   max-height: 60vh;
-  margin-inline: auto;
-  padding: 16px 28px 24px;
+  padding: 16px max(28px, calc((100% - 48rem) / 2 + 28px)) 24px;
   overflow-y: auto;
   background: var(--startup-status-background);
   scrollbar-width: thin;
