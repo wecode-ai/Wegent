@@ -8,6 +8,14 @@ export async function materializeBundledPluginResources(weworkRoot, destination)
 
   const marketplaceRoot = join(destination, 'wework-personal')
   const pluginNames = await marketplacePluginNames(marketplaceRoot)
+  if (pluginNames.has('wework-docs')) {
+    const manualRoot = join(marketplaceRoot, 'plugins/wework-docs/skills/wework-docs/references')
+    for (const language of ['zh', 'en']) {
+      await cp(join(weworkRoot, '..', 'docs', language, 'wework'), join(manualRoot, language), {
+        recursive: true,
+      })
+    }
+  }
   const dshRoot = join(weworkRoot, 'dsh')
   const entries = await readdir(dshRoot, { withFileTypes: true })
   for (const entry of entries) {

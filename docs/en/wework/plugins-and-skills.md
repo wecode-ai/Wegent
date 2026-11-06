@@ -6,6 +6,14 @@ sidebar_position: 8
 
 A Skill gives AI task-specific instructions and resources. A plugin can package Skills, commands, tools, and application entries.
 
+## Look up Wework documentation
+
+**Wework Docs** ships with the application and is installed by default, without a separate download or authorization. Ask questions such as “How do I configure a model in Wework?”, “How do projects differ from workspaces?”, or “How do I use the built-in browser?”. The agent can automatically use the `wework-docs` Skill, or you can select it explicitly in a conversation.
+
+The Skill includes the Chinese and English Wework documentation shipped with the build, supports offline reading, and cites its sources. Documentation describes product usage; actions available in a conversation still depend on its tools, device, and permissions. Latest release information and account availability require separate verification.
+
+## Use plugins
+
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
 When installing an unofficial plugin from Enterprise, Personal, or an external marketplace, including public community submissions, the confirmation dialog warns that it may execute code, access local files, or send data to external services. Public visibility does not establish official provenance. Only continue if you trust its source. Focus starts on **Cancel**, and Escape closes the dialog. Trying an uninstalled unofficial plugin also requires confirmation before installation and placing the example in a new conversation. OpenAI official and Wework official plugins retain their existing installation flow. Personal ZIP imports show the same source warning in the preview dialog.
