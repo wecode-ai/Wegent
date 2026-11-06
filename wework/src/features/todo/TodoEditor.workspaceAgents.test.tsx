@@ -1,6 +1,6 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import '@/i18n'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { act, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -356,6 +356,30 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
       await screen.findByTestId('issue-detail-attachment-thumbnail-pending-0')
     ).toHaveAttribute('src', 'blob:staged-issue-image-preview')
     expect(createObjectUrl).toHaveBeenCalledWith(image)
+  })
+
+  it('keeps a staged document identity after removing an earlier image', async () => {
+    const user = userEvent.setup()
+    const image = new File(['image'], 'a.png', { type: 'image/png' })
+    const document = new File(['document'], 'b.txt', { type: 'text/plain' })
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:staged-issue-image-preview')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    setup('backend', 'create')
+
+    await user.upload(screen.getByTestId('cloud-todo-attachment-input'), [image, document])
+
+    await screen.findByText('a.png')
+    expect(
+      await screen.findByTestId('issue-detail-attachment-thumbnail-pending-0')
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '删除 a.png' }))
+
+    await waitFor(() => expect(screen.queryByText('a.png')).not.toBeInTheDocument())
+    const documentRow = screen.getByText('b.txt').closest('button')?.parentElement
+    expect(documentRow).not.toBeNull()
+    expect(
+      within(documentRow as HTMLElement).queryByTestId(/^issue-detail-attachment-thumbnail-/)
+    ).not.toBeInTheDocument()
   })
 
   it('retains installed assignees when the workspace catalog cannot be loaded', async () => {
