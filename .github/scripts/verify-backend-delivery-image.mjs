@@ -365,7 +365,7 @@ export async function verifyDeliveryImage({ image, revision, evidence }) {
         imageInfo.Id,
         "All scenarios must use the same delivered image",
       );
-      const base = "http://" + docker("port", name, "18080/tcp");
+      let base = "http://" + docker("port", name, "18080/tcp");
       await ready(name, base, secret);
       await verifyRoutes(name, base, secret);
       assert.equal(
@@ -387,6 +387,8 @@ export async function verifyDeliveryImage({ image, revision, evidence }) {
         const started = inspect(name).State.StartedAt;
         docker("restart", "--time", "20", name);
         assert.notEqual(inspect(name).State.StartedAt, started);
+        // Docker can allocate a different ephemeral host port after restart.
+        base = "http://" + docker("port", name, "18080/tcp");
         await ready(name, base, secret);
         await verifyRoutes(name, base, secret);
         assert.equal(
@@ -437,6 +439,23 @@ export async function verifyDeliveryImage({ image, revision, evidence }) {
             `${evidence}/${name}.log`,
             redact((log.stdout || "") + (log.stderr || "")),
           );
+          const details = spawnSync("docker", ["inspect", name], {
+            encoding: "utf8",
+            timeout: 10_000,
+          });
+          if (details.status === 0 && details.stdout.trim()) {
+            const [{ State, NetworkSettings }] = JSON.parse(details.stdout);
+            writeFileSync(
+              `${evidence}/${name}-state.json`,
+              redact(
+                JSON.stringify(
+                  { state: State, ports: NetworkSettings?.Ports },
+                  null,
+                  2,
+                ),
+              ),
+            );
+          }
         }
         writeFileSync(
           `${evidence}/results.json`,
