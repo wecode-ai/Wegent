@@ -1,5 +1,6 @@
 import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
 import { createStandInExecutorApi } from '@/api/standIn'
+import { modelInterfaceRuntimeConfig } from '../../../electron/src/host/model-interface-runtime'
 import type { McpAppRequest } from '@/api/mcpApps'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
@@ -1004,10 +1005,6 @@ function runtimeCollaborationMode(modelOptions?: Record<string, string>): string
   return modelOptions?.collaborationMode || modelOptions?.collaboration_mode || null
 }
 
-function providerIdFromLocalConfig(config: LocalModelConfig): string {
-  return `local-${config.id}`.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
-}
-
 function localVisionSidecarConfig(config: LocalModelConfig): Record<string, unknown> | null {
   if (!config.visionModelConfigId) return null
   const visionModel = listLocalModelConfigs().find(
@@ -1095,46 +1092,12 @@ function localRuntimeModelConfig(
     if (requireCodexCatalog && !localModel.catalogReady) {
       throw new Error('Local model requires a Codex restart')
     }
-    const requestUrl = localModelConfigRequestUrl(localModel)
     const visionSidecar = localVisionSidecarConfig(localModel)
-    const primaryCodexCatalogModelId =
-      localModel.codexCatalogModelId || DEFAULT_CODEX_CATALOG_MODEL_ID
-    const nativeCodexTools =
-      localModel.apiFormat === 'openai-responses' &&
-      localModel.codexToolCompatibility !== 'standard'
-    return {
-      model: 'openai',
-      model_id: localModel.modelId,
-      wework_model_kind: 'model-interface',
-      codex_catalog_model_id: primaryCodexCatalogModelId,
-      api_format: RESPONSES_API_FORMAT,
-      upstream_api_format: localModel.apiFormat,
-      native_tool_search: nativeCodexTools,
-      native_namespace_tools: nativeCodexTools,
-      tool_profile: localModel.toolProfile,
-      protocol: OPENAI_RESPONSES_PROTOCOL,
-      base_url: localModel.baseUrl,
-      responses_url: requestUrl,
-      api_key: localModel.apiKey || 'dummy',
-      model_provider: providerIdFromLocalConfig(localModel),
-      provider_name: localModel.displayName,
-      display_name: localModel.displayName,
-      ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
-      ...(localModel.maxOutputTokens ? { max_output_tokens: localModel.maxOutputTokens } : {}),
-      web_search: localModel.webSearchMode ?? 'disabled',
-      image_generation: localModel.imageGenerationEnabled === true,
-      ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
-      ...(localModelDefaultReasoningEffort(localModel)
-        ? { reasoning: { effort: localModelDefaultReasoningEffort(localModel) } }
-        : {}),
-      codex_responses_compat_proxy: true,
-      runtime_config: {
-        codex: {
-          use_user_config: false,
-          configured: false,
-        },
-      },
-    }
+    return modelInterfaceRuntimeConfig(
+      { ...localModel, requestUrl: localModelConfigRequestUrl(localModel) },
+      visionSidecar,
+      localModelDefaultReasoningEffort(localModel)
+    )
   }
 
   if (!isCloudModelType(modelType) && modelName?.startsWith(LOCAL_MODEL_NAME_PREFIX)) {

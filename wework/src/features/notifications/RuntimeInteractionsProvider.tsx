@@ -39,6 +39,7 @@ import {
   NOTIFICATION_PREFERENCES_CHANGED_EVENT,
 } from './notificationPreferences'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
+import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
 import { weworkInteractionScheme } from './scheme'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { replyToInteractionProject } from './interactionProjectReply'
@@ -654,7 +655,11 @@ function RuntimeInteractionsState({
     for (const item of pending) {
       if (records[item.id]) continue
       const alreadyViewed = focused && [...views.current.values()].includes(item.id)
-      const category = interactionSource(item) === 'task' ? 'tasks' : 'collaboration'
+      const category = isPersonalStandInTask(item.task)
+        ? 'stand_in'
+        : interactionSource(item) === 'task'
+          ? 'tasks'
+          : 'collaboration'
       // An inactive window with system notifications disabled has delivered nothing.
       // Keep the request eligible for its in-app reminder when the user returns.
       const systemAvailable = isElectronRuntime() && preferences[category].system

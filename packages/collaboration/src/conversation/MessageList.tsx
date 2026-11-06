@@ -1,5 +1,6 @@
 import type { UserMessageServices } from './UserMessage'
 import { MessageListMessage } from './MessageListMessage'
+import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
 import {
   isCancelledAssistantMessage,
   shouldHideFailedAssistantContent,
@@ -220,14 +221,40 @@ export const MessageList = memo(function MessageList({
     () => resolveAsyncRequestUserInputReplies(messages),
     [messages]
   )
-  const visibleMessages = useMemo(
-    () => resolvedMessages.filter(shouldRenderMessage),
-    [resolvedMessages]
-  )
   const runtimeTurnsById = useMemo(
     () => new Map(turns.flatMap(turn => (turn.id ? [[turn.id, turn] as const] : []))),
     [turns]
   )
+  const visibleMessages = useMemo(() => {
+    const userTurns = new Set(
+      resolvedMessages
+        .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
+        .map(message => message.turnId)
+    )
+    const activityTurns = new Set(
+      resolvedMessages
+        .filter(isStandInActivityMessage)
+        .map(message => message.turnId)
+        .filter(turnId => turnId && !userTurns.has(turnId))
+    )
+    return resolvedMessages.filter(message => {
+      if (isStandInActivityMessage(message)) return false
+      if (message.turnId && activityTurns.has(message.turnId) && message.role === 'assistant') {
+        const turn = runtimeTurnsById.get(message.turnId)
+        if (message.status !== 'done' || (turn && turn.status !== 'done')) return true
+        if (
+          turn?.error ||
+          turn?.stoppedNotice ||
+          turn?.fileChanges ||
+          turn?.references?.length ||
+          turn?.memoryCitations?.length
+        )
+          return true
+        if (isCompletedStandInActivityTrace(message)) return false
+      }
+      return shouldRenderMessage(message)
+    })
+  }, [resolvedMessages, runtimeTurnsById])
   // Native crash history may retain an open status; only its latest root turn is live.
   const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
   const lastAssistantMessageIdByTurn = useMemo(() => {

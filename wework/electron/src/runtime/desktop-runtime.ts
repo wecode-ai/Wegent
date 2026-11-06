@@ -25,6 +25,8 @@ import {
 } from './workbench-runtime.js'
 import { applyWorkbenchModeToCorePlugins, type WorkbenchMode } from './workbench-mode.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
+import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
+import { modelInterfaceRunnerModels } from '../host/model-interface-runtime.js'
 
 const CORE_APP_PATH = '/'
 const CORE_DSH_START_TIMEOUT_MS = 120_000
@@ -34,6 +36,7 @@ export interface DesktopRuntimeOptions {
   dataDirectory: string
   logDirectory: string
   hostPipe: HostPipeServer
+  modelConfiguration?: ModelConfigurationStore
   readWorkbenchMode?: () => Promise<WorkbenchMode>
   createWorkbenchHostPipe?: (tabId: string) => {
     hostPipe: HostPipeServer
@@ -99,6 +102,7 @@ export class DesktopRuntime {
   private lifecycleGeneration = 0
   private startOperation: { generation: number; promise: Promise<void> } | null = null
   private restartOperation: { generation: number; promise: Promise<void> } | null = null
+  private localModelSync: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
@@ -167,6 +171,23 @@ export class DesktopRuntime {
       return Promise.reject(new Error('Managed executor is unavailable'))
     }
     return this.executor.request<Result>(method, params)
+  }
+
+  /** Rebuild the Executor's in-memory view from the native model configuration owner. */
+  async syncLocalModels(): Promise<void> {
+    const store = this.options.modelConfiguration
+    if (!store || !this.executor) return
+    const sync = this.localModelSync
+      .catch(() => {})
+      .then(async () => {
+        const snapshot = await store.read()
+        const models = snapshot.error
+          ? []
+          : modelInterfaceRunnerModels((await store.runtime()).models)
+        await this.requestExecutor('runtime.runner.local_models.replace', { models })
+      })
+    this.localModelSync = sync
+    await sync
   }
 
   openWorkbenchRuntime(launch: WorkbenchRuntimeLaunch): Promise<WorkbenchRuntimeSnapshot> {
@@ -296,6 +317,7 @@ export class DesktopRuntime {
         if (this.executor === executor) this.executor = null
         return
       }
+      await this.syncLocalModels()
       this.startupStep('executor-start', 'completed')
     } catch (error) {
       if (this.executor === executor) this.executor = null

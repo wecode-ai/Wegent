@@ -5,9 +5,9 @@
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
-use crate::agents::codex::{
-    spawn_codex_app_server, CodexAuthMode, CodexLaunchConfig, CodexTurnProcess, EnvRestore,
-};
+#[cfg(unix)]
+use crate::agents::codex::{spawn_codex_app_server, CodexLaunchConfig, CodexTurnProcess};
+use crate::agents::codex::{CodexAuthMode, EnvRestore};
 
 #[tokio::test]
 #[cfg(unix)]

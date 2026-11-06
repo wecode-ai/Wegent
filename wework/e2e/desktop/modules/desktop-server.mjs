@@ -19,6 +19,7 @@ import {
   codexRequestKind,
   cors,
   createSse,
+  delegatedTaskResultEvents,
   customToolCall,
   encryptedReasoningItem,
   functionCall,
@@ -1247,6 +1248,7 @@ class DesktopE2EServer {
     const result = new Promise((resolvePromise, reject) => {
       this.commandResults.set(id, {
         clientId,
+        queuedAt: new Date().toISOString(),
         action,
         resolve: resolvePromise,
         reject,
@@ -1268,6 +1270,20 @@ class DesktopE2EServer {
         `Timed out running UI action ${action} for ${selector}`
       )
     } catch (error) {
+      const diagnostic = this.commandHistory.find(command => command.id === id)
+      if (diagnostic) {
+        diagnostic.failedAt = new Date().toISOString()
+        console.error('[desktop-e2e-control] command failed', {
+          id,
+          action,
+          selector,
+          queuedAt: diagnostic.queuedAt,
+          deliveredAt: diagnostic.deliveredAt,
+          startedAt: diagnostic.startedAt ?? null,
+          resultReceivedAt: diagnostic.resultReceivedAt ?? null,
+          failedAt: diagnostic.failedAt,
+        })
+      }
       this.commandQueue = this.commandQueue.filter(item => item.command.id !== id)
       this.commandResults.delete(id)
       throw error
@@ -1279,11 +1295,16 @@ class DesktopE2EServer {
     if (commandIndex < 0) return false
 
     const { command } = this.commandQueue[commandIndex]
-    this.commandHistory.push({
+    const diagnostic = {
       ...command,
       ...(command.action === 'setCloudSessionToken' ? { value: '[redacted]' } : {}),
       clientId,
+      queuedAt: this.commandResults.get(command.id)?.queuedAt,
       deliveredAt: new Date().toISOString(),
+    }
+    this.commandHistory.push(diagnostic)
+    response.once('finish', () => {
+      diagnostic.responseFinishedAt = new Date().toISOString()
     })
     json(response, 200, command)
     return true
@@ -2114,6 +2135,8 @@ class DesktopE2EServer {
       }
       if (!pending.started) {
         pending.started = true
+        const diagnostic = this.commandHistory.find(command => command.id === started.id)
+        if (diagnostic) diagnostic.startedAt = new Date().toISOString()
         this.commandQueue = this.commandQueue.filter(item => item.command.id !== started.id)
         pending.resolveDelivery()
       }
@@ -2130,6 +2153,20 @@ class DesktopE2EServer {
       })
       const pending = this.commandResults.get(result.id)
       if (!pending) {
+        const diagnostic = this.commandHistory.find(
+          command => command.id === result.id && command.clientId === result.clientId
+        )
+        if (diagnostic) {
+          diagnostic.lateResultAt = new Date().toISOString()
+          console.error('[desktop-e2e-control] late result rejected', {
+            id: result.id,
+            action: diagnostic.action,
+            startedAt: diagnostic.startedAt ?? null,
+            failedAt: diagnostic.failedAt ?? null,
+            lateResultAt: diagnostic.lateResultAt,
+            actionSucceeded: result.ok === true,
+          })
+        }
         json(response, 404, { error: `Unknown command ${result.id}` })
         return true
       }
@@ -2143,6 +2180,11 @@ class DesktopE2EServer {
           error: `Command ${result.id} belongs to a different desktop control client`,
         })
         return true
+      }
+      const diagnostic = this.commandHistory.find(command => command.id === result.id)
+      if (diagnostic) {
+        diagnostic.resultReceivedAt = new Date().toISOString()
+        diagnostic.actionSucceeded = result.ok === true
       }
       this.commandResults.delete(result.id)
       // Observations may check readiness during an input cooldown, but must
@@ -2190,6 +2232,15 @@ class DesktopE2EServer {
     if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
       return
+    }
+
+    if (protocol === 'responses') {
+      const resultEvents = delegatedTaskResultEvents(body)
+      if (resultEvents) {
+        const id = `delegated-result-${this.modelRequests.length}`
+        this.writeSse(response, [responseCreated(id), ...resultEvents, responseCompleted(id)])
+        return
+      }
     }
 
     if (this.scenario === 'harness_app_models') {

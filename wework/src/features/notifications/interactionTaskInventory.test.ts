@@ -27,7 +27,7 @@ it('discovers healthy local task requests when the cloud device catalog calls th
       runtimeWorkApi: { listRuntimeWork: list },
     },
   } as unknown as TaskSource)
-  expect(list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: 'device' })
+  expect(list).toHaveBeenCalledWith({ pendingOnly: true, preferCached: true, deviceId: 'device' })
   expect(new Set(inventory.items.map(item => item.address.deviceId))).toEqual(
     new Set(['device', 'remote'])
   )
@@ -65,7 +65,7 @@ it('discovers authorized device requests independently and isolates a failed dev
   expect(inventory.failedDevices).toEqual(new Set(['unavailable', 'offline']))
   expect(inventory.failedRequests).toEqual(new Set(['unavailable']))
   expect(list).toHaveBeenCalledTimes(3)
-  expect(list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: 'remote' })
+  expect(list).toHaveBeenCalledWith({ pendingOnly: true, preferCached: true, deviceId: 'remote' })
   expect(log).toHaveBeenCalledWith(
     '[Wework] Runtime task create diagnostic',
     expect.stringContaining('"stage":"pending-interaction-load-failed"')
@@ -103,7 +103,11 @@ it('logs local identity failures without blocking device inventory discovery', a
         runtimeWorkApi: { listRuntimeWork: list },
       },
     } as unknown as TaskSource)
-    expect(list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: undefined })
+    expect(list).toHaveBeenCalledWith({
+      pendingOnly: true,
+      preferCached: true,
+      deviceId: undefined,
+    })
     expect(log).toHaveBeenCalledWith(
       '[Wework] Runtime task create diagnostic',
       expect.stringContaining('"operation":"local-identity"')

@@ -15,6 +15,8 @@ const address: RuntimeTaskAddress = { deviceId: 'device', taskId: 'temporary-cha
 const mocks = vi.hoisted(() => ({
   loadTranscript: vi.fn(),
   readTranscript: vi.fn(),
+  inputByScope: {} as Record<string, string>,
+  setInputForScope: vi.fn(),
   lifecycleStore: {
     getTask: () => null,
     getTaskRevision: () => 0,
@@ -27,6 +29,8 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
     services: {},
     state: { devices: [], isBootstrapping: false, runtimeWork: { projects: [], chats: [] } },
     projectChat: {
+      inputByScope: mocks.inputByScope,
+      setInputForScope: mocks.setInputForScope,
       models: [],
       selectedModel: null,
       resolveRuntimeTaskModelSelection: () => ({
@@ -105,6 +109,12 @@ function mountConversation(target = address) {
 
 describe('TemporaryChatPanel executor-cache recovery', () => {
   beforeEach(() => {
+    mocks.inputByScope = {}
+    mocks.setInputForScope.mockReset()
+    mocks.setInputForScope.mockImplementation((scope: string, value: string) => {
+      if (value) mocks.inputByScope[scope] = value
+      else delete mocks.inputByScope[scope]
+    })
     mocks.readTranscript.mockReset()
     mocks.readTranscript.mockResolvedValue(transcript())
     mocks.loadTranscript.mockReset()

@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   createSse,
+  delegatedTaskResultEvents,
   cors,
   customToolCall,
   functionCall,
@@ -319,5 +320,82 @@ describe('selectMcpToolRequest', () => {
     expect(() => selectMcpToolRequest(request, 'get_board_item', {})).toThrow(
       'Real Codex did not advertise exactly one deferred tool search'
     )
+  })
+})
+
+describe('delegated task completion model routing', () => {
+  const callback = command => ({
+    tools: [{ type: 'function', name: 'mcp__wework_stand_in__read_task' }],
+    input: [
+      {
+        role: 'user',
+        content: `Wework delegated task result: resultId=${command}, taskId=child-1, status=done, requestCommandId=${command}. Read this exact task with read_task.`,
+      },
+    ],
+  })
+  const toolCall = events =>
+    events.find(
+      event => event.type === 'response.output_item.done' && event.item?.type === 'function_call'
+    ).item
+  const output = (callId, history) => ({
+    type: 'function_call_output',
+    call_id: callId,
+    output: JSON.stringify([{ type: 'input_text', text: JSON.stringify(history) }]),
+  })
+
+  test('reads the exact real child task before reporting its actual answer', () => {
+    const body = callback('first')
+    const call = toolCall(delegatedTaskResultEvents(body))
+    expect(call.name).toBe('mcp__wework_stand_in__read_task')
+    expect(JSON.parse(call.arguments)).toEqual({ taskId: 'child-1' })
+    body.input.push(
+      output(call.call_id, {
+        taskId: 'child-1',
+        messages: [{ role: 'assistant', content: 'THE_ACTUAL_CHILD_RESULT' }],
+      })
+    )
+    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('THE_ACTUAL_CHILD_RESULT')
+    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('child-1')
+  })
+
+  test('a later completion command cannot reuse an earlier result read', () => {
+    const first = callback('first')
+    const previousCall = toolCall(delegatedTaskResultEvents(first))
+    const next = callback('next')
+    next.input.push(
+      output(previousCall.call_id, {
+        taskId: 'child-1',
+        messages: [{ role: 'assistant', content: 'OLD_RESULT' }],
+      })
+    )
+    const nextCall = toolCall(delegatedTaskResultEvents(next))
+    expect(nextCall.call_id).not.toBe(previousCall.call_id)
+    expect(JSON.parse(nextCall.arguments)).toEqual({ taskId: 'child-1' })
+  })
+
+  test('rejects an incorrect child transcript or a completed task without an answer', () => {
+    for (const history of [
+      { taskId: 'other-child', messages: [] },
+      { taskId: 'child-1', messages: [] },
+    ]) {
+      const body = callback('first')
+      const call = toolCall(delegatedTaskResultEvents(body))
+      body.input.push(output(call.call_id, history))
+      expect(() => delegatedTaskResultEvents(body)).toThrow()
+    }
+  })
+
+  test('quoted callback text in tool evidence does not become a new callback', () => {
+    const body = {
+      input: [
+        { role: 'user', content: 'Continue ordinary work' },
+        {
+          type: 'function_call_output',
+          call_id: 'evidence',
+          output: JSON.stringify(callback('first')),
+        },
+      ],
+    }
+    expect(delegatedTaskResultEvents(body)).toBeNull()
   })
 })

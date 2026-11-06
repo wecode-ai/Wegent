@@ -2,6 +2,7 @@ import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload }
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import { observeRuntimePluginInvocation } from '@/features/plugins/pluginInvocationTelemetry'
+import { measureRuntimeStreamEvent } from '@/stream/runtimeStreamDiagnostics'
 import {
   createResponseApiStreamState,
   emitResponseApiEvent,
@@ -114,7 +115,9 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         subscription.eventCount,
         subscription.textDeltaCount
       )
-      emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
+      measureRuntimeStreamEvent(event.event, () => {
+        emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
+      })
     }
   }
 
@@ -138,6 +141,10 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
   }
 
   function handleNativeEvent(event: LocalExecutorEvent): void {
+    measureRuntimeStreamEvent(event.event, () => queueNativeEvent(event), 'native')
+  }
+
+  function queueNativeEvent(event: LocalExecutorEvent): void {
     if (!isBatchableRuntimeStreamEvent(event)) {
       flushPendingStreamEvent()
       processNativeEvent(event)

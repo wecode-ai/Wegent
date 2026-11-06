@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyStandInProjectConnectionNames } from '../modules/stand-in-project-connections.mjs'
+import { verifyStandInConnectionCatalog } from '../modules/stand-in-connection-catalog.mjs'
 
 const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
 const USER = 9001
@@ -109,6 +110,7 @@ export function createDesktopScenario(options) {
           '[data-testid="stand-in-primary-connections-open"]'
         )
         await control.command('waitFor', '[data-testid="stand-in-connection-settings"]')
+        await verifyStandInConnectionCatalog(control, uiTimeoutMs, options.captureScreenshot)
         await openConnectionTypePicker(control)
         await control.command('waitFor', '[data-testid="stand-in-add-dingtalk-connection"]')
         await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')

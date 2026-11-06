@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) fn install_native_history(
+pub(in crate::runtime_work::handler) fn install_native_history(
     handler: &mut RuntimeWorkRpcHandler,
     root: &std::path::Path,
     turns: Vec<Value>,
