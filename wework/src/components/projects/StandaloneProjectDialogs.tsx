@@ -128,6 +128,10 @@ function StandaloneFolderProjectDialogContent({
   const [cloudDeviceCreating, setCloudDeviceCreating] = useState(false)
   const [addingProjectDevice, setAddingProjectDevice] = useState(false)
   const [onboardingPending, setOnboardingPending] = useState(false)
+  const handleOnboardingBusyChange = useCallback((busy: boolean) => {
+    setOnboardingBusy(busy)
+    if (busy) setAddingProjectDevice(true)
+  }, [])
   const availableDevices = useMemo(
     () => [
       ...devices.filter(
@@ -669,7 +673,7 @@ function StandaloneFolderProjectDialogContent({
                 cloudConnection={cloudConnection}
                 hasCloudDevice={cloudDeviceCreating || availableDevices.some(isCloudDevice)}
                 onCreatingChange={setCloudDeviceCreating}
-                onBusyChange={setOnboardingBusy}
+                onBusyChange={handleOnboardingBusyChange}
                 onPendingChange={setOnboardingPending}
                 onConnected={async (connectedDevices, device) => {
                   setAddingProjectDevice(false)

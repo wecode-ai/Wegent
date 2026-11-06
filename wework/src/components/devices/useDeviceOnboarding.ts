@@ -152,6 +152,10 @@ export function useDeviceOnboarding(props: DeviceOnboardingProps) {
     if (busy || pending?.cloud || hasCloudDevice || !isConnected || !apiBaseUrl || !token) return
     setLoading(true)
     setError(null)
+    setRemoteCommand(null)
+    setCopied(false)
+    setPending(null)
+    setStatus('idle')
     try {
       const created = await api.createCloudDevice()
       if (!mounted.current) return

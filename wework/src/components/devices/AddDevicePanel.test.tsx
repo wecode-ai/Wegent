@@ -132,6 +132,47 @@ describe('shared device onboarding', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  test('switching to managed creation cancels the previous Docker connection attempt', async () => {
+    let resolve!: (devices: DeviceInfo[]) => void
+    api.getAllDevices.mockImplementationOnce(
+      () =>
+        new Promise<DeviceInfo[]>(done => {
+          resolve = done
+        })
+    )
+    render(<AddDevicePanel cloudConnection={connection} onConnected={onConnected} />)
+    fireEvent.click(screen.getByTestId('add-remote-docker-button'))
+    await screen.findByTestId('remote-docker-command')
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
+    const signal = api.getAllDevices.mock.calls[0][0].signal as AbortSignal
+    fireEvent.click(screen.getByTestId('add-cloud-device-confirm'))
+    await waitFor(() => expect(api.createCloudDevice).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('remote-docker-command')).not.toBeInTheDocument()
+    expect(signal.aborted).toBe(true)
+    await act(async () => {
+      resolve([device()])
+    })
+    expect(onConnected).not.toHaveBeenCalled()
+  })
+
+  test('keeps adding a device while an unrelated usable device appears during generation', async () => {
+    let resolve!: (value: typeof command) => void
+    api.createDockerRemoteDeviceCommand.mockReturnValue(
+      new Promise<typeof command>(done => {
+        resolve = done
+      })
+    )
+    const view = render(<ConnectedProject />)
+    fireEvent.click(screen.getByTestId('add-remote-docker-button'))
+    view.rerender(<ConnectedProject devices={[device({ device_id: 'unrelated' })]} />)
+    expect(screen.getByTestId('add-device-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('remote-project-source-existing')).not.toBeInTheDocument()
+    await act(async () => {
+      resolve(command)
+    })
+    expect(screen.getByTestId('remote-docker-command')).toHaveTextContent(command.command)
+  })
+
   test('does not complete for another online device or the target while offline', async () => {
     api.getAllDevices.mockResolvedValue([
       device({ device_id: 'existing' }),
