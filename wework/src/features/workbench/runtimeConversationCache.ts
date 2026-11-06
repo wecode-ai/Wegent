@@ -87,6 +87,7 @@ const pendingConversationOperations = new Set<{
   requestUserInputKey?: string | null
 }>()
 let nextRuntimeGoalSnapshotVersion = 1
+export const EMPTY_RUNTIME_QUEUED_MESSAGES: RuntimePaneQueuedMessage[] = []
 
 export function beginRuntimeConversationOperation(
   address: RuntimeTaskAddress,
@@ -103,7 +104,7 @@ export function beginRuntimeConversationOperation(
   }
 }
 
-const EMPTY_RUNTIME_CONVERSATION_METADATA: RuntimeConversationMetadata = {
+export const EMPTY_RUNTIME_CONVERSATION_METADATA: RuntimeConversationMetadata = {
   goal: null,
   taskPlan: null,
   subagentStatuses: [],
@@ -494,7 +495,7 @@ export function getRuntimeConversationQueuedMessages(
 }
 
 export function getRuntimeConversationQueuedMessagesByKey(key: string): RuntimePaneQueuedMessage[] {
-  return touchEntry(queuedMessagesByConversation, key) ?? []
+  return touchEntry(queuedMessagesByConversation, key) ?? EMPTY_RUNTIME_QUEUED_MESSAGES
 }
 
 export function getRuntimeConversationQueueDiagnosticSnapshotByKey(
