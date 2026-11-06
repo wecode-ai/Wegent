@@ -14,7 +14,13 @@
           <canvas id="startup-brand-canvas" data-testid="startup-brand-canvas"></canvas>
         </div>
       </main>
-      <footer class="startup-status" data-testid="startup-status">
+      <div
+        id="startup-window-drag-region"
+        class="startup-window-drag-region"
+        data-testid="startup-window-drag-region"
+        aria-hidden="true"
+      ></div>
+      <footer id="startup-status" class="startup-status" data-testid="startup-status">
         <div class="splash-copy">
           <h1 id="splash-title" aria-live="polite">We're preparing your workbench</h1>
           <span id="splash-percentage" aria-hidden="true">0%</span>
