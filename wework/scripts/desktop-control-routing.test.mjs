@@ -207,3 +207,35 @@ test('retires unknown and replaced clients instead of starting an empty poll loo
   assert.equal(replaced.status, 410)
   assert.equal(control.controlLongPolls.size, 0)
 })
+
+test('measures action effects after input cooldown without counting setup activity', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  control.controlCommandAvailableAt.set('main-1', Date.now() + 100)
+  let externalRequests = 0
+  let operationBaseline = null
+  let dispatched = 0
+  const result = control.command('importPluginPackage', 'body', {
+    onDispatch() {
+      dispatched += 1
+      operationBaseline = externalRequests
+    },
+  })
+  assert.equal(dispatched, 0)
+  externalRequests += 1
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await post(control, 'results', {
+    id: command.id,
+    clientId: 'main-1',
+    ok: true,
+    value: 'imported',
+  })
+
+  assert.equal(await result, 'imported')
+  assert.equal(dispatched, 1)
+  assert.equal(operationBaseline, 1)
+  assert.equal(externalRequests - operationBaseline, 0)
+  assert.equal(Object.hasOwn(command, 'onDispatch'), false)
+})

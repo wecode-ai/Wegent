@@ -1230,12 +1230,14 @@ class DesktopE2EServer {
       this.controlWindowsByClient.has(clientId),
       `Desktop control client ${clientId} is not registered`
     )
+    const { onDispatch, ...commandOptions } = options
+    onDispatch?.()
     const id = randomUUID()
     const command = {
       id,
       action,
       selector,
-      ...options,
+      ...commandOptions,
       timeoutMs: options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
     }
     let resolveDelivery
