@@ -2,6 +2,17 @@ import { waitForSnapshot } from './conversation-layout.mjs'
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { ACTIVE_WORKBENCH_SELECTOR, assert } from './shared.mjs'
 
+export async function setGoalDraftForTabTransfer(control, contentSelector) {
+  await control.command('click', `${contentSelector} [data-testid="add-context-button"]`)
+  await control.command('click', '[data-testid="set-goal-button"]')
+  await control.command('waitFor', `${contentSelector} [data-testid="goal-draft-pill"]`)
+}
+
+export async function verifyTransferredGoalDraft(control, contentSelector) {
+  await control.command('waitFor', `${contentSelector} [data-testid="goal-draft-pill"]`)
+  await control.command('click', `${contentSelector} [data-testid="cancel-goal-draft-button"]`)
+}
+
 export async function verifyGoalDraftNavigation({ composerSelector, control, taskRowTestId }) {
   const pillSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="goal-draft-pill"]`
   const draft = 'Unsent goal draft retained across conversation navigation'
