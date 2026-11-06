@@ -1,9 +1,11 @@
-import { verifyIssueRuntimeTitleIsolation } from './issue-runtime-title-isolation.mjs'
+import {
+  verifyIssueRuntimeReply,
+  verifyIssueRuntimeTitleIsolation,
+} from './issue-runtime-title-isolation.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
   assert,
-  CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   DEFAULT_STEP_TIMEOUT_MS,
   join,
@@ -183,10 +185,8 @@ async function verifyDraft(control, project, existingItem) {
     value: prompt,
   })
   await control.command('press', composer, { key: 'Enter' })
-  await control.command('waitFor', `${content} [data-testid="message-assistant"]`, {
-    text: CHECKPOINT_TASK_COMPLETION_TEXT,
-  })
   const binding = await waitForBinding(control, project.id, existingItem?.id)
+  await verifyIssueRuntimeReply(control, content, binding)
   const persisted = await rpc('todos.get', {
     project_id: project.id,
     task_id: binding.loop_item_id,
