@@ -13,7 +13,11 @@ export { artifactDatabaseState, prepareArtifactDatabaseState } from './artifact-
 
 const repository = resolve(__dirname, '../../..')
 export const artifactApiUrl = process.env.E2E_API_URL || 'http://localhost:8000'
+// The artifact device runs inside the isolated Playwright container, so its
+// model URL must be reachable from that network. The runner-local loopback
+// override is only valid for devices started on the runner itself.
 export const artifactModelUrl =
+  process.env.E2E_CLAUDE_MODEL_SERVER_URL ||
   process.env.E2E_LOCAL_CLAUDE_MODEL_SERVER_URL ||
   process.env.MOCK_MODEL_SERVER_URL ||
   'http://localhost:9999'

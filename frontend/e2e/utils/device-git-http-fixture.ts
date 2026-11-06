@@ -11,6 +11,15 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
+/**
+ * The Backend and device Executors run outside the isolated browser container,
+ * so they must reach this fixture through the container's bridge address.
+ * Local runs keep loopback.
+ */
+function fixtureHost(): string {
+  return process.env.E2E_TEST_CONTAINER_ADDRESS?.trim() || '127.0.0.1'
+}
+
 export type GitHttpFixture = {
   domain: string
   url: string
@@ -89,7 +98,7 @@ export async function createGitHttpFixture(): Promise<GitHttpFixture> {
     await rm(fixtureRoot, { recursive: true, force: true })
     throw new Error('Device Git fixture did not expose a TCP port')
   }
-  const domain = `http://127.0.0.1:${address.port}`
+  const domain = `http://${fixtureHost()}:${address.port}`
 
   return {
     domain,

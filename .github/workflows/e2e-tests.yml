@@ -1926,6 +1926,7 @@ jobs:
           docker run --rm \
             --network bridge \
             --add-host wegent-e2e-runner:host-gateway \
+            --entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh" \
             --ipc host \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --volume "$GITHUB_WORKSPACE:$container_workspace" \
@@ -1952,8 +1953,7 @@ jobs:
             --env GITHUB_RUN_ATTEMPT \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \
-            bash ../.github/scripts/run-isolated-e2e-browser.sh \
-              node ./node_modules/@playwright/test/cli.js test --project=executor-chromium
+            node ./node_modules/@playwright/test/cli.js test --project=executor-chromium
 
       # Keep normal executor coverage on production thresholds. Replace only the
       # Backend after that suite, retaining its binaries, ports and dependencies.
@@ -2012,6 +2012,7 @@ jobs:
           docker run --rm \
             --network bridge \
             --add-host wegent-e2e-runner:host-gateway \
+            --entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh" \
             --ipc host \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --volume "$GITHUB_WORKSPACE:$container_workspace" \
@@ -2035,8 +2036,7 @@ jobs:
             --env PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report-stalled \
             --env PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report-stalled \
             "$PLATFORM_E2E_IMAGE" \
-            bash ../.github/scripts/run-isolated-e2e-browser.sh \
-              node ./node_modules/@playwright/test/cli.js test \
+            node ./node_modules/@playwright/test/cli.js test \
               --project=executor-stalled-chromium --output=test-results-stalled
 
       - name: Stop Local ClaudeCode Executor

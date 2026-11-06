@@ -13,7 +13,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { runtimeArtifact } from "./runtime-artifact.mjs";
-import { runnerLoopbackHosts } from "./e2e-runner-network.mjs";
+import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 
 test("isolated browsers route localhost to real runner services without retaining a loopback alias", () => {
   const hosts = [
@@ -55,6 +55,43 @@ test("invalid runner addresses fail before configuring browser routing", () => {
   }
 });
 
+test("fixture servers advertise the container address reachable from runner processes", () => {
+  const interfaces = {
+    lo: [
+      { address: "127.0.0.1", family: "IPv4", internal: true },
+      { address: "::1", family: "IPv6", internal: true },
+    ],
+    eth0: [
+      { address: "fe80::1", family: "IPv6", internal: false },
+      { address: "172.17.0.2", family: "IPv4", internal: false },
+    ],
+  };
+  assert.equal(containerIPv4(interfaces), "172.17.0.2");
+  assert.throws(
+    () => containerIPv4({ lo: interfaces.lo }),
+    /no non-loopback IPv4 address/,
+  );
+  const wrapper = readFileSync(
+    ".github/scripts/run-isolated-e2e-browser.sh",
+    "utf8",
+  );
+  assert.match(wrapper, /E2E_TEST_CONTAINER_ADDRESS="\$container_address"/);
+  const fixture = readFileSync(
+    "frontend/e2e/utils/device-git-http-fixture.ts",
+    "utf8",
+  );
+  assert.match(fixture, /process\.env\.E2E_TEST_CONTAINER_ADDRESS/);
+  const artifactFixture = readFileSync(
+    "frontend/e2e/utils/artifact-device-fixture.ts",
+    "utf8",
+  );
+  assert.ok(
+    artifactFixture.indexOf("process.env.E2E_CLAUDE_MODEL_SERVER_URL") <
+      artifactFixture.indexOf("process.env.E2E_LOCAL_CLAUDE_MODEL_SERVER_URL"),
+    "container-hosted artifact devices must prefer the runner-reachable model URL",
+  );
+});
+
 test("executor browser containers isolate network changes while retaining the existing jobs and workers", () => {
   const parsed = spawnSync(
     "ruby",
@@ -78,7 +115,7 @@ test("executor browser containers isolate network changes while retaining the ex
     assert.match(run, /--add-host wegent-e2e-runner:host-gateway\s/);
     assert.match(
       run,
-      /bash \.\.\/\.github\/scripts\/run-isolated-e2e-browser\.sh/,
+      /--entrypoint "\$container_workspace\/\.github\/scripts\/run-isolated-e2e-browser\.sh"/,
     );
     assert.doesNotMatch(run, /--network host|--workers|--retries/);
   }

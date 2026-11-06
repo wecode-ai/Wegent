@@ -1,8 +1,22 @@
 import { lookup } from "node:dns/promises";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/**
+ * Address that runner processes use to reach services inside the test container.
+ * Playwright fixtures must advertise this address instead of loopback.
+ */
+export function containerIPv4(interfaces = networkInterfaces()) {
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && !entry.internal) return entry.address;
+    }
+  }
+  throw new Error("The E2E test container has no non-loopback IPv4 address");
+}
 
 /** Route the test container's localhost names to the real runner services. */
 export function runnerLoopbackHosts(content, gateway) {
@@ -32,8 +46,12 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   await access("/.dockerenv");
-  const { address } = await lookup("wegent-e2e-runner", { family: 4 });
-  const hosts = await readFile("/etc/hosts", "utf8");
-  await writeFile("/etc/hosts", runnerLoopbackHosts(hosts, address));
-  process.stdout.write(address);
+  if (process.argv.includes("--container-address")) {
+    process.stdout.write(containerIPv4());
+  } else {
+    const { address } = await lookup("wegent-e2e-runner", { family: 4 });
+    const hosts = await readFile("/etc/hosts", "utf8");
+    await writeFile("/etc/hosts", runnerLoopbackHosts(hosts, address));
+    process.stdout.write(address);
+  }
 }
