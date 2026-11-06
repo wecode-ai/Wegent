@@ -165,19 +165,26 @@ export function createSourceStoryModel({ marker, roleId, providerId, mode, expec
     if (mode === 'project') state.taskId = work.work.taskId
     const message = work.messages.find(item => item.text === value.text)
     assert.ok(message, "The real collected event must contain this phase's source facts")
+    assert.ok(message.recordId, 'Full source reads require the immutable version record ID')
     if (!has(body, payload))
       return call(body, payload, 'read_work', {
-        messageId: message.id,
+        messageId: message.recordId,
         payloadOffset: 0,
       })
     const original = storyToolOutput(body, payload)
     assert.equal(original.nextOffset, null, 'This small source fixture must be read completely')
     const complete = JSON.parse(original.payload)
+    assert.equal(complete.recordId, message.recordId)
     assert.equal(complete.text, value.text)
     if (mode === 'project') assert.equal(complete.version, value.version)
     else assert.equal(complete.id, value.messageId)
     if (!state.reads.some(item => item.phase === phase))
-      state.reads.push({ phase, taskId: work.work.taskId })
+      state.reads.push({
+        phase,
+        taskId: work.work.taskId,
+        recordId: message.recordId,
+        messageId: message.id,
+      })
     if (mode === 'project') return [assistantMessage(value.fact)]
     return call(body, reply, 'reply', { messageId: message.id, text: value.reply })
   }

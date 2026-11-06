@@ -7335,6 +7335,9 @@ pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -
     });
     if is_tool_approval {
         payload["approvalKind"] = json!("mcp_tool_call");
+        if let Some(name) = meta.and_then(|meta| meta.get("tool_name")) {
+            payload["toolName"] = name.clone();
+        }
         if let Some(title) = meta.and_then(|meta| meta.get("tool_title")) {
             payload["toolTitle"] = title.clone();
         }

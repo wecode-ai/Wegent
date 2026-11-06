@@ -70,7 +70,7 @@ async function request(model, outputs = [], text = `New events: ${MARKER}`) {
 function sourceRead(phase = 1) {
   return output(`${MARKER}-work-${phase}`, {
     work: { taskId: 'actual-task' },
-    messages: [{ id: `message-${phase}`, text: expected(phase).text }],
+    messages: [{ id: `message-${phase}`, recordId: `record-${phase}`, text: expected(phase).text }],
   })
 }
 
@@ -82,28 +82,41 @@ describe('source story model evidence guards', () => {
     expect(first.response).not.toContain(expected(1).fact)
     const summary = await request(model, [sourceRead()])
     expect(summary.response).toContain('payloadOffset')
+    expect(summary.response).toContain('record-1')
     expect(summary.response).not.toContain(expected(1).fact)
     const complete = await request(model, [
       sourceRead(),
       output(`${MARKER}-work-1-payload`, {
-        payload: JSON.stringify({ id: 'message-1', text: expected(1).text, version: 'v1' }),
+        payload: JSON.stringify({
+          id: 'message-1',
+          recordId: 'record-1',
+          text: expected(1).text,
+          version: 'v1',
+        }),
         nextOffset: null,
       }),
     ])
     expect(complete.response).toContain(expected(1).fact)
-    expect(model.reads).toEqual([{ phase: 1, taskId: 'actual-task' }])
+    expect(model.reads).toEqual([
+      { phase: 1, taskId: 'actual-task', recordId: 'record-1', messageId: 'message-1' },
+    ])
   })
 
   it.each([
     { text: 'different fact', version: 'v1', nextOffset: null },
     { text: expected(1).text, version: 'different version', nextOffset: null },
     { text: expected(1).text, version: 'v1', nextOffset: 12000 },
+    { text: expected(1).text, version: 'v1', recordId: 'different-record', nextOffset: null },
   ])('rejects substituted or incomplete source evidence (%j)', async value => {
     await expect(
       request(fixture(), [
         sourceRead(),
         output(`${MARKER}-work-1-payload`, {
-          payload: JSON.stringify({ text: value.text, version: value.version }),
+          payload: JSON.stringify({
+            recordId: value.recordId ?? 'record-1',
+            text: value.text,
+            version: value.version,
+          }),
           nextOffset: value.nextOffset,
         }),
       ])
@@ -115,7 +128,7 @@ describe('source story model evidence guards', () => {
     await request(model, [
       sourceRead(),
       output(`${MARKER}-work-1-payload`, {
-        payload: JSON.stringify({ id: 'message-1', text: expected(1).text }),
+        payload: JSON.stringify({ id: 'message-1', recordId: 'record-1', text: expected(1).text }),
         nextOffset: null,
       }),
     ])
@@ -141,7 +154,7 @@ describe('source story model evidence guards', () => {
     await request(model, [
       sourceRead(2),
       output(`${MARKER}-work-2-payload`, {
-        payload: JSON.stringify({ id: 'message-2', text: expected(2).text }),
+        payload: JSON.stringify({ id: 'message-2', recordId: 'record-2', text: expected(2).text }),
         nextOffset: null,
       }),
     ])

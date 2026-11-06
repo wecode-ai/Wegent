@@ -111,7 +111,11 @@ export function createDingTalkReplyStory(options) {
     await control.command('clickWhenEnabled', '[data-testid="interaction-open-original"]')
     await control.command('waitFor', CARD, { timeoutMs: options.modelResponseTimeoutMs })
     const preview = await control.command('getText', CARD, { visible: true })
-    assert.ok(preview.includes(REPLY_STORY_VALUES[phase].messageId))
+    const source = await control.command('getText', '[data-testid="user-message-content"]', {
+      visible: true,
+    })
+    assert.ok(source.includes(REPLY_STORY_VALUES[phase].text))
+    assert.ok(source.includes('Source story group'))
     assert.ok(
       preview.includes(REPLY_STORY_VALUES[phase].reply),
       'Confirm the actual complete reply'

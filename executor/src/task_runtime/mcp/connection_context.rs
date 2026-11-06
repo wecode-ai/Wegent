@@ -7,10 +7,7 @@ const SUMMARY_CHARS: usize = 5000;
 
 pub(super) fn work_messages(messages: &[Value], args: &Value) -> Result<Value, String> {
     if let Some(id) = args["messageId"].as_str() {
-        let message = messages
-            .iter()
-            .find(|message| message["id"] == id || message["recordId"] == id)
-            .ok_or("Unknown source event")?;
+        let message = exact_message(messages, id)?;
         let mut chunk = payload_chunk(message, args)?;
         chunk["messageId"] = json!(id);
         return Ok(chunk);
@@ -30,6 +27,18 @@ pub(super) fn work_messages(messages: &[Value], args: &Value) -> Result<Value, S
         json!({"messages":page,"hasMore":offset+PAGE_SIZE<messages.len(),
         "nextOffset":(offset+PAGE_SIZE<messages.len()).then_some(offset+PAGE_SIZE)}),
     )
+}
+
+fn exact_message<'a>(messages: &'a [Value], id: &str) -> Result<&'a Value, String> {
+    if let Some(message) = messages.iter().find(|message| message["recordId"] == id) {
+        return Ok(message);
+    }
+    let mut matching = messages.iter().filter(|message| message["id"] == id);
+    let message = matching.next().ok_or("Unknown source event")?;
+    if matching.next().is_some() {
+        return Err("Ambiguous source event ID; use the immutable recordId from read_work".into());
+    }
+    Ok(message)
 }
 
 /// Chunk the complete immutable record without interpreting provider-owned fields.
@@ -87,6 +96,37 @@ pub(crate) fn summarize(mut value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versioned_events_require_an_exact_immutable_record() {
+        let messages = vec![
+            json!({"id":"stable", "recordId":"record-v1", "version":"v1", "text":"passed"}),
+            json!({"id":"stable", "recordId":"record-v2", "version":"v2", "text":"failed"}),
+            json!({"id":"unique", "recordId":"record-other", "version":"v1"}),
+        ];
+        for original in &messages {
+            let page =
+                work_messages(&messages, &json!({"messageId":original["recordId"]})).unwrap();
+            let payload: Value = serde_json::from_str(page["payload"].as_str().unwrap()).unwrap();
+            assert_eq!(&payload, original);
+        }
+        assert!(work_messages(&messages, &json!({"messageId":"stable"}))
+            .unwrap_err()
+            .contains("recordId"));
+        let unique = work_messages(&messages, &json!({"messageId":"unique"})).unwrap();
+        let payload: Value = serde_json::from_str(unique["payload"].as_str().unwrap()).unwrap();
+        assert_eq!(payload, messages[2]);
+        assert!(work_messages(&messages, &json!({"messageId":"foreign-record"})).is_err());
+    }
+
+    #[test]
+    fn immutable_record_identity_precedes_another_events_upstream_id() {
+        let exact = json!({"id":"stable", "recordId":"record-v2", "version":"v2"});
+        let messages = [json!({"id":"record-v2", "recordId":"other"}), exact.clone()];
+        let page = work_messages(&messages, &json!({"messageId":"record-v2"})).unwrap();
+        let payload: Value = serde_json::from_str(page["payload"].as_str().unwrap()).unwrap();
+        assert_eq!(payload, exact);
+    }
 
     #[test]
     fn provider_neutral_projection_preserves_original_events() {
