@@ -21,10 +21,7 @@ export type DesktopConversationPresentationProp =
   | 'useContentVisibility'
   | 'onVirtualMeasurement'
   | 'renderVisualization'
-export function useDesktopConversationPresentation(
-  messages: WorkbenchMessage[] = [],
-  workspacePath?: string
-) {
+export function useDesktopConversationPresentation(messages: WorkbenchMessage[] = []) {
   const hasSkillReferences = useMemo(
     () =>
       messages.some(
@@ -36,7 +33,7 @@ export function useDesktopConversationPresentation(
       ),
     [messages]
   )
-  const userMessageServices = useDesktopUserMessageServices(hasSkillReferences, workspacePath)
+  const userMessageServices = useDesktopUserMessageServices(hasSkillReferences)
   return {
     userMessageServices,
     virtualize: isDesktopRuntime(),

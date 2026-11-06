@@ -8,6 +8,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import references from '../../../../packages/chat-core/test-fixtures/prompt-mentions.json'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
+import { AttachmentPreviewContext } from './AttachmentPreviewContext'
+import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
 import { MessageList } from './MessageList'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
@@ -52,7 +54,7 @@ describe('MessageList', () => {
     { name: 'message list', Conversation: MessageList },
     { name: 'scrollable conversation', Conversation: ScrollableMessageArea },
   ])(
-    'opens sent text attachments with the current workspace preference in $name',
+    'previews sent text attachments independently of workspace opener preferences in $name',
     async ({ Conversation }) => {
       runtimeMock.electron = true
       // Supply a mounted viewport before the virtualizer's initial measurement.
@@ -72,8 +74,9 @@ describe('MessageList', () => {
           ]
         }
       })
-      setPreferredWorkspaceOpener('/workspace/first', 'vscode')
-      setPreferredWorkspaceOpener('/workspace/second', 'cursor')
+      setPreferredWorkspaceOpener('/workspace/first', 'terminal')
+      setPreferredWorkspaceOpener('/workspace/second', 'powershell')
+      const openPreview = vi.fn<(source: WorkspaceAttachmentPreviewSource) => void>()
       const path = '/attachments/sample.md'
       const onOpenWorkspaceFile = vi.fn()
       const messages = [
@@ -97,45 +100,39 @@ describe('MessageList', () => {
           ],
         },
       ]
+      const wrapper = ({ children }: { children: React.ReactNode }) => (
+        <AttachmentPreviewContext.Provider value={openPreview}>
+          {children}
+        </AttachmentPreviewContext.Provider>
+      )
       const { rerender } = render(
         <Conversation
           {...scrollProps}
           messages={messages}
-          workspacePath="/workspace/first"
           onOpenWorkspaceFile={onOpenWorkspaceFile}
-        />
+        />,
+        { wrapper }
       )
       await userEvent.click(screen.getByTestId('message-text-attachment'))
-      await waitFor(() =>
-        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
-          opener: 'vscode',
-          path,
-        })
-      )
-      desktopHostMock.invoke.mockClear()
+      expect(openPreview).toHaveBeenCalledTimes(1)
+      expect(openPreview.mock.calls[0][0].filename).toBe('sample.md')
+      await openPreview.mock.calls[0][0].loadFile()
+      expect(electronLocalFileMock.read).toHaveBeenCalledWith(path)
       rerender(
         <Conversation
           {...scrollProps}
           messages={messages}
-          workspacePath="/workspace/second"
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       )
       await userEvent.click(screen.getByTestId('message-text-attachment'))
-      await waitFor(() =>
-        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
-          opener: 'cursor',
-          path,
-        })
-      )
-      desktopHostMock.invoke.mockClear()
+      expect(openPreview).toHaveBeenCalledTimes(2)
       setPreferredWorkspaceOpener('/workspace/second', 'vscode')
       await userEvent.click(screen.getByTestId('message-text-attachment'))
-      await waitFor(() =>
-        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
-          opener: 'vscode',
-          path,
-        })
+      expect(openPreview).toHaveBeenCalledTimes(3)
+      expect(desktopHostMock.invoke).not.toHaveBeenCalledWith(
+        'workspace.openFile',
+        expect.anything()
       )
       expect(desktopHostMock.invoke).not.toHaveBeenCalledWith('shell.openPath', expect.anything())
       expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
