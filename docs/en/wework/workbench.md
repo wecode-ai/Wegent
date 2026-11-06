@@ -119,6 +119,12 @@ When in-app notifications are enabled for the relevant source, new questions sho
 
 To leave a question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally.
 
+Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
+
+When you are unsure how to answer a business question, select **Talk it through** on its question card or in the question details in **Needs your input**. Wework opens the right sidebar and prepares an editable question in its composer. Edit it and select Send to begin an independent discussion; opening alone never sends a message. The original question stays open. Closing and reopening keeps the discussion and unsent message.
+
+After discussing, select the text you want to use and choose **Fill answer** from the selection toolbar. For multiple questions, choose the target at the top of the sidebar first. Review and edit the selected text in the original answer before submitting. Filling a draft never sends an answer or approves an operation. Questions that were handled, cancelled, expired, or whose current state cannot be verified cannot receive a draft. Permission approvals and connector authorization retain their native confirmation flows.
+
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
 
 ## Use IM notifications

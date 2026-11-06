@@ -6088,6 +6088,20 @@
     "send": "发送",
     "unsupported_display_mode": "应用没有可用的显示模式。"
   },
+  "question_discussion": {
+    "empty": "先编辑问题再发送。讨论时选中文字，可填入原问题的回答。",
+    "expand_reply": "展开回复",
+    "open": "先聊聊",
+    "title": "先聊聊，再决定",
+    "close": "收起讨论",
+    "placeholder": "继续追问，或请模型总结建议",
+    "answer_for": "回填到这个问题",
+    "checking": "正在检查原问题…",
+    "unavailable": "原问题已处理或已失效，无法回填。讨论内容仍保留。",
+    "failed": "暂时无法检查原问题，请稍后重试。",
+    "prompt": "我对下面的问题还拿不准。请先解释各选项的依据和取舍，给出你的建议，并与我讨论；不要替我做决定或执行原任务。讨论清楚后，我会自己确认并提交答案。",
+    "start_failed": "讨论暂时未能开始，请在讨论输入框中重新发送。"
+  },
   "interactions": {
     "sources": {
       "task": "任务",

@@ -1340,7 +1340,8 @@ describe('TemporaryChatPanel', () => {
         address,
         message: RUNTIME_RETRY_CONTINUATION_PROMPT,
         modelId: 'gpt-5.6-codex',
-      })
+      }),
+      expect.any(Object)
     )
 
     await userEvent.click(screen.getByTestId('mock-submit-input'))
@@ -1402,9 +1403,95 @@ describe('TemporaryChatPanel', () => {
       'original-source'
     )
     await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
-    expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
-    expect(screen.queryByText('Older decision?')).not.toBeInTheDocument()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('request-user-input-expand')).toHaveTextContent('Older decision?')
+    expect(screen.getByTestId('request-user-input-custom-old')).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('request-user-input-expand'))
+    expect(screen.getByTestId('request-user-input-custom-old')).toBeVisible()
   })
+
+  it.each(['accepted', 'rejected', 'queued', 'pumped-queued'] as const)(
+    'retains a folded question until the side composer message is delivered (%s)',
+    async outcome => {
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      mocks.busy = outcome === 'pumped-queued'
+      const question = {
+        kind: 'request_user_input' as const,
+        itemId: 'held-question',
+        delivery: 'async',
+        questions: [{ id: 'audience', question: 'Who receives this?', is_other: true }],
+      }
+      mocks.conversationMessages = [
+        {
+          id: 'held-question-message',
+          role: 'assistant',
+          content: '',
+          status: 'done',
+          blocks: [
+            {
+              id: 'held-block',
+              type: 'tool',
+              toolName: 'request_user_input_async',
+              status: 'done',
+              renderPayload: question,
+            },
+          ],
+        },
+      ] as typeof mocks.conversationMessages
+      const panel = () => (
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          initialAddress={address}
+          instanceId="held-question"
+        />
+      )
+      const { rerender } = render(panel())
+      await userEvent.type(
+        screen.getByTestId('request-user-input-custom-audience'),
+        'Saved recipients'
+      )
+      await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+      let finish!: () => void
+      mocks.sendRuntimePaneMessage.mockImplementationOnce(
+        (...args: unknown[]) =>
+          new Promise<boolean>(resolve => {
+            const options = args[1] as { onQueued?: (response: { queuePosition: number }) => void }
+            finish = () => {
+              if (outcome === 'queued' || outcome === 'pumped-queued')
+                options.onQueued?.({ queuePosition: 1 })
+              resolve(outcome !== 'rejected')
+            }
+          })
+      )
+      expect(screen.getByTestId('mock-send')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('mock-send'))
+      if (outcome === 'pumped-queued') {
+        expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+        mocks.busy = false
+        mocks.lifecycleSnapshot = {
+          derived: { isRunning: false, isTurnActive: false },
+          turn: { id: null },
+        }
+        rerender(panel())
+      }
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('request-user-input-expand')).toBeVisible()
+      await act(async () => {
+        finish()
+      })
+      if (outcome === 'accepted') {
+        expect(screen.queryByTestId('request-user-input-expand')).not.toBeInTheDocument()
+      } else {
+        expect(screen.getByTestId('request-user-input-expand')).toBeVisible()
+        await userEvent.click(screen.getByTestId('request-user-input-expand'))
+        expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue(
+          'Saved recipients'
+        )
+      }
+      expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    }
+  )
 
   it('restores only the selected controlled question after notification revalidation', () => {
     mocks.renderToolBlocks = true

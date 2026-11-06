@@ -5,23 +5,23 @@ import { createRuntimeUserMessage } from './runtimeUserMessage'
 export const RUNTIME_RETRY_CONTINUATION_PROMPT =
   'Continue the unfinished work from the previous turn. Use the existing conversation context and do not repeat work that is already complete.'
 
-/** The hosts own the in-flight lock and transport; retry intent and rollback are shared. */
+/** The hosts own the in-flight lock and transport; retry delivery semantics are shared. */
 export async function retryRuntimeConversation({
   messageId,
   messages,
   request,
   labels,
-  addUserMessage,
-  removeUserMessage,
+  acceptUserMessage,
   send,
 }: {
   messageId: string
   messages: WorkbenchMessage[]
   request: Omit<RuntimeSendRequest, 'message' | 'clientUserMessageId'>
   labels: { continue: string; missing: string; failed: string }
-  addUserMessage(message: WorkbenchMessage & { role: 'user' }): void
-  removeUserMessage(id: string): void
-  send(request: RuntimeSendRequest): Promise<boolean>
+  acceptUserMessage(message: WorkbenchMessage & { role: 'user' }, turnId?: string): void
+  send(
+    request: RuntimeSendRequest
+  ): Promise<{ accepted: boolean; queued?: boolean; turnId?: string }>
 }): Promise<void> {
   if (
     !messages.some(
@@ -32,16 +32,16 @@ export async function retryRuntimeConversation({
     throw new Error(labels.missing)
   }
   const clientUserMessageId = `runtime-retry-continuation-${crypto.randomUUID()}`
-  addUserMessage(createRuntimeUserMessage(labels.continue, [], { id: clientUserMessageId }))
-  try {
-    const accepted = await send({
-      ...request,
-      message: RUNTIME_RETRY_CONTINUATION_PROMPT,
-      clientUserMessageId,
-    })
-    if (!accepted) throw new Error(labels.failed)
-  } catch (cause) {
-    removeUserMessage(clientUserMessageId)
-    throw cause
+  const result = await send({
+    ...request,
+    message: RUNTIME_RETRY_CONTINUATION_PROMPT,
+    clientUserMessageId,
+  })
+  if (!result.accepted) throw new Error(labels.failed)
+  if (!result.queued) {
+    acceptUserMessage(
+      createRuntimeUserMessage(labels.continue, [], { id: clientUserMessageId }),
+      result.turnId
+    )
   }
 }
