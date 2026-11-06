@@ -5,7 +5,11 @@ import { raceWithTimeout } from '@/lib/promise-timeout'
 import { ApiError } from '@/api/http'
 
 type ReadInstalled = (deviceId: string) => Promise<InstalledPluginListResponse>
-const readers = new WeakMap<ReadInstalled, ReturnType<typeof createRequestCache>>()
+type ReceiptReader = {
+  cache: ReturnType<typeof createRequestCache>
+  dispatched?: Promise<InstalledPluginListResponse>
+}
+const readers = new WeakMap<ReadInstalled, Map<string, ReceiptReader>>()
 
 export class PluginDeviceReceiptError extends Error {
   readonly code: string = 'PLUGIN_DEVICE_RECEIPT_UNCONFIRMED'
@@ -38,19 +42,45 @@ export function pluginDeviceReceiptPending(plugin: InstalledPlugin, deviceId: st
   )
 }
 
-function readLatest(read: ReadInstalled, deviceId: string, timeoutMs: number) {
-  let cache = readers.get(read)
-  if (!cache) {
-    cache = createRequestCache()
-    readers.set(read, cache)
+function beginReceiptReads(read: ReadInstalled, deviceId: string): ReceiptReader {
+  let devices = readers.get(read)
+  if (!devices) {
+    devices = new Map()
+    readers.set(read, devices)
   }
-  // The API function owns account credentials. Share only concurrent reads on
-  // that API/device; completed results must never confirm another receipt.
-  const shared = cache.get(
-    deviceId,
-    () => raceWithTimeout(read(deviceId), 15_000, () => new PluginDeviceReceiptTimeoutError()),
+  let reader = devices.get(deviceId)
+  if (!reader) {
+    reader = { cache: createRequestCache() }
+    devices.set(deviceId, reader)
+  }
+  // This poll follows its install POST. Detach already dispatched GETs without
+  // cancelling their waiters. A queued GET can still cover this newer intent.
+  if (reader.dispatched) {
+    reader.cache.invalidate()
+    reader.dispatched = undefined
+  }
+  return reader
+}
+
+function readLatest(
+  reader: ReceiptReader,
+  read: ReadInstalled,
+  deviceId: string,
+  timeoutMs: number
+) {
+  const shared: Promise<InstalledPluginListResponse> = reader.cache.get(
+    'installed',
+    () => {
+      reader.dispatched = shared
+      return raceWithTimeout(read(deviceId), 15_000, () => new PluginDeviceReceiptTimeoutError())
+    },
     0
   )
+  const settled = () => {
+    // An old response must not clear a newer request's admission boundary.
+    if (reader.dispatched === shared) reader.dispatched = undefined
+  }
+  void shared.then(settled, settled)
   // Each waiter owns its remaining budget; timing out must not cancel peers.
   return raceWithTimeout(shared, timeoutMs, () => new PluginDeviceReceiptTimeoutError())
 }
@@ -75,6 +105,7 @@ export async function waitForPluginDeviceReceipt(
 ): Promise<InstalledPlugin> {
   const identity = localPluginId(initial)
   if (identity === null) throw new PluginInstallationSupersededError()
+  const reader = beginReceiptReads(options.readInstalled, deviceId)
   const deadline = Date.now() + (options.timeoutMs ?? 60_000)
   const wait = options.wait ?? (delay => new Promise(resolve => window.setTimeout(resolve, delay)))
   let plugin = initial
@@ -89,7 +120,7 @@ export async function waitForPluginDeviceReceipt(
     if (Date.now() >= deadline) break
     let response: InstalledPluginListResponse
     try {
-      response = await readLatest(options.readInstalled, deviceId, deadline - Date.now())
+      response = await readLatest(reader, options.readInstalled, deviceId, deadline - Date.now())
     } catch (error) {
       // The install is already committed. Only retry reads within this poll's
       // original budget; never turn a receipt failure into an install rollback.

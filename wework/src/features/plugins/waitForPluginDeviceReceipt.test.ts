@@ -18,6 +18,92 @@ function plugin(state: string, id = 54, release = 17, deviceId = 'device'): Inst
 const current = () => true
 const wait = () => Promise.resolve()
 
+function deferredReceipt() {
+  let resolve!: (response: InstalledPluginListResponse) => void
+  const promise = new Promise<InstalledPluginListResponse>(done => (resolve = done))
+  return { promise, resolve }
+}
+
+test.each(['missing', 'old-installed'] as const)(
+  'a new install cannot use a previously dispatched GET containing %s membership',
+  async previousMembership => {
+    const old = deferredReceipt()
+    const fresh = deferredReceipt()
+    const aInstalled = plugin('installed')
+    const bInstalled = plugin('installed', 55)
+    const readInstalled = vi
+      .fn()
+      .mockReturnValueOnce(old.promise)
+      .mockReturnValueOnce(fresh.promise)
+    const options = { readInstalled, isCurrent: current, wait }
+    const a = waitForPluginDeviceReceipt(plugin('pending'), 'device', options)
+    await vi.waitFor(() => expect(readInstalled).toHaveBeenCalledOnce())
+    // B's POST returned pending after the server had already read A's old snapshot.
+    const settledB = vi.fn()
+    const b = waitForPluginDeviceReceipt(plugin('pending', 55), 'device', options).then(
+      value => {
+        settledB(value)
+        return value
+      },
+      error => {
+        settledB(error)
+        return error
+      }
+    )
+    const latest = { items: [aInstalled, bInstalled] } as InstalledPluginListResponse
+    try {
+      old.resolve({
+        items: [
+          aInstalled,
+          ...(previousMembership === 'old-installed' ? [plugin('installed', 55)] : []),
+        ],
+      } as InstalledPluginListResponse)
+      await a
+      expect(readInstalled).toHaveBeenCalledTimes(2)
+      expect(settledB).not.toHaveBeenCalled()
+      fresh.resolve(latest)
+      expect(await b).toBe(bInstalled)
+    } finally {
+      old.resolve(latest)
+      fresh.resolve(latest)
+      await Promise.all([a, b])
+    }
+  }
+)
+
+test('an older GET completion cannot make a newer dispatched GET reusable by another install', async () => {
+  const old = deferredReceipt()
+  const middle = deferredReceipt()
+  const aInstalled = plugin('installed')
+  const bInstalled = plugin('installed', 55)
+  const cInstalled = plugin('installed', 56)
+  const readInstalled = vi
+    .fn()
+    .mockReturnValueOnce(old.promise)
+    .mockReturnValueOnce(middle.promise)
+    .mockResolvedValue({ items: [aInstalled, bInstalled, cInstalled] })
+  const options = { readInstalled, isCurrent: current, wait }
+  const a = waitForPluginDeviceReceipt(plugin('pending'), 'device', options)
+  await vi.waitFor(() => expect(readInstalled).toHaveBeenCalledOnce())
+  const b = waitForPluginDeviceReceipt(plugin('pending', 55), 'device', options)
+  const latest = { items: [aInstalled, bInstalled, cInstalled] } as InstalledPluginListResponse
+  try {
+    await vi.waitFor(() => expect(readInstalled).toHaveBeenCalledTimes(2))
+    old.resolve({ items: [aInstalled] } as InstalledPluginListResponse)
+    await a
+    const c = waitForPluginDeviceReceipt(plugin('pending', 56), 'device', options)
+    // Finish B with a pre-C snapshot: only C's own fresh read can confirm it.
+    middle.resolve({ items: [aInstalled, bInstalled] } as InstalledPluginListResponse)
+    expect(await c).toBe(cInstalled)
+    expect(readInstalled).toHaveBeenCalledTimes(3)
+    expect(await b).toBe(bInstalled)
+  } finally {
+    old.resolve(latest)
+    middle.resolve(latest)
+    await Promise.all([a, b])
+  }
+})
+
 test.each([
   new ApiError('Unavailable', 503),
   new ApiError('Throttled', 429),
