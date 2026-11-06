@@ -1652,7 +1652,22 @@ const rendererStartupReady = createStartupReadyHandler(async (source: string) =>
         const bounds = await prepareStartupMainWindow(
           target,
           splashWindow,
-          !keepE2EWindowInBackground
+          !keepE2EWindowInBackground,
+          event => {
+            const geometry = event.splash ?? event.main
+            const display = geometry ? screen.getDisplayMatching(geometry.bounds) : null
+            logStartupStep('startup-window-handoff', event.error ? 'failed' : 'completed', {
+              ...event,
+              display: display
+                ? {
+                    id: display.id,
+                    scaleFactor: display.scaleFactor,
+                    bounds: display.bounds,
+                    workArea: display.workArea,
+                  }
+                : null,
+            })
+          }
         )
         logStartupStep('main-window-show', 'completed')
         return bounds
