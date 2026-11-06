@@ -164,7 +164,11 @@ test.each([
 ] as const)('cleanup makes no deletions when ownership is uncertain: %s', async failure => {
   const { store, current } = await fixture()
   const profile = join(store.slot('owner'), 'profile')
-  await store.save({ ...current, profileRoot: profile })
+  await store.save(
+    failure === 'broken-link'
+      ? { ...current, componentDataDirectory: profile }
+      : { ...current, profileRoot: profile }
+  )
   if (failure !== 'broken-link' && failure !== 'missing-profile') {
     await mkdir(profile)
     await writeFile(join(profile, 'package.json'), '{}')
@@ -187,7 +191,11 @@ test.each([
   await mkdir(snapshot, { recursive: true })
   await writeFile(join(snapshot, 'keep'), 'must survive')
 
-  expect(await store.prune()).toMatchObject({ status: 'skipped', reason: expect.any(String) })
+  expect(await store.prune()).toMatchObject({
+    status: 'skipped',
+    reason:
+      failure === 'broken-link' ? 'Release cleanup encountered a broken link' : expect.any(String),
+  })
 
   expect((await store.read('unused')).id).toBe('unused')
   expect(await readFile(marker, 'utf8')).toBe(markerValue)

@@ -232,6 +232,45 @@ test('a rolled-back target remains reachable but cannot download without explici
   expect(await store.rollbackHistory()).toHaveLength(1)
 })
 
+test.each(['update-rollback-history.json', 'rolled-back-versions.json'])(
+  'unreadable %s blocks checks and downloads until repaired',
+  async name => {
+    const { service, store, fetch, shutdown, restart } = await fixture()
+    const path = join(store.root, name)
+    await atomicReleaseWrite(path, '{')
+
+    await expect(service.check('stable')).rejects.toThrow()
+    await expect(service.download('stable')).rejects.toThrow()
+
+    expect(await readFile(path, 'utf8')).toBe('{')
+    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(0)
+    expect(shutdown).not.toHaveBeenCalled()
+    expect(restart).not.toHaveBeenCalled()
+    expect((await store.active())?.id).toBe('source')
+
+    await atomicReleaseWrite(path, '[]')
+    expect(await service.check('stable')).toMatchObject({ version: '1.1.0' })
+  }
+)
+
+test.each(['update-rollback-history.json', 'rolled-back-versions.json'])(
+  'damage to %s after preparation cannot bypass the install consent check',
+  async name => {
+    const { service, store, shutdown, restart } = await readyFixture()
+    const install = service.createInstallAction()
+    const path = join(store.root, name)
+    await atomicReleaseWrite(path, '{')
+
+    await expect(install()).rejects.toThrow()
+
+    expect(await readFile(path, 'utf8')).toBe('{')
+    expect(shutdown).not.toHaveBeenCalled()
+    expect(restart).not.toHaveBeenCalled()
+    expect((await store.active())?.id).toBe('source')
+    expect(await store.activation()).toBeNull()
+  }
+)
+
 test('retry consent is bound to the failed attempt and cannot authorize a different attempt', async () => {
   const { service, store, fetch } = await fixture()
   const failed = { token: 'first', version: '1.1.0', reason: 'startup-failed' }

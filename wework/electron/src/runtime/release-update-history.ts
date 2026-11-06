@@ -20,7 +20,7 @@ export function parseRollbackHistory(
   value: string | null,
   legacy: string | null
 ): ReleaseRollbackRecord[] {
-  const records: unknown = value ? JSON.parse(value) : []
+  const records: unknown = value === null ? [] : JSON.parse(value)
   if (
     !Array.isArray(records) ||
     records.some(
@@ -33,7 +33,7 @@ export function parseRollbackHistory(
     )
   )
     throw new Error('Invalid update rollback history')
-  const versions: unknown = legacy ? JSON.parse(legacy) : []
+  const versions: unknown = legacy === null ? [] : JSON.parse(legacy)
   if (!Array.isArray(versions) || versions.some(version => typeof version !== 'string'))
     throw new Error('Invalid rollback quarantine')
   const known = new Set(records.map(record => record.version))

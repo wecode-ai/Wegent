@@ -144,6 +144,30 @@ export class ReleaseStore {
     )
   }
 
+  /** Preserve unreadable consent records without blocking health or recovery. */
+  private async updateRollbackHistory(
+    update: (history: ReleaseRollbackRecord[]) => ReleaseRollbackRecord[]
+  ): Promise<void> {
+    let history: ReleaseRollbackRecord[]
+    try {
+      history = await this.rollbackHistory()
+    } catch {
+      // Retry checks still use the strict reader and reject until history is repaired.
+      return
+    }
+    const records = update(history)
+    await atomicReleaseWrite(
+      join(this.root, 'update-rollback-history.json'),
+      JSON.stringify(records)
+    )
+    // A retained older host still reads this file after rollback. New hosts
+    // interpret it as a request for consent, never as a server revocation.
+    await atomicReleaseWrite(
+      join(this.root, 'rolled-back-versions.json'),
+      JSON.stringify([...new Set(records.map(record => record.version))])
+    )
+  }
+
   async activation(): Promise<ReleaseActivation | null> {
     const value = await optionalText(join(this.root, 'activation.json'))
     if (!value) return null
@@ -250,14 +274,8 @@ export class ReleaseStore {
     await atomicReleaseWrite(join(this.root, 'previousHealthy'), activation.from)
     await atomicReleaseWrite(join(this.root, 'last-activation.json'), JSON.stringify(activation))
     const healthy = await this.read(id)
-    const history = await this.rollbackHistory()
-    await atomicReleaseWrite(
-      join(this.root, 'update-rollback-history.json'),
-      JSON.stringify(history.filter(record => record.version !== healthy.version))
-    )
-    await atomicReleaseWrite(
-      join(this.root, 'rolled-back-versions.json'),
-      JSON.stringify([...new Set(history.filter(record => record.version !== healthy.version).map(record => record.version))])
+    await this.updateRollbackHistory(history =>
+      history.filter(record => record.version !== healthy.version)
     )
     await atomicReleaseWrite(
       join(this.root, 'bridge'),
@@ -313,7 +331,6 @@ export class ReleaseStore {
     if (!activation) throw new Error('No release activation to roll back')
     const previous = await this.read(activation.from)
     const rejected = await this.read(activation.to)
-    const history = await this.rollbackHistory()
     const attempted = await optionalText(join(this.root, 'attempted'))
     if (activation.rollbackRequested || attempted === activation.token) {
       const record: ReleaseRollbackRecord = {
@@ -324,11 +341,10 @@ export class ReleaseStore {
         reason: activation.rollbackRequested ? 'rolled-back' : 'startup-failed',
         occurredAt: new Date().toISOString(),
       }
-      const retained = history.filter(item => item.version !== record.version)
-      await atomicReleaseWrite(join(this.root, 'update-rollback-history.json'), JSON.stringify([...retained, record]))
-      // A retained older host still reads this file after rollback. New hosts
-      // interpret it as a request for consent, never as a server revocation.
-      await atomicReleaseWrite(join(this.root, 'rolled-back-versions.json'), JSON.stringify([...new Set([...retained.map(item => item.version), record.version])]))
+      await this.updateRollbackHistory(history => [
+        ...history.filter(item => item.version !== record.version),
+        record,
+      ])
     }
     if (
       activation.restoreRequired &&
