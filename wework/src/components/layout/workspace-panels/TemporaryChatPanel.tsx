@@ -1008,6 +1008,7 @@ export function TemporaryChatPanel({
               <RequestUserInputCard
                 key={requestUserInputPayloadKey(pendingRequest)}
                 payload={pendingRequest}
+                source={address}
                 disabled={requestUserInputHost?.isDisabled(pendingRequest)}
                 error={requestUserInputHost?.getError(pendingRequest)}
                 messages={messages}

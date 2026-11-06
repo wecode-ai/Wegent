@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import {
   ChevronDown,
   CornerDownLeft,
@@ -27,7 +27,7 @@ import {
   useRequestUserInputDeadline,
 } from "./useRequestUserInputDeadline";
 
-interface RequestUserInputCardProps {
+export interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
   compact?: boolean;
   disabled?: boolean;
@@ -38,6 +38,7 @@ interface RequestUserInputCardProps {
     response: RequestUserInputResponse,
   ) => boolean | void | Promise<boolean | void>;
   onIgnore?: () => void;
+  additionalActions?: ReactNode;
   onOpenAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
 }
 
@@ -71,6 +72,7 @@ function RequestUserInputForm({
   disabled = false,
   onSubmit,
   onIgnore,
+  additionalActions,
   error,
   draftAnswers,
   onDraftAnswersChange,
@@ -94,9 +96,10 @@ function RequestUserInputForm({
     initialAnswers(questions),
   );
   // Newly arriving questions receive their defaults without resetting drafts.
-  const selectedAnswers = draftAnswers ?? {
+  const selectedAnswers = {
     ...initialAnswers(questions),
     ...localAnswers,
+    ...draftAnswers,
   };
   const setSelectedAnswers = (
     update:
@@ -109,8 +112,10 @@ function RequestUserInputForm({
     onDraftAnswersChange?.(next);
   };
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
-    initialActiveQuestionId(questions),
+    initialActiveQuestionId(questions, draftAnswers),
   );
+  const selectedQuestionId =
+    customDraftQuestionId(questions, draftAnswers) ?? activeQuestionId;
   const [submitted, setSubmitted] = useState(false);
   const isDisabled = disabled || submitted;
 
@@ -155,7 +160,7 @@ function RequestUserInputForm({
       responseAnswers(
         questions,
         answersOverride ?? selectedAnswers,
-        activeQuestionIdOverride ?? activeQuestionId,
+        activeQuestionIdOverride ?? selectedQuestionId,
       ),
     );
   };
@@ -221,6 +226,7 @@ function RequestUserInputForm({
 
   const actionControls = (
     <>
+      {additionalActions}
       {(!compact || canIgnore) && (
         <button
           type="button"
@@ -309,7 +315,7 @@ function RequestUserInputForm({
                     const isSelected =
                       selectedAnswers[question.id] === option.value &&
                       (!isImplementationPlanRequest ||
-                        activeQuestionId === question.id);
+                        selectedQuestionId === question.id);
                     return (
                       <button
                         key={`${question.id}-${option.label}-${index}`}
@@ -517,13 +523,31 @@ function initialAnswers(
 
 function initialActiveQuestionId(
   questions: ReturnType<typeof normalizeQuestions>,
+  draftAnswers?: Record<string, string>,
 ): string | null {
   return (
-    implementationPlanOptionQuestion(questions)?.id ?? questions[0]?.id ?? null
+    customDraftQuestionId(questions, draftAnswers) ??
+    implementationPlanOptionQuestion(questions)?.id ??
+    questions[0]?.id ??
+    null
   );
 }
 
 const CODEX_APPROVAL_QUESTION_ID = "__codex_approval";
+
+function customDraftQuestionId(
+  questions: ReturnType<typeof normalizeQuestions>,
+  draftAnswers?: Record<string, string>,
+): string | undefined {
+  return questions.find(
+    (question) =>
+      question.allowCustom &&
+      draftAnswers?.[question.id]?.trim() &&
+      !question.options.some(
+        (option) => option.value === draftAnswers[question.id],
+      ),
+  )?.id;
+}
 
 function localizeApprovalQuestions(
   payload: RequestUserInputPayload,

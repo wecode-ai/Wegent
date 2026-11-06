@@ -5504,6 +5504,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         'implementation-plan'
                                       }
                                       payload={pendingRequestUserInput}
+                                      source={currentRuntimeTask}
                                       messages={paneMessages}
                                       onSubmit={response => {
                                         const isImplementationPlanRequest =

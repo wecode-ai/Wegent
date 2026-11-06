@@ -6099,5 +6099,24 @@
     "title_with_count": "Needs your input, {{count}} pending",
     "cached": "This question was pending when last connected. Syncing its latest state; reconnect the device to respond.",
     "entity_unavailable": "This entity cannot be displayed here. Open its original location."
+  },
+  "question_discussion": {
+    "open": "Talk it through",
+    "title": "Talk it through before deciding",
+    "hint": "Explore the options, evidence, and tradeoffs. The original question stays open.",
+    "close": "Close discussion",
+    "starting": "Starting the discussion…",
+    "placeholder": "Ask a follow-up or request a recommendation",
+    "answer_for": "Return an answer to",
+    "conclusion": "Write or paste your conclusion, then review and edit it",
+    "review_hint": "This fills an answer draft. Review and submit it in the original question.",
+    "apply": "Fill answer",
+    "checking": "Checking the original question…",
+    "unavailable": "The original question was handled or is no longer available. Your discussion is kept.",
+    "failed": "Could not check the original question. Please try again.",
+    "use_reply": "Use the latest complete reply",
+    "no_reply": "No complete reply yet. Wait for a reply or write your own conclusion.",
+    "prompt": "I am unsure about the questions below. Explain the evidence and tradeoffs for each option, give your recommendation, and discuss it with me. Do not decide for me or execute the original task. I will review and submit my answers myself.",
+    "start_failed": "The discussion could not start. Please send the message again in the discussion."
   }
 }

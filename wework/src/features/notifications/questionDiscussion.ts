@@ -1,0 +1,122 @@
+import { createContext, useContext } from 'react'
+import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+import {
+  hasRequestUserInputResponse,
+  isPendingRequestUserInputBlock,
+  isRequestUserInputBlock,
+  resolveAsyncRequestUserInputAnswers,
+  requestUserInputPayloadKey,
+} from '@wegent/chat-core/runtime-user-input'
+import type { RuntimeTaskAddress } from '@/types/api'
+import {
+  pendingRequestUserInputPayload,
+  requestUserInputQuestionTarget,
+} from '@/components/layout/requestUserInputOverlay'
+import type { WorkbenchMessage } from '@/types/workbench'
+
+export function canDiscussQuestion(payload: RequestUserInputPayload): boolean {
+  return Boolean(
+    requestUserInputPayloadKey(payload) &&
+    payload.questions?.length &&
+    payload.questions.every(question => question.id) &&
+    !payload.approvalKind &&
+    !payload.approval_kind &&
+    !payload.mode &&
+    !payload.elicitationId &&
+    !payload.serverName &&
+    (!payload.interactionKind || payload.interactionKind === 'question') &&
+    (!payload.interaction_kind || payload.interaction_kind === 'question') &&
+    (!payload.interactionStatus || payload.interactionStatus === 'pending') &&
+    !hasRequestUserInputResponse(payload) &&
+    (!payload.expiresAtUnixMs || payload.expiresAtUnixMs > Date.now())
+  )
+}
+
+export function questionDiscussionKey(
+  source: RuntimeTaskAddress,
+  payload: RequestUserInputPayload
+) {
+  return JSON.stringify([source.deviceId, source.taskId, requestUserInputPayloadKey(payload)])
+}
+
+export function pendingDiscussionQuestion(
+  messages: WorkbenchMessage[],
+  payload: RequestUserInputPayload
+): RequestUserInputPayload | null {
+  const key = requestUserInputPayloadKey(payload)
+  const resolved = resolveAsyncRequestUserInputAnswers(messages)
+  if (payload.itemId?.startsWith('implementation-plan:')) {
+    const plan = pendingRequestUserInputPayload(resolved)
+    return plan && requestUserInputPayloadKey(plan) === key ? plan : null
+  }
+  const block = [...resolved]
+    .reverse()
+    .flatMap(message => [...(message.blocks ?? [])].reverse())
+    .find(
+      block =>
+        isRequestUserInputBlock(block) && requestUserInputPayloadKey(block.renderPayload) === key
+    )
+  return block && isPendingRequestUserInputBlock(block) ? block.renderPayload : null
+}
+
+export interface QuestionDiscussionSession {
+  source: RuntimeTaskAddress
+  payload: RequestUserInputPayload
+  address: RuntimeTaskAddress | null
+  answers: Record<string, string>
+  conclusions: Record<string, string>
+}
+
+export function questionDiscussionDrafts(
+  sessions: Record<string, QuestionDiscussionSession>,
+  source: RuntimeTaskAddress,
+  payload: RequestUserInputPayload
+): Record<string, string> {
+  return Object.fromEntries(
+    (payload.questions ?? []).flatMap(question => {
+      if (!question.id) return []
+      const target = requestUserInputQuestionTarget(payload, question.id)
+      const answer =
+        sessions[questionDiscussionKey(source, target.payload)]?.answers[target.questionId]
+      return answer === undefined ? [] : [[question.id, answer]]
+    })
+  )
+}
+
+export interface QuestionDiscussionStore {
+  sessions: Record<string, QuestionDiscussionSession>
+  update(
+    key: string,
+    update: (session: QuestionDiscussionSession | undefined) => QuestionDiscussionSession
+  ): void
+  create(
+    key: string,
+    start: () => Promise<RuntimeTaskAddress | false>
+  ): Promise<RuntimeTaskAddress | false>
+}
+
+export const QuestionDiscussionStoreContext = createContext<QuestionDiscussionStore | null>(null)
+export const QuestionDiscussionContext = createContext<{
+  open(source: RuntimeTaskAddress, payload: RequestUserInputPayload): void
+} | null>(null)
+
+export function useQuestionDiscussion() {
+  return useContext(QuestionDiscussionContext)
+}
+
+export function questionDiscussionPrompt(
+  payload: RequestUserInputPayload,
+  introduction: string
+): string {
+  return [
+    introduction,
+    ...(payload.questions ?? []).map(question =>
+      [
+        question.question ?? question.header,
+        ...(question.options ?? []).map(
+          option => `- ${option.label}${option.description ? `: ${option.description}` : ''}`
+        ),
+      ].join('\n')
+    ),
+  ].join('\n\n')
+}
