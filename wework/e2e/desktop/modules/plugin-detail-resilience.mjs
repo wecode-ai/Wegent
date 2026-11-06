@@ -10,9 +10,9 @@ import {
   configureFirstProjectExecutionEnvironment,
   createLocalCollaborationProject,
   openProjectAgentCreator,
+  selectCollaborationProjectView,
   selectProjectRunnerModel,
   waitForTestIdByText,
-  selectCollaborationProjectView,
 } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
 import {

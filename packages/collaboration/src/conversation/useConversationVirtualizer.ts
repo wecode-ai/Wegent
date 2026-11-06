@@ -138,5 +138,10 @@ export function useConversationVirtualizer({
     }
     return () => observer.disconnect()
   }, [listRef, options.enabled, scrollElementRef])
-  return { virtualizer, tailHeight: scrollTailHeight, scrollMargin: prefix }
+  return {
+    virtualizer,
+    tailHeight: scrollTailHeight,
+    scrollMargin: prefix,
+    viewportReady,
+  }
 }
