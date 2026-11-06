@@ -148,9 +148,6 @@ export function createDailyBriefStory(options) {
       const source = original.primary.connections.find(item => item.providerId === PROVIDER)
       assert.ok(source)
       const now = Date.now()
-      // Keep repeatable UTC day boundaries for the source story.
-      const receivedAt = new Date(now)
-      receivedAt.setUTCHours(0, 0, 0, 0)
       state.since = new Date(now - 3 * DAY).toISOString()
       const fixtures = [
         {
@@ -175,11 +172,14 @@ export function createDailyBriefStory(options) {
         })
         for (const fixture of fixtures) {
           const { age, ...details } = fixture
+          const internalDate = new Date(now - age)
+          // Exercise IMAP's 24-hour noon boundary regardless of the CI clock.
+          if (details.status === 'pending') internalDate.setUTCHours(12, 33, 30, 0)
           await mail.append(
             `${MARKER} ${details.status}`,
             JSON.stringify(details),
             `<daily-${details.status}@example.com>`,
-            new Date(receivedAt.getTime() - age)
+            internalDate
           )
         }
         await control.command('setMainWindowSize', 'body', {
