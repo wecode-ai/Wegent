@@ -65,9 +65,11 @@ export async function verifyInteractionArchiving(control, timeoutMs, taskId) {
     })
     await control.command('waitFor', `${PAGE} [data-testid="interaction-source-group-task"]`, {
       text: item.question,
+      timeoutMs,
     })
     await control.command('waitFor', `${PAGE} [data-testid="interaction-list-item"]`, {
       text: item.question,
+      timeoutMs,
     })
     await control.command('click', `${PAGE} [data-testid="interaction-list-item"]`)
     if (item.mode === 'external') {

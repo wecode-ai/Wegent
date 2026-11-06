@@ -138,17 +138,22 @@ export function createDingTalkReplyStory(options) {
           result: { hasMore: false, nextCursor: '0', conversationMessagesList: [] },
         })
       )
-      const binary = join(
-        options.resultDir,
-        process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
-      )
-      await promisify(execFile)('rustc', [
-        fileURLToPath(new URL('../fixtures/source-story-dingtalk-cli.rs', import.meta.url)),
-        '--edition',
-        '2021',
-        '-o',
-        binary,
-      ])
+      const preparedBinary = process.env.WEWORK_E2E_SOURCE_STORY_DWS_BIN
+      const binary =
+        preparedBinary ??
+        join(
+          options.resultDir,
+          process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
+        )
+      if (!preparedBinary) {
+        await promisify(execFile)('rustc', [
+          fileURLToPath(new URL('../fixtures/source-story-dingtalk-cli.rs', import.meta.url)),
+          '--edition',
+          '2021',
+          '-o',
+          binary,
+        ])
+      }
       context.appEnvironment.DWS_BINARY_PATH = binary
     },
     async verify(control, rpc) {
