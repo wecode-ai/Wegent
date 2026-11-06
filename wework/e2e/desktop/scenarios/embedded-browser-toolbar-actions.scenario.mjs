@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -646,7 +646,9 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       // --- Local file and directory external open ---
       const localRoot = await mkdtemp(join(executorHome, 'browser-toolbar-local-'))
       const localDirectory = join(localRoot, 'directory')
+      const localTextFile = join(localRoot, 'readme.txt')
       await mkdir(localDirectory, { recursive: true })
+      await writeFile(localTextFile, 'local file fixture', 'utf8')
 
       const loadLocalUrl = async value => {
         await control.command('submit', BROWSER_INPUT_SELECTOR, { value })
@@ -686,13 +688,16 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         )
         await stopLinuxProcess(externalProcess)
 
-        const invalidFileUrl = 'file://wework-e2e-invalid-host/missing.txt'
-        await loadLocalUrl(invalidFileUrl)
+        const textFileUrl = pathToFileURL(localTextFile).href
+        await loadLocalUrl(textFileUrl)
+        if (process.platform === 'darwin') {
+          await rm(localTextFile)
+        }
         await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
         await waitForBrowserError(
           control,
           uiTimeoutMs,
-          'An invalid local file URL did not surface the external-open error'
+          'A failed system app open did not surface the external-open error'
         )
 
         await loadLocalUrl(directoryUrl)
