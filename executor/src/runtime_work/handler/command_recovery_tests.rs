@@ -113,9 +113,11 @@ async fn queued_history_keeps_command_unconfirmed_when_processing_admission_clos
     // Normal saturation queues verification. Closing this fixture's admission
     // exercises unavailable history without waiting on permits owned by the test.
     workers.close();
-    let error = receipt.await.unwrap_err();
+    // Drive both futures while they share the Codex client's lock queue.
+    let (receipt, duplicate) = tokio::join!(receipt, duplicate);
+    let error = receipt.unwrap_err();
     assert_eq!(error.code, "command_recovery_unavailable");
-    let error = duplicate.await.unwrap_err();
+    let error = duplicate.unwrap_err();
     assert_eq!(error.code, "command_recovery_unavailable");
     assert_eq!(
         handler.command_journal.lock().unwrap()[&key].state,
