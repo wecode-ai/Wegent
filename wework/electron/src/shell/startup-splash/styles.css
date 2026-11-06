@@ -360,6 +360,7 @@ body {
 
 .startup-toast {
   position: fixed;
+  pointer-events: none;
   bottom: 24px;
   left: 50%;
   z-index: 30;
