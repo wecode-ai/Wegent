@@ -116,6 +116,22 @@ describe('localExecutor', () => {
     expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
   })
 
+  test('forwards read cancellation through bounded transcript transport', async () => {
+    const controller = new AbortController()
+    requestDshExecutorMock.mockResolvedValue({ messages: [], turns: [], fullContent: false })
+    await requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' }, undefined, {
+      signal: controller.signal,
+    })
+    expect(requestDshExecutorMock).toHaveBeenCalledWith(
+      'runtime.tasks.transcript',
+      {
+        taskId: 'task-1',
+        transcriptProtocolVersion: 2,
+      },
+      { signal: controller.signal }
+    )
+  })
+
   test('starts the Electron-managed DSH executor and caches its marketplace', async () => {
     await expect(ensureLocalExecutorStarted()).resolves.toEqual({
       running: true,
@@ -610,6 +626,63 @@ describe('localExecutor', () => {
         ([method]) => method === 'runtime.codex.ensure_started'
       )
     ).toHaveLength(1)
+  })
+
+  test.each(['request_timeout', 'request_cancelled', 'runtime_read_busy'])(
+    'keeps runtime readiness after an operation fails with %s',
+    async code => {
+      await ensureLocalExecutorStarted()
+      requestDshExecutorMock.mockRejectedValueOnce(new DshExecutorTransportError(code, code, true))
+      await expect(
+        requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' })
+      ).rejects.toThrow(code)
+      await ensureLocalExecutorStarted()
+      expect(describeDshExecutorMock).toHaveBeenCalledOnce()
+      expect(
+        requestDshExecutorMock.mock.calls.filter(
+          ([method]) => method === 'runtime.codex.ensure_started'
+        )
+      ).toHaveLength(1)
+    }
+  )
+
+  test('keeps runtime readiness after a native transcript abort', async () => {
+    await ensureLocalExecutorStarted()
+    const controller = new AbortController()
+    controller.abort()
+    const error = new DOMException('The operation was aborted', 'AbortError')
+    requestDshExecutorMock.mockRejectedValueOnce(error)
+
+    await expect(
+      requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' }, undefined, {
+        signal: controller.signal,
+      })
+    ).rejects.toBe(error)
+    await ensureLocalExecutorStarted()
+
+    expect(describeDshExecutorMock).toHaveBeenCalledOnce()
+    expect(
+      requestDshExecutorMock.mock.calls.filter(
+        ([method]) => method === 'runtime.codex.ensure_started'
+      )
+    ).toHaveLength(1)
+  })
+
+  test('retains actual transport failures when a transcript signal is also aborted', async () => {
+    await ensureLocalExecutorStarted()
+    const controller = new AbortController()
+    controller.abort()
+    requestDshExecutorMock.mockRejectedValueOnce(new Error('IPC disconnected'))
+
+    await expect(
+      requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' }, undefined, {
+        signal: controller.signal,
+      })
+    ).rejects.toThrow('IPC disconnected')
+    mockStartup()
+    await ensureLocalExecutorStarted()
+
+    expect(describeDshExecutorMock).toHaveBeenCalledTimes(2)
   })
 
   test('retains validated installation identity while disconnected and replaces it on reconnect', async () => {

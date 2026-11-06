@@ -5378,6 +5378,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
                     }
                     hasMoreBefore={paneSession.transcriptHasMoreBefore}
+                    beforeCursor={paneSession.transcriptBeforeCursor}
                     onSearchTranscript={paneSession.searchTranscript}
                     onEnsureSearchMatch={paneSession.ensureSearchMatch}
                     searchPage={paneSession.searchPage}

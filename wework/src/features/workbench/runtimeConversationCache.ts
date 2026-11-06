@@ -539,13 +539,16 @@ export function settleRuntimeConversationAcceptedMessage(
 
 export function reconcileRuntimeConversationQueueAfterTransportReplacement(
   address: RuntimeTaskAddress,
-  snapshotTurns: RuntimeConversationTurn[]
+  snapshotTurns: RuntimeConversationTurn[],
+  confirmation: {
+    acceptedClientUserMessageIds: string[]
+  }
 ): void {
   const key = runtimeConversationKey(address)
   const queuedMessages = queuedMessagesByConversation.get(key)
   if (!queuedMessages) return
 
-  const acceptedMessageIds = new Set<string>()
+  const acceptedMessageIds = new Set(confirmation.acceptedClientUserMessageIds)
   for (const turn of snapshotTurns) {
     if (turn.clientUserMessageId) acceptedMessageIds.add(turn.clientUserMessageId)
     for (const item of turn.items) {
@@ -553,26 +556,9 @@ export function reconcileRuntimeConversationQueueAfterTransportReplacement(
     }
   }
 
-  const nextQueuedMessages = queuedMessages.flatMap(message => {
-    if (acceptedMessageIds.has(message.id)) return []
-    if (message.status !== 'sending') return [message]
-    return [
-      {
-        ...message,
-        status: 'queued' as const,
-        deliveryMode: undefined,
-        awaitingTurnStart: undefined,
-        error: undefined,
-        notice: undefined,
-      },
-    ]
-  })
-  if (
-    nextQueuedMessages.length === queuedMessages.length &&
-    nextQueuedMessages.every((message, index) => message === queuedMessages[index])
-  ) {
-    return
-  }
+  // Missing turn bindings cannot prove rejection: accepted work may still be queued.
+  const nextQueuedMessages = queuedMessages.filter(message => !acceptedMessageIds.has(message.id))
+  if (nextQueuedMessages.length === queuedMessages.length) return
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
 }

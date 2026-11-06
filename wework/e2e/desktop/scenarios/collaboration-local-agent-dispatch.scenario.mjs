@@ -17,6 +17,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   selectProjectRunnerModel,
+  selectCollaborationProjectView,
   waitForTestIdByText,
   inCollaborationSidebar,
 } from '../modules/workspace-flows.mjs'
@@ -125,9 +126,7 @@ async function addLocalAgent(control, timeoutMs) {
 }
 
 async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
-  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs,
-  })
+  await selectCollaborationProjectView(control, CONTENT, 'board', timeoutMs)
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ASSIGNED_TASK,
@@ -247,8 +246,8 @@ async function renameIssueWhileRunning(control, timeoutMs) {
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-title"]'), {
     value: RENAMED_ISSUE,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
+  await control.command('press', scoped('[data-testid="cloud-todo-detail-title"]'), {
+    key: 'Enter',
   })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
     text: RENAMED_ISSUE,

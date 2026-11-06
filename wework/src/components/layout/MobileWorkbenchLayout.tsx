@@ -407,6 +407,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
               }
               hasMoreBefore={paneSession.transcriptHasMoreBefore}
+              beforeCursor={paneSession.transcriptBeforeCursor}
               onSearchTranscript={paneSession.searchTranscript}
               onEnsureSearchMatch={paneSession.ensureSearchMatch}
               searchPage={paneSession.searchPage}
@@ -687,6 +688,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         devices={state.devices}
         projects={state.projects}
         runtimeWork={state.runtimeWork}
+        runtimeWorkLoad={state.runtimeWorkLoad}
         currentProjectId={activeConversationProject?.id}
         currentRuntimeTask={currentRuntimeTask}
         unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}

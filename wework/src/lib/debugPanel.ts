@@ -91,6 +91,7 @@ export interface RuntimePaneDebugSnapshot {
     loading: boolean
     hasMoreBefore: boolean
     loadingMoreBefore: boolean
+    beforeCursor: string | null
     turnNavigationCount: number
     loadedRanges: RuntimePaneLoadedRange[]
   }

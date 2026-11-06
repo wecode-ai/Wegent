@@ -410,11 +410,13 @@ export interface StandardCloudBoardControllerOptions<
   T extends StandardCloudBoardItem,
 > extends ProjectBoardStateOptions {
   view?: SavedBoardView | null;
+  tagFilter?: readonly string[];
   createColumns(groupBy: ProjectBoardGroupBy): ProjectBoardColumn[];
   currentParentId?: string | null;
   supportsOrder?: boolean;
   extensions: StandardCloudBoardHostExtensions<T>;
   items: T[];
+  hierarchyItems?: T[];
   onCurrentParentIdChange?(parentId: string | null): void;
   tagLimitError: string;
   onMove(
@@ -747,11 +749,13 @@ export function useStandardCloudBoardController<
   currentParentId: controlledCurrentParentId,
   extensions,
   items,
+  hierarchyItems = items,
   onCurrentParentIdChange,
   onMove,
   supportsOrder = true,
   tagLimitError,
   view,
+  tagFilter,
   ...stateOptions
 }: StandardCloudBoardControllerOptions<T>) {
   const boardState = useProjectBoardState(stateOptions);
@@ -788,10 +792,10 @@ export function useStandardCloudBoardController<
     [boardState.groupBy, createColumns],
   );
   const currentParent =
-    items.find((item) => item.id === currentParentId) ?? null;
+    hierarchyItems.find((item) => item.id === currentParentId) ?? null;
   const breadcrumb = useMemo(
-    () => buildStandardCloudBoardBreadcrumb(items, currentParentId),
-    [currentParentId, items],
+    () => buildStandardCloudBoardBreadcrumb(hierarchyItems, currentParentId),
+    [currentParentId, hierarchyItems],
   );
 
   const moveItem = useCallback(
@@ -895,6 +899,16 @@ export function useStandardCloudBoardController<
     [boardState.groupBy, columns, extensions, items, moveItem],
   );
 
+  const visibleItems = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          matchesBoardView(item, view) &&
+          (!tagFilter?.length ||
+            tagFilter.some((tag) => item.tags.includes(tag))),
+      ),
+    [items, view, tagFilter],
+  );
   const getColumnItems = useCallback(
     (
       column: ProjectBoardColumn,
@@ -905,12 +919,10 @@ export function useStandardCloudBoardController<
         column,
         currentParentId: parentId,
         extensions,
-        items: view
-          ? items.filter((item) => matchesBoardView(item, view))
-          : items,
+        items: visibleItems,
         state,
       }),
-    [currentParentId, extensions, items, view],
+    [currentParentId, extensions, visibleItems],
   );
 
   return {
@@ -926,6 +938,7 @@ export function useStandardCloudBoardController<
     columns,
     currentParent,
     currentParentId,
+    filteredItems: visibleItems,
     getColumnItems,
     moveItem,
     moveDroppedItem,

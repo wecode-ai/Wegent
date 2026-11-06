@@ -26,8 +26,10 @@ describe('CloudCredentialService', () => {
       new Response(JSON.stringify({ status: 'pending' }), { status: 200 })
     )
 
-    const claimed = await new CloudCredentialService(root).claimAuthorization({
-      apiBaseUrl: 'https://cloud.example.com/api/',
+    const service = new CloudCredentialService(root)
+    const prepared = await service.prepareAuthorization('https://cloud.example.com/api')
+    const claimed = await service.claimAuthorization({
+      authorizationId: prepared.authorizationId,
       sessionId: 'session-1',
       pollToken: 'poll-1',
     })
@@ -59,19 +61,20 @@ describe('CloudCredentialService', () => {
       .mockRejectedValueOnce(new DOMException('The operation was aborted', 'TimeoutError'))
     const service = new CloudCredentialService(root, request)
 
-    await service.devicePublicKey()
+    const prepared = await service.prepareAuthorization('https://cloud.example.com/api/')
     await service.claimAuthorization({
-      apiBaseUrl: 'https://cloud.example.com/api/',
+      authorizationId: prepared.authorizationId,
       sessionId: 'session-1',
       pollToken: 'poll-1',
     })
+    await service.commitAuthorization(prepared.authorizationId, 7)
 
-    await expect(service.refreshAccessToken('https://cloud.example.com/api')).rejects.toMatchObject(
-      {
-        code: 'request_timeout',
-        message: 'Cloud credential request timed out',
-      } satisfies Partial<CloudCredentialError>
-    )
+    await expect(
+      service.refreshAccessToken('https://cloud.example.com/api', 7)
+    ).rejects.toMatchObject({
+      code: 'request_timeout',
+      message: 'Cloud credential request timed out',
+    } satisfies Partial<CloudCredentialError>)
     expect(request.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)
     expect(request.mock.calls[1][1]?.signal).toBeInstanceOf(AbortSignal)
     // The serial queue keeps working after the timed-out request.
@@ -86,7 +89,7 @@ describe('CloudCredentialService', () => {
       )
     )
     await expect(
-      service.refreshAccessToken('https://cloud.example.com/api')
+      service.refreshAccessToken('https://cloud.example.com/api', 7)
     ).resolves.toMatchObject({ accessToken: 'access-2' })
   })
 
@@ -119,13 +122,15 @@ describe('CloudCredentialService', () => {
       )
     const service = new CloudCredentialService(root, request)
 
-    const publicKey = await service.devicePublicKey()
+    const prepared = await service.prepareAuthorization('https://cloud.example.com/api/')
+    const publicKey = prepared.publicKey
     const claimed = await service.claimAuthorization({
-      apiBaseUrl: 'https://cloud.example.com/api/',
+      authorizationId: prepared.authorizationId,
       sessionId: 'session-1',
       pollToken: 'poll-1',
     })
-    const refreshed = await service.refreshAccessToken('https://cloud.example.com/api')
+    await service.commitAuthorization(prepared.authorizationId, 7)
+    const refreshed = await service.refreshAccessToken('https://cloud.example.com/api', 7)
 
     expect(publicKey).toMatchObject({ kty: 'EC', crv: 'P-256' })
     expect(claimed).toEqual({
@@ -169,11 +174,11 @@ describe('CloudCredentialService', () => {
     const request = vi.fn<typeof fetch>()
     const service = new CloudCredentialService(root, request)
 
-    await expect(service.refreshAccessToken('https://cloud.example.com/api')).rejects.toMatchObject(
-      {
-        code: 'credentials_unavailable',
-      } satisfies Partial<CloudCredentialError>
-    )
+    await expect(
+      service.refreshAccessToken('https://cloud.example.com/api', 7)
+    ).rejects.toMatchObject({
+      code: 'credentials_unavailable',
+    } satisfies Partial<CloudCredentialError>)
     expect(request).not.toHaveBeenCalled()
   })
 
@@ -193,12 +198,13 @@ describe('CloudCredentialService', () => {
     )
     const service = new CloudCredentialService(root, request)
 
-    await service.devicePublicKey()
+    const prepared = await service.prepareAuthorization('https://legacy.example.com/api')
     const claimed = await service.claimAuthorization({
-      apiBaseUrl: 'https://legacy.example.com/api',
+      authorizationId: prepared.authorizationId,
       sessionId: 'session-1',
       pollToken: 'poll-1',
     })
+    await service.commitAuthorization(prepared.authorizationId, 7)
 
     expect(claimed).toEqual({
       status: 'success',
@@ -240,16 +246,17 @@ describe('CloudCredentialService', () => {
         )
       )
     const service = new CloudCredentialService(root, request)
-    await service.devicePublicKey()
+    const prepared = await service.prepareAuthorization('https://cloud.example.com/api')
     await service.claimAuthorization({
-      apiBaseUrl: 'https://cloud.example.com/api',
+      authorizationId: prepared.authorizationId,
       sessionId: 'session-1',
       pollToken: 'poll-1',
     })
+    await service.commitAuthorization(prepared.authorizationId, 7)
 
     await Promise.all([
-      service.refreshAccessToken('https://cloud.example.com/api'),
-      service.refreshAccessToken('https://cloud.example.com/api'),
+      service.refreshAccessToken('https://cloud.example.com/api', 7),
+      service.refreshAccessToken('https://cloud.example.com/api', 7),
     ])
 
     expect(request).toHaveBeenCalledTimes(3)
@@ -274,18 +281,19 @@ describe('CloudCredentialService', () => {
         new Response(JSON.stringify({ detail: 'Desktop login has expired' }), { status: 401 })
       )
     const service = new CloudCredentialService(root, request)
-    await service.devicePublicKey()
+    const prepared = await service.prepareAuthorization('https://cloud.example.com/api')
     await service.claimAuthorization({
-      apiBaseUrl: 'https://cloud.example.com/api',
+      authorizationId: prepared.authorizationId,
       sessionId: 'session-1',
       pollToken: 'poll-1',
     })
+    await service.commitAuthorization(prepared.authorizationId, 7)
 
-    await expect(service.refreshAccessToken('https://cloud.example.com/api')).rejects.toMatchObject(
-      {
-        code: 'cloud_auth_expired',
-        status: 401,
-      } satisfies Partial<CloudCredentialError>
-    )
+    await expect(
+      service.refreshAccessToken('https://cloud.example.com/api', 7)
+    ).rejects.toMatchObject({
+      code: 'cloud_auth_expired',
+      status: 401,
+    } satisfies Partial<CloudCredentialError>)
   })
 })

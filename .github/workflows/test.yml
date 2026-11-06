@@ -480,13 +480,15 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
 
-      - name: Run native index platform regressions
+      - name: Run native file platform regressions
         if: ${{ !cancelled() }}
         shell: bash
         working-directory: ./executor
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
-        run: cargo test --all-features --lib runtime_work::store::tests::atomic_write
+        run: |
+          cargo test --all-features --lib runtime_work::store::tests::atomic_write
+          cargo test --all-features --lib agents::runtime_capabilities::json_file::tests
 
       - name: Run native worktree platform regressions
         if: ${{ !cancelled() }}
@@ -654,14 +656,14 @@ jobs:
           name: frontend-coverage
 
   test-wework:
-    name: Test Wework (${{ matrix.shard }}/2)
+    name: Test Wework (${{ matrix.shard }}/4)
     needs: changes
     if: needs.changes.outputs.wework == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout code
@@ -700,7 +702,7 @@ jobs:
           sandbox_path="$(pnpm --dir wework/electron exec node -p 'require("node:path").join(require("node:path").dirname(require("electron")), "chrome-sandbox")')"
           sudo chown root:root "$sandbox_path"
           sudo chmod 4755 "$sandbox_path"
-          xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
+          dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1
@@ -715,7 +717,7 @@ jobs:
           WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
           pnpm --filter wework exec vitest run \
             --passWithNoTests \
-            --shard=${{ matrix.shard }}/2 &
+            --shard=${{ matrix.shard }}/4 &
           vitest_pid=$!
 
           electron_pid=

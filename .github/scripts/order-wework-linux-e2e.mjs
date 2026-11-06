@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { coreRunnerSlots } from './core-runner-slots.mjs'
 
 import {
   DESKTOP_CHECKPOINTS,
@@ -20,6 +21,7 @@ const measurements = JSON.parse(
 export function balanceLinuxCoreMatrix(
   matrix,
   seconds = measurements.scopes.core,
+  runnerScale = 1,
 ) {
   if (!Array.isArray(matrix?.include))
     throw new Error('Invalid Linux Core matrix')
@@ -28,18 +30,25 @@ export function balanceLinuxCoreMatrix(
     entry.segments.split(',').includes(LINUX_CORE_HISTORY_CHECKPOINT),
   )
   if (!history) return { ...matrix, include }
-  // Keep the two latency benchmark shards exclusive and never add a runner.
+  const checkpoints = (entry) =>
+    expandDesktopCheckpoints(entry.segments.split(','))
+  const before = include.flatMap(checkpoints).sort()
+  const taskCount = include.reduce(
+    (total, entry) => total + (['core-9', 'core-10'].includes(entry.id)
+      ? 1 : checkpoints(entry).length),
+    0,
+  )
+  include.push(...coreRunnerSlots(include, taskCount, runnerScale))
+  // Keep the two latency benchmark shards exclusive.
   const receivers = include.filter(
     (entry) => !['core-9', 'core-10'].includes(entry.id),
   )
   if (!receivers.some((entry) => entry !== history))
     return { ...matrix, include }
-  const checkpoints = (entry) =>
-    expandDesktopCheckpoints(entry.segments.split(','))
-  const before = include.flatMap(checkpoints).sort()
   if (new Set(before).size !== before.length)
     throw new Error('Overlapping Linux Core checkpoints')
   const pending = receivers
+    .filter((entry) => entry.segments.length)
     .flatMap(checkpoints)
     .filter((checkpoint) => checkpoint !== LINUX_CORE_HISTORY_CHECKPOINT)
     .sort((a, b) => a.localeCompare(b))
@@ -135,7 +144,11 @@ if (
   if (process.argv[2] === '--balance-core') {
     if (!process.env.CORE_MATRIX) throw new Error('CORE_MATRIX is required')
     console.log(
-      `matrix=${JSON.stringify(balanceLinuxCoreMatrix(JSON.parse(process.env.CORE_MATRIX)))}`,
+      `matrix=${JSON.stringify(balanceLinuxCoreMatrix(
+        JSON.parse(process.env.CORE_MATRIX),
+        measurements.scopes.core,
+        Number(process.env.CORE_RUNNER_SCALE ?? 1),
+      ))}`,
     )
   } else {
     const segments = (process.env.WEWORK_E2E_SEGMENTS ?? '')

@@ -55,6 +55,8 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  /** Stable authentication and backend identity, independent of optional data readiness. */
+  accountScope: string;
   projectTemplateRequest?: {
     key: string;
     document: import("../templates/types").CollaborationTemplate;

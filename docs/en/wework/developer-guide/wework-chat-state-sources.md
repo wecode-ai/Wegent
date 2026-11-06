@@ -18,6 +18,52 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## Pending Interaction Membership and Error Cleanup
+
+After successful archival, remove the task through the shared lifecycle Store before updating
+the initiating view's task list. This confirmed user action is independent of background snapshot
+ownership. Removing through a non-owner's read-only view leaves embedded inbox conversations
+able to restore the old question from shared lifecycle state. Background write guards remain intact.
+After persisting archival, the executor emits the existing `runtime.work.changed` event so other
+subscribed views refresh their own task inventories. Updating only the initiating view cannot
+invalidate an embedded inbox conversation's stale inventory.
+
+Pending scans use current task sources and device pending inventories. Cached questions must
+not reintroduce archived or removed tasks. After a successful inventory read, remove questions,
+successful-read markers, and related errors for tasks outside the candidate set. Failed or
+offline devices retain their previous inventory; a connection failure is not an empty list.
+Tasks hidden from the sidebar remain discoverable through the device pending inventory.
+Confirmed archive markers in the existing conversation cache override offline inventory retention,
+even after the shared lifecycle entry is removed. Unarchival uses the existing marker cleanup.
+
+Failures during local identity discovery, inventory reads, transcript reads, and answered-question
+archival use the existing diagnostic channel in `runtime-launch.log`. Search for
+`pending-interaction-load-failed`. Entries include the operation, device and task identifiers,
+exception message, stack, error code, and status. Requests and conversation contents are not
+serialized; the log writer applies its existing credential redaction. An offline device that
+makes pending work unavailable is logged once per state transition.
+
+The desktop `human-interactions` checkpoint archives a real task after caching an unanswered
+question. It checks that background polling and renderer reload leave no pending item or load
+error and never restore the archived task.
+
+## Needs Your Input Answer Drafts
+
+`RuntimeInteractionsProvider` directly owns and synchronously exposes account-scoped
+answer drafts. Every controlled input edit must update that state directly, rather
+than updating child state and publishing a snapshot through an effect. That extra
+publication step writes the previous draft back into the DOM at the end of the
+input event. Even if the new value returns immediately afterward, the write
+interrupts Chinese IME composition. Persistence may use effects; input values must
+not wait for persistence or snapshot publication. After an account switch, callbacks
+from the previous account must not update the current account's drafts.
+
+Regression tests inspect every application-side `value` write during composition,
+not only the final text. The desktop `human-interactions` checkpoint reuses a real
+question and answer submission flow to check that DOM composition events cause no
+stale value writes, focus loss, or input remounts. This automation does not verify
+the operating system's candidate window.
+
 ## New Conversations and Manual Sidebar Order
 
 Standalone conversations and project tasks share one ordering rule: when a manual
@@ -86,6 +132,8 @@ The project-space board Hover task panel is a split view of the original task co
 ## Runtime Event Flow
 
 The conversation stream coordinator retains exactly one subscription and prefers the active page's service instance. When the active page uses a different instance, it releases the old subscription before subscribing to the new instance so a hidden page's retained device routes cannot lose events. Moving active ownership within the same service instance preserves the subscription. Only the active page handles messages.
+
+The lifecycle coordinator must also continue unfinished event recovery when services are replaced. Recovery reasons and task addresses belong to the same lifecycle Store. After cancelling the old subscription's reads, the new subscription reads authoritative task and transcript snapshots, including pending-message receipts. A service-object change does not complete recovery, and an empty receipt does not confirm a send.
 
 1. A new message submit sets `sendPhase` to `submitting`.
 2. After runtime accepts the request, `sendPhase` becomes `awaiting_assistant`.

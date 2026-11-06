@@ -1012,7 +1012,7 @@ pub(super) fn runtime_status_is_running(status: &str) -> bool {
     )
 }
 
-fn codex_thread_status_type(thread: &Value) -> Option<String> {
+pub(super) fn codex_thread_status_type(thread: &Value) -> Option<String> {
     let status = thread.get("status")?;
     status.as_str().map(str::to_owned).or_else(|| {
         status
