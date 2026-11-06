@@ -18,14 +18,20 @@ management access before role and group-name confirmation. Successful applicatio
 the project board while preserving existing tasks, groups and views.
 
 New projects inherit the template name, description, roles and workflow, using the existing
-space picker and space creation flow. Web templates containing Agents use the account’s
+space picker and space creation flow. New Web projects containing template Agents use the account’s
 designated default executor and its unique default model for each required runtime;
-they never choose an arbitrary device or model. The default executor must be online and
-must not be an APP device that only supports desktop-local calls. New-project forms require
+they never choose an arbitrary device or model. The default executor must be online;
+APP devices are supported when the Backend can access their model catalogs. New-project forms require
 explicit execution-environment selection and explain that selected environments are shared
 with the chosen space and authorized for the project. Missing consent, devices or models
-blocks submission before project creation. Existing projects require prior device authorization;
-import does not grant space or project device access. Saving, collecting and previewing templates
+preserves the form for correction before project creation. Existing-project confirmation lists
+online devices already authorized for the project, regardless of the account default. A sole
+device is selected automatically; users choose between multiple devices without changing their
+account default. Listing reads device inventory only; submission rechecks online status,
+authorization and runtime default models. When devices are unavailable or inventory loading
+fails, users can open project device settings in a new tab, return and refresh to continue with
+their group names and role edits preserved. Import does not grant space or project device access.
+Saving, collecting and previewing templates
 does not perform these operations.
 Local projects use their local execution environment without calling cloud space-sharing
 or project device-grant APIs.
@@ -86,7 +92,7 @@ templates without definitions still allow manual assignment. Saving YAML into th
 template library alone does not create project Agents; applying it does.
 
 Models, devices, workspaces and tools follow the recipient's execution environment.
-Before creating agents, all required runtimes are checked against the current device's unique default models. Missing defaults or a device not authorized for the destination project block import before any agent is created; import never grants device access.
+Before creating agents, all required runtimes are checked against the selected device's unique default models. Missing defaults or revoked project authorization preserve the confirmation dialog so users can configure the device and continue before any agent is created; import never grants device access.
 When creating a project from a template, device and default-model readiness is checked before project creation. A failed preflight preserves the form without creating an empty project, allowing users to switch templates or complete configuration and retry. Project-specific device authorization is still checked after creation. Later persistence failures retain the created project and direct users to inspect its configuration, preventing duplicate creation.
 Source account model, plugin and device IDs and credentials are excluded. Project
 and group exports load real Agent definitions, preserving prompts with portable
@@ -115,6 +121,19 @@ reconnects. Conflicts preserve drafts; synchronization neither overwrites a
 conflicting source nor publishes it.
 
 ## Verification
+
+Existing-project user story: users can apply a template through their project's configured
+device and recover from missing devices without re-entering group names or role assignments.
+
+| Precondition | Action | Expected result | Coverage |
+| --- | --- | --- | --- |
+| One online authorized project APP device | Open template, edit group name, refresh, apply and reload | Project device selected automatically; name preserved; six Agents bound to that device; group persisted | `authorized` template case in `issue-dispatch-executor.spec.ts` |
+| No authorized project device | Edit name, open device settings in a new tab, add and initialize device, return, refresh and apply | Confirmation and name preserved; refreshed device selected; Agents and group created | `configure` template case in the same suite |
+| Multiple online project devices | Choose a device in confirmation and apply | Uses the explicit selection without changing the account default; unavailable and offline devices excluded | `ProjectTemplateApplyDialog.test.tsx`, `templateAgentRouting.test.ts` |
+| Inventory failure or authorization revoked before submission | Refresh or choose another device | Input preserved; submission revalidates access; invalid device creates no Agents | Same component and routing tests |
+
+Both real-device cases reuse the existing Executor CI project with real Backend, devices and
+storage. Wegent internal APIs are not mocked.
 
 Shared-package tests cover validation, YAML round trips, cache isolation, source
 updates, and partial failures. Backend tests cover inbox isolation and reference

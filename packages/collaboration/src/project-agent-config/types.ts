@@ -17,7 +17,14 @@ export interface ProjectAgentConfigurationHost {
     runtime: "codex" | "claude_code",
     location: "local" | "cloud",
     projectId?: string,
+    environmentId?: string,
   ): Promise<import("../templates/types").TemplateAgentRouting>;
+  listTemplateAgentEnvironments?(
+    projectId: string,
+  ): Promise<import("../types").CollaborationExecutionEnvironment[]>;
+  templateAgentEnvironmentSettingsHref?(
+    project: import("../types").CollaborationProject,
+  ): string;
 
   createTemplateAgent?(
     agent: import("../templates/types").TemplateAgent,
