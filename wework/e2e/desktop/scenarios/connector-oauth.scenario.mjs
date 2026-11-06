@@ -209,6 +209,11 @@ export function createDesktopScenario({
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PROMPT })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        { enabled: true, timeoutMs: uiTimeoutMs }
+      )
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
 
       await control.command('waitFor', '[data-testid="cloud-connector-auth-card"]', {
