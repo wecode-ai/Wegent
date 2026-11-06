@@ -96,6 +96,15 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
+      // First-use setup has its own CI checkpoint; establish completed setup for both owners.
+      for (const userId of [0, USER]) {
+        await requestExecutor(
+          control,
+          'runtime.stand_in.onboarding.complete',
+          { userId, weeklyReview: false, language: 'zh-CN' },
+          uiTimeoutMs
+        )
+      }
       const initial = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
