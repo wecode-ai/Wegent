@@ -119,7 +119,11 @@ fn read_arguments(declaration: &Value, payload: &Value) -> Result<Vec<String>, A
     Ok(args)
 }
 
-fn dependency_root(plugin: &Value, source: &Value, home: &Path) -> Result<PathBuf, AppIpcError> {
+pub(super) fn dependency_root(
+    plugin: &Value,
+    source: &Value,
+    home: &Path,
+) -> Result<PathBuf, AppIpcError> {
     if let Some(version) = plugin["localVersion"].as_str() {
         let parts = [
             source["marketplaceId"].as_str(),

@@ -44,14 +44,37 @@ pub(crate) fn connection_auth_target(
 }
 
 // Replies retain the existing source-bound permission checks in the caller.
-pub(crate) async fn run_plugin_tool(
-    plugin_key: &str,
-    connector_slug: &str,
-    args: &[String],
-) -> Result<Value, AppIpcError> {
-    let (root, _) =
-        resolve_request(&json!({"pluginKey":plugin_key,"connectorSlug":connector_slug}))?;
-    run_connection_tool(&root, plugin_key, connector_slug, args).await
+pub(crate) fn run_declared_plugin_tool<'a>(
+    plugin_key: &'a str,
+    tool_id: &'a str,
+    args: &'a [String],
+) -> futures_util::future::BoxFuture<'a, Result<Value, AppIpcError>> {
+    // Erase the MCP-handler/app-server startup future cycle without changing execution.
+    Box::pin(async move {
+        let client =
+            crate::agents::CodexAppServerClient::new(crate::agents::resolve_codex_binary());
+        let installed = client
+            .request("plugin/installed", json!({"cwds":[]}))
+            .await
+            .map_err(|_| {
+                AppIpcError::new(
+                    "dependency_unavailable",
+                    "Cannot read Codex dependency inventory",
+                )
+            })?;
+        let (plugin, source) =
+            super::super::connection_dependencies::installed_plugin_by_key(&installed, plugin_key)?;
+        let root = super::super::connection_cli::dependency_root(
+            &plugin,
+            &source,
+            &crate::agents::wework_codex_home(),
+        )?;
+        let target = connection_auth_target(&root, plugin_key, &json!({"toolId":tool_id}))?;
+        let connector_slug = target["connectorSlug"]
+            .as_str()
+            .ok_or_else(|| AppIpcError::new("local_auth_invalid", "Missing connector identity"))?;
+        run_connection_tool(&root, plugin_key, connector_slug, args).await
+    })
 }
 
 pub(crate) async fn run_connection_tool(
@@ -451,6 +474,14 @@ mod connection_tool_tests {
                 connection_auth_target(root.path(), "dingtalk", &json!({"toolId":"dws"})).unwrap(),
                 json!({"pluginKey":"dingtalk","connectorSlug":slug})
             );
+            if slug == "dingtalk-local" {
+                assert_eq!(
+                    load_local_auth_spec(root.path(), Some("dingtalk"))
+                        .unwrap_err()
+                        .code,
+                    "local_auth_missing"
+                );
+            }
             assert!(
                 connection_auth_target(root.path(), "other", &json!({"toolId":"dws"})).is_err()
             );
