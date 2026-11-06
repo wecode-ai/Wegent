@@ -161,7 +161,10 @@ export function createStreamingToolChecks({
     )
     assert.ok(
       Number(
-        await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .hljs-keyword`)
+        await control.command(
+          'getElementCount',
+          `${LONG_CODE_SCROLL_SELECTOR} [data-syntax-token="keyword"]`
+        )
       ) > 0,
       'The completed long code block did not render highlighted keyword nodes'
     )

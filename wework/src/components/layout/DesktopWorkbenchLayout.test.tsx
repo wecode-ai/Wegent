@@ -72,6 +72,11 @@ import type {
 } from '@/types/workbench'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import {
+  getWorkspaceCodeText,
+  installPierreEditorTestPlatform,
+  replaceWorkspaceEditorText,
+} from '@/test/pierreCode'
+import {
   act,
   cleanup,
   configure,
@@ -595,6 +600,10 @@ vi.mock('@/lib/local-terminal', () => ({
   WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT: 'wework:local-harness-sessions-changed',
 }))
 
+vi.mock('@/components/code/PierreCodeProvider', () => ({
+  PierreCodeProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
+
 vi.mock('@pierre/diffs/react', async () => {
   const actual = await vi.importActual<typeof import('@pierre/diffs/react')>('@pierre/diffs/react')
 
@@ -852,7 +861,7 @@ function createDefaultImNotificationSettings() {
 }
 
 describe('DesktopWorkbenchLayout', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     configure({ asyncUtilTimeout: 5_000 })
     vi.setConfig({ testTimeout: 30_000 })
   })
@@ -933,6 +942,7 @@ describe('DesktopWorkbenchLayout', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks()
+    await installPierreEditorTestPlatform()
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
     experimentalFeatures.enabled = true
@@ -4853,9 +4863,7 @@ describe('DesktopWorkbenchLayout', () => {
       })
       await user.click(await screen.findByText('notes.txt'))
       const editor = await screen.findByTestId('workspace-file-editor')
-      const content = editor.querySelector<HTMLElement>('.cm-content')!
-      await user.click(content)
-      await user.keyboard('{Control>}a{/Control}hello world')
+      const content = await replaceWorkspaceEditorText(editor, 'hello world')
 
       fireEvent.keyDown(content, { key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
 
@@ -4867,7 +4875,7 @@ describe('DesktopWorkbenchLayout', () => {
           original.revision
         )
       )
-      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(saved.content)
+      expect(getWorkspaceCodeText()).toContain(saved.content)
       expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
       fireEvent.keyDown(content, { key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
       expect(writeWorkspaceTextFile).toHaveBeenCalledOnce()
@@ -4876,7 +4884,7 @@ describe('DesktopWorkbenchLayout', () => {
         expect(await screen.findByTestId('workspace-file-save-error')).toHaveTextContent(
           'Write failed'
         )
-        expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(saved.content)
+        expect(getWorkspaceCodeText()).toContain(saved.content)
         expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
         await user.click(screen.getByTestId('workspace-file-save-retry-button'))
       } else {
@@ -5589,9 +5597,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByRole('tab', { name: /quick_launch.py|admin.py/ })).toHaveLength(2)
 
     await user.click(screen.getByRole('tab', { name: /admin.py/ }))
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent('admin = True')
-    )
+    await waitFor(() => expect(getWorkspaceCodeText()).toContain('admin = True'))
     await user.click(screen.getByRole('tab', { name: /quick_launch.py/ }))
     await waitFor(() =>
       expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent('quick_launch.py')
@@ -6199,8 +6205,6 @@ describe('DesktopWorkbenchLayout', () => {
     const editor = await screen.findByTestId('workspace-file-editor')
     expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
-    const codeMirrorContent = editor.querySelector('.cm-content')
-    expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
 
     const nativeSetTimeout = window.setTimeout.bind(window)
     let runAutosave: (() => void) | null = null
@@ -6212,8 +6216,7 @@ describe('DesktopWorkbenchLayout', () => {
       return nativeSetTimeout(handler, timeout)
     })
     try {
-      await user.click(codeMirrorContent as HTMLElement)
-      await user.keyboard('{Control>}a{/Control}hello world')
+      await replaceWorkspaceEditorText(editor, 'hello world')
 
       await waitFor(() => expect(runAutosave).not.toBeNull())
       act(() => runAutosave?.())
@@ -6297,12 +6300,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
-    const codeMirrorContent = (await screen.findByTestId('workspace-file-editor')).querySelector(
-      '.cm-content'
+    await replaceWorkspaceEditorText(
+      await screen.findByTestId('workspace-file-editor'),
+      'hello world'
     )
-    expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
-    await user.click(codeMirrorContent as HTMLElement)
-    await user.keyboard('{Control>}a{/Control}hello world')
     await user.click(screen.getByText('notes.txt'))
 
     await waitFor(() =>

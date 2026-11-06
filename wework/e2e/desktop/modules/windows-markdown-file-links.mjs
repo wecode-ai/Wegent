@@ -70,7 +70,7 @@ export function createWindowsMarkdownFileLinks({ workspacePath, uiTimeoutMs }) {
         )
         for (const [label, , expectedPath, content] of references) {
           await control.command('clickElementWithText', links, { text: label })
-          await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+          await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
             text: content,
             timeoutMs: uiTimeoutMs,
           })
@@ -86,7 +86,7 @@ export function createWindowsMarkdownFileLinks({ workspacePath, uiTimeoutMs }) {
           text: 'Failed to resolve workspace file',
         })
         await control.command('clickElementWithText', links, { text: 'slash-drive' })
-        await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+        await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
           text: 'WINDOWS_SQL_FIRST',
           timeoutMs: uiTimeoutMs,
         })

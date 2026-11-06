@@ -92,7 +92,7 @@ export function createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiT
 
       for (const label of ['File link', 'File URI', 'Table file']) {
         await openLink(control, label)
-        await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+        await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
           text: FILE_TEXT,
         })
         assert.equal(

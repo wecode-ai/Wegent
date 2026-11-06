@@ -484,7 +484,6 @@
     "@wegent/chat-core": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "dompurify": "3.4.13",
-    "highlight.js": "11.11.1",
     "katex": "0.16.47",
     "mermaid": "11.15.0",
     "plantuml-encoder": "1.4.0",
@@ -504,6 +503,7 @@
     "streamdown": "2.5.0",
     "tailwind-merge": "^3.6.0",
     "unified": "^11.0.5",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "@pierre/highlights": "0.4.0"
   }
 }

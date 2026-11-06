@@ -15,10 +15,11 @@ import {
   Rows3,
   WrapText,
 } from 'lucide-react'
-import { PatchDiff } from '@pierre/diffs/react'
-import type { RefObject } from 'react'
+import { PatchDiff, Virtualizer } from '@pierre/diffs/react'
+import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
+import type { CSSProperties, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useOptionalAppearance } from '@/features/appearance'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -40,12 +41,12 @@ import {
 } from './fileChangesReviewUtils'
 import { ReviewFileTree } from './FileChangesReviewTree'
 
-const LARGE_DIFF_FILE_COUNT_THRESHOLD = 12
-const LARGE_DIFF_LINE_COUNT_THRESHOLD = 700
 const COPY_FEEDBACK_DURATION_MS = 1500
 const REFRESH_FEEDBACK_DURATION_MS = 600
 const PIERRE_DIFF_CSS = `
   :host {
+    --diffs-font-size: var(--text-code);
+    --diffs-line-height: var(--wework-review-code-line-height);
     --diffs-light-bg: rgb(var(--color-bg-base));
     --diffs-light: rgb(var(--color-text-primary));
     --diffs-dark-bg: rgb(var(--color-bg-base));
@@ -59,7 +60,7 @@ const PIERRE_DIFF_CSS = `
   :host, pre, code {
     font-family: var(--font-code);
     font-size: var(--text-code);
-    line-height: 1.8;
+    line-height: var(--diffs-line-height);
   }
   [data-diffs-file-header], [data-diffs-header] {
     min-height: 36px;
@@ -123,6 +124,9 @@ export function FileChangesReviewPanel({
 }: FileChangesReviewPanelProps) {
   const { t } = useTranslation('chat')
   const appearance = useOptionalAppearance()
+  const codeLineHeight = Math.round(
+    (appearance?.appearance.codeFontSize ?? defaultAppearance.codeFontSize) * 1.8
+  )
   const themeType =
     appearance?.resolvedMode ??
     (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark'
@@ -162,8 +166,6 @@ export function FileChangesReviewPanel({
   const selectedIndex = selectedPathIndex >= 0 ? selectedPathIndex : defaultSelectedIndex
   const selectedSection = sections[selectedIndex] ?? sections[0]
   const diffStats = useMemo(() => getSectionsDiffStats(sections), [sections])
-  const isLargeDiff = useMemo(() => isLargeReviewDiff(sections), [sections])
-  const displayedSections = isLargeDiff && selectedSection ? [selectedSection] : sections
 
   const scrollToSection = useCallback((section: DiffFileSection, behavior: ScrollBehavior) => {
     const container = diffLinesRef.current
@@ -274,11 +276,6 @@ export function FileChangesReviewPanel({
             gitApplyCommandCopied={gitApplyCommandCopied}
             onCopyGitApplyCommand={copyGitApplyCommand}
           />
-          {isLargeDiff ? (
-            <p className="shrink-0 border-b border-border bg-background px-6 py-2 text-sm text-text-muted">
-              {t('file_changes.large_diff_single_file_notice')}
-            </p>
-          ) : null}
           {actionError ? (
             <p
               role="alert"
@@ -301,7 +298,8 @@ export function FileChangesReviewPanel({
               </div>
             ) : (
               <AllDiffSections
-                sections={displayedSections}
+                codeLineHeight={codeLineHeight}
+                sections={sections}
                 ariaLabel={t('file_changes.all_files_diff_label')}
                 wrapLines={wrapLines}
                 diffLinesRef={diffLinesRef}
@@ -639,6 +637,7 @@ function useTransientFlag(durationMs: number) {
 }
 
 function AllDiffSections({
+  codeLineHeight,
   sections,
   ariaLabel,
   wrapLines,
@@ -658,6 +657,7 @@ function AllDiffSections({
   onCommentSelectionChange,
   themeType,
 }: {
+  codeLineHeight: number
   sections: DiffFileSection[]
   ariaLabel: string
   wrapLines: boolean
@@ -686,44 +686,54 @@ function AllDiffSections({
     >
       <div
         ref={diffLinesRef}
+        style={{ '--wework-review-code-line-height': `${codeLineHeight}px` } as CSSProperties}
         data-testid="file-changes-review-diff-lines"
         data-wrap={wrapLines ? 'true' : 'false'}
         data-diff-style={diffStyle}
-        className="scrollbar-soft pierre-diff-view min-h-0 flex-1 overflow-auto bg-background text-xs"
+        className="pierre-diff-view min-h-0 flex-1 overflow-hidden bg-background text-xs"
       >
-        {sections.map((section, index) => {
-          const sectionKey = getDiffSectionKey(section, index)
-          const collapsed = collapsedSections.has(sectionKey)
+        <PierreCodeProvider>
+          <Virtualizer
+            className="scrollbar-soft h-full overflow-auto"
+            contentClassName="min-h-full"
+          >
+            {sections.map((section, index) => {
+              const sectionKey = getDiffSectionKey(section, index)
+              const collapsed = collapsedSections.has(sectionKey)
 
-          return (
-            <FileDiffSection
-              key={sectionKey}
-              section={section}
-              index={index}
-              collapsed={collapsed}
-              wrapLines={wrapLines}
-              diffStyle={diffStyle}
-              hunksCollapsed={hunksCollapsed}
-              expandFileLabel={expandFileLabel}
-              collapseFileLabel={collapseFileLabel}
-              onToggle={() => onToggleSectionCollapsed(section, index)}
-              reviewMode={reviewMode}
-              pendingAction={pendingAction}
-              onApplyPatch={onApplyPatch}
-              onOpenSourceFile={onOpenSourceFile}
-              canComment={canComment}
-              commentSelection={commentSelection}
-              onCommentSelectionChange={onCommentSelectionChange}
-              themeType={themeType}
-            />
-          )
-        })}
+              return (
+                <FileDiffSection
+                  codeLineHeight={codeLineHeight}
+                  key={sectionKey}
+                  section={section}
+                  index={index}
+                  collapsed={collapsed}
+                  wrapLines={wrapLines}
+                  diffStyle={diffStyle}
+                  hunksCollapsed={hunksCollapsed}
+                  expandFileLabel={expandFileLabel}
+                  collapseFileLabel={collapseFileLabel}
+                  onToggle={() => onToggleSectionCollapsed(section, index)}
+                  reviewMode={reviewMode}
+                  pendingAction={pendingAction}
+                  onApplyPatch={onApplyPatch}
+                  onOpenSourceFile={onOpenSourceFile}
+                  canComment={canComment}
+                  commentSelection={commentSelection}
+                  onCommentSelectionChange={onCommentSelectionChange}
+                  themeType={themeType}
+                />
+              )
+            })}
+          </Virtualizer>
+        </PierreCodeProvider>
       </div>
     </section>
   )
 }
 
 function FileDiffSection({
+  codeLineHeight,
   section,
   index,
   collapsed,
@@ -742,6 +752,7 @@ function FileDiffSection({
   onCommentSelectionChange,
   themeType,
 }: {
+  codeLineHeight: number
   section: DiffFileSection
   index: number
   collapsed: boolean
@@ -827,91 +838,92 @@ function FileDiffSection({
           data-testid="file-changes-review-file-diff-body"
           data-theme={themeType}
         >
-          {patchChunks.flatMap((patch, patchIndex) =>
-            getHunkPatches(patch).map((hunkPatch, hunkIndex) => {
-              const selectionKey = `${index}:${patchIndex}:${hunkIndex}`
-              const hunkActionAnchor = getHunkActionAnchor(hunkPatch)
-              return (
-                <div
-                  key={`${wrapLines}:${diffStyle}:${hunksCollapsed}:${selectionKey}:${hunkPatch}`}
-                  className="relative"
-                >
-                  <PatchDiff<{ kind: 'hunk-actions' }>
-                    patch={hunkPatch}
-                    disableWorkerPool
-                    lineAnnotations={
-                      fileActions.length > 0 && hunkActionAnchor
-                        ? [{ ...hunkActionAnchor, metadata: { kind: 'hunk-actions' } }]
-                        : []
-                    }
-                    renderAnnotation={() => (
-                      <div
-                        data-testid="file-changes-review-hunk-actions"
-                        className="pointer-events-none absolute -top-8 right-0.5 z-20 flex items-center gap-1 rounded-full bg-surface/90 p-0.5 opacity-0 shadow-sm ring-1 ring-border/60 transition-opacity group-hover/file-diff:pointer-events-auto group-hover/file-diff:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
-                      >
-                        {fileActions.map(action => (
-                          <ReviewPatchActionButton
-                            key={action}
-                            action={action}
-                            scope="hunk"
-                            disabled={Boolean(pendingAction)}
-                            pending={pendingAction === `hunk:${selectionKey}:${action}`}
-                            onClick={() =>
-                              onApplyPatch(action, hunkPatch, `hunk:${selectionKey}:${action}`)
-                            }
-                          />
-                        ))}
-                      </div>
-                    )}
-                    selectedLines={
-                      commentSelection?.key === selectionKey ? commentSelection.range : null
-                    }
-                    options={{
-                      collapsed: hunksCollapsed,
-                      controlledSelection: true,
-                      diffStyle,
-                      disableFileHeader: true,
-                      enableLineSelection: canComment,
-                      lineHoverHighlight: 'both',
-                      onLineNumberClick: line => {
-                        const sourceLine = getOpenSourceLine(line)
-                        if (sourceLine === null) return
-                        onOpenSourceFile?.(section.path, sourceLine, sourceLine)
-                      },
-                      onLineSelectionEnd: range => {
-                        if (!range) {
-                          onCommentSelectionChange(null)
-                          return
-                        }
-                        const selected = getDiffSelection(hunkPatch, range)
-                        if (!selected) return
-                        onCommentSelectionChange({
-                          key: selectionKey,
-                          path: section.path,
-                          range,
-                          ...selected,
-                        })
-                      },
-                      overflow: wrapLines ? 'wrap' : 'scroll',
-                      stickyHeader: false,
-                      themeType,
-                      tokenizeMaxLength: 250_000,
-                      tokenizeMaxLineLength: 2_000,
-                      unsafeCSS: PIERRE_DIFF_CSS,
-                    }}
-                    metrics={{
-                      diffHeaderHeight: 0,
-                      hunkLineCount: 120,
-                      lineHeight: 20,
-                      paddingBottom: 0,
-                      paddingTop: 0,
-                      spacing: 0,
-                    }}
-                  />
-                </div>
-              )
+          {patchChunks.map((patch, patchIndex) => {
+            const selectionKey = String(index) + ':' + patchIndex
+            const hunkActions = getHunkPatches(patch).flatMap((hunkPatch, hunkIndex) => {
+              const anchor = getHunkActionAnchor(hunkPatch)
+              return anchor
+                ? [
+                    {
+                      ...anchor,
+                      metadata: { patch: hunkPatch, key: selectionKey + ':' + hunkIndex },
+                    },
+                  ]
+                : []
             })
-          )}
+            return (
+              <PatchDiff<{ patch: string; key: string }>
+                key={selectionKey}
+                patch={patch}
+                lineAnnotations={fileActions.length > 0 ? hunkActions : []}
+                renderAnnotation={annotation => (
+                  <div className="relative h-0">
+                    <div
+                      data-testid="file-changes-review-hunk-actions"
+                      className="pointer-events-none absolute -top-8 right-0.5 z-20 flex items-center gap-1 rounded-full bg-surface/90 p-0.5 opacity-0 shadow-sm ring-1 ring-border/60 transition-opacity group-hover/file-diff:pointer-events-auto group-hover/file-diff:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+                    >
+                      {fileActions.map(action => (
+                        <ReviewPatchActionButton
+                          key={action}
+                          action={action}
+                          scope="hunk"
+                          disabled={Boolean(pendingAction)}
+                          pending={
+                            pendingAction === 'hunk:' + annotation.metadata.key + ':' + action
+                          }
+                          onClick={() =>
+                            onApplyPatch(
+                              action,
+                              annotation.metadata.patch,
+                              'hunk:' + annotation.metadata.key + ':' + action
+                            )
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                selectedLines={
+                  commentSelection?.key === selectionKey ? commentSelection.range : null
+                }
+                options={{
+                  collapsed: hunksCollapsed,
+                  controlledSelection: true,
+                  diffStyle,
+                  disableFileHeader: true,
+                  enableLineSelection: canComment,
+                  lineHoverHighlight: 'both',
+                  onLineNumberClick: line => {
+                    const sourceLine = getOpenSourceLine(line)
+                    if (sourceLine !== null)
+                      onOpenSourceFile?.(section.path, sourceLine, sourceLine)
+                  },
+                  onLineSelectionEnd: range => {
+                    const selected = range ? getDiffSelection(patch, range) : null
+                    onCommentSelectionChange(
+                      range && selected
+                        ? { key: selectionKey, path: section.path, range, ...selected }
+                        : null
+                    )
+                  },
+                  overflow: wrapLines ? 'wrap' : 'scroll',
+                  stickyHeader: false,
+                  themeType,
+                  tokenizeMaxLength: 250_000,
+                  tokenizeMaxLineLength: 2_000,
+                  unsafeCSS: PIERRE_DIFF_CSS,
+                }}
+                metrics={{
+                  diffHeaderHeight: 0,
+                  hunkLineCount: 120,
+                  lineHeight: codeLineHeight,
+                  paddingBottom: 0,
+                  paddingTop: 0,
+                  spacing: 0,
+                }}
+              />
+            )
+          })}
         </div>
       ) : null}
     </article>
@@ -975,13 +987,4 @@ function getSectionsDiffStats(sections: DiffFileSection[]) {
     },
     { additions: 0, deletions: 0 }
   )
-}
-
-function isLargeReviewDiff(sections: DiffFileSection[]) {
-  if (sections.length > LARGE_DIFF_FILE_COUNT_THRESHOLD) {
-    return true
-  }
-
-  const lineCount = sections.reduce((total, section) => total + section.lines.length, 0)
-  return lineCount > LARGE_DIFF_LINE_COUNT_THRESHOLD
 }

@@ -3,12 +3,16 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import { useImperativeHandle, useRef, type ReactNode } from 'react'
+import type { CodeViewItem } from '@pierre/diffs'
 
 const fileViewerMocks = vi.hoisted(() => ({
   render: vi.fn(),
 }))
 const codeViewMocks = vi.hoisted(() => ({
   render: vi.fn(),
+  updateItem: vi.fn(),
+  addItems: vi.fn(),
 }))
 const appearanceMocks = vi.hoisted(() => ({
   resolvedMode: 'light' as 'dark' | 'light',
@@ -23,12 +27,35 @@ vi.mock('@/components/chat/AssistantMarkdown', () => ({
   ),
 }))
 
-vi.mock('@pierre/diffs/react', () => ({
+vi.mock('@/components/code/PierreCodeProvider', () => ({
+  PierreCodeProvider: ({ children }: { children: ReactNode }) => children,
+}))
+
+vi.mock('@pierre/diffs/react', async importOriginal => ({
+  ...(await importOriginal<typeof import('@pierre/diffs/react')>()),
   CodeView: (props: {
+    ref?: React.Ref<unknown>
+    initialItems: CodeViewItem<undefined>[]
     options: Record<string, unknown>
     selectedLines?: unknown
     style?: Record<string, string>
   }) => {
+    const item = useRef(props.initialItems[0])
+    useImperativeHandle(props.ref, () => ({
+      getItem: (id: string) => (item.current?.id === id ? item.current : undefined),
+      removeItem: () => {
+        item.current = undefined as unknown as CodeViewItem<undefined>
+      },
+      addItems: (items: CodeViewItem<undefined>[]) => {
+        item.current = items[0]
+        codeViewMocks.addItems(items)
+      },
+      updateItem: (next: CodeViewItem<undefined>) => {
+        item.current = next
+        codeViewMocks.updateItem(next)
+      },
+      scrollTo: vi.fn(),
+    }))
     codeViewMocks.render(props)
     return <div data-testid="code-view" />
   },
@@ -115,7 +142,9 @@ test('retries a failed text attachment read and displays the complete read-only 
   await waitFor(() =>
     expect(codeViewMocks.render).toHaveBeenCalledWith(
       expect.objectContaining({
-        items: [expect.objectContaining({ file: expect.objectContaining({ contents: content }) })],
+        initialItems: [
+          expect.objectContaining({ file: expect.objectContaining({ contents: content }) }),
+        ],
       })
     )
   )

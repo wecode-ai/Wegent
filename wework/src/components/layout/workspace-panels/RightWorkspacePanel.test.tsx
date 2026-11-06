@@ -1,10 +1,16 @@
+import { getWorkspaceCodeText, installPierreEditorTestPlatform } from '@/test/pierreCode'
 import { registerMcpAppPanel } from '@/features/mcp-apps/workspacePanels'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeAll, describe, expect, test, vi } from 'vitest'
 import { FileWorkspacePanel } from './FileWorkspacePanel'
 import { RightWorkspacePanel } from './RightWorkspacePanel'
+
+beforeAll(installPierreEditorTestPlatform)
+vi.mock('@/components/code/PierreCodeProvider', () => ({
+  PierreCodeProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
 
 vi.mock('./WorkspaceBrowserPanelContainer', () => ({
   WorkspaceBrowserPanel: ({
@@ -264,11 +270,9 @@ describe('RightWorkspacePanel file tab loading', () => {
       )
       const latest = '/fixture/repo/fast/second.ts'
       rerender(panel(latest, 2))
-      await waitFor(() =>
-        expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(latest)
-      )
+      await waitFor(() => expect(getWorkspaceCodeText()).toContain(latest))
       await act(async () => finishListing())
-      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(latest)
+      expect(getWorkspaceCodeText()).toContain(latest)
       expect(api.readWorkspaceTextFile.mock.calls.map(([, path]) => path)).toEqual([latest])
     }
   )
