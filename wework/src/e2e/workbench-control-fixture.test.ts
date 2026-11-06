@@ -10,6 +10,25 @@ import { createDesktopScenario } from '../../e2e/desktop/scenarios/workbench-con
 import { CLOUD_DEVICE_ID } from '../../e2e/desktop/modules/shared.mjs'
 import { waitForScenarioProgress } from '../../e2e/desktop/modules/scenario-progress.mjs'
 
+const SOURCE_DEVICE = {
+  device_type: 'local',
+  device_id: 'electron-source-device',
+  runtime_instance_id: 'source-runtime-instance',
+}
+const APP_DEVICE = {
+  device_type: 'app',
+  device_id: 'persisted-app-device-uuid',
+  execution_target_id: 'app-record-1',
+  app_device_id: SOURCE_DEVICE.device_id,
+  runtime_instance_id: SOURCE_DEVICE.runtime_instance_id,
+}
+const SOURCE_SNAPSHOT = JSON.stringify({
+  workbench: {
+    currentRuntimeTask: { deviceId: SOURCE_DEVICE.device_id, taskId: 'source-task' },
+    devices: [SOURCE_DEVICE],
+  },
+})
+
 vi.mock('../../e2e/desktop/modules/cloud-environment.mjs', () => ({
   verifyLocalExecutorUsesCloudSocketUrl: vi.fn(),
 }))
@@ -43,12 +62,12 @@ async function prepareFixture({
   waitError,
   role = 'executor',
   modelResponseTimeoutMs = 180000,
-  appDeviceType = 'app',
+  appDevices = [APP_DEVICE],
 }: {
   waitError?: Error
   role?: string
   modelResponseTimeoutMs?: number
-  appDeviceType?: string
+  appDevices?: (typeof APP_DEVICE)[]
 }) {
   const workspacePath = '/fixture/exact-remote-workspace'
   const origin = {
@@ -104,7 +123,7 @@ async function prepareFixture({
     ...restContext,
     workspacePath,
     waitForRuntimeTask,
-    devices: vi.fn(async () => [{ device_type: appDeviceType, device_id: 'local-device' }]),
+    devices: vi.fn(async () => appDevices),
   }
   const scenario = createDesktopScenario({ uiTimeoutMs: 1000, modelResponseTimeoutMs })
   await scenario.prepareCloud(restContext)
@@ -222,10 +241,7 @@ test('control workflow uses the runner model-response budget instead of the UI-a
   const reachedWorkflowWait = new Error('Reached the complete workflow wait')
   const command = vi.fn(
     async (action: string, _selector: string, options?: { text?: string; timeoutMs?: number }) => {
-      if (action === 'getWorkbenchDebugSnapshot')
-        return JSON.stringify({
-          workbench: { currentRuntimeTask: { deviceId: 'local-device', taskId: 'source-task' } },
-        })
+      if (action === 'getWorkbenchDebugSnapshot') return SOURCE_SNAPSHOT
       if (action === 'waitFor' && options?.text === 'WEWORK_CONTROL_COMPLETE') {
         expect(options.timeoutMs).toBe(modelResponseTimeoutMs)
         throw reachedWorkflowWait
@@ -245,13 +261,15 @@ test('control workflow uses the runner model-response budget instead of the UI-a
   }
 })
 
-test('control fixture rejects a remote source that cannot prove local APP behavior', async () => {
-  const { scenario } = await prepareFixture({ appDeviceType: 'remote' })
+test.each([
+  ['remote device', [{ ...APP_DEVICE, device_type: 'remote' }]],
+  ['another physical app', [{ ...APP_DEVICE, app_device_id: 'electron-other-device' }]],
+  ['another runtime', [{ ...APP_DEVICE, runtime_instance_id: 'other-runtime-instance' }]],
+  ['ambiguous registration', [APP_DEVICE, { ...APP_DEVICE, device_id: 'duplicate-app-uuid' }]],
+])('control fixture rejects %s as proof of the local APP source', async (_name, appDevices) => {
+  const { scenario } = await prepareFixture({ appDevices })
   const command = vi.fn(async (action: string) => {
-    if (action === 'getWorkbenchDebugSnapshot')
-      return JSON.stringify({
-        workbench: { currentRuntimeTask: { deviceId: 'local-device', taskId: 'source-task' } },
-      })
+    if (action === 'getWorkbenchDebugSnapshot') return SOURCE_SNAPSHOT
   })
   try {
     await expect(scenario.verify({ command })).rejects.toThrow(/real APP device/)

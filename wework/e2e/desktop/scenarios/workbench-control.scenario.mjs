@@ -645,13 +645,22 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       assert.ok(task?.deviceId && task.taskId, 'The UI must expose the actual source task address')
       sourceTaskId = task.taskId
       sourceDeviceId = task.deviceId
-      const devices = await cloudEnvironment.devices()
+      const localDevice = snapshot.workbench.devices.find(
+        device => device.device_type === 'local' && device.device_id === sourceDeviceId
+      )
       assert.ok(
-        devices.some(
+        localDevice?.runtime_instance_id,
+        'The local source must expose its Runtime identity'
+      )
+      const devices = await cloudEnvironment.devices()
+      assert.equal(
+        devices.filter(
           device =>
             device.device_type === 'app' &&
-            [device.device_id, device.execution_target_id].includes(sourceDeviceId)
-        ),
+            device.app_device_id === sourceDeviceId &&
+            device.runtime_instance_id === localDevice.runtime_instance_id
+        ).length,
+        1,
         'The local source must use a real APP device subject to remote-control restrictions'
       )
       sourceId = `conv_${Buffer.from(JSON.stringify([task.deviceId, task.taskId])).toString('base64url')}`
