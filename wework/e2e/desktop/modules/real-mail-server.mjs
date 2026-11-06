@@ -10,7 +10,7 @@ import { createServer, connect } from 'node:net'
 import { reservePort } from '../port-reservation.mjs'
 
 const run = promisify(execFile)
-// GreenMail 2.1.15 fixes noon APPEND dates being parsed as midnight (upstream #1086).
+// GreenMail 2.1.15 fixes APPEND noon timestamps being parsed as midnight.
 const VERSION = '2.1.15'
 const SHA256 = '91d58798698cac357f015365240383b936ced2f2a1a9f7db37d9e3e1a31391b1'
 
