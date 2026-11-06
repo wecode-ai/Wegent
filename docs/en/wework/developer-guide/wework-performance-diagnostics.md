@@ -28,6 +28,12 @@ During handoff, the splash completes the weaving, settles the current breathing 
 
 When the startup screen remains visible, correlate `Frontend logging initialized`, `app IPC stdio ready`, the current route's data-loading entries such as `runtime work list finished`, and the host's `renderer-startup-ready`, `main-window-show`, and `startup-splash-close` records. These distinguish executor cold startup, first-screen data loading, and window handoff. Measure `renderer-startup-ready` to `startup-splash-close` separately because that interval includes the completed frame, main-window compositing, and fade. Investigate background cloud synchronization through its corresponding sync logs.
 
+Normal desktop E2E reloads share `reloadMainWindow` from `workspace-flows.mjs`.
+A connected control channel does not imply a completed native startup handoff;
+the helper waits for splash closure, reloads, and waits for the replacement client.
+Combining `reloadApp` and `awaitReadyAfter` inside a scenario bypasses that gate,
+which can invalidate an in-flight `capturePage()` and hide the main window.
+
 ### First-Paint Gates and Idle Work
 
 Workbench first-paint gating requires the local executor and the current route's usable surface and required data. Features that need Codex start it on demand. Maintenance such as plugin auto-updates, bundled marketplace preparation, and temporary-image cleanup runs through one renderer idle-task scheduler.

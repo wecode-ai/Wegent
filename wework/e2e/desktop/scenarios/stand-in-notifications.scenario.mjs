@@ -12,6 +12,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationProjectView,
+  reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -219,9 +220,7 @@ export function createDesktopScenario({
         'Each completed turn must deliver exactly one alert, including after summary refresh'
       )
 
-      const readyBeforeReload = control.readyCount
-      await control.command('reloadApp', 'body')
-      await control.awaitReadyAfter(readyBeforeReload)
+      await reloadMainWindow(control, 'The stand-in notifications renderer did not reconnect')
       await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',

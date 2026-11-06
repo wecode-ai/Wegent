@@ -28,6 +28,10 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 排查启动页长时间不消失时，对齐 `Frontend logging initialized`、`app IPC stdio ready`、当前路由的数据加载记录（例如 `runtime work list finished`）与宿主的 `renderer-startup-ready`、`main-window-show`、`startup-splash-close` 记录，分别判断 executor 冷启动、首屏数据加载和窗口交接的耗时。`renderer-startup-ready` 到 `startup-splash-close` 之间包含完成帧呈现、主窗合成和淡出，应单独计量。后台云端同步耗时通过对应同步日志排查。
 
+桌面 E2E 的普通页面重载统一复用 `workspace-flows.mjs` 中的 `reloadMainWindow`。
+控制通道连接不代表原生启动交接已结束；该函数先等待启动页关闭，再重载并等待新控制客户端。
+场景内直接组合 `reloadApp` 和 `awaitReadyAfter` 会绕过这一门禁，可能使交接中的 `capturePage()` 失效并隐藏主窗口。
+
 ### 首屏门禁与闲时任务
 
 工作台首屏门禁要求本地 executor 可用，并满足当前路由的数据与可操作条件。需要 Codex 的功能会在用户实际使用时启动它。插件自动升级、内置插件市场准备和临时图片清理等维护工作通过统一的 renderer 闲时任务调度器执行。
