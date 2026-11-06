@@ -14,11 +14,11 @@ vi.mock('@/lib/local-terminal', () => ({ openLocalFileInWorkspaceApp: vi.fn() })
 
 const attachment: Attachment = {
   id: 42,
-  filename: 'test-document.md',
-  mime_type: 'text/markdown',
+  filename: 'test-document.zip',
+  mime_type: 'application/zip',
   file_size: 20,
   status: 'ready',
-  file_extension: '.md',
+  file_extension: '.zip',
   created_at: '2026-09-19T00:00:00Z',
 }
 
@@ -55,12 +55,35 @@ test('opens a cloud attachment in the bound side panel using the keyboard', asyn
   await userEvent.keyboard('{Enter}')
   expect(openPreview).toHaveBeenCalledTimes(1)
   const source = openPreview.mock.calls[0][0]
-  expect(source.filename).toBe('test-document.md')
+  expect(source.filename).toBe('test-document.zip')
   expect(await (await source.loadFile()).text()).toBe('# test cloud content')
   expect(fetchBlob).toHaveBeenCalledExactlyOnceWith(42)
   expect(readElectronLocalFile).not.toHaveBeenCalled()
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
+
+test.each(['/tmp/pasted.txt', 'C:\\attachments\\pasted.txt'])(
+  'previews a local pasted text attachment at %s without launching an external app',
+  async localPath => {
+    const content = '完整文本\n'.repeat(6000)
+    vi.mocked(readElectronLocalFile).mockResolvedValue(new TextEncoder().encode(content))
+    const { openPreview, fetchBlob, remove, restore } = renderAttachment({
+      filename: 'pasted.txt',
+      file_extension: '.txt',
+      mime_type: 'text/plain',
+      ui_kind: 'pasted-text',
+      text_content: content,
+      text_length: content.length,
+      local_path: localPath,
+    })
+    await userEvent.click(screen.getByTestId('attachment-text-open-button'))
+    expect(await (await openPreview.mock.calls[0][0].loadFile()).text()).toBe(content)
+    expect(openLocalFileInWorkspaceApp).not.toHaveBeenCalled()
+    expect(fetchBlob).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+    expect(restore).not.toHaveBeenCalled()
+  }
+)
 
 test('shows native opening failures and permits retry without switching to an inline preview', async () => {
   vi.mocked(openLocalFileInWorkspaceApp)
