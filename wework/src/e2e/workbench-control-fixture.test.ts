@@ -2,6 +2,7 @@
 
 import { afterEach, expect, test, vi } from 'vitest'
 import { Readable } from 'node:stream'
+import { normalize, posix, win32 } from 'node:path'
 import {
   createComposerDocument,
   serializeComposerDocument,
@@ -27,6 +28,11 @@ const SOURCE_SNAPSHOT = JSON.stringify({
     currentRuntimeTask: { deviceId: SOURCE_DEVICE.device_id, taskId: 'source-task' },
     devices: [SOURCE_DEVICE],
   },
+})
+
+vi.mock('node:path', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:path')>()
+  return { ...actual, normalize: vi.fn(actual.normalize) }
 })
 
 vi.mock('../../e2e/desktop/modules/cloud-environment.mjs', () => ({
@@ -56,6 +62,9 @@ vi.mock('../../e2e/desktop/modules/transport-fault-proxy.mjs', () => ({
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+  vi.mocked(normalize).mockImplementation(
+    process.platform === 'win32' ? win32.normalize : posix.normalize
+  )
 })
 
 async function prepareFixture({
@@ -261,9 +270,55 @@ test('control workflow uses the runner model-response budget instead of the UI-a
   }
 })
 
-test.each(['ready', 'preparing', 'failed', 'cancelled', 'wrong-workspace', 'owner-unavailable'])(
-  'local APP conversation continuation waits for its owning Executor: %s',
-  async state => {
+test.each([
+  ...['ready', 'preparing', 'failed', 'cancelled', 'wrong-workspace', 'owner-unavailable'].map(
+    state => ({
+      name: state,
+      state,
+      paths: posix,
+      workspacePath: '/cloud-workspace',
+      ownerWorkspacePath: state === 'wrong-workspace' ? '/another-workspace' : '/cloud-workspace',
+    })
+  ),
+  {
+    name: 'Windows native owner path',
+    state: 'ready',
+    paths: win32,
+    workspacePath: 'D:/fixture/cloud-workspace',
+    ownerWorkspacePath: 'D:\\fixture\\cloud-workspace',
+  },
+  {
+    name: 'Windows native receipt path',
+    state: 'ready',
+    paths: win32,
+    workspacePath: 'D:\\fixture\\cloud-workspace',
+    ownerWorkspacePath: 'D:/fixture/cloud-workspace',
+  },
+  {
+    name: 'Windows different drive',
+    state: 'wrong-workspace',
+    paths: win32,
+    workspacePath: 'D:/fixture/cloud-workspace',
+    ownerWorkspacePath: 'E:\\fixture\\cloud-workspace',
+  },
+  {
+    name: 'Windows different directory',
+    state: 'wrong-workspace',
+    paths: win32,
+    workspacePath: 'D:/fixture/cloud-workspace',
+    ownerWorkspacePath: 'D:\\fixture\\other-workspace',
+  },
+  {
+    name: 'POSIX literal backslash',
+    state: 'wrong-workspace',
+    paths: posix,
+    workspacePath: '/fixture/cloud-workspace',
+    ownerWorkspacePath: '/fixture\\cloud-workspace',
+  },
+])(
+  'local APP conversation continuation waits for its owning Executor: $name',
+  async ({ state, paths, workspacePath, ownerWorkspacePath }) => {
+    vi.mocked(normalize).mockImplementation(paths.normalize)
     const { scenario, waitForRuntimeTask } = await prepareFixture({})
     const reachedWorkflow = new Error('Reached workflow wait')
     let settled = state !== 'preparing'
@@ -272,12 +327,11 @@ test.each(['ready', 'preparing', 'failed', 'cancelled', 'wrong-workspace', 'owne
       return JSON.stringify({
         workspaces: [
           {
-            workspacePath: '/cloud-workspace',
+            workspacePath: ownerWorkspacePath,
             tasks: [
               {
                 taskId: 'cloud-task',
-                workspacePath:
-                  state === 'wrong-workspace' ? '/another-workspace' : '/cloud-workspace',
+                workspacePath: ownerWorkspacePath,
                 threadId: 'local-native-thread',
                 running: !settled,
                 status: ['failed', 'cancelled'].includes(state)
@@ -359,7 +413,7 @@ test.each(['ready', 'preparing', 'failed', 'cancelled', 'wrong-workspace', 'owne
         conversation_id: 'cloud-created',
         deviceId: SOURCE_DEVICE.device_id,
         taskId: 'cloud-task',
-        workspacePath: '/cloud-workspace',
+        workspacePath,
       })
       await vi.waitFor(() => expect(localRead).toHaveBeenCalled())
       if (state === 'preparing') {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { normalize } from 'node:path'
 
 import { verifyLocalExecutorUsesCloudSocketUrl } from '../modules/cloud-environment.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
@@ -256,7 +257,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           created.taskId
         )
         assert.ok(task, 'The owning Executor must retain the created APP task')
-        assert.equal(task.workspacePath, created.workspacePath)
+        assert.equal(normalize(task.workspacePath), normalize(created.workspacePath))
         assert.ok(!['failed', 'cancelled'].includes(task.status))
         cloudCreatedId = created.conversation_id
         cloudCreatedTaskId = created.taskId
