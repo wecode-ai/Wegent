@@ -35,6 +35,7 @@ export interface AuthSectionConfig {
     role: MemberRole
     onSelect: (entry: AuthEntry) => void
     /** Optional entity ID to exclude from search results (e.g. the KB's owning namespace) */
+    boundEntityIds?: string[]
     excludedEntityId?: string
   }) => ReactNode
 }

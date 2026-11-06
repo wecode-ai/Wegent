@@ -395,3 +395,51 @@ creationTest(
     await teammate.getByTestId('finish-created-authorization').click()
   }
 )
+
+creationTest(
+  'uses the same collaborator flow from the list and document management',
+  async ({ page, creation }) => {
+    const name = fixtureName('e2e-collaborators')
+    const created = await creation.api.post<{ id: number }>('/api/knowledge-bases', {
+      name,
+      namespace: 'default',
+      kb_type: 'classic',
+      summary_enabled: false,
+    })
+    if (created.data?.id) creation.libraries.set(created.data.id, creation.api)
+    expect(created.status).toBe(201)
+    const id = created.data!.id
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto('/knowledge?type=document')
+    await page.getByTestId('permission-kb-' + id).click()
+    await page.getByTestId('permission-add-collaborator').click()
+    await page.getByTestId('knowledge-auth-user-search').fill(REGULAR_USER.username)
+    await page.getByText(REGULAR_USER.username, { exact: true }).click()
+    const pending = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname === `/api/share/KnowledgeBase/${id}/members/batch` &&
+        response.request().method() === 'POST'
+    )
+    await page.getByTestId('submit-created-permissions').click()
+    const response = await pending
+    expect(response.status()).toBe(200)
+    expect(((await response.json()) as { failed: unknown[] }).failed).toEqual([])
+    await expect(page.getByTestId('knowledge-authorization-complete')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
+    await page.getByTestId('knowledge-member-search').fill(REGULAR_USER.username)
+    await expect(page.getByTestId('knowledge-member-count')).toContainText('1')
+    await page.keyboard.press('Escape')
+    await page.setViewportSize({ width: 375, height: 480 })
+    await page.goto(`/knowledge/default/${encodeURIComponent(name)}?type=document&view=documents`)
+    await page.getByTestId('knowledge-detail-permissions-tab').click()
+    await page.getByTestId('knowledge-member-search').fill(REGULAR_USER.username)
+    await expect(page.getByTestId('knowledge-member-count')).toContainText('1')
+    await page.getByTestId('permission-add-collaborator').click()
+    await expect(page.getByTestId('knowledge-auth-user-search')).toBeVisible()
+    await page.getByTestId('submit-created-permissions').scrollIntoViewIfNeeded()
+    await expect(page.getByTestId('submit-created-permissions')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
+  }
+)

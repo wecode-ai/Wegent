@@ -225,34 +225,6 @@ it('stops manager requests after a server denial even if raw source roles still 
   expect(screen.queryByTestId('perm-tab-user')).not.toBeInTheDocument()
 })
 
-it('retains registered extension tabs and forwards successful extension changes', async () => {
-  const { registerPermissionTab } =
-    await import('@/features/knowledge/permission/permission-tab-registry')
-  registerPermissionTab({
-    type: 'test-external',
-    labelKey: 'test-extension-tab',
-    label: 'Extension permissions',
-    filter: () => false,
-    renderAddButton: ({ onSuccess }) => (
-      <button data-testid="test-extension-add" onClick={onSuccess}>
-        Add extension permission
-      </button>
-    ),
-  })
-  jest
-    .mocked(knowledgePermissionApi.getMyPermissionSources)
-    .mockResolvedValue({ ...reader, effective_role: 'Maintainer' })
-  jest.mocked(knowledgePermissionApi.listPermissions).mockResolvedValue(members)
-  const callbacks = props()
-  render(<KnowledgeAccessDialog {...callbacks} canManage />)
-  await userEvent.setup().click(await screen.findByText('Extension permissions'))
-  await userEvent.setup().click(screen.getByTestId('test-extension-add'))
-  expect(callbacks.onChanged).toHaveBeenCalledTimes(1)
-  await waitFor(() =>
-    expect(knowledgePermissionApi.getMyPermissionSources).toHaveBeenCalledTimes(2)
-  )
-})
-
 it('keeps an initial member error distinct from an empty member list and retries locally', async () => {
   jest
     .mocked(knowledgePermissionApi.getMyPermissionSources)
@@ -321,7 +293,7 @@ it('keeps real pending requests actionable and compacts the section after approv
 async function openGroupGrant() {
   const user = userEvent.setup()
   await user.click(await screen.findByTestId('perm-tab-namespace'))
-  await user.click(screen.getByTestId('permission-add-namespace'))
+  await user.click(screen.getByTestId('permission-add-collaborator'))
   await user.click(screen.getByTestId('add-namespace-group-search'))
   await user.click(await screen.findByRole('button', { name: /Team A/ }))
   return user
@@ -344,15 +316,15 @@ it.each([false, true])(
       await user.click(screen.getByTestId('add-namespace-group-search'))
       await user.click(await screen.findByRole('button', { name: /Team B/ }))
     }
-    await user.click(screen.getByTestId('submit-namespace-permissions'))
+    await user.click(screen.getByTestId('submit-created-permissions'))
     await waitFor(() => expect(callbacks.onChanged).toHaveBeenCalled())
     if (partial) {
-      expect(screen.getByTestId('submit-namespace-permissions')).toBeInTheDocument()
+      expect(screen.getByTestId('submit-created-permissions')).toBeInTheDocument()
       jest.mocked(knowledgePermissionApi.batchAddPermission).mockResolvedValueOnce({
         succeeded: [{ entity_type: 'namespace', entity_id: '72', role: 'Reporter' }],
         failed: [],
       } as never)
-      await user.click(screen.getByTestId('submit-namespace-permissions'))
+      await user.click(screen.getByTestId('submit-created-permissions'))
       expect(knowledgePermissionApi.batchAddPermission).toHaveBeenLastCalledWith(
         27,
         expect.objectContaining({ members: [expect.objectContaining({ entity_id: '72' })] })
@@ -380,7 +352,7 @@ it.each([
       .mockRejectedValueOnce(new ApiError('denied', status))
     render(<KnowledgeAccessDialog {...callbacks} canManage />)
     const user = await openGroupGrant()
-    await user.click(screen.getByTestId('submit-namespace-permissions'))
+    await user.click(screen.getByTestId('submit-created-permissions'))
     await waitFor(() => expect(callbacks.onChanged).toHaveBeenCalled())
     await waitFor(() => expect(screen.queryByTestId('perm-tab-namespace')).not.toBeInTheDocument())
     if (hasAccess) {
@@ -407,7 +379,7 @@ it('does not notify a new library session when an old group request finishes', a
   )
   const { rerender } = render(<KnowledgeAccessDialog {...callbacks} canManage />)
   const user = await openGroupGrant()
-  await user.click(screen.getByTestId('submit-namespace-permissions'))
+  await user.click(screen.getByTestId('submit-created-permissions'))
   rerender(<KnowledgeAccessDialog {...callbacks} kbId={28} canManage />)
   await act(async () =>
     finish({
@@ -436,7 +408,7 @@ it.each(['success', 'denied'])(
       <PermissionManagementTab kbId={27} onChanged={changed} onAccessDenied={denied} />
     )
     const user = await openGroupGrant()
-    await user.click(screen.getByTestId('submit-namespace-permissions'))
+    await user.click(screen.getByTestId('submit-created-permissions'))
     rerender(<PermissionManagementTab kbId={28} onChanged={changed} onAccessDenied={denied} />)
     rerender(<PermissionManagementTab kbId={27} onChanged={changed} onAccessDenied={denied} />)
     await act(async () => {

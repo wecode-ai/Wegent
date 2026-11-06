@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AddUserDialog } from '@/features/knowledge/permission/components/add-user-dialog'
+import { KnowledgeGrantForm } from '@/features/knowledge/permission/components/KnowledgeGrantForm'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 const mockT = (key: string) => key
 jest.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: mockT }) }))
@@ -36,8 +36,7 @@ jest.mock('@/apis/knowledge-permission', () => ({
 
 it('keeps only failed people selected and retries without resending successful people', async () => {
   const user = userEvent.setup(),
-    changed = jest.fn(),
-    close = jest.fn()
+    changed = jest.fn()
   jest
     .mocked(knowledgePermissionApi.batchAddPermission)
     .mockResolvedValueOnce({
@@ -49,18 +48,18 @@ it('keeps only failed people selected and retries without resending successful p
     pending: [],
     approved: { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] },
   })
-  render(<AddUserDialog open kbId={29} onOpenChange={close} onChanged={changed} />)
-  const search = screen.getByPlaceholderText('document.permission.searchUserPlaceholder')
+  render(<KnowledgeGrantForm kbId={29} onChanged={changed} />)
+  const search = screen.getByTestId('knowledge-auth-user-search')
   await user.type(search, 'Alice')
   await user.click(await screen.findByText('Alice'))
   await user.type(search, 'Bob')
   await user.click(await screen.findByText('Bob'))
   expect(knowledgePermissionApi.batchAddPermission).not.toHaveBeenCalled()
-  await user.click(screen.getByTestId('submit-user-permissions'))
+  await user.click(screen.getByTestId('submit-created-permissions'))
   await screen.findByText(/retry Bob/)
   expect(screen.queryByText('Alice')).not.toBeInTheDocument()
-  await user.click(screen.getByTestId('submit-user-permissions'))
-  await waitFor(() => expect(close).toHaveBeenCalledWith(false))
+  await user.click(screen.getByTestId('submit-created-permissions'))
+  await screen.findByTestId('knowledge-authorization-complete')
   expect(knowledgePermissionApi.batchAddPermission).toHaveBeenLastCalledWith(29, {
     members: [expect.objectContaining({ user_id: 8, role: 'Reporter' })],
   })
@@ -68,10 +67,7 @@ it('keeps only failed people selected and retries without resending successful p
 })
 
 it('keeps failed teams available for retry through the same batch grant boundary', async () => {
-  const { AddNamespaceDialog } =
-    await import('@/features/knowledge/permission/components/add-namespace-dialog')
   const user = userEvent.setup(),
-    close = jest.fn(),
     changed = jest.fn()
   jest
     .mocked(knowledgePermissionApi.batchAddPermission)
@@ -84,15 +80,17 @@ it('keeps failed teams available for retry through the same batch grant boundary
       succeeded: [{ user_id: 0, entity_type: 'namespace', entity_id: '8', role: 'Reporter' }],
       failed: [],
     } as never)
-  render(<AddNamespaceDialog open kbId={29} onOpenChange={close} onChanged={changed} />)
+  render(<KnowledgeGrantForm kbId={29} onChanged={changed} />)
   await user.click(screen.getByTestId('add-namespace-group-search'))
   await user.click(await screen.findByText('Team A'))
-  await user.click(screen.getByText('Team B'))
-  await user.click(screen.getByTestId('submit-namespace-permissions'))
+  await user.click(screen.getByTestId('add-namespace-group-search'))
+  await user.click(await screen.findByRole('button', { name: /Team B/ }))
+  await user.click(screen.getByTestId('submit-created-permissions'))
   await screen.findByText(/retry team B/)
-  expect(screen.getAllByRole('button', { name: 'document.permission.remove' })).toHaveLength(1)
-  await user.click(screen.getByTestId('submit-namespace-permissions'))
-  await waitFor(() => expect(close).toHaveBeenCalledWith(false))
+  expect(screen.queryByTestId('remove-auth-namespace-7')).not.toBeInTheDocument()
+  expect(screen.getByTestId('remove-auth-namespace-8')).toBeInTheDocument()
+  await user.click(screen.getByTestId('submit-created-permissions'))
+  await screen.findByTestId('knowledge-authorization-complete')
   expect(knowledgePermissionApi.batchAddPermission).toHaveBeenLastCalledWith(29, {
     members: [expect.objectContaining({ user_id: 0, entity_type: 'namespace', entity_id: '8' })],
   })

@@ -13,6 +13,7 @@ import type {
   AllGroupedKnowledgeResponse,
   KnowledgeBase,
   KnowledgeBaseWithGroupInfo,
+  PermissionResponse,
 } from '@/types/knowledge'
 
 const mockPush = jest.fn(),
@@ -21,7 +22,8 @@ let mockParams = new URLSearchParams(),
   mockPathname = '/knowledge'
 let mockUser = { id: 1 },
   mockScope = 'backend:session-1'
-const mockT = (key: string) => key
+const mockT = (key: string, options?: { count?: number }) =>
+  options?.count === undefined ? key : `${key}: ${options.count}`
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: mockReplace }),
   useSearchParams: () => mockParams,
@@ -43,6 +45,7 @@ jest.mock('@/apis/knowledge', () => ({
   migrateKnowledgeBaseToGroup: jest.fn(),
 }))
 jest.mock('@/apis/groups', () => ({
+  searchGroups: jest.fn(async () => ({ items: [] })),
   listGroups: jest.fn(async () => ({
     items: [
       { name: 'team', my_role: 'Owner' },
@@ -105,7 +108,9 @@ jest.mock('@/features/knowledge/code-wiki/CodeWikiReader', () => ({
 }))
 jest.mock('@/apis/knowledge-permission', () => ({
   knowledgePermissionApi: {
+    batchAddPermission: jest.fn(),
     deletePermission: jest.fn(),
+    updatePermission: jest.fn(),
     getMyPermission: jest.fn(async () => ({
       has_access: true,
       role: 'Owner',
@@ -583,9 +588,13 @@ it.each([500, 403, 404])(
   }
 )
 
-it.each(['same', 'library', 'return', 'unmount'])(
-  'refreshes a closed-dialog write only for its current page resource (switch=%s)',
-  async mode => {
+it.each(
+  ['same', 'library', 'return', 'unmount'].flatMap(mode =>
+    (['delete', 'update'] as const).map(operation => [mode, operation] as const)
+  )
+)(
+  'refreshes a closed-dialog write only for its current page resource (switch=%s, operation=%s)',
+  async (mode, operation) => {
     const next = { ...baseKb, id: 88, name: 'Next library' }
     data.personal.created_by_me.push(row(next))
     jest.mocked(getKnowledgeBase).mockImplementation(async id => (id === 88 ? next : baseKb))
@@ -602,19 +611,29 @@ it.each(['same', 'library', 'return', 'unmount'])(
         ],
       },
     } as never)
-    let finish!: (value: { message: string }) => void
-    jest.mocked(knowledgePermissionApi.deletePermission).mockImplementationOnce(
-      () =>
-        new Promise(resolve => {
-          finish = resolve
-        })
-    )
+    let finish!: (value: PermissionResponse & { message: string }) => void
+    jest
+      .mocked(
+        operation === 'delete'
+          ? knowledgePermissionApi.deletePermission
+          : knowledgePermissionApi.updatePermission
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<PermissionResponse & { message: string }>(resolve => {
+            finish = resolve
+          })
+      )
     const { unmount } = render(<KnowledgeDocumentPageMobile />)
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('more-kb-7'))
     await user.click(screen.getByTestId('permission-kb-7'))
     await screen.findByText('Granted user')
-    await user.click(screen.getByTitle('document.permission.remove'))
+    if (operation === 'delete') await user.click(screen.getByTitle('document.permission.remove'))
+    else {
+      await user.click(screen.getByTestId('permission-edit-91'))
+      await user.click(screen.getByTestId('permission-save-91'))
+    }
     await user.click(screen.getByTestId('close-knowledge-access'))
     if (mode === 'library' || mode === 'return') {
       await user.click(screen.getByTestId('open-kb-88'))
@@ -628,9 +647,167 @@ it.each(['same', 'library', 'return', 'unmount'])(
     }
     if (mode === 'unmount') unmount()
     const reads = jest.mocked(knowledgeBaseApi.getAllGrouped).mock.calls.length
-    await act(async () => finish({ message: 'ok' }))
+    await act(async () =>
+      finish({
+        id: 91,
+        knowledge_base_id: 7,
+        user_id: 6,
+        role: 'Reporter',
+        status: 'approved',
+        requested_at: baseKb.created_at,
+        created_at: baseKb.created_at,
+        updated_at: baseKb.updated_at,
+        message: 'ok',
+      })
+    )
     if (mode !== 'same') expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads)
     else
       await waitFor(() => expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads + 1))
+  }
+)
+
+it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
+  'searches collaborators and adds registered targets through the full list page (%p)',
+  async Page => {
+    const { registerAuthSection } =
+      await import('@/features/knowledge/document/auth-section-registry')
+    registerAuthSection({
+      type: 'test-department',
+      labelKey: 'Test department',
+      renderSearch: ({ role, onSelect }) => (
+        <button
+          onClick={() =>
+            onSelect({
+              id: '7',
+              entityType: 'test-department',
+              entityId: '7',
+              label: 'Department A',
+              role,
+            })
+          }
+        >
+          Select department
+        </button>
+      ),
+    })
+    jest.mocked(knowledgePermissionApi.listPermissions).mockResolvedValueOnce({
+      pending: [],
+      approved: {
+        Owner: [],
+        Maintainer: [],
+        Developer: [],
+        RestrictedAnalyst: [],
+        Reporter: [
+          { id: 91, user_id: 6, display_name: 'Granted user', email: '', role: 'Reporter' },
+        ],
+      },
+    } as never)
+    jest.mocked(knowledgePermissionApi.batchAddPermission).mockResolvedValueOnce({
+      succeeded: [{ entity_type: 'test-department', entity_id: '7', role: 'Reporter' }],
+      failed: [],
+    } as never)
+    render(<Page />)
+    const user = userEvent.setup()
+    await screen.findByTestId('more-kb-7')
+    if (Page === KnowledgeDocumentPageMobile) await user.click(screen.getByTestId('more-kb-7'))
+    await user.click(screen.getByTestId('permission-kb-7'))
+    await screen.findByText('Granted user')
+    await user.type(screen.getByTestId('knowledge-member-search'), 'missing')
+    expect(screen.getByTestId('knowledge-member-count')).toHaveTextContent('0')
+    expect(screen.getByText('document.permission.noMatchingMembers')).toBeInTheDocument()
+    expect(screen.queryByText('Granted user')).not.toBeInTheDocument()
+    await user.clear(screen.getByTestId('knowledge-member-search'))
+    expect(screen.getByText('Granted user')).toBeInTheDocument()
+    await user.click(screen.getByTestId('permission-add-collaborator'))
+    await user.click(screen.getByRole('button', { name: 'Select department' }))
+    const reads = jest.mocked(knowledgeBaseApi.getAllGrouped).mock.calls.length
+    await user.click(screen.getByTestId('submit-created-permissions'))
+    await waitFor(() => expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads + 1))
+    expect(knowledgePermissionApi.batchAddPermission).toHaveBeenLastCalledWith(7, {
+      members: [
+        {
+          user_id: 0,
+          role: 'Reporter',
+          entity_type: 'test-department',
+          entity_id: '7',
+          entity_display_name: 'Department A',
+        },
+      ],
+    })
+  }
+)
+
+it.each(['child', 'manager', 'library', 'return', 'account', 'backend', 'unmount'])(
+  'delivers a late unified grant only to its surviving page session (%s)',
+  async mode => {
+    const { registerAuthSection } =
+      await import('@/features/knowledge/document/auth-section-registry')
+    registerAuthSection({
+      type: 'late-target',
+      labelKey: 'Late target',
+      renderSearch: ({ role, onSelect }) => (
+        <button
+          onClick={() =>
+            onSelect({
+              id: '7',
+              entityType: 'late-target',
+              entityId: '7',
+              label: 'Late target',
+              role,
+            })
+          }
+        >
+          Select late target
+        </button>
+      ),
+    })
+    const next = { ...baseKb, id: 88, name: 'Next library' }
+    data.personal.created_by_me.push(row(next))
+    jest.mocked(getKnowledgeBase).mockImplementation(async id => (id === 88 ? next : baseKb))
+    let finish!: (value: never) => void
+    jest.mocked(knowledgePermissionApi.batchAddPermission).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    const { rerender, unmount } = render(<KnowledgeDocumentPageMobile />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('more-kb-7'))
+    await user.click(screen.getByTestId('permission-kb-7'))
+    await user.click(await screen.findByTestId('permission-add-collaborator'))
+    await user.click(screen.getByRole('button', { name: 'Select late target' }))
+    await user.click(screen.getByTestId('submit-created-permissions'))
+    await user.click(screen.getByTestId('close-add-collaborator'))
+    if (mode !== 'child') await user.click(screen.getByTestId('close-knowledge-access'))
+    if (mode === 'library' || mode === 'return') {
+      await user.click(screen.getByTestId('open-kb-88'))
+      await screen.findByText('Next library')
+      if (mode === 'return') {
+        await user.click(screen.getByTestId('knowledge-detail-back-button'))
+        await user.click(screen.getByTestId('more-kb-7'))
+        await user.click(screen.getByTestId('permission-kb-7'))
+        await screen.findByTestId('perm-tab-user')
+      }
+    }
+    if (mode === 'account') {
+      mockUser = { id: 2 }
+      rerender(<KnowledgeDocumentPageMobile />)
+    }
+    if (mode === 'backend') {
+      mockScope = 'backend:session-2'
+      rerender(<KnowledgeDocumentPageMobile />)
+    }
+    if (mode === 'unmount') unmount()
+    const reads = jest.mocked(knowledgeBaseApi.getAllGrouped).mock.calls.length
+    await act(async () =>
+      finish({
+        succeeded: [{ entity_type: 'late-target', entity_id: '7', role: 'Reporter' }],
+        failed: [],
+      } as never)
+    )
+    if (mode === 'child' || mode === 'manager')
+      await waitFor(() => expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads + 1))
+    else expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads)
   }
 )

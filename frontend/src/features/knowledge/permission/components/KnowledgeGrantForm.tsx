@@ -13,11 +13,13 @@ import { useKnowledgeGrants } from '../hooks/useKnowledgeGrants'
 export function KnowledgeGrantForm({
   kbId,
   kbNamespace,
+  boundNamespaceIds,
   onChanged,
   onAccessDenied,
 }: {
   kbId: number
   kbNamespace?: string
+  boundNamespaceIds?: string[]
   onChanged: () => void
   onAccessDenied?: () => void
 }) {
@@ -42,6 +44,7 @@ export function KnowledgeGrantForm({
           defaultOpen
           value={entries}
           excludedNamespaceId={kbNamespace}
+          boundNamespaceIds={boundNamespaceIds}
           onChange={value => {
             setFinished(false)
             setEntries(value)

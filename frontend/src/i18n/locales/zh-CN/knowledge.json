@@ -764,7 +764,12 @@
       "namespaceMembers": "群组权限",
       "addNamespace": "添加群组",
       "noNamespacePermissions": "暂无群组权限",
-      "namespace": "群组"
+      "namespace": "群组",
+      "addCollaborator": "添加协作者",
+      "searchMembers": "搜索已授权协作者",
+      "matchingMembers": "匹配到 {{count}} 位协作者",
+      "noMatchingMembers": "没有匹配的协作者",
+      "groupSearchFailed": "搜索团队失败，请重试"
     },
     "advancedSettings": {
       "title": "高级设置",
