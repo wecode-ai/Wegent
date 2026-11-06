@@ -148,6 +148,10 @@ export function createDailyBriefStory(options) {
       const source = original.primary.connections.find(item => item.providerId === PROVIDER)
       assert.ok(source)
       const now = Date.now()
+      // Use repeatable UTC day boundaries: GreenMail's APPEND parser reads
+      // 12:xx as midnight (CommandParser uses hh rather than HH).
+      const receivedAt = new Date(now)
+      receivedAt.setUTCHours(0, 0, 0, 0)
       state.since = new Date(now - 3 * DAY).toISOString()
       const fixtures = [
         {
@@ -176,7 +180,7 @@ export function createDailyBriefStory(options) {
             `${MARKER} ${details.status}`,
             JSON.stringify(details),
             `<daily-${details.status}@example.com>`,
-            new Date(now - age)
+            new Date(receivedAt.getTime() - age)
           )
         }
         await control.command('setMainWindowSize', 'body', {
