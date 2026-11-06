@@ -168,10 +168,11 @@ export function createStreamingGuidanceOrderChecks({ resultDir, uiTimeoutMs }) {
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench.currentRuntimeTask
-        await control.command(
-          'click',
+        const selectedAnswer = await control.command(
+          'clickWhenEnabled',
           `${card} [data-testid="request-user-input-option-question_1-0"]`
         )
+        assert.ok(selectedAnswer.includes(ANSWER), 'The intended async answer was not selected')
         await waitForWorkbenchDebugState(
           control,
           snapshot => requests === 3 && snapshot.pane?.status?.isBusy === true,
