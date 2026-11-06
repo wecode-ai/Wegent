@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -142,13 +142,19 @@ export function createDingTalkReplyStory(options) {
         options.resultDir,
         process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
       )
-      await promisify(execFile)('rustc', [
-        fileURLToPath(new URL('../fixtures/source-story-dingtalk-cli.rs', import.meta.url)),
-        '--edition',
-        '2021',
-        '-o',
-        binary,
-      ])
+      const preparedBinary = process.env.WEWORK_E2E_SOURCE_STORY_DWS_BIN
+      if (preparedBinary) {
+        // The fixture resolves its protocol data next to its own executable.
+        await copyFile(preparedBinary, binary)
+      } else {
+        await promisify(execFile)('rustc', [
+          fileURLToPath(new URL('../fixtures/source-story-dingtalk-cli.rs', import.meta.url)),
+          '--edition',
+          '2021',
+          '-o',
+          binary,
+        ])
+      }
       context.appEnvironment.DWS_BINARY_PATH = binary
     },
     async verify(control, rpc) {
@@ -261,6 +267,10 @@ export function createDingTalkReplyStory(options) {
         await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
           timeoutMs: options.modelResponseTimeoutMs,
         })
+        const proposalDeadline = Date.now() + 10_000
+        while (!model.proposalSubmitted && Date.now() < proposalDeadline) {
+          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        }
         assert.equal(model.proposalSubmitted, true)
         assert.equal(
           (await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })).roles.find(

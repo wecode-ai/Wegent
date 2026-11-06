@@ -87,6 +87,32 @@ pub fn resolve_batch_target(program: &Path) -> Option<BatchTarget> {
         .lines()
         .filter_map(|line| parse_shim_line(line.trim(), shim_dir, prog.as_deref()))
         .find(target_is_runnable)
+        .or_else(|| node_script_fallback(&content, shim_dir, prog.as_deref()))
+}
+
+/// Last-resort launcher for shims whose command shape the parser does not
+/// recognize but which still forward `%*` to an existing JavaScript entry.
+fn node_script_fallback(content: &str, shim_dir: &Path, prog: Option<&str>) -> Option<BatchTarget> {
+    for line in content.lines() {
+        let line = line.trim();
+        if !line.contains("%*") {
+            continue;
+        }
+        for token in split_quoted_tokens(line) {
+            let expanded = expand_dp0(&token, shim_dir, prog);
+            if is_script_path(&expanded) && Path::new(&expanded).is_file() {
+                let program = prog
+                    .map(PathBuf::from)
+                    .filter(|candidate| is_node_launcher(&candidate.to_string_lossy()))
+                    .unwrap_or_else(|| PathBuf::from("node"));
+                return Some(BatchTarget {
+                    program,
+                    prefix_args: vec![expanded],
+                });
+            }
+        }
+    }
+    None
 }
 
 fn target_is_runnable(target: &BatchTarget) -> bool {
@@ -122,7 +148,17 @@ fn parse_shim_line(line: &str, shim_dir: &Path, prog: Option<&str>) -> Option<Ba
             continue;
         }
         let mut prefix_args = Vec::new();
-        if let Some(next) = tokens.get(index + 1) {
+        if is_node_launcher(&expanded) {
+            // npm shims may place node options between the launcher and script.
+            if let Some(script) = tokens
+                .iter()
+                .skip(index + 1)
+                .map(|token| expand_dp0(token, shim_dir, prog))
+                .find(|candidate| is_script_path(candidate) && Path::new(candidate).is_file())
+            {
+                prefix_args.push(script);
+            }
+        } else if let Some(next) = tokens.get(index + 1) {
             let next_expanded = expand_dp0(next, shim_dir, prog);
             if is_script_path(&next_expanded) {
                 prefix_args.push(next_expanded);
@@ -294,6 +330,49 @@ mod tests {
 
         let target = resolve_batch_target(&shim).unwrap();
         assert_eq!(target.program, node);
+        assert_eq!(
+            target.prefix_args,
+            vec![script.to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
+    fn resolves_node_script_after_launcher_options() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let script = root.join("node_modules").join("tool").join("cli.js");
+        fs::create_dir_all(script.parent().unwrap()).unwrap();
+        fs::write(&script, b"// script").unwrap();
+        let node = binary(root, "node.exe");
+        let shim = write_shim(
+            root,
+            "tool.cmd",
+            "@ECHO off\r\n\"%dp0%\\node.exe\" --no-warnings \"%dp0%\\node_modules\\tool\\cli.js\" %*\r\n",
+        );
+
+        let target = resolve_batch_target(&shim).unwrap();
+        assert_eq!(target.program, node);
+        assert_eq!(
+            target.prefix_args,
+            vec![script.to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
+    fn falls_back_to_node_script_for_unrecognized_shim() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let script = root.join("tool").join("cli.js");
+        fs::create_dir_all(script.parent().unwrap()).unwrap();
+        fs::write(&script, b"// script").unwrap();
+        let shim = write_shim(
+            root,
+            "tool.cmd",
+            "@ECHO off\r\n\"%dp0%\\bootstrap.cmd\" \"%dp0%\\tool\\cli.js\" %*\r\n",
+        );
+
+        let target = resolve_batch_target(&shim).unwrap();
+        assert_eq!(target.program, PathBuf::from("node"));
         assert_eq!(
             target.prefix_args,
             vec![script.to_string_lossy().to_string()]

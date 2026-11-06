@@ -77,9 +77,16 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
   async function singlePreview(control, testId, text) {
     const card = scoped(`[data-testid="cloud-todo-card-drop-${issue.id}"]`)
     const preview = `${card} [data-testid="cloud-todo-card-${testId}-${issue.id}"]`
-    await control.command('waitFor', preview, { text })
+    // The board can finish moving the card into its new column after the
+    // backend reports completion, so allow the full response window here.
+    await control.command('waitFor', preview, { text, timeoutMs: modelResponseTimeoutMs })
     await control.command('scrollIntoView', preview)
-    await control.command('waitFor', preview, { text, visible: true, stableMs: 500 })
+    await control.command('waitFor', preview, {
+      text,
+      visible: true,
+      stableMs: 500,
+      timeoutMs: modelResponseTimeoutMs,
+    })
     for (const selector of [
       `${card} [data-testid^="cloud-todo-card-task-summary-${issue.id}-"]`,
       preview,

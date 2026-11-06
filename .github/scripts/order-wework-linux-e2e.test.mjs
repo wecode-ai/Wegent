@@ -150,7 +150,11 @@ test('changes to Linux scheduling or MinIO setup select the existing desktop sui
     '.github/actions/build-minio-e2e/action.yml',
   ]) {
     const outputs = classifiedMatrices([path])
-    assert.deepEqual(outputs, matrices, path)
+    assert.deepEqual(
+      outputs,
+      { ...matrices, wework_windows_installer_e2e: 'false' },
+      path,
+    )
     const result = classifiedMatrices(
       [path],
       '.github/scripts/classify-ci-changes.sh',

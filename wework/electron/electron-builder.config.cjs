@@ -108,7 +108,7 @@ module.exports = {
   nsis: {
     oneClick: false,
     allowElevation: false,
-    allowToChangeInstallationDirectory: false,
+    allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
   },

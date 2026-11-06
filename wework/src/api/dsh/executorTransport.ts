@@ -1,6 +1,7 @@
 import { createRequestId } from '@/lib/request-id'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
 import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
+import { executorResourceTiming } from './executorTransportTiming'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
@@ -8,6 +9,7 @@ const executorEventSubscribers = new Map<symbol, (event: DshExecutorEventEnvelop
 let disconnectExecutorEventStream: (() => void) | null = null
 const INITIAL_RECONNECT_DELAY_MS = 500
 const MAX_RECONNECT_DELAY_MS = 10_000
+const SLOW_RPC_MS = 5_000
 const modelDiagnosticsDeadline = performance.now() + 30_000
 const modelDiagnosticMethods = new Set([
   'runtime.tasks.list',
@@ -120,6 +122,7 @@ export async function requestDshExecutor<T>(
     diagnosticCount < 3
   if (diagnose) modelDiagnosticCounts.set(method, diagnosticCount + 1)
   const diagnosticStart = performance.now()
+  let headersReceivedAt: number | null = null
   const transportDiagnostic = (stage: string, details: Record<string, unknown> = {}) => {
     console.warn(
       '[Wework] Executor transport diagnostic ' +
@@ -137,6 +140,26 @@ export async function requestDshExecutor<T>(
     logModelLoading(requestId, `rpc.${method}.${stage}`, {
       elapsedMs: Math.round(performance.now() - diagnosticStart),
       ...details,
+    })
+  }
+  const logSlowRequest = () => {
+    const finishedAt = performance.now()
+    if (finishedAt - diagnosticStart < SLOW_RPC_MS) return
+    let resourceTiming: Record<string, number | null> | null = null
+    try {
+      resourceTiming = executorResourceTiming(
+        performance.getEntriesByType('resource') as PerformanceResourceTiming[],
+        requestId
+      )
+    } catch {
+      // Missing resource timing must not change the RPC result.
+    }
+    transportDiagnostic('slow_rpc', {
+      headersWaitMs:
+        headersReceivedAt === null ? null : Math.round(headersReceivedAt - diagnosticStart),
+      bodyReadMs:
+        headersReceivedAt === null ? null : Math.round(finishedAt - headersReceivedAt),
+      resourceTiming,
     })
   }
   console.debug('[Wework] Executor RPC request started', {
@@ -164,6 +187,7 @@ export async function requestDshExecutor<T>(
     })
   } catch (error) {
     if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
+    logSlowRequest()
     diagnostic('fetch_failed')
     transportDiagnostic('fetch_failed', {
       errorType: error instanceof Error ? error.name : typeof error,
@@ -176,6 +200,7 @@ export async function requestDshExecutor<T>(
     })
     throw connectionError(error)
   }
+  headersReceivedAt = performance.now()
   diagnostic('headers_received', { status: response.status })
   console.debug('[Wework] Executor RPC response received', {
     request_id: requestId,
@@ -188,6 +213,7 @@ export async function requestDshExecutor<T>(
     parsedBody = await response.json()
   } catch (error) {
     if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
+    logSlowRequest()
     diagnostic('body_parse_failed')
     transportDiagnostic('body_parse_failed', {
       status: response.status,
@@ -202,6 +228,7 @@ export async function requestDshExecutor<T>(
     })
     throw connectionError(error)
   }
+  logSlowRequest()
   if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
     throw new DshExecutorTransportError(
       'protocol_mismatch',
