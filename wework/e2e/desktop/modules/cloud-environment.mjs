@@ -200,6 +200,8 @@ async function resolveBackendRsBinary() {
 }
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
+  let lastOutput = ''
+  let logReadError = null
   const captureSpawnError = error => {
     spawnError = error
   }
@@ -207,8 +209,13 @@ async function waitForRedisReady(redis, logPath, fromOffset) {
   const startedAt = Date.now()
   try {
     while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-      const content = await readFile(logPath, 'utf8').catch(() => '')
+      logReadError = null
+      const content = await readFile(logPath, 'utf8').catch(error => {
+        logReadError = error.code ?? error.message
+        return ''
+      })
       const attemptOutput = content.slice(fromOffset)
+      lastOutput = attemptOutput.slice(-8192)
       if (REDIS_READY_PATTERN.test(attemptOutput)) return attemptOutput
       if (spawnError) throw spawnError
       if (redis.exitCode !== null || redis.signalCode !== null) {
@@ -221,7 +228,16 @@ async function waitForRedisReady(redis, logPath, fromOffset) {
   } finally {
     redis.off('error', captureSpawnError)
   }
-  throw new Error(`Timed out waiting for Redis readiness in ${logPath}`)
+  throw new Error(
+    `Timed out waiting for Redis readiness in ${logPath}: ` +
+      JSON.stringify({
+        pid: redis.pid,
+        exitCode: redis.exitCode,
+        signalCode: redis.signalCode,
+        logReadError,
+        output: lastOutput,
+      })
+  )
 }
 
 async function startRedisServer(
@@ -428,8 +444,8 @@ class RealCloudEnvironment {
       PYTHONUTF8: '1',
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
-      INIT_DATA_DIR: join(backendDirectory, 'init_data'),
-      BUILTIN_PLUGINS_DIR: join(backendDirectory, 'init_data', 'plugins'),
+      INIT_DATA_DIR: join(repoDir, 'backend-rs', 'init_data'),
+      BUILTIN_PLUGINS_DIR: join(repoDir, 'backend-rs', 'init_data', 'plugins'),
       ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
       ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',

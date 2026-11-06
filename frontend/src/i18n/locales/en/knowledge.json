@@ -1,4 +1,10 @@
 {
+  "urlResolution": {
+    "not-found": "Knowledge base not found in this scope",
+    "ambiguous": "Multiple knowledge bases have this name. This link cannot identify a unique knowledge base.",
+    "error": "Unable to load this knowledge base. Please retry.",
+    "retry": "Retry"
+  },
   "title": "Knowledge Base",
   "add_context": "Add Context",
   "tooltip": "Knowledge Base",

@@ -9,6 +9,7 @@ fn input() -> (Value, SpawnTurnRequest) {
     let mut request = execution_request(&payload).unwrap();
     apply_runtime_payload_metadata(&mut request, &payload);
     let turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-1".into(),
         runtime: "codex".into(),
         request,
@@ -72,6 +73,63 @@ async fn synthetic_interruption_never_becomes_a_durable_cancel_receipt() {
             .unwrap();
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[tokio::test]
+async fn saturated_history_keeps_accepted_command_unconfirmed_without_replaying_it() {
+    let (mut handler, root) = isolated_runtime_work_handler("command-history-busy");
+    handler.command_journal.lock().unwrap().clear();
+    install_native_history(
+        &mut handler,
+        &root,
+        vec![json!({"id":"current","status":"completed","items":[]})],
+        None,
+    );
+    let (payload, turn) = input();
+    let mut command = RuntimeCommand::from_turn(&turn, CommandState::RecoveryRequired)
+        .unwrap()
+        .unwrap();
+    command.native = Some((0, "thread-1".into(), "current".into()));
+    let key = command.key();
+    handler
+        .command_journal
+        .lock()
+        .unwrap()
+        .insert(key.clone(), command);
+    let workers = handler.transcript_test_workers.as_ref().unwrap().clone();
+    let permits = workers.clone().acquire_many_owned(2).await.unwrap();
+    let error = handler
+        .clone()
+        .command_receipt(json!({"taskId":"task-1","commandId":"command","userId":7}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "command_recovery_unavailable");
+    let error = handler
+        .existing_payload_command(&payload)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "command_recovery_unavailable");
+    assert_eq!(
+        handler.command_journal.lock().unwrap()[&key].state,
+        CommandState::RecoveryRequired
+    );
+    assert!(handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .queued_turns
+        .is_empty());
+    let requests = fs::read_to_string(root.join("requests.jsonl")).unwrap();
+    assert!(requests.lines().all(|request| {
+        serde_json::from_str::<Value>(request).unwrap()["method"] != "turn/start"
+    }));
+    drop(permits);
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]

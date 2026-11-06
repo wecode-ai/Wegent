@@ -226,6 +226,10 @@ impl CommandHandler {
             return result;
         }
 
+        if let Some(result) = execute_directory_command(&request).await {
+            return result;
+        }
+
         log_directory_command_phase(&request, "prepare_environment", started_at);
         let mut command = process_command(&request);
         command.env_clear();
@@ -309,6 +313,60 @@ fn log_directory_command_phase(request: &CommandRequest, phase: &str, started_at
             ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
         ],
     );
+}
+
+async fn execute_directory_command(request: &CommandRequest) -> Option<CommandResult> {
+    let expected: &[&str] = match request.command_key.as_deref() {
+        Some("home_dir") => &["printenv", "HOME"],
+        Some("ls_dirs") => &["ls", "-a", "-p"],
+        _ => return None,
+    };
+    // Explicit custom command definitions retain their command execution path.
+    if request.command != expected.join(" ")
+        || (!request.argv.is_empty() && request.argv != expected)
+    {
+        return None;
+    }
+    let started_at = Instant::now();
+    let output = if request.command_key.as_deref() == Some("home_dir") {
+        match build_env(&request.env).get("HOME") {
+            Some(home) => Ok(format!("{home}\n")),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "HOME is not configured",
+            )),
+        }
+    } else {
+        directory_command_output(request.cwd.as_deref().unwrap_or(".")).await
+    };
+    let mut result = match output {
+        Ok(output) => {
+            let (text, truncated) =
+                decode_and_truncate(output.as_bytes(), request.max_output_bytes);
+            let mut result = CommandResult::ok(text);
+            result.stdout_truncated = truncated;
+            result
+        }
+        Err(error) => CommandResult::error(error.to_string(), 0.0, false),
+    };
+    result.duration = elapsed_seconds(started_at);
+    log_directory_command_phase(request, "native_completed", started_at);
+    Some(result)
+}
+
+async fn directory_command_output(path: &str) -> std::io::Result<String> {
+    let mut entries = tokio::fs::read_dir(path).await?;
+    let mut names = vec!["./".to_owned(), "../".to_owned()];
+    while let Some(entry) = entries.next_entry().await? {
+        let mut name = entry.file_name().to_string_lossy().into_owned();
+        // Like `ls -p`, symbolic links are not treated as directories.
+        if entry.file_type().await?.is_dir() {
+            name.push('/');
+        }
+        names.push(name);
+    }
+    names.sort();
+    Ok(format!("{}\n", names.join("\n")))
 }
 
 pub(crate) fn configured_home_dir() -> Option<std::path::PathBuf> {

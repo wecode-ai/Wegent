@@ -54,6 +54,10 @@ interface DshExecutorErrorBody {
   }
 }
 
+export interface DshExecutorRequestOptions {
+  signal?: AbortSignal
+}
+
 export class DshExecutorTransportError extends Error {
   readonly code: string
   readonly retryable: boolean
@@ -106,7 +110,8 @@ export async function describeDshExecutor(): Promise<DshExecutorDescription> {
 
 export async function requestDshExecutor<T>(
   method: string,
-  params: Record<string, unknown> = {}
+  params: Record<string, unknown> = {},
+  options: DshExecutorRequestOptions = {}
 ): Promise<T> {
   const requestId = createRequestId('wework-local')
   const startedAt = Date.now()
@@ -165,6 +170,11 @@ export async function requestDshExecutor<T>(
   let response: Response
   try {
     diagnostic('fetch_started')
+    if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+      await new Promise<void>(resolve =>
+        deliverRuntimeTransport('request', method, { params }, resolve)
+      )
+    }
     response = await fetch(`${EXECUTOR_BASE_PATH}/rpc`, {
       method: 'POST',
       headers: {
@@ -173,8 +183,10 @@ export async function requestDshExecutor<T>(
         'x-request-id': requestId,
       },
       body: requestBody,
+      ...(isCancellableRuntimeRead(method) && options.signal ? { signal: options.signal } : {}),
     })
   } catch (error) {
+    if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
     logSlowRequest()
     diagnostic('fetch_failed')
     transportDiagnostic('fetch_failed', {
@@ -200,6 +212,7 @@ export async function requestDshExecutor<T>(
   try {
     parsedBody = await response.json()
   } catch (error) {
+    if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
     logSlowRequest()
     diagnostic('body_parse_failed')
     transportDiagnostic('body_parse_failed', {
@@ -238,6 +251,10 @@ export async function requestDshExecutor<T>(
     throw error
   }
   return body.result
+}
+
+function isCancellableRuntimeRead(method: string): boolean {
+  return method === 'runtime.tasks.transcript'
 }
 
 function connectionError(error: unknown): unknown {

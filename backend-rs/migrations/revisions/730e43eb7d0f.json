@@ -1,0 +1,30 @@
+{
+  "revision": "730e43eb7d0f",
+  "parents": [
+    "bd9c871a93d2"
+  ],
+  "source": "20260804_730e43eb7d0f_bind_wiki_projects_to_their_code_wiki.py",
+  "upgrade": null,
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE wiki_projects ADD CONSTRAINT source_url UNIQUE (source_url)"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wiki_projects DROP INDEX uq_wiki_projects_source_url_kind_id"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_wiki_projects_kind_id ON wiki_projects"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wiki_projects DROP COLUMN kind_id"
+      ]
+    }
+  ]
+}

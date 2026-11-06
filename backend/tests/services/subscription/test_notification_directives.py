@@ -232,8 +232,7 @@ def test_append_group_notification_instruction_requires_bound_group() -> None:
     assert "本规则仅控制群聊通知路由，不改变私聊通知" in appended
     assert "群聊静默不得影响私聊，不要调用 silent_exit" in appended
     assert (
-        "对已启用群聊通知且支持群聊投递的已绑定群聊，默认必须发送群聊通知"
-        in appended
+        "对已启用群聊通知且支持群聊投递的已绑定群聊，默认必须发送群聊通知" in appended
     )
     assert "不支持群聊投递的绑定不会发送群聊通知，不影响私聊通知" in appended
     assert "否则对支持群聊投递的绑定一律正常发送" in appended

@@ -1,0 +1,12 @@
+{
+  "order": 116000,
+  "scenario": "./scenarios/plugin-composer-long-list.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 41000,
+      "shard": 7,
+      "position": 1000
+    }
+  }
+}

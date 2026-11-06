@@ -85,7 +85,8 @@ impl RuntimeWorkRpcHandler {
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned")
-            .active_tasks;
+            .active_task_ids
+            .len();
         if active_tasks > 0 || self.background_terminal_count() > 0 {
             return Ok(json!({"status": "deferred", "updated": false}));
         }
@@ -530,7 +531,12 @@ mod tests {
         set_plugin_config_enabled(&codex_home, &target.plugin_key, false).unwrap();
         let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
         let handler = RuntimeWorkRpcHandler::new("bundled-plugin-busy-test", "/bin/false");
-        handler.turn_scheduler.lock().unwrap().active_tasks = 1;
+        handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .active_task_ids
+            .insert("busy".into(), RuntimeTaskKind::Personal);
 
         assert_eq!(
             handler

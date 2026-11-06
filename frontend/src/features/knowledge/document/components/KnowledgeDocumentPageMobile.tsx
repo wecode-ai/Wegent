@@ -14,12 +14,11 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
-import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
-import { buildKbUrl, findKbByVirtualPath } from '@/utils/knowledgeUrl'
+import { buildKbUrl, getCanonicalKbUrl, resolveKbByVirtualPath } from '@/utils/knowledgeUrl'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { getModelFromConfig } from '@/features/settings/services/bots'
@@ -32,6 +31,7 @@ import { useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
+import { KnowledgeUrlStatus } from './KnowledgeUrlStatus'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { getKnowledgeBase, updateKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeViewState } from './KnowledgeDocumentPage'
@@ -63,9 +63,12 @@ export function KnowledgeDocumentPageMobile({
   onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const requestedKbId = searchParams.get('kb')
   const { showAdvancedKnowledge, setShowAdvancedKnowledge } = useAdvancedKnowledgeMode()
   // Knowledge tree hook
   const tree = useKnowledgeTree()
+  const { selectKb } = tree
 
   const { t } = useTranslation('knowledge')
 
@@ -73,7 +76,13 @@ export function KnowledgeDocumentPageMobile({
   const isTeamNamespace = !!initialKbNamespace && initialKbNamespace !== 'default'
 
   const [detailKb, setDetailKb] = useState<KnowledgeBase | null>(null)
-  const [detailKbLoading, setDetailKbLoading] = useState(false)
+  const [detailError, setDetailError] = useState(false)
+  const [detailRequestVersion, setDetailRequestVersion] = useState(0)
+  const [lastResolved, setLastResolved] = useState<{
+    routeKey: string
+    knowledgeBase: KnowledgeBase
+  } | null>(null)
+  const routeKey = JSON.stringify([initialKbNamespace, initialKbName, requestedKbId])
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
   const { currentView, setCurrentView } = useKnowledgeViewMode(detailKb?.kb_type, detailKb?.id)
@@ -124,41 +133,118 @@ export function KnowledgeDocumentPageMobile({
     return kbs
   }, [tree.personalData, tree.orgKbs, tree.groupKbMap])
 
-  const targetKb = useMemo(() => {
-    if (!initialKbName) return undefined
-    // When namespace is not provided (organization KB deep-link),
-    // constrain the name-only lookup to the organization namespace so
-    // same-name personal/team KBs don't shadow the org KB.
-    const effectiveNamespace = initialKbNamespace || tree.orgNamespace
-    return findKbByVirtualPath(allLoadedKbs, effectiveNamespace, initialKbName)
-  }, [allLoadedKbs, initialKbNamespace, initialKbName, tree.orgNamespace])
+  const kbResolution = useMemo(
+    () =>
+      resolveKbByVirtualPath({
+        allKnowledgeBases: allLoadedKbs,
+        organizationKnowledgeBases: tree.orgKbs,
+        namespace: initialKbNamespace,
+        name: initialKbName || '',
+        knowledgeBaseId: requestedKbId,
+        isLoading:
+          tree.loading ||
+          Boolean(
+            !tree.hasLoadError &&
+            isTeamNamespace &&
+            initialKbNamespace &&
+            ((!tree.groupKbMap[initialKbNamespace] && !tree.groupKbErrors?.[initialKbNamespace]) ||
+              tree.groupKbLoading[initialKbNamespace])
+          ),
+        hasError:
+          tree.hasLoadError ||
+          Boolean(initialKbNamespace && tree.groupKbErrors?.[initialKbNamespace]),
+      }),
+    [
+      allLoadedKbs,
+      tree.orgKbs,
+      tree.loading,
+      tree.hasLoadError,
+      tree.groupKbMap,
+      tree.groupKbLoading,
+      tree.groupKbErrors,
+      initialKbNamespace,
+      initialKbName,
+      requestedKbId,
+      isTeamNamespace,
+    ]
+  )
+  useEffect(() => {
+    if (!isDetailMode || kbResolution.status !== 'resolved') return
+    const canonicalUrl = getCanonicalKbUrl(
+      kbResolution.knowledgeBase,
+      {
+        namespace: initialKbNamespace ?? null,
+        kbName: initialKbName!,
+        docPath: initialDocPath,
+      },
+      searchParams.toString()
+    )
+    if (canonicalUrl) window.history.replaceState({}, '', canonicalUrl)
+  }, [isDetailMode, kbResolution, initialKbNamespace, initialKbName, initialDocPath, searchParams])
+
+  const retainsDetail =
+    lastResolved?.routeKey === routeKey &&
+    detailKb?.id === lastResolved?.knowledgeBase.id &&
+    (kbResolution.status === 'loading' || kbResolution.status === 'error')
+  const targetKb =
+    kbResolution.status === 'resolved'
+      ? kbResolution.knowledgeBase
+      : retainsDetail
+        ? lastResolved?.knowledgeBase
+        : undefined
+  const targetKbId = targetKb?.id
 
   useEffect(() => {
-    if (!isDetailMode) return
+    if (kbResolution.status === 'resolved') {
+      setLastResolved({ routeKey, knowledgeBase: kbResolution.knowledgeBase })
+    }
+  }, [kbResolution, routeKey])
 
+  useEffect(() => {
+    if (isDetailMode && targetKb) selectKb(targetKb)
+  }, [isDetailMode, targetKb, selectKb])
+
+  useEffect(() => {
     if (
+      isDetailMode &&
+      !tree.loading &&
+      !tree.hasLoadError &&
       isTeamNamespace &&
       initialKbNamespace &&
       !tree.groupKbMap[initialKbNamespace] &&
-      !tree.groupKbLoading[initialKbNamespace]
+      !tree.groupKbLoading[initialKbNamespace] &&
+      !tree.groupKbErrors?.[initialKbNamespace]
     ) {
       void tree.loadGroupKbs(initialKbNamespace)
     }
+  }, [isDetailMode, initialKbNamespace, isTeamNamespace, tree])
 
-    if (!targetKb) return
-
-    if (tree.selectedKbId !== targetKb.id) {
-      tree.selectKb(targetKb as KnowledgeBase)
+  useEffect(() => {
+    if (!isDetailMode || !targetKbId) return
+    let cancelled = false
+    setDetailKb(previous => (previous?.id === targetKbId ? previous : null))
+    setDetailError(false)
+    void getKnowledgeBase(targetKbId)
+      .then(kb => {
+        if (!cancelled) setDetailKb(kb)
+      })
+      .catch(() => {
+        if (!cancelled) setDetailError(true)
+      })
+    return () => {
+      cancelled = true
     }
+  }, [isDetailMode, targetKbId, detailRequestVersion])
 
-    if (!detailKbLoading && (!detailKb || detailKb.id !== targetKb.id)) {
-      setDetailKbLoading(true)
-      void getKnowledgeBase(targetKb.id)
-        .then(setDetailKb)
-        .catch(() => setDetailKb(targetKb as KnowledgeBase))
-        .finally(() => setDetailKbLoading(false))
+  const retryResolution = () => {
+    if (initialKbNamespace && tree.groupKbErrors?.[initialKbNamespace]) {
+      void tree.loadGroupKbs(initialKbNamespace)
+    } else if (kbResolution.status === 'error') {
+      void tree.refreshAll()
+    } else {
+      setDetailRequestVersion(version => version + 1)
     }
-  }, [detailKb, detailKbLoading, initialKbNamespace, isDetailMode, isTeamNamespace, targetKb, tree])
+  }
 
   const handleBack = useCallback(() => {
     router.push('/knowledge?type=document')
@@ -231,9 +317,10 @@ export function KnowledgeDocumentPageMobile({
   const handleSelectKb = useCallback(
     (kb: KnowledgeBase) => {
       tree.selectKb(kb)
-      // Use buildKbUrl: personal KB (namespace="default") gets /knowledge/default/{name},
-      // team/org KBs get /knowledge/{namespace}/{name}
-      router.push(buildKbUrl(kb.namespace, kb.name, false))
+      const isOrganization = tree.orgKbs.some(item => item.id === kb.id)
+      router.push(
+        buildKbUrl(kb.namespace, kb.name, isOrganization, undefined, { knowledgeBaseId: kb.id })
+      )
     },
     [tree, router]
   )
@@ -370,7 +457,19 @@ export function KnowledgeDocumentPageMobile({
     []
   )
 
+  const renderResolution = (status: 'loading' | 'not-found' | 'ambiguous' | 'error') => (
+    <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
+      <KnowledgeUrlStatus status={status} onRetry={retryResolution} />
+    </div>
+  )
+
   if (isDetailMode) {
+    if (kbResolution.status !== 'resolved' && !retainsDetail) {
+      return renderResolution(kbResolution.status)
+    }
+    if (detailError) {
+      return renderResolution('error')
+    }
     const matched = !!detailKb && !!targetKb && detailKb.id === targetKb.id
 
     if (matched) {
@@ -379,6 +478,9 @@ export function KnowledgeDocumentPageMobile({
       return (
         <>
           <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
+            {retainsDetail && kbResolution.status === 'error' && (
+              <KnowledgeUrlStatus status="error" onRetry={retryResolution} compact />
+            )}
             {(!isCodeWiki || codeWikiView === 'documents') && (
               <div className="flex items-center gap-2 h-12 px-2 border-b border-border shrink-0">
                 <button
@@ -426,23 +528,7 @@ export function KnowledgeDocumentPageMobile({
       )
     }
 
-    const resolving =
-      tree.loading ||
-      detailKbLoading ||
-      (isTeamNamespace &&
-        initialKbNamespace &&
-        (!tree.groupKbMap[initialKbNamespace] || tree.groupKbLoading[initialKbNamespace]))
-
-    if (resolving) {
-      return (
-        <div
-          className="flex items-center justify-center h-full"
-          data-testid="knowledge-document-page-mobile"
-        >
-          <Spinner size="lg" />
-        </div>
-      )
-    }
+    return renderResolution('loading')
   }
 
   return (

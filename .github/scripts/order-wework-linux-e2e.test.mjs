@@ -401,7 +401,7 @@ test('ordering preserves every selected checkpoint in its existing shard and run
   assert.ok(!JSON.stringify(windows).includes('order-wework-linux-e2e'))
 })
 
-test('successful Linux timing replay starts long tail checkpoints first with the same four workers', () => {
+test('successful Linux timing replay prioritizes measured tails after new coverage with four workers', () => {
   for (const [scope, id, longest] of [
     ['core', 'core-6', 'running-conversation-history'],
     ['cloud', 'cloud-3', 'plugin-write-coordination'],
@@ -411,15 +411,21 @@ test('successful Linux timing replay starts long tail checkpoints first with the
     assert.ok(shard, id)
     const segments = shard.segments.split(',')
     const ordered = orderLinuxCheckpoints(segments, scope)
-    assert.equal(ordered[0], longest)
-    const originalSeconds = completionSeconds(
-      expandDesktopCheckpoints(segments),
-      measurements.scopes[scope],
+    const expanded = expandDesktopCheckpoints(segments)
+    const seconds = measurements.scopes[scope]
+    const unmeasured = expanded.filter(
+      (checkpoint) => seconds[checkpoint] === undefined,
     )
-    const orderedSeconds = completionSeconds(
-      ordered,
-      measurements.scopes[scope],
+    const measured = expanded.filter(
+      (checkpoint) => seconds[checkpoint] !== undefined,
     )
+    assert.deepEqual(ordered.slice(0, unmeasured.length), unmeasured)
+    assert.deepEqual([...ordered].sort(), [...expanded].sort())
+    const measuredOrder = ordered.slice(unmeasured.length)
+    assert.equal(measuredOrder[0], longest)
+    // Historical timing evidence cannot assign a cost to new, unmeasured coverage.
+    const originalSeconds = completionSeconds(measured, seconds)
+    const orderedSeconds = completionSeconds(measuredOrder, seconds)
     assert.ok(
       orderedSeconds < originalSeconds,
       `${id}: ${orderedSeconds} < ${originalSeconds}`,

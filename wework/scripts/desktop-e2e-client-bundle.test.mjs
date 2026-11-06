@@ -35,6 +35,13 @@ async function isolatedConsumer(name) {
   const consumer = join(root, name)
   const desktop = join(consumer, 'wework/e2e/desktop')
   await cp(join(wework, 'e2e/desktop'), desktop, { recursive: true })
+  // desktop-build-flows imports the shared native tar extractor.
+  const sharedScripts = join(consumer, 'wework/scripts/lib')
+  await mkdir(sharedScripts, { recursive: true })
+  await cp(
+    join(wework, 'scripts/lib/extract-runtime-archive.mjs'),
+    join(sharedScripts, 'extract-runtime-archive.mjs')
+  )
   const runtime = join(consumer, 'wework/electron/src/runtime')
   await mkdir(runtime, { recursive: true })
   await cp(

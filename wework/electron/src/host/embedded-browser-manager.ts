@@ -21,6 +21,11 @@ import {
 } from './browser-history-store.js'
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
+import { withDebuggerSession } from './debugger-session.js'
+import {
+  BrowserDeviceMetricsController,
+  type BrowserDeviceMetrics,
+} from './browser-device-metrics.js'
 import {
   captureWebContentsDataUrl,
   type WebContentsCaptureOptions,
@@ -58,7 +63,7 @@ interface BrowserEntry {
   requestedUrl: string | null
   previewDisplayUrl: string | null
   previewSourceUrl: string | null
-  ownsDeviceMetricsDebugger: boolean
+  deviceMetrics: BrowserDeviceMetricsController
   navigationError: BrowserPageState['navigationError']
   historyId: string | null
   historyGeneration: number
@@ -369,6 +374,7 @@ export class EmbeddedBrowserManager {
       }
       for (const [entryLabel, entry] of this.entries) {
         if (entry.contents.id !== contents.id) continue
+        entry.deviceMetrics.dispose()
         this.entries.delete(entryLabel)
         removedLabels.add(entryLabel)
       }
@@ -417,7 +423,7 @@ export class EmbeddedBrowserManager {
       requestedUrl: validBrowserUrl(input.url),
       previewDisplayUrl: null,
       previewSourceUrl: null,
-      ownsDeviceMetricsDebugger: false,
+      deviceMetrics: new BrowserDeviceMetricsController(contents),
       navigationError: null,
       historyId: null,
       historyGeneration: this.historyGeneration,
@@ -599,44 +605,25 @@ export class EmbeddedBrowserManager {
     this.required(label).contents.setZoomFactor(scaleFactor)
   }
 
-  async setDeviceMetrics(
-    label: string,
-    metrics: { width: number; height: number; scale: number } | null
-  ): Promise<void> {
-    const contents = this.required(label).contents
-    const target = contents.debugger
-    const entry = this.required(label)
-    if (metrics && !target.isAttached()) {
-      target.attach('1.3')
-      entry.ownsDeviceMetricsDebugger = true
-    }
-    try {
-      if (metrics) {
-        if (!Number.isFinite(metrics.scale) || metrics.scale <= 0 || metrics.scale > 5) {
-          throw new Error('Browser device scale is invalid')
-        }
-        await target.sendCommand('Emulation.setDeviceMetricsOverride', {
-          width: Math.max(1, Math.round(metrics.width)),
-          height: Math.max(1, Math.round(metrics.height)),
-          deviceScaleFactor: 1,
-          mobile: false,
-          scale: metrics.scale,
-        })
-      } else {
-        if (target.isAttached()) {
-          await target.sendCommand('Emulation.clearDeviceMetricsOverride')
-        }
-      }
-    } finally {
-      if (!metrics && entry.ownsDeviceMetricsDebugger && target.isAttached()) {
-        target.detach()
-        entry.ownsDeviceMetricsDebugger = false
-      }
-    }
+  async setDeviceMetrics(label: string, metrics: BrowserDeviceMetrics | null): Promise<void> {
+    await this.required(label).deviceMetrics.set(metrics)
   }
 
   async evaluate(label: string, expression: string): Promise<unknown> {
-    return this.required(label).contents.executeJavaScript(expression, true)
+    // Hidden guests can execute Electron's script while leaving its isolated-world
+    // reply Promise pending. Return the main-world result through Chromium instead.
+    return withDebuggerSession(this.required(label).contents, async target => {
+      const { result, exceptionDetails } = await target.sendCommand('Runtime.evaluate', {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+        userGesture: true,
+      })
+      if (exceptionDetails) {
+        throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
+      }
+      return result.value
+    })
   }
 
   async uploadFiles(
@@ -645,10 +632,7 @@ export class EmbeddedBrowserManager {
     files: string[]
   ): Promise<{ selector: string }> {
     const contents = this.required(label).contents
-    const target = contents.debugger
-    const ownsAttach = !target.isAttached()
-    if (ownsAttach) target.attach('1.3')
-    try {
+    return withDebuggerSession(contents, async target => {
       const effectiveSelector = selector?.trim() || 'input[type="file"]'
       const { root } = (await target.sendCommand('DOM.getDocument', { depth: 1 })) as {
         root: { nodeId: number }
@@ -664,9 +648,7 @@ export class EmbeddedBrowserManager {
       }
       await target.sendCommand('DOM.setFileInputFiles', { files, nodeId })
       return { selector: effectiveSelector }
-    } finally {
-      if (ownsAttach && target.isAttached()) target.detach()
-    }
+    })
   }
 
   clickAt(label: string, x: number, y: number): void {
@@ -947,6 +929,7 @@ export class EmbeddedBrowserManager {
     const entry = this.entries.get(label)
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
+    entry.deviceMetrics.dispose()
     this.entries.delete(label)
     this.clearActiveTabReferences(label)
     this.clearLabelScopedState(label)

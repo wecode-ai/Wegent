@@ -121,6 +121,7 @@ impl RestoreStartupGate {
 }
 
 mod active_text;
+mod active_transcript;
 mod archives;
 mod assignment_receipts;
 mod async_questions;
@@ -133,8 +134,11 @@ mod codex_config;
 mod collection;
 mod command_items;
 mod command_journal;
+mod concurrency;
 mod connections;
 mod context_compaction;
+mod control_metadata;
+mod execution_control;
 mod fork_transfer;
 mod hooks;
 pub(super) mod lifecycle;
@@ -150,6 +154,7 @@ mod project_coordinator;
 mod project_preparation;
 mod project_router;
 mod queries;
+mod queries_projection;
 mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
@@ -166,17 +171,21 @@ mod stand_in_execution;
 mod stand_in_ingress;
 mod stand_in_memory;
 mod stand_in_processing;
+mod stand_in_review;
 mod stand_in_schedules;
 mod stand_in_tasks;
 mod stand_in_telemetry;
 mod stand_in_work;
 mod stand_in_workspace;
 mod supervisor;
+use concurrency::{RuntimeSettings, RuntimeTaskKind, RuntimeTurnScheduler};
+
 mod system;
 mod tasks;
 mod text_generation;
 mod transcript_diagnostics;
 mod transcript_overlays;
+mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
 mod turns;
@@ -223,10 +232,7 @@ use super::{
         transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{
-        full_transcript_messages, normalized_user_request_content, notification_item,
-        project_transcript, transcript_messages,
-    },
+    transcript::{normalized_user_request_content, notification_item, transcript_messages},
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
@@ -305,6 +311,8 @@ fn worktree_error_code(error: &str) -> &'static str {
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SpawnTurnRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_kind: Option<RuntimeTaskKind>,
     local_task_id: String,
     #[serde(default = "default_turn_runtime")]
     runtime: String,
@@ -320,155 +328,6 @@ struct SpawnTurnRequest {
 
 fn default_turn_runtime() -> String {
     "codex".to_owned()
-}
-
-#[derive(Clone)]
-struct RuntimeTurnScheduler {
-    max_concurrent_tasks: usize,
-    active_tasks: usize,
-    active_task_ids: HashSet<String>,
-    queued_turns: VecDeque<SpawnTurnRequest>,
-    waiting_automatic_task_ids: HashSet<String>,
-}
-
-impl RuntimeTurnScheduler {
-    fn new(max_concurrent_tasks: usize, queued_turns: VecDeque<SpawnTurnRequest>) -> Self {
-        Self {
-            max_concurrent_tasks,
-            active_tasks: 0,
-            active_task_ids: HashSet::new(),
-            queued_turns,
-            waiting_automatic_task_ids: HashSet::new(),
-        }
-    }
-
-    fn refresh_automatic_waits(&mut self, store: &RuntimeWorkStore, incoming: Option<&str>) {
-        self.waiting_automatic_task_ids = self
-            .queued_turns
-            .iter()
-            .map(|turn| turn.local_task_id.as_str())
-            .chain(incoming)
-            .filter(|id| {
-                store.get_task_summary(id).is_some_and(|link| {
-                    link.interaction_status
-                        .as_deref()
-                        .is_some_and(|status| !status.is_empty())
-                })
-            })
-            .map(str::to_owned)
-            .collect();
-    }
-
-    fn automatic_waits(&self, turn: &SpawnTurnRequest) -> bool {
-        turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true))
-            && self
-                .waiting_automatic_task_ids
-                .contains(&turn.local_task_id)
-    }
-
-    fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
-        if self.active_tasks >= self.max_concurrent_tasks
-            || self.automatic_waits(&turn)
-            || self.active_task_ids.contains(&turn.local_task_id)
-            || !self.queued_turns.is_empty()
-        {
-            self.queued_turns.push_back(turn);
-            return None;
-        }
-        self.active_tasks += 1;
-        self.active_task_ids.insert(turn.local_task_id.clone());
-        Some(turn)
-    }
-
-    fn enqueue_forced(&mut self, turn: SpawnTurnRequest) -> SpawnTurnRequest {
-        self.active_tasks += 1;
-        self.active_task_ids.insert(turn.local_task_id.clone());
-        turn
-    }
-
-    fn enqueue_queued(&mut self, turn: SpawnTurnRequest) {
-        self.queued_turns.push_back(turn);
-    }
-
-    fn queued_position(&self, local_task_id: &str) -> Option<usize> {
-        self.queued_turns
-            .iter()
-            .position(|turn| turn.local_task_id == local_task_id)
-    }
-
-    fn reordered_queue(
-        &self,
-        local_task_id: &str,
-        target_position: usize,
-    ) -> Result<VecDeque<SpawnTurnRequest>, &'static str> {
-        let current_position = self
-            .queued_position(local_task_id)
-            .ok_or("runtime task is not queued")?;
-        let mut reordered = self.queued_turns.clone();
-        let turn = reordered
-            .remove(current_position)
-            .ok_or("queued runtime task disappeared")?;
-        reordered.insert(target_position.saturating_sub(1).min(reordered.len()), turn);
-        Ok(reordered)
-    }
-
-    fn finish(&mut self, local_task_id: &str) -> Vec<SpawnTurnRequest> {
-        self.active_task_ids.remove(local_task_id);
-        self.active_tasks = self.active_task_ids.len();
-        self.take_available()
-    }
-
-    fn force_start(&mut self, local_task_id: &str) -> Option<SpawnTurnRequest> {
-        let position = self
-            .queued_turns
-            .iter()
-            .position(|turn| turn.local_task_id == local_task_id)?;
-        if self.automatic_waits(&self.queued_turns[position]) {
-            return None;
-        }
-        let turn = self.queued_turns.remove(position)?;
-        self.active_tasks += 1;
-        self.active_task_ids.insert(turn.local_task_id.clone());
-        Some(turn)
-    }
-
-    fn update_limit(&mut self, max_concurrent_tasks: usize) -> Vec<SpawnTurnRequest> {
-        self.max_concurrent_tasks = max_concurrent_tasks;
-        self.take_available()
-    }
-
-    fn take_available(&mut self) -> Vec<SpawnTurnRequest> {
-        let available = self.max_concurrent_tasks.saturating_sub(self.active_tasks);
-        let mut turns = Vec::with_capacity(available);
-        while turns.len() < available {
-            let Some(position) = self.queued_turns.iter().position(|turn| {
-                !self.active_task_ids.contains(&turn.local_task_id) && !self.automatic_waits(turn)
-            }) else {
-                break;
-            };
-            let Some(turn) = self.queued_turns.remove(position) else {
-                break;
-            };
-            self.active_task_ids.insert(turn.local_task_id.clone());
-            turns.push(turn);
-        }
-        self.active_tasks += turns.len();
-        turns
-    }
-}
-
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
-#[serde(default, rename_all = "camelCase")]
-struct RuntimeSettings {
-    max_concurrent_tasks: usize,
-}
-
-impl Default for RuntimeSettings {
-    fn default() -> Self {
-        Self {
-            max_concurrent_tasks: DEFAULT_MAX_CONCURRENT_TASKS,
-        }
-    }
 }
 
 fn standalone_chat_workspace_path(
@@ -652,6 +511,8 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    #[cfg(test)]
+    transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
@@ -974,13 +835,14 @@ impl RuntimeWorkRpcHandler {
                 }),
         );
         for turn in &mut queued_turns {
+            turn.bind_task_kind(&store);
             turn.request
                 .extra
                 .insert(RESTORED_TURN_MARKER.to_owned(), Value::Bool(true));
         }
         let restored_turn_count = queued_turns.len();
         let restore_startup_concurrency =
-            restore_startup_concurrency(runtime_settings.max_concurrent_tasks);
+            restore_startup_concurrency(runtime_settings.total_limit());
         if restored_turn_count > 0 {
             log_executor_event(
                 "runtime persisted turn startup ramp configured",
@@ -1002,6 +864,8 @@ impl RuntimeWorkRpcHandler {
             );
         }
         let handler = Self {
+            #[cfg(test)]
+            transcript_test_workers: None,
             device_id,
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
@@ -1015,7 +879,7 @@ impl RuntimeWorkRpcHandler {
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
-                runtime_settings.max_concurrent_tasks,
+                runtime_settings,
                 queued_turns,
             ))),
             active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
@@ -1294,6 +1158,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     // Connection discovery and transport must never resume unrelated model work.
     if method.starts_with("runtime.connections.")
         || method.starts_with("runtime.stand_in.telemetry.")
+        || method.starts_with("runtime.stand_in.onboarding.")
         || method == "runtime.stand_in.processing.status"
     {
         return false;
@@ -1320,6 +1185,7 @@ include!("handler/helpers.rs");
 mod collaboration;
 mod composer_catalog;
 mod dispatch;
+mod plugin_catalog;
 mod runtime_rpc;
 
 use runtime_rpc::{

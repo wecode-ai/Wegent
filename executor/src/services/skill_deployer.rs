@@ -61,7 +61,7 @@ pub fn resolve_skill_download_map(
         .collect()
 }
 
-pub(crate) fn resolve_request_skill_references<'a>(
+fn resolve_request_skill_references<'a>(
     bot: &'a Value,
     request: &'a ExecutionRequest,
     skills: &[String],

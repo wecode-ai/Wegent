@@ -1080,7 +1080,7 @@ it('does not authorize a current device that the destination cloud project has n
     ]),
   } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
   const listEnvironments = vi.fn(async () => [
-    { id: '73', device_key: 'device-key', project_authorized: false },
+    { id: '73', device_key: 'device-key', project_authorized: false, status: 'online' },
   ])
   const createAgent = vi.fn()
   const host = createWeworkProjectAgentConfigurationHost(
@@ -1114,6 +1114,7 @@ it('matches the current APP device through its app device id', async () => {
       device_key: 'app-record-73',
       app_device_id: 'electron-current',
       project_authorized: true,
+      status: 'online',
     },
   ])
   const host = createWeworkProjectAgentConfigurationHost(
@@ -1129,3 +1130,57 @@ it('matches the current APP device through its app device id', async () => {
     executionPolicy: { mode: 'fixed', environment_id: '73' },
   })
 })
+
+it.each([
+  {
+    statuses: ['offline', 'online', 'offline'],
+    grants: [false, false, false],
+    projectId: undefined,
+    expectedId: '2',
+  },
+  { statuses: ['online', 'offline'], grants: [true, true], projectId: 'project', expectedId: '1' },
+  { statuses: ['offline'], grants: [true], projectId: undefined, expectedId: null },
+  { statuses: ['online', 'online'], grants: [true, true], projectId: undefined, expectedId: null },
+  {
+    statuses: ['offline', 'online'],
+    grants: [true, false],
+    projectId: 'project',
+    expectedId: null,
+  },
+])(
+  'resolves only a unique online authorized alias: $statuses / $grants',
+  async ({ statuses, grants, projectId, expectedId }) => {
+    const host = createWeworkProjectAgentConfigurationHost(
+      {
+        listEnvironments: vi.fn(async () =>
+          statuses.map((status, index) => ({
+            id: String(index + 1),
+            device_key: `app-record-${index + 1}`,
+            app_device_id: 'electron-current',
+            status,
+            project_authorized: grants[index],
+          }))
+        ),
+      } as unknown as ReturnType<typeof createAgentResourceApi>,
+      {
+        listRunnerEnvironments: vi.fn(async () => [
+          {
+            id: 'electron-current',
+            device_key: 'electron-current',
+            models: [
+              { runtime: 'codex', provider: 'openai', model_id: 'default', is_default: true },
+            ],
+          },
+        ]),
+      } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
+    )
+    const routing = host.resolveTemplateAgentRouting!('codex', 'cloud', projectId)
+    if (expectedId) {
+      await expect(routing).resolves.toMatchObject({
+        executionPolicy: { mode: 'fixed', environment_id: expectedId },
+      })
+    } else {
+      await expect(routing).rejects.toThrow('template_environment_unavailable')
+    }
+  }
+)

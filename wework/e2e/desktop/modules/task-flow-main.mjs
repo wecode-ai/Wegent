@@ -13,6 +13,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
+import { prepareStandInOnboardingFixture } from './stand-in-onboarding-fixture.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -1396,6 +1397,7 @@ async function main() {
         desktopScenario?.authToken ??
         'wework-desktop-e2e-cloud-token',
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
+      WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(resultDir, 'desktop-control'),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_E2E_MODEL_SERVER_URL: control.url,
       WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
@@ -1712,6 +1714,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
+      if (
+        !desktopScenario.verifiesStandInOnboarding &&
+        (DESKTOP_SEGMENT.startsWith('stand-in') ||
+          DESKTOP_SEGMENT === 'application-menu' ||
+          DESKTOP_SEGMENT.startsWith('coordination-'))
+      ) {
+        await prepareStandInOnboardingFixture(control, cloudEnvironment, WORKBENCH_READY_TIMEOUT_MS)
+      }
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {
         await writeLocalHarnessDiagnostics(control, resultDir)

@@ -156,6 +156,9 @@ class RuntimeTranscriptRequest(RuntimeSessionReadRequest):
     )
     refresh: Optional[bool] = None
     navigation_only: Optional[bool] = Field(default=None, alias="navigationOnly")
+    reconcile_client_user_message_ids: Optional[list[str]] = Field(
+        default=None, alias="reconcileClientUserMessageIds"
+    )
     transcript_protocol_version: Optional[int] = Field(
         default=None, alias="transcriptProtocolVersion", strict=True, ge=1, le=2
     )
@@ -559,6 +562,11 @@ class RuntimeTranscriptResponse(BaseModel):
     )
     running: Optional[bool] = None
     origin: Optional[dict[str, Any]] = None
+    accepted_client_user_message_ids: Optional[list[str]] = Field(
+        default=None,
+        alias="acceptedClientUserMessageIds",
+        exclude_if=lambda value: value is None,
+    )
     history_unavailable: bool = Field(default=False, alias="historyUnavailable")
     turn_navigation: list[dict[str, Any]] = Field(
         default_factory=list, alias="turnNavigation"

@@ -165,8 +165,27 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. Core and Cloud shard definitions
-live in `.github/scripts/classify-wework-desktop-e2e.sh`. Linux Core and Cloud jobs
+`ci:all` still run the complete desktop suites. Registration, module paths,
+execution modes, and Core/Cloud shard assignments now come from independent
+`wework/e2e/desktop/catalog/<checkpoint>.json` files. The filename is the checkpoint
+ID. `checkpoints.mjs`, the runner, and CI read the same declarations, so adding a
+scenario does not edit shared registration lists or comma-joined shard lines.
+`order` controls default execution order; `ci.core` / `ci.cloud` declare `shard`
+and `position`, while each CI lane's `order` retains catalog order. Insert values
+between existing ones; equal values sort by checkpoint ID without renumbering
+other files. Core retains ten shards and Cloud retains eight. `scenario` names
+the module and `scenarioOnly` runs that module alone. Composite checkpoints use
+`members`; `ciHost` shares an existing checkpoint's CI lifecycle. Package upgrade
+checkpoints remain owned by `upgrade-suite.mjs`.
+
+A config change selects its CI owner, including the host of a composite member.
+New scenario modules select their declaration automatically. Optional `paths`
+shell globs add source coverage alongside existing path rules. Cross-feature
+rules retain their priority in `.github/scripts/desktop-ci/`. Classifier contracts
+live in `.github/scripts/ci-classification-tests/`, whose `.sh` files are discovered
+by the existing test entry point.
+
+Linux Core and Cloud jobs
 run at most four isolated checkpoints concurrently; actual concurrency also
 depends on the shard's checkpoint count. Each checkpoint owns its database,
 Redis, ports, and runtime directories, and Harness runtimes are extracted once
@@ -180,7 +199,12 @@ CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
 Core and Cloud matrix jobs also provide suite-level parallelism across runners.
-Core uses 10 shards, with Windows sharing the same matrix, and Cloud uses 8.
+The classifier provides 10 logical Core shards. Windows retains 10 runners;
+Linux sets `CORE_RUNNER_SCALE=1.5` and redistributes a full selection across
+15 runners using historical durations. Partial selections scale with their selected
+matrix, bounded by assignable checkpoints; selections without the history checkpoint
+retain their original matrix. The two Core benchmarks keep dedicated runners.
+Cloud uses 8 shards.
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
 within a runner. The two Core benchmark shards and three Cloud account-auth and
@@ -192,6 +216,23 @@ Lint, unit-test, platform E2E, and desktop E2E summary jobs use
 `always() && !cancelled()`: failures still produce a summary, while cancellation
 stops superseded summaries from waiting for runners and blocking newer runs.
 Cleanup and diagnostic upload steps retain their existing cancellation handling.
+
+PR Wework renderer unit tests use 4 runners with the existing measured file
+balancing. Electron and auxiliary checks still execute once. Platform browser/API
+and provider-native E2E each use 8 complete, nonoverlapping logical shards,
+reusing shared builds with independent services and users per runner. Additional
+DingTalk protocol integration, knowledge, and attachment checks retain their
+designated shards. Historical Linux Core timing replay reduces the test-stage
+critical path from 614 to 478 seconds. This estimate excludes builds, preparation,
+and queueing; subsequent CI runs must establish actual savings. Additional runners
+increase preparation overhead.
+
+Device folder selection uses native Executor home lookup and directory enumeration
+for the default `home_dir` and `ls_dirs` commands, without spawning `printenv` or `ls`.
+CI recorded process creation taking 6.2 and 8.1 seconds where the preceding run
+took tens of milliseconds. Native queries remove this startup dependency while
+preserving hidden directories, symlinks, output limits, and error handling.
+Explicit custom commands retain command execution; the ten-second E2E assertion is unchanged.
 
 Step timings from successful runs `39920301020` and `39920742402` separate test
 work from setup overhead. In the first sample, non-test steps across 42 shards
@@ -408,12 +449,11 @@ the additional-token handoff finishes.
 Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
-mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
-feature coverage is registered. When adding a `DESKTOP_CHECKPOINTS` entry, also
-add it to a Core, Cloud, or formal-release catalog, assign it to a shard, map
-the relevant source paths to the smallest applicable coverage, and update both
-the matrix expectations and focused classifier assertions in
-`.github/scripts/test-classify-ci-changes.sh`. The classifier rejects a
+mapping is maintained in feature-local catalog files. Declare a new checkpoint's
+module, execution mode, CI shard, and source `paths` in its own file, then add
+focused assertions to the relevant classifier contract module. Update affected
+matrix expectations when cross-feature coverage changes; shared runner lists,
+shard lists, and test entry points no longer need edits. The classifier rejects a
 checkpoint that exists only in the runner without CI catalog coverage, preventing
 locally runnable coverage that GitHub CI never invokes. Segment commands are also
 useful for focused local iteration:

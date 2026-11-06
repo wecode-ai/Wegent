@@ -40,6 +40,9 @@ mod command_recovery_tests;
 #[path = "native_timeline_tests.rs"]
 mod native_timeline_tests;
 
+#[path = "stand_in_review_pagination_tests.rs"]
+mod stand_in_review_pagination_tests;
+
 #[path = "runtime_rpc_tests.rs"]
 mod runtime_rpc_tests;
 
@@ -212,10 +215,13 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned");
-        scheduler.max_concurrent_tasks = 4;
-        scheduler.active_tasks = 2;
-        scheduler.active_task_ids = HashSet::from(["active-1".to_owned(), "active-2".to_owned()]);
+        scheduler.settings = RuntimeSettings::uniform(4);
+        scheduler.active_task_ids = HashMap::from([
+            ("active-1".to_owned(), RuntimeTaskKind::Personal),
+            ("active-2".to_owned(), RuntimeTaskKind::Personal),
+        ]);
         scheduler.queued_turns = VecDeque::from([SpawnTurnRequest {
+            task_kind: None,
             local_task_id: "queued-1".to_owned(),
             runtime: "codex".to_owned(),
             request: ExecutionRequest::default(),
@@ -233,7 +239,7 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
         .await
         .expect("capacity should be available");
 
-    assert_eq!(capacity["limit"], 4);
+    assert_eq!(capacity["limit"], 12);
     assert_eq!(capacity["active"], 2);
     assert_eq!(capacity["queued"], 1);
     let active_task_ids = capacity["active_task_ids"]
@@ -253,8 +259,10 @@ async fn create_task_persists_collaboration_member_runtime_profiles() {
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned");
-        scheduler.max_concurrent_tasks = 1;
-        scheduler.active_tasks = 1;
+        scheduler.settings = RuntimeSettings::uniform(1);
+        scheduler
+            .active_task_ids
+            .insert("busy".into(), RuntimeTaskKind::Personal);
     }
     let profiles = json!([{
         "memberIds": ["agent-2"],
@@ -337,6 +345,7 @@ async fn default_work_item_binding_uses_the_handler_store_path() {
 fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let mut turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request: ExecutionRequest::default(),
@@ -371,6 +380,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
 async fn archive_stop_waits_for_worktree_preparation_ack() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let mut turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request: ExecutionRequest::default(),
@@ -438,6 +448,7 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
         Value::String(plan.path.display().to_string()),
     );
     let turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request,
@@ -1115,6 +1126,7 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
         Value::String(plan.path.display().to_string()),
     );
     let interrupted = VecDeque::from([SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-queued".to_owned(),
         runtime: "codex".to_owned(),
         request,
@@ -1205,6 +1217,7 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
     handler.turn_queue_path = Arc::new(runtime_work_dir.join("turn-queue.json"));
@@ -1238,6 +1251,15 @@ mod lifecycle_tests;
 
 #[path = "pre_admission_transcript_tests.rs"]
 mod pre_admission_transcript_tests;
+
+#[path = "active_transcript_responsiveness_tests.rs"]
+mod active_transcript_responsiveness_tests;
+
+#[path = "control_metadata_tests.rs"]
+mod control_metadata_tests;
+
+#[path = "execution_control_tests.rs"]
+mod execution_control_tests;
 
 impl RuntimeWorkRpcHandler {
     // Test the same route/publication/hook handoff used by the two real subscriptions.

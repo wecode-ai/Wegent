@@ -163,7 +163,7 @@ backend/alembic/
    alembic revision --autogenerate -m "add new_field to user table"
    ```
 
-3. **检查生成的迁移** 在 `backend/alembic/versions/` 中：
+3. **检查生成的迁移** 在 `backend-rs/migrations/reference/versions/` 中：
    - 检查变更是否符合预期
    - 验证数据类型转换
    - 确保可空/默认值正确
@@ -182,7 +182,7 @@ backend/alembic/
 
 5. **提交迁移**：
    ```bash
-   git add backend/alembic/versions/<new_migration>.py
+   git add backend-rs/migrations/reference/versions/<new_migration>.py
    git commit -m "feat(backend): add new_field to user table"
    ```
 

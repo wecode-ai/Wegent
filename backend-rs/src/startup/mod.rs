@@ -11,6 +11,7 @@ use brz_redis::RedisService;
 use std::sync::Arc;
 
 pub mod app;
+pub mod database;
 mod entry_routes;
 pub mod models_unified;
 pub mod mysql;

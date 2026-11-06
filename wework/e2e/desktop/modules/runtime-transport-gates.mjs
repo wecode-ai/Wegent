@@ -26,6 +26,8 @@ function transportEvidence(capture) {
     ...timing,
     taskId: value.params?.taskId ?? value.payload?.taskId,
     installationId: value.params?.installationId,
+    includeFullContent: value.params?.includeFullContent,
+    limit: value.params?.limit,
     event: value.event,
     sequence: value.sequence,
     subtaskId: value.payload?.subtaskId,

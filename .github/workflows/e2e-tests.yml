@@ -176,7 +176,7 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           echo "image=$(.github/scripts/resolve-backend-rs-e2e-runtime.sh)" \
             >> "$GITHUB_OUTPUT"
@@ -502,25 +502,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Run 40558717377: provider shard 1 took 120s while shard 3 was empty.
-        # Exchange those logical shards without changing users or runner count.
+        # Each shard has its own services and consumes the same shared build artifacts.
         include:
           - shardIndex: 1
-            shardTotal: 4
+            shardTotal: 8
             dingtalkOAuth: false
             providerShardIndex: 3
           - shardIndex: 2
-            shardTotal: 4
+            shardTotal: 8
             dingtalkOAuth: true
             providerShardIndex: 2
           - shardIndex: 3
-            shardTotal: 4
+            shardTotal: 8
             dingtalkOAuth: false
             providerShardIndex: 1
           - shardIndex: 4
-            shardTotal: 4
+            shardTotal: 8
             dingtalkOAuth: false
             providerShardIndex: 4
+          - shardIndex: 5
+            shardTotal: 8
+            dingtalkOAuth: false
+            providerShardIndex: 5
+          - shardIndex: 6
+            shardTotal: 8
+            dingtalkOAuth: false
+            providerShardIndex: 6
+          - shardIndex: 7
+            shardTotal: 8
+            dingtalkOAuth: false
+            providerShardIndex: 7
+          - shardIndex: 8
+            shardTotal: 8
+            dingtalkOAuth: false
+            providerShardIndex: 8
 
     services:
       mysql:
@@ -1277,6 +1292,15 @@ jobs:
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
+      - name: Prepare authenticated GitHub skill import fixture
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          SECRET_KEY: test-secret-key-for-ci-testing
+          GITHUB_TOKEN: ${{ github.token }}
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/e2e/prepare_github_skill_user.py
+
       - name: Run E2E tests (Sharded)
         # The chromium project auto-discovers every browser spec under
         # frontend/e2e/tests, including skill-management-scope.spec.ts.
@@ -1288,6 +1312,7 @@ jobs:
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           E2E_USE_ISOLATED_USERS: "false"
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/browser
           CI: true
           RUNNER_PROCESS_DIAGNOSTICS: "1"
           RUNNER_RESOURCE_LOG_PATH: ci-diagnostics/shard-${{ matrix.shardIndex }}.jsonl
@@ -1308,6 +1333,7 @@ jobs:
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           E2E_USE_ISOLATED_USERS: "false"
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/provider-native
           CI: true
         run: |
           node ./node_modules/@playwright/test/cli.js test \

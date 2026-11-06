@@ -100,6 +100,7 @@ classify_path() {
       .github/scripts/lib/apt-packages.sh | \
       .github/scripts/lib/validate-ci-cache-policy.rb | \
       .github/scripts/test-ci-cache-policy.sh | \
+      .github/scripts/ci-classification-tests/* | \
       .github/scripts/test-classify-ci-changes.sh)
       mark_all
       return
@@ -126,9 +127,11 @@ classify_path() {
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
+      .github/scripts/core-runner-slots.* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
+      .github/scripts/desktop-ci/* | \
       .github/scripts/restore-oci-runtime-binary.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true

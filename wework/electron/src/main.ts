@@ -1,4 +1,8 @@
-import { McpAppRuntime, readMcpAppConnection } from './host/mcp-app-runtime.js'
+import { McpAppRuntime } from './host/mcp-app-runtime.js'
+import {
+  readCloudConnection,
+  requireCloudCredentialOwner,
+} from './host/cloud-connection-profile.js'
 import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
 import './host/process-output-bootstrap.js'
 import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
@@ -16,6 +20,7 @@ import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
+import { VerificationDevtools } from './host/verification-devtools.js'
 
 import {
   app,
@@ -496,8 +501,24 @@ const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
 )
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
-    console.info('[renderer-load]', { event, webContentsId: contents.id })
+    const address = contents.getURL()
+    const route =
+      process.env.VITE_WEWORK_E2E === 'true' && URL.canParse(address) ? new URL(address) : null
+    console.info('[renderer-load]', {
+      event,
+      webContentsId: contents.id,
+      ...(route?.pathname.startsWith('/wework/app')
+        ? {
+            pathname: route.pathname,
+            projectId: route.searchParams.get('projectId'),
+            projectStore: route.searchParams.get('projectStore'),
+            workspaceTab: route.searchParams.get('workspaceTab'),
+          }
+        : {}),
+    })
   }
+  if (process.env.VITE_WEWORK_E2E === 'true')
+    contents.on('did-navigate-in-page', logLoadEvent('did-navigate-in-page'))
   contents.on('did-start-loading', logLoadEvent('did-start-loading'))
   contents.on('dom-ready', logLoadEvent('dom-ready'))
   contents.on('did-finish-load', logLoadEvent('did-finish-load'))
@@ -1874,9 +1895,18 @@ function installIpc(): void {
       throw error
     }
   })
-  ipcMain.handle('cloud-credentials:get-device-public-key', () =>
-    requiredCloudCredentials().devicePublicKey()
-  )
+  ipcMain.handle('cloud-credentials:prepare-authorization', async (_event, apiBaseUrl: unknown) => {
+    try {
+      return {
+        ok: true,
+        value: await requiredCloudCredentials().prepareAuthorization(
+          requiredText(apiBaseUrl, 'apiBaseUrl')
+        ),
+      }
+    } catch (error) {
+      return cloudCredentialFailure(error)
+    }
+  })
   ipcMain.handle('cloud-credentials:claim-authorization', async (_event, input: unknown) => {
     try {
       if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -1886,7 +1916,7 @@ function installIpc(): void {
       return {
         ok: true,
         value: await requiredCloudCredentials().claimAuthorization({
-          apiBaseUrl: requiredText(value.apiBaseUrl, 'apiBaseUrl'),
+          authorizationId: requiredText(value.authorizationId, 'authorizationId'),
           sessionId: requiredText(value.sessionId, 'sessionId'),
           pollToken: requiredText(value.pollToken, 'pollToken'),
         }),
@@ -1895,18 +1925,55 @@ function installIpc(): void {
       return cloudCredentialFailure(error)
     }
   })
-  ipcMain.handle('cloud-credentials:refresh-access-token', async (_event, apiBaseUrl: unknown) => {
-    try {
-      return {
-        ok: true,
-        value: await requiredCloudCredentials().refreshAccessToken(
-          requiredText(apiBaseUrl, 'apiBaseUrl')
-        ),
+  ipcMain.handle(
+    'cloud-credentials:commit-authorization',
+    async (_event, authorizationId: unknown, ownerUserId: unknown) => {
+      try {
+        if (typeof ownerUserId !== 'number') throw new Error('Cloud credential owner is invalid')
+        return {
+          ok: true,
+          value: await requiredCloudCredentials().commitAuthorization(
+            requiredText(authorizationId, 'authorizationId'),
+            ownerUserId
+          ),
+        }
+      } catch (error) {
+        return cloudCredentialFailure(error)
       }
-    } catch (error) {
-      return cloudCredentialFailure(error)
     }
-  })
+  )
+  ipcMain.handle(
+    'cloud-credentials:discard-authorization',
+    async (_event, authorizationId: unknown) => {
+      try {
+        return {
+          ok: true,
+          value: await requiredCloudCredentials().discardAuthorization(
+            requiredText(authorizationId, 'authorizationId')
+          ),
+        }
+      } catch (error) {
+        return cloudCredentialFailure(error)
+      }
+    }
+  )
+  ipcMain.handle(
+    'cloud-credentials:refresh-access-token',
+    async (_event, apiBaseUrl: unknown, expectedUserId: unknown) => {
+      try {
+        if (typeof expectedUserId !== 'number') throw new Error('Cloud credential owner is invalid')
+        return {
+          ok: true,
+          value: await requiredCloudCredentials().refreshAccessToken(
+            requiredText(apiBaseUrl, 'apiBaseUrl'),
+            expectedUserId
+          ),
+        }
+      } catch (error) {
+        return cloudCredentialFailure(error)
+      }
+    }
+  )
   ipcMain.handle('cloud-credentials:clear', () => requiredCloudCredentials().clear())
   ipcMain.handle('runtime:get-state', () => ({
     ...(desktopRuntime?.state() ?? {
@@ -2168,6 +2235,9 @@ async function configureDesktopRuntime(): Promise<void> {
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
     smartApps: () => smartApps,
+    ...(process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
+      ? { devtools: new VerificationDevtools(() => webContents.getAllWebContents()) }
+      : {}),
   })
   logStartupStep('desktop-control-bridge', 'started')
   await desktopControlBridge.start()
@@ -2300,11 +2370,14 @@ async function configureDesktopRuntime(): Promise<void> {
                 if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
                 return desktopRuntime.requestExecutor('runtime.mcp_apps.request', request)
               },
-              async apiBaseUrl => {
-                const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+              async (apiBaseUrl, expectedUserId) => {
+                const credential = await requiredCloudCredentials().refreshAccessToken(
+                  apiBaseUrl,
+                  expectedUserId
+                )
                 return credential.accessToken
               },
-              () => readMcpAppConnection(rendererStorage!)
+              () => readCloudConnection(rendererStorage!)
             )
             return mcpAppRuntime.request(payload)
           },
@@ -2316,7 +2389,14 @@ async function configureDesktopRuntime(): Promise<void> {
           updatePreferences: updateDesktopPreferences,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
-            const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+            const expectedUserId = requireCloudCredentialOwner(
+              await readCloudConnection(rendererStorage!),
+              apiBaseUrl
+            )
+            const credential = await requiredCloudCredentials().refreshAccessToken(
+              apiBaseUrl,
+              expectedUserId
+            )
             return requestWeworkSync(request, `${credential.tokenType} ${credential.accessToken}`)
           },
         },

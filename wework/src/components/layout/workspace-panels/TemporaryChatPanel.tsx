@@ -1037,6 +1037,7 @@ export function TemporaryChatPanel({
         turns={turns}
         loading={historyLoading || historyLoadingMoreBefore}
         hasMoreBefore={Boolean(historyBeforeCursor)}
+        beforeCursor={historyBeforeCursor}
         loadingMoreBefore={historyLoadingMoreBefore}
         onLoadMoreBefore={loadMoreHistory}
         transcriptError={messages.length ? historyError : null}

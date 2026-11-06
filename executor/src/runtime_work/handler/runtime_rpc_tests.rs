@@ -84,3 +84,20 @@ fn remote_app_server_rpc_requires_inner_method() {
             assert_eq!(error.message, "method is required");
         });
 }
+
+#[tokio::test]
+async fn codex_plugin_discovery_waits_for_app_server_restart() {
+    let (handler, root) = isolated_runtime_work_handler("plugin-restart-serialization");
+    let restart_guard = codex_app_server_restart_gate().lock().await;
+    for method in ["plugin/installed", "plugin/list", "app/list"] {
+        let discovery = handler.handle_codex_app_server_rpc(json!({
+            "method": method,
+            "params": {},
+        }));
+        tokio::pin!(discovery);
+        let waiting = tokio::time::timeout(Duration::from_millis(100), &mut discovery).await;
+        assert!(waiting.is_err(), "{method} bypassed the restart gate");
+    }
+    drop(restart_guard);
+    let _ = fs::remove_dir_all(root);
+}

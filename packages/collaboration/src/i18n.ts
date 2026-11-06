@@ -259,6 +259,10 @@ const sharedMessages: Record<
   Readonly<Record<string, string>>
 > = {
   "zh-CN": {
+    "todo.milestone": "里程碑",
+    "todo.no_milestone": "未设置里程碑",
+    "todo.milestone_error": "里程碑操作失败，请重试",
+    "todo.milestone_retry": "重试",
     "todo.permission_owner": "所有者",
     "todo.project_members_intro": "管理项目访问权限与成员职责。",
     "todo.project_membership_inherit_hint":
@@ -347,6 +351,14 @@ const sharedMessages: Record<
     "todo.status_in_progress": "进行中",
     "todo.status_in_review": "待确认",
     "todo.status_completed": "已完成",
+    "todo.trigger_status_changed": "进入指定状态后",
+    "todo.trigger_status_changed_description": "Issue 进入指定状态时",
+    "todo.matching_status": "状态",
+    "todo.select_matching_status": "请选择状态",
+    "todo.trigger_entered_processing": "进入处理阶段后",
+    "todo.automatic_processing_prompt": "提示词（可选）",
+    "todo.automatic_processing_prompt_hint":
+      "触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。",
     "todo.projects_home": "项目空间",
     "todo.projects_home_subtitle": "跨项目的个人工作台与项目空间概览",
     "todo.new_project_space": "新建项目空间",
@@ -473,6 +485,9 @@ const sharedMessages: Record<
     "todo.access_token": "访问令牌",
     "todo.saved": "已保存",
     "todo.save_assignment": "保存分配",
+    "todo.notify_assignee": "通知负责人",
+    "todo.search_milestone": "搜索里程碑",
+    "todo.no_matching_milestone": "没有匹配的里程碑",
     "todo.save_and_notify": "保存并通知",
     "todo.save_without_notification": "仅保存不通知",
     "todo.save_options": "保存选项",
@@ -795,6 +810,10 @@ const sharedMessages: Record<
     "workbench.quick_view_conversation": "查看对话",
   },
   en: {
+    "todo.milestone": "Milestone",
+    "todo.no_milestone": "No milestone",
+    "todo.milestone_error": "Milestone operation failed. Try again",
+    "todo.milestone_retry": "Retry",
     "todo.permission_owner": "Owner",
     "todo.project_members_intro":
       "Manage project access and member responsibilities.",
@@ -889,6 +908,15 @@ const sharedMessages: Record<
     "todo.status_in_progress": "In progress",
     "todo.status_in_review": "In review",
     "todo.status_completed": "Completed",
+    "todo.trigger_status_changed": "Status reached",
+    "todo.trigger_status_changed_description":
+      "When an issue enters the selected status",
+    "todo.matching_status": "Status",
+    "todo.select_matching_status": "Select a status",
+    "todo.trigger_entered_processing": "Processing phase entered",
+    "todo.automatic_processing_prompt": "Prompt (optional)",
+    "todo.automatic_processing_prompt_hint":
+      "Sent to AI when triggered to work on the current Issue. Leave blank to use the target's responsibilities.",
     "todo.projects_home": "Project spaces",
     "todo.projects_home_subtitle": "Your cross-project workspace overview",
     "todo.new_project_space": "New project space",
@@ -1021,6 +1049,9 @@ const sharedMessages: Record<
     "todo.access_token": "Access token",
     "todo.saved": "Saved",
     "todo.save_assignment": "Save assignment",
+    "todo.notify_assignee": "Notify assignee",
+    "todo.search_milestone": "Search milestones",
+    "todo.no_matching_milestone": "No matching milestones",
     "todo.save_and_notify": "Save and notify",
     "todo.save_without_notification": "Save without notifying",
     "todo.save_options": "Save options",
