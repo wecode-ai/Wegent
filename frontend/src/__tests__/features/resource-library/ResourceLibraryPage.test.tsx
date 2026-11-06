@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
@@ -332,6 +332,16 @@ const mockedListSkillMarketProviders = listSkillMarketProviders as jest.MockedFu
   typeof listSkillMarketProviders
 >
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, resolve, reject }
+}
+
 describe('ResourceLibraryPage', () => {
   it('reveals the newly created agent with a toast instead of a success dialog', async () => {
     mockSearchParams = new URLSearchParams(
@@ -630,6 +640,41 @@ describe('ResourceLibraryPage', () => {
     expect(await screen.findByTestId('marketplace-external-source-community')).toHaveTextContent(
       'Community Hub'
     )
+  })
+
+  it('does not let a stale retry overwrite providers from a newer discovery', async () => {
+    const user = userEvent.setup()
+    const retryResponse = deferred<Awaited<ReturnType<typeof listSkillMarketProviders>>>()
+    const discoveryResponse = deferred<Awaited<ReturnType<typeof listSkillMarketProviders>>>()
+    mockedListSkillMarketProviders
+      .mockRejectedValueOnce(new Error('service unavailable'))
+      .mockImplementationOnce(() => retryResponse.promise)
+      .mockImplementationOnce(() => discoveryResponse.promise)
+    mockSearchParams = new URLSearchParams('type=skill')
+
+    const { rerender } = render(<ResourceLibraryPage />)
+
+    expect(await screen.findByTestId('skill-marketplace-providers-error')).toHaveTextContent(
+      'service unavailable'
+    )
+    await user.click(screen.getByTestId('skill-marketplace-providers-retry'))
+    mockSearchParams = new URLSearchParams('tab=mine&type=skill')
+    rerender(<ResourceLibraryPage />)
+    mockSearchParams = new URLSearchParams('type=skill')
+    rerender(<ResourceLibraryPage />)
+
+    await act(async () => {
+      discoveryResponse.resolve([{ key: 'community', name: 'Community Hub' }])
+    })
+    expect(await screen.findByTestId('marketplace-external-source-community')).toHaveTextContent(
+      'Community Hub'
+    )
+
+    await act(async () => {
+      retryResponse.reject(new Error('stale retry'))
+    })
+    expect(screen.queryByTestId('skill-marketplace-providers-error')).not.toBeInTheDocument()
+    expect(screen.getByTestId('marketplace-external-source-community')).toBeInTheDocument()
   })
 
   it('moves all management types and source filtering into My Capabilities', () => {
