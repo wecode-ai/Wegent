@@ -2,7 +2,14 @@ import assert from 'node:assert/strict'
 import { wireDeclarations } from './model-wire-contract.mjs'
 
 export function programmaticExecTools(request) {
-  return wireDeclarations(request, 'responses').filter(
+  const declarations = new Map()
+  // Lite history is incremental; current top-level declarations take precedence.
+  for (const tool of [
+    ...wireDeclarations({ input: request.input }, 'responses'),
+    ...wireDeclarations({ tools: request.tools }, 'responses'),
+  ])
+    declarations.set(JSON.stringify([tool.namespace ?? null, tool.name]), tool)
+  return [...declarations.values()].filter(
     tool =>
       ['exec', 'functions__exec'].includes(tool.name) &&
       (tool.type === 'custom' ||
@@ -29,7 +36,7 @@ export function programmaticInput(name, args) {
           'text(result.output)',
         ]
       : [
-          'if (Array.isArray(result?.content)) { for (const part of result.content) { if (part.type === "text") text(part.text); else if (part.type === "image") image(part) } } else text(result)',
+          'if (result?.isError) throw new Error(JSON.stringify(result)); if (result?.structuredContent !== undefined) text(result.structuredContent); else if (Array.isArray(result?.content)) { for (const part of result.content) { if (part.type === "text") text(part.text); else if (part.type === "image") image(part) } } else text(result)',
         ]),
   ].join('\n')
 }

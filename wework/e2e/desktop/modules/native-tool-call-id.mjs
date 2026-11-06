@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { waitForValue } from './workspace-agent-setup.mjs'
 
-async function readNativeToolCallId(control, address, matches, label, timeoutMs) {
+export async function readNativeToolCallId(control, address, matches, label, timeoutMs) {
   return waitForValue(
     async () => {
       const messages = JSON.parse(

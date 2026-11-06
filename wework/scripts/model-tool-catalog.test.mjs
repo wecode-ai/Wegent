@@ -189,3 +189,38 @@ test('native running cells retain their wait handle while completed headers are 
     modelToolOutputText('Script completed\nWall time 0.0 seconds\nOutput:\n\n{"ok":true}')
   ).toBe('{"ok":true}')
 })
+
+test('uses the latest native exec definition across incremental Lite catalog updates', () => {
+  const batch = description => ({
+    type: 'additional_tools',
+    tools: [{ type: 'namespace', name: 'functions', tools: [{ ...entry, description }] }],
+  })
+  const request = { input: [batch('original'), batch('updated')] }
+  expect(discoverySelection(request, 'get_current_context').codeMode.description).toBe('updated')
+  expect(programmaticSelection(request, 'get_goal', {}).codeMode.description).toBe('updated')
+  const top = {
+    type: 'namespace',
+    name: 'functions',
+    tools: [{ ...entry, description: 'current' }],
+  }
+  expect(discoverySelection({ ...request, tools: [top] }, 'get_goal').codeMode.description).toBe(
+    'current'
+  )
+  expect(() => discoverySelection({ ...request, tools: [entry] }, 'get_goal')).toThrow()
+})
+
+test('keeps the actual structured MCP result and rejects native MCP errors', async () => {
+  const selection = programmaticSelection(variants[0], 'model_only', {})
+  const input = inputOf(finalCall(selectedToolCall('ordinary', selection)))
+  const catalog = [{ name: 'mcp__counter__model_only' }]
+  const result = {
+    content: [{ type: 'text', text: 'Counter ready' }],
+    structuredContent: { count: 0 },
+  }
+  expect(await run(input, catalog, { mcp__counter__model_only: async () => result })).toEqual([
+    { count: 0 },
+  ])
+  await expect(
+    run(input, catalog, { mcp__counter__model_only: async () => ({ isError: true, content: [] }) })
+  ).rejects.toThrow('isError')
+})

@@ -609,7 +609,7 @@ export function createDesktopScenario({
         'Direct agent dispatch incorrectly entered the collaboration manager path'
       )
       const toolNames = advertisedToolNames(body)
-      if (requestAdvertisesProgrammaticExec(body)) {
+      if (requestAdvertisesProgrammaticExec(body) && modelRequests >= 3) {
         if (!requestContainsToolOutput(body, MANUAL_READ_CALL)) {
           const selection = selectProgrammaticExec(
             body,
