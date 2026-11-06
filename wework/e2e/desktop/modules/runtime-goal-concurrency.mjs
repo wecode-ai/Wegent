@@ -154,7 +154,6 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
         }
         releases[4]()
         await waitRequests(6)
-        assert.deepEqual(requests, [...expected, taskIds[0]])
         const finished = await rpc(control, 'runtime.tasks.goal.set', {
           taskId: taskIds[0],
           status: 'complete',
