@@ -20,6 +20,21 @@ export function mergeExecutionEnvironmentResources(
       .filter(environment => environment.kind === 'local_device')
       .map(executionEnvironmentIdentity)
   )
+  console.debug('[Wework] Execution environment resource identities', {
+    local: localEnvironments.map(environment => ({
+      id: environment.device_id ?? environment.id,
+      identity: executionEnvironmentIdentity(environment),
+      kind: environment.kind,
+      status: environment.status,
+    })),
+    cloud: cloudEnvironments.map(environment => ({
+      id: environment.device_id ?? environment.id,
+      identity: executionEnvironmentIdentity(environment),
+      kind: environment.kind,
+      status: environment.status,
+      current: currentLocalDeviceKeys.has(executionEnvironmentIdentity(environment)),
+    })),
+  })
   const seen = new Set<string>()
   return cloudEnvironments.flatMap(environment => {
     const identity = executionEnvironmentIdentity(environment)
