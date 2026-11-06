@@ -8,17 +8,12 @@ import {
 
 afterEach(() => {
   clearRuntimeConversationCacheForTests()
-  vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 test('coalesces native block bursts while preserving bounded item order and terminal state', () => {
   const address = { deviceId: 'device-1', taskId: 'task-1', workspacePath: '/workspace/one' }
-  let frame: FrameRequestCallback | undefined
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-    frame = callback
-    return 1
-  })
-  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  vi.useFakeTimers()
   applyRuntimeConversationAction(address, {
     type: 'assistant_started',
     taskId: address.taskId,
@@ -29,6 +24,8 @@ test('coalesces native block bursts while preserving bounded item order and term
     notifications.push(action?.type)
   })
   for (let index = 0; index < 520; index += 1) {
+    // A native burst spans multiple paint frames; it must not render on each one.
+    if (index > 0 && index % 100 === 0) vi.advanceTimersByTime(16)
     applyRuntimeConversationAction(address, {
       type: 'block_created',
       subtaskId: 'burst-turn',
@@ -53,11 +50,14 @@ test('coalesces native block bursts while preserving bounded item order and term
   expect(getRuntimeConversationTurns(address)[0].items.map(item => item.id)).toEqual(
     Array.from({ length: 520 }, (_, index) => `progress-${index}`).slice(-256)
   )
-  expect(frame).toBeDefined()
-  frame!(16)
+  vi.advanceTimersByTime(19)
+  expect(notifications).toEqual([])
+  vi.advanceTimersByTime(1)
   expect(notifications).toEqual([undefined])
   applyRuntimeConversationAction(address, { type: 'assistant_done', subtaskId: 'burst-turn' })
   expect(notifications).toEqual([undefined, 'assistant_done'])
   expect(getRuntimeConversationTurns(address)[0].status).toBe('done')
+  vi.advanceTimersByTime(100)
+  expect(notifications).toEqual([undefined, 'assistant_done'])
   unsubscribe()
 })

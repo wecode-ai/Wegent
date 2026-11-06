@@ -920,13 +920,9 @@ function scheduleStreamingConversationNotification(key: string): void {
     pendingStreamingNotifications.delete(key)
     notifyRuntimeConversation(key, undefined, true)
   }
-  if (typeof requestAnimationFrame === 'function') {
-    const frame = requestAnimationFrame(flush)
-    pendingStreamingNotifications.set(key, () => cancelAnimationFrame(frame))
-    return
-  }
-
-  const timer = globalThis.setTimeout(flush, 16)
+  // Leave time for queued native events before another expensive transcript layout.
+  // Completion and interactive actions cancel this timer and publish immediately.
+  const timer = globalThis.setTimeout(flush, 100)
   pendingStreamingNotifications.set(key, () => globalThis.clearTimeout(timer))
 }
 
