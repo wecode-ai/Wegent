@@ -1,3 +1,4 @@
+import { ModelConfigurationStore } from './host/model-configuration-store.js'
 import { McpAppRuntime } from './host/mcp-app-runtime.js'
 import {
   readCloudConnection,
@@ -2204,6 +2205,10 @@ async function configureDesktopRuntime(): Promise<void> {
     logDirectories: runtimeLogDirectories,
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
+  const modelConfiguration = new ModelConfigurationStore(
+    join(app.getPath('userData'), 'model-connections'),
+    secureStorage
+  )
   embeddedBrowser = new EmbeddedBrowserManager(
     app.getPath('userData'),
     event => {
@@ -2292,6 +2297,7 @@ async function configureDesktopRuntime(): Promise<void> {
     )
   })
   desktopRuntime = new DesktopRuntime({
+    modelConfiguration,
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
@@ -2388,6 +2394,8 @@ async function configureDesktopRuntime(): Promise<void> {
             return mcpAppRuntime.request(payload)
           },
           executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
+          modelConfiguration,
+          syncLocalModels: () => desktopRuntime!.syncLocalModels(),
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,

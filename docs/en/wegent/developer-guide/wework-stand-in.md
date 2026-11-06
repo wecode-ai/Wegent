@@ -30,7 +30,15 @@ Settings writes and dispatch serialize per user. Configuration changes cancel un
 
 ### Plugin and host transaction boundary
 
-Executor advertises `runtime.coordination-v1`. The plugin calls `runtime.coordination.contexts`, `snapshot`, `commit`, `wake` and `status` through the existing executor-runtime client. Host snapshots bind the current user, device, configuration, wake revision and event revisions. A plugin decision can select only snapshot facts. One existing SQLite transaction commits all intents, state and the immutable receipt. Invalid or multiply consumed events, stale snapshots, changed configuration and another device are rejected. Replaying the same snapshot and plan returns its original receipt without another dispatch.
+Executor advertises `runtime.coordination-v1`. The plugin calls `runtime.coordination.contexts`, `snapshot`, `commit`, `wake` and `status` through the existing executor-runtime client. Host snapshots bind the current user, device, configuration, wake revision and event revisions. A plugin decision can select only snapshot facts.
+
+The batch `snapshot.works` inventory contains metadata validated against current owner, role and source authority; it never eagerly loads conversations. Temporary history-read saturation cannot remove an existing responsibility. `read_work` supplies batch work metadata and original source messages, not proof that its conversation has been read. The coordinator uses the general bounded `read_task` API on demand for the matching original request and results, following page/content cursors and reading only work IDs in the current batch. Temporary busy errors remain recoverable reads, not missing work or justification for duplicate tasks. Continuation preserves the original task ID, read grants, approvals and result-return binding. One existing SQLite transaction commits all intents, state and the immutable receipt. Invalid or multiply consumed events, stale snapshots, changed configuration and another device are rejected. Replaying the same snapshot and plan returns its original receipt without another dispatch.
+
+One upstream event ID may have multiple immutable versions. To read a selected version, pass its `recordId` from the `read_work` summary as `messageId`, then follow `payloadOffset` / `nextOffset` through the original event. An exact `recordId` takes precedence within the current work. An upstream `id` is accepted only when it identifies one record; shared IDs return an explicit ambiguity error rather than silently selecting an older version. Other works and revoked source connections remain unreadable. `reply` and `send_email` use the same exact record selection and retain current work-owner, role and source-authority checks before execution. External reply targets and idempotency keys continue to use the selected original record’s upstream ID.
+
+Plugin CLI actions use one exact installed and enabled plugin from the native inventory. The Executor obtains its declared `connectorSlug` from the unique matching `localAuth.tool.id`; the plugin name cannot replace connector identity. Inventory errors, duplicate plugin names, missing or ambiguous tools reject execution without choosing an older cache, a different identity, or running extra login or health checks.
+
+When native MCP approvals omit a tool name, the host correlates one unfinished native call in the same task, thread and turn using the exact server and complete JSON arguments. Only a unique match supplies tool and call identity for the preview. Missing or ambiguous matches remain unidentified; question text, titles and recency never establish identity. Live approvals and recovered conversations share the result without changing native approval, authorization or sending policy.
 
 The Router has no separate database, model runner or permission system. Assessment instructions and routing rules belong to the plugin; Rust retains source eligibility, batch allowlists, role permissions, current-account checks and execution. Snapshot and commit both revalidate the background conversation lifecycle and cannot rotate an active or waiting batch. The old native business poller and immediate connection dispatch branches are removed; Automation scheduling and connection providers remain.
 
@@ -76,6 +84,8 @@ Each isolated case restores original profiles, removes its events and test plugi
 
 ## Connection plugin sources
 
+Connections are supplied by DSH plugins. See the [connection extension point](./wework-connection-plugins.md) for the shared host, Provider contract and default event handling.
+
 Connection dependencies declare exact marketplace and plugin IDs through `source` and optional `alternateSources`. Resolution reuses an installed source first, choosing declaration order when several sources are installed. Disabled or incompatible installations still require explicit action; they are never enabled, upgraded, or replaced automatically. Tool calls carry the selected source's actual ID and version, and the Executor verifies that the connection plugin declared that source.
 
 DingTalk supports both `dingtalk@wegent` and `dingtalk@wework`, preserving existing installations and account configuration without migration or reinstallation. Undeclared marketplaces do not participate in resolution.
@@ -86,9 +96,13 @@ Stand-ins and ordinary tasks share the model picker, classification, sorting, an
 
 Display models and `RunnerModelIdentity` are stored separately. Display models serve the UI; execution references contain only the actual runtime, provider, model ID, and the cloud resource name, type, namespace, and owner. Saving submits only the execution reference, not model configurations or credentials. The `public` resource type means a public resource, not a public-network endpoint. Intranet, public-network, and overseas labels come from the original catalog; unmarked models are not automatically labeled public-network.
 
+The native host's `ModelConfigurationStore` owns custom interfaces in `model.yml`. After Executor starts and before Core starts, and after reading, saving, or binding the configuration file, the host serially rebuilds the Executor's in-memory interface catalog. Stand-ins select a device-owned provider and `local-model:<id>` reference. Public catalogs and stand-in settings contain no endpoints, API keys, or complete execution configurations. Dispatch resolves the current configuration by full device model identity; disabling or deleting an interface rejects new executions instead of switching to a Codex subscription. Ordinary tasks and stand-ins share protocol conversion, and concrete work inherits the saved model reference. Persisted tasks contain no credentials; each actual turn, including restored, queued, and continued work, resolves the original task’s stable model identity against the current device configuration. Missing references and disabled models reject execution before an unauthenticated request is sent.
+
 Desktop and mobile use the same complete model identity comparison, distinguishing same-name providers, namespaces, and owners. Option identifiers are independent of display names and preserve existing identifiers. Changing the device or runtime invalidates old catalog requests; unavailable saved models retain the recovery entry.
 
 The existing CI `stand-in-profile` checkpoint group includes the original `stand-in-profile-settings` scenario and the new `stand-in-model-catalog` scenario. The latter compares ordinary and stand-in labels for real Backend intranet, public-network, and unmarked models sharing an upstream model ID, then validates persisted execution references. The runner and CI catalog validator share checkpoint-group expansion so registered scenarios cannot be left outside CI.
+
+The same `stand-in-model-catalog` checkpoint loads the `stand-in-model-interface` extension while retaining the original scenario, Backend, and desktop lifecycle. It checks native `model.yml` interface selection, credential-free saved settings, and authenticated calls to the same model service from both the primary stand-in and its concrete work. It also restarts the app and continues the original work, verifying the same conversation and authenticated model calls. Existing model-service scenarios and assertions remain unchanged.
 
 ## Multiple stand-ins handling work
 
@@ -138,6 +152,10 @@ Cover the status/history overview and secondary settings, default selection of a
 
 The primary stand-in keeps a persistent chat entry while individual work items retain separate Runtime tasks. Local Codex reuses thread resume and automatic compaction without timed thread rotation. The composer keeps model selection and hides execution controls such as context compaction, permissions, and planning.
 
+Each primary turn refreshes its orchestration contract: discover task tools, inspect existing work, create or continue an independent task with the complete requirements, sources, deliverables and authorization limits, then read actual results before reporting. This also applies to direct turns on loaded threads; concrete tasks and scenario roles do not receive this primary-only restriction. Configuration proposals remain in the identity conversation. `propose_profile` declares required settings fields, project reference objects, and independent automatic-processing, action-confirmation and timing policies. New roles preserve existing roles, and proposals are saved only after native confirmation. The identity conversation also creates or cancels schedules directly; concrete workers prepare reports and perform each execution without receiving identity configuration tools.
+
+When configuration blocks a current explicit business request, a proposal may set `continueCurrentRequest`. The host binds the actual identity conversation and an independent owner-request identifier, rather than accepting model-supplied actor ownership. The returned `willContinueCurrentRequest` reports whether that binding was established. Acceptance atomically saves settings and a pending continuation, then idempotently wakes the original conversation through the existing durable queue. Background results do not replace the owner request. A new owner message or cancellation invalidates the old continuation, including while queued. Ordinary settings edits do not generate business reminders. Continuations reread current settings, never elevate existing worker permissions, and preserve external-operation approvals.
+
 Independent `stand_in_memory` records live in the selected Executor's SQLite database, scoped to the person, a role, a collaboration project, or a DingTalk connection. They are separate from Codex threads, responsibilities, and connection permissions. Records retain their source task, timestamps, and version; edits and deletion require the current version. Devices keep independent memories.
 
 Before every execution, including follow-ups, queued turns, and restored executions, the Executor reloads current responsibilities, preferences, and applicable memories through one `additionalContext` source. Injection is limited to 20 records and 12KB; identity-bound `search_memories` provides further retrieval. Identity chats receive personal and their own role memories. External work receives only memories for its exact source, without private preferences or personal/role memories. The primary stand-in can query all records when managing memory. Stand-in execution disables Codex's global memory reading and generation to avoid mixing unrelated `CODEX_HOME` memories.
@@ -147,6 +165,14 @@ The first phase saves memories only when explicitly requested through `remember`
 Automatic extraction and consolidation, cross-device synchronization, and execution-thread rotation are not enabled in this phase.
 
 Scene roles can be deleted with confirmation from role settings, including the last scene role. The primary identity, work records, and memories remain. Deletion removes the selected role from saved settings without applying unrelated draft edits.
+
+### Per-turn Codex runtime policy
+
+Updating `thread/resume.developerInstructions` or the locally saved system prompt alone does not guarantee refreshed model-visible context in an existing history. The host atomically supplies its complete effective developer policy through the existing `turn/start.additionalContext` application entries; user drafts and business messages stay unchanged. UTF-8-safe bodies are at most 3,000 bytes, keeping each versioned fragment and its wrapper below the native 4,000-byte value budget. The host removes forged reserved entries and publishes the complete SHA, part count, and current manifest last. The current version supersedes earlier Wework runtime policy, including initial flat developer instructions; old revisions and excess historical parts are inactive. This does not physically delete history or override higher-priority system instructions or independent native permissions. An unchanged policy produces identical complete context values for native key/value merging.
+
+Hosts can declare explicit runtime-policy contributions in `additionalContext` as `{ kind: "application", runtimePolicy: true, value: "..." }`. The generic Codex adapter combines them in stable key order with the original user/system developer policy into the same effective text, chunk transport and live configuration SHA; merged standalone entries are removed from the wire. Changing or removing a contribution updates the current policy, and resume/compaction use that baseline through the existing configuration refresh gate. The flag grants no authority and applies only to application entries; untrusted source guidance cannot promote itself. Unmarked application data and CLI context keep their original transport and do not enter the policy SHA. Tool-disabled requests do not incorporate action-oriented policy contributions.
+
+Resume configuration identity includes both MCP configuration and the effective developer-policy SHA. Policy changes use the existing close/reload gate to refresh live configuration, so compaction rebuilds the current policy. A known policy change in a directly loaded temporary session stops explicitly, preserves history, and requires a new temporary session instead of rebuilding or downgrading it. Live steering does not change runtime policy and filters caller-supplied entries in its reserved namespace. Coordinator `tools/list` diagnostics include only tool names, schema property names, and schema/description fingerprints, never policy text, event bodies, authentication data, or paths.
 
 ## Merge and split work
 
@@ -182,6 +208,10 @@ Pending requests, command identity, and queue changes share the existing encrypt
 
 After restart, recovery checks the exact native thread and turn for a real timeline completion boundary. `thread/turns/list` can synthesize `interrupted`; that status alone cannot prove cancellation. Unconfirmed execution returns `recovery_required`, retains the request for inspection in the original work, and never resends automatically. Autonomous Goal recovery does not resubmit its original user command. Actual execution outcomes and generation checks determine settlement; late callbacks cannot settle a later command.
 
+When a native outcome remains unknown and no runner is active, the device owner can explicitly review and abandon that uncertain execution. Read `runtime.tasks.commands.get` for the current `commandFingerprint`, exact `native` tuple and acceptance time, then call `runtime.tasks.commands.resolve` with `{ taskId, commandId, userId, expectedFingerprint, expectedNative, decision: "abandon", requestId }`. `userId` is only a selector. The same controlled device-write transport as stopping a task applies, together with fresh connected-account and original command/current task owner/device checks. Missing device ownership, an active execution or a changed fingerprint/native binding fails closed. An explicit native `notLoaded` status proves no loaded runner, never historical turn completion. Only this owner-disposition flow uses that fact, with no local active, queued or preparing work, active Goal or known pending transition. Unknown native status remains unavailable; stop and historical completion predicates retain their original semantics.
+
+The stored native command state remains `recovery_required`; the owner disposition is persisted separately and projected as `abandoned` in public receipts. Older readers ignore the optional disposition and still reject replay of the uncertain command. An `abandoned` receipt retains `nativeOutcome: "unknown"`, the original command/thread/turn and the owner's decision. It never claims completion, native cancellation or successful external delivery. The same `requestId` reads the original decision idempotently; the original `commandId` can never replay. The decision is persisted atomically with the encrypted command queue. The coordinator consumes only that durable receipt, marks the exact old assessment as owner-abandoned and clears its recovery gate in one transaction. Existing actions and receipts remain intact; pending events enter subsequent batches. If the UI's following processing check is interrupted, restart consumes the durable receipt without resolving again or resending the old command.
+
 New coordination callers must check the capability and must not fall back to sending without command IDs. Acceptance receipts never replace source, role, project authorization, or native operation confirmation, and cannot answer or approve requests for the user.
 
 ## Durable arrangements
@@ -198,26 +228,69 @@ Calendar due runs use the existing per-automation history budget of 100 as their
 
 `runtime.stand_in.onboarding.get/complete` reads and submits feature choices for
 the current account on the selected Executor. Reads require no model, cloud
-catalog or execution preparation. Completion and the review arrangement share
-one Automation storage write. Opting out also records completion; closing does
-not. Existing users see onboarding once. Confirming a selected review materializes
-the UI's implicit primary profile only when absent, preserving explicit pauses
-and the calendar connection policy.
+catalog or execution preparation. Completing the introduction records completion without creating an arrangement;
+closing does not save. All five examples use equivalent buttons, with no checkbox
+or inline time field. Weekly reviews are scheduled through the conversation after
+scope and time confirmation, preserving paused identities and calendar policy.
 
 Onboarding and the calendar share the Executor's `weekly_review` template,
 defaulting to Monday 09:00 in Asia/Shanghai. Deleting an arrangement retains the
 completion record, preventing recreation on repeat submissions. Users may
 explicitly add it again through the primary calendar template.
 
-Review executions expose only the read-only `read_review_history` stand-in tool.
-The host verifies account, device, actor task, current arrangement version and
-the actual run binding before paginating task discovery and native transcripts
-over a fixed seven-day window. Prior reports are read separately. Primary
-identity management conversations may also use this tool; external work,
-scenario roles and project coordinators cannot. Native permissions and approvals
-remain in force, and history conveys no authority. Reports disclose missing
-timestamps, failed reads and truncation without automatically changing memories,
-settings or sending externally.
+The onboarding modal offers daily briefings, meeting preparation, project follow-up
+DingTalk mention replies and weekly work reviews, and can be reopened through the question-mark icon. Choosing
+an example selects the primary conversation and appends the business request to
+its editable draft without sending, replacing existing notes or creating schedules.
+A single-person icon distinguishes the primary identity from scenario roles;
+the selected identity has an inverse-neutral background and checkmark. Conversation
+surfaces use the light theme's white background, and processing notices use a bounded bar.
+
+The host injects source discovery instructions into system prompts, including
+continuations of existing identity conversations, rather than user drafts.
+The AI inspects the profile and provider catalog, then attempts discovery using
+`connect_source`, or `list_projects` for projects. The tool returns actual provider
+status, declared authorization identity or secure account setup requirements.
+It never collects passwords, expands scope or claims message access merely because
+a provider is available. Subscription changes require `propose_profile` confirmation;
+sign-in uses native authorization. Missing inputs block aggregation until connected
+and confirmed, rather than producing fabricated summaries or unusable tasks.
+
+Identity conversations restored with an earlier desktop device identifier are
+rebound to the current host only after their persisted task ID, owner and role
+match. Owner and role stay unchanged. Ordinary tasks, external work and background
+batches retain their existing boundaries and task tools retain all permission checks.
+
+Review executions reuse the general read-only `list_tasks` and `read_task` tools
+instead of a review-specific batch reader. The existing run binding verifies
+account, local device, actor task, current arrangement version and run state,
+fixing the scope to the seven days before that run. Explicit out-of-window time
+bounds are rejected. Every task page, message page and content chunk revalidates
+access. Follow `nextCursor`, `beforeCursor`, `afterCursor` and
+`messageContentCursor` for the required evidence. Complete message content does
+not imply complete history; `sourceContentMayBeIncomplete` denotes actual source
+incompleteness. Prior reports use ordinary conversation reads and are not
+independent evidence. This identity cannot continue other tasks, create delegates,
+configure settings, write memories or send externally. Native permissions and
+approvals remain unchanged, and history grants no authority. Results return to
+the original primary conversation, with material evidence gaps explained in
+business terms.
+
+Personal stand-ins and scenario roles use the general `list_tasks` and `read_task`
+tools to read permitted conversations belonging to the current account, including
+identity conversations and ordinary tasks. Lists and native transcripts support
+pagination and optional time bounds. List entries distinguish `kind` and
+`canContinue`: reading identity evidence does not authorize dispatching work to it.
+Direct primary-delegated workers inherit these two read-only tools by default.
+Explicit `readSources` selected at creation additionally grants only the chosen
+concrete source catalog and reads, without configuration, orchestration,
+scheduling, memory writes or external actions. Every read revalidates
+the persisted owner, device, existing role and delegation source. Pausing new-work
+intake does not revoke reads of existing conversations. Source tasks can read only
+associated conversations in the same role and exact currently connected scope;
+removing the connection denies subsequent reads. Other accounts, unknown owners,
+deleted or ephemeral tasks and private coordinators are excluded. Project
+coordinators receive no personal history. History never grants execution authority.
 
 ### User stories and acceptance coverage
 

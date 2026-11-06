@@ -11,32 +11,22 @@ function setup(completed = false) {
     completeOnboarding: vi.fn(async () => ({ state: { version: 1, completed: true } })),
   }
   const onClose = vi.fn()
+  const onExampleSelect = vi.fn()
   const view = render(
     <StandInOnboarding
       api={api as unknown as StandInExecutorApi}
       userId={7}
       deviceId="mac"
       onClose={onClose}
+      onExampleSelect={onExampleSelect}
     >
       <p>Stand-in content</p>
     </StandInOnboarding>
   )
-  return { ...view, api, onClose, user: userEvent.setup() }
+  return { ...view, api, onClose, onExampleSelect, user: userEvent.setup() }
 }
 
 describe('stand-in onboarding', () => {
-  it('explains a different choice saved by another window and reloads the completed state', async () => {
-    const { api, user } = setup()
-    api.completeOnboarding.mockImplementationOnce(async () => ({
-      state: { version: 1, completed: true, weeklyReview: false },
-    }))
-    await user.click(await screen.findByTestId('stand-in-onboarding-complete'))
-    await screen.findByRole('alert')
-    expect(screen.queryByText('Stand-in content')).not.toBeInTheDocument()
-    api.onboarding.mockResolvedValueOnce({ state: { version: 1, completed: true } })
-    await user.click(screen.getByTestId('stand-in-onboarding-reload'))
-    await screen.findByText('Stand-in content')
-  })
   it('shows progress and prevents edits or duplicate submissions while saving', async () => {
     const { api, user } = setup()
     let finish!: () => void
@@ -48,28 +38,16 @@ describe('stand-in onboarding', () => {
     )
     await user.click(await screen.findByTestId('stand-in-onboarding-complete'))
     expect(screen.getByTestId('stand-in-onboarding-complete')).toHaveAttribute('aria-busy', 'true')
-    expect(screen.getByTestId('stand-in-onboarding-review')).toBeDisabled()
-    expect(screen.getByTestId('stand-in-onboarding-time')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-onboarding-example-weekly_review')).toBeDisabled()
     expect(screen.getByTestId('stand-in-onboarding-close')).toBeDisabled()
     await user.click(screen.getByTestId('stand-in-onboarding-complete'))
     expect(api.completeOnboarding).toHaveBeenCalledOnce()
     await act(async () => finish())
     await screen.findByText('Stand-in content')
   })
-  it('defaults to review without saving until confirmed, then opens the original content', async () => {
+  it('completes the introduction without creating a recurring review', async () => {
     const { api, user } = setup()
-    expect(await screen.findByTestId('stand-in-onboarding-review')).toBeChecked()
-    expect(screen.getByTestId('stand-in-onboarding-time')).toHaveValue('09:00')
-    expect(api.completeOnboarding).not.toHaveBeenCalled()
-    await user.click(screen.getByTestId('stand-in-onboarding-complete'))
-    await screen.findByText('Stand-in content')
-    expect(api.completeOnboarding).toHaveBeenCalledWith(7, 'mac', true, '09:00', expect.any(String))
-  })
-
-  it('records an explicit opt-out', async () => {
-    const { api, user } = setup()
-    await user.click(await screen.findByTestId('stand-in-onboarding-review'))
-    await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+    await user.click(await screen.findByTestId('stand-in-onboarding-complete'))
     await screen.findByText('Stand-in content')
     expect(api.completeOnboarding).toHaveBeenCalledWith(
       7,
@@ -85,18 +63,15 @@ describe('stand-in onboarding', () => {
     await user.click(await screen.findByTestId('stand-in-onboarding-close'))
     expect(onClose).toHaveBeenCalledOnce()
     expect(api.completeOnboarding).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-onboarding-content')).not.toHaveAttribute('inert')
   })
 
-  it('retains the selection and edited time after a failed save and permits recovery', async () => {
+  it('shows a failed completion and permits recovery without scheduling work', async () => {
     const { api, user } = setup()
     api.completeOnboarding.mockRejectedValueOnce(new Error('Save failed'))
-    const input = await screen.findByTestId('stand-in-onboarding-time')
-    await user.clear(input)
-    await user.type(input, '10:30')
-    await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+    await user.click(await screen.findByTestId('stand-in-onboarding-complete'))
     await screen.findByRole('alert')
-    expect(input).toHaveValue('10:30')
-    expect(screen.getByTestId('stand-in-onboarding-review')).toBeChecked()
     await user.click(screen.getByTestId('stand-in-onboarding-complete'))
     await screen.findByText('Stand-in content')
   })
@@ -124,6 +99,53 @@ describe('stand-in onboarding', () => {
     )
     await waitFor(() => expect(api.onboarding).toHaveBeenCalledWith(7, 'other', expect.any(String)))
     expect(screen.queryByText('Stand-in content')).not.toBeInTheDocument()
-    expect(screen.queryByText('Other device')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-onboarding-content')).toHaveAttribute('inert')
+  })
+
+  it('presents five equivalent clickable examples in a modal without starting their work', async () => {
+    const { api } = setup()
+    await screen.findByTestId('stand-in-onboarding-complete')
+    const dialog = screen.getByRole('dialog', { name: '开始使用我的分身' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    for (const id of [
+      'daily_brief',
+      'meeting_prep',
+      'project_followup',
+      'dingtalk_reply',
+      'weekly_review',
+    ]) {
+      expect(screen.getByTestId(`stand-in-onboarding-example-${id}`)).toBeVisible()
+    }
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-onboarding-time')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-onboarding-content')).toHaveAttribute('inert')
+    expect(api.completeOnboarding).not.toHaveBeenCalled()
+  })
+
+  it('dismisses the modal with Escape without completing setup', async () => {
+    const { api, user, onClose } = setup()
+    await screen.findByTestId('stand-in-onboarding-complete')
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(api.completeOnboarding).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('hands an example to the conversation without submitting or scheduling work', async () => {
+    const { api, user, onExampleSelect } = setup()
+    const example = await screen.findByTestId('stand-in-onboarding-example-daily_brief')
+    await user.click(example)
+    expect(onExampleSelect).toHaveBeenCalledWith(expect.stringContaining('邮件、日历和项目动态'))
+    expect(onExampleSelect).toHaveBeenCalledWith(
+      '综合我的邮件、日历和项目动态，列出今天最重要的三件事，并附上来源。'
+    )
+    expect(api.completeOnboarding).toHaveBeenCalledWith(
+      7,
+      'mac',
+      false,
+      '09:00',
+      expect.any(String)
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

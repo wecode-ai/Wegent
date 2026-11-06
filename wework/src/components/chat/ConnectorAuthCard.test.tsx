@@ -130,6 +130,32 @@ describe('ConnectorAuthCard browser oauth', () => {
     expect(screen.getByText('在浏览器中授权')).toBeInTheDocument()
   })
 
+  test('GitLab CLI preserves its instance and opens only that native device authorization URL', async () => {
+    const target = {
+      pluginKey: 'gitlab',
+      connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
+      instance: 'https://gitlab.company.example',
+    }
+    authMocks.start.mockResolvedValue({
+      status: 'waiting_browser',
+      sessionId: 'gitlab-session',
+      userCode: 'GITLAB-CODE',
+      verificationUrl: `${target.instance}/oauth/device`,
+    })
+    authMocks.poll.mockImplementation(() => new Promise(() => undefined))
+    render(<ConnectorAuthCard target={target} onSuccess={vi.fn()} />)
+    expect(authMocks.start).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('gitlab-cli-login'))
+    expect(await screen.findByTestId('gitlab-cli-device-code')).toHaveTextContent('GITLAB-CODE')
+    expect(authMocks.start).toHaveBeenCalledWith(expect.objectContaining(target))
+    fireEvent.click(screen.getByTestId('gitlab-cli-open-browser'))
+    await waitFor(() =>
+      expect(authMocks.open).toHaveBeenCalledWith(`${target.instance}/oauth/device`, {
+        target: 'system',
+      })
+    )
+  })
+
   test('GitHub CLI waits for consent, displays a device code, and opens GitHub in the system browser', async () => {
     authMocks.start.mockResolvedValue({
       status: 'waiting_browser',

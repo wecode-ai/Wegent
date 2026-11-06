@@ -12,6 +12,18 @@ export const defaultNotificationPreferences: WeworkNotificationPreferences = {
   tasks: { in_app: true, system: false, im: null },
   collaboration: { in_app: true, system: true, im: true },
   general: { in_app: true, system: null, im: true },
+  stand_in: { in_app: true, system: true, im: null },
+}
+
+export function mergeNotificationPreferences(
+  stored: Partial<WeworkNotificationPreferences>
+): WeworkNotificationPreferences {
+  return {
+    tasks: { ...defaultNotificationPreferences.tasks, ...stored.tasks },
+    collaboration: { ...defaultNotificationPreferences.collaboration, ...stored.collaboration },
+    general: { ...defaultNotificationPreferences.general, ...stored.general },
+    stand_in: { ...defaultNotificationPreferences.stand_in, ...stored.stand_in },
+  }
 }
 
 function storageKey(accountKey: string): string {
@@ -40,14 +52,7 @@ export function readCachedNotificationPreferences(
     const raw = localStorage.getItem(storageKey(accountKey))
     if (!raw) return defaultNotificationPreferences
     const parsed = JSON.parse(raw) as Partial<WeworkNotificationPreferences>
-    return {
-      tasks: { ...defaultNotificationPreferences.tasks, ...parsed.tasks },
-      collaboration: {
-        ...defaultNotificationPreferences.collaboration,
-        ...parsed.collaboration,
-      },
-      general: { ...defaultNotificationPreferences.general, ...parsed.general },
-    }
+    return mergeNotificationPreferences(parsed)
   } catch {
     return defaultNotificationPreferences
   }
@@ -71,14 +76,7 @@ export function readActiveNotificationPreferences(): WeworkNotificationPreferenc
     const raw = localStorage.getItem(ACTIVE_NOTIFICATION_PREFERENCES_KEY)
     if (!raw) return defaultNotificationPreferences
     const parsed = JSON.parse(raw) as WeworkNotificationPreferences
-    return {
-      tasks: { ...defaultNotificationPreferences.tasks, ...parsed.tasks },
-      collaboration: {
-        ...defaultNotificationPreferences.collaboration,
-        ...parsed.collaboration,
-      },
-      general: { ...defaultNotificationPreferences.general, ...parsed.general },
-    }
+    return mergeNotificationPreferences(parsed)
   } catch {
     return defaultNotificationPreferences
   }

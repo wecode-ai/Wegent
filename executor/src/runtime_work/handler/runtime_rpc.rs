@@ -20,11 +20,12 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
         Box::pin(async move {
             let method = string_field(&data, "method")
                 .ok_or_else(|| AppIpcError::new("bad_request", "method is required"))?;
-            let payload = data
+            let mut payload = data
                 .get("payload")
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            self.bind_submitted_interface(&method, &mut payload, data.get("modelBinding"))?;
             self.dispatch(&method, payload).await
         })
     }

@@ -14,13 +14,21 @@ Click **Board** in the Tasks sidebar, or select **Board** from its task view men
 
 Edit responsibilities and shared preferences in the primary profile, and role responsibilities and sources in the role profile. Preferences can be edited or deleted. Changes take effect only after saving.
 
-You can also describe a role or configuration change in conversation. AI creates a proposal showing the affected roles, source scopes, and handling policies. Review it and explicitly confirm before applying. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
+You can also describe a role or configuration change in conversation. After AI creates a proposal, open **Pending settings** in the header to review the affected roles, source scopes, and handling policies. Explicitly confirm before applying. Closing the dialog only collapses the proposal; it neither accepts nor rejects it. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
+
+The main conversation keeps the transcript and composer in focus. **Work list** shows the number of items needing attention and opens their details. Connection problems and nonblocking background failures appear under **Needs attention**, with their original review and retry actions. Proactive background updates have their own marker rather than appearing as messages sent by you.
 
 ## Model selection
 
 Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. The primary conversation and the concrete work it creates both use the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
 
 ## DingTalk and collaboration sources
+
+Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.
+
+Search by app name or configured scope name at the top, or select the configured count to show existing sources only. Select **All sources** to restore the full catalog. The count is per source, and filtering does not change the stand-in's configuration.
+
+Open a source to install its plugin or sign in, then choose the receive scope and handling. Sources on remote execution devices require authorization on that device. Existing scopes remain visible and removable when a source is unavailable. Scope and handling changes take effect after saving stand-in settings; verifying a mailbox account also requires saving those settings before receiving new mail.
 
 Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
 
@@ -75,6 +83,10 @@ Record a matter and its trigger time in **Settings → Connections → Calendar*
 **Scheduled** in the Tasks sidebar remains independent and retains its goal, target task, model, and execution environment settings without requiring experimental features. Scheduled tasks and Calendar connections manage separate lists, editors, and run histories. The stand-in work list contains concrete work.
 
 The project conversation uses the existing collaboration group leader. Its header identifies the group and leader, and settings use the existing group configuration. Automatic project event handling enables that leader on the selected device. Each project/group has exactly one active member/device binding, with explicit takeover required for switching. Private chat and memory remain private until selected content is explicitly published to an Issue.
+
+## Connect GitHub and GitLab
+
+Roles can receive personal events or all subscribable repository events. The plugin provides capabilities; role instructions determine behavior. Cloud buffers repository Webhooks while the execution device is offline. External writes retain per-operation native approval. See [GitHub and GitLab connections](git-connections.md).
 
 ## Choose features on first use
 
