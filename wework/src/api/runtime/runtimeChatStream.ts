@@ -115,9 +115,22 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         subscription.eventCount,
         subscription.textDeltaCount
       )
-      measureRuntimeStreamEvent(event.event, () => {
-        emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
-      })
+      try {
+        measureRuntimeStreamEvent(event.event, () => {
+          emitResponseApiEvent(
+            subscription.handlers,
+            event.event,
+            event.payload,
+            subscription.state
+          )
+        })
+      } catch (error) {
+        console.error('[Wework] Runtime chat stream handler failed', {
+          event: event.event,
+          subscriptionId,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        })
+      }
     }
   }
 
@@ -454,6 +467,7 @@ function mergeRuntimeBlockContentSnapshots(
   if ((currentData.blockId ?? currentData.block_id) !== (nextData.blockId ?? nextData.block_id)) {
     return null
   }
+  if (asRecord(currentData.updates).status !== asRecord(nextData.updates).status) return null
   return next
 }
 

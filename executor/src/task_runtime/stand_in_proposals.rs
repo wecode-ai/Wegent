@@ -11,6 +11,7 @@ fn proposal_key(user: i64, role: Option<&str>) -> String {
 }
 
 impl LocalTaskStore {
+    /// Read a pending proposal with legacy settings normalized for owner review.
     pub fn stand_in_proposal(
         &self,
         user: i64,
@@ -23,7 +24,7 @@ impl LocalTaskStore {
                 .filter(|value| value["status"] == "pending")
                 .unwrap_or(Value::Null);
         if proposal.is_object() {
-            super::personal_stand_in::migrate_connections(&mut proposal["settings"])?;
+            super::personal_stand_in::migrate_personal_settings(&mut proposal["settings"])?;
         }
         Ok(proposal)
     }
@@ -41,6 +42,7 @@ impl LocalTaskStore {
         )
     }
 
+    /// Validate a scoped proposal and optional owner continuation without enabling its settings.
     pub fn propose_stand_in_settings_with_continuation(
         &self,
         user: i64,
@@ -63,7 +65,7 @@ impl LocalTaskStore {
                 "Invalid proposal owner request".into(),
             ));
         }
-        super::personal_stand_in::migrate_connections(&mut settings)?;
+        super::personal_stand_in::migrate_personal_settings(&mut settings)?;
         if summary.trim().is_empty() || summary.len() > 4000 {
             return Err(TaskRuntimeError::Invalid(
                 "proposal summary is required".into(),

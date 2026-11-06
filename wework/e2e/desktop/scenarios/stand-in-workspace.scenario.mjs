@@ -44,6 +44,7 @@ async function clickVisibleControl(control, target) {
   })
 }
 
+/** Verify stand-in workspace configuration and native source-work approval boundaries. */
 export function createDesktopScenario({
   workspacePath,
   homePath,
@@ -280,7 +281,8 @@ export function createDesktopScenario({
       )
       await control.command('clickWhenEnabled', selector(`model-option-${modelKey}`))
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-agent"]')
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-agent"]'), '0')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command(
