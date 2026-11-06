@@ -3,8 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <title>Wework</title>
+    <script>
+      const theme = new URLSearchParams(window.location.search).get('theme')
+      document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light'
+    </script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -49,9 +53,9 @@
                   x2="1"
                   y2="4"
                 >
-                  <stop offset="0%" stop-color="#4a91ff" />
-                  <stop offset="70%" stop-color="#8ed6ff" />
-                  <stop offset="100%" stop-color="#e2f6ff" />
+                  <stop offset="0%" class="startup-progress-stop-start" />
+                  <stop offset="70%" class="startup-progress-stop-middle" />
+                  <stop offset="100%" class="startup-progress-stop-end" />
                 </linearGradient>
               </defs>
               <line

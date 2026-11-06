@@ -4,13 +4,36 @@
   const CENTER_X = 600
   const CENTER_Y = 340
   const FORMATION_DURATION_MS = 5600
+  const WAITING_START_MS = 4700
   const STRAND_DENSITY = 1.5
   const PLAYBACK_SPEED = 1
-  const BREATHING_SCALE = 1.018
+  const LOGO_SCALE = 0.896
   const GLOW_MARGIN = 16
-  const FOOTER_GAP = 8
+  const FOOTER_GAP = 32
   const STREAM_COUNT = Math.round(32 + STRAND_DENSITY * 16)
   const TAU = Math.PI * 2
+  const PALETTES = {
+    dark: {
+      aura: '12, 59, 126',
+      auraOpacity: 0.055,
+      fibers: ['212, 242, 255', '118, 186, 255'],
+      stream: ['68, 150, 255', '157, 213, 255', '226, 248, 255'],
+      headGlow: { color: '#168eff', core: null, blur: 8 },
+      outline: '94, 180, 255',
+      highlight: '209, 242, 255',
+      composite: 'screen',
+    },
+    light: {
+      aura: '37, 99, 180',
+      auraOpacity: 0,
+      fibers: ['29, 78, 216', '37, 99, 180'],
+      stream: ['29, 78, 216', '37, 133, 216', '88, 181, 255'],
+      headGlow: { color: '#2585d8', core: '#58b5ff', blur: 5 },
+      outline: '37, 99, 180',
+      highlight: '30, 64, 175',
+      composite: 'source-over',
+    },
+  }
 
   const clamp = value => Math.max(0, Math.min(1, value))
   const mix = (start, end, amount) => start + (end - start) * amount
@@ -24,26 +47,32 @@
 
   function createLogoPath() {
     const path = new Path2D()
+    const outline = []
     const contours = window.WEWORK_STARTUP_BRAND_CONTOURS
-    const coordinates = contours.flatMap(contour => contour.points)
+    const coordinates = contours.flatMap(contour => contour.curves.flat())
     const xs = coordinates.map(([x]) => x)
     const ys = coordinates.map(([, y]) => y)
     const originX = (Math.min(...xs) + Math.max(...xs)) / 2
     const originY = (Math.min(...ys) + Math.max(...ys)) / 2
     contours.forEach(contour => {
-      const points = contour.points.map(([x, y]) => ({
-        x: (x - originX) * 1.12,
-        y: (y - originY) * 1.12,
-      }))
-      const first = points[0]
+      const curves = contour.curves.map(curve =>
+        curve.map(([x, y]) => ({ x: (x - originX) * LOGO_SCALE, y: (y - originY) * LOGO_SCALE }))
+      )
+      const first = curves[0][0]
       path.moveTo(first.x, first.y)
-      points.slice(1).forEach(point => path.lineTo(point.x, point.y))
+      outline.push(`M${first.x} ${first.y}`)
+      curves.forEach(([, controlA, controlB, end]) => {
+        path.bezierCurveTo(controlA.x, controlA.y, controlB.x, controlB.y, end.x, end.y)
+        outline.push(`C${controlA.x} ${controlA.y} ${controlB.x} ${controlB.y} ${end.x} ${end.y}`)
+      })
       path.closePath()
+      outline.push('Z')
     })
     return {
       path,
-      halfWidth: ((Math.max(...xs) - Math.min(...xs)) / 2) * 1.12,
-      halfHeight: ((Math.max(...ys) - Math.min(...ys)) / 2) * 1.12,
+      outline: outline.join(' '),
+      halfWidth: ((Math.max(...xs) - Math.min(...xs)) / 2) * LOGO_SCALE,
+      halfHeight: ((Math.max(...ys) - Math.min(...ys)) / 2) * LOGO_SCALE,
     }
   }
 
@@ -266,7 +295,7 @@
     context.stroke()
   }
 
-  function paintBackdrop(context, canvas, time, logo, viewport) {
+  function paintBackdrop(context, canvas, time, logo, viewport, palette) {
     const { width, height } = canvas
     context.setTransform(1, 0, 0, 1, 0, 0)
     context.clearRect(0, 0, width, height)
@@ -277,40 +306,26 @@
       Math.min(
         width / WIDTH,
         height / HEIGHT,
-        (width / 2 - glow) / (logo.halfWidth * BREATHING_SCALE),
-        (height / 2 - glow) / (logo.halfHeight * BREATHING_SCALE),
-        belowCenter / (logo.halfHeight * BREATHING_SCALE)
+        (width / 2 - glow) / logo.halfWidth,
+        (height / 2 - glow) / logo.halfHeight,
+        belowCenter / logo.halfHeight
       )
     )
     // Status and recovery controls take precedence when they cover the full-window center.
     if (fit === 0) return false
-    context.setTransform(fit, 0, 0, fit, (width - WIDTH * fit) / 2, (height - HEIGHT * fit) / 2)
-    const aura = context.createRadialGradient(CENTER_X, CENTER_Y, 30, CENTER_X, 310, 400)
-    aura.addColorStop(0, `rgba(12, 59, 126, ${0.08 + 0.15 * smooth(1, 3, time)})`)
-    aura.addColorStop(1, 'rgba(5, 7, 13, 0)')
+    const offsetX = (width - WIDTH * fit) / 2
+    const offsetY = (height - HEIGHT * fit) / 2
+    viewport.transform = { fit, offsetX, offsetY }
+    context.setTransform(fit, 0, 0, fit, offsetX, offsetY)
+    const aura = context.createRadialGradient(CENTER_X, CENTER_Y, 30, CENTER_X, CENTER_Y, 270)
+    aura.addColorStop(0, `rgba(${palette.aura}, ${palette.auraOpacity})`)
+    aura.addColorStop(1, `rgba(${palette.aura}, 0)`)
     context.fillStyle = aura
-    context.fillRect(0, 0, WIDTH, HEIGHT)
+    context.fillRect(-offsetX / fit, -offsetY / fit, width / fit, height / fit)
     return true
   }
 
-  function paintMaterial(context, logoPath, time) {
-    const solid = smooth(3.25, 4.7, time)
-    context.save()
-    context.translate(CENTER_X, CENTER_Y)
-    const material = context.createLinearGradient(-220, -210, 220, 210)
-    material.addColorStop(0, '#74d5ff')
-    material.addColorStop(0.32, '#149aff')
-    material.addColorStop(0.72, '#0867d4')
-    material.addColorStop(1, '#43b9ff')
-    context.globalAlpha = solid
-    context.fillStyle = material
-    context.shadowBlur = 12
-    context.shadowColor = '#168eff'
-    context.fill(logoPath)
-    context.restore()
-  }
-
-  function paintFiber(context, fiber, time, settle) {
+  function paintFiber(context, fiber, time, settle, palette) {
     const owner = fiber.owner
     const amount = owner
       ? clamp(
@@ -320,7 +335,7 @@
       : ease((time - fiber.birth) / fiber.grow)
     if (amount <= 0) return
     const brightness = fiber.brightness * (1 - settle * 0.94)
-    const tint = fiber.family ? '118, 186, 255' : '212, 242, 255'
+    const tint = palette.fibers[fiber.family ? 1 : 0]
     const color = `rgba(${tint}, ${brightness})`
     const width = fiber.family ? 0.85 : 1
     if (amount < 1) {
@@ -333,7 +348,7 @@
     context.stroke(fiber.ink)
   }
 
-  function paintStream(context, stream, index, time) {
+  function paintStream(context, stream, index, time, palette) {
     const elapsed = time - stream.birth
     if (elapsed <= 0 || elapsed >= stream.travel + 0.4) return
     const head = ease(elapsed / stream.travel)
@@ -349,63 +364,101 @@
     const fade =
       smooth(0, 0.24, elapsed) * (1 - smooth(stream.travel, stream.travel + 0.4, elapsed))
     const gradient = context.createLinearGradient(start.x, start.y, end.x + 0.01, end.y + 0.01)
-    gradient.addColorStop(0, 'rgba(69, 138, 255, 0)')
-    gradient.addColorStop(0.28, `rgba(68, 150, 255, ${fade * 0.35})`)
-    gradient.addColorStop(0.72, `rgba(157, 213, 255, ${fade * 0.72})`)
-    gradient.addColorStop(1, `rgba(226, 248, 255, ${fade * 0.92})`)
+    gradient.addColorStop(0, `rgba(${palette.stream[0]}, 0)`)
+    gradient.addColorStop(0.28, `rgba(${palette.stream[0]}, ${fade * 0.35})`)
+    gradient.addColorStop(0.72, `rgba(${palette.stream[1]}, ${fade * 0.72})`)
+    gradient.addColorStop(1, `rgba(${palette.stream[2]}, ${fade * 0.92})`)
+    context.save()
+    if (palette.headGlow) {
+      context.shadowColor = palette.headGlow.color
+      context.shadowBlur = palette.headGlow.blur
+    }
     stroke(context, points, gradient, index % 5 === 0 ? 1.8 : 1.15)
+    if (palette.headGlow?.core) {
+      context.globalAlpha *= fade
+      context.fillStyle = palette.headGlow.core
+      context.beginPath()
+      context.arc(end.x, end.y, index % 5 === 0 ? 1.5 : 1, 0, TAU)
+      context.fill()
+    }
+    context.restore()
   }
 
-  function paintFilaments(context, logoPath, fibers, streams, time) {
-    context.setTransform(1, 0, 0, 1, 0, 0)
-    context.clearRect(0, 0, WIDTH, HEIGHT)
+  function paintFilaments(context, logoPath, fibers, streams, time, palette) {
     context.save()
+    context.globalCompositeOperation = palette.composite
     context.translate(CENTER_X, CENTER_Y)
+    context.globalAlpha = 1 - smooth(4.9, 5.6, time)
     context.lineCap = 'round'
     context.lineJoin = 'round'
     const woven = smooth(0.7, 2, time)
     const settle = smooth(3.65, 4.9, time)
-    context.strokeStyle = `rgba(94, 180, 255, ${woven * (0.09 + 0.12 * (1 - settle))})`
+    context.strokeStyle = `rgba(${palette.outline}, ${woven * (0.09 + 0.12 * (1 - settle))})`
     context.lineWidth = 0.8
     context.stroke(logoPath)
-    fibers.forEach(fiber => paintFiber(context, fiber, time, settle))
-    streams.forEach((stream, index) => paintStream(context, stream, index, time))
+    fibers.forEach(fiber => paintFiber(context, fiber, time, settle, palette))
+    streams.forEach((stream, index) => paintStream(context, stream, index, time, palette))
     const ignition = Math.exp(-Math.pow((time - 3.65) / 0.4, 2))
     const solid = smooth(3.25, 4.7, time)
-    context.strokeStyle = `rgba(209, 242, 255, ${ignition * 0.7 + solid * 0.18})`
+    context.strokeStyle = `rgba(${palette.highlight}, ${ignition * 0.7 + solid * 0.18})`
     context.lineWidth = 1.3 + ignition * 1.5
     context.stroke(logoPath)
     context.restore()
   }
 
-  function compositeGlow(context, layer) {
-    context.save()
-    context.globalCompositeOperation = 'screen'
-    context.globalAlpha = 0.8
-    context.filter = 'blur(8px)'
-    context.drawImage(layer, 0, 0)
-    context.filter = 'blur(2px)'
-    context.drawImage(layer, 0, 0)
-    context.globalAlpha = 1
-    context.filter = 'none'
-    context.drawImage(layer, 0, 0)
-    context.restore()
-  }
-
   function createRenderer(canvas, viewport) {
+    const palette = PALETTES[document.documentElement.dataset.theme === 'light' ? 'light' : 'dark']
     const context = contextFor(canvas)
     const logo = createLogoPath()
     const logoPath = logo.path
     const fibers = createFibers(logoPath)
     const streams = Array.from({ length: STREAM_COUNT }, (_, index) => createStream(fibers, index))
     fibers.forEach(prepareFiber)
-    const filamentLayer = createCanvas(WIDTH, HEIGHT)
-    const ink = contextFor(filamentLayer)
+    let maskGeometry = ''
+    let materialOpacity = ''
     return time => {
-      if (!paintBackdrop(context, canvas, time, logo, viewport)) return
-      paintMaterial(context, logoPath, time)
-      paintFilaments(ink, logoPath, fibers, streams, time)
-      compositeGlow(context, filamentLayer)
+      if (!paintBackdrop(context, canvas, time, logo, viewport, palette)) {
+        canvas.parentElement.style.setProperty(
+          '--startup-logo-mask',
+          'linear-gradient(transparent, transparent)'
+        )
+        maskGeometry = ''
+        return
+      }
+      const { fit, offsetX, offsetY } = viewport.transform
+      const geometry = [canvas.width, canvas.height, fit, offsetX, offsetY].join(',')
+      if (geometry !== maskGeometry) {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${canvas.width} ${canvas.height}"><path fill="white" transform="translate(${offsetX} ${offsetY}) scale(${fit}) translate(${CENTER_X} ${CENTER_Y})" d="${logo.outline}"/></svg>`
+        canvas.parentElement.style.setProperty(
+          '--startup-logo-mask',
+          `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+        )
+        const style = window.getComputedStyle(canvas.parentElement)
+        const angle = (parseFloat(style.getPropertyValue('--startup-logo-angle')) * Math.PI) / 180
+        const highlight = parseFloat(style.getPropertyValue('--startup-logo-highlight')) / 100
+        const gradientLength =
+          2 * canvas.width * Math.sin(angle) + canvas.height * Math.abs(Math.cos(angle))
+        const peakOffset = ((highlight - 0.5) * gradientLength) / Math.sin(angle)
+        const halfWidth = logo.halfWidth * fit
+        const position = x => `${100 * (1 + (peakOffset - x) / canvas.width)}% 50%`
+        canvas.parentElement.style.setProperty(
+          '--startup-logo-sweep-start',
+          position(canvas.width / 2 - halfWidth)
+        )
+        canvas.parentElement.style.setProperty(
+          '--startup-logo-sweep-end',
+          position(canvas.width / 2 + halfWidth)
+        )
+        maskGeometry = geometry
+      }
+      const opacity = String(smooth(3.25, 4.7, time))
+      if (opacity !== materialOpacity) {
+        canvas.parentElement.style.setProperty('--startup-logo-opacity', opacity)
+        materialOpacity = opacity
+      }
+      if (time < FORMATION_DURATION_MS / 1000) {
+        paintFilaments(context, logoPath, fibers, streams, time, palette)
+      }
     }
   }
 
@@ -434,13 +487,14 @@
 
     function syncPlayback() {
       container.classList.toggle('is-paused', paused())
-      container.classList.toggle(
-        'is-breathing',
-        elapsed >= FORMATION_DURATION_MS &&
-          !motionQuery.matches &&
-          !destroyed &&
-          completionPromise === null
-      )
+      const waiting =
+        elapsed >= WAITING_START_MS &&
+        !motionQuery.matches &&
+        !destroyed &&
+        completionPromise === null
+      const wasWaiting = container.classList.contains('is-waiting-gradient')
+      container.classList.toggle('is-waiting-gradient', waiting)
+      if (waiting !== wasWaiting) render(elapsed / 1000)
       const resting =
         completion === null &&
         (paused() || elapsed >= FORMATION_DURATION_MS || completionPromise !== null)
@@ -448,26 +502,10 @@
       else if (frameId === null) frameId = window.requestAnimationFrame(frame)
     }
 
-    function readBreathingPose() {
-      if (!container.classList.contains('is-breathing')) return { scale: 1, brightness: 1 }
-      const style = window.getComputedStyle(canvas)
-      const brightness = style.filter.match(/brightness\(([\d.]+)\)/)
-      return {
-        scale: style.transform === 'none' ? 1 : new DOMMatrixReadOnly(style.transform).a,
-        brightness: brightness ? Number(brightness[1]) : 1,
-      }
-    }
-
-    function paintPose(pose, amount) {
-      canvas.style.transform = `scale(${mix(pose.scale, 1, amount)})`
-      canvas.style.filter = `brightness(${mix(pose.brightness, 1, amount)})`
-    }
-
     function finishCompletion() {
       const pending = completion
       completion = null
       elapsed = FORMATION_DURATION_MS
-      paintPose({ scale: 1, brightness: 1 }, 1)
       render(elapsed / 1000)
       syncPlayback()
       pending.resolve()
@@ -484,7 +522,6 @@
         return
       }
       elapsed = mix(completion.formation, FORMATION_DURATION_MS, amount)
-      paintPose(completion.pose, amount)
       render(elapsed / 1000)
     }
 
@@ -515,8 +552,9 @@
       canvas.height = Math.round(height * ratio)
       const bounds = container.getBoundingClientRect()
       const footer = footerElement.getBoundingClientRect()
-      viewport.footerTop =
-        Math.max(0, Math.min(height, footer.top - bounds.top)) * (canvas.height / height)
+      const footerTop = Math.max(0, Math.min(height, footer.top - bounds.top))
+      canvas.style.maskImage = `linear-gradient(to bottom, #000 ${Math.max(0, footerTop - FOOTER_GAP)}px, transparent ${footerTop}px)`
+      viewport.footerTop = footerTop * (canvas.height / height)
       viewport.pixelRatio = ratio
       render(elapsed / 1000)
     }
@@ -542,20 +580,24 @@
           new RangeError('Startup brand completion duration must be nonnegative')
         )
       }
-      const pose = readBreathingPose()
+      if (container.classList.contains('is-waiting-gradient')) {
+        container.style.setProperty(
+          '--startup-logo-position',
+          window.getComputedStyle(container, '::after').backgroundPosition
+        )
+      }
       cancelFrame()
       completionPromise = new Promise((resolve, reject) => {
         completion = {
           resolve,
           reject,
-          pose,
           formation: elapsed,
           startedAt: performance.now(),
           duration: durationMs,
         }
       })
-      paintPose(pose, 0)
-      container.classList.remove('is-breathing')
+      container.classList.remove('is-waiting-gradient')
+      render(elapsed / 1000)
       if (durationMs === 0 || document.hidden || motionQuery.matches) finishCompletion()
       else syncPlayback()
       return completionPromise
@@ -585,9 +627,7 @@
       motionQuery.removeEventListener('change', motionChanged)
       document.removeEventListener('visibilitychange', visibilityChanged)
       window.removeEventListener('pagehide', destroy)
-      container.classList.remove('is-breathing', 'is-paused')
-      canvas.style.transform = ''
-      canvas.style.filter = ''
+      container.classList.remove('is-waiting-gradient', 'is-paused')
       if (completion) {
         const pending = completion
         completion = null

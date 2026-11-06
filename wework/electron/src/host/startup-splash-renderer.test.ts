@@ -269,24 +269,24 @@ describe('startup splash renderer', () => {
     expect(html).toContain('id="startup-toast"')
     expect(styles).toContain('.startup-brand')
     expect(styles).toContain('.startup-status')
-    expect(styles).toContain('.is-breathing')
-    expect(styles).toContain('3.2s')
-    expect(styles).toContain('@keyframes startup-brand-breathe')
-    expect(styles).toContain('.startup-brand.is-paused canvas')
+    expect(styles).toContain('.is-waiting-gradient')
+    expect(styles).toContain('6s')
+    expect(styles).toContain('@keyframes startup-brand-gradient')
+    expect(styles).toContain('.startup-brand.is-paused::after')
     expect(styles).toContain('animation-play-state: paused')
     expect(styles).toContain('.startup-progress-fill')
     expect(styles).toContain('.startup-toast')
     expect(styles).toContain('.startup-timeout-actions')
     const rootStyles = styles.match(/:root\s*\{([^}]+)\}/)?.[1]
     const footerStyles = styles.match(/\.startup-status\s*\{([^}]+)\}/)?.[1]
-    expect(html).toContain('name="color-scheme" content="dark"')
+    expect(html).toContain('name="color-scheme" content="light dark"')
     expect(rootStyles).toContain('color-scheme: dark')
     expect(rootStyles).toContain('--startup-brand-background: #05070d')
-    expect(rootStyles).toContain('--startup-status-background: var(--startup-brand-background)')
+    expect(rootStyles).toContain('--startup-status-background: transparent')
     expect(footerStyles).toContain('background: var(--startup-status-background)')
     expect(footerStyles).toContain('position: relative')
     expect(footerStyles).toContain('grid-row: 2')
-    expect(styles).not.toMatch(/:root\[data-theme=/)
+    expect(styles).toContain(":root[data-theme='light']")
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
     expect(script).toContain('stageTimeoutMs()')
     expect(script).toContain('weworkStartupProgress')
@@ -825,5 +825,27 @@ describe('startup splash renderer', () => {
     await vi.waitFor(() => expect(copy).toHaveBeenCalledTimes(2))
     element('#startup-timeout-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('startup splash initial theme', () => {
+  test.each([
+    ['light', 'light'],
+    ['dark', 'dark'],
+    ['', 'light'],
+  ])('applies %s before loading styles', async (requested, expected) => {
+    const electronRoot =
+      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
+    const html = await readFile(join(electronRoot, 'src/shell/startup-splash/index.html'), 'utf8')
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1]
+    expect(script).toBeDefined()
+    expect(html.indexOf('<script>')).toBeLessThan(html.indexOf('<link rel="stylesheet"'))
+    const documentElement = { dataset: { theme: '' } }
+    runInNewContext(script!, {
+      URLSearchParams,
+      document: { documentElement },
+      window: { location: { search: '?theme=' + requested } },
+    })
+    expect(documentElement.dataset.theme).toBe(expected)
   })
 })
