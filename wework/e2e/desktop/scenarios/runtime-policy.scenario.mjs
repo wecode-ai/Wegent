@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -169,7 +170,7 @@ export function createDesktopScenario(options) {
         const command = `cat '${path.replaceAll("'", "'\\''")}'`
         const tool = selectShellToolCommand(body, command, options.workspacePath)
         callId = `runtime-policy-${phase}`
-        reply(response, id, functionCall(callId, tool.name, tool.arguments))
+        reply(response, id, selectedToolCall(callId, tool))
         return true
       } else {
         assert.ok(all.includes(SUMMARY), 'The real native compaction did not install its summary')

@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
 import { CLOUD_DEVICE_ID, createSingleRootLocalProject } from '../modules/shared.mjs'
@@ -67,13 +68,13 @@ export function createDesktopScenario({ captureScreenshot, workbenchReadyTimeout
             `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: cloud.runtimeWorkspaceRoot, yield_time_ms: 10000 })}))`
           )
           const event = customToolCall('desktop-artifact-generate', tool.name, tool.input)
-          event.item.namespace = 'functions'
+          if (tool.namespace) event.item.namespace = tool.namespace
           events = [event]
         } else {
           const tool = selectShellToolCommand(body, command, cloud.runtimeWorkspaceRoot, {
             yieldTimeMs: 10000,
           })
-          events = functionCall('desktop-artifact-generate', tool.name, tool.arguments)
+          events = selectedToolCall('desktop-artifact-generate', tool)
         }
       } else {
         const outputs = body.input.filter(item =>

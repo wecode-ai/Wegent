@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import { assert, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME } from './shared.mjs'
 import {
   assistantMessage,
@@ -88,7 +89,7 @@ export async function respondToConcurrentMcpInput(
     })
     control.writeSse(response, [
       responseCreated(responseId),
-      ...functionCall(questionId, ordinary.name, ordinary.arguments),
+      ...selectedToolCall(questionId, ordinary),
       responseCompleted(responseId),
     ])
     return
@@ -110,7 +111,7 @@ export async function respondToConcurrentMcpInput(
     })
     control.writeSse(response, [
       responseCreated(responseId),
-      ...functionCall(`wait-${scenario}`, wait.name, wait.arguments),
+      ...selectedToolCall(`wait-${scenario}`, wait),
       responseCompleted(responseId),
     ])
     return

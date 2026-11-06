@@ -87,7 +87,7 @@ function heldExecutionProgram(workspacePath, startedFile, releaseFile, progress)
 function writeToolResponse(body, response, callId, program, text) {
   const tool = selectProgrammaticExec(body, program)
   const event = customToolCall(callId, tool.name, tool.input)
-  event.item.namespace = 'functions'
+  if (tool.namespace) event.item.namespace = tool.namespace
   const progress = assistantMessage(text)
   progress.item.phase = 'commentary'
   response.writeHead(200, { 'Content-Type': 'text/event-stream' })
@@ -219,7 +219,7 @@ export function createDesktopScenario(options) {
           `// @exec: {"yield_time_ms": 120000}\ntext(await tools.update_plan({plan:[{step:"检查项目负责人及日历入口",status:"in_progress"},{step:"验证完整用户故事",status:"pending"}]}));\nlet execution = await tools.exec_command(${JSON.stringify({ cmd: command, workdir: options.workspacePath, yield_time_ms: 30000 })});\nwhile (execution.session_id) execution = await tools.write_stdin({session_id:execution.session_id,chars:"",yield_time_ms:30000});\ntext(execution)`
         )
         const event = customToolCall(CALL_ID, tool.name, tool.input)
-        event.item.namespace = 'functions'
+        if (tool.namespace) event.item.namespace = tool.namespace
         const calls = [event]
         const progress = assistantMessage(PROGRESS)
         progress.item.phase = 'commentary'

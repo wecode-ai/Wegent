@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
@@ -69,11 +70,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
             `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 10000 })}))`
           )
           const event = customToolCall('local-artifact-generate', tool.name, tool.input)
-          event.item.namespace = 'functions'
+          if (tool.namespace) event.item.namespace = tool.namespace
           events = [event]
         } else {
           const tool = selectShellToolCommand(body, command, workspacePath, { yieldTimeMs: 10000 })
-          events = functionCall('local-artifact-generate', tool.name, tool.arguments)
+          events = selectedToolCall('local-artifact-generate', tool)
         }
       } else {
         const outputs = body.input.filter(item =>

@@ -3,6 +3,27 @@ export interface ModelToolDefinition {
   namespace?: string
 }
 
+export function codeModeToolCall(
+  request: unknown,
+  requestedName: string,
+  args: Record<string, unknown>,
+  inspectToolNames: string[] = []
+): { toolName: string; arguments: { input: string } } | null {
+  const exec = modelToolDefinitions(request).find(tool =>
+    ['exec', 'functions__exec'].includes(tool.name)
+  )
+  if (!exec || requestedName === exec.name) return null
+  const input = [
+    `const requested = ${JSON.stringify(requestedName)}`,
+    'const matches = ALL_TOOLS.filter(tool => tool.name === requested || tool.name.endsWith("__" + requested))',
+    'if (matches.length !== 1) throw new Error("Native capability missing or ambiguous: " + requested)',
+    `const inspected = ${JSON.stringify(inspectToolNames)}`,
+    'text({ tools: ALL_TOOLS.filter(tool => matches.includes(tool) || inspected.some(name => tool.name === name || tool.name.endsWith("__" + name))) })',
+    `text(await tools[matches[0].name](${JSON.stringify(args)}))`,
+  ].join('\n')
+  return { toolName: exec.name, arguments: { input } }
+}
+
 export function modelToolMatches(tool: ModelToolDefinition, requested: string): boolean {
   return (
     tool.name.endsWith(requested) ||

@@ -619,7 +619,7 @@ export function createDesktopScenario({
             ].join('\n')
           )
           const event = customToolCall(MANUAL_READ_CALL, selection.name, selection.input)
-          event.item.namespace = 'functions'
+          if (selection.namespace) event.item.namespace = selection.namespace
           writeEvents(response, responseId, [event])
           return true
         }

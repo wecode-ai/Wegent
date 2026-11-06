@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import {
   codexRequestMetadata,
   customToolCall,
@@ -23,7 +24,7 @@ function programmaticCommand(request, callId, method, args) {
   ].join('\n')
   const exec = selectProgrammaticExec(request, program)
   const event = customToolCall(callId, exec.name, exec.input)
-  event.item.namespace = 'functions'
+  if (exec.namespace) event.item.namespace = exec.namespace
   return [event]
 }
 
@@ -38,7 +39,7 @@ export function shellCommandResponse(request, callId, command, workspacePath, op
   }
   const tool = selectShellToolCommand(request, command, workspacePath)
   Object.assign(tool.arguments, options)
-  return functionCall(callId, tool.name, tool.arguments)
+  return selectedToolCall(callId, tool)
 }
 
 export function shellCommandRequestDiagnostic(body) {
@@ -65,5 +66,5 @@ export function shellCommandPollResponse(request, callId, sessionId) {
     return programmaticCommand(request, callId, 'write_stdin', args)
   }
   const tool = selectTool(request, 'write_stdin', args)
-  return functionCall(callId, tool.name, tool.arguments)
+  return selectedToolCall(callId, tool)
 }

@@ -147,6 +147,7 @@ describe('programmatic exec', () => {
     expect(selectProgrammaticExec(request, 'text("ok")')).toEqual({
       name: 'exec',
       input: 'text("ok")',
+      namespace: 'functions',
     })
   })
 
