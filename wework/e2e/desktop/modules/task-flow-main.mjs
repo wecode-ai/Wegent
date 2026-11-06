@@ -1395,7 +1395,7 @@ async function main() {
       WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       ...(process.platform === 'win32' && DESKTOP_SEGMENT === 'core-task-flow'
         ? {
-            WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: join(resultDir, 'renderer-cpu'),
+            WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
             WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT: '1',
             WEWORK_E2E_RENDERER_CPU_PROFILE_TRIGGER: 'tracked-task-return',
           }
