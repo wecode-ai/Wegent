@@ -1,3 +1,4 @@
+import { BetaBadge } from '@/components/common/BetaBadge'
 import {
   Archive,
   AlarmClock,
@@ -1529,6 +1530,7 @@ function RuntimeTaskRow({
             hostId={hostId && hostId !== hostLabel ? hostId : null}
             updatedLabel={task.updatedAt ? formatRelativeSidebarTime(task.updatedAt) : null}
             branchWarning={hasRuntimeTaskBranchWarning(task)}
+            worktree={worktreeTask}
           />
         }
       >
@@ -1539,6 +1541,9 @@ function RuntimeTaskRow({
           role="button"
           tabIndex={disabled ? -1 : 0}
           aria-disabled={disabled}
+          aria-label={
+            worktreeTask ? `${task.title} · ${t('workbench.git_worktree_session')}` : undefined
+          }
           aria-current={
             splitGroup?.active
               ? splitGroup.focused
@@ -1638,13 +1643,6 @@ function RuntimeTaskRow({
               data-testid={`runtime-local-task-time-${task.taskId}`}
               className={SIDEBAR_ROW_METADATA_CLASS}
             >
-              {worktreeTask && (
-                <GitCompareArrows
-                  data-testid={`runtime-local-task-worktree-icon-${task.taskId}`}
-                  className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
-                  aria-label="Worktree"
-                />
-              )}
               {experimentalFeaturesEnabled &&
                 notificationsSubscribed &&
                 renderNotificationButton(
@@ -2838,7 +2836,7 @@ function ProjectItem({
                 ))}
                 {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
                   <div className="ml-9 flex h-8 items-center gap-2">
-                    {hasHiddenRuntimeTasks ? (
+                    {hasHiddenRuntimeTasks && (
                       <button
                         type="button"
                         data-testid={`project-runtime-tasks-expand-${project.id}`}
@@ -2850,18 +2848,21 @@ function ProjectItem({
                             )
                           )
                         }
-                        className="flex h-8 items-center rounded-md px-2 text-left text-sm font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                        aria-controls={`project-local-tasks-panel-${project.id}`}
+                        className="flex h-[30px] items-center rounded-md px-2 text-left text-base font-normal leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.expand_display', '展开显示')}
                       </button>
-                    ) : (
+                    )}
+                    {canCollapseRuntimeTasks && (
                       <button
                         type="button"
                         data-testid={`project-runtime-tasks-collapse-${project.id}`}
                         onClick={() =>
                           setRuntimeTaskVisibleLimit(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT)
                         }
-                        className="flex h-8 items-center rounded-md px-2 text-left text-sm font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                        aria-controls={`project-local-tasks-panel-${project.id}`}
+                        className="flex h-[30px] items-center rounded-md px-2 text-left text-base font-normal leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.collapse_display', '折叠显示')}
                       </button>
@@ -2921,6 +2922,7 @@ function ProjectItem({
   )
 }
 
+/** Presents workbench destinations and device-owned task lists without gating public Beta entries. */
 export function DesktopSidebar({
   user,
   projects,
@@ -4020,7 +4022,7 @@ export function DesktopSidebar({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
+        'relative z-popover h-full shrink-0 overflow-visible font-normal transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
         !collapsed && 'border-r border-black/[0.08] dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
@@ -4115,11 +4117,12 @@ export function DesktopSidebar({
               testId="new-chat-button"
               onClick={onNewChat}
             />
-            {experimentalFeaturesEnabled && onOpenStandIn && (
+            {onOpenStandIn && (
               <DesktopSidebarNavItem
                 icon={UserRound}
                 label={t('standIn.title')}
                 testId="personal-stand-in-button"
+                badge={<BetaBadge testId="personal-stand-in-beta" />}
                 selected={activeItem === 'stand-in'}
                 onClick={onOpenStandIn}
               />

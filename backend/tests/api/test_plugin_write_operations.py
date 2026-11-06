@@ -751,9 +751,7 @@ def test_reinstall_waits_for_an_ack_that_survives_a_newer_cleanup_intent(
         for row in response.json()["plugin"]["status"]["devices"]
         if row["deviceId"] == DEVICE_ID
     )
-    assert device["state"] == (
-        "installed" if superseded_attempts == 1 else "uninstalling"
-    )
+    assert device["state"] == ("installed" if superseded_attempts == 1 else "pending")
     assert device["actualReleaseId"] == context.release_id
     assert generations == ([7, 9] if superseded_attempts == 1 else [7, 9, 11])
     if superseded_attempts == 3:

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { assertStartupSplashDragRegions } from './startup-splash-drag.mjs'
 
 export function parseStartupEvents(log) {
   return [...log.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)].flatMap(match => {
@@ -234,6 +235,7 @@ export async function verifyStartupSplashProgress({
     'The real startup stage did not show its slow state before its timeout budget'
   )
   const slow = startupSlowObservation(slowEvidence)
+  assertStartupSplashDragRegions(slow)
   assert.equal(slow.failure, null)
   assert.equal(slow.recoveryHidden, true)
   assert.match(slow.title, /启动比预期慢|Startup is taking longer than expected/)
@@ -249,6 +251,7 @@ export async function verifyStartupSplashProgress({
   assert.equal(timeout.failure, null)
   assert.equal(slow.progress.startedAt, timeout.progress.startedAt)
   const timeoutObservation = startupTimeoutObservation(timeout)
+  assertStartupSplashDragRegions(timeout)
   await writeFile(
     join(root, 'observations.json'),
     `${JSON.stringify({ slowEvidence, timeout }, null, 2)}\n`
@@ -281,6 +284,7 @@ export async function verifyStartupSplashProgress({
     state => !state.failureHidden && !state.recoveryHidden,
     'The renderer error did not become a real startup failure'
   )
+  assertStartupSplashDragRegions(failure)
   assert.equal(failure.timeoutHidden, true)
   assert.equal(failure.failure?.message, 'Desktop E2E intentional renderer crash')
   assert.equal(failure.failure?.source, 'renderer_mount')

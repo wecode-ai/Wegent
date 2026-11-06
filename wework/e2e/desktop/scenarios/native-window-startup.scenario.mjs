@@ -12,6 +12,14 @@ import {
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 import { verifyFirstUsePageLoading } from '../modules/first-use-page-loading.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
+import {
+  STARTUP_SPLASH_HANDOFF_EVENTS,
+  verifyStartupSplashHandoff,
+} from '../modules/startup-splash-handoff.mjs'
+import {
+  captureStartupThemeEvidence,
+  seedStoppedStartupTheme,
+} from '../modules/startup-theme-evidence.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
@@ -42,8 +50,18 @@ async function waitForStartupLogs(resultDir) {
 
 export async function createDesktopScenario({ resultDir }) {
   let restartDesktopApp
+  let lightThemeSeed
+  const userDataDirectory = join(resultDir, 'electron-user-data')
   return {
     appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
+
+    async prepareApp() {
+      lightThemeSeed = await seedStoppedStartupTheme({
+        resultDir,
+        userDataDirectory,
+        mode: 'light',
+      })
+    },
 
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
@@ -59,9 +77,10 @@ export async function createDesktopScenario({ resultDir }) {
       const snapshot = await waitForClosedStartupSplash(control)
       assert.deepEqual(
         snapshot.events.map(event => event.name),
-        ['created', 'animation-ready', 'shown', 'closed'],
+        STARTUP_SPLASH_HANDOFF_EVENTS,
         'The Electron startup splash did not complete its animated lifecycle'
       )
+      await verifyStartupSplashHandoff({ snapshot, resultDir })
       assert.ok(
         snapshot.theme === 'light' || snapshot.theme === 'dark',
         `The Electron startup splash did not resolve a valid theme: ${snapshot.theme}`
@@ -73,7 +92,12 @@ export async function createDesktopScenario({ resultDir }) {
         'PNG',
         'The Electron startup splash evidence was not a PNG'
       )
-      const userDataDirectory = join(resultDir, 'electron-user-data')
+      await captureStartupThemeEvidence({
+        control,
+        snapshot,
+        seed: lightThemeSeed,
+        resultDir,
+      })
       await waitForStartupProgressEvidence({ userDataDirectory, resultDir })
       const appLog = await waitForStartupLogs(resultDir)
       const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
@@ -149,14 +173,36 @@ export async function createDesktopScenario({ resultDir }) {
       assert.ok(restartDesktopApp, 'The startup focus scenario requires the desktop restart hook')
       const telemetryRequestCountBeforeRestart = control.telemetryRequestCount()
       const afterBytes = (await readFile(join(userDataDirectory, 'logs', 'wework-main.log'))).length
+      let darkThemeSeed
+      const darkSplashCapturePath = join(resultDir, 'startup-theme-dark-splash.png')
       await restartDesktopApp({
+        afterStop: async () => {
+          darkThemeSeed = await seedStoppedStartupTheme({
+            resultDir,
+            userDataDirectory,
+            mode: 'dark',
+          })
+        },
         appEnvironmentOverrides: {
           WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '',
           WEWORK_E2E_STARTUP_SLOW_AFTER_MS: '',
           WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '',
+          WEWORK_E2E_STARTUP_SPLASH_CAPTURE: darkSplashCapturePath,
         },
       })
-      await waitForClosedStartupSplash(control)
+      const recoveredSplash = await waitForClosedStartupSplash(control)
+      await verifyStartupSplashHandoff({
+        snapshot: recoveredSplash,
+        resultDir,
+        name: 'startup-recovered-handoff',
+      })
+      await captureStartupThemeEvidence({
+        control,
+        snapshot: recoveredSplash,
+        seed: darkThemeSeed,
+        resultDir,
+        splashCapturePath: darkSplashCapturePath,
+      })
       await waitForStartupProgressEvidence({
         userDataDirectory,
         resultDir,
@@ -169,6 +215,9 @@ export async function createDesktopScenario({ resultDir }) {
         '[data-testid="chat-message-input"][contenteditable="true"]:focus'
       )
       const focusSnapshot = JSON.parse(await control.command('getComposerFocusSnapshot', 'body'))
+      const nativeWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(nativeWindow.visible, true, 'The workbench was hidden after the startup fade')
+      assert.equal(nativeWindow.focused, true, 'The startup handoff did not focus the workbench')
       await writeFile(
         join(resultDir, 'startup-composer-focus.json'),
         `${JSON.stringify(focusSnapshot, null, 2)}\n`

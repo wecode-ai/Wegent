@@ -960,6 +960,7 @@ describe('shared IssueDetail', () => {
     fireEvent.paste(screen.getByTestId('cloud-todo-detail-description'), {
       clipboardData: {
         files: [new File(['race'], uploaded.display_name, { type: uploaded.content_type })],
+        getData: () => '',
       },
     })
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
@@ -986,6 +987,119 @@ describe('shared IssueDetail', () => {
     })
     expect(screen.queryByText(uploaded.display_name)).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue(issue.description)
+  })
+
+  it('does not paste a screenshot file URL into the description', async () => {
+    const screenshot = new File(['tiff'], '2026-11-06_17-46-02.tiff', {
+      type: 'image/tiff',
+    })
+    const upload = jest.fn().mockResolvedValue({
+      id: 'pasted-screenshot',
+      loop_item_id: issue.id,
+      display_name: screenshot.name,
+      content_type: null,
+      size_bytes: screenshot.size,
+      created_by_user_id: 1,
+      created_at: '2026-11-06T09:46:58Z',
+      markdown_url: 'wegent://attachments/pasted-screenshot',
+      markdown: '![2026-11-06_17-46-02.tiff](wegent://attachments/pasted-screenshot)',
+    })
+    const api = createApi({
+      attachments: {
+        list: jest.fn().mockResolvedValue([]),
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    renderDetail(api)
+
+    const editor = screen.getByTestId('cloud-todo-detail-description')
+    const pasteAccepted = fireEvent.paste(editor, {
+      clipboardData: {
+        files: [screenshot],
+        types: ['Files', 'text/plain'],
+        getData: (type: string) =>
+          type === 'text/plain'
+            ? 'file:///Users/alice/Library/Metadata/CoreSpotlight/PasteboardHistory/2026-11-06_17-46-02.tiff'
+            : '',
+      },
+    })
+
+    expect(pasteAccepted).toBe(false)
+    await waitFor(() => expect(upload).toHaveBeenCalledWith(issue.id, screenshot))
+    expect(editor).toHaveValue(issue.description)
+  })
+
+  it('preserves clipboard text while stripping a pasted screenshot file URL', async () => {
+    const screenshot = new File(['tiff'], '2026-11-06_17-46-02.tiff', {
+      type: 'image/tiff',
+    })
+    const upload = jest.fn().mockResolvedValue({
+      id: 'mixed-paste-screenshot',
+      loop_item_id: issue.id,
+      display_name: screenshot.name,
+      content_type: null,
+      size_bytes: screenshot.size,
+      created_by_user_id: 1,
+      created_at: '2026-11-06T09:46:58Z',
+      markdown_url: 'wegent://attachments/mixed-paste-screenshot',
+      markdown: '![mixed](wegent://attachments/mixed-paste-screenshot)',
+    })
+    const api = createApi({
+      attachments: {
+        list: jest.fn().mockResolvedValue([]),
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    renderDetail(api)
+
+    const editor = screen.getByTestId('cloud-todo-detail-description') as HTMLTextAreaElement
+    editor.setSelectionRange(2, 2)
+    const pasteAccepted = fireEvent.paste(editor, {
+      clipboardData: {
+        files: [screenshot],
+        types: ['Files', 'text/plain'],
+        getData: (type: string) =>
+          type === 'text/plain'
+            ? '截图说明\nfile:///Users/alice/Library/Metadata/CoreSpotlight/PasteboardHistory/2026-11-06_17-46-02.tiff'
+            : '',
+      },
+    })
+
+    expect(pasteAccepted).toBe(false)
+    expect(editor).toHaveValue('原描截图说明述')
+    await waitFor(() => expect(upload).toHaveBeenCalledWith(issue.id, screenshot))
+  })
+
+  it('leaves a text-only paste to the browser', async () => {
+    const upload = jest.fn()
+    const api = createApi({
+      attachments: {
+        list: jest.fn().mockResolvedValue([]),
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    renderDetail(api)
+
+    const editor = screen.getByTestId('cloud-todo-detail-description')
+    const pasteAccepted = fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        types: ['text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? '普通文字' : ''),
+      },
+    })
+
+    expect(pasteAccepted).toBe(true)
+    expect(upload).not.toHaveBeenCalled()
   })
 
   it('keeps Issue editing, comments, assignment and starting work as separate permissions', async () => {
