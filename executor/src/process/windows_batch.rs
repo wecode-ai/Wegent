@@ -122,7 +122,17 @@ fn parse_shim_line(line: &str, shim_dir: &Path, prog: Option<&str>) -> Option<Ba
             continue;
         }
         let mut prefix_args = Vec::new();
-        if let Some(next) = tokens.get(index + 1) {
+        if is_node_launcher(&expanded) {
+            // npm shims may place node options between the launcher and script.
+            if let Some(script) = tokens
+                .iter()
+                .skip(index + 1)
+                .map(|token| expand_dp0(token, shim_dir, prog))
+                .find(|candidate| is_script_path(candidate) && Path::new(candidate).is_file())
+            {
+                prefix_args.push(script);
+            }
+        } else if let Some(next) = tokens.get(index + 1) {
             let next_expanded = expand_dp0(next, shim_dir, prog);
             if is_script_path(&next_expanded) {
                 prefix_args.push(next_expanded);
@@ -290,6 +300,28 @@ mod tests {
             root,
             "tool.cmd",
             "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\tool\\bin\\tool.js\" %*\r\n",
+        );
+
+        let target = resolve_batch_target(&shim).unwrap();
+        assert_eq!(target.program, node);
+        assert_eq!(
+            target.prefix_args,
+            vec![script.to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
+    fn resolves_node_script_after_launcher_options() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let script = root.join("node_modules").join("tool").join("cli.js");
+        fs::create_dir_all(script.parent().unwrap()).unwrap();
+        fs::write(&script, b"// script").unwrap();
+        let node = binary(root, "node.exe");
+        let shim = write_shim(
+            root,
+            "tool.cmd",
+            "@ECHO off\r\n\"%dp0%\\node.exe\" --no-warnings \"%dp0%\\node_modules\\tool\\cli.js\" %*\r\n",
         );
 
         let target = resolve_batch_target(&shim).unwrap();
