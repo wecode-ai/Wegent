@@ -143,7 +143,7 @@ function handleScopedRequest(
   port: number
 ): boolean {
   const url = new URL(req.url || '/', `http://localhost:${port}`)
-  if (url.pathname === '/e2e/mcp-marketplace/servers' && req.method === 'GET') {
+  if (url.pathname === '/mock-mcp-catalog/servers' && req.method === 'GET') {
     writeControlJson(res, 200, {
       success: true,
       total: marketplaceServers.length,
