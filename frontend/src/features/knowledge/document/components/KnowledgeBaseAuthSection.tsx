@@ -407,7 +407,7 @@ function NamespaceAuthSearch({
                   type="button"
                   onClick={() => !isBound && handleSelect(group)}
                   disabled={isBound}
-                  className={`w-full flex items-center justify-between gap-3 p-3 text-left ${
+                  className={`w-full min-h-11 flex items-center justify-between gap-3 p-3 text-left ${
                     isBound ? 'opacity-50 cursor-not-allowed' : 'hover:bg-surface cursor-pointer'
                   }`}
                 >

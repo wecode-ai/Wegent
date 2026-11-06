@@ -434,6 +434,15 @@ creationTest(
     await page.goto(`/knowledge/default/${encodeURIComponent(name)}?type=document&view=documents`)
     await page.getByTestId('knowledge-detail-permissions-tab').click()
     await page.getByTestId('knowledge-member-search').fill(REGULAR_USER.username)
+    const detail = page.getByTestId('knowledge-detail-classic')
+    await expect
+      .poll(() =>
+        detail.evaluate(element => element.getBoundingClientRect().bottom <= window.innerHeight)
+      )
+      .toBe(true)
+    await expect
+      .poll(() => page.evaluate(() => document.body.scrollHeight <= window.innerHeight))
+      .toBe(true)
     await expect(page.getByTestId('knowledge-member-count')).toContainText('1')
     await page.getByTestId('permission-add-collaborator').click()
     await expect(page.getByTestId('knowledge-auth-user-search')).toBeVisible()

@@ -747,7 +747,7 @@ function KnowledgeDocumentSession({
         </div>
       )}
 
-      <div className="flex-1 min-w-0 flex flex-col bg-base relative">
+      <div className="flex-1 min-h-0 min-w-0 flex flex-col bg-base relative">
         {sidebar.loadError && !kbResolution && (
           <div role="alert" className="p-3 text-error">
             {t('document.navigation.loadFailed')}
