@@ -6,6 +6,7 @@ import {
   isHttpUrl,
   isLocalHttpUrl,
   openExternalUrl,
+  openInExternalBrowser,
 } from './external-links'
 
 const desktopHostMock = vi.hoisted(() => vi.fn())
@@ -39,6 +40,23 @@ afterEach(() => {
 })
 
 describe('external link helpers', () => {
+  test.each(['file:///Users/', 'file:///Users/example/test.txt', 'https://example.com/'])(
+    'sends explicit browser-toolbar target %s to the browser capability',
+    async url => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      await openInExternalBrowser(url)
+      expect(desktopHostMock).toHaveBeenCalledWith('browser.openExternal', { url })
+      expect(getAppPreferencesMock).not.toHaveBeenCalled()
+      expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
+    }
+  )
+
+  test('propagates an external browser failure so the toolbar can show it', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    desktopHostMock.mockRejectedValueOnce(new Error('Browser unavailable'))
+    await expect(openInExternalBrowser('file:///Users/')).rejects.toThrow('Browser unavailable')
+  })
+
   test('accepts only http and https URLs', () => {
     expect(isHttpUrl('https://example.com')).toBe(true)
     expect(isHttpUrl('http://example.com')).toBe(true)

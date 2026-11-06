@@ -5,6 +5,7 @@ import type { BrowserAnnotationState } from '@/types/browser-annotation'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
+import { openInExternalBrowser } from '@/lib/external-links'
 
 const deviceSurfaceExtensionMock = vi.hoisted(() => ({
   available: true,
@@ -71,6 +72,7 @@ vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
 
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
+  openInExternalBrowser: vi.fn(async () => undefined),
 }))
 
 const navigationMocks = vi.hoisted(() => ({
@@ -249,6 +251,47 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.setEmbeddedBrowserAnnotationOriginalView.mockResolvedValue(undefined)
     embeddedBrowserMocks.startEmbeddedBrowserAnnotation.mockResolvedValue(undefined)
     embeddedBrowserMocks.stopEmbeddedBrowserAnnotation.mockResolvedValue(undefined)
+  })
+
+  test.each(['file:///Users/', 'file:///Users/mowei/readme.txt', 'https://example.com/'])(
+    'opens the visible address %s explicitly in an external browser',
+    async url => {
+      embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Browser fixture',
+        url,
+        isLoading: false,
+      })
+      mockBrowserHostRect()
+      render(<WorkspaceBrowserPanel active />)
+      const input = screen.getByTestId('workspace-browser-url-input')
+      fireEvent.change(input, { target: { value: url } })
+      fireEvent.submit(input.closest('form')!)
+      const button = screen.getByTestId('workspace-browser-open-external-button')
+      await waitFor(() => expect(button).toBeEnabled())
+      fireEvent.click(button)
+      await waitFor(() => expect(openInExternalBrowser).toHaveBeenCalledWith(url))
+    }
+  )
+
+  test('shows external browser failures and clears the error when retrying successfully', async () => {
+    vi.mocked(openInExternalBrowser).mockRejectedValueOnce(new Error('No browser configured'))
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'https://example.com/' } })
+    fireEvent.submit(input.closest('form')!)
+    const button = screen.getByTestId('workspace-browser-open-external-button')
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    expect(await screen.findByTestId('workspace-browser-error')).toHaveTextContent(
+      '无法在外部浏览器中打开'
+    )
+    fireEvent.click(button)
+    await waitFor(() =>
+      expect(screen.queryByTestId('workspace-browser-error')).not.toBeInTheDocument()
+    )
+    expect(openInExternalBrowser).toHaveBeenCalledTimes(2)
   })
 
   test('hides the clear-data notice while the browser panel is inactive', async () => {

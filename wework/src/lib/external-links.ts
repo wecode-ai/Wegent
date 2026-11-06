@@ -51,6 +51,20 @@ async function openWithSystemBrowser(value: string): Promise<void> {
   await invokeDesktopHost<void>('shell.openExternal', { url: value })
 }
 
+/** Explicit browser-toolbar action; does not broaden document link handling. */
+export async function openInExternalBrowser(value: string): Promise<void> {
+  const url = new URL(value)
+  if (!['http:', 'https:', 'file:'].includes(url.protocol)) {
+    throw new Error('Unsupported external browser URL')
+  }
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.openExternal', { url: url.href })
+    return
+  }
+  if (url.protocol === 'file:') throw new Error('Local browser opening requires the desktop app')
+  window.open(url.href, '_blank', 'noopener,noreferrer')
+}
+
 export async function openExternalUrl(
   value: string,
   options: OpenExternalUrlOptions = {}

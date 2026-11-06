@@ -74,7 +74,7 @@ import {
   readEmbeddedBrowserDownloadSnapshot,
   subscribeEmbeddedBrowserDownloadEvents,
 } from '@/lib/embedded-browser-download-store'
-import { openExternalUrl } from '@/lib/external-links'
+import { openInExternalBrowser } from '@/lib/external-links'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import { browserDiagnosticOrigin, normalizeBrowserUrl } from '@/lib/browser-url'
@@ -2016,7 +2016,10 @@ export function WorkspaceBrowserTabPanel({
 
   const handleOpenExternal = () => {
     if (!activePageUrl || internalExtensionPage) return
-    void openExternalUrl(activePageUrl, { target: 'system' })
+    setError(null)
+    void openInExternalBrowser(activePageUrl).catch(() =>
+      setError(t('workbench.browser_open_external_failed'))
+    )
   }
 
   const clearBrowserData = useCallback(
