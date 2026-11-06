@@ -13,19 +13,13 @@ import {
   requestUserInputQuestionTarget,
 } from '@/components/layout/requestUserInputOverlay'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { canQuickReply } from './runtimeInteractions'
 
 export function canDiscussQuestion(payload: RequestUserInputPayload): boolean {
   return Boolean(
     requestUserInputPayloadKey(payload) &&
     payload.questions?.length &&
-    payload.questions.every(question => question.id) &&
-    !payload.approvalKind &&
-    !payload.approval_kind &&
-    !payload.mode &&
-    !payload.elicitationId &&
-    !payload.serverName &&
-    (!payload.interactionKind || payload.interactionKind === 'question') &&
-    (!payload.interaction_kind || payload.interaction_kind === 'question') &&
+    payload.questions.every(question => canQuickReply({ ...payload, questions: [question] })) &&
     (!payload.interactionStatus || payload.interactionStatus === 'pending') &&
     !hasRequestUserInputResponse(payload) &&
     (!payload.expiresAtUnixMs || payload.expiresAtUnixMs > Date.now())

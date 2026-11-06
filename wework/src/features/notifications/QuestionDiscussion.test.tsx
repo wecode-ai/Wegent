@@ -293,6 +293,12 @@ test('keeps grouped asynchronous drafts bound to their individual original reque
 
 test('business discussion cannot replace native permission or connector authorization', () => {
   expect(canDiscussQuestion(payload)).toBe(true)
+  expect(
+    canDiscussQuestion({
+      ...payload,
+      questions: [{ id: 'mcp_tool_call_approval_native', question: 'Allow?' }],
+    })
+  ).toBe(false)
   for (const override of [
     { approvalKind: 'command' },
     { interactionKind: 'mcp_form' },
