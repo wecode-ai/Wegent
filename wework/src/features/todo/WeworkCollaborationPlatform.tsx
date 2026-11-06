@@ -6,7 +6,6 @@ import { bindProjectStandInApi } from '@/api/standIn'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
-import { MessageSquare } from 'lucide-react'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
@@ -377,6 +376,7 @@ export function WeworkSharedProject({
   onOpenRuntimeTask,
   onCancelRuntimeTask,
   project,
+  conversationRequestKey,
   runtimeTaskLifecycle,
   runtimeWork,
   runtimePort,
@@ -403,6 +403,7 @@ export function WeworkSharedProject({
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   project: CollaborationProject
+  conversationRequestKey?: string
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
   runtimePort?: IssueRuntimeBindingPort
@@ -414,7 +415,10 @@ export function WeworkSharedProject({
   const { t } = useTranslation('common')
   const preferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
-  const [projectChatOpen, setProjectChatOpen] = useState(false)
+  const [closedConversationRequestKey, setClosedConversationRequestKey] = useState<string>()
+  const projectChatOpen = Boolean(
+    conversationRequestKey && conversationRequestKey !== closedConversationRequestKey
+  )
   const issueChangeRequestMonitor =
     services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
       ? getChangeRequestMonitor(services.deviceApi)
@@ -542,16 +546,6 @@ export function WeworkSharedProject({
     () => ({
       renderProjectHeaderAction: currentProject => (
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            data-testid="project-space-chat-open"
-            aria-expanded={projectChatOpen}
-            onClick={() => setProjectChatOpen(open => !open)}
-            className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-          >
-            <MessageSquare className="h-4 w-4" aria-hidden="true" />
-            {t('workbench.project_space_chat.open')}
-          </button>
           {experimentalFeaturesEnabled && (
             <ProjectCoordinatorConversation
               key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
@@ -643,8 +637,6 @@ export function WeworkSharedProject({
       focusedItemId,
       devices,
       experimentalFeaturesEnabled,
-      projectChatOpen,
-      t,
       standInWorkspaceApi,
       scopedApi,
       onOpenRuntimeTask,
@@ -1357,11 +1349,12 @@ export function WeworkSharedProject({
       </div>
       {projectChatOpen && (
         <ProjectSpaceChatSidebar
-          key={`${project.project_store}:${project.id}`}
+          key={`${project.project_store}:${project.id}:${conversationRequestKey}`}
           project={editorProject}
           localProjects={localProjects}
           localExecution
-          onClose={() => setProjectChatOpen(false)}
+          startNew
+          onClose={() => setClosedConversationRequestKey(conversationRequestKey)}
         />
       )}
     </div>
@@ -1413,6 +1406,12 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     ]
   )
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
+  const [conversationRequest, setConversationRequest] = useState<{
+    projectId: string
+    projectStore: CollaborationProject['project_store']
+    accountScope: string
+    key: string
+  }>()
   const api = props.services.sharedWorkspaceApi
   const locale = useMemo(() => (i18n.language.startsWith('zh') ? 'zh-CN' : 'en'), [i18n.language])
   const collaborationUserName =
@@ -1682,6 +1681,14 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           accountScope: templateScope,
           templateStore,
           templateNavigation: true,
+          openProjectConversation: project => {
+            setConversationRequest({
+              projectId: project.id,
+              projectStore: project.project_store,
+              accountScope: templateScope,
+              key: crypto.randomUUID(),
+            })
+          },
           renderProjectSidebarBadge: project => {
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
@@ -1994,6 +2001,13 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               onOpenRuntimeTask={props.onOpenRuntimeTask}
               sendRuntimePaneMessage={props.sendRuntimePaneMessage}
               project={project}
+              conversationRequestKey={
+                conversationRequest?.projectId === project.id &&
+                conversationRequest.projectStore === project.project_store &&
+                conversationRequest.accountScope === templateScope
+                  ? conversationRequest.key
+                  : undefined
+              }
               runtimeTaskLifecycle={props.runtimeTaskLifecycle}
               runtimeWork={props.runtimeWork}
               runtimePort={runtimePort}

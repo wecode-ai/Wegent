@@ -258,9 +258,9 @@ The **Human processing** settings page only explains the direct-assignment and r
 
 ## Message AI
 
-Select **Conversations** in the collaboration project header to open its conversation sidebar. No collaboration group, AI leader, or experimental feature is required. Both local and cloud projects are supported. New conversations run on the current computer with the current project board as their default context, subject to the user's actual access and execution permissions.
+Select the **New conversation** icon next to a project in the collaboration sidebar to open that project with a new conversation on the right. No collaboration group, AI leader, or experimental feature is required. Both local and cloud projects are supported. New conversations run on the current computer with the current project board as their default context, subject to the user's actual access and execution permissions.
 
-Send a message directly or select a local code project as the working directory first. Start new conversations, switch between existing conversations, or close and reopen the sidebar to continue the same conversation. Local and cloud project histories are kept separate. If the local execution environment is unavailable, the sidebar reports the error; send again after recovery.
+Send a message directly or select a local code project as the working directory first. Start new conversations, switch between existing conversations, or reopen the sidebar and choose a previous conversation to continue it. Local and cloud project histories are kept separate. If the local execution environment is unavailable, the sidebar reports the error; send again after recovery.
 
 Opening a conversation does not enable background project coordination. For work that needs a tracked owner, status, and deliverables, create a board task and assign a member, robot, or collaboration group.
 

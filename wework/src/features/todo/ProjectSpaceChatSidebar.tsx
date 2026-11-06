@@ -37,6 +37,7 @@ interface ProjectSpaceChatSidebarProps {
   localProjects: ProjectWithTasks[]
   onClose: () => void
   localExecution?: boolean
+  startNew?: boolean
 }
 
 const PROJECT_CHAT_DEFAULT_WIDTH = 420
@@ -101,6 +102,7 @@ export function ProjectSpaceChatSidebar({
   localProjects,
   onClose,
   localExecution = false,
+  startNew = false,
 }: ProjectSpaceChatSidebarProps) {
   const { t } = useTranslation('common')
   const { state, services } = useWorkbenchPaneContext()
@@ -128,7 +130,7 @@ export function ProjectSpaceChatSidebar({
   const [selectedConversationKey, setSelectedConversationKey] = useState<string | null>(() =>
     window.localStorage.getItem(lastConversationStorageKey(project))
   )
-  const [creatingNew, setCreatingNew] = useState(false)
+  const [creatingNew, setCreatingNew] = useState(startNew)
   const [chatInstance, setChatInstance] = useState(0)
   const [width, setWidth] = useState(storedProjectChatWidth)
   const [resizing, setResizing] = useState(false)

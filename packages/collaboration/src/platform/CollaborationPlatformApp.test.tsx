@@ -796,6 +796,7 @@ function PlatformHarness({
   renderProject,
   renderIssueComposer,
   renderStandInPage,
+  openProjectConversation,
   currentUser,
   workspaceOwnerOptions,
   defaultAssistant,
@@ -809,6 +810,7 @@ function PlatformHarness({
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
+  openProjectConversation?: CollaborationPlatformHostAdapter["openProjectConversation"];
   currentUser?: CollaborationPlatformHostAdapter["currentUser"];
   api: SharedWorkspaceApi;
   navigationApis?: SharedWorkspaceApi[];
@@ -836,6 +838,7 @@ function PlatformHarness({
     cloudAccess,
     renderIssueComposer,
     renderStandInPage,
+    openProjectConversation,
     currentUser,
     location,
     capabilities,
@@ -1983,6 +1986,33 @@ describe("CollaborationPlatformApp real component flow", () => {
       '"rootView":"home"',
     );
     expect(byTestId("test-location").textContent).toContain('"projectId":null');
+  });
+
+  it("opens a host project conversation from the sidebar without creating an Issue", async () => {
+    const { api } = createApi();
+    const openProjectConversation = vi.fn();
+    await render(
+      <PlatformHarness
+        api={api}
+        openProjectConversation={openProjectConversation}
+      />,
+    );
+    await click(
+      byTestId(`collaboration-project-new-conversation-${project.id}`),
+    );
+    expect(openProjectConversation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: project.id }),
+    );
+    expect(byTestId("test-location").textContent).toContain(
+      `"projectId":"${project.id}"`,
+    );
+    expect(byTestId("test-location").textContent).toContain(
+      '"projectView":"board"',
+    );
+    expect(
+      container.querySelector('[data-testid="collaboration-issue-home"]'),
+    ).toBeNull();
+    expect(api.issues.create).not.toHaveBeenCalled();
   });
 
   it("starts the first project from collaboration home and preserves its workspace", async () => {

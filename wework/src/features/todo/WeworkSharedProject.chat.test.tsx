@@ -49,20 +49,16 @@ it.each(['local', 'backend'] as const)(
       workspace: { id: 'w1', name: 'Workspace' },
       setLocation: vi.fn(),
     } as unknown as ComponentProps<typeof WeworkSharedProject>
-    render(<WeworkSharedProject {...props} />)
+    const { rerender } = render(<WeworkSharedProject {...props} />)
     const user = userEvent.setup()
-    const open = screen.getByTestId('project-space-chat-open')
-    expect(open).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('chat-sidebar')).not.toBeInTheDocument()
-    await user.click(open)
+    rerender(<WeworkSharedProject {...props} conversationRequestKey="request-one" />)
     expect(screen.getByTestId('chat-sidebar')).toHaveTextContent(project.name)
     expect(screen.getByTestId('chat-sidebar')).toHaveAttribute('data-local', 'true')
-    expect(open).toHaveAttribute('aria-expanded', 'true')
     await user.click(screen.getByTestId('chat-close'))
     expect(screen.queryByTestId('chat-sidebar')).not.toBeInTheDocument()
-    await user.click(open)
-    await user.click(open)
-    expect(screen.queryByTestId('chat-sidebar')).not.toBeInTheDocument()
+    rerender(<WeworkSharedProject {...props} conversationRequestKey="request-two" />)
+    expect(screen.getByTestId('chat-sidebar')).toBeInTheDocument()
     expect(listGroups).not.toHaveBeenCalled()
   }
 )
