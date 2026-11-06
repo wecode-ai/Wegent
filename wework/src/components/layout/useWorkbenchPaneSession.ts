@@ -447,7 +447,12 @@ export function useWorkbenchPaneSession({
   const [threadGoal, setThreadGoal] = useState<RuntimeGoal | null>(null)
   const [taskPlan, setTaskPlan] = useState<RuntimePlanEventPayload | null>(null)
   const [pendingGoalState, setPendingGoalState] = useState<PendingRuntimeGoalState | null>(null)
-  const [goalDraftActive, setGoalDraftActive] = useState(false)
+  const goalDraftActive = projectChat.goalDraftActiveByScope?.[inputScopeKey] ?? false
+  const setGoalDraftActiveForScope = projectChat.setGoalDraftActiveForScope
+  const setGoalDraftActive = useCallback(
+    (active: boolean) => setGoalDraftActiveForScope(inputScopeKey, active),
+    [inputScopeKey, setGoalDraftActiveForScope]
+  )
   const loadedRuntimeTranscriptKeyRef = useRef<string | null>(null)
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const currentRuntimeTaskRef = useRef(currentRuntimeTask)
@@ -2239,6 +2244,7 @@ export function useWorkbenchPaneSession({
         currentRuntimeTask,
         goalDraftActive,
         getRuntimeModelFields,
+        setGoalDraftActive,
         input,
         inputRevision,
         sharedInputRevision,
@@ -2600,17 +2606,17 @@ export function useWorkbenchPaneSession({
     projectChat.setSelectedModelOption('collaborationMode', 'default')
     setGoalDraftActive(true)
     return true
-  }, [projectChat])
+  }, [projectChat, setGoalDraftActive])
 
   const cancelGoalDraft = useCallback(() => {
     setGoalDraftActive(false)
-  }, [])
+  }, [setGoalDraftActive])
 
   const editCurrentGoal = useCallback(() => {
     if (!goal) return
     replaceInput(goal.objective)
     setGoalDraftActive(true)
-  }, [goal, replaceInput])
+  }, [goal, replaceInput, setGoalDraftActive])
 
   const updateCurrentGoalStatus = useCallback(
     async (status: RuntimeGoal['status']) => {

@@ -48,9 +48,25 @@ const mocks = vi.hoisted(() => ({
   setError: vi.fn(),
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbenchPaneContext: () => mocks.context,
-}))
+vi.mock('@/features/workbench/useWorkbench', async () => {
+  const { useState, useCallback } = await import('react')
+  return {
+    useWorkbenchPaneContext: () => {
+      const [goalDraftActiveByScope, setGoals] = useState<Record<string, boolean>>({})
+      const setGoalDraftActiveForScope = useCallback((scope: string, active: boolean) => {
+        setGoals(current => ({ ...current, [scope]: active }))
+      }, [])
+      return {
+        ...mocks.context,
+        projectChat: {
+          ...(mocks.context.projectChat as object),
+          goalDraftActiveByScope,
+          setGoalDraftActiveForScope,
+        },
+      }
+    },
+  }
+})
 
 const address = {
   deviceId: 'original-device',

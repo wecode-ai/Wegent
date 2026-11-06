@@ -59,6 +59,7 @@ import {
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { prepareGoalCompletionRace } from './goal-completion-race.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
+import { verifyGoalDraftNavigation } from './goal-draft-flows.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -618,6 +619,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({
     ACTIVE_WORKBENCH_SELECTOR
   )
   await completionRace?.reset()
+  await verifyGoalDraftNavigation({ composerSelector, control, taskRowTestId: goalTaskRowTestId })
 }
 
 async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {

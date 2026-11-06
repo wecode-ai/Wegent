@@ -1525,6 +1525,9 @@ function ProjectSendProbe({
       <button type="button" onClick={() => void paneSession.setCurrentGoal()}>
         set goal
       </button>
+      <button type="button" onClick={paneSession.cancelGoalDraft}>
+        cancel goal draft
+      </button>
       <button
         type="button"
         onClick={() => workbench.projectChat.setSelectedModelOption('collaborationMode', 'plan')}
@@ -8161,6 +8164,33 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('workbench-error')).toHaveTextContent('')
     expect(screen.getByTestId('goal-objective')).toHaveTextContent('none')
   })
+
+  test.each([false, true])(
+    'retains goal draft mode across pane remounts and isolates it by conversation (with input=%s)',
+    async withInput => {
+      const services = createWorkbenchServices({
+        runtimeWorkApi: createRuntimeWorkApiMock() as WorkbenchServices['runtimeWorkApi'],
+      })
+      renderWorkbench(<ProjectSendProbe />, services)
+      await userEvent.click(await screen.findByText('open project runtime task'))
+      if (withInput) await userEvent.click(screen.getByText('set input'))
+      await userEvent.click(screen.getByText('set goal'))
+      expect(screen.getByTestId('goal-draft-active')).toHaveTextContent(/^active$/)
+
+      await userEvent.click(screen.getByText('start new chat'))
+      expect(screen.getByTestId('goal-draft-active')).toHaveTextContent('inactive')
+      expect(screen.getByTestId('composer-input').textContent).toBe('')
+      await userEvent.click(screen.getByText('open project runtime task'))
+      expect(screen.getByTestId('goal-draft-active')).toHaveTextContent(/^active$/)
+      expect(screen.getByTestId('composer-input').textContent).toBe(withInput ? '修复 CI' : '')
+
+      await userEvent.click(screen.getByText('cancel goal draft'))
+      await userEvent.click(screen.getByText('start new chat'))
+      await userEvent.click(screen.getByText('open project runtime task'))
+      expect(screen.getByTestId('goal-draft-active')).toHaveTextContent('inactive')
+      expect(screen.getByTestId('composer-input').textContent).toBe(withInput ? '修复 CI' : '')
+    }
+  )
 
   test('reports a visible error when submitting an empty goal draft', async () => {
     const services = createWorkbenchServices({

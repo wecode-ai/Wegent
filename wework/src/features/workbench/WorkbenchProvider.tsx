@@ -482,6 +482,16 @@ function OwnedWorkbenchProvider({
     setInput: writeDraftInputForScope,
     getRevision: getInputRevisionForScope,
   } = useWorkspaceTabDraftInput(workspaceTabId)
+  const [goalDraftActiveByScope, setGoalDraftActiveByScope] = useState<Record<string, boolean>>({})
+  const setGoalDraftActiveForScope = useCallback((scopeKey: string, active: boolean) => {
+    setGoalDraftActiveByScope(current => {
+      if (Boolean(current[scopeKey]) === active) return current
+      const next = { ...current }
+      if (active) next[scopeKey] = true
+      else delete next[scopeKey]
+      return next
+    })
+  }, [])
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
@@ -2736,6 +2746,8 @@ function OwnedWorkbenchProvider({
     () => ({
       scopeKey: projectChatScopeKey,
       inputByScope: draftInputByScope,
+      goalDraftActiveByScope,
+      setGoalDraftActiveForScope,
       getInputRevisionForScope,
       models: conversationModels,
       skills: skillSelection.skills,
@@ -2814,6 +2826,8 @@ function OwnedWorkbenchProvider({
       requestTaskComposerCatalogs,
       draftInput,
       draftInputByScope,
+      goalDraftActiveByScope,
+      setGoalDraftActiveForScope,
       getInputRevisionForScope,
       composerError,
       composerErrorByScope,
