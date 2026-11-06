@@ -1,5 +1,13 @@
-import { useCallback, useContext, useId, useMemo, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { X } from 'lucide-react'
 import {
   ToolInteractionServicesProvider,
@@ -9,9 +17,7 @@ import {
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getRuntimeConversationMessages } from '@/features/workbench/runtimeConversationCache'
 import type { WorkbenchMessage, RuntimeTaskComposerCreateOptions } from '@/types/workbench'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
@@ -30,6 +36,8 @@ const renderUserInput = (props: RequestUserInputCardProps) => <RequestUserInputC
 
 /** Each workbench owns its discussion surface; drafts remain shared across tabs. */
 export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
+  const { t } = useTranslation('common')
+  const opener = useRef<HTMLElement | null>(null)
   const store = useContext(QuestionDiscussionStoreContext)
   const inheritedServices = useToolInteractionServices()
   const toolServices = useMemo(
@@ -38,6 +46,9 @@ export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
   )
   const [selected, setSelected] = useState<string | null>(null)
   const [opened, setOpened] = useState<string[]>([])
+  useEffect(() => {
+    if (!selected && opener.current?.isConnected) opener.current.focus({ preventScroll: true })
+  }, [selected])
   const [scopeAccount, setScopeAccount] = useState(store?.accountKey)
   if (scopeAccount !== store?.accountKey) {
     setScopeAccount(store?.accountKey)
@@ -48,46 +59,60 @@ export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
     (source: RuntimeTaskAddress, payload: RequestUserInputPayload) => {
       if (!store || !canDiscussQuestion(payload)) return
       const key = questionDiscussionKey(source, payload)
+      opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
       store.update(key, current => ({
         ...current,
         source,
         payload,
         address: current?.address ?? null,
         answers: current?.answers ?? {},
-        conclusions: current?.conclusions ?? {},
       }))
       setSelected(JSON.stringify([store.accountKey, key]))
       setOpened(current => (current.includes(key) ? current : [...current, key]))
     },
     [store]
   )
-  const value = useMemo(() => (store ? { open } : null), [store, open])
+  const value = useMemo(
+    () => (store ? { open, isOpen: Boolean(selected) } : null),
+    [store, open, selected]
+  )
   return (
     <QuestionDiscussionContext.Provider value={value}>
-      <ToolInteractionServicesProvider value={toolServices}>
-        {children}
-      </ToolInteractionServicesProvider>
-      {opened.map(
-        key =>
-          store?.sessions[key] && (
-            <QuestionDiscussionDialog
-              key={`${store.accountKey}:${key}`}
-              sessionKey={key}
-              session={store.sessions[key]}
-              open={selected === JSON.stringify([store.accountKey, key])}
-              onClose={() =>
-                setSelected(current =>
-                  current === JSON.stringify([store.accountKey, key]) ? null : current
-                )
-              }
-            />
-          )
-      )}
+      <div className="flex h-full min-h-0 min-w-0">
+        <div className={`h-full min-h-0 min-w-0 flex-1 ${selected ? 'hidden md:block' : ''}`}>
+          <ToolInteractionServicesProvider value={toolServices}>
+            {children}
+          </ToolInteractionServicesProvider>
+        </div>
+        <aside
+          hidden={!selected}
+          aria-label={t('question_discussion.title')}
+          data-testid="question-discussion-sidebar"
+          className="h-full min-h-0 w-full shrink-0 border-l border-border bg-background md:w-[min(28rem,45vw)]"
+        >
+          {opened.map(
+            key =>
+              store?.sessions[key] && (
+                <QuestionDiscussionPanel
+                  key={`${store.accountKey}:${key}`}
+                  sessionKey={key}
+                  session={store.sessions[key]}
+                  open={selected === JSON.stringify([store.accountKey, key])}
+                  onClose={() =>
+                    setSelected(current =>
+                      current === JSON.stringify([store.accountKey, key]) ? null : current
+                    )
+                  }
+                />
+              )
+          )}
+        </aside>
+      </div>
     </QuestionDiscussionContext.Provider>
   )
 }
 
-function QuestionDiscussionDialog({
+function QuestionDiscussionPanel({
   sessionKey,
   session,
   open,
@@ -121,16 +146,22 @@ function QuestionDiscussionDialog({
   const [questionId, setQuestionId] = useState(session.payload.questions![0].id!)
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(onClose, open)
+  const panelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (open) panelRef.current?.focus({ preventScroll: true })
+  }, [open])
   const [initialAddress] = useState(session.address)
-  const conclusion = session.conclusions[questionId] ?? ''
+  const checkingRef = useRef(false)
   const onAddressChange = useCallback(
     (address: RuntimeTaskAddress | null) => {
       update(sessionKey, current => ({ ...current!, address }))
     },
     [sessionKey, update]
   )
-  const apply = async () => {
+  const apply = async (text: string) => {
+    if (checkingRef.current || !text.trim()) return
+    checkingRef.current = true
+    const target = requestUserInputQuestionTarget(session.payload, questionId)
     setChecking(true)
     setError(null)
     try {
@@ -154,7 +185,6 @@ function QuestionDiscussionDialog({
         beforeCursor = page.beforeCursor
         cursors.add(beforeCursor)
       } while (beforeCursor)
-      const target = requestUserInputQuestionTarget(session.payload, questionId)
       const live = pendingDiscussionQuestion(pages.flat(), target.payload)
       if (
         !live ||
@@ -165,45 +195,45 @@ function QuestionDiscussionDialog({
         return
       }
       store.update(questionDiscussionKey(session.source, target.payload), current => ({
+        ...current,
         source: session.source,
         payload: target.payload,
         address: current?.address ?? null,
-        conclusions: current?.conclusions ?? {},
-        answers: { ...current?.answers, [target.questionId]: conclusion.trim() },
+        answers: { ...current?.answers, [target.questionId]: text.trim() },
       }))
       onClose()
     } catch {
       setError(t('question_discussion.failed'))
     } finally {
+      checkingRef.current = false
       setChecking(false)
     }
   }
-  return createPortal(
-    <div
-      hidden={!open}
-      aria-hidden={!open}
-      inert={!open}
-      className={
-        open
-          ? 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-2 md:p-6'
-          : 'hidden'
-      }
-    >
+  return (
+    <div hidden={!open} aria-hidden={!open} inert={!open} className="h-full min-h-0">
       <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
+        ref={panelRef}
+        role="region"
+        onKeyDown={event => {
+          if (event.key === 'Escape' && !event.defaultPrevented) {
+            event.preventDefault()
+            event.stopPropagation()
+            onClose()
+          }
+        }}
         aria-labelledby={`${id}-title`}
         tabIndex={-1}
         data-testid="question-discussion-dialog"
-        className="flex h-full max-h-[52rem] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-background text-text-primary shadow-lg"
+        className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-text-primary"
       >
         <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3">
           <div className="min-w-0 flex-1">
             <h2 id={`${id}-title`} className="text-base font-medium">
               {t('question_discussion.title')}
             </h2>
-            <p className="mt-1 text-sm text-text-secondary">{t('question_discussion.hint')}</p>
+            <p className="mt-1 line-clamp-2 text-sm text-text-secondary">
+              {session.payload.questions?.find(question => question.id === questionId)?.question}
+            </p>
           </div>
           <button
             type="button"
@@ -215,6 +245,42 @@ function QuestionDiscussionDialog({
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </header>
+        {(session.payload.questions!.length > 1 || checking || error) && (
+          <div className="shrink-0 space-y-2 px-4 pb-2">
+            {session.payload.questions!.length > 1 && (
+              <>
+                <label htmlFor={`${id}-question`} className="block text-sm font-medium">
+                  {t('question_discussion.answer_for')}
+                </label>
+                <select
+                  id={`${id}-question`}
+                  data-testid="question-discussion-question"
+                  value={questionId}
+                  onChange={event => setQuestionId(event.target.value)}
+                  disabled={checking}
+                  className="block min-h-11 w-full min-w-0 max-w-full rounded-lg border border-border bg-background px-2 text-sm md:min-h-8"
+                >
+                  {session.payload.questions!.map(question => (
+                    <option key={question.id} value={question.id}>
+                      {question.question ?? question.header}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+            {checking && (
+              <p role="status" className="text-sm text-text-secondary">
+                {t('question_discussion.checking')}
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="text-sm text-status-error">
+                {error}
+              </p>
+            )}
+          </div>
+        )}
+
         <div
           data-testid="question-discussion-content"
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -225,109 +291,31 @@ function QuestionDiscussionDialog({
             instanceId={`question-discussion:${sessionKey}`}
             testId="question-discussion-conversation"
             initialAddress={initialAddress}
+            controlledAddress={session.address}
+            draft={{
+              value:
+                session.input ??
+                (session.address
+                  ? ''
+                  : questionDiscussionPrompt(session.payload, t('question_discussion.prompt'))),
+              onChange: input => store.update(sessionKey, current => ({ ...current!, input })),
+            }}
             active={open}
             initialInput={
               initialAddress
                 ? ''
                 : questionDiscussionPrompt(session.payload, t('question_discussion.prompt'))
             }
-            autoSubmitInitialInput={!initialAddress}
             onAddressChange={onAddressChange}
             createTask={createTask}
             showExecutionTools={false}
             expanded
-            emptyStateText={t('question_discussion.starting')}
+            emptyStateText={t('question_discussion.empty')}
+            onFillSelectionToAnswer={open && !checking ? text => void apply(text) : undefined}
             placeholder={t('question_discussion.placeholder')}
           />
         </div>
-        <footer
-          data-testid="question-discussion-answer"
-          className="flex shrink-0 flex-col gap-2 border-t border-border p-3"
-        >
-          <label htmlFor={`${id}-question`} className="text-sm font-medium">
-            {t('question_discussion.answer_for')}
-          </label>
-          <select
-            id={`${id}-question`}
-            data-testid="question-discussion-question"
-            value={questionId}
-            onChange={event => setQuestionId(event.target.value)}
-            disabled={checking}
-            className="min-h-11 rounded-lg border border-border bg-background px-2 text-sm md:min-h-8"
-          >
-            {session.payload.questions!.map(question => (
-              <option key={question.id} value={question.id}>
-                {question.question ?? question.header}
-              </option>
-            ))}
-          </select>
-          <textarea
-            data-testid="question-discussion-conclusion"
-            aria-label={t('question_discussion.conclusion')}
-            rows={2}
-            value={conclusion}
-            disabled={checking}
-            placeholder={t('question_discussion.conclusion')}
-            onChange={event => {
-              const text = event.target.value
-              store.update(sessionKey, current => ({
-                ...current!,
-                conclusions: { ...current!.conclusions, [questionId]: text },
-              }))
-            }}
-            className="max-h-32 min-h-16 resize-y rounded-lg border border-border bg-background p-2 text-sm keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-          />
-          {error && (
-            <p role="alert" className="text-sm text-status-error">
-              {error}
-            </p>
-          )}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p role="status" className="text-xs text-text-secondary">
-              {t('question_discussion.review_hint')}
-            </p>
-            <button
-              type="button"
-              data-testid="question-discussion-use-reply"
-              disabled={checking || !session.address}
-              onClick={() => {
-                const reply =
-                  session.address &&
-                  [...getRuntimeConversationMessages(session.address)]
-                    .reverse()
-                    .find(
-                      message =>
-                        message.role === 'assistant' &&
-                        message.status === 'done' &&
-                        message.content.trim()
-                    )
-                if (!reply) {
-                  setError(t('question_discussion.no_reply'))
-                  return
-                }
-                setError(null)
-                store.update(sessionKey, current => ({
-                  ...current!,
-                  conclusions: { ...current!.conclusions, [questionId]: reply.content },
-                }))
-              }}
-              className="min-h-11 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-50 md:min-h-8"
-            >
-              {t('question_discussion.use_reply')}
-            </button>
-            <button
-              type="button"
-              data-testid="question-discussion-apply"
-              onClick={() => void apply()}
-              disabled={checking || !conclusion.trim() || !canDiscussQuestion(session.payload)}
-              className="min-h-11 rounded-lg bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50 md:min-h-8"
-            >
-              {t(checking ? 'question_discussion.checking' : 'question_discussion.apply')}
-            </button>
-          </div>
-        </footer>
       </div>
-    </div>,
-    document.body
+    </div>
   )
 }

@@ -1,6 +1,10 @@
 import { SupersededConversationRead } from '@/features/workbench/runtimeConversationSynchronization'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
-import { useRuntimeConversationSnapshot } from '@/features/workbench/useRuntimeConversationSnapshot'
+import {
+  useRuntimeConversationMetadata,
+  useRuntimeConversationQueue,
+  useRuntimeConversationSnapshot,
+} from '@/features/workbench/useRuntimeConversationSnapshot'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import { useDebugSnapshotPublisher } from '@/features/workbench/useDebugSnapshotPublisher'
 
@@ -84,7 +88,6 @@ import type {
   RequestUserInputResponse,
   RuntimeGoal,
   RuntimeGoalCreateInput,
-  RuntimePlanEventPayload,
   RuntimeName,
   RuntimeAdditionalContext,
   RuntimeRollbackRequest,
@@ -98,7 +101,6 @@ import type {
   GuidanceWorkbenchMessage,
   RuntimePaneQueuedMessage,
   RuntimePaneTranscript,
-  RuntimeSubagentStatus,
   WorkbenchMessage,
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
@@ -110,6 +112,7 @@ import {
 } from '@/lib/browser-annotation-context'
 import {
   applyRuntimeConversationAction,
+  appendAcceptedRuntimeConversationMessage,
   appendOptimisticRuntimeConversationGuidance,
   beginRuntimeConversationOperation,
   beginRuntimeGoalSnapshot,
@@ -118,6 +121,7 @@ import {
   clearInterruptedRuntimeConversationGuidanceExcept,
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
+  getRuntimeConversationTurnIds,
   getRuntimeConversationMetadata,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueueDiagnosticSnapshotByKey,
@@ -131,7 +135,6 @@ import {
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
   restoreOptimisticallyInterruptedRuntimeConversation,
-  subscribeRuntimeConversation,
   takeInterruptedRuntimeConversationGuidance,
   updateRuntimeConversationBlocks,
   replaceRuntimeConversationSnapshot,
@@ -260,12 +263,8 @@ export function useWorkbenchPaneSession({
     () => queueController?.attach({ lifecycleStore, sendRuntimePaneMessage }),
     [lifecycleStore, queueController, sendRuntimePaneMessage]
   )
-  const [queuedMessages, setQueuedMessagesState] = useState<RuntimePaneQueuedMessage[]>(() =>
-    queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
-  )
-  const [queuedMessagesPaused, setQueuedMessagesPausedState] = useState(() =>
-    queuedMessageScopeKey ? getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey) : false
-  )
+  const { messages: queuedMessages, paused: queuedMessagesPaused } =
+    useRuntimeConversationQueue(currentRuntimeTask)
   const setQueuedMessages = useCallback(
     (update: SetStateAction<RuntimePaneQueuedMessage[]>) => {
       if (!queuedMessageScopeKey) return
@@ -273,7 +272,6 @@ export function useWorkbenchPaneSession({
       const next = typeof update === 'function' ? update(previous) : update
       if (next === previous) return
       cacheRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey, next)
-      setQueuedMessagesState(next)
     },
     [queuedMessageScopeKey]
   )
@@ -284,7 +282,6 @@ export function useWorkbenchPaneSession({
       const next = typeof update === 'function' ? update(previous) : update
       if (next === previous) return
       cacheRuntimeConversationQueuePausedByKey(queuedMessageScopeKey, next)
-      setQueuedMessagesPausedState(next)
     },
     [queuedMessageScopeKey]
   )
@@ -444,11 +441,13 @@ export function useWorkbenchPaneSession({
   const [transcriptFullContent, setTranscriptFullContent] = useState(false)
   const [loadedTranscriptRanges, setLoadedTranscriptRanges] = useState<LoadedTranscriptRange[]>([])
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
-  const [subagentStatuses, setSubagentStatuses] = useState<RuntimeSubagentStatus[]>([])
-  const [threadGoal, setThreadGoal] = useState<RuntimeGoal | null>(null)
-  const [taskPlan, setTaskPlan] = useState<RuntimePlanEventPayload | null>(null)
   const [pendingGoalState, setPendingGoalState] = useState<PendingRuntimeGoalState | null>(null)
-  const [goalDraftActive, setGoalDraftActive] = useState(false)
+  const goalDraftActive = projectChat.goalDraftActiveByScope?.[inputScopeKey] ?? false
+  const setGoalDraftActiveForScope = projectChat.setGoalDraftActiveForScope
+  const setGoalDraftActive = useCallback(
+    (active: boolean) => setGoalDraftActiveForScope(inputScopeKey, active),
+    [inputScopeKey, setGoalDraftActiveForScope]
+  )
   const loadedRuntimeTranscriptKeyRef = useRef<string | null>(null)
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const currentRuntimeTaskRef = useRef(currentRuntimeTask)
@@ -482,6 +481,11 @@ export function useWorkbenchPaneSession({
     runtimeTaskLoadTarget !== null && transcriptLoadingMoreBeforeKey === runtimeTaskLoadTarget.key
   const [draftMessages, setDraftMessages] = useState<WorkbenchMessage[]>([])
   const conversation = useRuntimeConversationSnapshot(runtimeTaskLoadTarget?.address ?? null)
+  const {
+    goal: threadGoal,
+    taskPlan,
+    subagentStatuses,
+  } = useRuntimeConversationMetadata(runtimeTaskLoadTarget?.address ?? null)
   const messages = runtimeTaskLoadTarget ? conversation.messages : draftMessages
   const turns = conversation.turns
   const messagesRef = useRef<WorkbenchMessage[]>(messages)
@@ -623,15 +627,6 @@ export function useWorkbenchPaneSession({
   ])
 
   useEffect(() => {
-    setQueuedMessagesState(
-      queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
-    )
-    setQueuedMessagesPausedState(
-      queuedMessageScopeKey ? getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey) : false
-    )
-  }, [queuedMessageScopeKey])
-
-  useEffect(() => {
     if (currentRuntimeTaskLoadTarget) {
       setRetainedRuntimeTaskLoadTarget(current =>
         current?.key === currentRuntimeTaskLoadTarget.key ? current : currentRuntimeTaskLoadTarget
@@ -644,35 +639,14 @@ export function useWorkbenchPaneSession({
   }, [runtimeTaskLoadTarget])
 
   useEffect(() => {
-    if (!runtimeTaskLoadTarget) {
-      setSubagentStatuses([])
-      setTaskPlan(null)
-      return
-    }
-    const { address } = runtimeTaskLoadTarget
-    const syncConversationState = () => {
-      const metadata = getRuntimeConversationMetadata(address)
-      if (metadata.goal && metadata.goal.threadId !== 'pending') {
-        clearRuntimePaneGoalSeed(address)
-        setPendingGoalState(current =>
-          current && isPendingGoalVisibleForRuntimeTarget(current, address) ? null : current
-        )
-      }
-      setSubagentStatuses(metadata.subagentStatuses)
-      setTaskPlan(metadata.taskPlan)
-      setThreadGoal(metadata.goal)
-    }
-    syncConversationState()
-    return subscribeRuntimeConversation(address, () => {
-      syncConversationState()
-      setQueuedMessagesState(
-        getRuntimeConversationQueuedMessagesByKey(runtimeConversationKey(address))
-      )
-      setQueuedMessagesPausedState(
-        getRuntimeConversationQueuePausedByKey(runtimeConversationKey(address))
-      )
-    })
-  }, [runtimeTaskLoadTarget])
+    if (!runtimeTaskLoadTarget || !threadGoal || threadGoal.threadId === 'pending') return
+    clearRuntimePaneGoalSeed(runtimeTaskLoadTarget.address)
+    setPendingGoalState(current =>
+      current && isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
+        ? null
+        : current
+    )
+  }, [runtimeTaskLoadTarget, threadGoal])
 
   useEffect(() => {
     messagesRef.current = messages
@@ -691,10 +665,7 @@ export function useWorkbenchPaneSession({
   }, [refreshWorkLists])
 
   useEffect(() => {
-    if (!runtimeTaskLoadTarget) {
-      setThreadGoal(null)
-      return
-    }
+    if (!runtimeTaskLoadTarget) return
 
     const seededGoal = getRuntimePaneGoalSeed(runtimeTaskLoadTarget.address)
     if (seededGoal) {
@@ -1093,7 +1064,7 @@ export function useWorkbenchPaneSession({
   const applyLocalRequestUserInputResponses = useCallback(
     (responses: readonly RequestUserInputResponse[]) => {
       if (!currentRuntimeTask) return
-      const previousCount = messagesRef.current.length
+      const previousCount = getRuntimeConversationMessages(currentRuntimeTask).length
       const nextMessages = updateRuntimeConversationBlocks(currentRuntimeTask, block =>
         responses.reduce(
           (current, response) => applyRequestUserInputResponseToBlock(current, response),
@@ -1121,7 +1092,7 @@ export function useWorkbenchPaneSession({
       try {
         const appendedLocalMessage =
           options.appendLocalMessage !== false &&
-          !pendingRequestUserInputPayload(messagesRef.current)
+          !pendingRequestUserInputPayload(getRuntimeConversationMessages(currentRuntimeTask))
         if (appendedLocalMessage) {
           applyRuntimeConversationAction(currentRuntimeTask, {
             type: 'user_added',
@@ -1168,6 +1139,10 @@ export function useWorkbenchPaneSession({
       if (!currentRuntimeTask) return false
       if (interruptAndSendInFlightRef.current) return false
       interruptAndSendInFlightRef.current = true
+      const deferLocalMessage = Boolean(
+        pendingRequestUserInputPayload(getRuntimeConversationMessages(currentRuntimeTask))
+      )
+      const turnIdsBeforeSend = getRuntimeConversationTurnIds(currentRuntimeTask)
       const interruptedGuidanceIds = new Set<string>()
       const interruptedGuidances = queuedMessages.filter(isInterruptedGuidance)
       interruptedGuidances.forEach(guidance => {
@@ -1186,12 +1161,15 @@ export function useWorkbenchPaneSession({
       const attachments = localRuntimeAttachments(messageAttachments)
       const terminalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
       const additionalContext = { ...message.additionalContext, ...terminalContext }
-      appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
-        id: message.id,
-        createdAt: message.createdAt,
-        runtimeGoalRequest: message.runtimeGoalRequest,
-        codeComments: message.codeComments,
-      })
+      if (!deferLocalMessage) {
+        appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
+          id: message.id,
+          createdAt: message.createdAt,
+          runtimeGoalRequest: message.runtimeGoalRequest,
+          codeComments: message.codeComments,
+        })
+      }
+      let queued = false
       const sent = await interruptAndSendRuntimePaneMessage(
         {
           address: currentRuntimeTask,
@@ -1205,7 +1183,12 @@ export function useWorkbenchPaneSession({
           ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
           ...(message.origin ? { origin: message.origin } : {}),
         },
-        { onError: setError }
+        {
+          onError: setError,
+          onQueued: () => {
+            queued = true
+          },
+        }
       )
       interruptAndSendInFlightRef.current = false
       if (!sent) {
@@ -1231,12 +1214,22 @@ export function useWorkbenchPaneSession({
                 : item
             )
         )
-        removeRuntimeConversationTurn(currentRuntimeTask, {
-          clientUserMessageId: message.id,
-        })
+        if (!deferLocalMessage) {
+          removeRuntimeConversationTurn(currentRuntimeTask, {
+            clientUserMessageId: message.id,
+          })
+        }
         return false
       }
 
+      if (deferLocalMessage && !queued) {
+        appendAcceptedRuntimeConversationMessage(
+          currentRuntimeTask,
+          createRuntimeQueuedUserMessage(message),
+          lifecycleStore.getTask(currentRuntimeTask)?.turn.id ?? null,
+          turnIdsBeforeSend
+        )
+      }
       markRuntimeTerminalAdditionalContextDelivered(terminalContext)
       setQueuedMessages(messages =>
         messages.filter(item => item.id !== message.id && !interruptedGuidanceIds.has(item.id))
@@ -1247,6 +1240,7 @@ export function useWorkbenchPaneSession({
       appendLocalUserMessage,
       currentRuntimeTask,
       interruptAndSendRuntimePaneMessage,
+      lifecycleStore,
       queuedMessages,
       setError,
       setQueuedMessages,
@@ -1319,7 +1313,7 @@ export function useWorkbenchPaneSession({
   const retryFailedMessageInPane = useCallback(
     async (message: WorkbenchMessage): Promise<boolean> => {
       if (!currentRuntimeTask || continuationInFlightRef.current) return false
-      const failedMessage = messagesRef.current.find(
+      const failedMessage = getRuntimeConversationMessages(currentRuntimeTask).find(
         currentMessage =>
           currentMessage.id === message.id &&
           currentMessage.role === 'assistant' &&
@@ -1352,7 +1346,7 @@ export function useWorkbenchPaneSession({
         return false
       }
 
-      const currentMessages = messagesRef.current
+      const currentMessages = getRuntimeConversationMessages(currentRuntimeTask)
       const messageIndex = currentMessages.findIndex(item => item.id === message.id)
       if (!isEditableLastUserMessage(currentMessages, messageIndex)) {
         setError('只能编辑最后一轮已完成的问题')
@@ -1669,7 +1663,10 @@ export function useWorkbenchPaneSession({
         const answerIsUserMessage =
           options.appendUserMessage ||
           isAsyncRequestUserInputPayload(
-            findRequestUserInputPayload(messagesRef.current, requestUserInputKey)
+            findRequestUserInputPayload(
+              getRuntimeConversationMessages(currentRuntimeTask),
+              requestUserInputKey
+            )
           )
         if (answerIsUserMessage) {
           const answerMessage: RuntimePaneQueuedMessage = {
@@ -2242,6 +2239,7 @@ export function useWorkbenchPaneSession({
         currentRuntimeTask,
         goalDraftActive,
         getRuntimeModelFields,
+        setGoalDraftActive,
         input,
         inputRevision,
         sharedInputRevision,
@@ -2603,17 +2601,17 @@ export function useWorkbenchPaneSession({
     projectChat.setSelectedModelOption('collaborationMode', 'default')
     setGoalDraftActive(true)
     return true
-  }, [projectChat])
+  }, [projectChat, setGoalDraftActive])
 
   const cancelGoalDraft = useCallback(() => {
     setGoalDraftActive(false)
-  }, [])
+  }, [setGoalDraftActive])
 
   const editCurrentGoal = useCallback(() => {
     if (!goal) return
     replaceInput(goal.objective)
     setGoalDraftActive(true)
-  }, [goal, replaceInput])
+  }, [goal, replaceInput, setGoalDraftActive])
 
   const updateCurrentGoalStatus = useCallback(
     async (status: RuntimeGoal['status']) => {

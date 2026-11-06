@@ -234,10 +234,10 @@ export function RequestUserInputCard({
             for (const [questionId, answer] of Object.entries(answers)) {
               const target = requestUserInputQuestionTarget(props.payload, questionId)
               store.update(questionDiscussionKey(address, target.payload), current => ({
+                ...current,
                 source: address,
                 payload: target.payload,
                 address: current?.address ?? null,
-                conclusions: current?.conclusions ?? {},
                 answers: { ...current?.answers, [target.questionId]: answer },
               }))
             }

@@ -356,6 +356,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.wait_done": "等待工具结果",
     "conversation.tool_activity.wait_error": "等待工具结果失败",
     "conversation.tool_activity.wait_running": "等待工具结果",
+    "conversation.workbench.fill_selection_to_answer": "填入回答",
     "conversation.workbench.add_selection_to_conversation": "添加到对话",
     "conversation.workbench.ask_selection_in_sidebar": "在侧边栏中提问",
     "conversation.file_changes.editing_files": "正在编辑 {{count}} 个文件",
@@ -775,6 +776,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.wait_done": "Waited for tool result",
     "conversation.tool_activity.wait_error": "Failed waiting for tool result",
     "conversation.tool_activity.wait_running": "Wait for tool result",
+    "conversation.workbench.fill_selection_to_answer": "Fill answer",
     "conversation.workbench.add_selection_to_conversation":
       "Add to conversation",
     "conversation.workbench.ask_selection_in_sidebar": "Ask in sidebar",

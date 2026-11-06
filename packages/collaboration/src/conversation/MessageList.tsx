@@ -119,6 +119,7 @@ export interface MessageListProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
+  onFillSelectionToAnswer?: (text: string) => void
   virtualScrollAdjustmentEnabled?: boolean
   virtualAnchor?: 'start' | 'end'
   virtualAnchorToEnd?: boolean
@@ -192,6 +193,7 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
+  onFillSelectionToAnswer,
   virtualAnchorToEnd = true,
   virtualAnchor = 'end',
   virtualScrollAdjustmentEnabled = true,
@@ -588,8 +590,11 @@ export const MessageList = memo(function MessageList({
     )
   }, [layoutKey, measureRows, messageVirtualizer, virtualLayoutReady])
 
+  const hasSelectionActions = Boolean(
+    onAddSelectionToConversation || onAskSelectionInSidebar || onFillSelectionToAnswer
+  )
   useEffect(() => {
-    if (!useContentVisibility && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
+    if (!useContentVisibility && !hasSelectionActions) return
 
     const updateSelectionState = (
       preserveCapturedSelection = false,
@@ -622,7 +627,7 @@ export const MessageList = memo(function MessageList({
         return
       }
       setIsTextSelectionActive(useContentVisibility)
-      if (!onAddSelectionToConversation || !onAskSelectionInSidebar) return
+      if (!hasSelectionActions) return
 
       const range = selection.getRangeAt(0)
       const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
@@ -694,7 +699,14 @@ export const MessageList = memo(function MessageList({
       window.removeEventListener('scroll', handleScroll, true)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [conversationKey, useContentVisibility, onAddSelectionToConversation, onAskSelectionInSidebar])
+  }, [
+    conversationKey,
+    useContentVisibility,
+    hasSelectionActions,
+    onAddSelectionToConversation,
+    onAskSelectionInSidebar,
+    onFillSelectionToAnswer,
+  ])
 
   const applySelectionAction = (action: (text: string) => void) => {
     if (!textSelection) return
@@ -728,13 +740,28 @@ export const MessageList = memo(function MessageList({
           : 'none'
       }
     >
-      {textSelection && textSelection.conversationKey === conversationKey && (
-        <SelectionActionsPopover
-          position={{ left: textSelection.left, top: textSelection.top }}
-          onAddToConversation={() => applySelectionAction(onAddSelectionToConversation!)}
-          onAskInSidebar={() => applySelectionAction(onAskSelectionInSidebar!)}
-        />
-      )}
+      {hasSelectionActions &&
+        textSelection &&
+        textSelection.conversationKey === conversationKey && (
+          <SelectionActionsPopover
+            position={{ left: textSelection.left, top: textSelection.top }}
+            onAddToConversation={
+              onAddSelectionToConversation
+                ? () => applySelectionAction(onAddSelectionToConversation)
+                : undefined
+            }
+            onAskInSidebar={
+              onAskSelectionInSidebar
+                ? () => applySelectionAction(onAskSelectionInSidebar)
+                : undefined
+            }
+            onFillAnswer={
+              onFillSelectionToAnswer
+                ? () => applySelectionAction(onFillSelectionToAnswer)
+                : undefined
+            }
+          />
+        )}
       {(virtualMessages
         ? virtualRows.map((virtualRow, position) => ({
             index: virtualRow.index,

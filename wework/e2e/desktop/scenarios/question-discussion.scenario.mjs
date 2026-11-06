@@ -23,12 +23,17 @@ import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { waitForElementWidth } from '../modules/layout-metrics.mjs'
 
 const PROMPT = '请帮我整理本周项目进展，先确定周报的接收范围。'
+const MULTI_PROMPT = `${PROMPT} 还要确定发送时间。`
+const LONG_QUESTION =
+  '当项目周报包含尚未公开的产品计划、跨团队协作进展和需要负责人确认的风险事项时，应该在什么时间向不同接收范围发送以及如何确认发送前已经完成敏感信息检查？'
 const QUESTION = '项目周报应该发给谁？'
 const FOLLOW_UP = '如果有敏感事项呢？请给出可以回填的结论。'
 const ADVICE =
   '建议先发给项目成员。这样能覆盖协作需要，也能减少不必要的信息扩散。你更关心协作效率，还是敏感信息的保护？'
 const CONCLUSION = '周报仅发送给项目成员，敏感事项只保留给项目负责人。'
 const COMPLETE = '已确认接收范围，将按这个结论继续整理周报。'
+const SELECTED = '周报仅发送给项目成员'
+const FILL_SELECTION = '[data-testid="fill-selection-to-answer-button"]'
 const ORDINARY_MESSAGE = '先只整理，不发送周报。'
 const DIALOG = '[aria-hidden="false"] > [data-testid="question-discussion-dialog"]'
 const SIDE = `${DIALOG} [data-testid="question-discussion-conversation"]`
@@ -71,7 +76,12 @@ export function createDesktopScenario({
         events = [assistantMessage(COMPLETE)]
       } else if (!requestContainsToolOutput(body, callId)) {
         const tool = selectTool(body, 'request_user_input_async', {
-          questions: [{ title: QUESTION, options: ['项目成员', '全公司'] }],
+          questions: [
+            { title: QUESTION, options: ['项目成员', '全公司'] },
+            ...(text.includes(MULTI_PROMPT)
+              ? [{ title: LONG_QUESTION, options: ['确认后发送', '定时发送'] }]
+              : []),
+          ],
         })
         firstToolName = tool.name
         events = functionCall(callId, tool.name, tool.arguments)
@@ -141,13 +151,57 @@ export function createDesktopScenario({
       )
       assert.equal(finalAnswers, 0, 'Folding and reopening cannot cancel or answer the question')
       await control.command('click', `${CARD} [data-testid="request-user-input-discuss"]`)
+      const sideComposer = `${SIDE} [data-testid="chat-message-input"]`
+      await control.command('waitFor', sideComposer, { visible: true })
+      const prepared = await control.command('getValue', sideComposer)
+      assert.ok(prepared.includes(QUESTION), 'Opening should prepare an editable question')
+      assert.equal(discussionCalls, 0, 'Opening must not send a model request')
+      await captureScreenshot(control, 'question-discussion-02a-unsent-prompt.png', 'body')
+      const editedPrompt = `${prepared}\n请先讨论项目成员方案。`
+      await control.command('fill', sideComposer, { value: editedPrompt })
+      await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('click', '[data-testid="workspace-tab-add-pending-interactions"]')
+      await control.command('waitFor', `${PAGE} [data-testid="interaction-list-item"]`, {
+        text: QUESTION,
+        visible: true,
+      })
+      await control.command('click', `${PAGE} [data-testid="interaction-list-item"]`, {
+        text: QUESTION,
+      })
+      await control.command('clickWhenEnabled', `${PAGE} [data-testid="interaction-discuss"]`)
+      await control.command('waitFor', sideComposer, {
+        text: '请先讨论项目成员方案。',
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getValue', sideComposer),
+        editedPrompt,
+        'Unsent edits must be shared across entry points'
+      )
+      assert.equal(discussionCalls, 0, 'Cross-entry draft editing must not send')
+      await captureScreenshot(control, 'question-discussion-02b-shared-unsent-prompt.png', 'body')
+      await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
+      await control.command('click', `${PAGE} [data-testid="interaction-open-original"]`)
+      await control.command('waitFor', CARD, { text: QUESTION, visible: true })
+      await control.command('click', `${CARD} [data-testid="request-user-input-discuss"]`)
+      await control.command('waitFor', sideComposer, {
+        text: '请先讨论项目成员方案。',
+        visible: true,
+      })
+      await control.command('clickWhenEnabled', `${SIDE} [data-testid="send-message-button"]`)
       await control.command('waitFor', `${SIDE} [data-testid="message-assistant"]`, {
         text: ADVICE,
         visible: true,
       })
       assert.equal(finalAnswers, 0, 'Opening discussion cannot answer the original question')
+      const [originalCard] = JSON.parse(await control.command('getElementMetrics', CARD))
+      const [discussionPanel] = JSON.parse(await control.command('getElementMetrics', DIALOG))
+      assert.ok(
+        originalCard.right <= discussionPanel.left + 1,
+        'Discussion must sit beside the original question without covering it'
+      )
       await captureScreenshot(control, 'question-discussion-02-discuss-options.png', 'body')
-      const sideComposer = `${SIDE} [data-testid="chat-message-input"]`
       await control.command('fill', sideComposer, { value: FOLLOW_UP })
       await control.command('clickWhenEnabled', `${SIDE} [data-testid="send-message-button"]`)
       await control.command('waitFor', `${SIDE} [data-testid="message-assistant"]`, {
@@ -155,17 +209,6 @@ export function createDesktopScenario({
         visible: true,
       })
       await captureScreenshot(control, 'question-discussion-03-follow-up.png', 'body')
-      await control.command(
-        'clickWhenEnabled',
-        `${DIALOG} [data-testid="question-discussion-use-reply"]`
-      )
-      assert.equal(
-        await control.command(
-          'getValue',
-          `${DIALOG} [data-testid="question-discussion-conclusion"]`
-        ),
-        CONCLUSION
-      )
       await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
       // Reach the actual pending-work page through its native tab entry.
       await control.command('click', '[data-testid="workspace-tab-add"]')
@@ -197,37 +240,22 @@ export function createDesktopScenario({
         narrow.scrollWidth <= narrow.clientWidth,
         'The discussion must not overflow horizontally'
       )
-      const [applyButton] = JSON.parse(
-        await control.command(
-          'getElementMetrics',
-          `${DIALOG} [data-testid="question-discussion-apply"]`
-        )
-      )
+      await control.command('selectText', `${SIDE} [data-testid="message-assistant"]`, {
+        value: SELECTED,
+      })
+      await control.command('waitFor', FILL_SELECTION, { visible: true })
+      const [fillButton] = JSON.parse(await control.command('getElementMetrics', FILL_SELECTION))
       assert.ok(
-        applyButton.bottom <= applyButton.viewportHeight && applyButton.left >= 0,
-        'The conclusion action must remain visible on a narrow screen'
-      )
-      const [composer] = JSON.parse(
-        await control.command(
-          'getElementMetrics',
-          `${SIDE} [data-testid="right-workspace-chat-composer-shell"]`
-        )
-      )
-      const [answerRegion] = JSON.parse(
-        await control.command(
-          'getElementMetrics',
-          `${DIALOG} [data-testid="question-discussion-answer"]`
-        )
-      )
-      assert.ok(
-        composer.bottom <= answerRegion.top + 1,
-        'The discussion composer must not cover the conclusion region'
+        fillButton.left >= 0 &&
+          fillButton.right <= fillButton.viewportWidth &&
+          fillButton.bottom <= fillButton.viewportHeight,
+        'Selected-text fill must stay reachable on a narrow screen'
       )
       await captureScreenshot(control, 'question-discussion-04a-narrow.png', 'body')
       await control.command('clickAt', 'body', {
         value: JSON.stringify({
-          x: applyButton.left + applyButton.width / 2,
-          y: applyButton.top + applyButton.height / 2,
+          x: fillButton.left + fillButton.width / 2,
+          y: fillButton.top + fillButton.height / 2,
         }),
       })
       await control.command(
@@ -238,7 +266,12 @@ export function createDesktopScenario({
       await captureScreenshot(control, 'question-discussion-04a2-narrow-answer.png', 'body')
       await control.command('setMainWindowSize', 'body', { value: previousSize })
       await control.command('clickWhenEnabled', `${PAGE} [data-testid="interaction-discuss"]`)
-      await waitForElementWidth(control, DIALOG, width => width > 700, 'restored discussion')
+      await waitForElementWidth(
+        control,
+        DIALOG,
+        width => Math.abs(width - discussionPanel.width) < 1,
+        'restored sidebar discussion'
+      )
       await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
       await control.command('navigate', 'body', { value: '/settings/appearance' })
       await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]')
@@ -250,13 +283,14 @@ export function createDesktopScenario({
         visible: true,
       })
       await captureScreenshot(control, 'question-discussion-04b-dark.png', 'body')
-      await control.command(
-        'clickWhenEnabled',
-        `${DIALOG} [data-testid="question-discussion-apply"]`
-      )
+      await control.command('selectText', `${SIDE} [data-testid="message-assistant"]`, {
+        value: SELECTED,
+      })
+      await control.command('clickWhenEnabled', FILL_SELECTION)
       const answer = `${PAGE} [data-testid="request-user-input-custom-question_1"]`
       await control.command('waitFor', answer, { visible: true })
-      assert.equal(await control.command('getValue', answer), CONCLUSION)
+      assert.equal(await control.command('getValue', answer), SELECTED)
+      await control.command('fill', answer, { value: CONCLUSION })
       assert.equal(finalAnswers, 0, 'Filling a draft cannot submit it')
       await captureScreenshot(control, 'question-discussion-05-editable-answer.png', 'body')
       await control.command(
@@ -288,12 +322,33 @@ export function createDesktopScenario({
       await mkdir(ordinaryWorkspace, { recursive: true })
       await createSingleRootLocalProject(control, ordinaryWorkspace, '收起问题后继续沟通')
       await selectE2EModel(control)
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PROMPT })
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: MULTI_PROMPT })
       await control.command(
         'clickWhenEnabled',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
       )
       await control.command('waitFor', CARD, { text: QUESTION, visible: true })
+      await control.command('click', `${CARD} [data-testid="request-user-input-discuss"]`)
+      const multiSize = await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 480, height: 760 }),
+      })
+      await waitForElementWidth(
+        control,
+        DIALOG,
+        width => width <= 480,
+        'multi-question narrow sidebar'
+      )
+      const target = `${DIALOG} [data-testid="question-discussion-question"]`
+      await control.command('fill', target, { value: 'question_2' })
+      const [selectBounds] = JSON.parse(await control.command('getElementMetrics', target))
+      assert.ok(
+        selectBounds.left >= 0 && selectBounds.right <= selectBounds.viewportWidth,
+        'Long target questions must fit the narrow sidebar'
+      )
+      await captureScreenshot(control, 'question-discussion-08-multi-question-narrow.png', 'body')
+      assert.equal(discussionCalls, 2, 'Opening a second question must only prefill its composer')
+      await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
+      await control.command('setMainWindowSize', 'body', { value: multiSize })
       await control.command('click', `${CARD} [data-testid="request-user-input-ignore-button"]`)
       await control.command('waitFor', expandQuestion, { visible: true })
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ORDINARY_MESSAGE })

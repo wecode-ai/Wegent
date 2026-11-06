@@ -1409,10 +1409,11 @@ describe('TemporaryChatPanel', () => {
     expect(screen.getByTestId('request-user-input-custom-old')).toBeVisible()
   })
 
-  it.each(['accepted', 'rejected', 'queued'] as const)(
+  it.each(['accepted', 'rejected', 'queued', 'pumped-queued'] as const)(
     'retains a folded question until the side composer message is delivered (%s)',
     async outcome => {
       mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      mocks.busy = outcome === 'pumped-queued'
       const question = {
         kind: 'request_user_input' as const,
         itemId: 'held-question',
@@ -1436,7 +1437,7 @@ describe('TemporaryChatPanel', () => {
           ],
         },
       ] as typeof mocks.conversationMessages
-      render(
+      const panel = () => (
         <TemporaryChatPanel
           currentProject={null}
           source={address}
@@ -1444,6 +1445,7 @@ describe('TemporaryChatPanel', () => {
           instanceId="held-question"
         />
       )
+      const { rerender } = render(panel())
       await userEvent.type(
         screen.getByTestId('request-user-input-custom-audience'),
         'Saved recipients'
@@ -1455,13 +1457,23 @@ describe('TemporaryChatPanel', () => {
           new Promise<boolean>(resolve => {
             const options = args[1] as { onQueued?: (response: { queuePosition: number }) => void }
             finish = () => {
-              if (outcome === 'queued') options.onQueued?.({ queuePosition: 1 })
+              if (outcome === 'queued' || outcome === 'pumped-queued')
+                options.onQueued?.({ queuePosition: 1 })
               resolve(outcome !== 'rejected')
             }
           })
       )
       expect(screen.getByTestId('mock-send')).toBeEnabled()
       await userEvent.click(screen.getByTestId('mock-send'))
+      if (outcome === 'pumped-queued') {
+        expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+        mocks.busy = false
+        mocks.lifecycleSnapshot = {
+          derived: { isRunning: false, isTurnActive: false },
+          turn: { id: null },
+        }
+        rerender(panel())
+      }
       await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
       expect(screen.getByTestId('request-user-input-expand')).toBeVisible()
       await act(async () => {

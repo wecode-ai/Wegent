@@ -161,6 +161,23 @@ describe('TemporaryChatPanel executor-cache recovery', () => {
     )
   })
 
+  it('adopts an already cached discussion when another entry finishes creating it', async () => {
+    await synchronizeRuntimeConversation(async () => transcript(), address)
+    const panel = (controlledAddress: RuntimeTaskAddress | null) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="late-bound-discussion"
+        controlledAddress={controlledAddress}
+      />
+    )
+    const { rerender } = render(panel(null))
+    expect(screen.queryByText('Saved side reply')).not.toBeInTheDocument()
+    rerender(panel(address))
+    await waitFor(() => expect(screen.getByText('Saved side reply')).toBeInTheDocument())
+    expect(mocks.loadTranscript).not.toHaveBeenCalled()
+  })
+
   it('reuses a mounted or recently cached ephemeral conversation without reading history', async () => {
     vi.useFakeTimers()
     await synchronizeRuntimeConversation(async () => transcript(), address)

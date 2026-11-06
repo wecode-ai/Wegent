@@ -58,7 +58,7 @@ export interface QuestionDiscussionSession {
   payload: RequestUserInputPayload
   address: RuntimeTaskAddress | null
   answers: Record<string, string>
-  conclusions: Record<string, string>
+  input?: string
 }
 
 export function questionDiscussionDrafts(
@@ -93,6 +93,7 @@ export interface QuestionDiscussionStore {
 export const QuestionDiscussionStoreContext = createContext<QuestionDiscussionStore | null>(null)
 export const QuestionDiscussionContext = createContext<{
   open(source: RuntimeTaskAddress, payload: RequestUserInputPayload): void
+  isOpen?: boolean
 } | null>(null)
 
 export function useQuestionDiscussion() {

@@ -71,6 +71,7 @@ function ScrollableMessagePaneContent({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
+  onFillSelectionToAnswer,
   autoScrollSuspended = false,
   searchTarget,
   messageTarget,
@@ -316,6 +317,7 @@ function ScrollableMessagePaneContent({
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
+                onFillSelectionToAnswer={onFillSelectionToAnswer}
                 virtualAnchorToEnd={virtualAnchorToEnd}
                 virtualAnchor={virtualAnchor}
                 virtualScrollAdjustmentEnabled={virtualScrollAdjustmentEnabled}

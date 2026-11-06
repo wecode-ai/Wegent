@@ -1,6 +1,6 @@
 import '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useContext, useRef, useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { QuestionDiscussionScope } from './QuestionDiscussionScope'
@@ -21,36 +21,53 @@ import type { WorkbenchMessage } from '@/types/workbench'
 const mock = vi.hoisted(() => ({
   create: vi.fn(),
   load: vi.fn(),
-  messages: [] as WorkbenchMessage[],
-}))
-vi.mock('@/features/workbench/runtimeConversationCache', () => ({
-  getRuntimeConversationMessages: () => mock.messages,
+  selectedText: '仅自己，可以保留草稿',
 }))
 vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: (props: {
-    autoSubmitInitialInput: boolean
+    autoSubmitInitialInput?: boolean
     initialInput: string
+    initialAddress?: unknown
+    draft?: { value: string; onChange(value: string): void }
+    controlledAddress?: unknown
     createTask: (message: string, options: object) => Promise<unknown>
     onAddressChange: (address: unknown) => void
+    onFillSelectionToAnswer?: (text: string) => void
   }) => {
     const started = useRef(false)
+    const [localInput, setLocalInput] = useState(props.initialInput)
+    const input = props.draft?.value ?? localInput
+    const setInput = props.draft?.onChange ?? setLocalInput
     const [error, setError] = useState<string | null>(null)
-    useEffect(() => {
-      if (props.autoSubmitInitialInput && !started.current) {
-        started.current = true
-        void props.createTask(props.initialInput, { onError: setError }).then(address => {
-          if (address) props.onAddressChange(address)
-        })
-      }
-    }, [props])
+    const send = () => {
+      if (started.current || props.initialAddress) return
+      started.current = true
+      void props.createTask(input, { onError: setError }).then(address => {
+        if (address) props.onAddressChange(address)
+      })
+    }
     return (
       <div data-testid="discussion-test-conversation">
-        {props.initialInput}
+        <input
+          data-testid="discussion-test-draft"
+          value={input}
+          onChange={event => setInput(event.target.value)}
+        />
+        <button data-testid="discussion-test-send" onClick={send}>
+          Send discussion
+        </button>
+        <button
+          data-testid="discussion-test-fill"
+          onClick={() => props.onFillSelectionToAnswer?.(mock.selectedText)}
+        >
+          Fill selected text
+        </button>
         {error && <p role="alert">{error}</p>}
       </div>
     )
   },
 }))
+
 const source = { deviceId: 'device', taskId: 'source' }
 const side = { deviceId: 'device', taskId: 'side' }
 const payload: RequestUserInputPayload = {
@@ -110,19 +127,23 @@ function setup(count = 1, input = payload) {
     </QuestionDiscussionProvider>
   )
 }
-const open = (index = 0) =>
+const showSidebar = (index = 0) =>
   fireEvent.click(
     within(screen.getByTestId(`entry-${index}`)).getByTestId('request-user-input-discuss')
   )
-const dialog = () => screen.getByRole('dialog')
-const changeConclusion = (text = '仅自己，可以保留草稿') =>
-  fireEvent.change(within(dialog()).getByTestId('question-discussion-conclusion'), {
-    target: { value: text },
-  })
-const apply = () => fireEvent.click(within(dialog()).getByTestId('question-discussion-apply'))
+const dialog = () => screen.getByRole('region')
+const open = (index = 0) => {
+  showSidebar(index)
+  fireEvent.click(within(dialog()).getByTestId('discussion-test-send'))
+}
+const changeConclusion = (text = '仅自己，可以保留草稿') => {
+  mock.selectedText = text
+}
+const apply = () => fireEvent.click(within(dialog()).getByTestId('discussion-test-fill'))
+
 beforeEach(() => {
   vi.clearAllMocks()
-  mock.messages = []
+  mock.selectedText = '仅自己，可以保留草稿'
   mock.create.mockResolvedValue(side)
   mock.load.mockResolvedValue({ messages: [originalMessage()], turns: [] })
   submit.mockResolvedValue(true)
@@ -130,7 +151,12 @@ beforeEach(() => {
 
 test('discusses independently, preserves defaults, fills an editable draft and submits only after review', async () => {
   setup()
-  open()
+  showSidebar()
+  expect(mock.create).not.toHaveBeenCalled()
+  expect(
+    (within(dialog()).getByTestId('discussion-test-draft') as HTMLInputElement).value
+  ).toContain('谁可以查看报告？')
+  fireEvent.click(within(dialog()).getByTestId('discussion-test-send'))
   await waitFor(() => expect(mock.create).toHaveBeenCalledTimes(1))
   expect(mock.create).toHaveBeenCalledWith(
     expect.stringContaining('谁可以查看报告？'),
@@ -138,12 +164,14 @@ test('discusses independently, preserves defaults, fills an editable draft and s
   )
   expect(submit).not.toHaveBeenCalled()
   expect(cancel).not.toHaveBeenCalled()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('question-discussion-sidebar')).toContainElement(dialog())
   expect(within(dialog()).getByTestId('discussion-test-conversation')).not.toHaveTextContent(
     'requestId'
   )
   changeConclusion()
   apply()
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
   const answer = screen.getByTestId('request-user-input-custom-audience')
   expect(answer).toHaveValue('仅自己，可以保留草稿')
   expect(submit).not.toHaveBeenCalled()
@@ -159,23 +187,49 @@ test('discusses independently, preserves defaults, fills an editable draft and s
   )
 })
 
-test('closing or Escape preserves conclusions and does not cancel or repeat the discussion', async () => {
+test('closing and reopening preserves the edited prompt without sending or cancelling', async () => {
   setup()
-  open()
-  changeConclusion('保留这个结论')
+  showSidebar()
+  const draft = within(dialog()).getByTestId('discussion-test-draft')
+  fireEvent.change(draft, { target: { value: '先讨论敏感事项，不要直接发布。' } })
   fireEvent.keyDown(dialog(), { key: 'Escape' })
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-  open()
-  expect(within(dialog()).getByTestId('question-discussion-conclusion')).toHaveValue('保留这个结论')
-  await waitFor(() => expect(mock.create).toHaveBeenCalledTimes(1))
-  expect(cancel).not.toHaveBeenCalled()
-  fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
-  fireEvent.click(screen.getByTestId('request-user-input-submit-button'))
+  expect(screen.queryByRole('region')).not.toBeInTheDocument()
+  showSidebar()
+  expect(within(dialog()).getByTestId('discussion-test-draft')).toBe(draft)
+  expect(draft).toHaveValue('先讨论敏感事项，不要直接发布。')
+  expect(mock.create).not.toHaveBeenCalled()
+  fireEvent.click(within(dialog()).getByTestId('discussion-test-send'))
   await waitFor(() =>
-    expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({ answers: { audience: { answers: ['仅自己'] } } })
+    expect(mock.create).toHaveBeenCalledExactlyOnceWith(
+      '先讨论敏感事项，不要直接发布。',
+      expect.objectContaining({ source, project: null })
     )
   )
+  expect(cancel).not.toHaveBeenCalled()
+})
+
+test('shares edited unsent prompts between the task and pending-work entry points', () => {
+  setup(2)
+  showSidebar(0)
+  fireEvent.change(within(dialog()).getByTestId('discussion-test-draft'), {
+    target: { value: '请只讨论，先别发送。' },
+  })
+  fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
+  showSidebar(1)
+  expect(within(dialog()).getByTestId('discussion-test-draft')).toHaveValue('请只讨论，先别发送。')
+  expect(mock.create).not.toHaveBeenCalled()
+})
+
+test('moves keyboard focus into the sidebar without a modal and restores it on Escape', () => {
+  setup()
+  const trigger = screen.getByTestId('request-user-input-discuss')
+  trigger.focus()
+  fireEvent.click(trigger)
+  expect(dialog()).toHaveFocus()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+  expect(screen.queryByRole('region')).not.toBeInTheDocument()
+  expect(trigger).toHaveFocus()
 })
 
 test('both entry surfaces share an in-flight creation and the returned answer', async () => {
@@ -193,23 +247,20 @@ test('both entry surfaces share an in-flight creation and the returned answer', 
   await act(async () => resolve(side))
   changeConclusion('同一份结论')
   apply()
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
   for (const answer of screen.getAllByTestId('request-user-input-custom-audience'))
     expect(answer).toHaveValue('同一份结论')
 })
 
-test('uses the latest complete assistant reply while leaving streaming content out', async () => {
-  mock.messages = [
-    { id: 'complete', role: 'assistant', status: 'done', content: '完整建议', createdAt: '' },
-    { id: 'partial', role: 'assistant', status: 'streaming', content: '尚未完成', createdAt: '' },
-  ]
+test('fills only the text selected by the user and keeps the original answer editable', async () => {
   setup()
   open()
-  await waitFor(() =>
-    expect(within(dialog()).getByTestId('question-discussion-use-reply')).toBeEnabled()
-  )
-  fireEvent.click(within(dialog()).getByTestId('question-discussion-use-reply'))
-  expect(within(dialog()).getByTestId('question-discussion-conclusion')).toHaveValue('完整建议')
+  changeConclusion('完整建议中的一小段')
+  expect(screen.queryByTestId('question-discussion-conclusion')).not.toBeInTheDocument()
+  apply()
+  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
+  expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue('完整建议中的一小段')
+  expect(submit).not.toHaveBeenCalled()
 })
 
 test.each(['answered', 'cancelled', 'expired'] as const)(
@@ -226,9 +277,7 @@ test.each(['answered', 'cancelled', 'expired'] as const)(
     await waitFor(() =>
       expect(within(dialog()).getByRole('alert')).toHaveTextContent('原问题已处理或已失效')
     )
-    expect(within(dialog()).getByTestId('question-discussion-conclusion')).toHaveValue(
-      '仅自己，可以保留草稿'
-    )
+    expect(mock.selectedText).toBe('仅自己，可以保留草稿')
     expect(submit).not.toHaveBeenCalled()
   }
 )
@@ -243,7 +292,7 @@ test('retains a conclusion after validation failure and allows retry', async () 
     expect(within(dialog()).getByRole('alert')).toHaveTextContent('暂时无法检查原问题')
   )
   apply()
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
   expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue(
     '仅自己，可以保留草稿'
   )
@@ -281,7 +330,6 @@ test('keeps grouped asynchronous drafts bound to their individual original reque
         source,
         payload: input,
         address: null,
-        conclusions: {},
         answers: { audience: index ? 'PDF' : '仅自己' },
       },
     ])
@@ -359,7 +407,7 @@ test('refills the exact owner of a grouped asynchronous question', async () => {
   })
   changeConclusion('PDF')
   apply()
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
   expect(screen.getByTestId(`request-user-input-custom-${secondId}`)).toHaveValue('PDF')
   expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue('仅自己')
 })
@@ -396,7 +444,7 @@ test('returns a plan adjustment without approving implementation', async () => {
   })
   changeConclusion('请先补充数据来源，再开始实施。')
   apply()
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
   expect(screen.getByTestId('request-user-input-custom-adjustment')).toHaveValue(
     '请先补充数据来源，再开始实施。'
   )
@@ -450,7 +498,6 @@ test('account switches isolate discussion drafts and late creation without remou
       payload,
       address: null,
       answers: { audience: 'private answer' },
-      conclusions: {},
     }))
   )
   const oldStore = store
@@ -474,14 +521,13 @@ test('account switches isolate discussion drafts and late creation without remou
       payload,
       address: null,
       answers: { audience: 'account-b answer' },
-      conclusions: {},
     }))
     await store.create(key, async () => otherSide)
   })
   act(() =>
     oldStore.update(key, current => ({
       ...current!,
-      conclusions: { audience: 'late private conclusion' },
+      answers: { audience: 'late private answer' },
     }))
   )
   await act(async () => {
@@ -491,7 +537,6 @@ test('account switches isolate discussion drafts and late creation without remou
   expect(store.sessions[key]).toMatchObject({
     address: otherSide,
     answers: { audience: 'account-b answer' },
-    conclusions: {},
   })
   expect(screen.getByRole('textbox', { name: 'Keep connection input' })).toHaveValue(
     'connection draft'
@@ -499,8 +544,7 @@ test('account switches isolate discussion drafts and late creation without remou
   rendered.rerender(tree('account-a'))
   expect(store.sessions[key]).toMatchObject({
     address: side,
-    answers: { audience: 'private answer' },
-    conclusions: { audience: 'late private conclusion' },
+    answers: { audience: 'late private answer' },
   })
 })
 

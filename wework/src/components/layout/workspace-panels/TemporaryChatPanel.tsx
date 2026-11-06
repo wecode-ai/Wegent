@@ -94,6 +94,8 @@ interface TemporaryChatPanelProps {
   onDraftRequestConsumed?(id: number): void
   autoSubmitInitialInput?: boolean
   initialAddress?: RuntimeTaskAddress | null
+  controlledAddress?: RuntimeTaskAddress | null
+  draft?: { value: string; onChange(value: string): void }
   createTask?: (
     message: string,
     options: RuntimeTaskComposerCreateOptions
@@ -117,6 +119,7 @@ interface TemporaryChatPanelProps {
   projectWorkBarTrailingContext?: ReactNode
   composerHeader?: ReactNode
   onRestoreConversation?: () => void
+  onFillSelectionToAnswer?: (text: string) => void
   initialScrollPosition?: 'restore' | 'latest'
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   coordinateUserInput?: boolean
@@ -135,6 +138,8 @@ export function TemporaryChatPanel({
   onDraftRequestConsumed,
   autoSubmitInitialInput = false,
   initialAddress = null,
+  controlledAddress,
+  draft,
   createTask,
   onAddressChange,
   runtimeContext,
@@ -154,6 +159,7 @@ export function TemporaryChatPanel({
   projectWorkBarTrailingContext,
   composerHeader,
   onRestoreConversation,
+  onFillSelectionToAnswer,
   initialScrollPosition = 'restore',
   onOpenRuntimeTask,
   coordinateUserInput = false,
@@ -184,7 +190,8 @@ export function TemporaryChatPanel({
     deleteAttachment: services.attachmentApi?.deleteAttachment,
     scopeKey: instanceId,
   })
-  const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
+  const [localAddress, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
+  const address = controlledAddress === undefined ? localAddress : controlledAddress
   const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
   const catalogTranslate = useCallback((key: string) => String(t(key)), [t])
   const catalogAddress = address ?? source
@@ -287,10 +294,11 @@ export function TemporaryChatPanel({
     value: projectChat.inputByScope[draftScopeKey] ?? initialInput,
   }))
   const input =
-    inputState.scopeKey === draftScopeKey
+    draft?.value ??
+    (inputState.scopeKey === draftScopeKey
       ? inputState.value
       : (projectChat.inputByScope[draftScopeKey] ??
-        (initialDraftScope === draftScopeKey ? initialInput : ''))
+        (initialDraftScope === draftScopeKey ? initialInput : '')))
   if (inputState.scopeKey !== draftScopeKey) {
     setInputState({ scopeKey: draftScopeKey, value: input })
   }
@@ -298,10 +306,14 @@ export function TemporaryChatPanel({
   const setInput = useCallback(
     (value: SetStateAction<string>) => {
       const next = typeof value === 'function' ? value(input) : value
+      if (draft) {
+        draft.onChange(next)
+        return
+      }
       writeDraftInput(draftScopeKey, next)
       setInputState({ scopeKey: draftScopeKey, value: next })
     },
-    [draftScopeKey, input, writeDraftInput]
+    [draftScopeKey, input, writeDraftInput, draft]
   )
   const [replaceDraftKey, setReplaceDraftKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -400,6 +412,7 @@ export function TemporaryChatPanel({
         setError(null)
       }
     }
+    syncMessages()
     return subscribeRuntimeConversation(address, syncMessages)
   }, [address])
 
@@ -540,6 +553,7 @@ export function TemporaryChatPanel({
         if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
         const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
         let error: string | null = null
+        let queued = false
         const sent = await sendRuntimePaneMessage(
           runtimeQueuedMessageRequest(
             { address, ...(sendEphemeral ? { ephemeral: true } : {}), ...runtimeContext },
@@ -549,9 +563,12 @@ export function TemporaryChatPanel({
             onError: value => {
               error = value
             },
+            onQueued: () => {
+              queued = true
+            },
           }
         )
-        if (sent)
+        if (sent && !queued)
           setMessages(
             appendAcceptedRuntimeConversationMessage(
               address,
@@ -1102,6 +1119,7 @@ export function TemporaryChatPanel({
       }
     >
       <ScrollableMessageArea
+        onFillSelectionToAnswer={onFillSelectionToAnswer}
         messageTarget={messageTarget}
         messages={messages}
         turns={turns}

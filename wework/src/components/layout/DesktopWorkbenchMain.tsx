@@ -1,3 +1,4 @@
+import { useQuestionDiscussion } from '@/features/notifications/questionDiscussion'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import {
   getMcpAppPanel,
@@ -2072,8 +2073,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
   }
-  const displayedRightPanelOpen = rightPanelOpen
-  const displayedRightPanelExpanded = rightPanelExpanded
+  const questionDiscussion = useQuestionDiscussion()
+  const displayedRightPanelOpen = rightPanelOpen && !questionDiscussion?.isOpen
+  const displayedRightPanelExpanded = rightPanelExpanded && !questionDiscussion?.isOpen
   const compactRightPanelOpen =
     rightPanelView === 'subagents' || isRightWorkspaceExtensionTab(rightPanelView)
   const {
@@ -2189,7 +2191,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? 'launcher'
       : rightPanelView
   const temporaryChatExpanded =
-    temporaryChatAvailable && rightPanelExpanded && rightPanelView.startsWith('chat:')
+    temporaryChatAvailable && displayedRightPanelExpanded && rightPanelView.startsWith('chat:')
   const shouldRenderRightPanel = displayedRightPanelOpen || effectiveRightPanelTabs.length > 0
   const hasPersistentRightPanelResource =
     fileWorkspaceDirty ||

@@ -11,6 +11,7 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { isDeliveredRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
 
 type QuestionTarget = { payload: RequestUserInputPayload; questionId: string }
 type GroupedInput = RequestUserInputPayload & { questionTargets?: Record<string, QuestionTarget> }
@@ -97,7 +98,7 @@ export function pendingRequestUserInputPayloads(
   const asyncPayloads: RequestUserInputPayload[] = []
   let planPayload: RequestUserInputPayload | null = null
   for (const message of [...messages].reverse()) {
-    if (message.role === 'user' && message.content.trim()) {
+    if (isDeliveredRequestUserInputReply(message)) {
       break
     }
 

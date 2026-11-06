@@ -768,10 +768,17 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
       ...selectMcpTool(request, namespace.name, toolName, argumentsValue),
     }
   }
-  if (!advertisesToolSearch && directToolName && names.includes(directToolName)) {
-    return {
-      mode: 'direct',
-      ...selectTool(request, directToolName, argumentsValue),
+  if (!advertisesToolSearch && directToolName) {
+    const qualifiedNames = namespaceName
+      ? [directToolName, `${namespaceName}__${toolName}`]
+      : [directToolName]
+    const advertisedNames = qualifiedNames.filter(name => names.includes(name))
+    assert.ok(advertisedNames.length <= 1, `Ambiguous direct MCP tool ${directToolName}`)
+    if (advertisedNames.length === 1) {
+      return {
+        mode: 'direct',
+        ...selectTool(request, advertisedNames[0], argumentsValue),
+      }
     }
   }
   return {

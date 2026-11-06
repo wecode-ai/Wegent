@@ -48,9 +48,25 @@ const mocks = vi.hoisted(() => ({
   setError: vi.fn(),
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbenchPaneContext: () => mocks.context,
-}))
+vi.mock('@/features/workbench/useWorkbench', async () => {
+  const { useState, useCallback } = await import('react')
+  return {
+    useWorkbenchPaneContext: () => {
+      const [goalDraftActiveByScope, setGoals] = useState<Record<string, boolean>>({})
+      const setGoalDraftActiveForScope = useCallback((scope: string, active: boolean) => {
+        setGoals(current => ({ ...current, [scope]: active }))
+      }, [])
+      return {
+        ...mocks.context,
+        projectChat: {
+          ...(mocks.context.projectChat as object),
+          goalDraftActiveByScope,
+          setGoalDraftActiveForScope,
+        },
+      }
+    },
+  }
+})
 
 const address = {
   deviceId: 'original-device',
@@ -74,14 +90,23 @@ const codeComment = {
 const continuation = 'Authorization is complete. Continue from the blocked operation.'
 let lifecycleStore: RuntimeTaskLifecycleStore
 
-test.each(['accepted', 'rejected', 'queued'] as const)(
-  'retains an unanswered question until an ordinary message is delivered (%s)',
-  async outcome => {
+test.each(
+  ['accepted', 'rejected', 'queued'].flatMap(outcome => [
+    { outcome, interrupt: false },
+    { outcome, interrupt: true },
+  ])
+)(
+  'retains an unanswered question until delivery ($outcome, interrupt=$interrupt)',
+  async ({ outcome, interrupt }) => {
     const restoreAttachment = vi.fn()
     Object.assign(mocks.context.projectChat as object, {
       addExistingAttachmentForScope: restoreAttachment,
     })
+    const interruptSend = vi.fn()
+    mocks.context.interruptAndSendRuntimePaneMessage = interruptSend
+    const sendMethod = interrupt ? interruptSend : mocks.send
     const { result } = await renderSession()
+    if (interrupt) act(() => lifecycleStore.turnStarted(address, 'question-turn'))
     act(() => {
       reconcileRuntimeConversationSnapshot(address, [
         {
@@ -110,7 +135,7 @@ test.each(['accepted', 'rejected', 'queued'] as const)(
       ])
     })
     let finish!: () => void
-    mocks.send.mockImplementationOnce(
+    sendMethod.mockImplementationOnce(
       (_request, options) =>
         new Promise<boolean>(resolve => {
           finish = () => {
@@ -121,9 +146,11 @@ test.each(['accepted', 'rejected', 'queued'] as const)(
     )
     let sending!: Promise<boolean>
     act(() => {
-      sending = result.current.send('Continue with project members only')
+      sending = result.current.send('Continue with project members only', {
+        interruptWhenBusy: interrupt,
+      })
     })
-    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    await waitFor(() => expect(sendMethod).toHaveBeenCalledOnce())
     expect(pendingRequestUserInputPayload(result.current.messages)?.itemId).toBe('question-item')
     await act(async () => {
       finish()
@@ -397,6 +424,52 @@ describe('pane transcript reload ownership', () => {
     expect(result.current.transcriptHasMoreBefore).toBe(false)
     expect(result.current.transcriptBeforeCursor).toBeNull()
   })
+})
+
+test('keeps progress updates on the existing frame subscription when the queue is empty', async () => {
+  const { result, unmount } = await renderSession()
+  const frames = new Map<number, FrameRequestCallback>()
+  let sequence = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.set(++sequence, callback)
+    return sequence
+  })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  const flush = () => {
+    for (const [id, callback] of [...frames]) {
+      frames.delete(id)
+      callback(0)
+    }
+  }
+  try {
+    act(() => {
+      applyRuntimeConversationAction(address, { type: 'assistant_started', subtaskId: 'burst' })
+    })
+    act(flush)
+    const before = result.current.messages
+    const ids = Array.from({ length: 20 }, (_, index) => `progress-${index}`)
+    for (const id of ids) {
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'block_created',
+          subtaskId: 'burst',
+          block: { id, type: 'text', content: id, status: 'done', createdAt: 1_793_959_193_678 },
+        })
+      })
+    }
+    expect(result.current.messages === before).toBe(true)
+    expect(
+      getRuntimeConversationMessages(address)
+        .at(-1)
+        ?.blocks?.map(block => block.id)
+    ).toEqual(ids)
+    act(flush)
+    expect(result.current.messages.at(-1)?.blocks?.map(block => block.id)).toEqual(ids)
+    expect(result.current.queuedMessages).toEqual([])
+  } finally {
+    unmount()
+    vi.unstubAllGlobals()
+  }
 })
 
 describe('explicit composer draft replacement', () => {

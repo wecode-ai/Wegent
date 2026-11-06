@@ -9,7 +9,8 @@ export interface SelectionActionsPosition {
 
 interface SelectionActionsPopoverProps {
   position: SelectionActionsPosition;
-  onAddToConversation: () => void;
+  onAddToConversation?: () => void;
+  onFillAnswer?: () => void;
   onAskInSidebar?: () => void;
   testId?: string;
   addButtonTestId?: string;
@@ -20,6 +21,7 @@ export function SelectionActionsPopover({
   position,
   onAddToConversation,
   onAskInSidebar,
+  onFillAnswer,
   testId = "message-selection-actions",
   addButtonTestId = "add-selection-to-conversation-button",
   askButtonTestId = "ask-selection-in-sidebar-button",
@@ -35,14 +37,26 @@ export function SelectionActionsPopover({
       style={{ ...portalTheme.style, left: position.left, top: position.top }}
       onPointerDown={(event) => event.preventDefault()}
     >
-      <button
-        type="button"
-        data-testid={addButtonTestId}
-        className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-        onClick={onAddToConversation}
-      >
-        {t("workbench.add_selection_to_conversation")}
-      </button>
+      {onAddToConversation && (
+        <button
+          type="button"
+          data-testid={addButtonTestId}
+          className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+          onClick={onAddToConversation}
+        >
+          {t("workbench.add_selection_to_conversation")}
+        </button>
+      )}
+      {onFillAnswer && (
+        <button
+          type="button"
+          data-testid="fill-selection-to-answer-button"
+          className="min-h-11 rounded-md px-2.5 text-sm text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:min-h-8"
+          onClick={onFillAnswer}
+        >
+          {t("workbench.fill_selection_to_answer")}
+        </button>
+      )}
       {onAskInSidebar ? (
         <button
           type="button"
