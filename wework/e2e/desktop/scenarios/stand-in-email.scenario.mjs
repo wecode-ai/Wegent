@@ -8,6 +8,7 @@ import { until } from '../modules/plugin-regression-fixture.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
+import { createDailyBriefStory } from '../modules/stand-in-daily-brief-story.mjs'
 import {
   assistantMessage,
   createSse,
@@ -38,6 +39,11 @@ export function createDesktopScenario({
   let coordinatorRound = 0
   let originalSettings
   let messageId
+  const dailyStory = createDailyBriefStory({
+    captureScreenshot,
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+  })
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const backend = async (control, method, params = {}) =>
     JSON.parse(
@@ -79,6 +85,7 @@ export function createDesktopScenario({
       )
     },
     async handleHttp(req, response, url) {
+      if (await dailyStory.handleHttp(req, response, url)) return true
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
@@ -464,6 +471,12 @@ export function createDesktopScenario({
         edited.connections[0].boundary,
         reused.connections[0].boundary,
         'Ordinary project edits with a default role ID must preserve the pending-mail boundary'
+      )
+      await dailyStory.verify(
+        control,
+        (method, params) => rpc(control, method, params),
+        mail,
+        model
       )
     },
     async cleanup() {
