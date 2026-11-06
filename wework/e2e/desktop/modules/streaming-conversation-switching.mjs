@@ -153,7 +153,11 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('startRuntimeStreamDiagnostics', 'body')
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
+        // The prefix follows 520 progress items in this deliberately long response.
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: PREFIX,
+          timeoutMs: longResponseTimeoutMs,
+        })
         stage = 'native-history'
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench?.currentRuntimeTask
