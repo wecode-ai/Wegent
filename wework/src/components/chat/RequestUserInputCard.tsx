@@ -22,6 +22,15 @@ function nativeApprovalArguments(payload: RequestUserInputPayload, title: string
     : undefined
 }
 
+function nativeSourceReplyApproval(payload: RequestUserInputPayload) {
+  const input = nativeApprovalArguments(payload, 'Wework: Reply to source')
+  return payload.toolName === 'reply' &&
+    input &&
+    ['messageId', 'text'].every(key => typeof input[key] === 'string' && input[key].trim())
+    ? input
+    : undefined
+}
+
 function nativeEmailApproval(payload: RequestUserInputPayload) {
   const input = nativeApprovalArguments(payload, 'Wework: Send email')
   return input &&
@@ -95,7 +104,9 @@ export function RequestUserInputCard({
     (reply && reply.type === 'tool' && reply.toolName === 'wework_stand_in.send_email'
       ? reply.toolInput
       : undefined)
-  const text = email?.text ?? (reply && reply.type === 'tool' && reply.toolInput?.text)
+  const sourceReply = nativeSourceReplyApproval(props.payload)
+  const text =
+    email?.text ?? sourceReply?.text ?? (reply && reply.type === 'tool' && reply.toolInput?.text)
   const git = nativeGitApproval(props.payload)
   const webhook = nativeGitWebhookApproval(props.payload)
   const preview = git
@@ -122,7 +133,9 @@ export function RequestUserInputCard({
             subject: email.subject,
             body: text,
           })
-        : text
+        : sourceReply
+          ? t('standIn.workspace.reply_preview', { body: text })
+          : text
   const payload =
     typeof preview === 'string' && props.payload.questions?.length === 1 && question
       ? {

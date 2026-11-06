@@ -5676,6 +5676,7 @@
       "unavailable_project": "不可用的项目",
       "excluded_project": "排除：{{name}}",
       "load_more": "加载更多",
+      "reply_preview": "将回复到这项工作中选定的原消息，使用该来源的已连接账号。原消息和来源可在上方的工作记录中核对。\n\n回复内容：\n{{body}}",
       "confirm_reply": "确认发送回复",
       "send_reply": "确认发送",
       "decline_reply": "暂不发送",

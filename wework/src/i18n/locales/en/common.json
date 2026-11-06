@@ -5681,6 +5681,7 @@
       "unavailable_project": "Unavailable project",
       "excluded_project": "Excluded: {{name}}",
       "load_more": "Load more",
+      "reply_preview": "Reply to the selected original message in this work using the account connected to that source. Review the original message and source in the work history above.\n\nReply text:\n{{body}}",
       "confirm_reply": "Confirm reply",
       "send_reply": "Send reply",
       "decline_reply": "Do not send",

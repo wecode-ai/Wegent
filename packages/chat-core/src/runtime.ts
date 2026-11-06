@@ -392,6 +392,8 @@ export interface RequestUserInputPayload {
   /** Arguments supplied by the native MCP tool approval, bound to this request. */
   toolArguments?: Record<string, unknown>;
   toolTitle?: string;
+  /** Exact tool identity supplied by the native MCP approval metadata. */
+  toolName?: string;
   /** `async` marks a Codex question answered by the next user message. */
   delivery?: string;
   command?: string;
