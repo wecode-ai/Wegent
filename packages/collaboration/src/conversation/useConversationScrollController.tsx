@@ -26,6 +26,7 @@ import {
   setConversationScrollSnapshot,
 } from './conversationScrollGeometry'
 import { useReaderViewportAnchor } from './useReaderViewportAnchor'
+import { useConversationFooterHeight } from './useConversationFooterHeight'
 import type { ConversationVirtualizer } from './useConversationVirtualizer'
 import { getMessageLayoutSignature } from './messagePretextLayout'
 import {
@@ -79,7 +80,7 @@ export function useConversationScrollController({
   const contentRef = useRef<HTMLDivElement>(null)
   const stickyFooterRef = useRef<HTMLDivElement>(null)
   const contentFooterRef = useRef<HTMLDivElement>(null)
-  const [scrollTailHeight, setScrollTailHeight] = useState(0)
+  const scrollTailHeight = useConversationFooterHeight(contentFooterRef, stickyFooterRef)
   const virtualizerRef = useRef<ConversationVirtualizer | null>(null)
   const currentScrollKey = scrollPositionKey(conversationKey)
   const identityRef = useRef(currentScrollKey)
@@ -288,13 +289,6 @@ export function useConversationScrollController({
     },
     [cancelMotion, save, writeOffset]
   )
-  const measureFooter = useCallback(() => {
-    setScrollTailHeight(
-      (contentFooterRef.current?.offsetHeight ?? 0) + (stickyFooterRef.current?.offsetHeight ?? 0)
-    )
-  }, [])
-  // Footer props can mount or replace a footer without changing the messages.
-  useLayoutEffect(measureFooter)
   const handleContentLayoutChange = useCallback(() => {
     if (initializedKeyRef.current !== currentScrollKey) return
     if (
@@ -315,6 +309,25 @@ export function useConversationScrollController({
     } else if (modeRef.current === 'read') restoreReaderPositionFromLayout()
     else follow()
   }, [currentScrollKey, follow, restoreReaderPositionFromLayout])
+  const layoutFrameRef = useRef<SafeAnimationFrameHandle | null>(null)
+  const handleVirtualLayoutChange = useCallback(() => {
+    if (modeRef.current !== 'follow' || !latestRef.current.streaming) {
+      handleContentLayoutChange()
+      return
+    }
+    if (layoutFrameRef.current) return
+    layoutFrameRef.current = requestSafeAnimationFrame(() => {
+      layoutFrameRef.current = null
+      handleContentLayoutChange()
+    })
+  }, [handleContentLayoutChange])
+  useLayoutEffect(
+    () => () => {
+      if (layoutFrameRef.current) cancelSafeAnimationFrame(layoutFrameRef.current)
+      layoutFrameRef.current = null
+    },
+    [handleVirtualLayoutChange]
+  )
   const preserveScrollPositionForNextLayout = useCallback(() => {
     cancelMotion()
     if (modeRef.current === 'drag') return
@@ -478,7 +491,8 @@ export function useConversationScrollController({
       restoringRef.current = null
       changeMode('follow')
     }
-    handleContentLayoutChange()
+    if (changed || loaded || sent || resumed) handleContentLayoutChange()
+    else handleVirtualLayoutChange()
   }, [
     autoScrollSuspended,
     cancelMotion,
@@ -486,6 +500,7 @@ export function useConversationScrollController({
     clearAnchor,
     currentScrollKey,
     handleContentLayoutChange,
+    handleVirtualLayoutChange,
     initialScrollPosition,
     isWaitingForAssistant,
     loading,
@@ -495,21 +510,13 @@ export function useConversationScrollController({
     const viewport = scrollRef.current
     const content = contentRef.current
     if (!viewport || !content) return
-    // Virtual rows report layout individually. Read shared footer geometry once
-    // per controller commit or observed resize, not after every row commit.
-    const observer = new ResizeObserver(() => {
-      measureFooter()
-      handleContentLayoutChange()
-    })
+    const observer = new ResizeObserver(handleContentLayoutChange)
     observer.observe(viewport)
     observer.observe(content)
-    if (stickyFooterRef.current) observer.observe(stickyFooterRef.current)
-    if (contentFooterRef.current) observer.observe(contentFooterRef.current)
     // External host refs are attached after the child's layout effects.
-    measureFooter()
     handleContentLayoutChange()
     return () => observer.disconnect()
-  }, [handleContentLayoutChange, measureFooter, scrollRef])
+  }, [handleContentLayoutChange, scrollRef])
 
   useEffect(() => {
     const viewport = scrollRef.current
@@ -737,6 +744,7 @@ export function useConversationScrollController({
     handleTurnNavigationScrollTargetChange,
     handleTurnNavigationLoadStateChange,
     handleContentLayoutChange,
+    handleVirtualLayoutChange,
     handleScrollToBottom,
     preserveScrollPositionForNextLayout,
     prepareForHistoryPrepend,
