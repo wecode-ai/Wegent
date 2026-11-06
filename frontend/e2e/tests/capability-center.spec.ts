@@ -30,6 +30,19 @@ interface McpProvidersResponse {
   providers: Array<{ key: string }>
 }
 
+interface McpServerListResponse {
+  success: boolean
+  message: string
+  servers: Array<{
+    id: string
+    name: string
+    description?: string
+    provider: string
+    tags?: string[] | null
+    is_active: boolean
+  }>
+}
+
 interface AdminMarketplaceResourceResponse {
   total: number
   items: Array<{
@@ -68,6 +81,31 @@ async function ensureRecommendedSystemAgent(request: APIRequestContext) {
 async function clickListingAction(page: Page, listingId: number) {
   await page.getByTestId(`resource-listing-card-${listingId}`).hover()
   await page.getByTestId(`install-resource-${listingId}-button`).click()
+}
+
+/** Verifies the real catalog response and its included and excluded cards. */
+async function expectMcpKeywordResults(
+  page: Page,
+  keyword: string,
+  includedId: string,
+  excludedId: string,
+  action: () => Promise<unknown>
+) {
+  const serversPromise = page.waitForResponse(
+    response =>
+      response.request().method() === 'POST' &&
+      /\/api\/mcp-providers\/e2e_catalog\/servers$/.test(new URL(response.url()).pathname)
+  )
+  await action()
+  const response = await serversPromise
+  expect(response.ok()).toBe(true)
+  const serverList = (await response.json()) as McpServerListResponse
+  expect(serverList.success, serverList.message).toBe(true)
+  expect(serverList.servers.some(server => server.id === includedId)).toBe(true)
+  expect(serverList.servers.some(server => server.id === excludedId)).toBe(true)
+  await expect(page.getByTestId(`mcp-marketplace-card-${includedId}`)).toBeVisible()
+  await expect(page.getByTestId(`mcp-marketplace-card-${excludedId}`)).toHaveCount(0)
+  await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue(keyword)
 }
 
 /** Verifies the real listings response and its included and excluded skill cards. */
@@ -140,17 +178,31 @@ test.describe('Capability Center', () => {
   })
 
   test('opens the MCP marketplace pre-filtered from a deep link', async ({ page }) => {
-    await page.goto('/resource-library?type=mcp&keyword=商品数据对比')
+    await expectMcpKeywordResults(
+      page,
+      '商品数据对比',
+      '@e2e/product-comparison',
+      '@e2e/document-search',
+      () => page.goto(`/resource-library?type=mcp&keyword=${encodeURIComponent('商品数据对比')}`)
+    )
 
     await expect(page.getByTestId('resource-type-mcp-filter')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
     await expect(page.getByTestId('mcp-marketplace')).toBeVisible()
-    await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue('商品数据对比')
 
-    await page.reload()
-    await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue('商品数据对比')
+    await expectMcpKeywordResults(
+      page,
+      '商品数据对比',
+      '@e2e/product-comparison',
+      '@e2e/document-search',
+      () => page.reload()
+    )
+    await expect(page).toHaveURL(
+      url =>
+        url.searchParams.get('type') === 'mcp' && url.searchParams.get('keyword') === '商品数据对比'
+    )
   })
 
   test('clears an unknown marketplace deep link and resumes keyword search', async ({ page }) => {

@@ -270,7 +270,7 @@ echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT
     # brz-http-gateway 0.1.4 does not install hyper-util's pool timer. Keep
     # upstream sockets alive beyond the longest CI job so its pooled client
     # cannot reuse a socket that Uvicorn expired during the run.
-    exec "$PYTHON_UVICORN" app.main:app \
+    exec "$PYTHON_UVICORN" "${WEGENT_PYTHON_APP:-app.main:app}" \
         --reload \
         --reload-dir . \
         --reload-dir ../shared \
