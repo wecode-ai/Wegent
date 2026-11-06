@@ -4748,6 +4748,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : null
 
   const toggleRightPanel = () => {
+    if (questionDiscussion?.isOpen) return
     setRightPanelOpen(open => {
       const nextOpen = !open
       if (nextOpen) {
@@ -4761,6 +4762,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     })
   }
   const toggleRightPanelExpanded = () => {
+    if (questionDiscussion?.isOpen) return
     setRightPanelExpanded(expanded => !expanded)
   }
   const toggleBottomPanel = () => {
@@ -4891,6 +4893,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           : undefined
       }
       rightPanelOpen={displayedRightPanelOpen}
+      rightPanelDisabled={questionDiscussion?.isOpen}
       rightPanelExpanded={displayedRightPanelExpanded}
       bottomPanelOpen={bottomPanelOpen}
       onToggleRightPanel={toggleRightPanel}

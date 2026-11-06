@@ -1,6 +1,6 @@
 import '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useContext, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { QuestionDiscussionScope } from './QuestionDiscussionScope'
@@ -99,6 +99,14 @@ const originalMessage = (input = payload): WorkbenchMessage => ({
 })
 const submit = vi.fn()
 const cancel = vi.fn()
+let latestStore: QuestionDiscussionStore
+function StoreProbe() {
+  const store = useContext(QuestionDiscussionStoreContext)!
+  useEffect(() => {
+    latestStore = store
+  }, [store])
+  return null
+}
 function setup(count = 1, input = payload) {
   return render(
     <QuestionDiscussionProvider>
@@ -113,6 +121,7 @@ function setup(count = 1, input = payload) {
           }
         >
           <QuestionDiscussionScope>
+            <StoreProbe />
             <section data-testid={`entry-${index}`}>
               <RequestUserInputCard
                 payload={input}
@@ -341,6 +350,55 @@ test('keeps grouped asynchronous drafts bound to their individual original reque
   )
 })
 
+test('editing an individual answer cannot replace a grouped discussion payload', () => {
+  const first = { ...payload, delivery: 'async' }
+  const second = {
+    ...first,
+    requestId: 13,
+    questions: [{ id: 'audience', question: '输出格式？' }],
+  }
+  const grouped = pendingRequestUserInputPayload([originalMessage(first), originalMessage(second)])!
+  expect(questionDiscussionKey(source, grouped)).not.toBe(questionDiscussionKey(source, first))
+  setup(1, grouped)
+  open()
+  fireEvent.change(
+    within(screen.getByTestId('entry-0')).getByTestId('request-user-input-custom-audience'),
+    { target: { value: 'Only the owner' } }
+  )
+  expect(
+    within(dialog()).getByTestId('question-discussion-question').querySelectorAll('option')
+  ).toHaveLength(2)
+  expect(
+    latestStore.sessions[questionDiscussionKey(source, grouped)].payload.questions
+  ).toHaveLength(2)
+})
+
+test('immediately falls back to an available target when a selected question disappears', async () => {
+  const multi = {
+    ...payload,
+    questions: [...payload.questions!, { id: 'format', question: '输出格式？', is_other: true }],
+  }
+  setup(1, multi)
+  open()
+  fireEvent.change(within(dialog()).getByTestId('question-discussion-question'), {
+    target: { value: 'format' },
+  })
+  fireEvent.change(
+    within(screen.getByTestId('entry-0')).getByTestId('request-user-input-custom-format'),
+    { target: { value: 'Keep this draft' } }
+  )
+  act(() =>
+    latestStore.update(questionDiscussionKey(source, multi), current => ({ ...current!, payload }))
+  )
+  changeConclusion('Available target only')
+  apply()
+  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
+  expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue(
+    'Available target only'
+  )
+  expect(screen.getByTestId('request-user-input-custom-format')).toHaveValue('Keep this draft')
+})
+
 test('business discussion cannot replace native permission or connector authorization', () => {
   expect(canDiscussQuestion(payload)).toBe(true)
   expect(
@@ -439,9 +497,8 @@ test('returns a plan adjustment without approving implementation', async () => {
   mock.load.mockResolvedValue({ messages: [message], turns: [] })
   setup(1, plan)
   open()
-  fireEvent.change(within(dialog()).getByTestId('question-discussion-question'), {
-    target: { value: 'adjustment' },
-  })
+  expect(screen.queryByTestId('request-user-input-custom-implement')).not.toBeInTheDocument()
+  expect(within(dialog()).queryByTestId('question-discussion-question')).not.toBeInTheDocument()
   changeConclusion('请先补充数据来源，再开始实施。')
   apply()
   await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
@@ -479,7 +536,10 @@ test('a shared creation failure is visible in the currently open entry surface',
 test('account switches isolate discussion drafts and late creation without remounting unrelated input', async () => {
   let store!: QuestionDiscussionStore
   function Probe() {
-    store = useContext(QuestionDiscussionStoreContext)!
+    const current = useContext(QuestionDiscussionStoreContext)!
+    useEffect(() => {
+      store = current
+    }, [current])
     return <input aria-label="Keep connection input" defaultValue="" />
   }
   const tree = (accountKey: string) => (

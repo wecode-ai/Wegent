@@ -889,6 +889,7 @@ export function TemporaryChatPanel({
       retryInFlightRef.current = true
       setError(null)
       try {
+        const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
         await retryRuntimeConversation({
           messageId: message.id,
           messages,
@@ -898,11 +899,24 @@ export function TemporaryChatPanel({
             missing: t('workbench.retry_message_missing'),
             failed: t('workbench.retry_failed'),
           },
-          addUserMessage: message =>
-            setMessages(applyRuntimeConversationAction(address, { type: 'user_added', message })),
-          removeUserMessage: clientUserMessageId =>
-            setMessages(removeRuntimeConversationTurn(address, { clientUserMessageId })),
-          send: sendRuntimePaneMessage,
+          acceptUserMessage: (message, turnId) =>
+            setMessages(
+              appendAcceptedRuntimeConversationMessage(
+                address,
+                message,
+                turnId ?? lifecycleStore.getTask(address)?.turn.id ?? null,
+                turnIdsBeforeSend
+              )
+            ),
+          send: async request => {
+            let queued = false
+            const accepted = await sendRuntimePaneMessage(request, {
+              onQueued: () => {
+                queued = true
+              },
+            })
+            return { accepted, queued }
+          },
         })
         return true
       } catch (caughtError) {
@@ -912,7 +926,15 @@ export function TemporaryChatPanel({
         retryInFlightRef.current = false
       }
     },
-    [address, messages, runtimeContext, selectedModelFields, sendRuntimePaneMessage, t]
+    [
+      address,
+      messages,
+      runtimeContext,
+      selectedModelFields,
+      sendRuntimePaneMessage,
+      lifecycleStore,
+      t,
+    ]
   )
 
   const submitRequestUserInput = useCallback(

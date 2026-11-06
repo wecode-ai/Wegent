@@ -164,6 +164,67 @@ test.each(
   }
 )
 
+test.each([false, true])(
+  'keeps normal optimistic sending after a question was dismissed (interrupt=%s)',
+  async interrupt => {
+    Object.assign(mocks.context.projectChat as object, {
+      addExistingAttachmentForScope: vi.fn(),
+    })
+    const interruptSend = vi.fn()
+    mocks.context.interruptAndSendRuntimePaneMessage = interruptSend
+    const sendMethod = interrupt ? interruptSend : mocks.send
+    const { result } = await renderSession()
+    const payload = {
+      kind: 'request_user_input' as const,
+      delivery: 'async' as const,
+      itemId: 'dismissed-question',
+      questions: [{ id: 'audience', question: 'Who receives the report?' }],
+    }
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'question-turn',
+          status: 'done',
+          items: [
+            {
+              id: payload.itemId,
+              type: 'block',
+              block: {
+                id: payload.itemId,
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'done',
+                createdAt: 1,
+                renderPayload: payload,
+              },
+            },
+          ],
+        },
+      ])
+    })
+    await act(async () => result.current.ignoreRequestUserInput(payload))
+    if (interrupt) act(() => lifecycleStore.turnStarted(address, 'follow-up-turn'))
+    let finish!: (accepted: boolean) => void
+    sendMethod.mockImplementationOnce(() => new Promise<boolean>(resolve => (finish = resolve)))
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = result.current.send('A new follow-up', { interruptWhenBusy: interrupt })
+    })
+    await waitFor(() => expect(sendMethod).toHaveBeenCalledOnce())
+    expect(getRuntimeConversationMessages(address)).toContainEqual(
+      expect.objectContaining({ role: 'user', content: 'A new follow-up' })
+    )
+    await act(async () => {
+      finish(false)
+      expect(await sending).toBe(false)
+    })
+    expect(getRuntimeConversationMessages(address)).not.toContainEqual(
+      expect.objectContaining({ role: 'user', content: 'A new follow-up' })
+    )
+    expect(result.current.answeredRequestUserInputIds.has('item:dismissed-question')).toBe(true)
+  }
+)
+
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.send.mockReset().mockResolvedValue(true)

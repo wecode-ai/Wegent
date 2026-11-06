@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react'
 import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   hasRequestUserInputResponse,
+  isImplementationPlanRequestUserInput,
   isPendingRequestUserInputBlock,
   isRequestUserInputBlock,
   resolveAsyncRequestUserInputAnswers,
@@ -26,11 +27,32 @@ export function canDiscussQuestion(payload: RequestUserInputPayload): boolean {
   )
 }
 
+/** Fixed implementation confirmation remains a native choice, not a free-form answer. */
+export function questionDiscussionAnswerQuestions(payload: RequestUserInputPayload) {
+  const questions = payload.questions ?? []
+  return isImplementationPlanRequestUserInput(payload)
+    ? questions.filter(
+        question => question.is_other ?? question.isOther ?? !question.options?.length
+      )
+    : questions
+}
+
 export function questionDiscussionKey(
   source: RuntimeTaskAddress,
   payload: RequestUserInputPayload
 ) {
-  return JSON.stringify([source.deviceId, source.taskId, requestUserInputPayloadKey(payload)])
+  const owners = [
+    ...new Set(
+      (payload.questions ?? []).map(question =>
+        requestUserInputPayloadKey(requestUserInputQuestionTarget(payload, question.id!).payload)
+      )
+    ),
+  ].sort()
+  return JSON.stringify([
+    source.deviceId,
+    source.taskId,
+    owners.length > 1 ? { requests: owners } : requestUserInputPayloadKey(payload),
+  ])
 }
 
 export function pendingDiscussionQuestion(

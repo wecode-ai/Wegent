@@ -24,6 +24,7 @@ import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import { requestUserInputQuestionTarget } from '@/components/layout/requestUserInputOverlay'
 import {
   canDiscussQuestion,
+  questionDiscussionAnswerQuestions,
   QuestionDiscussionContext,
   QuestionDiscussionStoreContext,
   questionDiscussionKey,
@@ -78,8 +79,8 @@ export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
   )
   return (
     <QuestionDiscussionContext.Provider value={value}>
-      <div className="flex h-full min-h-0 min-w-0">
-        <div className={`h-full min-h-0 min-w-0 flex-1 ${selected ? 'hidden md:block' : ''}`}>
+      <div className={selected ? 'flex h-full min-h-0 min-w-0' : 'contents'}>
+        <div className={selected ? 'hidden h-full min-h-0 min-w-0 flex-1 md:block' : 'contents'}>
           <ToolInteractionServicesProvider value={toolServices}>
             {children}
           </ToolInteractionServicesProvider>
@@ -143,7 +144,11 @@ function QuestionDiscussionPanel({
     },
     [create, sessionKey, createTemporaryRuntimeTask, session.source, t]
   )
-  const [questionId, setQuestionId] = useState(session.payload.questions![0].id!)
+  const answerQuestions = questionDiscussionAnswerQuestions(session.payload)
+  const [selectedQuestionId, setQuestionId] = useState(answerQuestions[0]?.id)
+  const questionId = answerQuestions.some(question => question.id === selectedQuestionId)
+    ? selectedQuestionId
+    : answerQuestions[0]?.id
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -159,7 +164,7 @@ function QuestionDiscussionPanel({
     [sessionKey, update]
   )
   const apply = async (text: string) => {
-    if (checkingRef.current || !text.trim()) return
+    if (checkingRef.current || !text.trim() || !questionId) return
     checkingRef.current = true
     const target = requestUserInputQuestionTarget(session.payload, questionId)
     setChecking(true)
@@ -197,7 +202,7 @@ function QuestionDiscussionPanel({
       store.update(questionDiscussionKey(session.source, target.payload), current => ({
         ...current,
         source: session.source,
-        payload: target.payload,
+        payload: current?.payload ?? target.payload,
         address: current?.address ?? null,
         answers: { ...current?.answers, [target.questionId]: text.trim() },
       }))
@@ -232,7 +237,8 @@ function QuestionDiscussionPanel({
               {t('question_discussion.title')}
             </h2>
             <p className="mt-1 line-clamp-2 text-sm text-text-secondary">
-              {session.payload.questions?.find(question => question.id === questionId)?.question}
+              {session.payload.questions?.find(question => question.id === questionId)?.question ??
+                session.payload.questions?.[0]?.question}
             </p>
           </div>
           <button
@@ -245,9 +251,9 @@ function QuestionDiscussionPanel({
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </header>
-        {(session.payload.questions!.length > 1 || checking || error) && (
+        {(answerQuestions.length > 1 || checking || error) && (
           <div className="shrink-0 space-y-2 px-4 pb-2">
-            {session.payload.questions!.length > 1 && (
+            {answerQuestions.length > 1 && (
               <>
                 <label htmlFor={`${id}-question`} className="block text-sm font-medium">
                   {t('question_discussion.answer_for')}
@@ -260,7 +266,7 @@ function QuestionDiscussionPanel({
                   disabled={checking}
                   className="block min-h-11 w-full min-w-0 max-w-full rounded-lg border border-border bg-background px-2 text-sm md:min-h-8"
                 >
-                  {session.payload.questions!.map(question => (
+                  {answerQuestions.map(question => (
                     <option key={question.id} value={question.id}>
                       {question.question ?? question.header}
                     </option>
@@ -311,7 +317,9 @@ function QuestionDiscussionPanel({
             showExecutionTools={false}
             expanded
             emptyStateText={t('question_discussion.empty')}
-            onFillSelectionToAnswer={open && !checking ? text => void apply(text) : undefined}
+            onFillSelectionToAnswer={
+              open && !checking && questionId ? text => void apply(text) : undefined
+            }
             placeholder={t('question_discussion.placeholder')}
           />
         </div>

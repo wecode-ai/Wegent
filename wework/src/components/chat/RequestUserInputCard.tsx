@@ -20,7 +20,11 @@ import { DesktopConversationTranslation } from './DesktopConversationTranslation
 import { openExternalUrl } from '@/lib/external-links'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isRequestUserInputBlock, requestUserInputPayloadKey } from './requestUserInputMessages'
+import {
+  isRequestUserInputBlock,
+  requestUserInputPayloadKey,
+  isImplementationPlanRequestUserInput,
+} from './requestUserInputMessages'
 export type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 
 function nativeApprovalArguments(payload: RequestUserInputPayload, title: string) {
@@ -216,7 +220,7 @@ export function RequestUserInputCard({
       <SharedRequestUserInputCard
         {...props}
         payload={
-          canDiscuss
+          canDiscuss && !isImplementationPlanRequestUserInput(payload)
             ? {
                 ...payload,
                 questions: payload.questions?.map(question => ({
@@ -236,7 +240,7 @@ export function RequestUserInputCard({
               store.update(questionDiscussionKey(address, target.payload), current => ({
                 ...current,
                 source: address,
-                payload: target.payload,
+                payload: current?.payload ?? target.payload,
                 address: current?.address ?? null,
                 answers: { ...current?.answers, [target.questionId]: answer },
               }))

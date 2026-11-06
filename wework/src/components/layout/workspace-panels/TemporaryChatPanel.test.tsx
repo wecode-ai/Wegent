@@ -1340,7 +1340,8 @@ describe('TemporaryChatPanel', () => {
         address,
         message: RUNTIME_RETRY_CONTINUATION_PROMPT,
         modelId: 'gpt-5.6-codex',
-      })
+      }),
+      expect.any(Object)
     )
 
     await userEvent.click(screen.getByTestId('mock-submit-input'))

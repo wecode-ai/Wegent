@@ -1092,7 +1092,10 @@ export function useWorkbenchPaneSession({
       try {
         const appendedLocalMessage =
           options.appendLocalMessage !== false &&
-          !pendingRequestUserInputPayload(getRuntimeConversationMessages(currentRuntimeTask))
+          !pendingRequestUserInputPayload(
+            getRuntimeConversationMessages(currentRuntimeTask),
+            answeredRequestUserInputIds
+          )
         if (appendedLocalMessage) {
           applyRuntimeConversationAction(currentRuntimeTask, {
             type: 'user_added',
@@ -1124,7 +1127,13 @@ export function useWorkbenchPaneSession({
         operation.dispose()
       }
     },
-    [currentRuntimeTask, lifecycleStore, sendRuntimePaneMessage, setError]
+    [
+      currentRuntimeTask,
+      lifecycleStore,
+      sendRuntimePaneMessage,
+      setError,
+      answeredRequestUserInputIds,
+    ]
   )
 
   const retainRuntimeQueuedMessage = useCallback(
@@ -1140,7 +1149,10 @@ export function useWorkbenchPaneSession({
       if (interruptAndSendInFlightRef.current) return false
       interruptAndSendInFlightRef.current = true
       const deferLocalMessage = Boolean(
-        pendingRequestUserInputPayload(getRuntimeConversationMessages(currentRuntimeTask))
+        pendingRequestUserInputPayload(
+          getRuntimeConversationMessages(currentRuntimeTask),
+          answeredRequestUserInputIds
+        )
       )
       const turnIdsBeforeSend = getRuntimeConversationTurnIds(currentRuntimeTask)
       const interruptedGuidanceIds = new Set<string>()
@@ -1238,6 +1250,7 @@ export function useWorkbenchPaneSession({
     },
     [
       appendLocalUserMessage,
+      answeredRequestUserInputIds,
       currentRuntimeTask,
       interruptAndSendRuntimePaneMessage,
       lifecycleStore,

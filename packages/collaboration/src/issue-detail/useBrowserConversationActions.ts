@@ -63,6 +63,9 @@ export function useBrowserConversationActions(
           pending.current.add(session)
           setError(null)
           try {
+            const turnIdsBeforeSend = new Set(
+              session.getSnapshot().turns.flatMap(turn => (turn.id ? [turn.id] : []))
+            )
             await retryRuntimeConversation({
               messageId: message.id,
               messages: session.getSnapshot().messages,
@@ -72,13 +75,17 @@ export function useBrowserConversationActions(
                 missing: translate('workbench.retry_message_missing'),
                 failed: translate('workbench.retry_failed'),
               },
-              addUserMessage: session.addUserMessage,
-              removeUserMessage: session.removeUserMessage,
+              acceptUserMessage: (message, turnId) =>
+                session.acceptUserMessage(message, turnIdsBeforeSend, turnId),
               async send(request) {
                 const result = await runtime.work.sendRuntimeMessage(request)
                 if (!result.accepted)
                   throw new Error(result.error || translate('workbench.retry_failed'))
-                return true
+                return {
+                  accepted: true,
+                  queued: result.status === 'queued',
+                  turnId: result.turnId ?? result.turn_id,
+                }
               },
             })
             return true

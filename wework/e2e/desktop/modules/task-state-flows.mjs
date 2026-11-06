@@ -437,14 +437,31 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
   )
 
   await control.command('click', '[data-testid="request-user-input-option-question_1-1"]')
-  // Hold the turn open until the answer has provably landed, so the assertion
-  // covers delivery while the model is still working rather than after it stops.
+  // Native guidance is accepted before it can be applied at the next model boundary.
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
     visible: true,
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.pane?.status?.isBusy === true &&
+      snapshot.pane?.queuedMessages?.some(
+        message =>
+          message.content === REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER &&
+          message.status === 'sending' &&
+          message.deliveryMode === 'guidance' &&
+          !message.awaitingGuidanceAcceptance
+      ),
+    'The running async answer was not accepted as guidance'
+  )
+  await withTimeout(
+    control.releaseAsyncRequestUserInputHold(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Timed out releasing the original async question response'
+  )
   await control.command('waitFor', '[data-testid="user-message-question-reply"]', {
     text: REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
     visible: true,
@@ -457,7 +474,7 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
     'The async answer only landed after the model stopped working'
   )
   await withTimeout(
-    control.releaseAsyncRequestUserInputHold(),
+    control.releaseAsyncRequestUserInputAnswerHold(),
     DEFAULT_STEP_TIMEOUT_MS,
     'Timed out releasing the running async question turn'
   )
