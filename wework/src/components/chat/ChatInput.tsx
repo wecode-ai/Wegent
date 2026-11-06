@@ -770,7 +770,12 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
               (contextHeader || (displayedGoal && !goalDraftActive)) && (
                 <div
                   data-testid="composer-context-rail"
-                  className="mb-1 flex min-w-0 flex-wrap items-center text-sm text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full"
+                  className={[
+                    'mb-1 min-w-0 items-center text-sm text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full',
+                    contextHeader && displayedGoal && !goalDraftActive
+                      ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
+                      : 'flex',
+                  ].join(' ')}
                 >
                   {displayedGoal && !goalDraftActive && (
                     <GoalStatusBar
