@@ -79,6 +79,9 @@ export function apply(ctx) {
   const origin = await control.command('getLocationOrigin', 'body')
   const response = await fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
     method: 'POST',
+    // Installing a real plugin snapshots the profile, runs pnpm and validates
+    // the result. These serial phases can exceed the ordinary UI step budget.
+    timeoutMs: 60_000,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       capability: 'runtime.installCoreDshPlugin',

@@ -6,8 +6,12 @@ import type { AppUpdateError } from '@/features/app-update/app-update-error'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
+import zh from '@/i18n/locales/zh-CN/common.json'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
+const translations = createInstance()
 const mockCheckNow = vi.fn()
 const mockInstallUpdate = vi.fn()
 const runtimeModeMock = vi.hoisted(() => ({
@@ -111,23 +115,26 @@ function renderMenu({
     />
   )
   render(
-    localCodexSubscriptionEnabled === undefined ? (
-      menu
-    ) : (
-      <AppPreferencesContext.Provider
-        value={{
-          loaded: true,
-          preferences: { ...defaultAppPreferences, localCodexSubscriptionEnabled },
-        }}
-      >
-        {menu}
-      </AppPreferencesContext.Provider>
-    )
+    <I18nextProvider i18n={translations}>
+      {localCodexSubscriptionEnabled === undefined ? (
+        menu
+      ) : (
+        <AppPreferencesContext.Provider
+          value={{
+            loaded: true,
+            preferences: { ...defaultAppPreferences, localCodexSubscriptionEnabled },
+          }}
+        >
+          {menu}
+        </AppPreferencesContext.Provider>
+      )}
+    </I18nextProvider>
   )
 }
 
 describe('DesktopSettingsMenu', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await translations.init({ lng: 'zh-CN', resources: { 'zh-CN': { common: zh } } })
     vi.clearAllMocks()
     mockUpdateState = {
       availableUpdate: null,
