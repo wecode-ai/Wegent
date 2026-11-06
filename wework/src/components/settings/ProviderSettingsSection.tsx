@@ -114,7 +114,7 @@ export function ProviderSettingsSection() {
         <p
           role="alert"
           data-testid="provider-settings-error"
-          className="break-words text-sm text-red-500"
+          className="break-words text-sm text-destructive"
         >
           {error || loadError}
         </p>

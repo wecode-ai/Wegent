@@ -121,7 +121,7 @@ export function FileChangesCard({
           </p>
         ) : null}
         {actionError ? (
-          <p className="border-b border-border bg-red-50 px-3 py-1.5 text-xs text-red-700">
+          <p className="border-b border-border bg-[rgb(var(--file-change-error-bg,254_242_242))] px-3 py-1.5 text-xs text-[rgb(var(--file-change-error,185_28_28))]">
             {actionError}
           </p>
         ) : null}

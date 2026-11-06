@@ -16,6 +16,7 @@ import {
   WrapText,
 } from 'lucide-react'
 import { PatchDiff } from '@pierre/diffs/react'
+import { WEWORK_CODE_THEME } from '@/lib/code-theme'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOptionalAppearance } from '@/features/appearance'
@@ -54,6 +55,9 @@ const PIERRE_DIFF_CSS = `
     --diffs-bg-context-override: rgb(var(--color-bg-base));
     --diffs-bg-context-gutter-override: rgb(var(--color-bg-surface));
     --diffs-bg-hover-override: rgb(var(--color-muted));
+    --diffs-addition-color-override: rgb(var(--color-diff-added));
+    --diffs-deletion-color-override: rgb(var(--color-diff-removed));
+    --diffs-modified-color-override: rgb(var(--color-primary));
     background: rgb(var(--color-bg-base)) !important;
   }
   :host, pre, code {
@@ -68,12 +72,6 @@ const PIERRE_DIFF_CSS = `
     font-family: var(--font-ui);
     font-size: var(--text-sm);
     font-weight: 500;
-  }
-  [data-diffs-line-addition], [data-diffs-line-added] {
-    background: rgb(34 197 94 / 0.12);
-  }
-  [data-diffs-line-deletion], [data-diffs-line-deleted] {
-    background: rgb(239 68 68 / 0.12);
   }
 `
 interface FileChangesReviewPanelProps {
@@ -248,7 +246,7 @@ export function FileChangesReviewPanel({
       {loading ? (
         <p className="py-8 text-center text-sm text-text-muted">{t('file_changes.loading_diff')}</p>
       ) : error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
       ) : (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
           <ReviewToolbar
@@ -283,7 +281,7 @@ export function FileChangesReviewPanel({
             <p
               role="alert"
               data-testid="file-changes-review-action-error"
-              className="shrink-0 border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+              className="shrink-0 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
             >
               {actionError}
             </p>
@@ -494,8 +492,10 @@ function ReviewToolbar({
               <span className="shrink-0">{toolbarTitle}</span>
             )}
           </div>
-          <span className="shrink-0 font-normal text-green-600">+{additions.toLocaleString()}</span>
-          <span className="shrink-0 font-normal text-red-600">-{deletions.toLocaleString()}</span>
+          <span className="shrink-0 font-normal text-success">+{additions.toLocaleString()}</span>
+          <span className="shrink-0 font-normal text-destructive">
+            -{deletions.toLocaleString()}
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <ToolbarButton
@@ -801,8 +801,8 @@ function FileDiffSection({
         >
           {section.path}
         </button>
-        <span className="shrink-0 font-normal text-green-600">+{stats.additions}</span>
-        <span className="shrink-0 font-normal text-red-600">-{stats.deletions}</span>
+        <span className="shrink-0 font-normal text-success">+{stats.additions}</span>
+        <span className="shrink-0 font-normal text-destructive">-{stats.deletions}</span>
         {fileActions.length > 0 ? (
           <div
             data-testid="file-changes-review-file-actions"
@@ -895,6 +895,7 @@ function FileDiffSection({
                       overflow: wrapLines ? 'wrap' : 'scroll',
                       stickyHeader: false,
                       themeType,
+                      theme: WEWORK_CODE_THEME,
                       tokenizeMaxLength: 250_000,
                       tokenizeMaxLineLength: 2_000,
                       unsafeCSS: PIERRE_DIFF_CSS,

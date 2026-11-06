@@ -114,7 +114,7 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
             {error && (
               <div
                 data-testid="external-content-import-error"
-                className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                className="mt-4 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive"
               >
                 {error}
               </div>

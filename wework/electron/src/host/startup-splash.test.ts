@@ -163,10 +163,12 @@ describe('StartupSplash', () => {
     const splashAsset = (name: string) =>
       readFile(join(electronRoot, 'src', 'shell', 'startup-splash', name), 'utf8')
 
-    const [html, styles, script] = await Promise.all([
+    const [html, styles, animations, script, themeTokens] = await Promise.all([
       splashAsset('index.html'),
       splashAsset('styles.css'),
+      splashAsset('animations.css'),
       splashAsset('splash.js'),
+      readFile(join(electronRoot, 'src', 'shell', 'theme-tokens.css'), 'utf8'),
     ])
 
     expect(html).toContain('class="workbench-scene"')
@@ -196,16 +198,17 @@ describe('StartupSplash', () => {
     expect(html).toContain('data-testid="startup-copy-diagnostics-button"')
     expect(html).toContain('data-testid="startup-open-logs-button"')
     expect(html).toContain('id="startup-toast"')
-    expect(styles).toContain('@keyframes robot-bob')
-    expect(styles).toContain('@keyframes human-bob')
-    expect(styles).toContain('@keyframes splash-enter')
-    expect(styles).toContain('@keyframes ambient-line-arrive')
-    expect(styles).toContain('@keyframes progress-breathe')
+    expect(styles).toContain("@import './animations.css'")
+    expect(animations).toContain('@keyframes robot-bob')
+    expect(animations).toContain('@keyframes human-bob')
+    expect(animations).toContain('@keyframes splash-enter')
+    expect(animations).toContain('@keyframes ambient-line-arrive')
+    expect(animations).toContain('@keyframes progress-breathe')
     expect(styles).toContain('.startup-progress-fill')
     expect(styles).toContain('.startup-toast')
     expect(styles).toContain('.startup-timeout-actions')
-    expect(html).toContain('document.documentElement.dataset.theme = theme')
-    expect(styles).toContain(":root[data-theme='dark']")
+    expect(html).toContain('<script src="../appearance.js"></script>')
+    expect(themeTokens).toContain(":root[data-theme='dark']")
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
     expect(script).toContain('stageTimeoutMs()')
     expect(script).toContain('weworkStartupProgress')

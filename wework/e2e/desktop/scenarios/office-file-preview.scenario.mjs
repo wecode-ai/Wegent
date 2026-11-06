@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { createOfficePreviewFixtures } from '../modules/office-preview-fixtures.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { createLocalProject } from '../modules/streaming-text-fixture.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import {
@@ -276,6 +277,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       return true
     },
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       await createOfficePreviewFixtures(workspacePath)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       const originalTaskId = await createTask(control, 'A', uiTimeoutMs)

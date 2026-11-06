@@ -4710,8 +4710,8 @@ describe('DesktopWorkbenchLayout', () => {
       'h-[18px]',
       'w-[18px]',
       'rounded-full',
-      'hover:bg-black/70',
-      'hover:text-white'
+      'hover:bg-text-primary/70',
+      'hover:text-background'
     )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
@@ -5309,8 +5309,8 @@ describe('DesktopWorkbenchLayout', () => {
       'h-[18px]',
       'w-[18px]',
       'rounded-full',
-      'hover:bg-black/70',
-      'hover:text-white'
+      'hover:bg-text-primary/70',
+      'hover:text-background'
     )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(closeButton).not.toHaveClass('border', 'bg-muted')

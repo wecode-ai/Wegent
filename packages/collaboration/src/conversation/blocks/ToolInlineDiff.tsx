@@ -74,8 +74,8 @@ export function InlineDiffPreview({
             data-testid="process-file-change-diff-stats"
             className="flex shrink-0 items-center gap-1.5 font-medium"
           >
-            <span className="text-green-600">+{file.additions}</span>
-            <span className="text-red-500">-{file.deletions}</span>
+            <span className="text-[rgb(var(--color-diff-added,22_163_74))]">+{file.additions}</span>
+            <span className="text-[rgb(var(--color-diff-removed,239_68_68))]">-{file.deletions}</span>
           </span>
         </span>
         <button
@@ -111,9 +111,9 @@ export function InlineDiffPreview({
             className={[
               "grid min-w-max grid-cols-[3.25rem_max-content]",
               line.type === "addition"
-                ? "border-l-4 border-green-500 bg-green-500/10"
+                ? "border-l-4 border-[rgb(var(--color-diff-added,34_197_94))] bg-[rgb(var(--color-diff-added,34_197_94)/0.1)]"
                 : line.type === "deletion"
-                  ? "border-l-4 border-red-500 bg-red-500/10"
+                  ? "border-l-4 border-[rgb(var(--color-diff-removed,239_68_68))] bg-[rgb(var(--color-diff-removed,239_68_68)/0.1)]"
                   : line.type === "separator"
                     ? "border-l-4 border-transparent bg-muted/60"
                     : "border-l-4 border-transparent",
@@ -123,9 +123,9 @@ export function InlineDiffPreview({
               className={[
                 "select-none px-3 text-right",
                 line.type === "addition"
-                  ? "text-green-600"
+                  ? "text-[rgb(var(--color-diff-added,22_163_74))]"
                   : line.type === "deletion"
-                    ? "text-red-500"
+                    ? "text-[rgb(var(--color-diff-removed,239_68_68))]"
                     : "text-text-muted",
               ].join(" ")}
             >

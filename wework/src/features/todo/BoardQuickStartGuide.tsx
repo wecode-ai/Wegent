@@ -131,7 +131,7 @@ export function BoardQuickStartGuide({
         role="status"
         className="mx-6 mb-3 flex min-h-10 items-center gap-2 rounded-xl border border-border bg-muted/50 px-3 text-sm text-text-secondary"
       >
-        <Check className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden="true" />
+        <Check className="h-4 w-4 text-success" aria-hidden="true" />
         <span>{t('todo.quick_start_completed', '快速上手已完成，可以继续推进工作了。')}</span>
       </div>
     )
@@ -251,7 +251,7 @@ function QuickStartStep({
         className={[
           'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs',
           complete
-            ? 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-300'
+            ? 'border-success/30 bg-success/10 text-success'
             : 'border-border text-text-muted',
         ].join(' ')}
         aria-label={

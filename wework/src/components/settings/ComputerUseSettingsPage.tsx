@@ -124,7 +124,7 @@ export function ComputerUseSettingsPage() {
       </div>
 
       {error || status?.error ? (
-        <div data-testid="computer-use-settings-error" className="mb-4 text-sm text-red-500">
+        <div data-testid="computer-use-settings-error" className="mb-4 text-sm text-destructive">
           {error ?? status?.error}
         </div>
       ) : null}

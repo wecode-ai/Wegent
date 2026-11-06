@@ -296,7 +296,7 @@ export function WeworkAgentResourceForm({
         <>
           {unsupportedRuntime ? (
             <p
-              className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
+              className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
               data-testid="wework-agent-resource-form-unsupported"
               role="alert"
             >

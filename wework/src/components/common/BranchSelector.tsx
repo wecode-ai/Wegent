@@ -400,7 +400,7 @@ export function BranchSelector({
               </p>
             )}
             {!branchesLoading && error && !createFormOpen && (
-              <p className="px-2 py-3 text-xs text-red-500">{error}</p>
+              <p className="px-2 py-3 text-xs text-destructive">{error}</p>
             )}
             {!branchesLoading &&
               !error &&
@@ -494,7 +494,7 @@ export function BranchSelector({
                 {error && (
                   <p
                     data-testid={`${prefix}-branch-generation-error`}
-                    className="px-2 pt-2 text-xs text-red-500"
+                    className="px-2 pt-2 text-xs text-destructive"
                     aria-live="polite"
                   >
                     {error}

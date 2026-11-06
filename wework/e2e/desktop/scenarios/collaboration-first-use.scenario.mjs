@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -24,6 +25,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   return {
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: workbenchReadyTimeoutMs,

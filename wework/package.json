@@ -82,6 +82,7 @@
     "@fullcalendar/react": "^6.1.21",
     "@headless-tree/core": "^1.7.0",
     "@headless-tree/react": "^1.7.0",
+    "@lezer/highlight": "^1.2.3",
     "@mantine/core": "^8.3.18",
     "@mantine/hooks": "^8.3.18",
     "@modelcontextprotocol/ext-apps": "2.0.3",

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createWindowsMarkdownFileLinks } from '../modules/windows-markdown-file-links.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -96,6 +97,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
   return {
     handleHttp: windowsLinks.handleHttp,
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
       const breadcrumbDirectory = join(workspacePath, 'breadcrumb-fixture')
       await mkdir(breadcrumbDirectory, { recursive: true })

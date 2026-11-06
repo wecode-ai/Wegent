@@ -153,7 +153,7 @@ describe('WorkspaceTabStrip', () => {
       .find(tab => tab.getAttribute('aria-selected') === 'true')
     expect(activeBoardTab).toBeDefined()
     expect(activeBoardTab?.parentElement).toHaveClass(
-      'bg-white',
+      'bg-surface',
       'border-border/70',
       'shadow-sm',
       'rounded-md'

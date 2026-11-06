@@ -1,4 +1,5 @@
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import assert from 'node:assert/strict'
 import { withTimeout, WORKBENCH_READY_TIMEOUT_MS } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -141,6 +142,7 @@ async function waitForWindowElementCount(explorerCommand, selector, expected, ti
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       await ensureExperimentalFeaturesEnabled(control)
       // Every declared item must exist so the menu structure cannot silently
       // lose an entry. Visibility is asserted separately below.
@@ -386,6 +388,31 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         'dark',
         'The Process Explorer did not inherit the dark theme'
       )
+      await explorerCommand('waitFor', 'html[data-appearance-theme="tokyo-night"]')
+      assert.equal(
+        await explorerCommand('getComputedStyleValue', 'html', { value: '--color-bg-base' }),
+        '26 27 38',
+        'The Process Explorer did not inherit the named palette'
+      )
+      await captureScreenshot(
+        { command: explorerCommand },
+        'appearance-tokyo-process-explorer.png',
+        'body'
+      )
+      await selectWorkbenchTheme(control, { themeId: 'matrix', timeoutMs: uiTimeoutMs })
+      await explorerCommand('waitFor', 'html[data-appearance-theme="matrix"]')
+      assert.equal(
+        await explorerCommand('getComputedStyleValue', 'html', { value: '--color-bg-base' }),
+        '4 8 5',
+        'An open auxiliary window did not follow a theme change within dark mode'
+      )
+      await captureScreenshot(
+        { command: explorerCommand },
+        'appearance-matrix-process-explorer.png',
+        'body'
+      )
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
+      await explorerCommand('waitFor', 'html[data-appearance-theme="tokyo-night"]')
 
       // Header edges resize a column, and the change is visible immediately.
       const firstColumnBefore = await explorerCommand(

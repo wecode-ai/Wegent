@@ -10,6 +10,10 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import type { TurnFileChangesSummary } from '@/types/api'
+import {
+  readVisualizationThemeVariables,
+  VISUALIZATION_THEME_PROPERTIES,
+} from '@/lib/visualization-theme'
 
 const MIN_FRAME_HEIGHT = 120
 const MAX_FRAME_HEIGHT = 1200
@@ -94,7 +98,12 @@ export function CodexInlineVisualizationHost({
 
   const updateFrameTheme = useCallback(() => {
     frameRef.current?.contentWindow?.postMessage(
-      { type: THEME_MESSAGE_TYPE, token: resizeToken, theme },
+      {
+        type: THEME_MESSAGE_TYPE,
+        token: resizeToken,
+        theme,
+        variables: readVisualizationThemeVariables(),
+      },
       '*'
     )
   }, [resizeToken, theme])
@@ -103,6 +112,15 @@ export function CodexInlineVisualizationHost({
     themeRef.current = theme
     updateFrameTheme()
   }, [theme, updateFrameTheme, document])
+
+  useEffect(() => {
+    const observer = new MutationObserver(updateFrameTheme)
+    observer.observe(window.document.documentElement, {
+      attributes: true,
+      attributeFilter: ['style', 'class', 'data-theme', 'data-appearance-theme'],
+    })
+    return () => observer.disconnect()
+  }, [updateFrameTheme])
 
   useEffect(() => {
     if (!sourcePath || !sourceUrl) return
@@ -230,7 +248,10 @@ function buildVisualizationDocument(
 ): string {
   const directoryUrl = new URL('.', sourceUrl).href
   const base = `<base href="${escapeHtmlAttribute(directoryUrl)}">`
-  const styles = `<style>${CODEX_VISUALIZATION_HOST_STYLES}\n:root { color-scheme: ${theme}; }</style>`
+  const variables = Object.entries(readVisualizationThemeVariables())
+    .map(([property, value]) => `${property}:${value.replace(/</g, '\\3c ')};`)
+    .join('')
+  const styles = `<style>${CODEX_VISUALIZATION_HOST_STYLES}\n:root { color-scheme: ${theme}; }\n:root { ${variables} }</style>`
   const resizeScript = `<script>(()=>{
     const token=${JSON.stringify(token)};
     const height=()=>{
@@ -243,6 +264,12 @@ function buildVisualizationDocument(
       if(event.source!==parent||!data||data.type!==${JSON.stringify(THEME_MESSAGE_TYPE)}||data.token!==token) return;
       if(data.theme!=='light'&&data.theme!=='dark') return;
       document.documentElement.style.colorScheme=data.theme;
+      const properties=${JSON.stringify(VISUALIZATION_THEME_PROPERTIES)};
+      if(data.variables&&typeof data.variables==='object') {
+        for(const [property,value] of Object.entries(data.variables)) {
+          if(properties.includes(property)&&typeof value==='string') document.documentElement.style.setProperty(property,value);
+        }
+      }
       send();
     });
     new ResizeObserver(send).observe(document.body);

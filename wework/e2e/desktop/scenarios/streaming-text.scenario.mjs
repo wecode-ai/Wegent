@@ -101,6 +101,7 @@ import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
 import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
 import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
 import { createInteractiveVisualizationChecks } from '../modules/streaming-interactive-visualization.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { createVisualizationScrollChecks } from '../modules/streaming-visualization-scroll.mjs'
 
 export function createDesktopScenario({
@@ -124,6 +125,7 @@ export function createDesktopScenario({
   const interactiveVisualization = createInteractiveVisualizationChecks({
     workspacePath,
     uiTimeoutMs,
+    captureScreenshot,
   })
   const visualizationScroll = createVisualizationScrollChecks({ workspacePath, uiTimeoutMs })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
@@ -873,6 +875,7 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       active = true
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
