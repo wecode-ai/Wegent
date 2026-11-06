@@ -352,6 +352,52 @@ describe('pane transcript reload ownership', () => {
   })
 })
 
+test('keeps progress updates on the existing frame subscription when the queue is empty', async () => {
+  const { result, unmount } = await renderSession()
+  const frames = new Map<number, FrameRequestCallback>()
+  let sequence = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.set(++sequence, callback)
+    return sequence
+  })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  const flush = () => {
+    for (const [id, callback] of [...frames]) {
+      frames.delete(id)
+      callback(0)
+    }
+  }
+  try {
+    act(() => {
+      applyRuntimeConversationAction(address, { type: 'assistant_started', subtaskId: 'burst' })
+    })
+    act(flush)
+    const before = result.current.messages
+    const ids = Array.from({ length: 20 }, (_, index) => `progress-${index}`)
+    for (const id of ids) {
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'block_created',
+          subtaskId: 'burst',
+          block: { id, type: 'text', content: id, status: 'done', createdAt: 1_793_959_193_678 },
+        })
+      })
+    }
+    expect(result.current.messages === before).toBe(true)
+    expect(
+      getRuntimeConversationMessages(address)
+        .at(-1)
+        ?.blocks?.map(block => block.id)
+    ).toEqual(ids)
+    act(flush)
+    expect(result.current.messages.at(-1)?.blocks?.map(block => block.id)).toEqual(ids)
+    expect(result.current.queuedMessages).toEqual([])
+  } finally {
+    unmount()
+    vi.unstubAllGlobals()
+  }
+})
+
 describe('explicit composer draft replacement', () => {
   test('marks repeated same-value replacements without marking ordinary publications', async () => {
     const { result } = await renderSession()
