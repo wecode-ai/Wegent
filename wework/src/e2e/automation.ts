@@ -2651,11 +2651,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
-      const { collectMemory = true, profile } = JSON.parse(command.value ?? '{}') as {
+      const { collectMemory = true } = JSON.parse(command.value ?? '{}') as {
         collectMemory?: boolean
-        profile?: string
       }
-      if (profile) console.debug('[e2e-renderer-profile-trigger]', profile)
       const debugSnapshot = getWorkbenchDebugSnapshot()
       const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
       const runtimeMessages = currentRuntimeTask

@@ -6,10 +6,6 @@ interface ProfileContents {
   id: number
   isDestroyed(): boolean
   on(event: 'did-finish-load', listener: () => void): unknown
-  on(
-    event: 'console-message',
-    listener: (event: unknown, level: number, message: string) => void
-  ): unknown
 }
 
 export function installE2ERendererCpuProfiling(
@@ -28,21 +24,13 @@ export function installE2ERendererCpuProfiling(
   if (maximum !== Infinity && (!Number.isSafeInteger(maximum) || maximum < 1)) return
   const progress = { sequence: 0, maximum }
   let collecting = false
-  const start = () => {
+  contents.on('did-finish-load', () => {
     if (collecting || progress.sequence >= maximum) return
     collecting = true
     void collectProfiles(contents, directory, progress).finally(() => {
       collecting = false
     })
-  }
-  const trigger = environment.WEWORK_E2E_RENDERER_CPU_PROFILE_TRIGGER
-  if (trigger) {
-    contents.on('console-message', (_event, _level, message) => {
-      if (message.includes(trigger)) start()
-    })
-  } else {
-    contents.on('did-finish-load', start)
-  }
+  })
 }
 
 async function collectProfiles(

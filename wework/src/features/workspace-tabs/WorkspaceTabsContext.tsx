@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   isSettingsRoute,
   navigateTo,
@@ -534,20 +533,8 @@ export function WorkspaceTabsProvider({
       const tab = state.tabs.find(candidate => candidate.id === tabId)
       if (!tab) return
       const updated = { ...tab, ...updates }
-      const startedAt = window.__WEWORK_E2E__ ? performance.now() : null
-      const trace = (phase: string) => {
-        if (startedAt === null) return
-        logRuntimeTaskCreateStage(
-          'workspace-tab-selection',
-          { tabId, phase, elapsedMs: Math.round(performance.now() - startedAt) },
-          'debug'
-        )
-      }
-      trace('started')
       flushSync(() => dispatch({ type: 'select', tabId, updates }))
-      trace('committed')
       navigateTo(workspaceTabRoute(updated))
-      trace('navigated')
     },
     [state.tabs]
   )
