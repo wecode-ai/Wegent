@@ -148,6 +148,7 @@ describe('bundled plugin resources', () => {
     const manifest = JSON.parse(readFileSync(resolve(plugin, '.codex-plugin/plugin.json'), 'utf8'))
     expect(manifest.skills).toBe('./skills/')
     for (const name of [
+      'coding',
       'browser',
       'computer',
       'github',

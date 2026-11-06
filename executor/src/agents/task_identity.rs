@@ -24,10 +24,14 @@ pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "WEWORK_PARENT_TITLE",
 ];
 
+pub(super) fn is_backend_task(request: &ExecutionRequest) -> bool {
+    request.task_id.trim().parse::<i64>().is_ok_and(|id| id > 0)
+}
+
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.extend(crate::plugin_account_auth::broker::environment());
-    if request.task_id.trim().parse::<i64>().is_ok_and(|id| id > 0) {
+    if is_backend_task(request) {
         env.insert(
             "WEGENT_BACKEND_TASK_ID".to_owned(),
             request.task_id.trim().to_owned(),

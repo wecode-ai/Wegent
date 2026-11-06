@@ -1,12 +1,9 @@
 import type { LocalModelToolProfile } from './localModelSettings'
-import GPT_DEFAULT_INSTRUCTIONS from '../../../../shared/assets/gptDefaultInstructions.md?raw'
+import GPT_DEFAULT_INSTRUCTIONS from '../../../../shared/assets/codexProgressiveInstructions.md?raw'
 
 export type LocalModelCatalogEntry = Record<string, unknown>
 
-export const DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS = GPT_DEFAULT_INSTRUCTIONS.replace(
-  'You are Codex, an agent based on GPT-5.',
-  'You are Codex, a coding agent.'
-)
+export const DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS = GPT_DEFAULT_INSTRUCTIONS
 
 function catalogSlug(id: string): string {
   const normalized = id
@@ -61,7 +58,7 @@ export function createDefaultLocalModelCatalogEntry(input: {
     supports_search_tool: true,
     use_responses_lite: false,
     auto_review_model_override: null,
-    tool_mode: null,
+    tool_mode: 'code_mode_only',
     multi_agent_version: null,
   }
 }

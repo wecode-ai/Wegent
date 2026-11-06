@@ -28,7 +28,7 @@
       "name": "wework-runtime",
       "description": "Wework host workflows loaded on demand.",
       "source": "./plugins/wework-runtime",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   ]
 }

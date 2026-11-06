@@ -1,3 +1,25 @@
+import { nativeMatrixCatalogModel } from './model-native-catalog.mjs'
+import { wireDeclarations } from './model-wire-contract.mjs'
+import {
+  handleDirectMatrixAudit,
+  matrixSkillNames,
+  recordMatrixFailure,
+  writeMatrixReport,
+} from './model-matrix-audit.mjs'
+import { writeFileSync } from 'node:fs'
+import {
+  assertProgressiveHi,
+  captureMatrixRequest,
+  countModelRequest,
+  handleProgressiveMatrixTurn,
+  matrixHiCompletion,
+  matrixDeferredCompletion,
+  matrixDeferredPrompt,
+  writeCodeModeMatrixPatch,
+  assertCodeModeMatrixPatch,
+  hasMatrixExec,
+  assertCodeModeMatrixRequest,
+} from './model-progressive-contract.mjs'
 import { visibleRuntimeUserMessage } from '../../../../packages/chat-core/src/runtime-user-message.js'
 
 import {
@@ -104,6 +126,7 @@ import {
   CUSTOM_TOOL_INPUT_DESCRIPTION,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
+  SELECTED_DESKTOP_SEGMENT,
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_READY_TIMEOUT_MS,
   DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
@@ -977,8 +1000,9 @@ class DesktopE2EServer {
   setMatrixCase(model) {
     this.matrixCase = model
     this.matrixState = {
-      stage: 'text',
+      stage: 'hi',
       requests: [],
+      failures: [],
     }
     this.setScenario('model_protocol_matrix')
   }
@@ -1978,7 +2002,10 @@ class DesktopE2EServer {
       )
       response.setHeader('ETag', '"wework-desktop-e2e-models-v1"')
       json(response, 200, {
-        models: [],
+        models:
+          SELECTED_DESKTOP_SEGMENT === 'model-routing'
+            ? [nativeMatrixCatalogModel(DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)]
+            : [],
       })
       return
     }
@@ -2309,7 +2336,50 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'model_protocol_matrix') {
-      this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
+      try {
+        this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
+      } catch (error) {
+        recordMatrixFailure(this, 'request/' + this.matrixState.stage, error)
+        if (this.matrixState.stage === 'hi') {
+          this.matrixState.stage = 'text'
+          this.writeMatrixAssistantMessage(
+            response,
+            this.matrixCase,
+            matrixHiCompletion(this.matrixCase)
+          )
+        } else if (
+          this.matrixState.progressive &&
+          !['complete', 'failed'].includes(this.matrixState.progressive)
+        ) {
+          this.matrixState.progressive = 'failed'
+          this.matrixState.deferAudit = {
+            ...this.matrixState.deferAudit,
+            status: 'failed',
+            error: error.message,
+          }
+          this.writeMatrixAssistantMessage(
+            response,
+            this.matrixCase,
+            matrixDeferredCompletion(this.matrixCase)
+          )
+        } else if (this.matrixState.stage === 'text') {
+          this.matrixState.stage = 'tool'
+          this.writeMatrixAssistantMessage(
+            response,
+            this.matrixCase,
+            matrixTextCompletion(this.matrixCase)
+          )
+        } else {
+          this.matrixState.stage = 'complete'
+          this.writeMatrixAssistantMessage(
+            response,
+            this.matrixCase,
+            matrixToolCompletion(this.matrixCase)
+          )
+        }
+      } finally {
+        writeMatrixReport(this, this.matrixCase)
+      }
       return
     }
 
@@ -5165,6 +5235,7 @@ class DesktopE2EServer {
     assert.equal(protocol, model.protocol, `${matrixCaseId(model)} reached the wrong endpoint`)
     assert.equal(body.model, model.modelId, `${matrixCaseId(model)} forwarded the wrong model ID`)
     state.requests.push({ body, headers })
+    const evidenceDirectory = captureMatrixRequest(this, model, body)
 
     const requestKind = codexRequestKind(body)
     if (requestKind === 'prewarm' || requestKind === 'compaction') {
@@ -5174,6 +5245,44 @@ class DesktopE2EServer {
 
     const serialized = JSON.stringify(body)
     this.assertMatrixRequestEnvelope(model, body, headers)
+    if (state.stage === 'hi') {
+      const budget = countModelRequest(body)
+      writeFileSync(`${evidenceDirectory}.hi-budget.json`, JSON.stringify(budget, null, 2))
+      state.hi = {
+        skills: matrixSkillNames(body),
+        ...budget,
+        declarationForm: body.input?.some(item => item.type === 'additional_tools')
+          ? 'additional_tools'
+          : 'top-level-tools',
+        tools: wireDeclarations(body, model.protocol).map(tool => ({
+          name: tool.name ?? tool.type,
+          namespace: tool.namespace ?? null,
+        })),
+      }
+      try {
+        this.matrixSkillBaselines ??= {}
+        const baseline = (this.matrixSkillBaselines[model.execution] ??= state.hi.skills)
+        const missing = baseline.filter(name => !state.hi.skills.includes(name))
+        assert.deepEqual(missing, [], 'Protocol switching lost enabled skill metadata')
+        assertProgressiveHi(body, model, budget)
+      } catch (error) {
+        recordMatrixFailure(this, 'hi', error)
+      }
+      state.stage = 'text'
+      this.writeMatrixAssistantMessage(response, model, matrixHiCompletion(model))
+      return
+    }
+    if (state.progressive !== 'failed') {
+      if (
+        !hasMatrixExec(body, model.protocol) &&
+        (state.directAuditStage || serialized.includes(matrixDeferredPrompt(model))) &&
+        state.progressive !== 'complete'
+      ) {
+        state.progressive = 'direct-audit'
+        if (handleDirectMatrixAudit(this, response, model, body)) return
+      }
+      if (handleProgressiveMatrixTurn(this, response, model, body)) return
+    }
     this.assertMatrixTools(model, body)
     if (state.stage === 'text') {
       if (!serialized.includes(matrixTextPrompt(model))) {
@@ -5248,6 +5357,10 @@ class DesktopE2EServer {
   }
 
   assertMatrixTools(model, body) {
+    if (hasMatrixExec(body, model.protocol)) {
+      assertCodeModeMatrixRequest(body, model)
+      return
+    }
     const tools = Array.isArray(body.tools) ? body.tools : []
     const applyPatch = tools.find(
       candidate => (candidate?.name ?? candidate?.function?.name) === 'apply_patch'
@@ -5290,6 +5403,10 @@ class DesktopE2EServer {
   }
 
   assertMatrixToolOutput(model, body) {
+    if (hasMatrixExec(body, model.protocol)) {
+      assertCodeModeMatrixPatch(body, model)
+      return
+    }
     if (model.protocol === 'responses') {
       const expectedType =
         model.source === 'local' || model.requestMode === 'standard'
@@ -5357,6 +5474,11 @@ class DesktopE2EServer {
   }
 
   writeMatrixToolCall(response, model) {
+    const body = this.matrixState.requests.at(-1).body
+    if (hasMatrixExec(body, model.protocol)) {
+      writeCodeModeMatrixPatch(this, response, model, body)
+      return
+    }
     const patch = matrixPatch(model)
     if (model.protocol === 'responses') {
       const id = `matrix-${matrixCaseId(model)}-tool`

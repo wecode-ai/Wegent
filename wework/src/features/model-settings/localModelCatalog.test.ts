@@ -31,9 +31,10 @@ describe('localModelCatalog', () => {
       supports_search_tool: true,
     })
     expect(Object.keys(entry).length).toBeGreaterThanOrEqual(30)
-    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS.length).toBeGreaterThan(10_000)
-    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS).toContain('# Working with the user')
-    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS).toContain('# Rules for getting work done')
+    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS.length).toBeLessThan(4_000)
+    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS).toContain('ALL_TOOLS')
+    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS).toContain('wework-runtime:coding')
+    expect(entry.tool_mode).toBe('code_mode_only')
     expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS).not.toContain('based on GPT-5')
   })
 

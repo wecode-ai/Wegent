@@ -43,6 +43,9 @@ fn text_model_catalog(model: &Value) -> Result<Value, String> {
     // Apply-patch exposure is a model capability, not a feature flag. Keep the
     // selected model and provider authentication while removing this capability.
     model["apply_patch_tool_type"] = Value::Null;
+    if model.get("tool_mode").is_some() {
+        model["tool_mode"] = json!("direct");
+    }
     Ok(json!({"models":[model]}))
 }
 
@@ -104,6 +107,16 @@ pub(super) fn configure_no_execution_tools(config: &mut CodexLaunchConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_model_catalog_disables_a_model_owned_code_mode_override() {
+        let catalog = text_model_catalog(&json!({"slug":"native", "tool_mode":"code_mode_only", "model_messages":{"instructions_template":"Provider instructions"}})).unwrap();
+        assert_eq!(catalog["models"][0]["tool_mode"], "direct");
+        assert_eq!(
+            catalog["models"][0]["model_messages"]["instructions_template"],
+            "Provider instructions"
+        );
+    }
 
     #[test]
     fn text_catalog_removes_patch_capability_without_changing_model_metadata() {

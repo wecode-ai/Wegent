@@ -1,3 +1,17 @@
+import {
+  assertMatrixReports,
+  recordMatrixFailure,
+  writeMatrixReport,
+} from './model-matrix-audit.mjs'
+import {
+  MATRIX_SKILL_CANARY,
+  MATRIX_UNUSED_SKILL_CANARY,
+  MATRIX_SKILL_DESCRIPTION,
+  matrixHiCompletion,
+  matrixDeferredPrompt,
+  matrixDeferredCompletion,
+  matrixSkillPath,
+} from './model-progressive-contract.mjs'
 import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
 import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
@@ -382,6 +396,28 @@ function mcpElicitationConfigToml(evidencePath) {
   ].join('\n')
 }
 
+async function setMatrixUpstreamProtocol(codexHome, protocol) {
+  assert.ok(
+    ['responses', 'chat', 'anthropic'].includes(protocol),
+    'Unknown matrix protocol: ' + protocol
+  )
+  const configPath = join(codexHome, 'config.toml')
+  const config = await readFile(configPath, 'utf8')
+  const pattern = /^upstream_api_format\s*=.*$/gm
+  assert.equal(
+    [...config.matchAll(pattern)].length,
+    1,
+    'The matrix requires exactly one upstream format setting'
+  )
+  const next = config.replace(
+    pattern,
+    'upstream_api_format = ' + JSON.stringify(codexUpstreamApiFormat(protocol))
+  )
+  const temporaryPath = configPath + '.' + randomUUID() + '.tmp'
+  await writeFile(temporaryPath, next)
+  await rename(temporaryPath, configPath)
+}
+
 function codexUpstreamApiFormat(protocol) {
   return protocol === 'responses'
     ? 'openai-responses'
@@ -552,6 +588,7 @@ async function verifyConnectedModelsOnLocalExecution({
   cloudEnvironment,
   setCodexUpstreamProtocol,
   workspacePath,
+  collectFailures = false,
 }) {
   const composerSelector = ACTIVE_COMPOSER_SELECTOR
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
@@ -599,6 +636,7 @@ async function verifyConnectedModelsOnLocalExecution({
     setCodexUpstreamProtocol,
     startIndex: LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.length,
     workspacePath,
+    collectFailures,
   })
 
   const currentProjectSnapshot = await waitForSnapshot(
@@ -1593,106 +1631,150 @@ async function verifyModelProtocolMatrix({
   setCodexUpstreamProtocol,
   startIndex = 0,
   workspacePath,
+  collectFailures = false,
 }) {
+  await mkdir(join(workspacePath, '.agents', 'skills', 'model-matrix'), { recursive: true })
+  await writeFile(
+    matrixSkillPath(workspacePath),
+    `---\nname: model-matrix\ndescription: ${MATRIX_SKILL_DESCRIPTION}\n---\n\n${MATRIX_SKILL_CANARY}\n`
+  )
+  const unusedSkillDirectory = join(workspacePath, '.agents', 'skills', 'model-matrix-unused')
+  await mkdir(unusedSkillDirectory, { recursive: true })
+  await writeFile(
+    join(unusedSkillDirectory, 'SKILL.md'),
+    `---\nname: model-matrix-unused\ndescription: An unrelated matrix fixture skill.\n---\n\n${MATRIX_UNUSED_SKILL_CANARY}\n`
+  )
   let hasConfirmedCatalogSync = false
+  const focusedCases = process.env.WEWORK_E2E_MODEL_MATRIX_CASES?.split(',')
   for (const [caseIndex, model] of cases.entries()) {
+    if (focusedCases && !focusedCases.includes(matrixCaseId(model))) continue
     const matrixIndex = startIndex + caseIndex
     console.log(
       `Model protocol matrix ${matrixIndex + 1}/${MODEL_PROTOCOL_MATRIX_TOTAL} started: ${matrixCaseId(model)}`
     )
-    if (model.source === 'codex') {
-      assert.ok(
-        setCodexUpstreamProtocol,
-        `${matrixCaseId(model)} requires a Codex upstream protocol setter`
-      )
-      await setCodexUpstreamProtocol(model.protocol)
-    }
     control.setMatrixCase(model)
-    await control.command('clickWhenEnabled', newConversationSelector)
-    await control.command('waitFor', composerSelector, {
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await selectE2EModel(control, model.optionIds, model.labels)
-
-    const confirmCloudModelCatalogSync =
-      !hasConfirmedCatalogSync && model.execution === 'cloud' && model.source === 'local'
-    await sendPromptWithButton(
-      control,
-      composerSelector,
-      matrixTextPrompt(model),
-      MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
-      {
-        confirmCloudModelCatalogSync,
-      }
-    )
-    if (confirmCloudModelCatalogSync) {
-      hasConfirmedCatalogSync = true
-    }
-    await waitForMatrixStage(control, model, 'tool')
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: matrixTextCompletion(model),
-      timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
-    })
-
-    await sendPromptWithButton(control, composerSelector, matrixToolPrompt(model))
-    await waitForMatrixStage(control, model, 'awaiting_tool_output', 'complete')
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: matrixToolCompletion(model),
-      timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
-    })
-    assert.equal(
-      (await readFile(join(workspacePath, matrixArtifact(model)), 'utf8')).trim(),
-      matrixArtifactContent(model),
-      `${matrixCaseId(model)} apply_patch did not create the expected artifact`
-    )
-    assert.equal(
-      control.matrixState?.stage,
-      'complete',
-      `${matrixCaseId(model)} did not complete text and tool turns`
-    )
-    assert.ok(
-      control.matrixState.requests.length >= 3,
-      `${matrixCaseId(model)} did not send the text/tool/tool-output request sequence`
-    )
     try {
-      await prepareCompletedTurnScreenshot(control)
-    } catch (error) {
-      try {
-        const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-        const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
-        const task = taskId && readRuntimeTask ? await readRuntimeTask(taskId) : null
-        const execution = task
-          ? Object.fromEntries(
-              [
-                'taskId',
-                'status',
-                'running',
-                'threadStatus',
-                'turnStatus',
-                'completedAt',
-                'updatedAt',
-              ].map(key => [key, task[key] ?? null])
-            )
-          : null
-        control.matrixState.executionDiagnostics = execution
-        console.error('Model protocol matrix terminal state mismatch', {
-          caseId: matrixCaseId(model),
-          taskId,
-          execution,
-          lifecycle: snapshot.workbench?.activeLifecycle ?? null,
-        })
-      } catch {
-        console.error('Model protocol matrix terminal state diagnostics could not be collected')
+      if (model.source === 'codex') {
+        assert.ok(
+          setCodexUpstreamProtocol,
+          `${matrixCaseId(model)} requires a Codex upstream protocol setter`
+        )
+        await setCodexUpstreamProtocol(model.protocol)
       }
-      throw error
+      await control.command('clickWhenEnabled', newConversationSelector)
+      await control.command('waitFor', composerSelector, {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, model.optionIds, model.labels)
+
+      const confirmCloudModelCatalogSync =
+        !hasConfirmedCatalogSync && model.execution === 'cloud' && model.source === 'local'
+      await sendPromptWithButton(
+        control,
+        composerSelector,
+        'hi',
+        MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+        {
+          confirmCloudModelCatalogSync,
+        }
+      )
+      if (confirmCloudModelCatalogSync) {
+        hasConfirmedCatalogSync = true
+      }
+      await waitForMatrixStage(control, model, 'text')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: matrixHiCompletion(model),
+        timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      })
+      await sendPromptWithButton(control, composerSelector, matrixDeferredPrompt(model))
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: matrixDeferredCompletion(model),
+        timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      })
+      if (control.matrixState.progressive !== 'complete') {
+        recordMatrixFailure(
+          control,
+          'defer',
+          new Error('Discovery, MCP invocation or skill loading failed')
+        )
+      }
+      await sendPromptWithButton(control, composerSelector, matrixTextPrompt(model))
+      await waitForMatrixStage(control, model, 'tool')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: matrixTextCompletion(model),
+        timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      })
+
+      await sendPromptWithButton(control, composerSelector, matrixToolPrompt(model))
+      await waitForMatrixStage(control, model, 'awaiting_tool_output', 'complete')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: matrixToolCompletion(model),
+        timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      })
+      assert.equal(
+        (await readFile(join(workspacePath, matrixArtifact(model)), 'utf8')).trim(),
+        matrixArtifactContent(model),
+        `${matrixCaseId(model)} apply_patch did not create the expected artifact`
+      )
+      assert.equal(
+        control.matrixState?.stage,
+        'complete',
+        `${matrixCaseId(model)} did not complete text and tool turns`
+      )
+      assert.ok(
+        control.matrixState.requests.length >= 3,
+        `${matrixCaseId(model)} did not send the text/tool/tool-output request sequence`
+      )
+      try {
+        await prepareCompletedTurnScreenshot(control)
+      } catch (error) {
+        try {
+          const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+          const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+          const task = taskId && readRuntimeTask ? await readRuntimeTask(taskId) : null
+          const execution = task
+            ? Object.fromEntries(
+                [
+                  'taskId',
+                  'status',
+                  'running',
+                  'threadStatus',
+                  'turnStatus',
+                  'completedAt',
+                  'updatedAt',
+                ].map(key => [key, task[key] ?? null])
+              )
+            : null
+          control.matrixState.executionDiagnostics = execution
+          console.error('Model protocol matrix terminal state mismatch', {
+            caseId: matrixCaseId(model),
+            taskId,
+            execution,
+            lifecycle: snapshot.workbench?.activeLifecycle ?? null,
+          })
+        } catch {
+          console.error('Model protocol matrix terminal state diagnostics could not be collected')
+        }
+        throw error
+      }
+      await captureVerificationScreenshot(
+        control,
+        `${screenshotPrefix}-${String(matrixIndex + 1).padStart(2, '0')}-${matrixCaseId(model)}.png`
+      )
+    } catch (error) {
+      recordMatrixFailure(control, 'case', error)
+    } finally {
+      const report = writeMatrixReport(control, model)
+      console.log(
+        'Model protocol matrix finished: ' +
+          matrixCaseId(model) +
+          ' ' +
+          (report.passed ? 'PASS' : 'FAIL')
+      )
     }
-    await captureVerificationScreenshot(
-      control,
-      `${screenshotPrefix}-${String(matrixIndex + 1).padStart(2, '0')}-${matrixCaseId(model)}.png`
-    )
-    console.log(`Model protocol matrix passed: ${matrixCaseId(model)}`)
   }
+  if (!collectFailures) assertMatrixReports(control)
 }
 
 async function waitForMatrixStage(control, model, ...expectedStages) {
@@ -1711,6 +1793,7 @@ export {
   writeCodexConfig,
   toolDetailsMcpConfigToml,
   mcpElicitationConfigToml,
+  setMatrixUpstreamProtocol,
   codexUpstreamApiFormat,
   buildExecutor,
   hostCodexTarget,

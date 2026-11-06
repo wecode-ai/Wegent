@@ -180,3 +180,28 @@ fn tools_disabled_has_no_policy_file_or_action_policy_reference() {
         "Keep ordinary context"
     );
 }
+
+#[test]
+fn backend_tasks_retain_inline_artifact_rules_while_wework_keeps_them_deferred() {
+    let launch = CodexLaunchConfig::default();
+    for task_id in ["123", "runtime-conversation"] {
+        let request = ExecutionRequest {
+            task_id: task_id.into(),
+            ..Default::default()
+        };
+        for params in [
+            thread_start_params(&request, &launch),
+            thread_fork_params("source", None, &request, &launch),
+            thread_resume_params("source", &request, &launch),
+        ] {
+            let instructions = params["developerInstructions"].as_str().unwrap();
+            assert_eq!(
+                instructions
+                    .matches(crate::artifact_cli::AGENT_INSTRUCTIONS)
+                    .count(),
+                usize::from(task_id == "123")
+            );
+            assert!(instructions.contains(host_skills::INSTRUCTIONS));
+        }
+    }
+}

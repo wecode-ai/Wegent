@@ -25,7 +25,7 @@ use tokio::{
 use crate::{
     agents::{
         runtime_capabilities,
-        task_identity::{task_identity_env, TASK_SCOPED_ENV_KEYS},
+        task_identity::{is_backend_task, task_identity_env, TASK_SCOPED_ENV_KEYS},
     },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
@@ -1922,6 +1922,8 @@ fn persistent_codex_app_server_launch_config(
     launch_config.config_overrides.extend([
         "features.goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
+        "features.code_mode_only=true".to_owned(),
+        "features.code_mode_only_strict_3p_tools=true".to_owned(),
     ]);
     launch_config
         .config_overrides

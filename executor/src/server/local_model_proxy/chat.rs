@@ -19,6 +19,10 @@ use serde_json::{json, Map, Value};
 
 use crate::logging::log_executor_event;
 
+#[path = "tool_catalog.rs"]
+mod tool_catalog;
+use tool_catalog::effective_tools;
+
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const TOOL_SEARCH_NAME: &str = "tool_search";
 pub(super) const BRIDGED_TOOL_SEARCH_NAME: &str = "search_deferred_tools";
@@ -203,76 +207,6 @@ fn copy_field(body: &Value, result: &mut Map<String, Value>, source: &str, targe
     }
 }
 
-fn effective_tools(body: &Value) -> Vec<Value> {
-    let mut tools = body
-        .get("tools")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for searched_tool in body
-        .get("input")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|item| item.get("type").and_then(Value::as_str) == Some("tool_search_output"))
-        .flat_map(|item| {
-            item.get("tools")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-        })
-    {
-        merge_effective_tool(&mut tools, searched_tool);
-    }
-    tools
-}
-
-fn merge_effective_tool(tools: &mut Vec<Value>, searched_tool: &Value) {
-    let searched_type = searched_tool.get("type").and_then(Value::as_str);
-    if searched_type != Some("namespace") {
-        if !matches!(searched_type, Some("function" | "custom" | "tool_search")) {
-            return;
-        }
-        let searched_name = searched_tool.get("name").and_then(Value::as_str);
-        if !tools.iter().any(|tool| {
-            tool.get("type") == searched_tool.get("type")
-                && tool.get("name").and_then(Value::as_str) == searched_name
-        }) {
-            tools.push(searched_tool.clone());
-        }
-        return;
-    }
-
-    let Some(namespace) = searched_tool.get("name").and_then(Value::as_str) else {
-        return;
-    };
-    let Some(existing) = tools.iter_mut().find(|tool| {
-        tool.get("type").and_then(Value::as_str) == Some("namespace")
-            && tool.get("name").and_then(Value::as_str) == Some(namespace)
-    }) else {
-        tools.push(searched_tool.clone());
-        return;
-    };
-    let Some(existing_tools) = existing.get_mut("tools").and_then(Value::as_array_mut) else {
-        *existing = searched_tool.clone();
-        return;
-    };
-    for inner_tool in searched_tool
-        .get("tools")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let inner_name = inner_tool.get("name").and_then(Value::as_str);
-        if !existing_tools
-            .iter()
-            .any(|tool| tool.get("name").and_then(Value::as_str) == inner_name)
-        {
-            existing_tools.push(inner_tool.clone());
-        }
-    }
-}
-
 fn build_tool_context(tools: &[Value], preserve_namespace: bool) -> ToolContext {
     let name_counts = tool_name_counts(tools);
 
@@ -316,7 +250,11 @@ fn build_tool_context(tools: &[Value], preserve_namespace: bool) -> ToolContext 
                     ToolIdentity {
                         name: name.to_owned(),
                         namespace: Some(namespace.to_owned()),
-                        kind: ToolKind::Function,
+                        kind: if inner_tool.get("type").and_then(Value::as_str) == Some("custom") {
+                            ToolKind::Custom
+                        } else {
+                            ToolKind::Function
+                        },
                     },
                 );
             }
@@ -870,6 +808,16 @@ pub(super) fn responses_to_responses(
     let bridge_tool_search = !native_tool_search;
     let bridge_namespace_tools = !native_namespace_tools;
 
+    let materialize_lite = result.get("tools").is_none()
+        && (convert_custom_tools || bridge_tool_search || bridge_namespace_tools);
+    if materialize_lite {
+        result["tools"] = Value::Array(effective_tools.clone());
+        if let Some(input) = result.get_mut("input").and_then(Value::as_array_mut) {
+            input.retain(|item| {
+                item.get("type").and_then(Value::as_str) != Some("additional_tools")
+            });
+        }
+    }
     if let Some(tools) = result.get("tools").and_then(Value::as_array) {
         if !tools.is_empty() {
             let tools = if bridge_namespace_tools {
@@ -4666,5 +4614,45 @@ mod tests {
             "output: {output}"
         );
         assert!(!output.contains("custom_tool_call"), "output: {output}");
+    }
+    #[test]
+    fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
+        let script = "text('中文');\ntext(42)";
+        let declaration = json!({"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec","description":"Native code execution"}]});
+        let body = json!({"input":[
+            {"type":"additional_tools","tools":[declaration]},
+            {"type":"custom_tool_call","namespace":"functions","name":"exec","call_id":"cell-1","input":script},
+            {"type":"custom_tool_call_output","call_id":"cell-1","output":"42"}
+        ]});
+        let (chat, context) = responses_to_chat(&body).unwrap();
+        assert!(context.is_custom("functions__exec"));
+        assert_eq!(
+            chat["tools"][0]["function"]["parameters"]["required"],
+            json!(["input"])
+        );
+        let arguments: Value = serde_json::from_str(
+            chat["messages"][0]["tool_calls"][0]["function"]["arguments"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(arguments["input"], script);
+        let (standard, context) = responses_to_responses(&body, true, false, false).unwrap();
+        assert!(context.is_custom("functions__exec"));
+        assert_eq!(standard["tools"][0]["name"], "functions__exec");
+        assert!(!standard["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["type"] == "additional_tools"));
+        let (native, _) = responses_to_responses(&body, false, true, true).unwrap();
+        assert_eq!(native["input"], body["input"]);
+        assert!(native.get("tools").is_none());
+        let (anthropic, _) = super::super::anthropic::responses_to_anthropic(&body).unwrap();
+        assert_eq!(
+            anthropic["tools"][0]["input_schema"]["required"],
+            json!(["input"])
+        );
+        assert!(anthropic["messages"].to_string().contains("中文"));
     }
 }

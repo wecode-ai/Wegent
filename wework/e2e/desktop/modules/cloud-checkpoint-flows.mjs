@@ -1,3 +1,4 @@
+import { assertMatrixReports } from './model-matrix-audit.mjs'
 import { access, readFile } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
@@ -11,7 +12,9 @@ import {
 } from './conversation-navigation.mjs'
 
 import {
+  setMatrixUpstreamProtocol,
   verifyCloudProjectFlow,
+  verifyConnectedModelsOnLocalExecution,
   verifyModelProtocolMatrix,
   verifyRetryFailureRestoration,
 } from './desktop-build-flows.mjs'
@@ -817,6 +820,17 @@ async function verifyCloudCheckpoint({
     return
   }
 
+  if (checkpoint === 'model-routing') {
+    setPhase('local-connected-model-routing')
+    await verifyConnectedModelsOnLocalExecution({
+      control,
+      cloudEnvironment,
+      workspacePath,
+      collectFailures: true,
+      setCodexUpstreamProtocol: protocol => setMatrixUpstreamProtocol(codexHome, protocol),
+    })
+  }
+
   const { composerSelector, projectRowSelector, projectUiId } = await createCloudProjectFixture(
     control,
     workspacePath
@@ -864,9 +878,12 @@ async function verifyCloudCheckpoint({
         newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
         readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
         screenshotPrefix: 'cloud-model-routing',
+        startIndex: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length,
+        collectFailures: true,
         setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
         workspacePath,
       })
+      assertMatrixReports(control)
       return
     case 'window-lifecycle':
       setPhase('cloud-window-lifecycle')
