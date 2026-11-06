@@ -468,14 +468,12 @@ export function useWorkbenchRuntimeMessaging({
         } else {
           lifecycleStore.sendAccepted(outboundRequest.address)
         }
-        try {
-          await refreshWorkLists()
-        } catch (error) {
+        void refreshWorkLists().catch(error => {
           console.warn('[Wework] Runtime send accepted but work list refresh failed', {
             taskId: response.taskId ?? outboundRequest.address.taskId,
             error: error instanceof Error ? error.message : String(error),
           })
-        }
+        })
         return isCurrent()
       } catch (error) {
         if (!isCurrent()) return false

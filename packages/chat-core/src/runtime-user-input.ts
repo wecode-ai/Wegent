@@ -159,7 +159,11 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
       const offset = offsetByReply.get(reply.id) ?? 0
       const count = block.renderPayload.questions?.length ?? 0
       offsetByReply.set(reply.id, offset + count)
-      return resolveAsyncBlock<TFileChanges>(block, reply.content, rows?.slice(offset, offset + count))
+      return resolveAsyncBlock<TFileChanges>(
+        block,
+        reply.content,
+        rows?.slice(offset, offset + count)
+      )
     })
     if (!blocks || blocks.every((block, blockIndex) => block === message.blocks![blockIndex])) {
       return message
@@ -192,7 +196,7 @@ export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
   const replies = new Map<string, AsyncRequestUserInputReply[]>()
   let questions: string[] = []
   for (const message of messages) {
-    if (isUserReply(message)) {
+    if (isDeliveredRequestUserInputReply(message)) {
       const rows = pairQuestionsWithReply(questions, message.content)
       if (rows.length > 0) replies.set(message.id, rows)
       questions = []
@@ -266,14 +270,14 @@ function asyncReplyByMessageIndex(messages: WorkbenchMessage[]): (WorkbenchMessa
   let reply: WorkbenchMessage | null = null
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     replies[index] = reply
-    if (isUserReply(messages[index])) reply = messages[index]
+    if (isDeliveredRequestUserInputReply(messages[index])) reply = messages[index]
   }
   return replies
 }
 
 /** The user message that answers a preceding question, whenever the composer sent it. */
-function isUserReply(message: WorkbenchMessage): boolean {
-  return message.role === 'user' && Boolean(message.content.trim())
+export function isDeliveredRequestUserInputReply(message: WorkbenchMessage): boolean {
+  return message.role === 'user' && message.status === 'done' && Boolean(message.content.trim())
 }
 
 /** A single free-form reply answers every question the async card asked. */

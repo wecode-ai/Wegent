@@ -6093,6 +6093,20 @@
     "send": "Send",
     "unsupported_display_mode": "The app has no supported display mode."
   },
+  "question_discussion": {
+    "empty": "Edit the question, then send. Select discussion text to fill the original answer.",
+    "expand_reply": "Expand reply",
+    "open": "Talk it through",
+    "title": "Talk it through before deciding",
+    "close": "Close discussion",
+    "placeholder": "Ask a follow-up or request a recommendation",
+    "answer_for": "Return an answer to",
+    "checking": "Checking the original question…",
+    "unavailable": "The original question was handled or is no longer available. Your discussion is kept.",
+    "failed": "Could not check the original question. Please try again.",
+    "prompt": "I am unsure about the questions below. Explain the evidence and tradeoffs for each option, give your recommendation, and discuss it with me. Do not decide for me or execute the original task. I will review and submit my answers myself.",
+    "start_failed": "The discussion could not start. Please send the message again in the discussion."
+  },
   "interactions": {
     "sources": {
       "task": "Tasks",

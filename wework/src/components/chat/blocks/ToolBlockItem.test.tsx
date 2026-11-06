@@ -38,7 +38,7 @@ describe('ToolBlockItem', () => {
     vi.restoreAllMocks()
   })
 
-  test('uses muted regular text for the completed tool summary', () => {
+  test('uses muted text with inherited UI weight for the completed tool summary', () => {
     render(
       <ToolBlockItem
         block={{
@@ -56,7 +56,7 @@ describe('ToolBlockItem', () => {
     const duration = screen.getByTestId('tool-block-duration')
     expect(duration).toHaveTextContent('3.3s')
     expect(duration.parentElement).toHaveClass('text-text-muted')
-    expect(duration.parentElement!.parentElement).toHaveClass('font-normal')
+    expect(duration.parentElement!.parentElement).not.toHaveClass('font-normal')
   })
 
   test('hides the shell launcher from expanded command details', async () => {
