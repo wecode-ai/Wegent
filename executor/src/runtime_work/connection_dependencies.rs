@@ -3,6 +3,42 @@ use serde_json::Value;
 fn failure(code: &str, message: impl Into<String>) -> AppIpcError {
     AppIpcError::new(code, message)
 }
+
+pub(super) fn installed_plugin_by_key(
+    installed: &Value,
+    plugin_key: &str,
+) -> Result<(Value, Value), AppIpcError> {
+    let invalid = || {
+        failure(
+            "dependency_unavailable",
+            "The exact installed plugin is unavailable",
+        )
+    };
+    let mut sources = Vec::new();
+    for market in installed["marketplaces"].as_array().ok_or_else(invalid)? {
+        for plugin in market["plugins"].as_array().into_iter().flatten() {
+            if plugin["name"].as_str() != Some(plugin_key) {
+                continue;
+            }
+            let marketplace = market["name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(invalid)?;
+            let id = plugin["id"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(invalid)?;
+            sources.push(serde_json::json!({"marketplaceId":marketplace,"pluginId":id}));
+        }
+    }
+    if sources.len() != 1 {
+        return Err(invalid());
+    }
+    let source = sources.pop().unwrap();
+    let plugin = installed_plugin(installed, &source)?;
+    Ok((plugin, source))
+}
+
 pub(super) fn installed_dependency(
     installed: &Value,
     payload: &Value,
@@ -63,4 +99,51 @@ pub(super) fn installed_plugin(installed: &Value, source: &Value) -> Result<Valu
         return Err(invalid());
     }
     Ok(plugin.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn inventory() -> Value {
+        json!({"marketplaceLoadErrors":[],"marketplaces":[{"name":"fixture","path":"/market",
+            "plugins":[{"id":"plugin@fixture","name":"plugin","installed":true,"enabled":true,
+                "localVersion":"1.0.0"}]}]})
+    }
+
+    #[test]
+    fn plugin_key_resolves_one_exact_enabled_installation() {
+        let installed = inventory();
+        let (plugin, source) = installed_plugin_by_key(&installed, "plugin").unwrap();
+        assert_eq!(
+            source,
+            json!({"marketplaceId":"fixture","pluginId":"plugin@fixture"})
+        );
+        assert_eq!(plugin["localVersion"], "1.0.0");
+        assert_eq!(plugin["marketplacePath"], "/market");
+        for field in ["installed", "enabled"] {
+            let mut unavailable = inventory();
+            unavailable["marketplaces"][0]["plugins"][0][field] = json!(false);
+            assert!(installed_plugin_by_key(&unavailable, "plugin").is_err());
+        }
+        let mut failed = inventory();
+        failed["marketplaceLoadErrors"] = json!([{"message":"unavailable"}]);
+        assert!(installed_plugin_by_key(&failed, "plugin").is_err());
+        assert!(installed_plugin_by_key(&installed, "foreign").is_err());
+    }
+
+    #[test]
+    fn duplicate_plugin_names_cannot_choose_an_enabled_installation() {
+        let mut installed = inventory();
+        let mut duplicate = installed["marketplaces"][0].clone();
+        duplicate["name"] = json!("another-market");
+        duplicate["plugins"][0]["id"] = json!("plugin@another-market");
+        duplicate["plugins"][0]["enabled"] = json!(false);
+        installed["marketplaces"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
+        assert!(installed_plugin_by_key(&installed, "plugin").is_err());
+    }
 }

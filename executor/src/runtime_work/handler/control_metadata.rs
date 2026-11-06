@@ -23,9 +23,33 @@ pub(super) struct CodexControlSnapshot {
     pub(super) active_turn_id: Option<String>,
     activity: Activity,
     terminal_status: Option<&'static str>,
+    runtime_status: &'static str,
+    latest_turn_status: &'static str,
+    has_owned_control: bool,
+    pending_owner_transition: bool,
+    active_owner_goal: bool,
 }
 
 impl CodexControlSnapshot {
+    // This proves absence of a runner only for an owner disposition. It never proves
+    // the historical turn completed; callers must also fence local admissions.
+    pub(super) fn is_inactive_for_owner_resolution(&self) -> bool {
+        !self.pending_owner_transition
+            && !self.active_owner_goal
+            && (self.is_idle() || self.runtime_status == "notLoaded")
+    }
+
+    pub(super) fn has_active_owner_resolution_control(&self) -> bool {
+        self.runtime_status == "active" || self.pending_owner_transition || self.active_owner_goal
+    }
+
+    pub(super) fn diagnostic_summary(&self) -> Value {
+        json!({"runtimeStatus":self.runtime_status,"latestTurnStatus":self.latest_turn_status,
+            "derivedActivity":format!("{:?}",self.activity),"hasOwnedControl":self.has_owned_control,
+            "hasLatestTurn":self.latest_turn_id.is_some(),"hasActiveTurn":self.active_turn_id.is_some(),
+            "pendingOwnerTransition":self.pending_owner_transition,"activeOwnerGoal":self.active_owner_goal})
+    }
+
     pub(super) fn is_idle(&self) -> bool {
         self.activity == Activity::Idle
     }
@@ -118,6 +142,26 @@ fn control_snapshot(thread: &Value, owned: Option<OwnedControlState>) -> CodexCo
     let turn = thread["turns"].as_array().and_then(|turns| turns.last());
     let latest_turn_id = turn.and_then(|turn| string_field(turn, "id"));
     let runtime = super::super::response::codex_thread_status_type(thread);
+    let runtime_status = match runtime.as_deref() {
+        Some("active") => "active",
+        Some("idle") => "idle",
+        Some("notLoaded") => "notLoaded",
+        Some("systemError") => "systemError",
+        None => "missing",
+        _ => "unknown",
+    };
+    let latest_turn_status = match turn.and_then(|turn| turn["status"].as_str()) {
+        Some("inProgress") => "inProgress",
+        Some("interrupted") => "interrupted",
+        Some("completed") => "completed",
+        Some("failed") => "failed",
+        Some("cancelled") => "cancelled",
+        None => "missing",
+        _ => "unknown",
+    };
+    let has_owned_control = owned.is_some();
+    let pending_owner_transition = owned.as_ref().is_some_and(|owned| owned.pending_transition);
+    let active_owner_goal = owned.as_ref().is_some_and(|owned| owned.goal_active);
     let awaiting_next_turn = owned.as_ref().is_some_and(|owned| {
         owned.pending_transition
             || (owned.goal_active && codex_thread_terminal_task_status(thread) == Some("done"))
@@ -171,12 +215,40 @@ fn control_snapshot(thread: &Value, owned: Option<OwnedControlState>) -> CodexCo
         active_turn_id,
         activity,
         terminal_status,
+        runtime_status,
+        latest_turn_status,
+        has_owned_control,
+        pending_owner_transition,
+        active_owner_goal,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_disposition_does_not_turn_unloaded_history_into_completion_or_bypass_goals() {
+        for runtime in ["notLoaded", "idle"] {
+            let thread = json!({"status":{"type":runtime},"turns":[{"id":"current","status":"interrupted"}]});
+            let native = control_snapshot(&thread, None);
+            assert!(native.is_inactive_for_owner_resolution());
+            assert_eq!(native.terminal_task_status(), None);
+            if runtime == "notLoaded" {
+                assert!(!native.is_idle());
+            }
+            for (pending_transition, goal_active) in [(true, false), (false, true)] {
+                let owned = Some(OwnedControlState {
+                    turn_id: Some("current".into()),
+                    pending_transition,
+                    goal_active,
+                });
+                let native = control_snapshot(&thread, owned);
+                assert!(!native.is_inactive_for_owner_resolution());
+                assert!(native.has_active_owner_resolution_control());
+            }
+        }
+    }
 
     #[test]
     fn missing_runtime_status_preserves_only_positive_running_turn_evidence() {

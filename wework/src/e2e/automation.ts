@@ -1,3 +1,8 @@
+import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
+import {
+  getProviderConfigurationState,
+  reloadProviderConfiguration,
+} from '@/features/model-settings/providerModelConfiguration'
 import { rendererCrashStore } from './rendererCrashStore'
 import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
@@ -452,10 +457,10 @@ function createBridge(): WeworkAutomationBridge {
 export function seedDesktopE2ELocalModels(
   runtimeConfig: DesktopE2ERuntimeConfig,
   modelServerUrl: string
-): void {
+): boolean {
   const seedLocalModels =
     runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
-  if (!seedLocalModels) return
+  if (!seedLocalModels) return false
   const localModelsCatalogReady =
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
@@ -551,6 +556,7 @@ export function seedDesktopE2ELocalModels(
       options: {},
     },
   })
+  return true
 }
 
 function resolveDesktopE2ECloudBackendUrl(runtimeConfig: DesktopE2ERuntimeConfig) {
@@ -608,7 +614,13 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
   const modelServerUrl = resolveDesktopE2EModelServerUrl(runtimeConfig, backendUrl)
   if (modelServerUrl) {
-    seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
+    if (seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)) {
+      // Seeding occurs after normal bootstrap. Await the real migration save and
+      // native Executor synchronization before advertising automation readiness.
+      await reloadProviderConfiguration()
+      const configurationError = getProviderConfigurationState().error
+      if (configurationError) throw new Error(configurationError)
+    }
   }
   await seedDesktopE2ECloudConnection(runtimeConfig, true)
 }
@@ -2543,6 +2555,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       window.dispatchEvent(new Event(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT))
       return ''
     }
+    case 'getNativeModelFixtureConfigs':
+      return JSON.stringify(readNativeModelFixtures())
+    case 'setNativeModelFixtureConfigs':
+      await writeNativeModelFixtures(JSON.parse(command.value ?? '[]'))
+      return ''
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {

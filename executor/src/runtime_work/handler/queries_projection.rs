@@ -92,6 +92,9 @@ impl RuntimeWorkRpcHandler {
             .filter(|_| !direct_thread_override)
             .map(|_| super::super::transcript::transcript_page_identity(&thread));
         if !direct_thread_override && !search_match_requested {
+            if before_cursor.is_none() && after_cursor.is_none() {
+                handler.reconcile_native_transcript_terminal(&local_task_id, &thread);
+            }
             handler.merge_active_codex_transcript_cancellable(
                 &local_task_id,
                 &mut thread,
@@ -279,6 +282,9 @@ impl RuntimeWorkRpcHandler {
             turn_navigation,
         });
         response["threadId"] = json!(thread_id);
+        if conversation_context_only {
+            response["fullItemContent"] = json!(full_item_content);
+        }
         if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
             if let Some(runtime_turns) = runtime_turns {
                 response["runtimeTurns"] = json!(runtime_turns);

@@ -804,7 +804,7 @@ jobs:
           DELIVERY_S3_BUCKET: wegent-deliveries
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
-          RUST_LOG: info,brz_http_gateway::proxy=debug
+          RUST_LOG: info,brz_http_gateway::proxy=debug,brz_http_server::hyper::runtime=debug
         run: |
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &

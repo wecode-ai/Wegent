@@ -5,9 +5,12 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTaskRowByText } from '../modules/task-state-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
+  handleModelMaintenanceRequest,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
   readRequestBody,
@@ -35,6 +38,13 @@ export function createDesktopScenario({
   let createdTaskId
   let intake
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  const meetingStory = createMeetingUserStory({
+    rpc,
+    executorHome,
+    workspacePath,
+    modelResponseTimeoutMs,
+    captureScreenshot,
+  })
   async function waitFor(read, ready, timeoutMs) {
     const deadline = Date.now() + timeoutMs
     let latest
@@ -80,13 +90,17 @@ export function createDesktopScenario({
   }
   return {
     async handleHttp(req, response, url) {
+      if (await meetingStory.handleHttp(req, response, url)) return true
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
+      if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
-      let events
-      if (input.includes('Review this silent intake batch')) {
+      let events = delegatedTaskResultEvents(body)
+      if (events) {
+        // A result wake is a new host turn, even when its history quotes the original request.
+      } else if (input.includes('Review this silent intake batch')) {
         coordinatorCalls++
         const readId = `silent-read-${round}`
         const actionId = `silent-action-${round}`
@@ -301,9 +315,11 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         assert.equal(scheduled.running, false)
-        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
-          timeoutMs: 20000,
-        })
+        assert.equal(
+          await control.command('getElementCount', '[data-testid="stand-in-processing-notice"]'),
+          '0',
+          'Scheduled background feedback without a question or failure must not interrupt the user'
+        )
         await captureScreenshot(control, 'silent-02-feedback-without-extra-work.png')
         // Collaboration executions belong to the stand-in work list, not the ordinary task sidebar.
         const workCard = `[data-testid="stand-in-activity-task-${taskId}"]`
@@ -439,6 +455,7 @@ export function createDesktopScenario({
           text: 'ORDINARY_FOLLOWUP_DONE',
         })
         await captureScreenshot(control, 'silent-07-primary-continues-ordinary-task.png')
+        await meetingStory.verify(control, model)
       } finally {
         const current = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
         await rpc(control, 'runtime.stand_in.personal.save', {

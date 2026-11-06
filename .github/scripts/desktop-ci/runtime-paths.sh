@@ -152,8 +152,11 @@ classify_path() {
   case "$path" in
     packages/collaboration/src/controls/ModelSelector* | \
       packages/collaboration/src/controls/ModelPowerSlider* | \
+      packages/collaboration/src/controls/model-reasoning* | \
+      packages/collaboration/src/controls/model-ui* | \
       packages/collaboration/src/controls/model-selector-utils*)
       select_target "cloud:cloud-model-presets"
+      select_target "core:codex-native-catalog"
       ;;
   esac
   case "$path" in

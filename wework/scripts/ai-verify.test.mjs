@@ -82,6 +82,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
       'wait-for': 'waitFor',
       'window-focus-snapshot': 'getWindowFocusSnapshot',
+      'window-size': 'setMainWindowSize',
       text: 'getText',
       value: 'getValue',
     })
@@ -310,6 +311,27 @@ describe('validateStartOptions', () => {
       })
     ).not.toThrow()
   })
+
+  test('preserves an explicit existing profile device only with an explicit home', () => {
+    expect(() => validateStartOptions({ 'device-id': 'electron-existing-device' })).toThrow(
+      '--device-id requires --executor-home'
+    )
+    expect(() =>
+      validateStartOptions({
+        'device-id': 'electron-existing-device',
+        'executor-home': '/tmp/home',
+      })
+    ).not.toThrow()
+  })
+
+  test.each(['', ' device', '../device', 'device.with.dots'])(
+    'rejects invalid device ID %s',
+    id => {
+      expect(() => validateStartOptions({ 'device-id': id, 'executor-home': '/tmp/home' })).toThrow(
+        '--device-id must be a valid nonempty device identifier'
+      )
+    }
+  )
 
   test.each(['', '   ', 'relative/executor-home'])('rejects invalid executor home %s', path => {
     expect(() => validateStartOptions({ 'executor-home': path })).toThrow(

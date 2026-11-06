@@ -219,6 +219,32 @@ export async function startRealMailServer(directory, runtimeRoot) {
     stop,
     pauseImap: () => proxy.pause(),
     resumeImap: () => proxy.resume(),
+    async append(subject, text, messageId, internalDate) {
+      assert.ok(internalDate instanceof Date && Number.isFinite(internalDate.getTime()))
+      const transport = nodemailer.createTransport({ streamTransport: true, buffer: true })
+      const encoded = await transport.sendMail({
+        from: 'sender@example.com',
+        to: config.email,
+        subject,
+        text,
+        messageId,
+        date: internalDate,
+      })
+      return imap('owner', async client => {
+        const added = await client.append('INBOX', encoded.message, [], internalDate)
+        assert.ok(added.uid, 'Real IMAP APPEND must return a UID')
+        const stored = await client.fetchOne(
+          added.uid,
+          { uid: true, internalDate: true },
+          { uid: true }
+        )
+        assert.equal(
+          new Date(stored.internalDate).getTime(),
+          Math.floor(internalDate.getTime() / 1000) * 1000
+        )
+        return { uid: added.uid, internalDate: new Date(stored.internalDate).toISOString() }
+      })
+    },
     async deliver(subject, text, messageId) {
       const smtp = nodemailer.createTransport({
         ...config.smtp,
