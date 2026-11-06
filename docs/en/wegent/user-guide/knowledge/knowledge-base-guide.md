@@ -257,21 +257,22 @@ Knowledge bases support fine-grained access control through the Share Service ar
 
 ### Managing Members
 
-1. Open a knowledge base and click **Permission Management**
-2. Under the **Personal** tab, invite users by username or email
-3. Assign a role from the dropdown (Owner, Maintainer, Developer, Reporter)
-4. Click **Add** to send the invitation
+The library list's **Permission Details**, document management's **Permission Management**, and the **Library created** page share the same member management and add flow. On mobile, open permission details from the list's **More** menu.
 
-### Entity-Level Authorization
+1. Search existing collaborators to see members and roles. Pending requests remain visible independently of the search.
+2. Click **Add collaborator**, select people by username or email, or search for groups.
+3. Choose Maintainer, Developer, Reporter, or RestrictedAnalyst for each selected target. Owner cannot be assigned through this flow.
+4. Click **Authorize**. Partial success leaves only failed targets for retry; uncertain results are checked against existing grants first.
 
-In addition to individual users, you can authorize entire groups or namespaces:
+The member list supports role changes, removal, and request review. View-only users see their effective permission and access sources.
 
-1. Switch to the **Group** tab in the permission dialog
-2. Search for a group or namespace
-3. Select the desired group and assign a role
-4. All members of that group inherit the assigned permissions
+After creation, **Finish / Configure later** keeps the library. A failed list refresh can be retried separately without creating the library again or repeating grants.
 
-**Note:** Entity-authorized knowledge bases appear in the members' **Shared with Me** section rather than under the group's native knowledge bases.
+### Group Authorization
+
+Select a group and assign its role in **Add collaborator**. Group members inherit that access; existing group grants appear under the management view's **Group** tab.
+
+**Note:** Libraries received through group grants appear under **Shared with Me**, rather than the receiving group's native library list.
 
 ### Permission Source Visualization
 
