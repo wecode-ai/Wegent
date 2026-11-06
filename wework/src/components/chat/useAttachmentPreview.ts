@@ -2,15 +2,15 @@ import { useCallback, useContext } from 'react'
 import type { Attachment } from '@/types/api'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { readWorkspaceFileBytes } from '@/lib/workspace-file-bytes'
-import { useAttachmentDownload } from '../AttachmentDownloadContext'
-import { useWorkspaceFileReader } from '../WorkspaceFileReaderContext'
-import { AttachmentPreviewContext } from '../AttachmentPreviewContext'
+import { useAttachmentDownload } from './AttachmentDownloadContext'
+import { useWorkspaceFileReader } from './WorkspaceFileReaderContext'
+import { AttachmentPreviewContext } from './AttachmentPreviewContext'
 
-export function useComposerAttachmentPreview() {
+export function useAttachmentPreview() {
   const fetchAttachmentBlob = useAttachmentDownload()
   const readWorkspaceFileChunk = useWorkspaceFileReader()
   const openPreview = useContext(AttachmentPreviewContext)
-  return useCallback(
+  const preview = useCallback(
     (attachment: Attachment) => {
       if (!openPreview) throw new Error('Attachment preview panel is unavailable')
       openPreview({
@@ -35,4 +35,5 @@ export function useComposerAttachmentPreview() {
     },
     [fetchAttachmentBlob, readWorkspaceFileChunk, openPreview]
   )
+  return openPreview ? preview : null
 }

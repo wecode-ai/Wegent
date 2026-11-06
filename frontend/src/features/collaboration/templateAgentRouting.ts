@@ -5,31 +5,48 @@ import { runnerModelIdentity, type RunnerEnvironment } from '@wegent/collaborati
 import type { TemplateAgentRouting } from '@wegent/collaboration/templates'
 import { apiClient } from '@/apis/client'
 import { deviceApis } from '@/apis/devices'
+import { createWebSharedWorkspaceApi } from './shared-api'
 
-/** Web templates follow the user's designated default executor, never an arbitrary device. */
+async function defaultEnvironmentId(): Promise<string | undefined> {
+  const defaults = (await deviceApis.getAllDevices()).items.filter(device => device.is_default)
+  return defaults.length === 1 && defaults[0].status !== 'offline'
+    ? String(defaults[0].id)
+    : undefined
+}
+
+export function listWebTemplateAgentEnvironments(projectId: string) {
+  return createWebSharedWorkspaceApi(apiClient).projects.listExecutionEnvironments(projectId)
+}
+
+/** Existing projects resolve within their authorized pool; new projects use the account default. */
 export async function resolveWebTemplateAgentRouting(
   runtime: 'codex' | 'claude_code',
   location: 'local' | 'cloud',
-  projectId?: string
+  projectId?: string,
+  environmentId?: string
 ): Promise<TemplateAgentRouting> {
   if (location !== 'cloud') throw new Error('template_environment_unavailable')
-  const defaults = (await deviceApis.getAllDevices()).items.filter(device => device.is_default)
-  if (
-    defaults.length !== 1 ||
-    defaults[0].device_type === 'app' ||
-    defaults[0].status === 'offline'
-  )
+  const defaultId = projectId || environmentId ? undefined : await defaultEnvironmentId()
+  if (!projectId && !environmentId && !defaultId)
     throw new Error('template_environment_unavailable')
   const environments = await apiClient.get<RunnerEnvironment[]>(
     `/v1/resources/execution-environments${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`
   )
-  const environment = environments.find(item => item.id === String(defaults[0].id))
-  if (
-    !environment ||
-    environment.status !== 'online' ||
-    (projectId && !environment.project_authorized)
+  const available = environments.filter(
+    item => item.status === 'online' && (!projectId || item.project_authorized)
   )
-    throw new Error('template_environment_unavailable')
+  const preferredId =
+    environmentId ?? (projectId && available.length > 1 ? await defaultEnvironmentId() : defaultId)
+  const environment =
+    !environmentId && projectId && available.length === 1
+      ? available[0]
+      : available.find(item => item.id === preferredId)
+  if (!environment)
+    throw new Error(
+      !environmentId && projectId && available.length > 1
+        ? 'template_environment_ambiguous'
+        : 'template_environment_unavailable'
+    )
   if (environment.catalog_error) throw new Error(environment.catalog_error)
   const models = environment.models.filter(model => model.runtime === runtime && model.is_default)
   if (models.length !== 1) throw new Error('template_model_default_unavailable')

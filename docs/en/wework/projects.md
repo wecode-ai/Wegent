@@ -194,12 +194,12 @@ Each Issue and the tag catalog saved in project settings allow up to 20 distinct
 
 Renaming or deleting a tag in a native project saves the catalog, tags on undeleted Issues, lane bindings, and filter references together. A project version conflict or any Issue update failure rolls back the entire operation so it can be retried after resolving the error. Externally hosted Issues do not support this transaction across records. Failed bulk status changes in the table list the affected Issues and reasons; successful Issues are deselected while failed Issues stay selected for retry.
 
-| Drag direction | Issue changes |
-| --- | --- |
-| Status → Status | Update status and keep tags |
-| Status → Tag | Add the destination tag and keep status |
-| Tag → Status | Update status and keep tags |
-| Tag → Tag | Remove the source tag, add the destination tag, and keep other tags and status |
+| Drag direction  | Issue changes                                                                  |
+| --------------- | ------------------------------------------------------------------------------ |
+| Status → Status | Update status and keep tags                                                    |
+| Status → Tag    | Add the destination tag and keep status                                        |
+| Tag → Status    | Update status and keep tags                                                    |
+| Tag → Tag       | Remove the source tag, add the destination tag, and keep other tags and status |
 
 An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
 
@@ -314,6 +314,8 @@ Automation rules can run on a schedule or be triggered by project events such as
 
 When a collaboration group handles an issue, its manager agent always reads the issue and eligible members before creating a workflow plan. The manager writes a specific execution prompt for each child task; members receive that assignment prompt rather than the static role description in group settings. After members report their outcomes, the manager decides whether to continue work, request review, or complete the issue. This flow does not depend on preset stages or a collaboration-mode option.
 
+Issue activity describes assignments as “Project manager assigned ‘Task title’ to Member” without repeating a manager role label. When a linked execution is available, select **View execution** to open its details.
+
 Each rule selects one assignment strategy:
 
 - **Manual selection** fixes one project robot. When the rule fires, the original board task is assigned directly to that robot through the same execution flow used by an ordinary human assignment.
@@ -345,7 +347,6 @@ For worktree tasks, the file tree, terminal, and development tools use the task'
 A project can reference a different folder on each local, cloud, or remote device. Select the device that contains the code when starting a task. Copying a task to another device requires a project folder on that device.
 
 On macOS, open a folder from a terminal with `wework .` or `wework /path/to/project`.
-
 
 ## Editing deliveries
 
