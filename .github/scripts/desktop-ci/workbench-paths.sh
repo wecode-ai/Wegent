@@ -465,6 +465,10 @@ classify_workbench_path() {
       ;;
 
     # Runtime queue orchestration has an independently bootstrapped checkpoint.
+    wework/e2e/desktop/scenarios/workbench-control.scenario.mjs)
+      select_catalog_path_targets "$path"
+      return
+      ;;
     wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs)
       select_target "core:runtime-task-queue"
       return
@@ -521,7 +525,9 @@ classify_workbench_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs)
+    wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs | \
+      wework/e2e/desktop/scenarios/codex-catalog-context.mjs | \
+      wework/e2e/desktop/scenarios/codex-catalog-reasoning.mjs)
       select_target "core:codex-native-catalog"
       return
       ;;
