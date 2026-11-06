@@ -182,8 +182,37 @@ export function createDesktopScenario({
         applyButton.bottom <= applyButton.viewportHeight && applyButton.left >= 0,
         'The conclusion action must remain visible on a narrow screen'
       )
+      const [composer] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${SIDE} [data-testid="right-workspace-chat-composer-shell"]`
+        )
+      )
+      const [answerRegion] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${DIALOG} [data-testid="question-discussion-answer"]`
+        )
+      )
+      assert.ok(
+        composer.bottom <= answerRegion.top + 1,
+        'The discussion composer must not cover the conclusion region'
+      )
       await captureScreenshot(control, 'question-discussion-04a-narrow.png', 'body')
+      await control.command('clickAt', 'body', {
+        value: JSON.stringify({
+          x: applyButton.left + applyButton.width / 2,
+          y: applyButton.top + applyButton.height / 2,
+        }),
+      })
+      await control.command(
+        'waitFor',
+        `${PAGE} [data-testid="request-user-input-custom-question_1"]`,
+        { visible: true }
+      )
+      await captureScreenshot(control, 'question-discussion-04a2-narrow-answer.png', 'body')
       await control.command('setMainWindowSize', 'body', { value: previousSize })
+      await control.command('clickWhenEnabled', `${PAGE} [data-testid="interaction-discuss"]`)
       await waitForElementWidth(control, DIALOG, width => width > 700, 'restored discussion')
       await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
       await control.command('navigate', 'body', { value: '/settings/appearance' })

@@ -205,7 +205,10 @@ function QuestionDiscussionDialog({
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </header>
-        <div className="min-h-0 flex-1">
+        <div
+          data-testid="question-discussion-content"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
           <TemporaryChatPanel
             currentProject={null}
             source={session.source}
@@ -227,7 +230,10 @@ function QuestionDiscussionDialog({
             placeholder={t('question_discussion.placeholder')}
           />
         </div>
-        <footer className="flex shrink-0 flex-col gap-2 border-t border-border p-3">
+        <footer
+          data-testid="question-discussion-answer"
+          className="flex shrink-0 flex-col gap-2 border-t border-border p-3"
+        >
           <label htmlFor={`${id}-question`} className="text-sm font-medium">
             {t('question_discussion.answer_for')}
           </label>
