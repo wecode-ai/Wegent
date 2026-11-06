@@ -332,7 +332,8 @@ class PluginDeviceInstallationService:
         result = result.model_copy(
             update={"device_id": plugin_device_id(db, user_id, result.device_id)}
         )
-        if result.desired_plugin_snapshot is not None:
+        snapshot = result.desired_plugin_snapshot
+        if snapshot is not None and snapshot.get("plugin_sync"):
             from app.services.device.plugin_sync_recording import (
                 record_versioned_result,
             )
@@ -340,6 +341,14 @@ class PluginDeviceInstallationService:
             record_versioned_result(self, db, user_id, result)
             return
         installs = self._desired_installs(db, user_id)
+        if snapshot is not None:
+            from app.services.device.plugin_sync_recording import (
+                current_legacy_plugin_ids,
+            )
+
+            confirmed = current_legacy_plugin_ids(db, user_id, result)
+        else:
+            confirmed = None
         desired_ids = {installed.id for installed in installs}
         plugin_results = {
             int(item.id): item
@@ -350,6 +359,8 @@ class PluginDeviceInstallationService:
             db, user_id, result, desired_ids, set(plugin_results)
         )
         for installed in installs:
+            if confirmed is not None and installed.id not in confirmed:
+                continue
             self._record_desired_install(
                 db,
                 user_id=user_id,

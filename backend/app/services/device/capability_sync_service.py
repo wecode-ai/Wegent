@@ -504,7 +504,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
     ) -> DeviceCapabilitySyncResult:
         """Push an already-built desired payload to one online device."""
-        snapshot = payload if payload.get("plugin_sync") else None
+        snapshot = payload if "plugins" in payload else None
         try:
             route = await runtime_route_resolver.resolve(
                 user_id=user_id,
@@ -540,7 +540,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             )
         dispatch_payload = {**payload, "device_id": route.runtime_device_id}
         started = time.monotonic()
-        if snapshot is not None:
+        if payload.get("plugin_sync"):
             from app.services.device.plugin_sync_protocol import (
                 register_plugin_snapshot_intent,
             )
@@ -637,7 +637,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
                 acknowledged=True,
                 scope=response.get("scope"),
                 plugin_sync=response.get("plugin_sync"),
-                desired_plugin_snapshot=payload if payload.get("plugin_sync") else None,
+                desired_plugin_snapshot=snapshot,
                 error=str(
                     response.get("error")
                     or self._raw_item_failure_message(response)
@@ -662,7 +662,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             acknowledged=True,
             scope=response.get("scope"),
             plugin_sync=response.get("plugin_sync"),
-            desired_plugin_snapshot=payload if payload.get("plugin_sync") else None,
+            desired_plugin_snapshot=snapshot,
             skills=response.get("skills", []),
             plugins=response.get("plugins", []),
             mcps=response.get("mcps", []),

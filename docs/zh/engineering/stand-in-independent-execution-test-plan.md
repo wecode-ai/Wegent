@@ -32,6 +32,8 @@ sidebar_position: 27
 
 项目视图导航通过共享助手在同一次 renderer 操作中选择当前可用的标签或下拉框。CI 里程碑回归的控制记录和失败快照证实，分开检查布局与点击会在响应式重排后等待已经卸载的标签。此修复保留场景断言与超时，并用组件测试覆盖控件替换和单次选择。
 
+CI 周边回归继续复用原有场景与断言：`streaming-conversation-switching` 保留 520 个进度项和原有等待时限，结构化块事件进入既有 16ms 批次，逐项保序并在终态前全部刷新；`plugin-legacy-upgrade` 继续使用已交付的历史安装器，后端仅在实际发送的插件快照仍匹配当前期望时确认旧协议回执，防止迟到回执把新版本错误标记为已安装。快照仅在服务端保存，不进入旧设备的通信协议或公开响应。
+
 聚焦命令：`pnpm --filter wework e2e:desktop --parallel-segments stand-in,stand-in-workspace`；远程场景沿用相同 runner 的 `--segment stand-in-cloud`。默认单 checkpoint 并发，复用同一构建产物。
 
 测试使用 runner 的独立目录、账号数据和进程；结束时沿用既有 `finally` 清理。运行结果、完整失败日志及截图仅保存在本地 `wework/test-results/`，不提交。实际结果记录在 PR 验证说明中；远程环境不可用时明确报告，不能以组件测试冒充云端 E2E。

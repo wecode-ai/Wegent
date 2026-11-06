@@ -73,20 +73,20 @@ def _payload(db, installed, *, removed=False, complete=False):
 
 
 def _result(payload, *, status="synced", success=True, device_id="device"):
-    requested = payload["plugins"] + payload["removed_plugins"]
+    requested = payload["plugins"] + payload.get("removed_plugins", [])
     return DeviceCapabilitySyncResult(
         device_id=device_id,
         success=success,
         acknowledged=True,
         scope=payload["scope"],
-        plugin_sync=payload["plugin_sync"],
+        plugin_sync=payload.get("plugin_sync"),
         desired_plugin_snapshot=payload,
         plugins=[
             {
                 "id": item["installed_plugin_id"],
                 "status": status,
-                "generation": payload["plugin_sync"]["generation"],
-                "operation": "remove" if payload["removed_plugins"] else "upsert",
+                "generation": (payload.get("plugin_sync") or {}).get("generation"),
+                "operation": "remove" if payload.get("removed_plugins") else "upsert",
                 "version": item.get("version"),
                 "checksum": item.get("checksum"),
                 "error": "download failed" if status == "failed" else None,
@@ -119,12 +119,17 @@ def test_delta_ack_does_not_clear_unrelated_pending_uninstall(test_db, test_user
 
 
 @pytest.mark.parametrize("change", ["release", "enabled", "component_states"])
+@pytest.mark.parametrize("versioned", [False, True])
 def test_late_install_ack_cannot_confirm_newer_account_desired_state(
-    test_db, test_user, change
+    test_db, test_user, change, versioned
 ):
     installed = _installed(test_db, test_user.id, "target")
     row = _device_row(test_db, installed)
     old_payload = _payload(test_db, installed)
+    if not versioned:
+        old_payload.pop("plugin_sync")
+        old_payload.pop("removed_plugins")
+        old_payload.update(mode="replace", scope="plugins")
     data = deepcopy(installed.json)
     if change == "release":
         data["spec"].update(
@@ -145,6 +150,61 @@ def test_late_install_ack_cannot_confirm_newer_account_desired_state(
     assert row.actual_release_id == 0
     assert row.desired_release_id == (18 if change == "release" else 17)
     assert row.attempt_count == 0
+
+    current_payload = _payload(test_db, installed)
+    if not versioned:
+        current_payload.pop("plugin_sync")
+        current_payload.pop("removed_plugins")
+        current_payload.update(mode="replace", scope="plugins")
+    _record(test_db, test_user.id, current_payload)
+    test_db.refresh(row)
+    assert row.state == "installed"
+    assert row.actual_release_id == row.desired_release_id
+
+
+@pytest.mark.asyncio
+async def test_legacy_rpc_ack_keeps_its_dispatched_release_after_account_change(
+    test_db, test_user, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from tests.services.test_plugin_sync_protocol import _wire_ack, _wire_route
+
+    installed = _installed(test_db, test_user.id, "legacy-rpc")
+    row = _device_row(test_db, installed)
+    payload = _payload(test_db, installed)
+    payload.pop("plugin_sync")
+    payload.pop("removed_plugins")
+    payload.update(mode="replace", scope="plugins")
+
+    async def acknowledge(_event, sent, **_kwargs):
+        assert "plugin_sync" not in sent
+        installed.json = {
+            "spec": {**installed.json["spec"], "releaseId": 18, "version": "2.0.0"}
+        }
+        row.desired_release_id = 18
+        test_db.commit()
+        return _wire_ack(sent)
+
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        AsyncMock(return_value=_wire_route(versioned=False)),
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.get_sio",
+        lambda: SimpleNamespace(call=acknowledge),
+    )
+    result = await DeviceCapabilitySyncService().sync_device_payload(
+        user_id=test_user.id, device_id="device", payload=payload
+    )
+    assert "desired_plugin_snapshot" not in result.model_dump()
+    PluginDeviceInstallationService().record_device_sync_result(
+        test_db, user_id=test_user.id, result=result
+    )
+    test_db.refresh(row)
+    assert row.state == "pending"
+    assert row.actual_release_id == 0
+    assert row.desired_release_id == 18
 
 
 def test_late_remove_ack_cannot_delete_reinstalled_device_row(test_db, test_user):
