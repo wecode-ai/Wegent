@@ -19,8 +19,10 @@ const isSpace = (code: Code) => code !== null && (code < 0 || code === 32 || cod
 const isDigit = (code: Code) => code !== null && code >= 48 && code <= 57
 const isLineEnding = (code: Code) => code !== null && code < -2
 
-// Parse TeX delimiters before CommonMark consumes backslash escapes. Code,
-// escaped delimiters and link destinations retain the Markdown parser's rules.
+/**
+ * Parses TeX delimiters before CommonMark consumes backslash escapes. Code,
+ * escaped delimiters, and link destinations retain the Markdown parser's rules.
+ */
 function mathConstruct(open: number, close: number, flow = false): Construct {
   const dollar = open === 36
   const tokenize: Tokenizer = function (effects, ok, nok) {
@@ -189,6 +191,7 @@ const fromMarkdown: FromMarkdownExtension = {
   },
 }
 
+/** Registers the bracket and dollar math delimiters used by chat Markdown. */
 export const remarkMathDelimiters: Plugin<[], Root> = function () {
   const data = this.data()
   const syntaxExtensions = (data.micromarkExtensions ??= [])
@@ -222,8 +225,10 @@ function dollarDisplay(source: string, start: number, end: number): string {
   return `${before}$$${leading}${body}${trailing}$$${after}`
 }
 
-// Streamdown's block splitter and streaming completion understand dollar math.
-// Normalize only parsed TeX nodes, so code, URLs and escaped text stay literal.
+/**
+ * Normalizes parsed backslash TeX delimiters into dollar math while leaving
+ * code, URLs, and escaped text literal.
+ */
 export function normalizeMathDelimiters(source: string): string {
   if (!/\\[[(]/.test(source)) return source
   const replacements: { start: number; end: number; text: string }[] = []

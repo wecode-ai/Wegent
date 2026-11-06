@@ -142,6 +142,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   onOpenMarketplace,
   renderAppIcon = defaultAppIcon,
   onOpenMentionPlugin,
+  onOpenMentionReference,
   onPickWorkspacePaths,
   contributedMentionCandidates = [],
   contributedSlashCommands = [],
@@ -953,6 +954,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         onOpenMentionFile={onOpenSkillFile}
         onOpenMentionPlugin={onOpenMentionPlugin}
         onActivateMention={onActivateMention}
+        onOpenMentionReference={onOpenMentionReference}
         onEditComposerLink={editComposerLink}
         onClick={() => {
           restoredAutocompleteValueRef.current = null

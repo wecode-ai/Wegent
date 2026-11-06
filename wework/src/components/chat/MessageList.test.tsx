@@ -1617,6 +1617,59 @@ describe('MessageList', () => {
     expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
+
+  test('opens referenced conversations from user messages', () => {
+    const href =
+      'wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22runtime-42%22%7D'
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'conversation-reference',
+            role: 'user',
+            content: `[$修复登录流程](${href}) 继续分析`,
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const conversationLink = screen.getByTestId(/^sent-conversation-token-/)
+    expect(conversationLink).toHaveAttribute('href', href)
+    expect(conversationLink).toHaveAttribute('aria-disabled', 'false')
+    fireEvent.click(conversationLink)
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      '/runtime-tasks?deviceId=local-device&taskId=runtime-42'
+    )
+    window.history.replaceState({}, '', '/')
+  })
+
+  test('opens referenced issues from user messages', () => {
+    const href = 'wework-issue://2753648597973755964/WEWORK2D8526-113'
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'issue-reference',
+            role: 'user',
+            content: `[$#113 输出框里用at引用对话](${href}) [$修复登录流程](wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22runtime-42%22%7D)`,
+            status: 'done',
+            createdAt: '2026-11-06T02:56:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const issueLink = screen.getByTestId(/^sent-issue-token-/)
+    expect(issueLink).toHaveAttribute('href', href)
+    expect(issueLink).toHaveAttribute('aria-disabled', 'false')
+    fireEvent.click(issueLink)
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      '/todo?projectStore=backend&projectId=2753648597973755964&itemId=WEWORK2D8526-113'
+    )
+    window.history.replaceState({}, '', '/')
+  })
 })
 
 function selectText(container: HTMLElement, text: string) {

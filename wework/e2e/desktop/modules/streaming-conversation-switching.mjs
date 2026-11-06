@@ -196,7 +196,10 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
         await control.command('startRuntimeStreamDiagnostics', 'body')
         stopCpuProfile = await startSwitchingCpuProfile(resultDir, uiTimeoutMs)
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: PREFIX,
+          timeoutMs: longResponseTimeoutMs,
+        })
         await stopCpuProfile()
         stage = 'native-history'
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
@@ -240,7 +243,10 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
           'clickWhenEnabled',
           `[data-testid="runtime-local-task-row-${address.taskId}"]`
         )
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: SUFFIX.trim() })
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: SUFFIX.trim(),
+          timeoutMs: longResponseTimeoutMs,
+        })
         await waitForWorkbenchDebugState(
           control,
           snapshot =>

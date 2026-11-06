@@ -137,6 +137,7 @@ test.each([
     await expect(stream).resolves.toBe(true)
     expect(control.command.mock.calls.find(([action]) => action === 'waitFor')[2]).toEqual({
       text: 'TASK_SWITCH_RUNNING',
+      timeoutMs: 30000,
     })
     expect(requestExecutor).toHaveBeenCalledWith(
       control,

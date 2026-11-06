@@ -22,6 +22,7 @@ import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelim
 import {
   classifyMarkdownLink,
   isHtmlFilePath,
+  protectComposerReferenceLinks,
   transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
@@ -121,6 +122,7 @@ type AssistantMarkdownPart =
     }
   | { kind: 'visualization'; file: string; mode?: 'wide'; title?: string }
 
+/** Renders assistant and user Markdown with shared link and diagram handling. */
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
   isStreaming = false,
@@ -141,9 +143,11 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     () =>
       preprocessCjkEmphasis(
         normalizeMathDelimiters(
-          variant === 'user'
-            ? bufferedContent
-            : stripUnsupportedContentReferenceCitations(bufferedContent)
+          protectComposerReferenceLinks(
+            variant === 'user'
+              ? bufferedContent
+              : stripUnsupportedContentReferenceCitations(bufferedContent)
+          )
         )
       ),
     [bufferedContent, variant]
