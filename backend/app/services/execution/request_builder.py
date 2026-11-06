@@ -2744,7 +2744,9 @@ class TaskRequestBuilder:
         """Resolve the shell type instead of relying on a shell's display name."""
         try:
             return self._resolve_shell_type(bot, user_id) == "Chat"
-        except (ValueError, ValidationError):
+        except (AttributeError, ValueError, ValidationError):
+            # Connector capability discovery fails closed when a partial Bot
+            # object cannot resolve its persisted CRD.
             return False
 
     def _user_has_callable_connectors(self, user: User) -> bool:

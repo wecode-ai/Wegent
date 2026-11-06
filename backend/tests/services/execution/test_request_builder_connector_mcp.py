@@ -269,6 +269,12 @@ def test_chat_shell_detection_rejects_an_unresolvable_shell(monkeypatch) -> None
     assert builder._bot_uses_chat_shell(bot, 7) is False
 
 
+def test_chat_shell_detection_fails_closed_for_a_partial_bot() -> None:
+    builder = TaskRequestBuilder(MagicMock())
+
+    assert builder._bot_uses_chat_shell(SimpleNamespace(id=9), 7) is False
+
+
 def test_cloud_coding_shell_gets_the_matched_connector_server(monkeypatch) -> None:
     """Cloud Claude Code/Codex tasks have no local proxy to fall back on."""
     builder = TaskRequestBuilder(MagicMock())

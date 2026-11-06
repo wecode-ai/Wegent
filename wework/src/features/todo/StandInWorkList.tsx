@@ -59,7 +59,9 @@ export function StandInWorkList({
     (selectedWork?.roleId ?? selectedOrigin?.standInId) === '@primary' ? 'primary' : 'role'
   useStandInOpened('work', identity, active && !!selected, selected?.key)
   const needsStart =
-    selectedWork && ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
+    selectedWork &&
+    selectedState?.status !== 'waiting' &&
+    ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
     const work = inbox.find(value => value.taskId === item.task.taskId)
     return work && work.status !== 'sent'
@@ -456,6 +458,37 @@ export function StandInWorkList({
               {t(needsStart ? 'standIn.workspace.start_work' : 'standIn.workspace.open_work')}
               <ArrowUpRight className="h-4 w-4" />
             </button>
+            {selectedWork?.task &&
+              ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
+              selectedState.status !== 'running' &&
+              selectedState.status !== 'waiting' &&
+              selectedState.status !== 'completed' &&
+              api &&
+              userId !== undefined &&
+              deviceId && (
+                <button
+                  type="button"
+                  data-testid="stand-in-preview-confirm-once"
+                  disabled={busy}
+                  className="mt-2 min-h-11 w-full rounded-lg border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-9"
+                  onClick={async () => {
+                    try {
+                      setBusy(true)
+                      const address = await api.runWork(userId, deviceId, selectedWork.id, {
+                        confirmThisRun: true,
+                      })
+                      onRefresh?.()
+                      await onOpenTask?.(address)
+                    } catch (cause) {
+                      setError(getStandInErrorMessage(cause))
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  {t('standIn.authorization.confirm_once')}
+                </button>
+              )}
           </div>
         </aside>
       )}

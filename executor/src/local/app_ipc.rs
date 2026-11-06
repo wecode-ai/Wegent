@@ -278,6 +278,7 @@ pub trait BackendConnectionHandler: Send + Sync {
 pub struct AppIpcError {
     pub code: String,
     pub message: String,
+    pub retry_after_ms: Option<u64>,
 }
 
 impl AppIpcError {
@@ -285,7 +286,13 @@ impl AppIpcError {
         Self {
             code: code.into(),
             message: message.into(),
+            retry_after_ms: None,
         }
+    }
+
+    pub fn with_retry_after_ms(mut self, delay: u64) -> Self {
+        self.retry_after_ms = Some(delay.clamp(1, 3_600_000));
+        self
     }
 }
 
@@ -3675,6 +3682,9 @@ fn error_message(request_id: Option<&str>, error: &AppIpcError) -> Value {
             "message": error.message,
         },
     });
+    if let Some(delay) = error.retry_after_ms {
+        response["error"]["retryAfterMs"] = json!(delay);
+    }
     if error.code == "runtime_read_busy" {
         response["error"]["retryable"] = json!(true);
     }

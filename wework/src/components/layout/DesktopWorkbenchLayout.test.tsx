@@ -1073,6 +1073,12 @@ describe('DesktopWorkbenchLayout', () => {
       turnId: 'runtime-side-chat-turn',
     })
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
+    baseProps.projectChat.inputByScope = {}
+    baseProps.projectChat.setInputForScope.mockReset()
+    baseProps.projectChat.setInputForScope.mockImplementation((scope: string, value: string) => {
+      if (value) baseProps.projectChat.inputByScope[scope] = value
+      else delete baseProps.projectChat.inputByScope[scope]
+    })
   }, 60_000)
 
   const baseProps = {
@@ -1102,6 +1108,8 @@ describe('DesktopWorkbenchLayout', () => {
     onStartStandaloneChat: vi.fn(),
     onOpenPlugins: vi.fn(),
     projectChat: {
+      inputByScope: {} as Record<string, string>,
+      setInputForScope: vi.fn(),
       models: [],
       skills: [],
       selectedModel: null,

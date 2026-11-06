@@ -1,9 +1,11 @@
 import type { WorkbenchMessage } from '@/types/workbench'
+import { isGitlabCliTarget } from '@/api/local/gitlabCli'
 
 const CONNECTOR_AUTH_TEXT_LIMIT = 64 * 1024
 const CONNECTOR_AUTH_FIELD_TEXT_LIMIT = 16 * 1024
 const CONNECTOR_AUTH_OBJECT_KEYS = [
   'error',
+  'code',
   'message',
   'detail',
   'content',
@@ -14,6 +16,8 @@ const CONNECTOR_AUTH_OBJECT_KEYS = [
   'plugin_key',
   'connectorSlug',
   'connector_slug',
+  'instance',
+  'authTarget',
   'data',
   'result',
   'cause',
@@ -111,11 +115,19 @@ export function extractConnectorAuthConnectorSlug(text: string | null | undefine
 /** Resolve an explicit plugin and connector identity without enumerating installations. */
 export function resolveLocalConnectorAuthHint(
   text: string | null | undefined
-): { pluginKey: string; connectorSlug: string; displayName: string } | null {
+): { pluginKey: string; connectorSlug: string; displayName: string; instance?: string } | null {
   if (!text || !messageRequiresConnectorAuth(text)) return null
   const pluginKey = extractConnectorAuthPluginKey(text)
   const connectorSlug = extractConnectorAuthConnectorSlug(text)
   if (pluginKey && connectorSlug) {
+    if (pluginKey === 'gitlab' && connectorSlug.startsWith('wework-gitlab-cli-')) {
+      const instance =
+        text.match(/"instance"\s*:\s*"([^"]+)"/i)?.[1] ??
+        text.match(/\binstance[`*_]*\s*[=:]\s*[`*_]*(https:\/\/[^\s`*"<>]+)/i)?.[1]
+      const target = { pluginKey, connectorSlug, instance }
+      if (!isGitlabCliTarget(target)) return null
+      return { ...target, displayName: pluginKey }
+    }
     return { pluginKey, connectorSlug, displayName: pluginKey }
   }
   return null
@@ -126,6 +138,8 @@ export interface ConnectorAuthHint {
   pluginKey: string | null
   connectorSlug: string
   displayName: string
+  /** Exact native instance binding, when the connector requires one. */
+  instance?: string
 }
 
 /**
@@ -137,13 +151,16 @@ export interface ConnectorAuthHint {
 export function resolveConnectorAuthHint(
   text: string | null | undefined
 ): ConnectorAuthHint | null {
+  const local = resolveLocalConnectorAuthHint(text)
+  if (local) return local
   if (!text || !messageRequiresConnectorAuth(text)) return null
   const pluginKey = extractConnectorAuthPluginKey(text)
   const connectorSlug = extractConnectorAuthConnectorSlug(text)
-  if (!connectorSlug) return null
+  // An invalid local identity must not be redirected to cloud authorization.
+  if (pluginKey || !connectorSlug) return null
   return {
-    pluginKey,
+    pluginKey: null,
     connectorSlug,
-    displayName: pluginKey ?? connectorSlug,
+    displayName: connectorSlug,
   }
 }

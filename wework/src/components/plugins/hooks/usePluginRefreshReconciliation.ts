@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { beginPluginDeviceSync } from '@/features/plugins/pluginDeviceAutoSync'
+import {
+  beginPluginDeviceSync,
+  pluginDeviceSyncDiagnostic,
+} from '@/features/plugins/pluginDeviceAutoSync'
 import { reconcilePluginRefresh } from '@/features/plugins/pluginRefreshReconciliation'
+import { logPluginRefreshPhase } from '@/features/plugins/pluginRefreshDiagnostics'
 
 type ReconciliationOptions = Parameters<typeof reconcilePluginRefresh>[0]
 
@@ -35,6 +39,7 @@ export function usePluginRefreshReconciliation(options: {
       if (mounted.current) setActive(current => (current === owner ? null : current))
     }
     setActive(owner)
+    logPluginRefreshPhase('reconcile-request', { request: options.request, busy: options.busy })
     if (options.busy) return clearActive
     if (!options.available || !options.deviceId) {
       handled.current = options.request
@@ -47,14 +52,23 @@ export function usePluginRefreshReconciliation(options: {
     let cancelled = false
     let acquired = false
     const deadline = Date.now() + 30_000
+    const startedAt = Date.now()
+    let waiting = false
     const isCurrent = () =>
       mounted.current &&
       latest.current.accountKey === accountKey &&
       latest.current.deviceId === deviceId
     const start = () => {
       if (cancelled || !isCurrent()) return
-      const release = beginPluginDeviceSync(deviceId)
+      const release = beginPluginDeviceSync(deviceId, 'reconcile')
       if (!release) {
+        if (!waiting) {
+          waiting = true
+          logPluginRefreshPhase('reconcile-lease-wait', {
+            request,
+            ...pluginDeviceSyncDiagnostic(deviceId),
+          })
+        }
         if (Date.now() >= deadline) {
           handled.current = request
           latest.current.onError(new Error('Plugin synchronization is busy; refresh again'))
@@ -66,8 +80,9 @@ export function usePluginRefreshReconciliation(options: {
       }
       handled.current = request
       acquired = true
+      logPluginRefreshPhase('reconcile-start', { request, elapsedMs: Date.now() - startedAt })
       const current = latest.current
-      void reconcilePluginRefresh({ ...current.operations, isCurrent })
+      void reconcilePluginRefresh({ ...current.operations, isCurrent, diagnosticRequest: request })
         .then(() => {
           if (isCurrent()) latest.current.onComplete()
         })
@@ -75,6 +90,7 @@ export function usePluginRefreshReconciliation(options: {
           if (isCurrent()) latest.current.onError(error)
         })
         .finally(() => {
+          logPluginRefreshPhase('reconcile-end', { request, elapsedMs: Date.now() - startedAt })
           release()
           clearActive()
         })

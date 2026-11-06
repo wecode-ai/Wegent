@@ -7,6 +7,23 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn list_summary_projects_only_the_current_turn_source_without_private_content() {
+    let mut handle = json!({"lastTurnId":"turn-2","userMessagePresentations":[
+        {"turnId":"turn-1","source":{"source":"stand_in_activity"},"content":"old finding"},
+        {"turnId":"turn-2","source":{"source":"manual","sender_id":"private"},"content":"private request"}
+    ]});
+    let summary = runtime_handle_list_summary_map(&handle);
+    assert_eq!(
+        summary["latestUserMessageSource"],
+        json!({"source":"manual","turnId":"turn-2"})
+    );
+    assert!(!summary.contains_key("userMessagePresentations"));
+    assert!(!serde_json::to_string(&summary).unwrap().contains("private"));
+    handle["lastTurnId"] = json!("turn-3");
+    assert!(!runtime_handle_list_summary_map(&handle).contains_key("latestUserMessageSource"));
+}
+
+#[test]
 fn lifecycle_snapshot_carries_the_selected_model_without_client_enrichment() {
     let selection = json!({"modelName": "local-model:fixture", "modelType": "runtime",
         "options": {"permissionMode": "read-only"}});
