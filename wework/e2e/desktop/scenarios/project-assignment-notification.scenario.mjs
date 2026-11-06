@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
 import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
@@ -556,7 +557,7 @@ export function createDesktopScenario({
           delivery_id: delivery.id,
           fulfillments: [],
         })
-        events = namespacedFunctionCall(CALLS.finalize, tool.namespace, tool.name, tool.arguments)
+        events = selectedToolCall(CALLS.finalize, tool)
       } else if (requestContainsToolOutput(body, CALLS.create)) {
         delivery = findDeliveryDraft(findToolOutput(body.input ?? [], CALLS.create))
         assert.ok(delivery, 'create_delivery 没有返回持久化的 Delivery 草稿')
@@ -574,7 +575,7 @@ export function createDesktopScenario({
         const tool = selectMcpTool(body, 'wework_space', 'create_delivery', {
           markdown: `# ${ISSUE}\n\n${MARKER}：项目周报已经整理完成。`,
         })
-        events = namespacedFunctionCall(CALLS.create, tool.namespace, tool.name, tool.arguments)
+        events = selectedToolCall(CALLS.create, tool)
       } else {
         events = mcpToolRequestEvents(body, {
           toolName: 'create_delivery',

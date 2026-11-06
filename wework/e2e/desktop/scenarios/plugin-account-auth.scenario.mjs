@@ -13,6 +13,10 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import {
+  shellCommandResponse,
+  shellCommandPollResponse,
+} from '../modules/shell-command-response.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
 import { verifyNativeAccountRuntimeIsolation } from '../modules/native-account-runtime-isolation.mjs'
 import {
@@ -40,13 +44,10 @@ import {
 } from '../modules/shared.mjs'
 import {
   assistantMessage,
-  functionCall,
   latestModelInputText,
   readRequestBody,
   responseCompleted,
   responseCreated,
-  selectShellToolCommand,
-  selectTool,
 } from '../modules/response-protocol.mjs'
 
 const run = promisify(execFile)
@@ -232,18 +233,12 @@ export async function createDesktopScenario({
       } else if (requestText.includes(prompt) && command) {
         const result = accountCommandResult(body.input, callId)
         if (result?.sessionId) {
-          const tool = selectTool(body, 'write_stdin', {
-            session_id: result.sessionId,
-            chars: '',
-            yield_time_ms: 1000,
-          })
-          events = functionCall(result.pollId, tool.name, tool.arguments)
+          events = shellCommandPollResponse(body, result.pollId, result.sessionId)
         } else if (result) {
           toolResult = result.output
           events = [assistantMessage('Cloud account verification finished')]
         } else {
-          const tool = selectShellToolCommand(body, command, businessWorkspace)
-          events = functionCall(callId, tool.name, tool.arguments)
+          events = shellCommandResponse(body, callId, command, businessWorkspace)
         }
       } else {
         events = [assistantMessage('Account authentication fixture ready')]

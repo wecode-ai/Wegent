@@ -11,13 +11,12 @@ import {
   useState,
   type Ref,
 } from 'react'
-import { Bot, ChevronRight, Folder, Plus, Trash2 } from 'lucide-react'
+import { ChevronRight, Folder, Plus, Trash2 } from 'lucide-react'
 import { dequal } from 'dequal'
 import type {
   CollaborationProject,
   SharedWorkspaceApi,
   WorkspaceStandInSettings,
-  WorkspaceProjectAgent,
 } from '@wegent/collaboration'
 import {
   newStandInRole,
@@ -32,7 +31,6 @@ import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { useStandInProjectAgents, projectAgentChoiceValue } from './useStandInProjectAgents'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { StandInProjectSetup } from './StandInProjectSetup'
 import {
@@ -49,7 +47,6 @@ import {
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { findStandInProject } from './standInProjects'
 import { StandInCreationDevice } from './StandInCreationDevice'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 
@@ -80,6 +77,7 @@ interface StandInSettingsPageProps {
   onRequestCreate?(): void
 }
 
+/** Resolve the creation device before opening an editor and preserve the unsaved-edit guard. */
 export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps) {
   const cloud = useContext(CloudConnectionContext)
   const cloudCreation =
@@ -127,8 +125,8 @@ export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps)
   )
 }
 
+/** Edit one device-owned stand-in draft and persist it only after an explicit save. */
 function StandInSettingsEditor({
-  api,
   projects,
   services,
   devices,
@@ -149,9 +147,7 @@ function StandInSettingsEditor({
 }: StandInSettingsPageProps) {
   useStandInOpened('settings', initialProfileId === '@primary' ? 'primary' : 'role')
   const { t } = useTranslation('common')
-  const cloudConnection = useContext(CloudConnectionContext)
-  const canLoadPersonalAgents = (cloudConnection?.isConnected ?? true) && userId !== 0
-  const state = usePersonalStandIn(services, userId, initialDeviceId, canLoadPersonalAgents)
+  const state = usePersonalStandIn(services, userId, initialDeviceId)
   const { draft, saved, setDraft, updateRole, loading, saving, setError } = state
   const [confirmDelete, setConfirmDelete] = useState(false)
   const executionDeviceId = draft?.executionDeviceId
@@ -165,10 +161,6 @@ function StandInSettingsEditor({
   const [notice, setNotice] = useState(false)
   const [roleNameError, setRoleNameError] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
-  const [personalAgentDetail, setPersonalAgentDetail] = useState<{
-    id: number
-    agent: WorkspaceProjectAgent
-  } | null>(null)
   const [runtimeWork, setRuntimeWork] = useState<RuntimeWorkListResponse | null>(null)
   const projectRef = useMemo(
     () =>
@@ -182,50 +174,10 @@ function StandInSettingsEditor({
   const projectEnabled = Boolean(
     projectRef && draft?.roles.some(row => row.enabled && roleIncludesProject(row, projectRef))
   )
-  const firstProjectRole =
-    projectRef &&
-    draft?.roles.find(
-      row =>
-        !row.agentProject ||
-        (row.agentProject.id === projectRef.id && row.agentProject.store === projectRef.store)
-    )
-  const projectRoleId = selectedId || connectedRole?.id || firstProjectRole?.id || ''
+  const projectRoleId = selectedId || connectedRole?.id || draft?.roles[0]?.id || ''
   const role =
     draft?.roles.find(role => role.id === (initialProject ? projectRoleId : selectedId)) ??
-    (initialProject &&
-      draft?.roles.find(role =>
-        roleIncludesProject(role, {
-          id: initialProject.id,
-          store: initialProject.project_store === 'local' ? 'local' : 'cloud',
-        })
-      )) ??
     draft?.roles[0]
-  const selectedResourceId = role?.agentResourceId
-  useEffect(() => {
-    if (view !== 'advanced' || !selectedResourceId || !services.agentResourceApi) return
-    let active = true
-    void services.agentResourceApi
-      .getAgent(selectedResourceId)
-      .then(detail => {
-        if (active)
-          setPersonalAgentDetail({
-            id: selectedResourceId,
-            agent: {
-              id: String(detail.teamId),
-              name: detail.displayName || detail.name,
-              runtime: detail.runtime ?? undefined,
-              modelPolicy: detail.modelPolicy,
-              executionPolicy: detail.executionPolicy,
-            },
-          })
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [view, selectedResourceId, services, setError])
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
@@ -406,20 +358,6 @@ function StandInSettingsEditor({
     project =>
       project.project_store !== 'local' || draft?.executionDeviceId === state.currentDeviceId
   )
-  const projectCatalog = useStandInProjectAgents(
-    api,
-    initialProject
-      ? availableProjects.filter(
-          project =>
-            project.id === initialProject.id &&
-            project.project_store === initialProject.project_store
-        )
-      : availableProjects
-  )
-  const selectedProjectValue =
-    role?.agentId && role.agentProject
-      ? projectAgentChoiceValue({ id: role.agentId, project: role.agentProject })
-      : 'project-reference'
   const included = role
     ? availableProjects.filter(project =>
         roleIncludesProject(role, {
@@ -428,100 +366,7 @@ function StandInSettingsEditor({
         })
       )
     : []
-  const selectedAgentMissing =
-    role?.agentResourceId && !state.agents.some(agent => agent.id === role.agentResourceId)
   const title = view === 'main' ? 'personal.settings_title' : `personal.${view}_title`
-  const agentField = role && (
-    <div className="space-y-2">
-      <label htmlFor="stand-in-agent" className="flex min-h-8 items-center text-text-secondary">
-        {t('standIn.personal.execution_agent')}
-      </label>
-      <div className="min-w-0">
-        <div className="flex min-h-8 items-center gap-2 rounded-md border border-border px-2">
-          <Bot className="h-4 w-4 shrink-0 text-text-muted" />
-          <select
-            id="stand-in-agent"
-            data-testid="stand-in-agent"
-            disabled={saving}
-            value={role.agentResourceId ?? (role.agentId ? selectedProjectValue : '')}
-            onChange={event => {
-              const selected = projectCatalog.choices.find(
-                choice => projectAgentChoiceValue(choice) === event.target.value
-              )
-              changeRole({
-                ...role,
-                agentResourceId:
-                  selected || !event.target.value ? null : Number(event.target.value),
-                agentId: selected?.id ?? null,
-                agentProject: selected?.project,
-                model: null,
-                collaboration: selected
-                  ? {
-                      ...role.collaboration,
-                      enabled: true,
-                      allProjects: false,
-                      projects: [selected.project],
-                      excludedProjects: [],
-                    }
-                  : role.collaboration,
-              })
-            }}
-            className="min-h-8 min-w-0 flex-1 bg-transparent text-sm outline-none"
-          >
-            <option value="">{t('standIn.default_agent')}</option>
-            {role.agentId &&
-              !projectCatalog.choices.some(
-                choice => projectAgentChoiceValue(choice) === selectedProjectValue
-              ) && (
-                <option value={selectedProjectValue}>{t('standIn.personal.project_agent')}</option>
-              )}
-            {selectedAgentMissing && (
-              <option value={role.agentResourceId!}>{t('standIn.agent_unavailable')}</option>
-            )}
-            {state.agents.map(agent => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
-            ))}
-            {projectCatalog.choices.length > 0 && (
-              <optgroup label={t('standIn.personal.project_agents')}>
-                {projectCatalog.choices.map(choice => (
-                  <option
-                    key={projectAgentChoiceValue(choice)}
-                    value={projectAgentChoiceValue(choice)}
-                  >
-                    {choice.name} · {choice.projectName}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-        </div>
-        {role.agentProject && (
-          <p data-testid="stand-in-project-agent-scope" className="mt-2 text-xs text-text-muted">
-            {t('standIn.personal.project_agent_scope', {
-              project:
-                findStandInProject(projects, role.agentProject)?.name ?? role.agentProject.id,
-            })}
-          </p>
-        )}
-        {canLoadPersonalAgents && state.agentError && (
-          <p className="mt-1 text-xs text-text-muted" role="status">
-            {t('standIn.personal.catalog_unavailable')}
-            <button
-              type="button"
-              data-testid="stand-in-agents-retry"
-              disabled={saving}
-              onClick={state.reloadAgents}
-              className="ml-2 underline"
-            >
-              {t('standIn.reload')}
-            </button>
-          </p>
-        )}
-      </div>
-    </div>
-  )
 
   return (
     <section
@@ -606,8 +451,6 @@ function StandInSettingsEditor({
                   roles={draft.roles.filter(row => view !== 'create' || row.id !== role.id)}
                   projectRoleId={projectRoleId}
                   role={role}
-                  agents={state.agents}
-                  projectAgents={projectCatalog.choices}
                   onOpenSettings={
                     onOpenPersonalSettings
                       ? () => onOpenPersonalSettings(role.id, draft.executionDeviceId)
@@ -675,7 +518,6 @@ function StandInSettingsEditor({
                   {t('standIn.personal.current_project', { project: initialProject.name })}
                 </p>
               )}
-              {(view === 'main' || view === 'create') && agentField}
               {(view === 'main' || view === 'create') && (
                 <div className="space-y-2">
                   <h2 className="font-medium">{t('standIn.personal.requirements')}</h2>
@@ -787,16 +629,6 @@ function StandInSettingsEditor({
                   }}
                   disabled={saving}
                   submitDisabled={saving}
-                  controls={null}
-                  selectedAgent={
-                    role.agentResourceId
-                      ? personalAgentDetail?.id === role.agentResourceId
-                        ? personalAgentDetail.agent
-                        : undefined
-                      : projectCatalog.choices.find(
-                          choice => projectAgentChoiceValue(choice) === selectedProjectValue
-                        )?.agent
-                  }
                   showPrompt={false}
                   runtimeWork={runtimeWork}
                   devices={devices}

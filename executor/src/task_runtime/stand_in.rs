@@ -46,6 +46,7 @@ impl LocalTaskStore {
         Ok(project_role(&role, user_id, project_id, kind))
     }
 
+    /// Save a project-addressed view into its owning personal document without duplicate persistence.
     pub fn save_stand_in_settings(
         &self,
         project_id: &str,
@@ -99,9 +100,7 @@ impl LocalTaskStore {
         value["id"] = json!(id);
         value["name"] = value.get("name").cloned().unwrap_or_else(|| json!(""));
         value["collaboration"] = source;
-        if value["agentId"].is_string() {
-            value["agentProject"] = project;
-        }
+        super::personal_stand_in::migrate_agent_binding(&mut value)?;
         super::personal_stand_in::stamp_stand_in_connections(
             &mut value,
             before.unwrap_or(&Value::Null),

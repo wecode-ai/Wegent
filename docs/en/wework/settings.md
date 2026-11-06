@@ -16,8 +16,8 @@ arc and remaining track automatically adapt their contrast for light and dark th
 reaches the compaction threshold, the indicator switches to a warning color and, when compaction
 is available, offers the compact action.
 
-The permission-mode control appears as the current mode's icon immediately before the context
-indicator. Hover to see the active mode, or click to choose **Read only**, **Workspace**, or
+The permission-mode control appears as the current mode's icon in the left composer toolbar,
+immediately after quick phrases. Hover to see the active mode, or click to choose **Read only**, **Workspace**, or
 **Full access**. After selecting a project space, the composer chip shows only the board name;
 its hover text still explains that sending creates a task on that board.
 

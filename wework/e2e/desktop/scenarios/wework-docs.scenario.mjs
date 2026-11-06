@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -82,12 +83,11 @@ export function createDesktopScenario({
             body,
             `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 10000 })}))`
           )
-          const event = customToolCall(CALL, tool.name, tool.input)
-          event.item.namespace = 'functions'
+          const event = selectedToolCall(CALL, { codeMode: tool }).at(-1)
           events = [event]
         } else {
           const tool = selectShellToolCommand(body, command, workspacePath, { yieldTimeMs: 10000 })
-          events = functionCall(CALL, tool.name, tool.arguments)
+          events = selectedToolCall(CALL, tool)
         }
       } else {
         const output = JSON.stringify(

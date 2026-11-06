@@ -2083,7 +2083,7 @@ fn prepare_wework_codex_home_removes_browser_only_developer_instructions() {
         codex_home.join("config.toml"),
         format!(
             "developer_instructions = {instructions:?}\n",
-            instructions = WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS
+            instructions = host_skills::BROWSER.split_once("\n\n").unwrap().1
         ),
     )
     .expect("legacy config should be written");
@@ -4698,10 +4698,10 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
             .expect("developer instructions should be a string");
         assert!(instructions
             .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
-        assert!(instructions.contains("Wework 内置浏览器 routing:"));
-        assert!(instructions.contains("browser_open"));
+        assert!(instructions.contains(host_skills::INSTRUCTIONS));
+        assert!(!instructions.contains("browser_take_screenshot"));
         assert!(instructions.contains("Wework 项目空间 routing:"));
-        assert!(instructions.contains(local_connector_auth::INSTRUCTIONS));
+        assert!(!instructions.contains("Wework local plugin authorization:"));
     }
 }
 
@@ -4723,20 +4723,15 @@ fn legacy_ghost_keeps_stored_rules_in_all_thread_launches_with_runtime_declarati
             .as_str()
             .expect("runtime declaration instructions must reach the real SDK");
         assert!(instructions.starts_with(legacy));
-        assert!(instructions.ends_with(crate::artifact_cli::AGENT_INSTRUCTIONS));
-        assert!(instructions.contains("artifact declare --path"));
+        assert!(instructions.contains(host_skills::INSTRUCTIONS));
+        assert!(!instructions.contains("artifact declare --path"));
         assert_eq!(
             instructions
                 .matches(external_work::SOURCE_CONTENT_INSTRUCTIONS)
                 .count(),
             1
         );
-        let runtime_suffix = format!(
-            "{}\n\n{}",
-            external_work::SOURCE_CONTENT_INSTRUCTIONS,
-            crate::artifact_cli::AGENT_INSTRUCTIONS
-        );
-        assert!(instructions.ends_with(runtime_suffix.as_str()));
+        assert!(instructions.contains("Wework runtime policy revision:"));
     }
     assert_eq!(request.system_prompt, legacy);
 }
@@ -5406,10 +5401,9 @@ fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
         vec![text_input("GitHub (gh)".to_owned())]
     );
     let instructions = codex_thread_developer_instructions("user settings", "task settings");
-    assert!(instructions.contains(github_cli::INSTRUCTIONS));
-    assert!(instructions.contains("connectorSlug=wework-github-cli"));
-    assert!(instructions.contains("artifact declare --path"));
-    assert!(instructions.contains("sends metadata only"));
+    assert!(instructions.contains(host_skills::INSTRUCTIONS));
+    assert!(!instructions.contains("connectorSlug=wework-github-cli"));
+    assert!(!instructions.contains("artifact declare --path"));
 }
 
 #[test]
@@ -5433,7 +5427,8 @@ fn python_plugin_routing_is_present_only_on_managed_desktop_executors() {
     );
     let instructions = codex_thread_developer_instructions("", "");
     assert!(instructions.contains(crate::plugin_python::INSTRUCTIONS));
-    assert!(instructions.contains(inline_visualization::INSTRUCTIONS));
+    assert!(instructions.contains(host_skills::INSTRUCTIONS));
+    assert!(host_skills::INSTRUCTIONS.contains("visualization"));
     assert!(crate::agents::build_claude_command(&request, "claude")
         .args()
         .iter()
