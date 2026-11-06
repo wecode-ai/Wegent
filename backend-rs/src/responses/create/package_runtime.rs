@@ -37,7 +37,10 @@ fn authorize_target(
         // Empty configuration remains fail-closed at the embedded engine.
         request.bearer_auth(token.trim())
     } else {
-        request.header("authorization", super::dispatch::OPENAI_DUMMY_AUTHORIZATION)
+        request.header(
+            "authorization",
+            super::openai_client::OPENAI_DUMMY_AUTHORIZATION,
+        )
     }
 }
 
@@ -77,7 +80,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             request.headers()["authorization"],
-            super::super::dispatch::OPENAI_DUMMY_AUTHORIZATION
+            super::super::openai_client::OPENAI_DUMMY_AUTHORIZATION
         );
     }
 }

@@ -26,6 +26,7 @@ export function windowsBuildKey({ cwd = process.cwd(), toolchain }) {
       'backend-rs',
       'shared/assets',
       'shared/protocol',
+      'shared/rust',
       'wework',
       ':(exclude)wework/e2e/**',
       ':(exclude)wework/test-results/**',

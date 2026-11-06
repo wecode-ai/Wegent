@@ -1,3 +1,26 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
+import { nativeMatrixCatalogModel } from './model-native-catalog.mjs'
+import { wireDeclarations } from './model-wire-contract.mjs'
+import {
+  handleDirectMatrixAudit,
+  matrixSkillNames,
+  recordMatrixFailure,
+  writeMatrixReport,
+} from './model-matrix-audit.mjs'
+import { writeFileSync } from 'node:fs'
+import {
+  assertProgressiveHi,
+  captureMatrixRequest,
+  countModelRequest,
+  handleProgressiveMatrixTurn,
+  matrixHiCompletion,
+  matrixDeferredCompletion,
+  matrixDeferredPrompt,
+  writeCodeModeMatrixPatch,
+  assertCodeModeMatrixPatch,
+  hasMatrixExec,
+  assertCodeModeMatrixRequest,
+} from './model-progressive-contract.mjs'
 import { visibleRuntimeUserMessage } from '../../../../packages/chat-core/src/runtime-user-message.js'
 
 import {
@@ -50,6 +73,7 @@ import {
   responseCreated,
   responseFailed,
   selectApplyPatchTool,
+  applyPatchResponseEvents,
   selectCloudApplyPatchTool,
   selectConvertedTool,
   selectMcpTool,
@@ -104,6 +128,7 @@ import {
   CUSTOM_TOOL_INPUT_DESCRIPTION,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
+  SELECTED_DESKTOP_SEGMENT,
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_READY_TIMEOUT_MS,
   DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
@@ -404,7 +429,9 @@ function inputUserMessageTexts(request) {
 function hasUserReplyAfterToolOutput(request, callId, answer) {
   const input = Array.isArray(request.input) ? request.input : []
   const outputIndex = input.findIndex(
-    item => item.type === 'function_call_output' && item.call_id === callId
+    item =>
+      ['function_call_output', 'custom_tool_call_output'].includes(item.type) &&
+      item.call_id === callId
   )
   if (outputIndex === -1) return false
   return inputUserMessageTexts({ input: input.slice(outputIndex + 1) }).some(
@@ -981,8 +1008,9 @@ class DesktopE2EServer {
   setMatrixCase(model) {
     this.matrixCase = model
     this.matrixState = {
-      stage: 'text',
+      stage: 'hi',
       requests: [],
+      failures: [],
     }
     this.setScenario('model_protocol_matrix')
   }
@@ -1986,7 +2014,10 @@ class DesktopE2EServer {
       )
       response.setHeader('ETag', '"wework-desktop-e2e-models-v1"')
       json(response, 200, {
-        models: [],
+        models:
+          SELECTED_DESKTOP_SEGMENT === 'model-routing'
+            ? [nativeMatrixCatalogModel(DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)]
+            : [],
       })
       return
     }
@@ -2317,7 +2348,50 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'model_protocol_matrix') {
-      this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
+      try {
+        this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
+      } catch (error) {
+        recordMatrixFailure(this, 'request/' + this.matrixState.stage, error)
+        if (this.matrixState.stage === 'hi') {
+          this.matrixState.stage = 'text'
+          this.writeMatrixAssistantMessage(
+            response,
+            this.matrixCase,
+            matrixHiCompletion(this.matrixCase)
+          )
+        } else if (
+          this.matrixState.progressive &&
+          !['complete', 'failed'].includes(this.matrixState.progressive)
+        ) {
+          this.matrixState.progressive = 'failed'
+          this.matrixState.deferAudit = {
+            ...this.matrixState.deferAudit,
+            status: 'failed',
+            error: error.message,
+          }
+          this.writeMatrixAssistantMessage(
+            response,
+            this.matrixCase,
+            matrixDeferredCompletion(this.matrixCase)
+          )
+        } else if (this.matrixState.stage === 'text') {
+          this.matrixState.stage = 'tool'
+          this.writeMatrixAssistantMessage(
+            response,
+            this.matrixCase,
+            matrixTextCompletion(this.matrixCase)
+          )
+        } else {
+          this.matrixState.stage = 'complete'
+          this.writeMatrixAssistantMessage(
+            response,
+            this.matrixCase,
+            matrixToolCompletion(this.matrixCase)
+          )
+        }
+      } finally {
+        writeMatrixReport(this, this.matrixCase)
+      }
       return
     }
 
@@ -2440,7 +2514,7 @@ class DesktopE2EServer {
       })
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall(publishResult.pollId, tool.name, tool.arguments),
+        ...selectedToolCall(publishResult.pollId, tool),
         responseCompleted(responseId),
       ])
       return
@@ -2462,7 +2536,7 @@ class DesktopE2EServer {
       const tool = selectShellToolCommand(body, publishCommand, this.cloudWorkspacePath)
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall(PLUGIN_WORKSPACE_PUBLISH_CALL_ID, tool.name, tool.arguments),
+        ...selectedToolCall(PLUGIN_WORKSPACE_PUBLISH_CALL_ID, tool),
         responseCompleted(responseId),
       ])
       return
@@ -2663,7 +2737,7 @@ class DesktopE2EServer {
         const tool = selectShellToolCommand(body, 'printf earlier-created-tool', this.workspacePath)
         this.writeSse(response, [
           responseCreated(responseId),
-          ...functionCall(EARLIER_TOOL_BLOCK_ID, tool.name, tool.arguments),
+          ...selectedToolCall(EARLIER_TOOL_BLOCK_ID, tool),
           responseCompleted(responseId),
         ])
         return
@@ -2690,12 +2764,7 @@ class DesktopE2EServer {
         })
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            NODE_REPL_TOOL_BLOCK_ID,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          ),
+          ...selectedToolCall(NODE_REPL_TOOL_BLOCK_ID, tool),
           responseCompleted(responseId),
         ])
         return
@@ -2730,12 +2799,7 @@ class DesktopE2EServer {
         })
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            GENERIC_MCP_TOOL_BLOCK_ID,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          ),
+          ...selectedToolCall(GENERIC_MCP_TOOL_BLOCK_ID, tool),
           responseCompleted(responseId),
         ])
         return
@@ -2756,7 +2820,7 @@ class DesktopE2EServer {
         const tool = selectShellToolCommand(body, 'printf later-created-tool', this.workspacePath)
         this.writeSse(response, [
           responseCreated(responseId),
-          ...functionCall(LATER_TOOL_BLOCK_ID, tool.name, tool.arguments),
+          ...selectedToolCall(LATER_TOOL_BLOCK_ID, tool),
           responseCompleted(responseId),
         ])
         return
@@ -2789,9 +2853,9 @@ class DesktopE2EServer {
       await this.initialToolRelease
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
-        ...functionCall('wework-e2e-view-image', image.name, image.arguments, 1),
-        customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
+        ...selectedToolCall('wework-e2e-tool-call', tool),
+        ...selectedToolCall('wework-e2e-view-image', image, 1),
+        ...applyPatchResponseEvents(body, 'wework-e2e-apply-patch', patch),
         responseCompleted(responseId),
       ])
       return
@@ -2818,7 +2882,7 @@ class DesktopE2EServer {
           const exec = selectProgrammaticExec(body, program)
           this.writeSse(response, [
             responseCreated(responseId),
-            customToolCall(EMBEDDED_BROWSER_SETUP_OPEN_ID, exec.name, exec.input),
+            ...selectedToolCall(EMBEDDED_BROWSER_SETUP_OPEN_ID, { codeMode: exec }),
             responseCompleted(responseId),
           ])
           return
@@ -2873,12 +2937,7 @@ class DesktopE2EServer {
         })
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            EMBEDDED_BROWSER_SETUP_OPEN_ID,
-            browserTool.namespace,
-            browserTool.name,
-            browserTool.arguments
-          ),
+          ...selectedToolCall(EMBEDDED_BROWSER_SETUP_OPEN_ID, browserTool),
           responseCompleted(responseId),
         ])
         return
@@ -2926,7 +2985,7 @@ class DesktopE2EServer {
           const exec = selectProgrammaticExec(body, program)
           this.writeSse(response, [
             responseCreated(responseId),
-            customToolCall(EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID, exec.name, exec.input),
+            ...selectedToolCall(EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID, { codeMode: exec }),
             responseCompleted(responseId),
           ])
           return
@@ -2987,12 +3046,7 @@ class DesktopE2EServer {
         })
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID,
-            browserTool.namespace,
-            browserTool.name,
-            browserTool.arguments
-          ),
+          ...selectedToolCall(EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID, browserTool),
           responseCompleted(responseId),
         ])
         return
@@ -3130,7 +3184,7 @@ class DesktopE2EServer {
         this.writeSse(response, [
           responseCreated(responseId),
           preToolMessage,
-          ...functionCall('wework-e2e-guidance-scroll-tool', tool.name, tool.arguments),
+          ...selectedToolCall('wework-e2e-guidance-scroll-tool', tool),
           responseCompleted(responseId, [preToolMessage.item]),
         ])
         return
@@ -3182,7 +3236,7 @@ class DesktopE2EServer {
       this.viewImageStage = 'awaiting_tool_output'
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall('wework-e2e-view-image', image.name, image.arguments),
+        ...selectedToolCall('wework-e2e-view-image', image),
         responseCompleted(responseId),
       ])
       return
@@ -3256,7 +3310,7 @@ class DesktopE2EServer {
       this.memoryStage = 'awaiting_tool_output'
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall('wework-memory-tool-call', tool.name, tool.arguments),
+        ...selectedToolCall('wework-memory-tool-call', tool),
         responseCompleted(responseId),
       ])
       return
@@ -3291,8 +3345,8 @@ class DesktopE2EServer {
       this.cloudModelStage = 'awaiting_tool_output'
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall(CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID, tool.name, tool.arguments),
-        customToolCall('wework-cloud-e2e-apply-patch', 'apply_patch', patch),
+        ...selectedToolCall(CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID, tool),
+        ...applyPatchResponseEvents(body, 'wework-cloud-e2e-apply-patch', patch),
         responseCompleted(responseId),
       ])
       return
@@ -3306,9 +3360,10 @@ class DesktopE2EServer {
         'The real cloud Codex request did not report its tool output to the model service'
       )
       const identityToolOutput = toolOutputText(body, CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID) ?? ''
+      assert.match(identityToolOutput, /Process exited with code 0\b/)
       assert.equal(
-        identityToolOutput.trim().endsWith(`Output:\n${CLOUD_AUTHENTICATED_USER_NAME}`),
-        true,
+        identityToolOutput.trim().split('\n').at(-1),
+        CLOUD_AUTHENTICATED_USER_NAME,
         'The real cloud executor did not expose the authenticated Wework user identity'
       )
       const stream = streamingTextEvents(responseId, CLOUD_COMPLETION_TEXT)
@@ -3463,11 +3518,7 @@ class DesktopE2EServer {
         await this.holdSubsequentGoalRestartResume('goal_restart_blocker')
         response.end(
           createSse([
-            ...functionCall(
-              'wework-e2e-goal-restart-blocker-complete',
-              updateGoal.name,
-              updateGoal.arguments
-            ),
+            ...selectedToolCall('wework-e2e-goal-restart-blocker-complete', updateGoal),
             responseCompleted(responseId),
           ])
         )
@@ -3513,11 +3564,7 @@ class DesktopE2EServer {
         await this.goalRestartResumeRelease
         this.writeSse(response, [
           responseCreated(responseId),
-          ...functionCall(
-            'wework-e2e-cloud-goal-restart-complete',
-            updateGoal.name,
-            updateGoal.arguments
-          ),
+          ...selectedToolCall('wework-e2e-cloud-goal-restart-complete', updateGoal),
           responseCompleted(responseId),
         ])
         return
@@ -3581,11 +3628,7 @@ class DesktopE2EServer {
         await this.holdSubsequentGoalRestartResume('goal_restart')
         response.end(
           createSse([
-            ...functionCall(
-              'wework-e2e-goal-restart-complete',
-              updateGoal.name,
-              updateGoal.arguments
-            ),
+            ...selectedToolCall('wework-e2e-goal-restart-complete', updateGoal),
             responseCompleted(responseId),
           ])
         )
@@ -3669,7 +3712,7 @@ class DesktopE2EServer {
         response.end(
           createSse([
             ...stream.finish.slice(0, -1),
-            ...functionCall('wework-e2e-goal-idle-complete', updateGoal.name, updateGoal.arguments),
+            ...selectedToolCall('wework-e2e-goal-idle-complete', updateGoal),
             responseCompleted(responseId),
           ])
         )
@@ -3761,7 +3804,7 @@ class DesktopE2EServer {
         this.goalBusyStage = 'awaiting_update_output'
         this.writeSse(response, [
           responseCreated(responseId),
-          ...functionCall('wework-e2e-goal-busy-complete', updateGoal.name, updateGoal.arguments),
+          ...selectedToolCall('wework-e2e-goal-busy-complete', updateGoal),
           responseCompleted(responseId),
         ])
         return
@@ -4021,7 +4064,7 @@ class DesktopE2EServer {
       await this.requestUserInputRelease
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall('wework-e2e-request-user-input', tool.name, tool.arguments),
+        ...selectedToolCall('wework-e2e-request-user-input', tool),
         responseCompleted(responseId),
       ])
       this.resolveRequestUserInputResponseWritten()
@@ -4052,7 +4095,7 @@ class DesktopE2EServer {
         })
         this.writeSse(response, [
           responseCreated(responseId),
-          ...functionCall(callId, tool.name, tool.arguments),
+          ...selectedToolCall(callId, tool),
           responseCompleted(responseId),
         ])
         return
@@ -4127,7 +4170,7 @@ class DesktopE2EServer {
       })
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall(callId, tool.name, tool.arguments),
+        ...selectedToolCall(callId, tool),
         responseCompleted(responseId),
       ])
       return
@@ -4172,7 +4215,7 @@ class DesktopE2EServer {
         )
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(callId, tool.namespace, tool.name, tool.arguments),
+          ...selectedToolCall(callId, tool),
           responseCompleted(responseId),
         ])
         return
@@ -4250,7 +4293,7 @@ class DesktopE2EServer {
         )
         this.writeSse(response, [
           responseCreated(responseId),
-          ...functionCall('wework-e2e-official-plugin-skill', shell.name, shell.arguments),
+          ...selectedToolCall('wework-e2e-official-plugin-skill', shell),
           responseCompleted(responseId),
         ])
         return
@@ -4290,12 +4333,7 @@ class DesktopE2EServer {
         })
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            'wework-e2e-official-plugin-mcp',
-            mcpTool.namespace,
-            mcpTool.name,
-            mcpTool.arguments
-          ),
+          ...selectedToolCall('wework-e2e-official-plugin-mcp', mcpTool),
           responseCompleted(responseId),
         ])
         return
@@ -4369,12 +4407,7 @@ class DesktopE2EServer {
         const tool = selectMcpTool(body, 'wework_space', 'get_current_context', {})
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            'late-bound-project-space-context',
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          ),
+          ...selectedToolCall('late-bound-project-space-context', tool),
           responseCompleted(responseId),
         ])
         return
@@ -4394,12 +4427,7 @@ class DesktopE2EServer {
         const tool = selectMcpTool(body, 'wework_space', 'list_item_attachments', {})
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            'late-bound-project-space-attachments',
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          ),
+          ...selectedToolCall('late-bound-project-space-attachments', tool),
           responseCompleted(responseId),
         ])
         return
@@ -4523,7 +4551,7 @@ class DesktopE2EServer {
           this.automationStage === 'manual_goal' ? 'manual_goal_output' : 'scheduled_goal_output'
         this.writeSse(response, [
           responseCreated(responseId),
-          ...functionCall(callId, updateGoal.name, updateGoal.arguments),
+          ...selectedToolCall(callId, updateGoal),
           responseCompleted(responseId),
         ])
         return
@@ -4794,7 +4822,7 @@ class DesktopE2EServer {
         await this.sideChatGuidanceRelease
         this.writeSse(response, [
           responseCreated(responseId),
-          ...functionCall('wework-e2e-side-chat-guidance-tool', tool.name, tool.arguments),
+          ...selectedToolCall('wework-e2e-side-chat-guidance-tool', tool),
           responseCompleted(responseId),
         ])
         return
@@ -5184,6 +5212,7 @@ class DesktopE2EServer {
     assert.equal(protocol, model.protocol, `${matrixCaseId(model)} reached the wrong endpoint`)
     assert.equal(body.model, model.modelId, `${matrixCaseId(model)} forwarded the wrong model ID`)
     state.requests.push({ body, headers })
+    const evidenceDirectory = captureMatrixRequest(this, model, body)
 
     const requestKind = codexRequestKind(body)
     if (requestKind === 'prewarm' || requestKind === 'compaction') {
@@ -5193,6 +5222,44 @@ class DesktopE2EServer {
 
     const serialized = JSON.stringify(body)
     this.assertMatrixRequestEnvelope(model, body, headers)
+    if (state.stage === 'hi') {
+      const budget = countModelRequest(body)
+      writeFileSync(`${evidenceDirectory}.hi-budget.json`, JSON.stringify(budget, null, 2))
+      state.hi = {
+        skills: matrixSkillNames(body),
+        ...budget,
+        declarationForm: body.input?.some(item => item.type === 'additional_tools')
+          ? 'additional_tools'
+          : 'top-level-tools',
+        tools: wireDeclarations(body, model.protocol).map(tool => ({
+          name: tool.name ?? tool.type,
+          namespace: tool.namespace ?? null,
+        })),
+      }
+      try {
+        this.matrixSkillBaselines ??= {}
+        const baseline = (this.matrixSkillBaselines[model.execution] ??= state.hi.skills)
+        const missing = baseline.filter(name => !state.hi.skills.includes(name))
+        assert.deepEqual(missing, [], 'Protocol switching lost enabled skill metadata')
+        assertProgressiveHi(body, model, budget)
+      } catch (error) {
+        recordMatrixFailure(this, 'hi', error)
+      }
+      state.stage = 'text'
+      this.writeMatrixAssistantMessage(response, model, matrixHiCompletion(model))
+      return
+    }
+    if (state.progressive !== 'failed') {
+      if (
+        !hasMatrixExec(body, model.protocol) &&
+        (state.directAuditStage || serialized.includes(matrixDeferredPrompt(model))) &&
+        state.progressive !== 'complete'
+      ) {
+        state.progressive = 'direct-audit'
+        if (handleDirectMatrixAudit(this, response, model, body)) return
+      }
+      if (handleProgressiveMatrixTurn(this, response, model, body)) return
+    }
     this.assertMatrixTools(model, body)
     if (state.stage === 'text') {
       if (!serialized.includes(matrixTextPrompt(model))) {
@@ -5267,6 +5334,10 @@ class DesktopE2EServer {
   }
 
   assertMatrixTools(model, body) {
+    if (hasMatrixExec(body, model.protocol)) {
+      assertCodeModeMatrixRequest(body, model)
+      return
+    }
     const tools = Array.isArray(body.tools) ? body.tools : []
     const applyPatch = tools.find(
       candidate => (candidate?.name ?? candidate?.function?.name) === 'apply_patch'
@@ -5309,6 +5380,10 @@ class DesktopE2EServer {
   }
 
   assertMatrixToolOutput(model, body) {
+    if (hasMatrixExec(body, model.protocol)) {
+      assertCodeModeMatrixPatch(body, model)
+      return
+    }
     if (model.protocol === 'responses') {
       const expectedType =
         model.source === 'local' || model.requestMode === 'standard'
@@ -5376,6 +5451,11 @@ class DesktopE2EServer {
   }
 
   writeMatrixToolCall(response, model) {
+    const body = this.matrixState.requests.at(-1).body
+    if (hasMatrixExec(body, model.protocol)) {
+      writeCodeModeMatrixPatch(this, response, model, body)
+      return
+    }
     const patch = matrixPatch(model)
     if (model.protocol === 'responses') {
       const id = `matrix-${matrixCaseId(model)}-tool`
@@ -6016,7 +6096,7 @@ class DesktopE2EServer {
       const id = `local-${model.protocol}-browser-open`
       this.writeSse(response, [
         responseCreated(id),
-        ...functionCall(callId, tool.name, tool.arguments),
+        ...selectedToolCall(callId, tool),
         responseCompleted(id),
       ])
       return

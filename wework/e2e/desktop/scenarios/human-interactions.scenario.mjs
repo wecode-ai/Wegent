@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -82,7 +83,7 @@ export function createDesktopScenario({
       createSse([
         responseCreated(responseId),
         context,
-        ...functionCall(callId, held.tool.name, held.tool.arguments, 1),
+        ...selectedToolCall(callId, held.tool, 1),
         responseCompleted(responseId),
       ])
     )

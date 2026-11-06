@@ -647,7 +647,8 @@ async fn enforce_remote_runtime_proxy(
         &app.mysql,
         i32::try_from(user_id).map_err(|_| ())?,
     )
-    .await?;
+    .await
+    .map_err(|_| ())?;
     apply_runtime_proxy(&mut next_payload, &proxy_url);
     tracing::info!(
         user_id,

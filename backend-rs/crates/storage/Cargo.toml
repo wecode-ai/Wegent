@@ -1,0 +1,21 @@
+[package]
+name = "wegent-storage"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "S3 request signing and object path encoding for Wegent"
+
+[dependencies]
+wegent-backend-config = { path = "../config" }
+wegent-network-policy = { path = "../network-policy" }
+anyhow = "1"
+brz-http = { version = "=0.0.14", features = ["json", "gzip", "metrics", "slow-log"] }
+hmac = "0.12"
+sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }
+brz-metrics = { version = "=0.0.13", features = ["tokio"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread"] }

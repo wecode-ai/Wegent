@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
@@ -6,7 +7,7 @@ import { isCollaborationSubagentRequest } from './subagent-request.mjs'
 import {
   assistantMessage,
   createSse,
-  namespacedFunctionCall,
+  selectTool,
   responseCreated,
   responseCompleted,
   customToolCall,
@@ -26,7 +27,6 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
   let spawned = false
   let resumed = false
   let pending = false
-  let namespace
   let initialReady = false
   let resumedReady = false
   let statusCallId
@@ -57,9 +57,10 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
     reply(
       response,
       statusCallId,
-      namespacedFunctionCall(statusCallId, namespace, 'list_agents', {
-        path_prefix: `/root/${CHILD}`,
-      })
+      selectedToolCall(
+        statusCallId,
+        selectTool(body, 'list_agents', { path_prefix: `/root/${CHILD}` })
+      )
     )
     return false
   }
@@ -81,24 +82,17 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
         resumedReady = true
       }
       if (!spawned) {
-        const candidates = (body.tools ?? []).filter(
-          tool =>
-            tool.type === 'namespace' && tool.tools?.some(nested => nested.name === 'spawn_agent')
-        )
-        assert.equal(
-          candidates.length,
-          1,
-          'The native request must advertise one collaboration namespace'
-        )
-        namespace = candidates[0].name
         spawned = true
         reply(
           response,
           'history-spawn',
-          namespacedFunctionCall('history-spawn', namespace, 'spawn_agent', {
-            task_name: CHILD,
-            message: 'Complete this isolated regression fixture.',
-          })
+          selectedToolCall(
+            'history-spawn',
+            selectTool(body, 'spawn_agent', {
+              task_name: CHILD,
+              message: 'Complete this isolated regression fixture.',
+            })
+          )
         )
       } else if (!content.includes(FOLLOW_UP)) {
         reply(response, 'history-result', [assistantMessage(`${INITIAL} completed result`)])
@@ -112,10 +106,13 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
             item.item.phase = 'commentary'
             return item
           }),
-          ...namespacedFunctionCall('history-resume', namespace, 'followup_task', {
-            target: CHILD,
-            message: 'Complete another isolated regression fixture.',
-          }).map(event => ({ ...event, output_index: 520 })),
+          ...selectedToolCall(
+            'history-resume',
+            selectTool(body, 'followup_task', {
+              target: CHILD,
+              message: 'Complete another isolated regression fixture.',
+            })
+          ).map(event => ({ ...event, output_index: 520 })),
         ])
       } else if (!pending) {
         pending = true
@@ -123,8 +120,7 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
           body,
           heldExecutionProgram(options.workspacePath, startedFile, releaseFile, FOLLOW_UP)
         )
-        const call = customToolCall('history-held-command', tool.name, tool.input)
-        call.item.namespace = 'functions'
+        const call = selectedToolCall('history-held-command', { codeMode: tool }).at(-1)
         reply(response, 'history-live', [call])
       } else {
         assert.ok(

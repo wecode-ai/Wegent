@@ -149,7 +149,12 @@ fn membership_sync(home: &Path) -> (CapabilitySyncHandler<Package>, Value) {
         "installed_plugin_id":10, "download_path":"/package", "checksum":checksum,
     }]});
     (
-        CapabilitySyncHandler::with_package_provider("", store(home), provider),
+        CapabilitySyncHandler::with_package_provider(
+            "",
+            store(home),
+            provider,
+            std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+        ),
         payload,
     )
 }

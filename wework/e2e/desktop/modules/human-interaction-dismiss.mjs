@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import {
   assistantMessage,
@@ -36,7 +37,7 @@ export function handleArchiveInteractionModel(body, response) {
           const tool = selectTool(body, 'request_user_input_async', {
             questions: [{ title: current.question }],
           })
-          return functionCall(id, tool.name, tool.arguments, 1)
+          return selectedToolCall(id, tool, 1)
         })()
       : [assistantMessage('归档验证的问题已经提出。')]
   response.end(createSse([responseCreated(id), ...items, responseCompleted(id)]))

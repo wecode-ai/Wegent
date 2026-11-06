@@ -1,3 +1,4 @@
+import { readNativeMcpCallId } from '../modules/native-tool-call-id.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -72,6 +73,13 @@ export function createOrdinaryMcpRegression({ uiTimeoutMs, modelResponseTimeoutM
       const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         .workbench.currentRuntimeTask
       assert.ok(address.taskId)
+      const callId = await readNativeMcpCallId(
+        control,
+        address,
+        'counter',
+        'model_only',
+        uiTimeoutMs
+      )
       const discover = () =>
         requestExecutor(control, 'runtime.mcp_apps.request', { address, callId }, uiTimeoutMs)
       assert.equal(await discover(), null)

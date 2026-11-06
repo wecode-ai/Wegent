@@ -86,7 +86,6 @@ mod admin_public_teams;
 mod admin_service_keys;
 mod admin_subscription_monitor_errors;
 mod admin_system_config_slogan_tips;
-mod admin_users;
 mod api_keys;
 mod api_v1_wework_notifications_probe;
 mod application;
@@ -94,13 +93,12 @@ mod apps_installed;
 mod attachment_block;
 mod attachments;
 mod attachments_task_all;
-pub mod auth;
-mod auth_login;
+pub use wegent_identity::auth;
 mod authenticate;
 pub mod background_jobs;
 mod board_snapshot;
 mod bots;
-mod celery_broker;
+pub use wegent_celery as celery_broker;
 mod chat_attachment_text;
 mod chat_guidance;
 mod chat_guidance_consume;
@@ -113,10 +111,10 @@ mod cloud_projects;
 mod cloud_projects_members;
 mod cloud_projects_runtime_default;
 mod collaboration_templates;
-pub mod config;
+pub use wegent_backend_config as config;
 mod connector_runtime;
 mod conversion_callback;
-mod crd;
+pub(crate) use wegent_resource_store::crd;
 mod decisions;
 mod delivery_storage;
 mod delivery_update;
@@ -132,29 +130,27 @@ mod device_upgrade;
 pub mod devices;
 mod dingtalk_wikispace;
 mod dsh_plugin_storage;
-pub mod erp_provider;
-pub mod erp_types;
-mod executor_manager;
+pub use wegent_directory::erp_provider;
+pub use wegent_directory::erp_types;
+use wegent_executor_manager::executor_manager;
 pub mod executor_version;
 mod experimental_dag_probe;
 mod filters;
-mod git_repositories;
+pub(crate) use wegent_git_repositories::git_repositories;
 mod groups;
-mod headers;
-pub mod http_compat;
-mod http_fallback;
-pub mod http_trust;
+use wegent_http_compat::fallback as http_fallback;
+pub(crate) use wegent_identity::headers;
+pub use wegent_network_policy::http_trust;
 mod hybrid;
 mod im_private_sessions;
 mod incoming_hooks;
 mod internal_api_keys;
 mod internal_attachments_download;
-mod internal_auth;
+pub(crate) use wegent_identity::internal_auth;
 mod internal_callback;
 mod internal_conversion_callback;
 mod internal_robot_queue;
-pub mod json_decode_error;
-mod jwt_compat;
+pub(crate) use wegent_identity::jwt_compat;
 mod knowledge_artifacts;
 mod knowledge_base_detail;
 mod knowledge_bases_all_grouped;
@@ -181,8 +177,8 @@ mod marketplace_tags;
 mod mcp;
 mod milestones;
 mod project_coordination;
-pub mod task_store_background;
-pub mod task_store_maintenance;
+pub use wegent_task_store::task_store_background;
+pub use wegent_task_store::task_store_maintenance;
 
 pub use mcp::interactive_form_question::{
     InteractiveFormQuestionNormalizer, InteractiveFormRegistry,
@@ -197,20 +193,16 @@ pub(crate) mod mcp_oauth_credentials;
 pub mod mcp_provider_registry;
 pub mod mcp_providers;
 pub(crate) mod mcp_user_service;
-pub mod media_policy;
+pub use wegent_media::media_policy;
 mod method_call_anon;
 mod method_login;
 mod models_error_recommendations;
-mod models_unified;
-pub mod new_user_resources;
+use wegent_models as models_unified;
+pub use wegent_onboarding::new_user_resources;
 mod oauth_clients;
-pub mod oidc_callback;
-mod oidc_cli_callback;
-mod oidc_cli_login;
-mod oidc_cli_poll;
-mod oidc_login;
-pub mod oidc_service;
-pub mod permissions;
+pub use wegent_access::permissions;
+pub use wegent_oidc::oidc_callback;
+pub use wegent_oidc::oidc_service;
 mod pet;
 mod plugin_account_auth;
 mod plugin_publications;
@@ -219,17 +211,16 @@ mod plugins_installed;
 mod plugins_marketplace;
 mod projects;
 pub(crate) mod provider_guidance;
-mod py_set_order;
 mod quota;
-mod remote_workspace_status;
-mod remote_workspace_tree;
-mod repository_tokens;
+pub(crate) use wegent_git_repositories::repository_tokens;
+use wegent_remote_workspace::remote_workspace_status;
+use wegent_remote_workspace::remote_workspace_tree;
 mod resource_library_listings;
 mod resource_library_tags;
 mod resource_library_team_icons;
-mod resource_refs;
+pub(crate) use wegent_resource_store::resource_refs;
 mod responses;
-mod runtime_check;
+use wegent_runtime_check as runtime_check;
 mod runtime_profiles;
 mod runtime_transcript_search;
 mod runtime_work;
@@ -243,19 +234,18 @@ mod sessions;
 mod share_knowledge_base_my_permission;
 mod shells_unified;
 mod shutdown_state;
-mod site_app_types;
-mod sites;
+pub(crate) use wegent_sites::sites;
 pub mod skill_market;
 mod skills;
 mod smart_apps_download;
 mod smart_apps_marketplace;
 mod snapshots;
 pub mod socketio;
-mod socketio_emit;
-pub mod socketio_rpc;
-mod sql_support;
+pub(crate) use wegent_backend_persistence::sql_support;
 #[cfg(test)]
-mod sql_test_support;
+pub(crate) use wegent_backend_test_support as sql_test_support;
+pub(crate) use wegent_socket_events::socketio_emit;
+pub use wegent_socket_events::socketio_rpc;
 mod startup;
 mod state;
 mod stripe_webhook_probe;
@@ -266,11 +256,11 @@ mod subscriptions_list;
 pub use subscriptions_item::random_token_urlsafe;
 pub use subscriptions_list::workspaces as subscription_workspaces;
 /// Caller-owned SQL handle for one request-scoped transaction.
-pub mod request_sql;
+pub use wegent_backend_persistence::request_sql;
 mod subtasks;
 mod system_execute_sql_for_single;
 mod tables;
-pub mod task_creation;
+pub use wegent_task_store::task_creation;
 mod task_detail_api;
 pub mod task_export_docx;
 mod task_mutation_api;
@@ -281,27 +271,27 @@ pub mod task_routing;
 mod task_run_metric_hooks;
 mod task_run_metrics;
 mod task_share_api;
-mod task_skills;
+use wegent_capabilities::task_skills;
 mod task_source_group;
-pub mod task_store;
-mod task_store_cancel_statements;
-mod task_store_create;
-mod task_store_default;
-mod task_store_edit;
-mod task_store_executor_reference;
-mod task_store_listing;
-mod task_store_personal;
-mod task_store_pipeline;
-mod task_store_project;
-mod task_store_project_count;
-mod task_store_projects;
-mod task_store_public_share;
-mod task_store_statements;
-mod task_store_subtask_content;
-mod task_store_subtask_writes;
-mod task_store_tables;
-mod task_store_traits;
-mod task_token;
+use wegent_identity::task_token;
+pub use wegent_task_store::task_store;
+pub use wegent_task_store::task_store_cancel_statements;
+pub use wegent_task_store::task_store_create;
+pub use wegent_task_store::task_store_default;
+pub use wegent_task_store::task_store_edit;
+pub use wegent_task_store::task_store_executor_reference;
+pub use wegent_task_store::task_store_listing;
+pub use wegent_task_store::task_store_personal;
+pub use wegent_task_store::task_store_pipeline;
+pub use wegent_task_store::task_store_project;
+pub use wegent_task_store::task_store_project_count;
+pub use wegent_task_store::task_store_projects;
+pub use wegent_task_store::task_store_public_share;
+pub use wegent_task_store::task_store_statements;
+pub use wegent_task_store::task_store_subtask_content;
+pub use wegent_task_store::task_store_subtask_writes;
+pub use wegent_task_store::task_store_tables;
+pub use wegent_task_store::task_store_traits;
 mod tasks_db_projection;
 mod tasks_list;
 mod tasks_lite_group;
@@ -317,32 +307,22 @@ mod tokens_probe;
 mod transaction_outcome;
 mod url_metadata;
 mod url_metadata_extract;
-mod url_ssrf;
+pub(crate) use wegent_network_policy::url_ssrf;
 mod user_git_accounts_sync_summary;
 mod user_login_probe;
 mod user_mcp_oauth;
-pub mod user_profile;
-pub mod user_reader;
-mod users_default_teams;
-mod users_features;
-mod users_me;
-mod users_me_available_channels;
+pub use wegent_backend_users::user_profile;
+use wegent_backend_users::users_features;
+pub use wegent_identity::user_reader;
 mod users_me_mcps_providers_services;
-mod users_me_proxy_config;
+use wegent_backend_users::users_me_proxy_config;
 mod users_me_subscription_invitations;
-mod users_me_update;
-mod users_me_wegent_runtime;
-mod users_me_wegent_runtime_token;
-mod users_runtime_configs;
-mod users_search;
-mod users_welcome_config;
+use wegent_backend_users::users_runtime_configs;
 mod v1_resources;
-pub mod video_result_urls;
+pub use wegent_media::video_result_urls;
 mod web_scraper;
 mod web_scraper_create_document;
-mod wework_auth;
-mod wework_auth_refresh;
-mod wework_auth_tokens;
+use wegent_identity::wework_auth_tokens;
 mod wework_notification_preferences;
 mod wework_notifications;
 mod wework_transcript_archive_storage;
@@ -371,31 +351,12 @@ brz_http_server::registry!(
 brz_socket_io::registry!(
     dependencies(app: Arc<AppState>, runtime: Arc<crate::socketio::runtime::SocketRuntime>)
 );
-brz_http_server::registry!(
-    group = runtime_check,
-    dependencies(rc: startup::RuntimeCheckState),
-    auth = auth::AppAuthenticator
-);
-brz_http_server::registry!(
-    group = models_unified,
-    dependencies(mu: startup::ModelsState),
-    auth = auth::AppAuthenticator
-);
-brz_http_server::registry!(
-    group = remote_workspace_status,
-    dependencies(rws: startup::StatusState),
-    auth = auth::AppAuthenticator
-);
-brz_http_server::registry!(
-    group = remote_workspace_tree,
-    dependencies(rwt: startup::TreeState),
-    auth = auth::AppAuthenticator
-);
 
 #[cfg(test)]
 mod json_contract_tests;
 
-/// JSON input compatibility for legacy projections.
-pub mod json_compat;
+pub use wegent_http_compat as http_compat;
+pub use wegent_python_compat::{json_compat, json_decode_error, py_set_order};
 
-mod remote_workspace_payload;
+#[cfg(test)]
+mod git_route_ownership_tests;

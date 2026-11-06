@@ -1,3 +1,4 @@
+import { readNativeMcpCallId } from './native-tool-call-id.mjs'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -68,14 +69,12 @@ async function restartAppServer(cloud, deviceId) {
       socket.once('connect_error', reject)
       socket.connect()
     })
-    const ack = await socket
-      .timeout(DEFAULT_STEP_TIMEOUT_MS)
-      .emitWithAck('runtime:request', {
-        id: crypto.randomUUID(),
-        device_id: deviceId,
-        method: 'runtime.codex.app_server.restart',
-        params: {},
-      })
+    const ack = await socket.timeout(DEFAULT_STEP_TIMEOUT_MS).emitWithAck('runtime:request', {
+      id: crypto.randomUUID(),
+      device_id: deviceId,
+      method: 'runtime.codex.app_server.restart',
+      params: {},
+    })
     assert.equal(ack.ok, true, ack.error?.message)
   } finally {
     socket.disconnect()
@@ -95,7 +94,6 @@ export async function verifyPositiveMcpCloudOwnership(control, cloud, address, i
   const configPath = join(cloud.remoteCodexHome, 'config.toml')
   const config = await readFile(configPath, 'utf8')
   const previous = control.desktopScenario
-  const scope = `[data-mcp-call-id="${callId}"]`
   const sessionId = crypto.randomUUID()
   const frame = (action, params = {}) =>
     invoke('e2e.mcpAppFrame', { url: 'https://unused.example', action, ...params })
@@ -114,6 +112,14 @@ export async function verifyPositiveMcpCloudOwnership(control, cloud, address, i
       text: completion,
       timeoutMs: 30000,
     })
+    const callId = await readNativeMcpCallId(
+      control,
+      address,
+      'native_cloud_app',
+      'show_app',
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+    const scope = `[data-mcp-call-id="${callId}"]`
     await control.command('waitFor', scope + ' [data-testid="mcp-app-frame"][data-ready="true"]')
     const retained = await invoke('mcpApps.retainSession', {
       address,

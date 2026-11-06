@@ -1898,9 +1898,6 @@ export function createHybridWorkbenchServices(
           deviceId
         )
       },
-      async personalAgents(userId, deviceId) {
-        return (await standInApiForDevice(deviceId)).personalAgents(userId, deviceId)
-      },
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
       },
