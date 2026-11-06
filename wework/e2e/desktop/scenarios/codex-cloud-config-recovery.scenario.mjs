@@ -19,6 +19,31 @@ const OFFICIAL_MODEL = 'gpt-5.5'
 // slow operations; ordinary UI actions retain the shared ten-second timeout.
 const RECOVERY_TIMEOUT_MS = 60_000
 
+export function assertCloudConfigDegradation(log, { expectedMethod, resumedTaskId } = {}) {
+  const entry = log
+    .split('\n')
+    .find(line => line.includes('codex auth degraded after cloud config failure'))
+  assert.ok(entry, 'Missing cloud configuration auth degradation')
+  const method = /\bmethod=(\S+)/.exec(entry)?.[1]
+  assert.ok(method, entry)
+  assert.match(entry, /\bauth_mode=wework_router(?:\s|$)/)
+  assert.match(entry, /\bpending_requests=0(?:\s|$)/)
+  assert.ok(expectedMethod || resumedTaskId, 'Missing recovery observation target')
+  if (expectedMethod) assert.equal(method, expectedMethod, entry)
+  if (resumedTaskId) {
+    const resumed = log.split('\n').some(line => {
+      const fields = line.split(/\s+/)
+      return (
+        line.includes('codex shared thread request started') &&
+        fields.includes(`task_id=${resumedTaskId}`) &&
+        fields.includes('operation=thread/resume')
+      )
+    })
+    assert.ok(resumed, `Missing native thread/resume for ${resumedTaskId}`)
+  }
+  return method
+}
+
 export function createDesktopScenario({ resultDir, workspacePath }) {
   const model = createCloudConfigModelService()
   const logPath = join(resultDir, 'executor.log')
@@ -141,20 +166,19 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         assert.equal(result.restarted, true, JSON.stringify(result))
         return { offset, failureCount }
       }
-      const assertDegraded = async ({ offset, failureCount }, expectedMethod) => {
+      const assertDegraded = async ({ offset, failureCount }, expectedMethod, resumedTaskId) => {
         const log = await waitForLogPattern(
           logPath,
           /codex auth degraded after cloud config failure/,
           { fromOffset: offset, timeoutMs: RECOVERY_TIMEOUT_MS }
         )
         assert.ok(model.diagnostics().bundleFailures > failureCount)
-        const entry = log
-          .slice(offset)
-          .split('\n')
-          .find(line => line.includes('codex auth degraded'))
-        assert.ok(entry?.includes(`method=${expectedMethod}`), entry)
+        const recoveryMethod = assertCloudConfigDegradation(log.slice(offset), {
+          expectedMethod,
+          resumedTaskId,
+        })
         evidence.push({
-          recoveryMethod: expectedMethod,
+          recoveryMethod,
           bundleFailures: model.diagnostics().bundleFailures,
         })
       }
@@ -282,6 +306,8 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       )
       const beforeGoal = (await rpc('runtime.tasks.goal.get', { address: address(goalTask) })).goal
       assert.equal(beforeGoal.status, 'active')
+      const goalThreadId = (await task(goalTask)).threadId
+      assert.ok(goalThreadId, 'The active Goal must own a native thread before restart')
       const goalFailureCount = await model.failBundle()
       const goalOffset = (await readFile(logPath, 'utf8')).length
       assert.equal(typeof restartDesktopApp, 'function')
@@ -292,7 +318,14 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       assert.equal(afterGoal.status, 'complete')
       assert.equal(afterGoal.objective, beforeGoal.objective)
       assert.equal(afterGoal.createdAt, beforeGoal.createdAt)
-      await assertDegraded({ offset: goalOffset, failureCount: goalFailureCount }, 'thread/resume')
+      assert.equal((await task(goalTask)).threadId, goalThreadId)
+      // Cold-start model discovery can degrade auth before the Goal resumes.
+      // Verify both the safe transition and this Goal's actual native resume.
+      await assertDegraded(
+        { offset: goalOffset, failureCount: goalFailureCount },
+        undefined,
+        goalTask
+      )
 
       // A second complete desktop restart must reconstruct the final reply and
       // stopped Goal from disk without starting another model continuation.
