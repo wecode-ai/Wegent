@@ -340,6 +340,24 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     expect(api.agents.create).toHaveBeenCalledOnce()
   })
 
+  it('previews a staged image while creating an Issue', async () => {
+    const user = userEvent.setup()
+    const image = new File(['image'], 'image.png', { type: 'image/png' })
+    const createObjectUrl = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:staged-issue-image-preview')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    setup('backend', 'create')
+
+    await user.upload(screen.getByTestId('cloud-todo-attachment-input'), image)
+
+    expect(await screen.findByText('image.png')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('issue-detail-attachment-thumbnail-pending-0')
+    ).toHaveAttribute('src', 'blob:staged-issue-image-preview')
+    expect(createObjectUrl).toHaveBeenCalledWith(image)
+  })
+
   it('retains installed assignees when the workspace catalog cannot be loaded', async () => {
     const { api, bindings } = setup('backend')
     bindings.push({ id: 'installed', name: '已加入项目的智能体', status: 'active' })

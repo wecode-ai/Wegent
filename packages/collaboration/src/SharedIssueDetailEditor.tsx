@@ -1507,6 +1507,16 @@ export function TodoEditor(props: TodoEditorProps) {
       size_bytes: file.size,
     }),
   );
+  const readPendingAttachment = useCallback(
+    async (attachmentId: string) => {
+      const file = pendingFiles.find(
+        (_, index) => `pending-${index}` === attachmentId,
+      );
+      if (!file) throw new Error("Pending attachment is unavailable");
+      return file;
+    },
+    [pendingFiles],
+  );
   const childRailExpanded = Boolean(expandedRailSections.children);
   const executionRailExpanded = Boolean(expandedRailSections.executions);
   const deliveryRailExpanded = Boolean(expandedRailSections.deliveries);
@@ -3582,7 +3592,9 @@ export function TodoEditor(props: TodoEditorProps) {
                     downloadingId={downloadingAttachmentId}
                     onAdd={isCreate ? stageFiles : addAttachments}
                     onReadPreview={
-                      isCreate ? undefined : editorPort.attachments.read
+                      isCreate
+                        ? readPendingAttachment
+                        : editorPort.attachments.read
                     }
                     onOpen={isCreate ? undefined : openAttachment}
                     onDownload={
