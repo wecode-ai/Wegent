@@ -40,6 +40,7 @@ from app.services.channels.dingtalk.card_binding import (
     reply_address,
     save_binding,
 )
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
@@ -212,7 +213,11 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             sender_id=sender_id,
             sender_name=sender_nick,
             conversation_id=conversation_id,
-            conversation_type="group" if conversation_type == "2" else "private",
+            conversation_type=(
+                "group"
+                if conversation_type == DingTalkConversationType.GROUP
+                else "private"
+            ),
             is_mention=is_in_at_list,
             raw_message=message,
             extra_data=extra_data,

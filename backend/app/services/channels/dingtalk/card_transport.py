@@ -17,6 +17,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 from shared.telemetry.decorators import trace_async
 
@@ -25,7 +26,7 @@ CARD_REQUEST_TIMEOUT = 15
 
 def card_delivery_data(client: Any, message: Any, track_id: str) -> dict:
     data = {"outTrackId": track_id, "userIdType": 1}
-    if message.conversation_type == "2":
+    if message.conversation_type == DingTalkConversationType.GROUP:
         space_id = message.conversation_id
         model_key = "imGroupOpenDeliverModel"
         data["openSpaceId"] = f"dtv1.card//IM_GROUP.{space_id}"

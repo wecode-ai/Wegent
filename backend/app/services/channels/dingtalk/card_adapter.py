@@ -17,6 +17,7 @@ from app.services.channels.dingtalk.card_transport import (
     DingTalkCardTransport,
     card_delivery_data,
 )
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 
 
@@ -152,7 +153,7 @@ class TemplateChatCardAdapter:
                 continue
             if not carrier_id:
                 continue
-            if self._message.conversation_type == "2" and (
+            if self._message.conversation_type == DingTalkConversationType.GROUP and (
                 row.get("spaceType") != "IM_GROUP"
                 or row.get("spaceId") != self._message.conversation_id
             ):

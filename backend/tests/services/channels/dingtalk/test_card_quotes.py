@@ -112,6 +112,14 @@ async def test_unmatched_messages_keep_original_routing(quote_case, change):
 
 
 @pytest.mark.asyncio
+async def test_unknown_conversation_type_keeps_original_routing(quote_case):
+    receiver, _, data = quote_case
+    data["conversationType"] = "3"
+    assert not await route_quoted_card(receiver, data)
+    receiver.inbox.enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("command", ["/new", "/help"])
 async def test_quoted_commands_keep_command_routing(quote_case, command):
     receiver, _, data = quote_case
@@ -130,7 +138,6 @@ async def test_quote_of_running_card_reports_rejection_without_new_task(quote_ca
     assert "仍在生成" in receiver._report_error.call_args.args[1]
 
 
-@pytest.mark.asyncio
 async def test_private_quote_uses_delivery_mapping(quote_case):
     receiver, binding, data = quote_case
     binding.incoming_data.update({"conversationId": "dm-a", "conversationType": "1"})

@@ -11,6 +11,7 @@ from dingtalk_stream.frames import Headers
 from app.core.cache import cache_manager
 from app.services.channels.commands import parse_command
 from app.services.channels.dingtalk.card_binding import CARD_BINDING_TTL, load_binding
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 
 if TYPE_CHECKING:
@@ -73,8 +74,12 @@ async def route_quoted_card(
     conversation_id = data.get("conversationId")
     conversation_type = data.get("conversationType")
     if (
-        conversation_type not in {"1", "2"}
-        or (conversation_type == "2" and not data.get("isInAtList"))
+        conversation_type
+        not in (DingTalkConversationType.PRIVATE, DingTalkConversationType.GROUP)
+        or (
+            conversation_type == DingTalkConversationType.GROUP
+            and not data.get("isInAtList")
+        )
         or not isinstance(carrier_id, str)
         or not carrier_id
         or not isinstance(conversation_id, str)
