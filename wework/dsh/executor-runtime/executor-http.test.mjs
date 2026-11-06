@@ -360,6 +360,38 @@ for (const event of ['finish', 'close']) {
   })
 }
 
+test('retains recovery events until the RPC bridge can reconcile them', async () => {
+  let ready = false
+  let stopped = 0
+  const stream = () =>
+    eventStreamFixture(
+      {},
+      {
+        events: [executorEvent(8, 'executor.event_lagged')],
+        onStop: () => {
+          stopped++
+        },
+      }
+    )
+  const options = {
+    assertReady: () => {
+      if (!ready) throw new ExecutorRuntimeError('runtime_not_ready', 'Not negotiated', true)
+    },
+  }
+  const unavailable = responseFixture()
+  await handleExecutorEvents(executorEventRequest('?after=7'), unavailable, stream, options)
+  assert.equal(unavailable.status, 503)
+  assert.equal(JSON.parse(unavailable.body).error.code, 'runtime_not_ready')
+  assert.doesNotMatch(unavailable.body, /executor.event_lagged/)
+  assert.equal(stopped, 2)
+  ready = true
+  const recovered = responseFixture()
+  await handleExecutorEvents(executorEventRequest('?after=7'), recovered, stream, options)
+  assert.equal(recovered.status, 200)
+  assert.match(recovered.body, /executor.event_lagged/)
+  assert.match(recovered.body, /"sequence":8/)
+})
+
 test('passes the browser cursor to the executor-owned event stream', async () => {
   const request = executorEventRequest('?after=7')
   const response = responseFixture()

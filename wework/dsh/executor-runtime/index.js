@@ -52,7 +52,9 @@ export async function apply(ctx) {
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => handleExecutorRpc(req, res, client))
   register(ctx, `${BASE_PATH}/plugin-image`, (req, res) => handlePluginImage(req, res, client))
-  register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))
+  register(ctx, `${BASE_PATH}/events`, (req, res) =>
+    handleExecutorEvents(req, res, undefined, { assertReady: () => client.describe() })
+  )
 }
 
 export function createTranscriptTarget(client) {
@@ -366,6 +368,8 @@ export async function handleExecutorEvents(
     })
     source = await eventStream.start()
     if (!active || res.writableEnded || res.destroyed) return
+    // Recovery events must only reach consumers once their RPC path can reconcile them.
+    options.assertReady?.()
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-store',

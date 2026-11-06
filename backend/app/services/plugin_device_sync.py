@@ -305,6 +305,8 @@ async def sync_installed_plugin_on_device(
     previous: DeviceCapabilitySyncResponse | None = None,
 ) -> DeviceCapabilitySyncResponse | None:
     """Finish the requesting device's sync with a persisted, current ACK."""
+    if not device_id:
+        return previous
     result = previous
     for attempt in range(1, DESIRED_STATE_SYNC_ATTEMPTS + 1):
         result = await _sync_installed_plugin_once(
@@ -314,7 +316,7 @@ async def sync_installed_plugin_on_device(
             installed_id=installed_id,
             previous=previous,
         )
-        if not device_id or result is None or not result.success:
+        if result is None or not result.success:
             return result
         try:
             superseded = await run_plugin_operation(
@@ -342,8 +344,9 @@ async def sync_installed_plugin_on_device(
             installed_id,
             attempt,
         )
+        previous = result
     return deferred_plugin_sync(
-        PluginWriteError("plugin_sync_superseded"),
+        PluginWriteError("plugin_write_conflict"),
         user_id=user_id,
         device_id=device_id,
         stage="plugin_ack",
@@ -386,13 +389,10 @@ async def _sync_installed_plugin_once(
     db: Session,
     *,
     user_id: int,
-    device_id: str | None,
+    device_id: str,
     installed_id: int,
     previous: DeviceCapabilitySyncResponse | None,
 ) -> DeviceCapabilitySyncResponse | None:
-    """Send current plugin state even when its package is already installed."""
-    if not device_id:
-        return previous
     try:
         merge_sync = (
             await device_capability_sync_service.sync_installed_plugin_to_device_result(
@@ -418,7 +418,15 @@ async def _sync_installed_plugin_once(
             device_id,
             installed_id,
         )
-        return previous
+        if previous is None:
+            return None
+        return deferred_plugin_sync(
+            PluginWriteError("plugin_device_sync_failed"),
+            user_id=user_id,
+            device_id=device_id,
+            previous=previous,
+            stage="snapshot",
+        )
     finally:
         db.close()
     return await record_sync_response(
