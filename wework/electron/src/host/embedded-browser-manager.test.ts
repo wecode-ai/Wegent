@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
+import { createHash } from 'node:crypto'
+import type { Session } from 'electron'
+import { DshBrowserAuthentication } from '../runtime/dsh-browser-auth.js'
 import {
   electronMocks,
   emitBeforeInput,
@@ -13,6 +16,43 @@ import { EmbeddedBrowserManager, type BrowserHostEvent } from './embedded-browse
 describe('EmbeddedBrowserManager lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  test('bounds managed DSH cookies through the existing browser request hook', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-cookie-headers-'))
+    const url = 'http://127.0.0.1:45100/'
+    const name = (authority: string) =>
+      `dsh-auth-${createHash('sha256').update(authority).digest('base64url')}`
+    const ownName = name('127.0.0.1:45100')
+    const foreignName = name('127.0.0.1:45101')
+    const authentication = new DshBrowserAuthentication(url)
+    await authentication.prepare({} as Session)
+    try {
+      new EmbeddedBrowserManager(directory)
+      const listener =
+        electronMocks.browserSession.webRequest.onBeforeSendHeaders.mock.calls[0]?.[0]
+      const callback = vi.fn()
+      listener(
+        {
+          url,
+          requestHeaders: {
+            Cookie: `${ownName}=valid; ${foreignName}=keep-in-storage; site-login=keep`,
+            Accept: 'text/html',
+          },
+        },
+        callback
+      )
+      expect(callback).toHaveBeenCalledWith({
+        requestHeaders: { Cookie: `${ownName}=valid; site-login=keep`, Accept: 'text/html' },
+      })
+      const independent = vi.fn()
+      const headers = { Cookie: `${foreignName}=external-session` }
+      listener({ url: 'http://127.0.0.1:45101/', requestHeaders: headers }, independent)
+      expect(independent).toHaveBeenCalledWith({ requestHeaders: headers })
+    } finally {
+      await authentication.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test.each([true, false])(
