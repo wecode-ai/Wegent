@@ -89,7 +89,10 @@ import {
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { requestE2ERuntime } from './host/e2e-runtime-request.js'
-import { dshBrowserAuthenticationCookies } from './runtime/dsh-browser-auth.js'
+import {
+  dshBrowserAuthenticationCookies,
+  dshBrowserRequestHeaders,
+} from './runtime/dsh-browser-auth.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
@@ -939,9 +942,12 @@ function installDshWindowLabelHeaders(): void {
         ? dshWindowLabels.get(details.webContentsId)
         : undefined
     callback({
-      requestHeaders: label
-        ? { ...details.requestHeaders, 'X-Wework-Window-Label': label }
-        : details.requestHeaders,
+      requestHeaders: dshBrowserRequestHeaders(
+        details.url,
+        label
+          ? { ...details.requestHeaders, 'X-Wework-Window-Label': label }
+          : details.requestHeaders
+      ),
     })
   })
 }
