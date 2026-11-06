@@ -359,7 +359,7 @@ export function createDesktopScenario({
         packageRoot: pluginRoot,
       })
       await api(
-        `/plugins/marketplace/${connectorPlugin.pluginId}/install?device_id=${encodeURIComponent(
+        `/api/plugins/marketplace/${connectorPlugin.pluginId}/install?device_id=${encodeURIComponent(
           appDevice.device_id
         )}`,
         { method: 'POST' }

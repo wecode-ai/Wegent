@@ -2229,13 +2229,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         apiBaseUrl: string
         connectorToken: string
         expiresAtMs: number
+        syncRevision?: number
       }
       return JSON.stringify(
         await requestLocalExecutor('runtime.connectors.configure', {
           apiBaseUrl: input.apiBaseUrl,
           connectorToken: input.connectorToken,
           expiresAtMs: input.expiresAtMs,
-          syncRevision: nextConnectorSyncRevision(),
+          syncRevision: input.syncRevision ?? nextConnectorSyncRevision(),
         })
       )
     }
