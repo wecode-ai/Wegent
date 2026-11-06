@@ -244,7 +244,7 @@ export function createDesktopScenario(options) {
       await control.command('waitFor', '[data-testid="stand-in-onboarding-summary"]', {
         text: '还没有连接应用',
       })
-      await rpc('runtime.stand_in.personal.save', {
+      const concurrentSettings = await rpc('runtime.stand_in.personal.save', {
         userId: USER,
         settings: {
           ...beforeSetup,
@@ -283,7 +283,7 @@ export function createDesktopScenario(options) {
       assert.equal(afterSetup.primary.connections?.length ?? 0, 0)
       assert.deepEqual(
         afterSetup.roles.map(role => ({ ...role, version: 0 })),
-        beforeSetup.roles.map(role => ({ ...role, version: 0 })),
+        concurrentSettings.roles.map(role => ({ ...role, version: 0 })),
         'Onboarding must preserve existing scenario roles'
       )
       assert.equal(
