@@ -355,9 +355,10 @@ class PluginDeviceInstallationService:
             for item in result.plugins
             if item.id is not None and str(item.id).isdigit()
         }
-        self._record_removed_installs(
-            db, user_id, result, desired_ids, set(plugin_results)
-        )
+        if snapshot is None or snapshot.get("mode") == "replace":
+            self._record_removed_installs(
+                db, user_id, result, desired_ids, set(plugin_results)
+            )
         for installed in installs:
             if confirmed is not None and installed.id not in confirmed:
                 continue

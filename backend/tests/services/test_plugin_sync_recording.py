@@ -102,13 +102,32 @@ def _record(db, user_id, payload, *, status="synced", success=True):
     )
 
 
-def test_delta_ack_does_not_clear_unrelated_pending_uninstall(test_db, test_user):
+@pytest.mark.parametrize("versioned", [False, True])
+@pytest.mark.parametrize("single_plugin", [False, True])
+def test_delta_ack_does_not_clear_unrelated_pending_uninstall(
+    test_db, test_user, versioned, single_plugin
+):
     installed = _installed(test_db, test_user.id, "target")
     unrelated = _installed(test_db, test_user.id, "unrelated", active=False)
     target_row = _device_row(test_db, installed)
     unrelated_row = _device_row(test_db, unrelated, state="uninstalling", actual=17)
 
-    _record(test_db, test_user.id, _payload(test_db, installed))
+    payload = _payload(test_db, installed)
+    if not versioned:
+        payload.pop("plugin_sync")
+        payload.pop("removed_plugins")
+    if single_plugin:
+        response = DeviceCapabilitySyncService()._aggregate_response(
+            [_result(payload)], skipped=0, mode="merge"
+        )
+        PluginDeviceInstallationService().record_plugin_sync_response(
+            test_db,
+            user_id=test_user.id,
+            installed_kind_id=installed.id,
+            response=response,
+        )
+    else:
+        _record(test_db, test_user.id, payload)
 
     test_db.refresh(target_row)
     test_db.refresh(unrelated_row)

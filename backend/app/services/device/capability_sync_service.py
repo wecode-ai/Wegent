@@ -154,6 +154,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         installed_mcp_ids: Optional[list[int]] = None,
         mcp_ids: Optional[list[str]] = None,
         mode: str = "merge",
+        device_id: str | None = None,
     ) -> dict[str, Any]:
         """Resolve user-selected capability IDs into an executor payload."""
         self._validate_mode(mode)
@@ -178,6 +179,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             user_id=user.id,
             installed_plugin_ids=installed_plugin_ids or [],
             strict=True,
+            device_id=device_id,
         )
         if plugins:
             payload["plugins"] = plugins
@@ -379,6 +381,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         payload = self.resolve_payload(
             db,
             user=user,
+            device_id=device_id,
             skill_ids=skill_ids,
             installed_skill_ids=installed_skill_ids,
             installed_plugin_ids=installed_plugin_ids,
@@ -484,6 +487,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         payload = self.resolve_payload(
             db,
             user=User(id=user_id),
+            device_id=device_id,
             skill_ids=[],
             installed_plugin_ids=[installed_plugin_id],
             mode="merge",

@@ -34,6 +34,8 @@ The shared project-view helper chooses the currently available tab or select in 
 
 Related CI regressions retain their existing scenarios and assertions. `streaming-conversation-switching` keeps all 520 progress items and its original deadlines: structural blocks use the shared conversation cache's batched publication, preserve every transition in order and flush before terminal events. `plugin-legacy-upgrade` keeps the delivered historical installers: Backend confirms a legacy acknowledgement only when its dispatched plugin snapshot still matches current desired state, preventing a late acknowledgement from falsely marking a newer version installed. Snapshots remain server-side and never enter the legacy wire protocol or public responses.
 
+Focused acknowledgement regressions also verify that a single-plugin merge preserves unrelated pending removals and that dispatch and recording apply the same device release override. Stream tests verify that a failing subscriber cannot interrupt other subscribers or completion, and preserve status transitions around snapshot content updates.
+
 Run `pnpm --filter wework e2e:desktop --parallel-segments stand-in,stand-in-workspace`; use the same runner with `--segment stand-in-cloud` for the remote case. Default to one checkpoint at a time and reuse the build.
 
 Use runner-owned directories, identities and processes and existing `finally` cleanup. Keep results, complete failure logs and screenshots locally under `wework/test-results/`, outside commits. Record actual results in the PR. If the remote environment is unavailable, disclose that limitation rather than treating component tests as cloud E2E evidence.
