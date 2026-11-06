@@ -45,28 +45,22 @@ Local devices do not show an unusable cloud configuration action. Repair their n
 
 ## Directory Rules
 
-The URL-based clone flow uses the selected parent directory and creates `<parent>/<repository-name>`. Other Git project entries using a managed project root default to:
+The URL-based clone flow creates `<parent>/<repository-name>` under the selected parent directory and previews the full path in the dialog. For example, parent `/home/ubuntu/projects` and repository `pluto` produce:
 
 ```bash
-~/.wecode/wegent-executor/workspace/projects/<repoName>
-```
-
-For example, when the repository name is `pluto`, the final directory is:
-
-```bash
-~/.wecode/wegent-executor/workspace/projects/pluto
+/home/ubuntu/projects/pluto
 ```
 
 Task execution enters the same directory. In other words, the `git clone` location used during project creation and the workspace directory used by later tasks stay aligned.
 
-After a successful clone, Wegent uses the current user's Git account that matches the repository domain to set the repository-local commit identity:
+Commit identity is separate from repository access credentials. If Git reports a missing identity when committing, set it inside the repository:
 
 ```bash
 git config user.name <git_login>
 git config user.email <git_email>
 ```
 
-This only updates the project repository's `.git/config`; it does not change global Git configuration on the execution device. If the current user does not have a complete Git login and email, Wegent leaves the repository config unchanged, and later commits still need the user or agent to provide a commit identity.
+These commands only update that repository's `.git/config`, not the device's global Git configuration. Successful access checks or credential synchronization do not prove that commit identity is configured.
 
 ## Execution Modes
 

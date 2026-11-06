@@ -34,28 +34,22 @@ ClaudeCode 云端或远程设备遇到认证失败时，会尝试同步已配置
 
 ## 目录规则
 
-上述地址克隆入口使用所选父目录，最终目录为 `<父目录>/<仓库名>`。其他使用托管项目根目录的 Git 项目入口默认使用：
+上述地址克隆入口使用所选父目录，最终目录为 `<父目录>/<仓库名>`，弹窗中会预览完整路径。例如父目录为 `/home/ubuntu/projects`、仓库名为 `pluto` 时：
 
 ```bash
-~/.wecode/wegent-executor/workspace/projects/<repoName>
-```
-
-例如仓库名为 `pluto` 时，最终目录是：
-
-```bash
-~/.wecode/wegent-executor/workspace/projects/pluto
+/home/ubuntu/projects/pluto
 ```
 
 任务执行时也会进入同一个目录。也就是说，项目创建阶段的 `git clone` 目录和后续任务的工作目录保持一致。
 
-克隆成功后，Wegent 会根据当前用户匹配该仓库域名的 Git 账号信息，在仓库本地写入提交身份：
+提交身份与仓库访问凭据不同。若 Git 提交提示身份尚未配置，可以在该仓库中设置：
 
 ```bash
 git config user.name <git_login>
 git config user.email <git_email>
 ```
 
-这只影响该项目仓库的 `.git/config`，不会修改执行设备的全局 Git 配置。如果当前用户没有完整的 Git 登录名和邮箱，Wegent 会保留仓库原有配置，后续提交仍需用户或智能体补齐提交身份。
+这些命令只影响该仓库的 `.git/config`，不会修改执行设备的全局 Git 配置。访问检查或凭据同步成功，不代表已经配置提交身份。
 
 ## 执行模式
 
