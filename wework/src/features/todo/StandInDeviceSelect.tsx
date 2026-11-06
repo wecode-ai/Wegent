@@ -22,7 +22,7 @@ export function StandInDeviceSelect({
       value={value}
       disabled={disabled}
       onChange={event => onChange(event.target.value)}
-      className="min-h-8 max-w-full bg-transparent px-2"
+      className="min-h-11 max-w-full bg-transparent px-2 md:min-h-8"
     >
       <option value={currentDeviceId}>{t('standIn.current_device')}</option>
       {devices

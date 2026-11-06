@@ -18,6 +18,8 @@ import {
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { findStandInProject } from './standInProjects'
+import type { DeviceInfo } from '@/types/api'
+import { StandInDeviceSelect } from './StandInDeviceSelect'
 
 export interface StandInOnboardingConfiguration {
   settings: PersonalStandInSettings | null
@@ -25,6 +27,8 @@ export interface StandInOnboardingConfiguration {
   error: string | null
   projects: CollaborationProject[]
   localDeviceId: string
+  devices?: DeviceInfo[]
+  onSelectDevice?(deviceId: string): void
   onSave(value: PersonalStandInSettings): Promise<PersonalStandInSettings | null>
   onReload(): void
 }
@@ -117,6 +121,23 @@ export function StandInOnboardingSetup({
     findStandInProject(projects, value)?.name ?? value.id
   return (
     <div className="space-y-5" data-testid="stand-in-onboarding-setup">
+      {configuration.onSelectDevice && baseline && (
+        <label className="flex items-center gap-2 text-sm">
+          <span>{t('standIn.device')}</span>
+          <StandInDeviceSelect
+            value={baseline.executionDeviceId}
+            currentDeviceId={localDeviceId}
+            devices={configuration.devices ?? []}
+            disabled={busy}
+            onChange={device => {
+              const change = () =>
+                navigation.requestLeave(() => configuration.onSelectDevice?.(device))
+              if (connections.current) connections.current.requestLeave(change)
+              else change()
+            }}
+          />
+        </label>
+      )}
       <ol
         className="flex flex-wrap gap-5 text-sm text-text-secondary"
         aria-label={t('standIn.onboarding.steps_label')}
