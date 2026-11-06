@@ -136,11 +136,16 @@ export function useProjectCreateController({
         : null,
     [aitableUrl, host, isAITableProvider],
   );
+  const templateEnvironmentLoading =
+    location === "cloud" &&
+    (templateDocument?.spec.resources.collaboration.agents?.length ?? 0) > 0 &&
+    resourceSetup?.executionEnvironmentLoading === true;
   const canSubmit =
     Boolean(
       createdProject ||
       (name.trim() &&
         !templatePending &&
+        !templateEnvironmentLoading &&
         (!repositoryProvider || repositoryAddress.trim()) &&
         (!isAITableProvider || aitableLink) &&
         !saving),

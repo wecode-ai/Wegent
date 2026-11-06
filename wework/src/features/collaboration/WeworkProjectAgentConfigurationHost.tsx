@@ -42,8 +42,7 @@ export function createWeworkProjectAgentConfigurationHost(
               const currentDeviceKeys = [current.device_key, current.app_device_id].filter(
                 (key): key is string => Boolean(key)
               )
-              const available = await agentResourceApi.listEnvironments(projectId)
-              const authorized = available.filter(
+              const authorized = (await agentResourceApi.listEnvironments(projectId)).filter(
                 environment =>
                   environment.status === 'online' &&
                   currentDeviceKeys.some(
@@ -51,20 +50,7 @@ export function createWeworkProjectAgentConfigurationHost(
                   ) &&
                   (!projectId || environment.project_authorized)
               )
-              if (authorized.length !== 1) {
-                console.warn('[Wework] Template device authorization could not be resolved', {
-                  projectId,
-                  currentDeviceKeys,
-                  environments: available.map(environment => ({
-                    id: environment.id,
-                    device_key: environment.device_key,
-                    app_device_id: environment.app_device_id,
-                    status: environment.status,
-                    project_authorized: environment.project_authorized,
-                  })),
-                })
-                throw new Error('template_environment_unavailable')
-              }
+              if (authorized.length !== 1) throw new Error('template_environment_unavailable')
               environmentId = authorized[0].id
             }
             return {
