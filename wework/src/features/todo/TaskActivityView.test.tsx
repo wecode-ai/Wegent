@@ -42,6 +42,11 @@ const cancelCloudAutomationRun = vi.fn()
 const listModels = vi.fn()
 const modelListeners = new Set<() => void>()
 
+async function pasteActivityDraft(user: ReturnType<typeof userEvent.setup>, text: string) {
+  await user.click(screen.getByTestId('cloud-task-activity-composer'))
+  await user.paste(text)
+}
+
 async function revealModelOptions(user: ReturnType<typeof userEvent.setup>) {
   const advancedToggle = screen.queryByTestId('model-advanced-toggle')
   if (advancedToggle) await user.click(advancedToggle)
@@ -850,7 +855,7 @@ describe('TaskActivityView', () => {
 
     expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('动态')
     expect(screen.queryByTestId('cloud-task-activity-close')).not.toBeInTheDocument()
-    await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+    await pasteActivityDraft(user, '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
     expect(client.send).toHaveBeenCalledWith(
@@ -1074,7 +1079,7 @@ describe('TaskActivityView', () => {
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('侧项目')
     expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
 
-    await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+    await pasteActivityDraft(user, '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() =>
       expect(createProjectRuntimeTask).toHaveBeenCalledWith(
@@ -1574,7 +1579,7 @@ describe('TaskActivityView', () => {
       )
       expect(screen.getByTestId('issue-reply-starts-task-hint')).toHaveTextContent('核对发布清单')
 
-      await user.type(screen.getByTestId('cloud-task-activity-composer'), '补充 CPU 占用')
+      await pasteActivityDraft(user, '补充 CPU 占用')
       await user.click(sendButtonFor('cloud-task-activity-composer'))
 
       await waitFor(() =>
@@ -1641,7 +1646,7 @@ describe('TaskActivityView', () => {
       await user.click(
         await screen.findByTestId('cloud-task-activity-reply-toggle-manager-assignment')
       )
-      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'See evidence')
+      await pasteActivityDraft(user, 'See evidence')
       await user.click(sendButtonFor('cloud-task-activity-composer'))
       await waitFor(() =>
         expect(importLoopItemAttachments).toHaveBeenCalledWith('WEG-1', [
@@ -1811,7 +1816,7 @@ describe('TaskActivityView', () => {
       )
       if (reply)
         await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
-      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'See image')
+      await pasteActivityDraft(user, 'See image')
       await user.click(sendButtonFor('cloud-task-activity-composer'))
 
       const error = failure === 'upload' ? 'Upload unavailable' : 'Import unavailable'
@@ -1901,7 +1906,7 @@ describe('TaskActivityView', () => {
       )
       if (reply)
         await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
-      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'See image')
+      await pasteActivityDraft(user, 'See image')
       await user.click(sendButtonFor('cloud-task-activity-composer'))
 
       if (reply)
@@ -1982,7 +1987,7 @@ describe('TaskActivityView', () => {
       )
       if (reply)
         await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
-      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'Local image')
+      await pasteActivityDraft(user, 'Local image')
       await user.click(sendButtonFor('cloud-task-activity-composer'))
 
       await waitFor(() =>
@@ -3372,7 +3377,7 @@ describe('TaskActivityView', () => {
       />
     )
 
-    await user.type(screen.getByTestId('cloud-task-activity-composer'), '新评论')
+    await pasteActivityDraft(user, '新评论')
     await user.click(sendButtonFor('cloud-task-activity-composer'))
 
     await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
@@ -3860,7 +3865,7 @@ it('starts a cloud issue comment through the project service when the assigned a
       }
     />
   )
-  await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+  await pasteActivityDraft(user, '继续处理')
   await user.click(screen.getByRole('button', { name: '发送消息' }))
   await waitFor(() =>
     expect(client.executeTaskComment).toHaveBeenCalledWith({
