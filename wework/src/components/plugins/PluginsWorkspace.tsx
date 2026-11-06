@@ -1,3 +1,4 @@
+import { ExpiredPluginInventoryRequest } from '@/api/local/codexInstalledCatalog'
 import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import {
   recordPluginInstallationAccepted,
@@ -4637,6 +4638,12 @@ export function PluginsWorkspace({
     deferredCodexCatalogRequestRef.current = requestKey
     const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     let cancelled = false
+    const isActiveRequest = () =>
+      !cancelled && deferredCodexCatalogRequestRef.current === requestKey
+    const isCurrent = () =>
+      isActiveRequest() &&
+      pluginInstallationReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart) &&
+      sameLocalPluginSources(getPluginMarketplaceCache(marketplaceCacheKeyValue), inventoryAtStart)
     void localPluginApi
       .readState({
         mergeAllMarketplaces: true,
@@ -4649,25 +4656,8 @@ export function PluginsWorkspace({
           if (import.meta.env.VITE_WEWORK_E2E === 'true')
             console.info('[plugin-catalog-publication]', reason)
         }
-        if (cancelled) {
-          trace('cancelled')
-          return
-        }
-        if (!pluginInstallationReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) {
-          trace('membership-superseded')
-          return
-        }
-        if (
-          !sameLocalPluginSources(
-            getPluginMarketplaceCache(marketplaceCacheKeyValue),
-            inventoryAtStart
-          )
-        ) {
-          trace('sources-superseded')
-          return
-        }
-        if (deferredCodexCatalogRequestRef.current !== requestKey) {
-          trace('request-superseded')
+        if (!isCurrent()) {
+          trace('superseded')
           return
         }
         if (localState.partial) {
@@ -4682,18 +4672,17 @@ export function PluginsWorkspace({
         trace('applying')
         applyLiveCodexCatalog(localState)
       })
-      .catch(() => {
-        if (!cancelled) {
-          setPluginMarketplaceState(previous => ({ ...previous, isLoading: false }))
-          setPluginOperationNotice({
-            id: 'plugin-catalog-load',
-            kind: 'error',
-            message: t('workbench.plugins_load_failed', '加载插件失败'),
-          })
-        }
+      .catch(error => {
+        if (!isCurrent() || error instanceof ExpiredPluginInventoryRequest) return
+        setPluginMarketplaceState(previous => ({ ...previous, isLoading: false }))
+        setPluginOperationNotice({
+          id: 'plugin-catalog-load',
+          kind: 'error',
+          message: t('workbench.plugins_load_failed', '加载插件失败'),
+        })
       })
       .finally(() => {
-        if (!cancelled) setIsMarketplaceRefreshing(false)
+        if (isActiveRequest()) setIsMarketplaceRefreshing(false)
       })
 
     return () => {

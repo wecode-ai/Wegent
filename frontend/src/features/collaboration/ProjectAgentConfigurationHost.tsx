@@ -11,11 +11,26 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { WebAgentResourceForm } from './WebAgentResourceForm'
-import { resolveWebTemplateAgentRouting } from './templateAgentRouting'
+import {
+  listWebTemplateAgentEnvironments,
+  resolveWebTemplateAgentRouting,
+} from './templateAgentRouting'
+import { collaborationLocationPath } from './routes'
 
 export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
   requiresTemplateEnvironmentSelection: true,
   resolveTemplateAgentRouting: resolveWebTemplateAgentRouting,
+  listTemplateAgentEnvironments: listWebTemplateAgentEnvironments,
+  templateAgentEnvironmentSettingsHref: project =>
+    collaborationLocationPath({
+      platformView: 'spaces',
+      workspaceId: project.workspace_id ?? null,
+      workspaceView: 'projects',
+      projectId: project.id,
+      projectView: 'manage',
+      projectSettingsSection: 'environments',
+      issueId: null,
+    }),
   supportsExistingAgentSelection: true,
   renderAgentCreator(props) {
     return <WebAgentResourceForm {...props} />

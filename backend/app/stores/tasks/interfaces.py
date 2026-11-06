@@ -982,6 +982,8 @@ class SubtaskStore(Protocol):
         cutoff: datetime,
         max_age_cutoff: datetime,
         limit: int,
+        after_updated_at: datetime | None = None,
+        after_subtask_id: int | None = None,
     ) -> list[StalledRunningSubtask]: ...
 
     def list_session_task_ids(

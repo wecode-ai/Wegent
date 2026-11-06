@@ -876,8 +876,11 @@ function appOwnerTaskSource(pending: boolean): TaskSource {
 }
 
 function pendingInteractionStorageKeys(): string[] {
-  return Object.keys(localStorage)
-    .filter(key => key.startsWith('wework.interactions:') && key.endsWith(':pending'))
+  return Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+    .filter(
+      (key): key is string =>
+        key !== null && key.startsWith('wework.interactions:') && key.endsWith(':pending')
+    )
     .sort()
 }
 
