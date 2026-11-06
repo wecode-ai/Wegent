@@ -25,6 +25,23 @@ Knowledge Base is a document storage and retrieval system that enables RAG. It a
 
 ---
 
+## Finding Knowledge Bases
+
+The knowledge page lists active libraries you can currently access directly.
+
+| Entry | Contents |
+| --- | --- |
+| All | All accessible libraries returned by the existing list API, including company libraries |
+| Created by me | Personal and team libraries you created, excluding company libraries |
+| Shared with me | Libraries created by others and accessible through user, team, or other grants, excluding company-space libraries |
+| Company knowledge | Libraries that belong to company spaces |
+
+Filter by the library's actual personal or team space. All also supports company spaces; Company knowledge hides the space filter. Sharing with a team does not change ownership. Multiple access paths produce one row per library. Sidebar counts remain independent of local filters; filter option counts reflect the current entry, search, and type. Leaving a team does not trigger additional discovery beyond the existing list API.
+
+On mobile, expand navigation and use the vertical list to see names, spaces, and actions. Unknown space categories are shown as unknown; unconfirmed effective permissions are hidden in the list. The permissions action confirms effective access and its sources with the server; managers can also manage members and roles. Existing library links, code libraries, and migration actions remain available.
+
+---
+
 ## 🆕 Creating Knowledge Bases
 
 ### Step 1: Navigate to Knowledge Base
@@ -63,6 +80,14 @@ See [Knowledge Base Types](./knowledge-base-types.md) for detailed comparison.
 2. Choose source type (File / Text / URL / External Table)
 3. Configure chunking settings (optional)
 4. Click **Upload**
+
+---
+
+### Space and Authorization After Creation
+
+New libraries default to personal space. Choose another space where you can create libraries under More settings. If you have filtered by a team where you can create, the dialog selects that team and explains that team permissions are inherited. If creation is unavailable there, explicitly choose personal space or another authorized space.
+
+After creation, Library created confirms that the library is saved. Authorize people, teams, or other supported targets immediately, or finish later; closing authorization does not delete the library. Retry only failed grants. If a result is uncertain, existing grants are verified before another write. A failed list refresh can be retried separately without creating another library. Existing role choices and permission restrictions still apply.
 
 ---
 
@@ -232,21 +257,22 @@ Knowledge bases support fine-grained access control through the Share Service ar
 
 ### Managing Members
 
-1. Open a knowledge base and click **Permission Management**
-2. Under the **Personal** tab, invite users by username or email
-3. Assign a role from the dropdown (Owner, Maintainer, Developer, Reporter)
-4. Click **Add** to send the invitation
+The library list's **Permission Details**, document management's **Permission Management**, and the **Library created** page share the same member management and add flow. On mobile, open permission details from the list's **More** menu.
 
-### Entity-Level Authorization
+1. Search existing collaborators to see members and roles. Pending requests remain visible independently of the search.
+2. Click **Add collaborator**, select people by username or email, or search for groups.
+3. Choose Maintainer, Developer, Reporter, or RestrictedAnalyst for each selected target. Owner cannot be assigned through this flow.
+4. Click **Authorize**. Partial success leaves only failed targets for retry; uncertain results are checked against existing grants first.
 
-In addition to individual users, you can authorize entire groups or namespaces:
+The member list supports role changes, removal, and request review. View-only users see their effective permission and access sources.
 
-1. Switch to the **Group** tab in the permission dialog
-2. Search for a group or namespace
-3. Select the desired group and assign a role
-4. All members of that group inherit the assigned permissions
+After creation, **Finish / Configure later** keeps the library. A failed list refresh can be retried separately without creating the library again or repeating grants.
 
-**Note:** Entity-authorized knowledge bases appear in the members' **Shared with Me** section rather than under the group's native knowledge bases.
+### Group Authorization
+
+Select a group and assign its role in **Add collaborator**. Group members inherit that access; existing group grants appear under the management view's **Group** tab.
+
+**Note:** Libraries received through group grants appear under **Shared with Me**, rather than the receiving group's native library list.
 
 ### Permission Source Visualization
 
