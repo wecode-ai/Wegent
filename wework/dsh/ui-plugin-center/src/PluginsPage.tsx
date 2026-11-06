@@ -121,7 +121,6 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
     archiveChatConversations,
     selectStandaloneDevice,
     openStandaloneWorkspace,
-    getRemoteDeviceStartupCommand,
     refreshDevices,
     createProject,
     createGitWorkspaceProject,
@@ -219,7 +218,6 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
             onArchiveChatConversations={archiveChatConversations}
             onOpenStandaloneWorkspace={openStandaloneWorkspace}
             onSelectStandaloneDevice={selectStandaloneDevice}
-            onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
             onRefreshDevices={refreshDevices}
             onUpdateProjectName={updateProjectName}
             onRemoveProject={removeProject}

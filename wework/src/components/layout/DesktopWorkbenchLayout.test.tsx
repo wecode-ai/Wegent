@@ -1615,7 +1615,6 @@ describe('DesktopWorkbenchLayout', () => {
       runtimeTaskReminders: props.runtimeTaskReminders,
       refreshWorkLists: vi.fn().mockResolvedValue(undefined),
       refreshDevices: props.onRefreshDevices ?? vi.fn().mockResolvedValue(undefined),
-      getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
       upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
       createProject:
         props.onCreateProject ?? baseProps.onCreateProject ?? vi.fn().mockResolvedValue({}),
@@ -3769,8 +3768,8 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
-    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('启动脚本')
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('添加设备')
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('远程 Docker 设备')
     expect(screen.getByTestId('standalone-remote-device-select')).toHaveTextContent(
       'Remote Docker Device'
     )
@@ -3830,7 +3829,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('添加设备')
     expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
     expect(screen.queryByText('Remote Device')).not.toBeInTheDocument()
   })
