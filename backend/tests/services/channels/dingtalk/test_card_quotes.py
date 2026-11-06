@@ -175,6 +175,30 @@ async def test_private_quote_of_running_card_reports_rejection(quote_case):
 
 
 @pytest.mark.asyncio
+async def test_quote_with_media_keeps_normal_attachment_routing(quote_case):
+    receiver, binding, data = quote_case
+    binding.incoming_data.update({"conversationId": "dm-a", "conversationType": "1"})
+    await save_binding("card-446", binding)
+    await save_quote_address(285, "dm-a", "delivery-carrier", "card-446")
+    data.update(
+        {
+            "conversationType": "1",
+            "conversationId": "dm-a",
+            "senderStaffId": "212680",
+            "msgtype": "richText",
+            "content": {
+                "richText": [{"type": "picture", "downloadCode": "quoted-image"}]
+            },
+        }
+    )
+    data.pop("isInAtList")
+
+    assert not await route_quoted_card(receiver, data)
+
+    receiver.inbox.enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_duplicate_quote_reuses_inbox_deduplication(quote_case):
     receiver, _, data = quote_case
     receiver.inbox.enqueue.side_effect = [True, False]

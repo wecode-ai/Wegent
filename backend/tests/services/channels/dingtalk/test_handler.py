@@ -12,7 +12,6 @@ import pytest
 import requests
 from dingtalk_stream import AckMessage
 
-from app.services.channels.callback import runtime_local_task_callback_key
 from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.dingtalk import handler as handler_module
 from app.services.channels.dingtalk.callback import DingTalkCallbackInfo
@@ -643,7 +642,7 @@ async def test_private_quote_while_runtime_turn_runs_keeps_callback(
 
     assert handled is False
     handler.send_text_reply.assert_awaited_once()
-    assert "仍在执行" in handler.send_text_reply.await_args.args[1]
+    assert "仍在处理" in handler.send_text_reply.await_args.args[1]
     create_emitter.assert_not_awaited()
     send.assert_not_awaited()
     assert service.saved == []
@@ -652,12 +651,11 @@ async def test_private_quote_while_runtime_turn_runs_keeps_callback(
 
 
 @pytest.mark.asyncio
-async def test_rejected_runtime_continuation_restores_previous_callback(
+async def test_rejected_runtime_continuation_leaves_previous_callback_untouched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.services import runtime_work_service
 
-    callback_key = runtime_local_task_callback_key("device-a", "task-a")
     previous = DingTalkCallbackInfo(
         channel_id=77,
         conversation_id="conv-private",
@@ -701,10 +699,11 @@ async def test_rejected_runtime_continuation_restores_previous_callback(
     assert handled is False
     assert service.deleted == []
     assert service.registered == []
-    assert len(service.saved) == 2
-    assert service.saved[0][0] == callback_key
-    assert service.saved[0][1].card_instance_id == "new-card"
-    assert service.saved[1] == (callback_key, previous)
+    assert service.saved == []
+    assert service.info is previous
     emitter.emit_error.assert_awaited_once()
-    assert "already running" in emitter.emit_error.await_args.kwargs["error"]
+    assert (
+        emitter.emit_error.await_args.kwargs["error"]
+        == "上一条消息仍在执行，请等当前回答完成后再发送。"
+    )
     emitter.close.assert_awaited_once()

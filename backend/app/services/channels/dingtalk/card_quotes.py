@@ -38,10 +38,28 @@ async def save_quote_address(
         raise RuntimeError("Could not persist DingTalk quoted card address")
 
 
+def _has_media_content(data: dict[str, Any]) -> bool:
+    """Keep media quotes on the normal path so attachments are not dropped."""
+    if data.get("msgtype") in {"picture", "richText", "file"}:
+        return True
+    content = data.get("content")
+    if not isinstance(content, dict):
+        return False
+    if content.get("downloadCode") or content.get("pictureDownloadCode"):
+        return True
+    rich_text = content.get("richText")
+    return isinstance(rich_text, list) and any(
+        isinstance(item, dict) and item.get("type") in {"picture", "file"}
+        for item in rich_text
+    )
+
+
 async def route_quoted_card(
     receiver: "DingTalkCardCallbackHandler", data: dict[str, Any]
 ) -> bool:
     """Route a verified, mapped card quote from a group or private chat."""
+    if _has_media_content(data):
+        return False
     text = data.get("text")
     if not isinstance(text, dict) or not text.get("isReplyMsg"):
         return False

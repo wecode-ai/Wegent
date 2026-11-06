@@ -399,7 +399,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         )
         await self.send_text_reply(
             message_context,
-            "上一条消息仍在执行，请等当前回答完成后再发送。",
+            "上一条消息仍在处理或结果尚未送达，请稍后在 Wework 查看后再试。",
         )
         return True
 
