@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
@@ -14,7 +15,9 @@ class FakePath2D {
   moveTo(x: number, y: number): void {
     this.points.push({ x, y })
   }
-  lineTo(): void {}
+  lineTo(x: number, y: number): void {
+    this.points.push({ x, y })
+  }
   quadraticCurveTo(controlX: number, controlY: number, x: number, y: number): void {
     this.points.push({ x: controlX, y: controlY }, { x, y })
   }
@@ -74,7 +77,8 @@ function createClassList() {
 
 async function createAnimationFixture(
   reducedMotion = false,
-  dimensions = { width: 1200, height: 680 }
+  dimensions = { width: 1200, height: 680 },
+  options: { footerTop?: number; pixelRatio?: number } = {}
 ) {
   const electronRoot =
     basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
@@ -84,7 +88,12 @@ async function createAnimationFixture(
     asset('brand-mark.js'),
     asset('brand-animation.js'),
   ])
-  const brand = { classList: createClassList(), style: {}, dataset: {} }
+  const brand = {
+    classList: createClassList(),
+    style: {},
+    dataset: {},
+    getBoundingClientRect: () => ({ top: 0 }),
+  }
   const contexts: ReturnType<typeof createContext>[] = []
   const createCanvas = () => {
     const context = createContext()
@@ -104,6 +113,8 @@ async function createAnimationFixture(
     }
   }
   const canvas = createCanvas()
+  let footerTop = options.footerTop
+  const footer = { getBoundingClientRect: () => ({ top: footerTop ?? canvas.clientHeight }) }
   let now = 0
   let frameId = 0
   const frames = new Map<number, FrameRequestCallback>()
@@ -142,7 +153,7 @@ async function createAnimationFixture(
     matchMedia: vi.fn(() => media),
     requestAnimationFrame,
     cancelAnimationFrame,
-    devicePixelRatio: 1,
+    devicePixelRatio: options.pixelRatio ?? 1,
     getComputedStyle: () => ({
       transform: `matrix(${breathingScale}, 0, 0, ${breathingScale}, 0, 0)`,
       filter: `brightness(${breathingBrightness})`,
@@ -150,8 +161,12 @@ async function createAnimationFixture(
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
   } as {
-    createStartupBrandAnimation: (target: typeof canvas) => BrandAnimation
-    WEWORK_STARTUP_BRAND_CONTOURS: Array<{ points: Array<[number, number]> }>
+    createStartupBrandAnimation: (target: typeof canvas, status: typeof footer) => BrandAnimation
+    WEWORK_STARTUP_BRAND_CONTOURS: Array<{
+      name: string
+      hole: boolean
+      points: Array<[number, number]>
+    }>
   } & Record<string, unknown>
   const environment = {
     window,
@@ -177,7 +192,7 @@ async function createAnimationFixture(
     },
   }
   runInNewContext(`${markScript}\n${animationScript}`, environment)
-  const animation = window.createStartupBrandAnimation(canvas)
+  const animation = window.createStartupBrandAnimation(canvas, footer)
   const step = (timestamp: number) => {
     now = timestamp
     const pending = [...frames.values()]
@@ -196,7 +211,9 @@ async function createAnimationFixture(
     animation,
     brand,
     canvas,
+    footer,
     contours: window.WEWORK_STARTUP_BRAND_CONTOURS,
+    markScript,
     contexts,
     frames,
     media,
@@ -208,6 +225,14 @@ async function createAnimationFixture(
     setReducedMotion,
     setHidden,
     resize: () => resizeCallback(),
+    setFooterTop: (top: number) => {
+      footerTop = top
+      resizeCallback()
+    },
+    setPixelRatio: (ratio: number) => {
+      window.devicePixelRatio = ratio
+      resizeCallback()
+    },
     setBreathingPose: (scale: number, brightness: number) => {
       breathingScale = scale
       breathingBrightness = brightness
@@ -216,6 +241,146 @@ async function createAnimationFixture(
 }
 
 describe('startup brand animation lifecycle', () => {
+  test.each([
+    { width: 1440, height: 960, footerTop: 840, pixelRatio: 1 },
+    { width: 1440, height: 384, footerTop: 264, pixelRatio: 1 },
+    { width: 900, height: 520, footerTop: 392, pixelRatio: 2 },
+    { width: 320, height: 300, footerTop: 205, pixelRatio: 1.5 },
+  ])(
+    'fits the complete centered mark above its footer at $width × $height, DPR $pixelRatio',
+    async options => {
+      const { animation, canvas, contexts, resizeObserver, footer } = await createAnimationFixture(
+        true,
+        options,
+        options
+      )
+      const [scale, , , scaleY, offsetX, offsetY] = contexts[0].setTransform.mock.calls.at(-1)!
+      expect(scale).toBeGreaterThan(0)
+      expect(scaleY).toBe(scale)
+      const logo = contexts[0].fill.mock.calls.at(-1)![0]
+      const [x, y] = contexts[0].translate.mock.calls.at(-1)!
+      const points = logo.points.map(point => ({
+        x: canvas.width / 2 + ((point.x + x) * scale + offsetX - canvas.width / 2) * 1.018,
+        y: canvas.height / 2 + ((point.y + y) * scale + offsetY - canvas.height / 2) * 1.018,
+      }))
+      const left = Math.min(...points.map(point => point.x))
+      const right = Math.max(...points.map(point => point.x))
+      const top = Math.min(...points.map(point => point.y))
+      const bottom = Math.max(...points.map(point => point.y))
+      expect((left + right) / 2).toBeCloseTo(canvas.width / 2, 8)
+      expect((top + bottom) / 2).toBeCloseTo(canvas.height / 2, 8)
+      expect(left).toBeGreaterThan(0)
+      expect(right).toBeLessThan(canvas.width)
+      expect(top).toBeGreaterThan(0)
+      expect(bottom).toBeLessThan(options.footerTop * (canvas.height / options.height))
+      expect(resizeObserver.observe).toHaveBeenCalledWith(canvas)
+      expect(resizeObserver.observe).toHaveBeenCalledWith(footer)
+      animation.destroy()
+    }
+  )
+
+  test('preserves formation and breathing phases across footer changes and DPR resizing', async () => {
+    const {
+      animation,
+      brand,
+      canvas,
+      contexts,
+      frames,
+      step,
+      setFooterTop,
+      setPixelRatio,
+      resize,
+    } = await createAnimationFixture(false, { width: 900, height: 600 }, { footerTop: 480 })
+    step(0)
+    step(3500)
+    const opacity = contexts[0].fillAlphas.at(-1)!
+    const draws = contexts[0].fill.mock.calls.length
+    setFooterTop(280)
+    step(4200)
+    expect(contexts[0].fill).toHaveBeenCalledTimes(draws)
+    expect(contexts[0].clearRect).toHaveBeenLastCalledWith(0, 0, canvas.width, canvas.height)
+    setFooterTop(480)
+    expect(contexts[0].fillAlphas.at(-1)).toBeGreaterThan(opacity)
+    const resumed = contexts[0].fillAlphas.at(-1)
+    setPixelRatio(2)
+    expect(contexts[0].fillAlphas.at(-1)).toBe(resumed)
+    expect(canvas.width).toBe(1800)
+    expect(canvas.height).toBe(1200)
+    expect(contexts).toHaveLength(3)
+    expect(frames.size).toBe(1)
+    step(5600)
+    expect(brand.classList.contains('is-breathing')).toBe(true)
+    const transform = contexts[0].setTransform.mock.calls.at(-1)
+    canvas.getBoundingClientRect = () => ({ width: 10000, height: 10000 })
+    resize()
+    expect(contexts[0].setTransform.mock.calls.at(-1)).toEqual(transform)
+    expect(brand.classList.contains('is-breathing')).toBe(true)
+    expect(frames.size).toBe(0)
+    animation.destroy()
+  })
+
+  test('keeps a recovery footer available when it covers the full-window center', async () => {
+    const { animation, contexts, setFooterTop } = await createAnimationFixture(
+      true,
+      { width: 500, height: 300 },
+      { footerTop: 140 }
+    )
+    expect(contexts[0].fill).not.toHaveBeenCalled()
+    setFooterTop(240)
+    expect(contexts[0].fill).toHaveBeenCalledOnce()
+    animation.destroy()
+  })
+
+  test('traces its supplied RGBA artwork and preserves the open e and terminal gaps', async () => {
+    const { animation, contours, markScript } = await createAnimationFixture(true)
+    const electronRoot =
+      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
+    const source = await readFile(join(electronRoot, 'src/shell/startup-splash/brand-source.png'))
+    expect(source[25]).toBe(6)
+    expect(markScript).toContain(
+      `Source SHA-256: ${createHash('sha256').update(source).digest('hex')}`
+    )
+    expect(contours.map(contour => [contour.name, contour.hole])).toEqual([
+      ['we', false],
+      ['chevron', false],
+      ['underscore', false],
+    ])
+    const contains = (x: number, y: number) => {
+      let inside = false
+      for (const { points } of contours) {
+        for (
+          let index = 0, previous = points.length - 1;
+          index < points.length;
+          previous = index++
+        ) {
+          const [a, b] = points[index]
+          const [c, d] = points[previous]
+          if (b > y !== d > y && x < ((c - a) * (y - b)) / (d - b) + a) inside = !inside
+        }
+      }
+      return inside
+    }
+    for (const [x, y] of [
+      [170, 400],
+      [392, 400],
+      [550, 450],
+      [720, 215],
+      [775, 815],
+      [850, 895],
+    ]) {
+      expect(contains(x / 2, y / 2)).toBe(true)
+    }
+    for (const [x, y] of [
+      [670, 350],
+      [870, 510],
+      [295, 430],
+      [650, 815],
+    ]) {
+      expect(contains(x / 2, y / 2)).toBe(false)
+    }
+    animation.destroy()
+  })
+
   test.each([
     { width: 1440, height: 828 },
     { width: 1440, height: 384 },

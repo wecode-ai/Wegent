@@ -22,6 +22,8 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 启动页的动画舞台支持原生窗口拖动，底部状态区域和恢复按钮保留交互。舞台始终使用深色品牌背景；亮暗主题设置决定交接后的主界面。
 
+完整标记和光丝按窗口及底栏上沿等比缩放，呼吸效果也保留安全间距。若极短窗口的底栏已盖过全页中心，暂时不绘制装饰图标；空间恢复后继续同一条动画时间轴。
+
 交接时，启动页在约 200ms 内补齐编织、收束当前呼吸并将进度推至 100%。完成帧经过两次绘制确认并停留 50ms 后，宿主对齐主窗位置和尺寸，使用 `capturePage()` 确认主窗已有非空合成帧，再以 600ms 原生窗口透明度淡出启动页（macOS/Windows）。Linux 的 Electron 原生窗口透明度不生效。启动页关闭并将焦点交给主窗口后，宿主记录启动成功。启用减少动态效果时，直接呈现完成帧并跳过收束、停留和淡出动画。
 
 排查启动页长时间不消失时，对齐 `Frontend logging initialized`、`app IPC stdio ready`、当前路由的数据加载记录（例如 `runtime work list finished`）与宿主的 `renderer-startup-ready`、`main-window-show`、`startup-splash-close` 记录，分别判断 executor 冷启动、首屏数据加载和窗口交接的耗时。`renderer-startup-ready` 到 `startup-splash-close` 之间包含完成帧呈现、主窗合成和淡出，应单独计量。后台云端同步耗时通过对应同步日志排查。

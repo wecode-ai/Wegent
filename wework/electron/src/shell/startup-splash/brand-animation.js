@@ -6,6 +6,9 @@
   const FORMATION_DURATION_MS = 5600
   const STRAND_DENSITY = 1.5
   const PLAYBACK_SPEED = 1
+  const BREATHING_SCALE = 1.018
+  const GLOW_MARGIN = 16
+  const FOOTER_GAP = 8
   const STREAM_COUNT = Math.round(32 + STRAND_DENSITY * 16)
   const TAU = Math.PI * 2
 
@@ -33,15 +36,15 @@
         y: (y - originY) * 1.12,
       }))
       const first = points[0]
-      const last = points[points.length - 1]
-      path.moveTo((last.x + first.x) / 2, (last.y + first.y) / 2)
-      points.forEach((point, index) => {
-        const next = points[(index + 1) % points.length]
-        path.quadraticCurveTo(point.x, point.y, (point.x + next.x) / 2, (point.y + next.y) / 2)
-      })
+      path.moveTo(first.x, first.y)
+      points.slice(1).forEach(point => path.lineTo(point.x, point.y))
       path.closePath()
     })
-    return path
+    return {
+      path,
+      halfWidth: ((Math.max(...xs) - Math.min(...xs)) / 2) * 1.12,
+      halfHeight: ((Math.max(...ys) - Math.min(...ys)) / 2) * 1.12,
+    }
   }
 
   function createCanvas(width, height) {
@@ -263,18 +266,31 @@
     context.stroke()
   }
 
-  function paintBackdrop(context, canvas, time) {
+  function paintBackdrop(context, canvas, time, logo, viewport) {
     const { width, height } = canvas
     context.setTransform(1, 0, 0, 1, 0, 0)
     context.clearRect(0, 0, width, height)
-    // Keep the complete mark and its breathing margin visible above a tall status footer.
-    const fit = Math.min(Math.max(width / WIDTH, height / HEIGHT), width / 560, height / 520)
+    const glow = GLOW_MARGIN * viewport.pixelRatio
+    const belowCenter = viewport.footerTop - height / 2 - glow - FOOTER_GAP * viewport.pixelRatio
+    const fit = Math.max(
+      0,
+      Math.min(
+        width / WIDTH,
+        height / HEIGHT,
+        (width / 2 - glow) / (logo.halfWidth * BREATHING_SCALE),
+        (height / 2 - glow) / (logo.halfHeight * BREATHING_SCALE),
+        belowCenter / (logo.halfHeight * BREATHING_SCALE)
+      )
+    )
+    // Status and recovery controls take precedence when they cover the full-window center.
+    if (fit === 0) return false
     context.setTransform(fit, 0, 0, fit, (width - WIDTH * fit) / 2, (height - HEIGHT * fit) / 2)
     const aura = context.createRadialGradient(CENTER_X, CENTER_Y, 30, CENTER_X, 310, 400)
     aura.addColorStop(0, `rgba(12, 59, 126, ${0.08 + 0.15 * smooth(1, 3, time)})`)
     aura.addColorStop(1, 'rgba(5, 7, 13, 0)')
     context.fillStyle = aura
     context.fillRect(0, 0, WIDTH, HEIGHT)
+    return true
   }
 
   function paintMaterial(context, logoPath, time) {
@@ -376,26 +392,28 @@
     context.restore()
   }
 
-  function createRenderer(canvas) {
+  function createRenderer(canvas, viewport) {
     const context = contextFor(canvas)
-    const logoPath = createLogoPath()
+    const logo = createLogoPath()
+    const logoPath = logo.path
     const fibers = createFibers(logoPath)
     const streams = Array.from({ length: STREAM_COUNT }, (_, index) => createStream(fibers, index))
     fibers.forEach(prepareFiber)
     const filamentLayer = createCanvas(WIDTH, HEIGHT)
     const ink = contextFor(filamentLayer)
     return time => {
-      paintBackdrop(context, canvas, time)
+      if (!paintBackdrop(context, canvas, time, logo, viewport)) return
       paintMaterial(context, logoPath, time)
       paintFilaments(ink, logoPath, fibers, streams, time)
       compositeGlow(context, filamentLayer)
     }
   }
 
-  function createStartupBrandAnimation(canvas) {
+  function createStartupBrandAnimation(canvas, footerElement) {
     const container = canvas.parentElement
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const render = createRenderer(canvas)
+    const viewport = { footerTop: 0, pixelRatio: 1 }
+    const render = createRenderer(canvas, viewport)
     let elapsed = motionQuery.matches ? FORMATION_DURATION_MS : 0
     let externalPause = false
     let destroyed = false
@@ -495,6 +513,11 @@
       const ratio = Math.min(window.devicePixelRatio || 1, 2)
       canvas.width = Math.round(width * ratio)
       canvas.height = Math.round(height * ratio)
+      const bounds = container.getBoundingClientRect()
+      const footer = footerElement.getBoundingClientRect()
+      viewport.footerTop =
+        Math.max(0, Math.min(height, footer.top - bounds.top)) * (canvas.height / height)
+      viewport.pixelRatio = ratio
       render(elapsed / 1000)
     }
 
@@ -574,6 +597,7 @@
 
     const observer = new ResizeObserver(resize)
     observer.observe(canvas)
+    observer.observe(footerElement)
     motionQuery.addEventListener('change', motionChanged)
     document.addEventListener('visibilitychange', visibilityChanged)
     window.addEventListener('pagehide', destroy)

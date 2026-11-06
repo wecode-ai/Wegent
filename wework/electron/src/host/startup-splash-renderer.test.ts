@@ -325,7 +325,8 @@ describe('startup splash renderer', () => {
     } = await createRendererFixture()
 
     expect(createStartupBrandAnimation).toHaveBeenCalledExactlyOnceWith(
-      element('#startup-brand-canvas')
+      element('#startup-brand-canvas'),
+      element('#startup-status')
     )
     expect(element('documentElement').dataset.animationReady).toBeUndefined()
     expect(frames.size).toBe(1)

@@ -60,7 +60,8 @@ const confirmationCancel = document.querySelector('#startup-confirmation-cancel'
 const confirmationSubmit = document.querySelector('#startup-confirmation-submit')
 const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
 const brandAnimation = window.createStartupBrandAnimation(
-  document.querySelector('#startup-brand-canvas')
+  document.querySelector('#startup-brand-canvas'),
+  document.querySelector('#startup-status')
 )
 const isChinese = navigator.language.toLowerCase().startsWith('zh')
 
