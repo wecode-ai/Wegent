@@ -315,10 +315,10 @@ export function ProjectBoardBody<TItem>({
           <span className="ml-auto text-xs text-text-muted">{externalManagedLabel}</span>
         </div>
       ) : (
-        <div className="flex min-w-0 shrink-0 items-start">
+        <div className="project-board-toolbar flex min-w-0 shrink-0 items-start">
           <div
             data-testid="cloud-board-toolbar"
-            className="project-board-toolbar scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
+            className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
           >
             {isMyTasksBoard && localProjectFilter && localProjectFilter.options.length > 0 ? (
               <label className="relative inline-flex h-8 min-w-40 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
@@ -426,7 +426,10 @@ export function ProjectBoardBody<TItem>({
             </div>
           </div>
           {toolbarAction && (
-            <div data-testid="project-board-toolbar-action" className="shrink-0 pb-3 pr-6">
+            <div
+              data-testid="project-board-toolbar-action"
+              className="flex shrink-0 items-center gap-2 pb-3 pr-6"
+            >
               {toolbarAction}
             </div>
           )}
