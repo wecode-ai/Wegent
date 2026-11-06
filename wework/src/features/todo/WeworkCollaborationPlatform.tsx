@@ -1257,6 +1257,7 @@ export function WeworkSharedProject({
             </IssueConversationDrawers>
           )}
           renderBoardIssueCard={({
+            metadata,
             childrenAction,
             display,
             focused,
@@ -1297,6 +1298,7 @@ export function WeworkSharedProject({
             return (
               <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
                 <CloudTodoBoardCard
+                  metadata={metadata}
                   childrenAction={childrenAction}
                   item={
                     {
@@ -1651,6 +1653,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          accountScope: templateScope,
           templateStore,
           templateNavigation: true,
           renderProjectSidebarBadge: project => {

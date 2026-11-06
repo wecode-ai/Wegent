@@ -4,6 +4,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -20,7 +21,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await createLocalCollaborationProject(control, CONTENT, OTHER_PROJECT)
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const projects = await rpc('projects.list', {})
       const project = projects.find(row => row.name === PROJECT)

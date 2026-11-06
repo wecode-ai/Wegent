@@ -59,6 +59,11 @@ export async function verifySilentIssueSaves({
   }
   const selectAssignee = async userId => {
     await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-assignee"]`)
+    const notify = '[data-testid="cloud-todo-assignee-notify"]'
+    await control.command('waitFor', notify)
+    if (Number(await control.command('getElementCount', `${notify}:checked`)) > 0)
+      await control.command('click', notify)
+
     await control.command(
       'clickWhenEnabled',
       `[data-testid="cloud-todo-detail-assignee-option-user:${userId}"]`,
@@ -118,7 +123,6 @@ export async function verifySilentIssueSaves({
 
   // Establish a different owner before the UI reassigns to the non-acting recipient.
   await selectAssignee(owner.id)
-  await saveSilently(control, 'cloud-todo-save')
   await waitForValue(
     () => request(`/api/v1/loop-items/${created.id}`),
     item => String(item.assignee_user_id) === String(owner.id),
@@ -129,9 +133,8 @@ export async function verifySilentIssueSaves({
     'waitFor',
     `${CONTENT} [data-testid="cloud-todo-detail-assignee"][data-value="user:${owner.id}"]`
   )
-  await selectAssignee(member.id)
   await setRole('Viewer')
-  await saveSilently(control, 'cloud-todo-save')
+  await selectAssignee(member.id)
   await control.command('waitFor', ERROR, { text: 'Assignee is not a member', visible: true })
   assert.equal(
     await control.command('getAttribute', `${CONTENT} [data-testid="cloud-todo-detail-assignee"]`, {
@@ -146,7 +149,7 @@ export async function verifySilentIssueSaves({
   await assertNoNotification(created.id)
   await capture('assignment-11-silent-reassignment-rejected.png')
   await setRole('Developer')
-  await saveSilently(control, 'cloud-todo-save')
+  await control.command('clickWhenEnabled', `${CONTENT} [data-testid="cloud-todo-field-retry"]`)
   const reassigned = await waitForValue(
     () => request(`/api/v1/loop-items/${created.id}`),
     item => String(item.assignee_user_id) === String(member.id),

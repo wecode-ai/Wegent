@@ -103,6 +103,8 @@ export function sourcePayload(
     pluginName: plugin.name,
     pluginId: plugin.id,
     remotePluginId: plugin.remotePluginId ?? null,
+    // Codex discovery retains account-owned entries after device cleanup.
+    ...(isWegentCloudMarketplace(marketplace.name) ? { managedByWegent: true } : {}),
   }
 }
 

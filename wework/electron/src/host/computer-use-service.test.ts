@@ -27,6 +27,30 @@ vi.mock('@trycua/cua-driver/electron', () => ({
 }))
 
 const directories: string[] = []
+const services: ComputerUseService[] = []
+
+/** Start a private HTTP bridge with an injectable deadline and automatic cleanup. */
+async function openBridge(timeoutMs = 90_000) {
+  const executorHome = await mkdtemp(join(tmpdir(), 'wework-computer-use-cancellation-'))
+  directories.push(executorHome)
+  const service = new ComputerUseService(executorHome, 'darwin', timeoutMs)
+  services.push(service)
+  await service.setEnabled(true)
+  const runtime = JSON.parse(
+    await readFile(join(executorHome, 'runtime/computer-use-bridge.json'), 'utf8')
+  ) as { address: string; token: string }
+  const call = (body: Record<string, unknown>, signal?: AbortSignal) =>
+    fetch(`http://${runtime.address}/computer`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${runtime.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    })
+  return { service, call }
+}
 
 describe('ComputerUseService', () => {
   beforeEach(() => {
@@ -59,6 +83,7 @@ describe('ComputerUseService', () => {
   })
 
   afterEach(async () => {
+    await Promise.all(services.splice(0).map(service => service.stop()))
     await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
   })
 
@@ -210,7 +235,7 @@ describe('ComputerUseService', () => {
     await service.stopCurrentAction()
     await expect(actionResponse.then(response => response.json())).resolves.toMatchObject({
       ok: false,
-      error: 'aborted',
+      error: 'Computer use action stopped by user; action outcome is unknown',
     })
     await expect(service.status()).resolves.toMatchObject({ currentTool: null })
     await service.stop()
@@ -240,6 +265,24 @@ describe('ComputerUseService', () => {
     await expect(service.setEnabled(true)).resolves.toMatchObject({ running: true, error: null })
     expect(mocks.create).toHaveBeenCalledTimes(2)
     await service.stop()
+  })
+
+  test('waits for the failed native generation to stop before creating a replacement', async () => {
+    const { service } = await openBridge()
+    let finish!: () => void
+    const pendingShutdown = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    mocks.shutdown.mockReturnValueOnce(pendingShutdown)
+    const onExit = mocks.create.mock.calls[0][0] as (error: Error) => void
+    onExit(new Error('Native worker cancellation timed out; action outcome is unknown'))
+    await vi.waitFor(() => expect(mocks.shutdown).toHaveBeenCalledOnce())
+    const restarted = service.setEnabled(true)
+    expect(mocks.create).toHaveBeenCalledOnce()
+    finish()
+    await expect(restarted).resolves.toMatchObject({ enabled: true, running: true })
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    expect(mocks.callTool).not.toHaveBeenCalled()
   })
 
   test('ignores exit notifications belonging to a stopped generation', async () => {
@@ -281,5 +324,90 @@ describe('ComputerUseService', () => {
     })
     expect(mocks.create).toHaveBeenCalledOnce()
     await service.stop()
+  })
+
+  test('times out the client but retains admission until the SDK call settles', async () => {
+    let finish!: () => void
+    let signal!: AbortSignal
+    const pending = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    mocks.callTool.mockImplementationOnce(async (_name, _arguments, options) => {
+      signal = options.signal
+      await pending
+      return { text: 'late result', images: [], isError: false }
+    })
+    const { service, call } = await openBridge(30)
+    const response = await call({ action: 'callTool', name: 'start_session' })
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: 'Computer use start_session timed out after 30ms; action outcome is unknown',
+    })
+    expect(signal.aborted).toBe(true)
+    await expect(service.status()).resolves.toMatchObject({ currentTool: 'start_session' })
+    await expect(
+      call({ action: 'callTool', name: 'click' }).then(response => response.json())
+    ).resolves.toMatchObject({ ok: false, error: 'Another computer use action is already running' })
+    expect(mocks.callTool).toHaveBeenCalledOnce()
+    finish()
+    await vi.waitFor(async () => {
+      await expect(service.status()).resolves.toMatchObject({ currentTool: null })
+    })
+    await expect(
+      call({ action: 'callTool', name: 'list_apps' }).then(response => response.json())
+    ).resolves.toMatchObject({ ok: true, data: { text: 'Apps listed' } })
+  })
+
+  test.each(['callTool', 'listTools'])(
+    'cancels %s when the HTTP client disconnects',
+    async action => {
+      let signal!: AbortSignal
+      const pending = (_name: unknown, _arguments: unknown, options: { signal: AbortSignal }) => {
+        signal = options.signal
+        return new Promise<never>((_, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      }
+      if (action === 'callTool') mocks.callTool.mockImplementationOnce(pending)
+      else mocks.listToolsJson.mockImplementationOnce(options => pending(null, null, options))
+      const { service, call } = await openBridge()
+      const controller = new AbortController()
+      const response = call({ action, name: 'list_apps' }, controller.signal)
+      const rejected = expect(response).rejects.toThrow()
+      await vi.waitFor(() => expect(signal).toBeDefined())
+      controller.abort()
+      await rejected
+      await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      await vi.waitFor(async () => {
+        await expect(service.status()).resolves.toMatchObject({ currentTool: null })
+      })
+      await expect(
+        call({ action: 'listTools' }).then(response => response.json())
+      ).resolves.toMatchObject({ ok: true })
+    }
+  )
+
+  test('disabling computer use cancels pending tool discovery before shutting down', async () => {
+    let signal!: AbortSignal
+    mocks.listToolsJson.mockImplementationOnce(options => {
+      signal = options.signal
+      return new Promise<never>((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    })
+    const { service, call } = await openBridge()
+    const discovery = call({ action: 'listTools' }).then(response => response.json())
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    await service.setEnabled(false)
+    expect(signal.aborted).toBe(true)
+    await expect(discovery).resolves.toMatchObject({
+      ok: false,
+      error: 'Computer use service stopped',
+    })
+    await expect(service.status()).resolves.toMatchObject({
+      enabled: false,
+      running: false,
+      error: null,
+    })
   })
 })

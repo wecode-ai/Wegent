@@ -1,5 +1,6 @@
 import type { UserMessageServices } from './UserMessage'
 import { MessageListMessage } from './MessageListMessage'
+import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
 import {
   isCancelledAssistantMessage,
   shouldHideFailedAssistantContent,
@@ -220,14 +221,40 @@ export const MessageList = memo(function MessageList({
     () => resolveAsyncRequestUserInputReplies(messages),
     [messages]
   )
-  const visibleMessages = useMemo(
-    () => resolvedMessages.filter(shouldRenderMessage),
-    [resolvedMessages]
-  )
   const runtimeTurnsById = useMemo(
     () => new Map(turns.flatMap(turn => (turn.id ? [[turn.id, turn] as const] : []))),
     [turns]
   )
+  const visibleMessages = useMemo(() => {
+    const userTurns = new Set(
+      resolvedMessages
+        .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
+        .map(message => message.turnId)
+    )
+    const activityTurns = new Set(
+      resolvedMessages
+        .filter(isStandInActivityMessage)
+        .map(message => message.turnId)
+        .filter(turnId => turnId && !userTurns.has(turnId))
+    )
+    return resolvedMessages.filter(message => {
+      if (isStandInActivityMessage(message)) return false
+      if (message.turnId && activityTurns.has(message.turnId) && message.role === 'assistant') {
+        const turn = runtimeTurnsById.get(message.turnId)
+        if (message.status !== 'done' || (turn && turn.status !== 'done')) return true
+        if (
+          turn?.error ||
+          turn?.stoppedNotice ||
+          turn?.fileChanges ||
+          turn?.references?.length ||
+          turn?.memoryCitations?.length
+        )
+          return true
+        if (isCompletedStandInActivityTrace(message)) return false
+      }
+      return shouldRenderMessage(message)
+    })
+  }, [resolvedMessages, runtimeTurnsById])
   // Native crash history may retain an open status; only its latest root turn is live.
   const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
   const lastAssistantMessageIdByTurn = useMemo(() => {
@@ -683,13 +710,6 @@ export const MessageList = memo(function MessageList({
     <div
       ref={listRef}
       className={cn(listLayoutClass, className, virtualMessages && 'relative gap-0 pb-0 pt-0')}
-      style={
-        virtualMessages
-          ? {
-              height: Math.max(0, virtualTotalSize - tailHeight),
-            }
-          : undefined
-      }
     >
       {textSelection && textSelection.conversationKey === conversationKey && (
         <SelectionActionsPopover
@@ -699,22 +719,20 @@ export const MessageList = memo(function MessageList({
         />
       )}
       {(virtualMessages
-        ? virtualRows.map(virtualRow => ({
+        ? virtualRows.map((virtualRow, position) => ({
             index: virtualRow.index,
             key: virtualRow.key,
-            measureRef: undefined,
             style: {
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              width: '100%',
-              transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+              flexShrink: 0,
+              marginTop: Math.max(
+                0,
+                virtualRow.start - (virtualRows[position - 1]?.end ?? scrollMargin)
+              ),
             } satisfies CSSProperties,
           }))
         : visibleMessages.map((_, index) => ({
             index,
             key: visibleMessages[index].id,
-            measureRef: undefined,
             style: undefined,
           }))
       ).map(row => {
@@ -797,13 +815,7 @@ export const MessageList = memo(function MessageList({
         )
         const gap = renderGapAfterMessage?.(message, nextMessage)
         return virtualMessages ? (
-          <div
-            key={row.key}
-            ref={row.measureRef}
-            data-index={index}
-            data-message-row
-            style={row.style}
-          >
+          <div key={row.key} data-index={index} data-message-row style={row.style}>
             {searchableArticle}
             {gap}
           </div>
@@ -814,6 +826,22 @@ export const MessageList = memo(function MessageList({
           </Fragment>
         )
       })}
+      {virtualMessages && (
+        <div
+          aria-hidden="true"
+          className="shrink-0"
+          data-virtual-message-tail
+          style={{
+            height: Math.max(
+              0,
+              virtualTotalSize -
+                tailHeight -
+                (virtualRows.at(-1)?.end ?? scrollMargin) +
+                scrollMargin
+            ),
+          }}
+        />
+      )}
       {!virtualMessages && shouldShowWaitingIndicator && (
         <article className="min-w-0" data-testid="message-assistant-waiting">
           <AssistantThinkingIndicator />

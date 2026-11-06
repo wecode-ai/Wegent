@@ -91,6 +91,7 @@ export function canAccessCollaborationProjectView(
 ): boolean {
   const role = resolveProjectRole(project);
   if (
+    view === "milestones" ||
     view === "board" ||
     view === "calendar" ||
     view === "gantt" ||

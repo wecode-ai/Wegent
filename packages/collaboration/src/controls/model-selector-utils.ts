@@ -1,9 +1,7 @@
 import {
   type ModelControlConfig,
   getControlsForModel,
-  hasCatalogReasoningEfforts,
   isCodexOfficialModel,
-  isModelInterfaceModel,
   isModelPickerDefault,
   isSameModelSelection,
   normalizeModelOptionValue,
@@ -186,7 +184,6 @@ function configuredPowerPresets(
         settings.push(modelPowerSetting(model));
         continue;
       }
-      const supportedEfforts = reasoningEfforts(model);
       const configuredEfforts = Array.isArray(config.reasoningEfforts)
         ? config.reasoningEfforts
         : typeof config.reasoningEffort === "string"
@@ -196,7 +193,7 @@ function configuredPowerPresets(
             : [];
       for (const configuredEffort of configuredEfforts) {
         const effort = normalizeModelOptionValue("reasoning", configuredEffort);
-        if (!effort || !supportedEfforts.has(effort)) continue;
+        if (!effort) continue;
         settings.push(modelPowerSetting(model, effort));
       }
     }
@@ -227,10 +224,9 @@ function fallbackCodexPowerSettings(
     officialModels[0];
   if (!primaryModel) return [];
 
-  const primaryEfforts = reasoningEfforts(primaryModel);
-  const primarySettings = PRIMARY_POWER_EFFORTS.filter((effort) =>
-    primaryEfforts.has(effort),
-  ).map((effort) => modelPowerSetting(primaryModel, effort));
+  const primarySettings = PRIMARY_POWER_EFFORTS.map((effort) =>
+    modelPowerSetting(primaryModel, effort),
+  );
   const secondaryModel = officialModels.find(
     (model) =>
       !isSameModelSelection(model, primaryModel) &&
@@ -315,26 +311,6 @@ export function isSelectedPowerSetting(
       normalizeModelOptionValue("reasoning", reasoningEffort) ===
         setting.reasoningEffort),
   );
-}
-
-export function desktopModelControl(
-  control: ModelControlConfig | undefined,
-  model: UnifiedModel | null,
-): ModelControlConfig | undefined {
-  if (!control || control.id !== "reasoning") {
-    return control;
-  }
-  if (
-    isModelInterfaceModel(model) ||
-    (model && hasCatalogReasoningEfforts(model))
-  ) {
-    return control;
-  }
-
-  return {
-    ...control,
-    options: control.options.filter((option) => option.value !== "max"),
-  };
 }
 
 export function selectedControlOption(

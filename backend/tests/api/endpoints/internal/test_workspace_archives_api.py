@@ -214,95 +214,10 @@ def test_archive_sandbox_endpoint_uses_sandbox_runtime(
     assert archive_mock.await_args.kwargs["executor_name"] == "sandbox-1501"
 
 
-@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
-def test_restore_sandbox_endpoint_uses_sandbox_runtime(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    mocker,
-    task_state: int,
-):
-    task = _create_task(
-        test_db, task_id=1502, user_id=test_user.id, is_active=task_state
-    )
-    restore_mock = mocker.patch.object(
-        archive_service,
-        "restore_workspace",
-        new=AsyncMock(
-            return_value={
-                "success": True,
-                "session_restored": False,
-                "git_restored": False,
-            }
-        ),
-    )
-
-    response = test_client.post(
-        f"/api/internal/workspace-archives/{task.id}/restore-sandbox",
-        json={
-            "executor_name": "sandbox-1502",
-            "executor_namespace": "default",
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    restore_mock.assert_awaited_once()
-    assert restore_mock.await_args.kwargs["runtime_type"] == "sandbox"
-    assert restore_mock.await_args.kwargs["executor_name"] == "sandbox-1502"
-
-
-@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
-def test_restore_sandbox_without_archive_is_explicitly_skipped(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    mocker,
-    task_state: int,
-):
-    task = _create_task(
-        test_db, task_id=1503, user_id=test_user.id, is_active=task_state
-    )
-    mocker.patch.object(
-        archive_service, "restore_workspace", new=AsyncMock(return_value=None)
-    )
-    response = test_client.post(
-        f"/api/internal/workspace-archives/{task.id}/restore-sandbox",
-        json={"executor_name": "sandbox-1503", "executor_namespace": "default"},
-    )
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    assert response.json()["skipped"] is True
-
-
-@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
-def test_restore_sandbox_with_failed_archive_reports_failure(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    mocker,
-    task_state: int,
-):
-    task = _create_task(
-        test_db, task_id=1504, user_id=test_user.id, is_active=task_state
-    )
-    task.json = {**task.json, "status": {"archive": {"storageKey": "archive-1504"}}}
-    test_db.commit()
-    mocker.patch.object(
-        archive_service, "restore_workspace", new=AsyncMock(return_value=None)
-    )
-    response = test_client.post(
-        f"/api/internal/workspace-archives/{task.id}/restore-sandbox",
-        json={"executor_name": "sandbox-1504", "executor_namespace": "default"},
-    )
-    assert response.status_code == 409
-    assert response.json()["detail"] == "sandbox_archive_restore_failed"
-
-
 @pytest.mark.parametrize(
     "task_state", [TaskResource.STATE_DELETED, TaskResource.STATE_ARCHIVED]
 )
-@pytest.mark.parametrize("operation", ["archive", "archive-sandbox", "restore-sandbox"])
+@pytest.mark.parametrize("operation", ["archive", "archive-sandbox"])
 def test_archive_operations_reject_inactive_tasks(
     test_client: TestClient,
     test_db: Session,
@@ -321,12 +236,3 @@ def test_archive_operations_reject_inactive_tasks(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Task not found"
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("restore_sandbox",)) as client:
-        yield client

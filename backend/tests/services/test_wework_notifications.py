@@ -776,8 +776,9 @@ def test_malformed_notification_preferences_fall_back_without_blocking_delivery(
     no_external_delivery.assert_called_once()
 
 
+@pytest.mark.parametrize("category", ["tasks", "stand_in"])
 def test_disabling_local_task_inbox_does_not_clear_cloud_unread(
-    test_client, test_db, test_user, test_token
+    test_client, test_db, test_user, test_token, category
 ):
     rows = [
         create_notification(
@@ -795,7 +796,7 @@ def test_disabling_local_task_inbox_does_not_clear_cloud_unread(
     response = test_client.put(
         "/api/v1/wework-notifications/preferences",
         headers={"Authorization": f"Bearer {test_token}"},
-        json={"category": "tasks", "channel": "in_app", "enabled": False},
+        json={"category": category, "channel": "in_app", "enabled": False},
     )
 
     assert response.status_code == 200
@@ -804,6 +805,33 @@ def test_disabling_local_task_inbox_does_not_clear_cloud_unread(
         test_db.get(WeworkNotification, notification.id).is_read is False
         for notification in rows
     )
+
+
+def test_personal_stand_in_notification_preference_round_trip(
+    test_client, test_db, test_user, test_token
+):
+    test_user.preferences = json.dumps(
+        {
+            "existing_setting": "keep",
+            "wework_notification_preferences": {"tasks": {"system": False}},
+        }
+    )
+    test_db.commit()
+    path = "/api/v1/wework-notifications/preferences"
+    headers = {"Authorization": f"Bearer {test_token}"}
+    initial = get_notification_preferences(test_user)
+    assert initial.stand_in.model_dump() == {"in_app": True, "system": True, "im": None}
+    updated = test_client.put(
+        path,
+        headers=headers,
+        json={"category": "stand_in", "channel": "system", "enabled": False},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["stand_in"]["system"] is False
+    assert updated.json()["tasks"]["system"] is False
+    test_db.refresh(test_user)
+    assert get_notification_preferences(test_user).stand_in.system is False
+    assert json.loads(test_user.preferences)["existing_setting"] == "keep"
 
 
 def test_disabled_inbox_still_allows_enabled_im_delivery(

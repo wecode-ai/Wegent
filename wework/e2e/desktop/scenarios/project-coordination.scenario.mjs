@@ -5,6 +5,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   reloadMainWindow,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -201,10 +202,7 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`
       )
-      await control.command(
-        'clickWhenEnabled',
-        `${CONTENT} [data-testid="collaboration-tab-board"]`
-      )
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]')
       assert.notEqual(

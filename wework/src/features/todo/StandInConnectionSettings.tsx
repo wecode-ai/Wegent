@@ -1,27 +1,27 @@
+import { dequal } from 'dequal'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
-import { ChevronRight, Folder, Mail, MessageSquare, Plus, type LucideIcon } from 'lucide-react'
+import { MessageSquare } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
-import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
+import type { StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInConnections } from './StandInConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
+import { StandInGitConnections, GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { StandInEmailConnections, EMAIL_PROVIDER } from './StandInEmailConnections'
 import {
   AutomationsPage,
   type AutomationNavigationHandle,
 } from '@/features/automations/AutomationsPage'
 import { Clock } from 'lucide-react'
-import { findStandInProject } from './standInProjects'
+import { StandInConnectionCatalog } from './StandInConnectionCatalog'
 
 export interface StandInConnectionNavigationHandle extends AutomationNavigationHandle {
   back(): void
 }
-
-const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 
 export function StandInConnectionSettings({
   role,
@@ -38,6 +38,7 @@ export function StandInConnectionSettings({
   onCalendarViewChange,
   onDetailViewChange,
   hideHeading = false,
+  savedConfiguration,
   ref,
   onNavigate,
 }: {
@@ -55,10 +56,17 @@ export function StandInConnectionSettings({
   onCalendarViewChange?(open: boolean): void
   onDetailViewChange?(open: boolean): void
   hideHeading?: boolean
+  savedConfiguration?: Pick<StandInRole, 'connections' | 'collaboration' | 'calendar'>
   ref?: Ref<StandInConnectionNavigationHandle>
   onNavigate?(action: () => void): void
 }) {
   const { t, i18n } = useTranslation('common')
+  const pending = Boolean(
+    savedConfiguration &&
+    (!dequal(role.connections ?? [], savedConfiguration.connections ?? []) ||
+      !dequal(role.collaboration, savedConfiguration.collaboration) ||
+      !dequal(role.calendar, savedConfiguration.calendar))
+  )
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const [emailDirty, setEmailDirty] = useState(false)
   const [view, setView] = useState<string | null>(initialCalendar ? 'time' : null)
@@ -88,7 +96,6 @@ export function StandInConnectionSettings({
     onCalendarViewChange?.(view === 'time')
     return () => onCalendarViewChange?.(false)
   }, [view, onCalendarViewChange])
-  const [adding, setAdding] = useState(false)
   const [catalog, setCatalog] = useState<{
     key: string
     api: StandInExecutorApi
@@ -136,40 +143,6 @@ export function StandInConnectionSettings({
     }
   }, [api, deviceId, catalogKey, i18n.language, view, refresh])
   const provider = providers.find(item => item.id === view)
-  const source = role.collaboration
-  const projectRows = !source.enabled
-    ? []
-    : source.allProjects
-      ? [
-          {
-            key: 'all-projects',
-            name: t('standIn.personal.all_projects'),
-            detail: t('standIn.workspace.project_scope_summary', {
-              count: source.excludedProjects.length,
-            }),
-            policy: standInPolicy(role),
-            view: 'projects',
-          },
-        ]
-      : source.projects.map(ref => ({
-          key: `project-${ref.store}-${ref.id}`,
-          name: findStandInProject(projects, ref)?.name ?? ref.id,
-          detail: t('standIn.personal.collaboration'),
-          policy: standInPolicy(role, ref),
-          view: 'projects',
-        }))
-  const rows = [
-    ...projectRows,
-    ...(role.connections ?? []).map(connection => ({
-      key: `${connection.providerId === DINGTALK_PROVIDER ? 'dingtalk' : connection.providerId}-${connection.profile}-${connection.kind}-${connection.id}`,
-      name: connection.name,
-      detail:
-        providers.find(item => item.id === connection.providerId)?.displayName ??
-        t('standIn.workspace.connection_unavailable'),
-      policy: connection.policy,
-      view: connection.providerId,
-    })),
-  ]
   const install = async (item: ConnectionProviderDescriptor) => {
     if (!api) return
     setInstalling(true)
@@ -189,12 +162,20 @@ export function StandInConnectionSettings({
       setInstalling(false)
     }
   }
-  const showPicker = adding || rows.length === 0
   return (
     <section
       className={view === 'time' ? 'flex min-h-0 flex-1 flex-col gap-3' : 'space-y-3'}
       data-testid="stand-in-connection-settings"
     >
+      {pending && (
+        <p
+          role="status"
+          data-testid="stand-in-connections-pending"
+          className="text-sm text-text-secondary"
+        >
+          {t('standIn.workspace.connection_pending')}
+        </p>
+      )}
       {view ? (
         <>
           {view === 'time' && scheduling ? (
@@ -267,6 +248,16 @@ export function StandInConnectionSettings({
                   disabled={disabled || loading}
                   onChange={onChange}
                 />
+              ) : provider.id.startsWith(GIT_CONNECTION_PREFIX) ? (
+                <StandInGitConnections
+                  key={`${deviceId}:${role.id}:${provider.id}`}
+                  provider={provider}
+                  role={role}
+                  api={api}
+                  deviceId={deviceId}
+                  disabled={disabled || loading}
+                  onChange={onChange}
+                />
               ) : ['ready', 'auth_required'].includes(provider.availability.status) ? (
                 <StandInSourceConnections
                   key={`${deviceId}:${provider.id}`}
@@ -280,133 +271,41 @@ export function StandInConnectionSettings({
                   onReady={() => setRefresh(value => value + 1)}
                 />
               ) : null}
+              {provider.id !== EMAIL_PROVIDER &&
+                !['ready', 'auth_required'].includes(provider.availability.status) && (
+                  <UnavailableSourceConnections
+                    role={role}
+                    providerId={provider.id}
+                    disabled={disabled || loading}
+                    onChange={onChange}
+                  />
+                )}
             </>
           ) : (
             <div className="space-y-3">
               {!loading && <p role="status">{t('standIn.workspace.connection_unavailable')}</p>}
-              {(role.connections ?? [])
-                .filter(source => source.providerId === view)
-                .map(source => (
-                  <div
-                    key={JSON.stringify([source.profile, source.kind, source.id])}
-                    className="flex items-center gap-2"
-                  >
-                    <span className="min-w-0 flex-1 truncate">{source.name}</span>
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      data-testid={`stand-in-disconnect-${source.providerId}-${source.id}`}
-                      onClick={() =>
-                        onChange({
-                          ...role,
-                          connections: (role.connections ?? []).filter(row => row !== source),
-                        })
-                      }
-                      className="min-h-9 px-2 text-sm underline"
-                    >
-                      {t('standIn.workspace.remove_connection', { name: source.name })}
-                    </button>
-                  </div>
-                ))}
+              <UnavailableSourceConnections
+                role={role}
+                providerId={view}
+                disabled={disabled || loading}
+                onChange={onChange}
+              />
             </div>
           )}
         </>
       ) : (
         <>
-          <div className="flex items-center justify-end gap-3">
-            {!hideHeading && (
-              <h3 className="flex-1 font-medium">{t('standIn.workspace.connections')}</h3>
-            )}
-            {!showPicker && (
-              <button
-                type="button"
-                data-testid="stand-in-add-connection"
-                aria-expanded={showPicker}
-                disabled={disabled}
-                onClick={() => setAdding(value => !value)}
-                className="flex min-h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-muted"
-              >
-                <Plus aria-hidden="true" className="h-4 w-4" />
-                {t('standIn.workspace.add_connection')}
-              </button>
-            )}
-          </div>
-          {showPicker && (
-            <div className="space-y-1" data-testid="stand-in-connection-type-picker">
-              <ConnectionTypeRow
-                testId="stand-in-add-projects-connection"
-                icon={Folder}
-                label={t('standIn.personal.collaboration')}
-                disabled={disabled}
-                onSelect={() => {
-                  setView('projects')
-                  setAdding(false)
-                }}
-              />
-              {scheduling && (
-                <ConnectionTypeRow
-                  testId="stand-in-time-connections"
-                  icon={Clock}
-                  label={t('standIn.workspace.time_connection')}
-                  disabled={disabled}
-                  onSelect={() => {
-                    setView('time')
-                    setAdding(false)
-                  }}
-                />
-              )}
-              {providers.map(item => (
-                <ConnectionTypeRow
-                  key={item.id}
-                  testId={`stand-in-add-${item.id === DINGTALK_PROVIDER ? 'dingtalk' : item.id}-connection`}
-                  icon={item.id === EMAIL_PROVIDER ? Mail : MessageSquare}
-                  label={item.displayName}
-                  disabled={disabled}
-                  onSelect={() => {
-                    setView(item.id)
-                    setAdding(false)
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          {rows.length ? (
-            <div className="divide-y divide-border" data-testid="stand-in-connected-list">
-              {rows.map(row => (
-                <button
-                  key={row.key}
-                  type="button"
-                  data-testid={`stand-in-connection-${row.key}`}
-                  disabled={disabled}
-                  onClick={() => setView(row.view)}
-                  className="flex min-h-14 w-full items-center gap-3 rounded-md px-2 py-3 text-left hover:bg-muted disabled:opacity-40"
-                >
-                  {row.view === 'projects' ? (
-                    <Folder aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
-                  ) : row.view === EMAIL_PROVIDER ? (
-                    <Mail aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
-                  ) : (
-                    <MessageSquare
-                      aria-hidden="true"
-                      className="h-4 w-4 shrink-0 text-text-secondary"
-                    />
-                  )}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{row.name}</span>
-                    <span className="mt-1 block text-xs text-text-muted">{row.detail}</span>
-                  </span>
-                  <span className="max-w-32 text-right text-xs text-text-secondary">
-                    {!row.policy.automatic
-                      ? t('standIn.workspace.connection_handling_disabled')
-                      : row.policy.immediate === false
-                        ? t('standIn.workspace.processing_background')
-                        : t('standIn.workspace.process_immediately')}
-                  </span>
-                  <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-                </button>
-              ))}
-            </div>
-          ) : null}
+          {!hideHeading && <h3 className="font-medium">{t('standIn.workspace.connections')}</h3>}
+          <StandInConnectionCatalog
+            role={role}
+            projects={projects}
+            providers={providers}
+            loading={loading}
+            local={deviceId === localDeviceId}
+            disabled={disabled}
+            scheduling={Boolean(scheduling)}
+            onSelect={setView}
+          />
         </>
       )}
       {loading && <p role="status">{t('standIn.loading')}</p>}
@@ -477,30 +376,51 @@ function ConnectionProviderStatus({
   )
 }
 
-function ConnectionTypeRow({
-  testId,
-  icon: Icon,
-  label,
+function UnavailableSourceConnections({
+  role,
+  providerId,
   disabled,
-  onSelect,
+  onChange,
 }: {
-  testId: string
-  icon: LucideIcon
-  label: string
+  role: StandInRole
+  providerId: string
   disabled: boolean
-  onSelect(): void
+  onChange(role: StandInRole): void
 }) {
+  const { t } = useTranslation('common')
+  const rows = (role.connections ?? []).filter(source => source.providerId === providerId)
+  if (!rows.length) return null
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      disabled={disabled}
-      onClick={onSelect}
-      className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted disabled:opacity-40"
-    >
-      <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-    </button>
+    <section className="space-y-2">
+      <h4 className="text-sm font-medium">{t('standIn.workspace.connection_scope')}</h4>
+      {rows.map(source => (
+        <div
+          key={JSON.stringify([source.profile, source.kind, source.id])}
+          className="flex items-center gap-2"
+        >
+          <span className="min-w-0 flex-1 break-words text-sm">
+            {source.name}
+            <span className="block text-text-muted">
+              {source.configurationSummary ??
+                t('standIn.workspace.connection_default_configuration')}
+            </span>
+          </span>
+          <button
+            type="button"
+            disabled={disabled}
+            data-testid={`stand-in-disconnect-${source.providerId}-${source.id}`}
+            onClick={() =>
+              onChange({
+                ...role,
+                connections: (role.connections ?? []).filter(row => row !== source),
+              })
+            }
+            className="min-h-11 shrink-0 px-2 text-sm underline"
+          >
+            {t('standIn.workspace.remove_connection', { name: source.name })}
+          </button>
+        </div>
+      ))}
+    </section>
   )
 }

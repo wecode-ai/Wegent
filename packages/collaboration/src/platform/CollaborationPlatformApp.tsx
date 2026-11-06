@@ -1920,7 +1920,7 @@ export function CollaborationPlatformApp(
 ) {
   return (
     <CollaborationTemplateContext.Provider
-      key={props.host.templateStore?.library.scope ?? "default"}
+      key={props.host.accountScope}
       value={props.host.templateStore ?? null}
     >
       <CollaborationPlatformAppContent {...props} />
@@ -2573,6 +2573,7 @@ function CollaborationPlatformAppContent({
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
+          parentGroupingEnabled
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
           issueArchiveEnabled

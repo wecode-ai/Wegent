@@ -47,6 +47,7 @@ import { CollaborationContextSidebar } from '@/features/collaboration/Collaborat
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
 import { useUser } from '@/features/common/UserContext'
+import LoadingState from '@/features/common/LoadingState'
 import { useCollaborationTemplates } from '@/features/resource-library/useCollaborationTemplates'
 import {
   templateIdentity,
@@ -129,12 +130,13 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
 
 export function CollaborationPage() {
   const theme = useDocumentTheme()
-  const { user } = useUser()
+  const { user, isLoading: userLoading } = useUser()
+  const accountScope = String(apiClient.getCacheScope())
   const templateStore = useCollaborationTemplates()
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { getCurrentLanguage } = useTranslation()
+  const { getCurrentLanguage, t } = useTranslation('common')
   const templateLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
   const requestedTemplate = searchParams.get('template')
   const [templateRequest, setTemplateRequest] = useState<{
@@ -170,6 +172,8 @@ export function CollaborationPage() {
       active = false
     }
   }, [requestedTemplate, templateStore, templateLocale, templateRequestAttempt])
+  // accountScope keys the lifecycle of clients that read credentials lazily.
+  // Scope changes must replace and dispose the previous clients.
   const api = useMemo(() => {
     const socketOptions = {
       socketBaseUrl: async () => {
@@ -217,7 +221,8 @@ export function CollaborationPage() {
         readWorkspaceFile: readRuntimeWorkspaceFile,
       },
     }
-  }, [user?.id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountScope])
   useEffect(
     () => () => {
       api.activity.dispose()
@@ -333,6 +338,7 @@ export function CollaborationPage() {
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
+      accountScope,
       templateStore: templateStore ?? undefined,
       projectTemplateRequest:
         templateRequest &&
@@ -407,6 +413,7 @@ export function CollaborationPage() {
       projectAgentConfiguration: webProjectAgentConfigurationHost,
     }),
     [
+      accountScope,
       issueId,
       pathname,
       projectId,
@@ -423,6 +430,12 @@ export function CollaborationPage() {
       searchParams,
     ]
   )
+
+  if (userLoading && !user) {
+    return (
+      <CollaborationWebShell sidebar={<div />} main={<LoadingState message={t('loading')} />} />
+    )
+  }
 
   if (requestedTemplate && templateRequestError) {
     const m = templateMessages[templateLocale]

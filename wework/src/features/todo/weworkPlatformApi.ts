@@ -23,8 +23,10 @@ export function mergeExecutionEnvironmentResources(
   const seen = new Set<string>()
   return cloudEnvironments.flatMap(environment => {
     const identity = executionEnvironmentIdentity(environment)
-    if (seen.has(identity)) return []
-    seen.add(identity)
+    // Historical records can share a desktop alias without being the same resource.
+    const resourceId = String(environment.device_id ?? environment.id)
+    if (seen.has(resourceId)) return []
+    seen.add(resourceId)
     return [
       currentLocalDeviceKeys.has(identity)
         ? { ...environment, is_current_device: true }
