@@ -743,6 +743,7 @@ use handlers::handle_bound_thread;
 use handlers::handle_for_token;
 use handlers::handle_harness_messages;
 pub(super) use handlers::handle_token_route;
+#[cfg(any(test, feature = "test-support"))]
 pub use handlers::thread_has_bound_route;
 #[cfg(test)]
 use handlers::token_route_token;

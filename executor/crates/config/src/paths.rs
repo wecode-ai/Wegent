@@ -101,6 +101,23 @@ fn migrate_at(home: &Path, target: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Resolves the isolated Codex home owned by the Wework executor.
+pub fn wework_codex_home() -> PathBuf {
+    env::var_os("WEGENT_CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| executor_home().join("codex"))
+}
+
+pub fn default_manifest_path() -> PathBuf {
+    if let Some(home) = env::var_os("WEGENT_CAPABILITIES_HOME")
+        .filter(|value| !value.to_string_lossy().trim().is_empty())
+    {
+        return PathBuf::from(home).join("manifest-v2.json");
+    }
+    executor_home().join("capabilities/manifest-v2.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,21 +163,4 @@ mod tests {
             .file_type()
             .is_symlink());
     }
-}
-
-/// Resolves the isolated Codex home owned by the Wework executor.
-pub fn wework_codex_home() -> PathBuf {
-    env::var_os("WEGENT_CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executor_home().join("codex"))
-}
-
-pub fn default_manifest_path() -> PathBuf {
-    if let Some(home) = env::var_os("WEGENT_CAPABILITIES_HOME")
-        .filter(|value| !value.to_string_lossy().trim().is_empty())
-    {
-        return PathBuf::from(home).join("manifest-v2.json");
-    }
-    executor_home().join("capabilities/manifest-v2.json")
 }

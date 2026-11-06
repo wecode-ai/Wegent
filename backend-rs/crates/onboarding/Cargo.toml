@@ -2,6 +2,7 @@
 name = "wegent-onboarding"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 license = "Apache-2.0"
 description = "New-user default resource application with original transaction boundaries"
 

@@ -73,14 +73,14 @@ pub(super) async fn run_streaming_command_output<S>(
     timeout_seconds: u64,
     sink: S,
     builder: ResponsesEventBuilder,
-    task_id: String,
-    subtask_id: String,
+    task: (String, String),
     session: stream_session::SessionRecorder,
     environment: &dyn ChildEnvironment,
 ) -> CommandOutcome
 where
     S: EventSink,
 {
+    let (task_id, subtask_id) = task;
     let mut command = command_from_spec(&spec, environment);
     command
         .stdin(Stdio::piped())

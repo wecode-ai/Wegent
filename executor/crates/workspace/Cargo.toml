@@ -2,6 +2,7 @@
 name = "wegent-workspace"
 version = "0.1.0"
 edition = "2021"
+rust-version.workspace = true
 license = "Apache-2.0"
 description = "Workspace file operations, native Git, and change tracking"
 

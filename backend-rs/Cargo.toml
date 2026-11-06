@@ -2,7 +2,7 @@
 name = "wegent-backend-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version.workspace = true
 description = "Incremental Rust migration gateway for the Wegent backend"
 license = "Apache-2.0"
 
@@ -10,6 +10,9 @@ license = "Apache-2.0"
 resolver = "2"
 members = ["crates/*"]
 default-members = [".", "crates/*"]
+
+[workspace.package]
+rust-version = "1.94"
 
 [dependencies]
 wegent-oidc = { path = "crates/oidc" }

@@ -2,6 +2,7 @@
 name = "wegent-subprocess"
 version = "0.1.0"
 edition = "2021"
+rust-version.workspace = true
 license = "Apache-2.0"
 description = "Platform process spawning and child lifetime primitives"
 

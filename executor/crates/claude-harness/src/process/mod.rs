@@ -142,8 +142,7 @@ where
                     timeout_seconds,
                     sink.clone(),
                     builder.as_ref().clone(),
-                    task_id.clone(),
-                    subtask_id.clone(),
+                    (task_id.clone(), subtask_id.clone()),
                     session.for_reader(),
                     environment.as_ref(),
                 )

@@ -2,7 +2,7 @@
 name = "wegent-storage"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version.workspace = true
 license = "Apache-2.0"
 description = "S3 request signing and object path encoding for Wegent"
 

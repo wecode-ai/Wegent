@@ -80,6 +80,8 @@ cargo test --manifest-path executor/Cargo.toml --locked --all-features
 cargo test --manifest-path shared/rust/Cargo.toml --locked
 ```
 
+两个应用与其领域库分别通过 `workspace.package.rust-version` 继承原有版本声明，CI 使用 `.github/ci/rust-toolchain` 固定的工具链。本次保持已有源码 API 基线，不认证旧工具链对完整锁定依赖图的兼容性。
+
 Backend 与 Executor 各自 workspace 的默认成员包含应用和专属库。共享 workspace 独立维护用于库测试的锁文件；依赖它的应用仍按各自锁文件解析依赖。应用的 `cargo test` 不会自动执行外部依赖的单测，因此现有 Backend CI 测试任务另外运行共享库的格式、测试和 Clippy 检查。
 
 共享源码变化必须触发 Backend、Executor 及其既有集成验证。Docker 构建的依赖层和应用层都需要共享源码；依赖镜像指纹、运行时镜像指纹以及 macOS/Windows 构建指纹均包含共享库和应用专属库。新增本地 crate 时同步维护这些输入，避免复用旧二进制。

@@ -2,7 +2,7 @@
 name = "wegent-executor"
 version = "1.8.7"
 edition = "2021"
-rust-version = "1.77"
+rust-version.workspace = true
 description = "Wegent task executor service"
 license = "Apache-2.0"
 
@@ -32,6 +32,9 @@ resolver = "2"
 members = ["crates/*"]
 default-members = [".", "crates/*"]
 exclude = ["vendor/tf-rust-socketio"]
+
+[workspace.package]
+rust-version = "1.77"
 
 [dependencies]
 wegent-claude-harness = { path = "crates/claude-harness" }

@@ -45,6 +45,12 @@ pub struct DecisionProxyRuntime {
     client: reqwest::Client,
 }
 
+impl Default for DecisionProxyRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DecisionProxyRuntime {
     pub fn new() -> Self {
         Self {

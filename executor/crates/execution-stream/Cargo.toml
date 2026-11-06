@@ -2,6 +2,7 @@
 name = "wegent-execution-stream"
 version = "0.1.0"
 edition = "2021"
+rust-version.workspace = true
 license = "Apache-2.0"
 description = "Ordered streaming delivery, delta compaction, failure propagation, and flushing"
 

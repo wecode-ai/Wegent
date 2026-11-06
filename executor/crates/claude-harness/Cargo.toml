@@ -2,6 +2,7 @@
 name = "wegent-claude-harness"
 version = "0.1.0"
 edition = "2021"
+rust-version.workspace = true
 license = "Apache-2.0"
 description = "Claude native process execution, session resume, and stream interpretation"
 

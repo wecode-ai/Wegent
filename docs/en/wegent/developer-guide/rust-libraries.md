@@ -80,6 +80,8 @@ cargo test --manifest-path executor/Cargo.toml --locked --all-features
 cargo test --manifest-path shared/rust/Cargo.toml --locked
 ```
 
+Each application and its domain libraries inherit the existing version declaration through `workspace.package.rust-version`; CI uses the toolchain pinned in `.github/ci/rust-toolchain`. This refactor retains the source API baseline without certifying older toolchains against the complete locked dependency graph.
+
 Each Backend and Executor workspace includes its application and private libraries as default members. The shared workspace has a separate lockfile for library tests; applications still resolve dependencies through their own lockfiles. Application `cargo test` does not run external dependency unit tests, so the existing Backend CI test job explicitly checks shared-library formatting, tests, and Clippy.
 
 Shared-source changes must select Backend, Executor, and their existing integration checks. Docker dependency and application stages both need shared sources. Dependency-image, runtime-image, and macOS/Windows build fingerprints include shared and application-private libraries. Update these inputs when adding local crates so cached binaries cannot omit source changes.

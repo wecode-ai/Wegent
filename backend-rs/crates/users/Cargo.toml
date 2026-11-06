@@ -2,6 +2,7 @@
 name = "wegent-backend-users"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 license = "Apache-2.0"
 description = "User profiles, account settings, runtime configuration, and directory routes"
 

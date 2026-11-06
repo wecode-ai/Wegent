@@ -2,6 +2,7 @@
 name = "wegent-identity"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 license = "Apache-2.0"
 description = "Session and service authentication with explicit identity dependencies"
 
