@@ -40,6 +40,7 @@ export function createDesktopScenario({
   resultDir,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
+  restartDesktopApp,
 }) {
   let skillPath
   let active = false
@@ -48,6 +49,9 @@ export function createDesktopScenario({
   let expected
 
   return {
+    diagnostics() {
+      return { skillPath, requested, hashes: evidence, expected }
+    },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -168,18 +172,21 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`,
         { visible: false }
       )
-      // Seed an older installed manual, then exercise the production content-based sync.
+      // Restart with an older installed manual, as when launching an updated application.
       const installedManual = join(dirname(skillPath), 'references/zh/tasks.md')
-      await writeFile(installedManual, 'WEWORK_DOCS_PREVIOUS_EDITION\n')
-      await control.command('ensureBundledPluginUpdated', 'body', {
-        value: 'wework-docs',
-        timeoutMs: workbenchReadyTimeoutMs,
+      await restartDesktopApp({
+        afterStop: () => writeFile(installedManual, 'WEWORK_DOCS_PREVIOUS_EDITION\n'),
       })
       await until(
-        async () => hash(await readFile(installedManual)),
-        current => current === expected[1],
-        'The built-in plugin synchronization retained an obsolete manual',
+        async () => JSON.parse(await control.command('getBundledPluginUpdates', 'body')),
+        state => state.states?.['wework-docs']?.status === 'ready',
+        'Wework Docs did not synchronize after restarting the application',
         workbenchReadyTimeoutMs
+      )
+      assert.equal(
+        hash(await readFile(installedManual)),
+        expected[1],
+        'Startup retained an obsolete manual'
       )
       await writeFile(
         join(resultDir, 'wework-docs-story.json'),
