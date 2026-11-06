@@ -14,6 +14,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   configureFirstProjectExecutionEnvironment,
   createLocalCollaborationProject,
+  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
@@ -137,7 +138,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, name)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', selector('collaboration-tab-manage'))
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
       await control.command('click', selector('collaboration-project-settings-sharing'))
       await control.command('clickWhenEnabled', selector('project-template-import'))
       await control.command('click', selector('template-tab-available'))
@@ -414,6 +415,67 @@ export function createDesktopScenario({
         text: '将创建 6 个智能体',
       })
       await captureScreenshot(control, 'template-agents-07-dark-confirmation.png', CONTENT)
+      // Reselecting the same template starts a fresh role configuration.
+      await control.command('click', selector('template-remove-role-group-1-role-1'))
+      await control.command('waitFor', selector('template-agents-summary'), {
+        text: '将创建 5 个智能体',
+      })
+      await control.command('click', selector('project-create-choose-template'))
+      await control.command('click', pickerSelector('template-tab-mine'))
+      const savedDetails = pickerSelector(card.replace('template-card-', 'template-details-'))
+      await control.command('waitFor', savedDetails)
+      await control.command('click', savedDetails)
+      await control.command('click', pickerSelector('template-use'))
+      await control.command('waitFor', PICKER, { visible: false })
+      await control.command('waitFor', selector('template-agents-summary'), {
+        text: '将创建 6 个智能体',
+      })
+      // Import a coordinator-only variant and verify removed roles and their stages stay absent.
+      for (let index = 1; index < 6; index++) {
+        await control.command('click', selector(`template-remove-role-group-1-role-${index}`))
+      }
+      await control.command('waitFor', selector('template-agents-summary'), {
+        text: '将创建 1 个智能体',
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            selector('template-remove-role-group-1-role-0') + ':disabled'
+          )
+        ),
+        1,
+        'The coordinator must remain required'
+      )
+      const reducedName = `模板精简角色-${process.pid}`
+      await control.command('fill', selector('collaboration-project-name-input'), {
+        value: reducedName,
+      })
+      await control.command('clickWhenEnabled', selector('collaboration-project-create-confirm'))
+      await control.command('waitFor', selector('cloud-project-header-title'), {
+        text: reducedName,
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      const reduced = (await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)).find(
+        project => project.name === reducedName
+      )
+      assert.ok(reduced, 'The reduced template must create a project')
+      const reducedAgents = await requestExecutor(
+        control,
+        'chat_agents.list',
+        {
+          project_id: reduced.id,
+        },
+        uiTimeoutMs
+      )
+      assert.equal(reducedAgents.length, 1, 'Removed roles must not create Agents')
+      const reducedGroup = reduced.metadata.collaboration_groups[0]
+      assert.equal(reducedGroup.members.length, 1)
+      assert.equal(reducedGroup.leader.id, reducedAgents[0].id)
+      assert.deepEqual(
+        reducedGroup.stages.map(stage => stage.name),
+        definitions.groups[0].stages.filter(stage => !stage.ownerRole).map(stage => stage.name)
+      )
     },
   }
 }

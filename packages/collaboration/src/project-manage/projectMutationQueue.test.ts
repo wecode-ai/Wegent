@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createProjectVersionMutationQueue } from "./projectMutationQueue";
+import { createVersionMutationQueue } from "../versionMutationQueue";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -23,7 +23,7 @@ describe("project version mutation queue", () => {
       .fn<(category: string, version: number) => Promise<{ version: number }>>()
       .mockImplementationOnce(() => firstResponse.promise)
       .mockResolvedValueOnce({ version: 7 });
-    const queue = createProjectVersionMutationQueue<{ version: number }>(5);
+    const queue = createVersionMutationQueue<{ version: number }>(5);
 
     const visibility = queue.enqueue(
       (version) => update("visibility", version),
@@ -50,7 +50,7 @@ describe("project version mutation queue", () => {
       .fn<(version: number) => Promise<{ version: number }>>()
       .mockRejectedValueOnce(new Error("conflict"))
       .mockResolvedValueOnce({ version: 10 });
-    const queue = createProjectVersionMutationQueue<{ version: number }>(9);
+    const queue = createVersionMutationQueue<{ version: number }>(9);
 
     await expect(
       queue.enqueue(update, (project) => project.version),

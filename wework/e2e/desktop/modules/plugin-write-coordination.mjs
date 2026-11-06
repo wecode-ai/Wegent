@@ -48,7 +48,7 @@ export async function verifyPluginWriteCoordination({
   }
   const refreshSurfaces = async (item, present = true) => {
     await openPlugin(control, item)
-    await control.command('click', testId('plugins-refresh-button'))
+    await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
     if (present) {
       await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
         timeoutMs,
@@ -70,7 +70,7 @@ export async function verifyPluginWriteCoordination({
     slug: 'coordination-e2e-responsive',
   }
   await openPlugin(control, responsive)
-  await control.command('click', testId('plugins-refresh-button'))
+  await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   await assertInstallButton(control, responsive)
   let lease = await holdPluginWriteLease(cloud)
   let pending

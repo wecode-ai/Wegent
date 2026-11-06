@@ -493,6 +493,7 @@ classify_path() {
       .github/actions/setup-minio-e2e/* | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
+      .github/scripts/core-runner-slots.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \

@@ -190,7 +190,9 @@ export async function verifyPluginSyncDisconnect({
     await until(
       diagnostics,
       state => {
-        if (state.inFlight) assertNoReconciliation(state)
+        // Reconnect can complete the original ACK before this probe returns;
+        // a later auto-update pass may already own a new device lease.
+        if (syncPosts()[0].status === undefined) assertNoReconciliation(state)
         return state.backend.connected && state.rendererConnected
       },
       'The real Executor did not reconnect after the transport recovered',

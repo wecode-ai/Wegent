@@ -105,16 +105,22 @@ commentTest(
       ] as const) {
         await expect(link).toHaveAttribute('target', '_blank')
         await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+        const navigationPromise = page
+          .context()
+          .waitForEvent(
+            'request',
+            request => request.isNavigationRequest() && request.url() === url
+          )
         const popupPromise = page.waitForEvent('popup')
         await link.click()
         const popup = await popupPromise
         try {
+          const navigation = await navigationPromise
+          expect(navigation.frame()).toBe(popup.mainFrame())
           await expect(popup).toHaveURL(url)
           if (documentText) {
             await expect(popup.locator('body')).toHaveText(documentText)
-          } else {
-            await popup.waitForLoadState('load')
-            await expect(popup).toHaveTitle(/GitHub/)
+            expect(await popup.evaluate(() => window.opener)).toBeNull()
           }
           await expect(page).toHaveURL(issuePath)
           await expect(page.getByTestId('cloud-todo-detail-title')).toHaveValue(issueTitle)

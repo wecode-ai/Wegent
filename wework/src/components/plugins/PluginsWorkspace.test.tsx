@@ -360,7 +360,34 @@ function mockCodexAppServerInvoke(
       })
     }
     if (method === 'executor.plugins.personal.list') {
-      return Promise.resolve({ marketplacePath: '', plugins: [] })
+      const personal = marketplaces.filter(marketplace =>
+        ['personal', 'wework-personal'].includes(marketplace.name)
+      )
+      return Promise.resolve({
+        marketplaceId: 'wework-personal',
+        marketplacePath: personal[0]?.path ?? '/tmp/wework-personal',
+        plugins: personal.flatMap(marketplace =>
+          (marketplace.plugins ?? [defaultCodexPlugin]).map(plugin => ({
+            ...plugin,
+            version: plugin.localVersion,
+            marketplacePath: marketplace.path,
+            pluginPath: `${marketplace.path}/plugins/${plugin.name}`,
+          }))
+        ),
+      })
+    }
+    if (method === 'executor.codex_home.config.read') {
+      const keys = (enabled: boolean) =>
+        marketplaces.flatMap(marketplace =>
+          (marketplace.plugins ?? [defaultCodexPlugin])
+            .filter(
+              plugin =>
+                installedPluginNames.has(plugin.name) &&
+                (pluginEnabledById.get(plugin.id) !== false) === enabled
+            )
+            .map(plugin => `${plugin.name}@${marketplace.name}`)
+        )
+      return Promise.resolve({ enabledPluginKeys: keys(true), disabledPluginKeys: keys(false) })
     }
     if (method === 'executor.plugins.links.unlink' && options.unlinkError) {
       return Promise.reject(options.unlinkError)
@@ -1400,6 +1427,7 @@ function mockPersonalRefreshInventory(pluginName = 'offline-notes') {
   ]
   mockCodexAppServerInvoke({
     deviceId: 'current-device',
+    installedPluginNames: [pluginName],
     marketplaces: [
       {
         name: 'wework-personal',

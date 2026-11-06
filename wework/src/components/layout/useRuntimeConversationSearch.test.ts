@@ -111,6 +111,7 @@ describe('runtime conversation search pages', () => {
       beforeCursor: 'latest-match',
       limit: 5,
       isolated: true,
+      signal: expect.any(AbortSignal),
     })
   })
 
@@ -139,6 +140,7 @@ describe('runtime conversation search pages', () => {
       beforeCursor: match.cursor,
       limit: 5,
       isolated: true,
+      signal: expect.any(AbortSignal),
     })
     expect(result.current.page?.messages[0].content).toBe('historical needle')
     const nextTranscript: RuntimePaneTranscript = {
@@ -188,6 +190,7 @@ describe('runtime conversation search pages', () => {
     expect(loadTranscript).toHaveBeenCalledTimes(1)
     const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' })
     controller.abort()
+    expect(loadTranscript.mock.calls[0][1].signal.aborted).toBe(true)
     await act(async () => {
       pending.resolve(transcript)
       await rejected
@@ -222,6 +225,7 @@ describe('runtime conversation search pages', () => {
     const nextTarget = { ...target, key: 'device:other', address: { ...address, taskId: 'other' } }
     targetRef.current = nextTarget
     rerender({ ...options, target: nextTarget })
+    expect(options.loadTranscript.mock.calls[1][1].signal.aborted).toBe(true)
     expect(result.current.page).toBeNull()
     await act(async () => {
       pending.resolve(transcript)
@@ -305,11 +309,11 @@ describe('runtime conversation search pages', () => {
     ])
     expect(result.current.page).toMatchObject({ hasMoreBefore: false, hasMoreAfter: false })
     expect(loadTranscript.mock.calls.map(call => call[1])).toEqual([
-      { beforeCursor: match.cursor, limit: 5, isolated: true },
-      { beforeCursor: 'before-middle', limit: 5, isolated: true },
-      { afterCursor: 'after-middle', limit: 5, isolated: true },
-      { beforeCursor: 'before-older', limit: 5, isolated: true },
-      { afterCursor: 'after-next', limit: 5, isolated: true },
+      { beforeCursor: match.cursor, limit: 5, isolated: true, signal: expect.any(AbortSignal) },
+      { beforeCursor: 'before-middle', limit: 5, isolated: true, signal: expect.any(AbortSignal) },
+      { afterCursor: 'after-middle', limit: 5, isolated: true, signal: expect.any(AbortSignal) },
+      { beforeCursor: 'before-older', limit: 5, isolated: true, signal: expect.any(AbortSignal) },
+      { afterCursor: 'after-next', limit: 5, isolated: true, signal: expect.any(AbortSignal) },
     ])
     await act(async () => {
       await result.current.loadMoreContext('before')
@@ -408,8 +412,8 @@ describe('runtime conversation search pages', () => {
     expect(result.current.page?.turns.map(turn => turn.id)).toEqual(['previous', 'middle'])
     expect(result.current.page?.loadError).toBeNull()
     expect(loadTranscript.mock.calls.slice(1).map(call => call[1])).toEqual([
-      { beforeCursor: 'before', limit: 5, isolated: true },
-      { beforeCursor: 'before', limit: 5, isolated: true },
+      { beforeCursor: 'before', limit: 5, isolated: true, signal: expect.any(AbortSignal) },
+      { beforeCursor: 'before', limit: 5, isolated: true, signal: expect.any(AbortSignal) },
     ])
   })
 
@@ -446,12 +450,12 @@ describe('runtime conversation search pages', () => {
     expect(result.current.page?.turns.map(turn => turn.id)).toEqual(['middle', 'next'])
     expect(result.current.page?.loadError).toBeNull()
     expect(loadTranscript.mock.calls.slice(1).map(call => call[1])).toEqual([
-      { afterCursor: 'after', limit: 5, isolated: true },
-      { afterCursor: 'after', limit: 5, isolated: true },
+      { afterCursor: 'after', limit: 5, isolated: true, signal: expect.any(AbortSignal) },
+      { afterCursor: 'after', limit: 5, isolated: true, signal: expect.any(AbortSignal) },
     ])
   })
 
-  test.each(['close', 'query', 'task'] as const)(
+  test.each(['close', 'query', 'task', 'reload'] as const)(
     'discards pending context after changing %s',
     async change => {
       const pending = deferred<RuntimePaneTranscript>()
@@ -459,6 +463,7 @@ describe('runtime conversation search pages', () => {
       const options = {
         target,
         targetRef,
+        reloadRevision: 0,
         searchTranscript: vi
           .fn()
           .mockResolvedValue({ matches: [], totalMatches: 0, isCapped: false }),
@@ -490,6 +495,7 @@ describe('runtime conversation search pages', () => {
           targetRef.current = nextTarget
           rerender({ ...options, target: nextTarget })
         }
+        if (change === 'reload') rerender({ ...options, reloadRevision: 1 })
       })
       expect(result.current.page).toBeNull()
       await act(async () => {
@@ -543,6 +549,7 @@ describe('runtime conversation search pages', () => {
       beforeCursor: 'selected-match',
       limit: 5,
       isolated: true,
+      signal: expect.any(AbortSignal),
     })
   })
 })

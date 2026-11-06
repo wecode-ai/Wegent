@@ -45,7 +45,6 @@ import type {
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
   RuntimeTaskPinRequest,
-  User,
 } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import type { WorkbenchState } from '@/types/workbench'
@@ -64,7 +63,7 @@ import {
 import { track } from '@/telemetry/client'
 
 interface UseWorkbenchProjectActionsOptions {
-  user: User
+  ownershipKey: string
   state: WorkbenchState
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
@@ -135,7 +134,7 @@ export async function isMatchingGitCheckout(
 }
 
 export function useWorkbenchProjectActions({
-  user,
+  ownershipKey,
   state,
   dispatch,
   executorClient,
@@ -166,12 +165,12 @@ export function useWorkbenchProjectActions({
       } else {
         await refreshWorkLists()
       }
-      writeLastProjectId(user.id, project.id)
+      writeLastProjectId(ownershipKey, project.id)
       dispatch({ type: 'project_selected', project })
       track('project_created', { kind: 'standard' })
       return project
     },
-    [dispatch, refreshWorkLists, services.projectApi, user.id]
+    [dispatch, refreshWorkLists, services.projectApi, ownershipKey]
   )
 
   const createLocalRuntimeProject = useCallback(
@@ -225,12 +224,12 @@ export function useWorkbenchProjectActions({
         tasks: response.project.tasks ?? [],
       }
       await refreshWorkLists()
-      writeLastProjectId(user.id, project.id)
+      writeLastProjectId(ownershipKey, project.id)
       dispatch({ type: 'project_selected', project })
       track('project_created', { kind: 'git' })
       return project
     },
-    [dispatch, refreshWorkLists, services.projectApi, user.id]
+    [dispatch, refreshWorkLists, services.projectApi, ownershipKey]
   )
 
   const prepareDeviceWorkspace = useCallback(

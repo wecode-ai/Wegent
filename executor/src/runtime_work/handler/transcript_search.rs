@@ -12,6 +12,11 @@ const MAX_TRANSCRIPT_SEARCH_MATCHES: usize = 250;
 const CACHED_SEARCH_CURSOR_PREFIX: &str = "wework-cached-search:";
 const CACHED_CONTEXT_CURSOR_PREFIX: &str = "wework-cached-search-context:";
 
+pub(super) fn is_cached_search_cursor(cursor: &str) -> bool {
+    cursor.starts_with(CACHED_SEARCH_CURSOR_PREFIX)
+        || cursor.starts_with(CACHED_CONTEXT_CURSOR_PREFIX)
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn search_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
         let task_id = runtime_task_id(&payload)

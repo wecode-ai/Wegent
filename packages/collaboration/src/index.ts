@@ -48,3 +48,9 @@ export {
 export { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
 
 export { StandInIcon } from "./StandInIcon";
+
+export type {
+  Milestone,
+  MilestoneInput,
+  MilestonesApi,
+} from "./milestones/types";

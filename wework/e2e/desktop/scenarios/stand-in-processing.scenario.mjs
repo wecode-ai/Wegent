@@ -229,7 +229,7 @@ export function createDesktopScenario({
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-        await control.command('click', '[data-testid="stand-in-connections-open"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
         await control.command(
           'click',
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
@@ -260,7 +260,7 @@ export function createDesktopScenario({
         await verifyQueuedAssignmentReceipt(control, project.id)
         // Direct source routing is explicit; completion feedback still uses the silent window.
         await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-        await control.command('click', '[data-testid="stand-in-connections-open"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
         await control.command(
           'click',
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
@@ -333,6 +333,7 @@ export function createDesktopScenario({
             count => count > 0,
             uiTimeoutMs
           )
+          database.exec('BEGIN IMMEDIATE')
           dueAt = Date.now() + 1000
           const changed = database
             .prepare(
@@ -340,6 +341,7 @@ export function createDesktopScenario({
             )
             .run(new Date(dueAt - 5 * 60000).toISOString(), USER, taskId)
           assert.ok(changed.changes > 0, 'The real completed work must produce durable feedback')
+          database.exec('COMMIT')
         } finally {
           database.close()
         }

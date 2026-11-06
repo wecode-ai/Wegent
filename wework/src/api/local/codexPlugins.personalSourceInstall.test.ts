@@ -69,6 +69,8 @@ function fixture(
   mocks.request.mockImplementation(async (method: string, payload?: { method?: string }) => {
     if (method === options.pauseAt) await options.pause
     if (method === options.failRead) throw new Error(`Unavailable ${method}`)
+    if (method === 'executor.codex_home.config.read')
+      return { enabledPluginKeys: committed ? [membership.id] : [] }
     if (method === 'executor.plugins.personal.list')
       return { marketplaceId: 'wework-personal', marketplacePath: path, plugins: [source] }
     if (method === 'executor.plugins.links.list')
