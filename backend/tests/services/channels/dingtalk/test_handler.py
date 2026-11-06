@@ -707,3 +707,61 @@ async def test_rejected_runtime_continuation_leaves_previous_callback_untouched(
         == "上一条消息仍在执行，请等当前回答完成后再发送。"
     )
     emitter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rejected_runtime_continuation_falls_back_to_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import runtime_work_service
+
+    previous = DingTalkCallbackInfo(
+        channel_id=77,
+        conversation_id="conv-private",
+        card_instance_id="old-card",
+        incoming_message_data={"msgId": "old-message"},
+    )
+    service = _CallbackService(previous)
+    emitter = SimpleNamespace(
+        card_instance_id="new-card",
+        emit_error=AsyncMock(side_effect=RuntimeError("card delivery failed")),
+        close=AsyncMock(),
+    )
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    handler.get_callback_service = Mock(return_value=service)
+    handler._create_private_im_runtime_streaming_emitter = AsyncMock(
+        return_value=emitter
+    )
+    send = AsyncMock(
+        return_value=SimpleNamespace(
+            accepted=False,
+            error="runtime task is already running",
+        )
+    )
+    monkeypatch.setattr(runtime_work_service, "send_runtime_message", send)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "canonical_runtime_event_address",
+        Mock(side_effect=lambda db, *, user_id, address: address),
+    )
+
+    handled = await handler._execute_private_im_continue_runtime_task(
+        db=Mock(),
+        user=SimpleNamespace(id=9),
+        im_session=_runtime_session(),
+        message="继续",
+        message_context=_message_context(),
+        runtime_task={"deviceId": "device-a", "localTaskId": "task-a"},
+    )
+
+    assert handled is False
+    handler.send_text_reply.assert_awaited_once()
+    assert (
+        handler.send_text_reply.await_args.args[1]
+        == "上一条消息仍在执行，请等当前回答完成后再发送。"
+    )
+    assert service.saved == []
+    assert service.deleted == []
+    assert service.info is previous
+    emitter.close.assert_awaited_once()

@@ -1333,6 +1333,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 message_context=message_context,
                 error=error,
             )
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Failed to deliver rejected runtime card: %s",
+                self._channel_type.value,
+                callback_key,
+            )
+            await self.send_text_reply(message_context, error)
         finally:
             try:
                 if streaming_emitter and hasattr(streaming_emitter, "close"):
