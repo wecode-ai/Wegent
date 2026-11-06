@@ -730,6 +730,7 @@
     "use_existing_folder": "使用现有文件夹",
     "new_project_chat": "问AI",
     "project_space_chat": {
+      "open": "会话",
       "resize": "调整问AI宽度",
       "conversation": "历史会话",
       "new_conversation": "新建会话",
@@ -5465,7 +5466,6 @@
     "prompt_placeholder": "例如：先给出处理思路，完成后说明做了什么、验证了什么；遇到不确定的地方先问我。",
     "current_device": "当前设备",
     "device": "在哪里处理",
-    "select_device": "选择设备",
     "device_unavailable": "已选设备不可用，请重新选择",
     "offline": "离线",
     "cancel": "取消",
@@ -6055,6 +6055,20 @@
       "allow_description": "保存后，分身可在「{{name}}」已连接的范围内，按你设定的职责直接回复。邮箱仅限回复原邮件发件人，新收件人仍需确认。涉及不确定信息或承诺时先询问你。可随时打开此开关撤销持续授权。",
       "allow": "允许此范围内回复",
       "confirm_once": "本次确认后执行"
+    },
+    "local_profile": "本机 · 独立使用的分身",
+    "account_local_profile": "本机 · 当前账号的分身",
+    "migration": {
+      "offer": "云设备已可用，可将此分身的配置和记忆迁到云端。",
+      "local_available": "本机已有分身，配置和历史仍保留；你可以继续本地使用或迁移到云端。",
+      "view_local": "查看本机分身",
+      "action": "迁移到云端",
+      "keep_local": "继续本地使用",
+      "title": "迁移到「{{device}}」？",
+      "description": "迁移此分身的名称、指令、模型设置、标签及该分身和共享记忆，保留云端已有分身。本地档案、记忆和历史不删除；成功后暂停本地分身接收新工作。云端分身初始暂停，目录、项目/数据源连接、智能体和定时安排需在云端重新配置后启用。进行中的工作和会话不迁移。",
+      "changed": "本地配置已变化，尚未暂停本地分身。请核对两端配置后重试。",
+      "conflict": "云端已存在不同配置的迁移副本。请先核对或移除该副本，再重试；本地配置未被覆盖。",
+      "same_device": "请选择另一台云设备。"
     }
   },
   "workbench_error": {

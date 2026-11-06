@@ -1715,6 +1715,11 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         _operation: tokio::sync::OwnedMutexGuard<()>,
     ) {
+        // A native Goal can outlive the local request that admitted it. Its
+        // task keeps the reservation until native execution actually settles.
+        if self.native_task_holds_capacity(local_task_id) {
+            return;
+        }
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
                 .turn_scheduler

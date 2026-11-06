@@ -731,6 +731,7 @@
     "use_existing_folder": "Use existing folder",
     "new_project_chat": "Message AI",
     "project_space_chat": {
+      "open": "Chat",
       "resize": "Resize AI messages",
       "conversation": "Conversations",
       "new_conversation": "New conversation",
@@ -5470,7 +5471,6 @@
     "prompt_placeholder": "For example: Start with a plan, then explain what changed and how it was verified. Ask me when unsure.",
     "current_device": "Current device",
     "device": "Where to work",
-    "select_device": "Select a device",
     "device_unavailable": "Selected device unavailable; select again",
     "offline": "Offline",
     "cancel": "Cancel",
@@ -6060,6 +6060,20 @@
       "allow_description": "After saving, the stand-in may reply within the connected scope “{{name}}” under your configured responsibilities. Email automation is limited to replies to the original sender; new recipients still require confirmation. Uncertain facts and commitments require your input. Turn this switch on at any time to revoke this permission.",
       "allow": "Allow replies in this scope",
       "confirm_once": "Run with confirmation this time"
+    },
+    "local_profile": "This device · Standalone stand-ins",
+    "account_local_profile": "This device · Current account's stand-ins",
+    "migration": {
+      "offer": "A cloud device is available. Move this stand-in’s settings and memories to the cloud.",
+      "local_available": "Your local stand-ins, settings and history are retained. Keep working locally or migrate to a cloud device.",
+      "view_local": "View local stand-ins",
+      "action": "Migrate to cloud",
+      "keep_local": "Keep using locally",
+      "title": "Migrate to “{{device}}”?",
+      "description": "Transfer this stand-in’s name, instructions, model settings, tags and its role and shared memories without replacing existing cloud stand-ins. Keep local profiles, memories and history; pause local intake only after success. The cloud copy starts paused. Reconfigure its directory, project/data-source connections, agent and schedules before enabling it. Active work and conversations stay on their original device.",
+      "changed": "Local settings changed; local intake has not been paused. Review both profiles before retrying.",
+      "conflict": "A migrated cloud copy has different settings. Review or remove that copy before retrying. Local settings were not overwritten.",
+      "same_device": "Choose a different cloud device."
     }
   },
   "workbench_error": {

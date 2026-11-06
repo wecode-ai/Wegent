@@ -243,7 +243,7 @@ function CollaborationPlatformNavigation({
     workspaceId: string,
     mode: "blank" | "folder" | "existing",
   ): void;
-  onNewConversation(projectId: string): void;
+  onNewConversation(project: CollaborationProject): void;
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
 }) {
@@ -791,7 +791,7 @@ function CollaborationPlatformNavigation({
                               className="collaboration-project-new-conversation"
                               aria-label={`${messages.newConversation} · ${project.name}`}
                               data-testid={`collaboration-project-new-conversation-${project.id}`}
-                              onClick={() => onNewConversation(project.id)}
+                              onClick={() => onNewConversation(project)}
                             >
                               <SquarePen aria-hidden="true" />
                             </button>
@@ -1449,12 +1449,7 @@ function IssueHomeLauncher({
       projects={projects}
       workspaces={workspaces}
       projectId={selectedProjectId}
-      onSelectProject={(id) => {
-        setMembers([]);
-        setAgents([]);
-        setMentionIssues([]);
-        onSelectProject(id);
-      }}
+      onSelectProject={onSelectProject}
       translate={translate}
       placeholder={messages.issueHomePlaceholder}
       projectLabel={messages.issueHomeProject}
@@ -3156,7 +3151,22 @@ function CollaborationPlatformAppContent({
       }}
       onCreateProject={openWorkspaceProjectCreator}
       onArchiveProject={setArchiveProject}
-      onNewConversation={(projectId) => {
+      onNewConversation={(project) => {
+        if (host.openProjectConversation) {
+          host.navigate({
+            platformView: "spaces",
+            collaborationDomain:
+              project.project_store === "local" ? "local" : "cloud",
+            workspaceId: project.workspace_id ?? null,
+            workspaceView: "projects",
+            projectId: project.id,
+            projectView: "board",
+            issueId: null,
+          });
+          host.openProjectConversation(project);
+          return;
+        }
+        const projectId = project.id;
         setRootIssueProjectId(projectId);
         host.navigate({
           platformView: "spaces",

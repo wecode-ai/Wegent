@@ -41,6 +41,8 @@ const ASSIGNMENT_EVENT_TYPE: &str = "assignment";
 /// One `IssueAssignmentResponse` row.
 #[derive(Debug, Serialize)]
 pub(super) struct IssueAssignmentResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    automation: Option<serde_json::Value>,
     pub(super) id: String,
     issue_id: String,
     pub(super) target_type: String,
@@ -412,6 +414,7 @@ async fn assignment_response(
             .map(|user| user.user_name)
     };
     Ok(IssueAssignmentResponse {
+        automation: metadata.automation.clone(),
         id: comment.id.clone(),
         issue_id: comment.loop_item_id.clone().unwrap_or_default(),
         target_type: metadata.target_type.clone().unwrap_or_default(),
@@ -598,7 +601,8 @@ mod tests {
     fn serializes_the_assignment_shape() {
         let comments = vec![assign("101", "human", "7", "")];
         let event = active_events(&comments);
-        let row = IssueAssignmentResponse {
+        let mut row = IssueAssignmentResponse {
+            automation: None,
             id: event[0].comment.id.clone(),
             issue_id: "EXAMPLE-5".to_string(),
             target_type: event[0].metadata.target_type.clone().unwrap_or_default(),
@@ -616,7 +620,7 @@ mod tests {
             human_read_at: None,
             stand_in_received_at: None,
         };
-        let value = crate::json_contract_tests::serialized(row).unwrap();
+        let value = crate::json_contract_tests::serialized(&row).unwrap();
         assert_eq!(
             value,
             serde_json::json!({
@@ -638,5 +642,12 @@ mod tests {
                 "stand_in_received_at": null,
             })
         );
+        let automation = serde_json::json!({
+            "rule_id": "rule-1", "rule_name": "Review new Issues", "run_id": "run-1"
+        });
+        row.automation = Some(automation.clone());
+        let automated = crate::json_contract_tests::serialized(row).unwrap();
+        assert_eq!(automated["automation"], automation);
+        assert_eq!(automated["created_by_user_id"], 7);
     }
 }

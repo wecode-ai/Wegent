@@ -72,6 +72,49 @@ struct LeaseRedis {
     script_loaded: Mutex<bool>,
 }
 
+#[tokio::test]
+async fn cancelling_auto_update_response_keeps_transaction_and_unlock_owned() {
+    let redis = std::sync::Arc::new(LeaseRedis::default());
+    let operation_redis = redis.clone();
+    let (entered, entered_rx) = tokio::sync::oneshot::channel();
+    let (finish, finish_rx) = tokio::sync::oneshot::channel();
+    let (released, released_rx) = tokio::sync::oneshot::channel();
+    let response = tokio::spawn(async move {
+        super::super::auto_update::complete_auto_update(async move {
+            let lease = PluginWriteLease::acquire(Some(operation_redis.as_ref()), 23).await?;
+            entered.send(()).unwrap();
+            finish_rx.await.unwrap();
+            lease.release().await;
+            released.send(()).unwrap();
+            Ok(())
+        })
+        .await
+    });
+    entered_rx.await.unwrap();
+    response.abort();
+    assert!(response.await.unwrap_err().is_cancelled());
+    assert!(
+        redis
+            .owners
+            .lock()
+            .unwrap()
+            .contains_key("wegent:plugin-write:23")
+    );
+    finish
+        .send(())
+        .expect("response cancellation must retain the in-flight transaction");
+    tokio::time::timeout(Duration::from_secs(1), released_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(redis.owners.lock().unwrap().is_empty());
+    PluginWriteLease::acquire(Some(redis.as_ref()), 23)
+        .await
+        .unwrap()
+        .release()
+        .await;
+}
+
 impl LeaseRedis {
     fn run<T: FromRedisValue>(&self, command: Cmd) -> RedisResult<T> {
         if self.fail {
