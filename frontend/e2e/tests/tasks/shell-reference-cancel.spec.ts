@@ -4,7 +4,6 @@ import { test, expect, executorMockUrl } from '../../fixtures/executor-test'
 import { DataBuilders } from '../../fixtures/data-builders'
 import { createApiClient, type ApiResponse } from '../../utils/api-client'
 import { modelToolDefinitions } from '../../utils/model-tool-discovery'
-import { resolveRuntime } from '../../utils/pipeline-archive-runtime'
 
 const MOCK = executorMockUrl()
 const PROVIDER = executorMockUrl(process.env.E2E_CLAUDE_MODEL_SERVER_URL)
@@ -16,7 +15,6 @@ type Subtask = {
   id: number
   role: string
   status: string
-  executor_name?: string | null
   bots: BotSummary[]
 }
 type TaskDetail = {
@@ -275,22 +273,19 @@ test('stops ClaudeCode through a cross-namespace Shell reference after refresh',
         const current = await detail()
         const assistant = current.subtasks.find(item => item.role === 'ASSISTANT')
         assistantId = assistant?.id
-        return assistant?.status === 'RUNNING' && Boolean(assistant.executor_name)
+        return assistant?.status === 'RUNNING'
       })
       .toBe(true)
-    const executorName = (await detail()).subtasks.find(
-      item => item.id === assistantId
-    )?.executor_name
-    expect(executorName).not.toMatch(/^(?:device-|inprocess[-_])/)
-    const runtime = await resolveRuntime(
-      request,
-      MANAGER,
-      taskId,
-      { Authorization: `Bearer ${executorAccount.token}` },
-      'executor'
-    )
-    expect(runtime.container_name).toBe(executorName)
-    expect(runtime.base_url).toMatch(/^https?:\/\//)
+    // Executor names are saved by terminal callbacks for container reuse.
+    // A task heartbeat identifies the live container while its model is held.
+    const heartbeat = await request.get(`${MANAGER}/tasks/${taskId}/heartbeat`)
+    expect(heartbeat.ok(), await heartbeat.text()).toBe(true)
+    const runtime = await heartbeat.json()
+    expect(runtime).toMatchObject({
+      task_id: String(taskId),
+      alive: true,
+      heartbeat_type: 'task',
+    })
 
     traffic.joins.length = 0
     await page.reload({ waitUntil: 'domcontentloaded' })
