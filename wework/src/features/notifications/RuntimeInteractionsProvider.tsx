@@ -45,7 +45,9 @@ import { replyToInteractionProject } from './interactionProjectReply'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
+import { logInteractionLoadFailure } from './interactionDiagnostics'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
   archiveInteraction,
   readInteractionDrafts,
@@ -152,6 +154,7 @@ function RuntimeInteractionsState({
   const successfulReads = useRef(new Map<string, { signature: string; readAt: number }>())
   const successfulReadApi = useRef(source?.services?.runtimeWorkApi)
   const fetching = useRef(false)
+  const reportedOfflineDevices = useRef(new Set<string>())
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
@@ -266,39 +269,73 @@ function RuntimeInteractionsState({
         const retained = inventoryRef.current.filter(
           item => !discovered.refreshedDevices.has(item.address.deviceId)
         )
+        const archivedKeys = new Set(
+          current.items
+            .filter(
+              item => item.task.status === 'archived' || isRuntimeConversationArchived(item.address)
+            )
+            .map(item => item.key)
+        )
+        const currentItems = current.items.filter(item => !archivedKeys.has(item.key))
         const nextInventory = [
           ...new Map([...retained, ...discovered.items].map(item => [item.key, item])).values(),
-        ]
+        ].filter(
+          item =>
+            item.task.status !== 'archived' &&
+            !archivedKeys.has(item.key) &&
+            !isRuntimeConversationArchived(item.address)
+        )
         setInventory(nextInventory)
+        const failedInventoryDevices = [...discovered.failedDevices].filter(
+          deviceId =>
+            discovered.failedRequests.has(deviceId) ||
+            nextInventory.some(item => item.address.deviceId === deviceId) ||
+            currentItems.some(
+              item => item.address.deviceId === deviceId && item.task.interactionStatus
+            ) ||
+            deviceId === ''
+        )
+        const offlineDevices = new Set(
+          failedInventoryDevices.filter(deviceId =>
+            current.devices?.some(
+              device => device.device_id === deviceId && device.status === 'offline'
+            )
+          )
+        )
+        for (const deviceId of offlineDevices) {
+          if (!reportedOfflineDevices.current.has(deviceId))
+            logInteractionLoadFailure('inventory', 'Device is marked offline', { deviceId })
+        }
+        reportedOfflineDevices.current = offlineDevices
+        // Current sources own membership; cached questions must not resurrect archived tasks.
+        const candidates = new Map(
+          [...currentItems, ...nextInventory].map(item => [item.key, item])
+        )
+        const removedErrorKeys = new Set<string>()
+        for (const [key, requests] of Object.entries(loadedRef.current)) {
+          if (candidates.has(key)) continue
+          removedErrorKeys.add(key)
+          for (const request of requests) removedErrorKeys.add(request.id)
+          successfulReads.current.delete(key)
+        }
+        setLoaded(value =>
+          Object.fromEntries(Object.entries(value).filter(([key]) => candidates.has(key)))
+        )
         setErrors(value => {
           const next = Object.fromEntries(
-            Object.entries(value).filter(([key]) => !key.startsWith('inventory:'))
-          )
-          for (const deviceId of discovered.failedDevices) {
-            if (
-              inventoryRef.current.some(item => item.address.deviceId === deviceId) ||
-              current.items.some(
-                item => item.address.deviceId === deviceId && item.task.interactionStatus
-              ) ||
-              deviceId === ''
+            Object.entries(value).filter(
+              ([key]) => !key.startsWith('inventory:') && !removedErrorKeys.has(key)
             )
-              next[`inventory:${deviceId}`] = t('interactions.load_failed')
+          )
+          for (const deviceId of failedInventoryDevices) {
+            next[`inventory:${deviceId}`] = t('interactions.load_failed')
           }
           return next
         })
-        const candidates = new Map(
-          [
-            ...Object.values(loadedRef.current)
-              .flat()
-              .filter(item => !item.answered)
-              .map(item => item.task),
-            ...current.items,
-            ...nextInventory,
-          ].map(item => [item.key, item])
-        )
         // Discovery owns persisted pending state; live sources supply turn identity.
-        for (const item of current.items) {
-          const candidate = candidates.get(item.key)!
+        for (const item of currentItems) {
+          const candidate = candidates.get(item.key)
+          if (!candidate) continue
           if (item.lifecycle) candidates.set(item.key, { ...candidate, lifecycle: item.lifecycle })
         }
         const items = [...candidates.values()].filter(
@@ -338,6 +375,7 @@ function RuntimeInteractionsState({
                 Date.now() - previousRead.readAt < 30_000
               )
                 continue
+              let operation: 'transcript' | 'archive' = 'transcript'
               try {
                 stage = `transcript:${item.address.taskId}`
                 const requests = await readRuntimeInteractions(item, api)
@@ -353,6 +391,7 @@ function RuntimeInteractionsState({
                   return next
                 })
                 for (const answered of requests.filter(request => request.answered)) {
+                  operation = 'archive'
                   stage = `archive:${answered.requestKey}`
                   await archive(answered)
                   localStorage.removeItem(acceptancePrefix + answered.id)
@@ -360,9 +399,9 @@ function RuntimeInteractionsState({
               } catch (error) {
                 successfulReads.current.delete(item.key)
                 if (!mounted.current) return
-                console.error('[Wework] Could not read pending interaction', {
+                logInteractionLoadFailure(operation, error, {
+                  deviceId: item.address.deviceId,
                   taskId: item.address.taskId,
-                  error,
                 })
                 setErrors(value => ({ ...value, [item.key]: t('interactions.load_failed') }))
                 if (item.lifecycle?.interactionStatus ?? item.task.interactionStatus) {
@@ -400,6 +439,7 @@ function RuntimeInteractionsState({
   const signature = JSON.stringify(
     source?.items.map(item => [
       item.key,
+      item.task.status,
       item.lifecycle?.interactionStatus,
       item.task.interactionStatus,
       item.task.updatedAt,

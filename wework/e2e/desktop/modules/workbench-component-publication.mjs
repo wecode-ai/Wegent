@@ -24,7 +24,31 @@ export async function verifyWindowsComponentPublication({ resources, environment
     `
 param([string]$Path, [int]$ReleaseAfterMs = 0)
 $ErrorActionPreference = 'Stop'
-$handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+$prefix = '{0}{0}?{0}' -f [char]92
+$nativePath = if ($Path.StartsWith($prefix)) { $Path } else { $prefix + $Path }
+if ([System.IO.Directory]::Exists($nativePath)) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class NativeDirectoryHolder {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern SafeFileHandle CreateFile(string path, uint access,
+    uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+}
+'@
+  # Lock the directory being renamed; a child file handle does not fence its parent.
+  $handle = [NativeDirectoryHolder]::CreateFile(
+    $nativePath, [uint32]2147483648, 3, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero
+  )
+  if ($handle.IsInvalid) {
+    throw [System.ComponentModel.Win32Exception]::new(
+      [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    )
+  }
+} else {
+  $handle = [System.IO.File]::Open($nativePath, 'Open', 'Read', 'ReadWrite')
+}
 try {
   [Console]::Out.WriteLine('held')
   [Console]::Out.Flush()
@@ -49,8 +73,8 @@ const input = JSON.parse(process.argv[2])
 const { waitForNativeFileHolder } = await import(pathToFileURL(input.holderHelper).href)
 const occupiedPublicationEntry = ${occupiedPublicationEntry.toString()}
 app.setPath('userData', join(input.root, 'electron'))
-const runtimeRoot = join(input.root, 'runtimes')
 const originalSymlink = fs.symlink
+const runtimeRoot = join(input.root, 'runtimes')
 let child
 let closed
 let occupiedPublications = 0
@@ -58,17 +82,22 @@ async function holdFile(file, releaseAfterMs = 0) {
   child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', input.holder,
     '-Path', file, '-ReleaseAfterMs', String(releaseAfterMs)],
     { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+  let stderr = ''
+  child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(-8000) })
   closed = new Promise((accept, reject) => {
     child.once('error', reject)
-    child.once('close', code => code === 0 ? accept(code) : reject(new Error('Native holder failed')))
+    child.once('close', code => code === 0 ? accept(code) :
+      reject(new Error('Native holder failed (' + code + '): ' + stderr)))
   })
+  // Publication workers can fail before anyone awaits the eventual close receipt.
+  closed.catch(() => {})
   await waitForNativeFileHolder(child)
 }
 fs.symlink = async (source, target, type) => {
   const file = occupiedPublicationEntry(input.root, source, target)
   if (file) {
     assert.equal((await fs.stat(join(source, file))).isFile(), true)
-    await holdFile(join(source, file))
+    await holdFile(source)
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
     await originalSymlink(source, target, type)
