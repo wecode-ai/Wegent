@@ -4089,7 +4089,11 @@ class DesktopE2EServer {
             : this.asyncRequestUserInputKeepsRunningRelease)
           this.writeSse(response, [
             responseCreated(responseId),
-            assistantMessage(REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT),
+            assistantMessage(
+              answered
+                ? REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT
+                : REQUEST_USER_INPUT_ASYNC_WAITING_TEXT
+            ),
             responseCompleted(responseId),
           ])
           return
