@@ -70,22 +70,29 @@ async function verifyAssociationDialogLayout(control, existingItem) {
   }
 }
 
-async function waitForBinding(control, projectId, itemId) {
+export async function waitForBinding(control, projectId, itemId) {
   const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
   let binding
+  let lastError
   while (Date.now() < deadline) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     const task = snapshot.workbench?.currentRuntimeTask ?? snapshot.pane?.currentRuntimeTask
     if (task) {
-      binding = await requestExecutor(
-        control,
-        'runtime_tasks.context',
-        {
-          device_id: task.deviceId,
-          task_id: task.taskId,
-        },
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      try {
+        binding = await requestExecutor(
+          control,
+          'runtime_tasks.context',
+          {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          },
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      } catch (error) {
+        // The renderer exposes the new task before the Runtime persists its link.
+        lastError = error
+        binding = undefined
+      }
       if (
         binding?.cloud_project_id === projectId &&
         binding.loop_item_id &&
@@ -95,7 +102,10 @@ async function waitForBinding(control, projectId, itemId) {
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  assert.fail(`First message did not persist the draft binding: ${JSON.stringify(binding)}`)
+  assert.fail(
+    `First message did not persist the draft binding: ${JSON.stringify(binding)}` +
+      (lastError ? ` (last error: ${lastError.message})` : '')
+  )
 }
 
 async function verifyDraft(control, project, existingItem) {
