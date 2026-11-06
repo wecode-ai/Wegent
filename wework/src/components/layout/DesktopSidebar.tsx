@@ -1,3 +1,4 @@
+import { BetaBadge } from '@/components/common/BetaBadge'
 import {
   Archive,
   AlarmClock,
@@ -2850,7 +2851,7 @@ function ProjectItem({
                           )
                         }
                         aria-controls={`project-local-tasks-panel-${project.id}`}
-                        className="flex h-[30px] items-center rounded-md px-2 text-left text-base font-normal leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                        className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.expand_display', '展开显示')}
                       </button>
@@ -2863,7 +2864,7 @@ function ProjectItem({
                           setRuntimeTaskVisibleLimit(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT)
                         }
                         aria-controls={`project-local-tasks-panel-${project.id}`}
-                        className="flex h-[30px] items-center rounded-md px-2 text-left text-base font-normal leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                        className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.collapse_display', '折叠显示')}
                       </button>
@@ -2923,6 +2924,7 @@ function ProjectItem({
   )
 }
 
+/** Presents workbench destinations and device-owned task lists without gating public Beta entries. */
 export function DesktopSidebar({
   user,
   projects,
@@ -4023,7 +4025,7 @@ export function DesktopSidebar({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover h-full shrink-0 overflow-visible font-normal transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
+        'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
         !collapsed && 'border-r border-black/[0.08] dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
@@ -4118,11 +4120,12 @@ export function DesktopSidebar({
               testId="new-chat-button"
               onClick={onNewChat}
             />
-            {experimentalFeaturesEnabled && onOpenStandIn && (
+            {onOpenStandIn && (
               <DesktopSidebarNavItem
                 icon={UserRound}
                 label={t('standIn.title')}
                 testId="personal-stand-in-button"
+                badge={<BetaBadge testId="personal-stand-in-beta" />}
                 selected={activeItem === 'stand-in'}
                 onClick={onOpenStandIn}
               />

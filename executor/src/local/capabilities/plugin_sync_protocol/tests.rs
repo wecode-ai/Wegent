@@ -6,6 +6,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::*;
 
+#[path = "concurrency_tests.rs"]
+mod concurrency_tests;
+#[path = "differential_tests.rs"]
+mod differential_tests;
 #[path = "scope_tests.rs"]
 mod scope_tests;
 

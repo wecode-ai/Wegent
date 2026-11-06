@@ -28,7 +28,11 @@ import {
   storeDirMatchesPluginKey,
 } from '../installedPluginMerge'
 import { isLocalMarketplaceItem, mergeMarketplaceCatalog } from '../marketplaceCatalogMerge'
-import { marketplaceItemMarketplaceId } from '../pluginDistribution'
+import {
+  installedPluginMarketplaceId,
+  marketplaceItemMarketplaceId,
+  normalizedMarketplaceId,
+} from '../pluginDistribution'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import { sharedRecipientMetaItems } from '../pluginManagementSubtitle'
 
@@ -234,43 +238,6 @@ export function withMarketplacePluginDetail(
   }
 }
 
-export function pluginDetailHasVisibleComponents(plugin: InstalledPluginItem): boolean {
-  const components = plugin.raw.spec.components
-  return (
-    components.skills.length > 0 ||
-    components.commands.length > 0 ||
-    (components.apps?.length ?? 0) > 0 ||
-    components.agents.length > 0 ||
-    components.mcps.length > 0 ||
-    components.hooks.length > 0 ||
-    (components.connectors?.length ?? 0) > 0
-  )
-}
-
-export function keepRicherMarketplacePluginDetail(
-  previous: InstalledPluginItem | null,
-  next: InstalledPluginItem
-): InstalledPluginItem {
-  if (
-    previous &&
-    previous.raw.spec.source.pluginKey === next.raw.spec.source.pluginKey &&
-    pluginDetailHasVisibleComponents(previous) &&
-    !pluginDetailHasVisibleComponents(next)
-  ) {
-    return {
-      ...next,
-      raw: {
-        ...next.raw,
-        spec: {
-          ...next.raw.spec,
-          components: previous.raw.spec.components,
-        },
-      },
-    }
-  }
-  return next
-}
-
 export function createDefaultPluginApi(apiBaseUrl?: string, token?: string | null) {
   const runtime = getRuntimeConfig()
   const resolvedApiBaseUrl = apiBaseUrl || runtime.apiBaseUrl
@@ -371,38 +338,35 @@ export function findInstalledPluginForMarketplaceItem(
     )
     if (byInstalledId) return byInstalledId
   }
-  const marketplaceId = marketplaceItemMarketplaceId(item)
+  // A known cloud identity must never be replaced by a name or directory match.
+  const cloudId = (plugin: InstalledPluginItem) =>
+    plugin.raw.spec.pluginId ?? linkedCloudPluginId(plugin.raw)
+  const byCloudId = plugins.filter(plugin => {
+    const id = cloudId(plugin)
+    return id != null && String(id) === String(item.id)
+  })
+  if (byCloudId.length) return byCloudId.length === 1 ? byCloudId[0] : null
+  const candidates = plugins.filter(plugin => cloudId(plugin) == null)
+  const marketplaceId = normalizedMarketplaceId(marketplaceItemMarketplaceId(item))
   const pluginKey = item.name.trim().toLowerCase()
   if (!pluginKey) return null
-  const byIdentity =
-    plugins.find(plugin => {
-      const rawKey = plugin.raw.spec.source.pluginKey.trim().toLowerCase()
-      if (rawKey !== pluginKey) return false
-      if (!marketplaceId) return true
-      const payload = plugin.raw.spec.sourcePayload
-      const payloadMarketplace =
-        payload && typeof payload === 'object'
-          ? (payload as Record<string, unknown>).marketplaceName
-          : null
-      const candidates = [
-        payloadMarketplace,
-        plugin.raw.spec.source.marketplace,
-        plugin.raw.spec.source.providerKey,
-        plugin.raw.metadata.namespace,
-      ]
-      return candidates.some(
-        candidate => typeof candidate === 'string' && candidate.trim() === marketplaceId
+  const scoped = marketplaceId
+    ? candidates.filter(
+        plugin =>
+          normalizedMarketplaceId(installedPluginMarketplaceId(plugin.raw)) === marketplaceId
       )
-    }) ?? null
-  if (byIdentity) return byIdentity
-  return (
-    plugins.find(
-      plugin =>
-        storeDirMatchesPluginKey(String(plugin.id), item.name) ||
-        storeDirMatchesPluginKey(String(plugin.raw.metadata.name || ''), item.name) ||
-        storeDirMatchesPluginKey(String(plugin.raw.spec.source.pluginKey || ''), item.name)
-    ) ?? null
+    : candidates
+  const byIdentity = scoped.filter(
+    plugin => plugin.raw.spec.source.pluginKey.trim().toLowerCase() === pluginKey
   )
+  if (byIdentity.length) return byIdentity.length === 1 ? byIdentity[0] : null
+  const byDirectory = scoped.filter(
+    plugin =>
+      storeDirMatchesPluginKey(String(plugin.id), item.name) ||
+      storeDirMatchesPluginKey(String(plugin.raw.metadata.name || ''), item.name) ||
+      storeDirMatchesPluginKey(String(plugin.raw.spec.source.pluginKey || ''), item.name)
+  )
+  return byDirectory.length === 1 ? byDirectory[0] : null
 }
 
 export function resolveMarketplaceUninstallId(
@@ -425,6 +389,16 @@ export function resolveMarketplaceUninstallId(
     return `${item.name}@${item.manifest.marketplaceId}`
   }
   return item.id
+}
+
+export function isMarketplaceUninstallPending(
+  item: PluginMarketplaceItem,
+  plugins: InstalledPluginItem[],
+  uninstallingIds: ReadonlySet<string>
+): boolean {
+  // Only the local operation belongs here. Device receipts are interpreted by
+  // the row separately, so a previous removal cannot override a new install.
+  return uninstallingIds.has(String(resolveMarketplaceUninstallId(item, plugins)))
 }
 
 export function localMarketplaceKey(id: string): string {

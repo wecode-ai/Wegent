@@ -426,5 +426,5 @@ export function ToolBlocksDisplay({
       ) : null}
     </>
   )
-  return <div className="mb-3 min-w-0 w-full font-normal">{processingBody}</div>
+  return <div className="mb-3 min-w-0 w-full">{processingBody}</div>
 }

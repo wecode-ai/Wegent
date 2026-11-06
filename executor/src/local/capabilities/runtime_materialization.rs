@@ -3,34 +3,21 @@
 
 use super::*;
 
+#[path = "runtime_template.rs"]
+mod template;
+use template::RuntimeTemplate;
+
 impl GlobalCapabilityStore {
-    pub(super) fn unchanged_plugin_runtime_paths(
+    pub(in crate::local::capabilities) fn unchanged_plugin_runtime_paths(
         &self,
         spec: &PluginSyncSpec,
         source: &Path,
     ) -> Result<BTreeSet<PathBuf>, CapabilitySyncError> {
-        let stage = tempfile::tempdir()?;
-        let template = stage.path().join("runtime");
-        copy_dir_atomic(source, &template)?;
-        ensure_dual_plugin_manifests(&template)?;
-        ensure_plugin_hook_permissions(&template)?;
-        let modes = tree_fingerprint(&template)?
-            .into_keys()
-            .map(|path| Ok((path.clone(), file_mode(&fs::metadata(template.join(path))?))))
-            .collect::<Result<BTreeMap<_, _>, CapabilitySyncError>>()?;
-        let reusable = |path: &Path| {
-            // Ownership was validated before this probe. Unreadable or symlinked
-            // contents still follow the existing whole-directory repair path.
-            same_runtime_contents(path, &template).unwrap_or(false)
-                && modes.iter().all(|(relative, expected)| {
-                    fs::symlink_metadata(path.join(relative))
-                        .is_ok_and(|metadata| file_mode(&metadata) == *expected)
-                })
-        };
         let mut reused = BTreeSet::new();
+        let mut candidates = BTreeSet::new();
         for (runtime, field) in self.plugin_runtime_targets(spec) {
-            if reusable(&runtime) {
-                reused.insert(runtime.clone());
+            if runtime.is_dir() && !runtime.is_symlink() {
+                candidates.insert(runtime.clone());
             }
             let claude = field == "claude_link";
             let market = if claude {
@@ -42,10 +29,19 @@ impl GlobalCapabilityStore {
                 .join("plugins")
                 .join(self.marketplace_plugin_name(spec, claude));
             self.ensure_state_path(&link, true)?;
-            if fs::read_link(&link).is_ok_and(|target| target == runtime) || reusable(&link) {
+            if fs::read_link(&link).is_ok_and(|target| target == runtime) {
                 reused.insert(link);
+            } else if link.is_dir() && !link.is_symlink() {
+                candidates.insert(link);
             }
         }
+        if candidates.is_empty() {
+            return Ok(reused);
+        }
+        let template = RuntimeTemplate::read(source)?;
+        // Ownership was validated before this probe. Unreadable or symlinked
+        // contents still follow the existing whole-directory repair path.
+        reused.extend(template.matching_paths(&candidates)?);
         Ok(reused)
     }
 }
@@ -81,6 +77,8 @@ pub(super) fn tree_fingerprint(
                 visit(root, &child?.path(), result)?;
             }
         } else if metadata.is_file() {
+            #[cfg(test)]
+            tests::record_hash(path);
             result.insert(
                 path.strip_prefix(root).unwrap().to_owned(),
                 sha256_digest(&fs::read(path)?),
@@ -129,12 +127,16 @@ pub(super) fn same_fingerprints(
     mut left: BTreeMap<PathBuf, String>,
     right: &BTreeMap<PathBuf, String>,
 ) -> bool {
-    left.retain(|path, _| {
-        !(path
-            .components()
-            .any(|component| component.as_os_str() == "__pycache__")
-            && path.extension().is_some_and(|extension| extension == "pyc")
-            && !right.contains_key(path))
-    });
+    left.retain(|path, _| !is_runtime_bytecode(path) || right.contains_key(path));
     left == *right
 }
+
+fn is_runtime_bytecode(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "__pycache__")
+        && path.extension().is_some_and(|extension| extension == "pyc")
+}
+
+#[cfg(test)]
+#[path = "runtime_materialization_tests.rs"]
+mod tests;

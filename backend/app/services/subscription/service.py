@@ -430,14 +430,6 @@ class SubscriptionService:
             if not s.json.get("_internal", {}).get("is_rental", False)
         ]
 
-        # Filter by enabled status if specified
-        if enabled is not None:
-            subscriptions = [
-                s
-                for s in subscriptions
-                if s.json.get("_internal", {}).get("enabled", True) == enabled
-            ]
-
         # Filter by trigger_type if specified
         if trigger_type is not None:
             subscriptions = [
@@ -471,6 +463,15 @@ class SubscriptionService:
 
         if expired_updated:
             db.commit()
+
+        # Filter by enabled status after expiration updates so totals and pages
+        # reflect the subscriptions' current state.
+        if enabled is not None:
+            subscriptions = [
+                s
+                for s in subscriptions
+                if s.json.get("_internal", {}).get("enabled", True) == enabled
+            ]
 
         total = len(subscriptions)
         subscriptions = subscriptions[skip : skip + limit]

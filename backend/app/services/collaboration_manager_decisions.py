@@ -60,10 +60,6 @@ def _require_manager_dispatch(
             LoopItemExecution.loop_item_id == item.id,
             LoopItemExecution.cloud_project_id == str(project_id),
         )
-        # Use the current version and retain the lock through the status decision;
-        # device reconciliation may have advanced an earlier snapshot.
-        .populate_existing()
-        .with_for_update()
         .all()
     )
     dispatch = next(
@@ -81,6 +77,16 @@ def _require_manager_dispatch(
             status.HTTP_409_CONFLICT,
             "Collaboration dispatch is unavailable",
         )
+    # Snapshot reconciliation can advance the execution version independently.
+    # Lock and refresh the aggregate before authorizing and completing it, so
+    # the Issue decision cannot commit after losing its terminal transition.
+    dispatch = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.id == dispatch.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
     if "project_coordination" in dispatch.runtime_origin_context:
         from app.services.collaboration_revocation import execution_authorized
 

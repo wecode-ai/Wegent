@@ -28,6 +28,61 @@ from app.services.project_incoming_hooks import project_incoming_hook_service
 from tests.services.test_loop_item_assignment import _collaboration_group, _make_project
 
 
+def test_manager_decision_refreshes_dispatch_before_terminal_transition(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer snapshot must not leave an approved dispatch active."""
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", lambda *args: None)
+    project = _make_project(test_db, test_user)
+    group, manager, _ = _collaboration_group(test_db, project, test_user)
+    with patch(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        return_value=[group],
+    ):
+        issue = loop_item_service.create(
+            test_db,
+            project.id,
+            test_user.id,
+            LoopItemCreate(
+                title="Snapshot races manager", assignee_group_id=str(group["id"])
+            ),
+        )
+    dispatch = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .one()
+    )
+    dispatch_id = dispatch.runtime_origin_context["dispatch_id"]
+    dispatch.status = "claimed"
+    dispatch.runtime_device_id = manager.device_id
+    dispatch.runtime_task_id = "snapshot-race-root"
+    test_db.flush()
+    version = dispatch.version
+    # Model a snapshot committed after this Session cached the dispatch.
+    test_db.query(LoopItemExecution).filter(LoopItemExecution.id == dispatch.id).update(
+        {"version": version + 1}, synchronize_session=False
+    )
+    assert dispatch.version == version
+    result = apply_collaboration_manager_decision(
+        test_db,
+        project_id=project.id,
+        item_id=issue.id,
+        user_id=test_user.id,
+        dispatch_id=dispatch_id,
+        manager_agent_id=manager.id,
+        idempotency_key="snapshot-race",
+        target_status="in_review",
+        reason="Manager explicitly finished",
+        comment="Ready for review",
+    )
+    test_db.refresh(dispatch)
+    assert dispatch.status == "completed"
+    assert dispatch.version == version + 2
+    assert dispatch.termination_reason == "manager_status_decision"
+    assert result.item.status == "in_review"
+    assert result.comment is not None
+
+
 def _complete_group_conversation(
     db: Session, root: LoopItemExecution, agent, role: str
 ) -> None:
@@ -106,14 +161,8 @@ def _complete_group_conversation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("origin", "other_rule", "stale_dispatch"),
-    [
-        ("automation", False, False),
-        ("automation", True, False),
-        ("manager", False, False),
-        ("manager", False, True),
-        ("human", False, False),
-    ],
+    ("origin", "other_rule"),
+    [("automation", False), ("automation", True), ("manager", False), ("human", False)],
 )
 async def test_manager_status_event_preserves_only_its_actual_dispatch_cause(
     test_db: Session,
@@ -121,7 +170,6 @@ async def test_manager_status_event_preserves_only_its_actual_dispatch_cause(
     monkeypatch: pytest.MonkeyPatch,
     origin: str,
     other_rule: bool,
-    stale_dispatch: bool,
 ) -> None:
     monkeypatch.setattr("app.core.async_utils.schedule_async_task", lambda *args: None)
     monkeypatch.setattr(
@@ -225,15 +273,6 @@ async def test_manager_status_event_preserves_only_its_actual_dispatch_cause(
             LoopItemUpdate(version=issue.version, status="in_review"),
         )
     else:
-        if stale_dispatch:
-            # A device reconciliation can advance the version after this
-            # Session has already loaded the dispatch into its identity map.
-            version = group_dispatch.version
-            test_db.query(LoopItemExecution).filter_by(id=group_dispatch.id).update(
-                {LoopItemExecution.version: LoopItemExecution.version + 1},
-                synchronize_session=False,
-            )
-            assert group_dispatch.version == version
         apply_collaboration_manager_decision(
             test_db,
             project_id=project.id,
@@ -245,9 +284,6 @@ async def test_manager_status_event_preserves_only_its_actual_dispatch_cause(
             target_status="in_review",
             reason="Work is ready for review",
         )
-        test_db.refresh(group_dispatch)
-        assert group_dispatch.status == "completed"
-        assert group_dispatch.termination_reason == "manager_status_decision"
         if cause is not None:
             test_db.refresh(cause)
             assert cause.status == "succeeded"

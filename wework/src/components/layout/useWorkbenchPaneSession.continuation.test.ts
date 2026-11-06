@@ -48,9 +48,25 @@ const mocks = vi.hoisted(() => ({
   setError: vi.fn(),
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbenchPaneContext: () => mocks.context,
-}))
+vi.mock('@/features/workbench/useWorkbench', async () => {
+  const { useState, useCallback } = await import('react')
+  return {
+    useWorkbenchPaneContext: () => {
+      const [goalDraftActiveByScope, setGoals] = useState<Record<string, boolean>>({})
+      const setGoalDraftActiveForScope = useCallback((scope: string, active: boolean) => {
+        setGoals(current => ({ ...current, [scope]: active }))
+      }, [])
+      return {
+        ...mocks.context,
+        projectChat: {
+          ...(mocks.context.projectChat as object),
+          goalDraftActiveByScope,
+          setGoalDraftActiveForScope,
+        },
+      }
+    },
+  }
+})
 
 const address = {
   deviceId: 'original-device',
@@ -334,6 +350,56 @@ describe('pane transcript reload ownership', () => {
     expect(result.current.transcriptHasMoreBefore).toBe(false)
     expect(result.current.transcriptBeforeCursor).toBeNull()
   })
+})
+
+test('publishes buffered progress through the existing subscription when the queue is empty', async () => {
+  const { result, unmount } = await renderSession()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const frames = new Map<number, FrameRequestCallback>()
+  let sequence = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.set(++sequence, callback)
+    return sequence
+  })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  const flush = () => {
+    for (const [id, callback] of [...frames]) {
+      frames.delete(id)
+      callback(0)
+    }
+  }
+  try {
+    act(() => {
+      applyRuntimeConversationAction(address, { type: 'assistant_started', subtaskId: 'burst' })
+    })
+    act(flush)
+    const before = result.current.messages
+    const ids = Array.from({ length: 20 }, (_, index) => `progress-${index}`)
+    for (const id of ids) {
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'block_created',
+          subtaskId: 'burst',
+          block: { id, type: 'text', content: id, status: 'done', createdAt: 1_793_959_193_678 },
+        })
+      })
+    }
+    expect(result.current.messages === before).toBe(true)
+    expect(
+      getRuntimeConversationMessages(address)
+        .at(-1)
+        ?.blocks?.map(block => block.id)
+    ).toEqual(ids)
+    act(() => vi.advanceTimersByTime(99))
+    expect(result.current.messages === before).toBe(true)
+    act(() => vi.advanceTimersByTime(1))
+    expect(result.current.messages.at(-1)?.blocks?.map(block => block.id)).toEqual(ids)
+    expect(result.current.queuedMessages).toEqual([])
+  } finally {
+    unmount()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  }
 })
 
 describe('explicit composer draft replacement', () => {

@@ -715,9 +715,6 @@ export async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
   const deadline = Date.now() + timeoutMs
   await control.command('waitFor', selector, { timeoutMs })
-  await new Promise(resolve =>
-    setTimeout(resolve, Math.min(minimumSeconds * 1_000, Math.max(0, deadline - Date.now())))
-  )
   let text = ''
   let duration = 0
   while (Date.now() <= deadline) {

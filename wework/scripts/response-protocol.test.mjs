@@ -234,6 +234,54 @@ describe('selectMcpTool', () => {
 })
 
 describe('selectMcpToolRequest', () => {
+  test('does not select a same-named tool from another MCP server', () => {
+    expect(() =>
+      selectMcpToolRequest(
+        { tools: [functionTool('another_server__list_tasks')] },
+        'list_tasks',
+        {},
+        'mcp__wework_stand_in__list_tasks'
+      )
+    ).toThrow('Real Codex did not advertise exactly one deferred tool search')
+  })
+
+  test('rejects ambiguous advertised direct MCP identities', () => {
+    expect(() =>
+      selectMcpToolRequest(
+        {
+          tools: [
+            functionTool('wework_stand_in__list_tasks'),
+            functionTool('mcp__wework_stand_in__list_tasks'),
+          ],
+        },
+        'list_tasks',
+        {},
+        'mcp__wework_stand_in__list_tasks'
+      )
+    ).toThrow('Ambiguous direct MCP tool')
+  })
+
+  test.each(['wework_stand_in__list_tasks', 'mcp__wework_stand_in__list_tasks'])(
+    'calls the exact advertised direct MCP name %s without inventing tool search',
+    name => {
+      const response = mcpToolRequestEvents(
+        { tools: [functionTool(name)] },
+        {
+          toolName: 'list_tasks',
+          directToolName: 'mcp__wework_stand_in__list_tasks',
+          argumentsValue: { limit: 50 },
+          searchCallId: 'search-tasks',
+          toolCallId: 'list-tasks',
+        }
+      )
+      const call = response.events.find(event => event.type === 'response.output_item.done').item
+      expect(response.mode).toBe('direct')
+      expect(call.name).toBe(name)
+      expect(JSON.parse(call.arguments)).toEqual({ limit: 50 })
+      expect(call.call_id).toBe('list-tasks')
+    }
+  )
+
   test('uses direct Chat Shell calls throughout the manager state machine', () => {
     const request = {
       tools: [

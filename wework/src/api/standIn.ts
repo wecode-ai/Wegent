@@ -549,7 +549,25 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    readTask: (deviceId, taskId) => request('runtime.tasks.get', { taskId }, deviceId),
+    readTask: async (deviceId, taskId) => {
+      try {
+        return await request<Awaited<ReturnType<StandInExecutorApi['readTask']>>>(
+          'runtime.tasks.get',
+          { taskId },
+          deviceId
+        )
+      } catch (error) {
+        // A missing first conversation is an empty lookup on both transports.
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'task_not_found'
+        )
+          return { success: false, code: 'task_not_found' }
+        throw error
+      }
+    },
     assignmentTasks: (userId, deviceId, assignments) =>
       request('runtime.stand_in.assignment_tasks', { userId, assignments }, deviceId),
     catalog: deviceId => request('runtime.runner.catalog', {}, deviceId),

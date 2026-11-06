@@ -404,7 +404,8 @@ export function createDesktopScenario({
           },
           uiTimeoutMs
         )
-        await new Promise(resolve => setTimeout(resolve, 11000))
+        // Observe a full five-second scheduler interval plus timer jitter.
+        await new Promise(resolve => setTimeout(resolve, 5500))
         assert.equal((await bindings(issue)).length, 1, 'Another device duplicated existing work')
         assert.equal(requests, 1)
         assert.equal(

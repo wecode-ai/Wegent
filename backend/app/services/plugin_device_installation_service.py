@@ -116,10 +116,15 @@ class PluginDeviceInstallationService:
                 )
                 db.add(row)
             desired_changed = row.desired_release_id != desired_release_id
+            reinstalling = row.state == "uninstalling" or (
+                row.state == "failed" and row.actual_release_id == desired_release_id
+            )
             row.desired_release_id = desired_release_id
-            if desired_changed or reset_failures:
+            if desired_changed or reset_failures or reinstalling:
                 row.attempt_count = 0
-            if row.actual_release_id != desired_release_id:
+            # The active Kind was re-read under the write lease. Its new install
+            # intent supersedes removal even when the release has not changed.
+            if row.actual_release_id != desired_release_id or reinstalling:
                 if self._auto_update_blocked(row) and not reset_failures:
                     continue
                 row.state = "pending"

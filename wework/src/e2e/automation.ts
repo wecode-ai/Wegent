@@ -92,7 +92,7 @@ import {
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
-import { selectDesktopControlOption } from './desktop-control-select'
+import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
   getAppPreferences,
@@ -1567,6 +1567,34 @@ async function doubleClickDesktopControlElement(selector: string): Promise<strin
   return secondElement.textContent?.trim() ?? ''
 }
 
+function desktopControlElementValue(element: HTMLElement): string {
+  if (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+  ) {
+    return element.value
+  }
+  const declaredValue =
+    element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
+  if (declaredValue !== null && declaredValue !== undefined) return declaredValue
+  if (element.isContentEditable) {
+    const propertyValue = (element as HTMLElement & { value?: unknown }).value
+    if (
+      typeof propertyValue === 'string' &&
+      element.classList.contains('composer-prosemirror-editor')
+    ) {
+      return desktopControlComposerDisplayValue(element, propertyValue)
+    }
+    const blockValues = Array.from(
+      element.querySelectorAll<HTMLElement>('.bn-block-content[data-content-type]')
+    ).map(block => desktopControlTextWithLineBreaks(block).trim())
+    if (blockValues.length > 0) return blockValues.join('\n').trim()
+    return element.innerText.replace(/\r\n?/g, '\n').trim()
+  }
+  return element.textContent?.trim() ?? ''
+}
+
 async function waitForDesktopControlElement(
   command: DesktopControlCommand,
   onMatch?: (element: HTMLElement) => string
@@ -2997,34 +3025,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!property) throw new Error('getInlineStyle requires a CSS property name')
       return element.style.getPropertyValue(property)
     }
+    case 'getValueWhenReady':
+      // Read in the matching turn, before React can replace the detail between IPC calls.
+      return waitForDesktopControlElement(command, desktopControlElementValue)
     case 'getValue': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
-      if (
-        element instanceof HTMLInputElement ||
-        element instanceof HTMLTextAreaElement ||
-        element instanceof HTMLSelectElement
-      ) {
-        return element.value
-      }
-      const declaredValue =
-        element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
-      if (declaredValue !== null && declaredValue !== undefined) return declaredValue
-      if (element.isContentEditable) {
-        const propertyValue = (element as HTMLElement & { value?: unknown }).value
-        if (
-          typeof propertyValue === 'string' &&
-          element.classList.contains('composer-prosemirror-editor')
-        ) {
-          return desktopControlComposerDisplayValue(element, propertyValue)
-        }
-        const blockValues = Array.from(
-          element.querySelectorAll<HTMLElement>('.bn-block-content[data-content-type]')
-        ).map(block => desktopControlTextWithLineBreaks(block).trim())
-        if (blockValues.length > 0) return blockValues.join('\n').trim()
-        return element.innerText.replace(/\r\n?/g, '\n').trim()
-      }
-      return element.textContent?.trim() ?? ''
+      return desktopControlElementValue(element)
     }
     case 'getSelectionOffset': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -3270,6 +3277,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         element.click()
         return element.textContent?.trim() ?? ''
       })
+    }
+    case 'chooseWhenEnabled': {
+      return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
+        chooseDesktopControlOption(element, command.value ?? '')
+      )
     }
     case 'setExpanded': {
       const expected = command.value

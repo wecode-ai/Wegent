@@ -443,6 +443,111 @@ def test_newer_other_plugin_intent_does_not_fence_independent_ack(test_db, test_
     assert row.actual_release_id == 17
 
 
+@pytest.mark.parametrize("older_status", ["synced", "failed"])
+@pytest.mark.parametrize("previous_state", ["uninstalling", "failed"])
+def test_same_release_reinstall_waits_for_latest_ack_after_old_removal(
+    test_db, test_user, older_status, previous_state
+):
+    installed = _installed(test_db, test_user.id, "reinstall", active=False)
+    row = _device_row(test_db, installed, state=previous_state, actual=17)
+    row.attempt_count = 3
+    row.error_code = "OLD_REMOVAL_ERROR"
+    row.error_message = "Previous removal did not settle"
+    test_db.commit()
+    removal = _payload(test_db, installed, removed=True)
+    installed.is_active = True
+    document = deepcopy(installed.json)
+    document["spec"]["installState"] = "installed"
+    installed.json = document
+    test_db.commit()
+    PluginDeviceInstallationService()._ensure_pending_for_devices(
+        test_db,
+        user_id=test_user.id,
+        installed_kind_id=installed.id,
+        desired_release_id=17,
+        device_ids=["device"],
+        reset_failures=False,
+    )
+    test_db.refresh(row)
+    assert row.state == "pending"
+    assert row.attempt_count == 0
+    assert row.error_code == ""
+    assert row.error_message == ""
+    install = _payload(test_db, installed)
+    install["plugin_sync"]["generation"] = 8
+    latest = deepcopy(install)
+    latest["plugin_sync"]["generation"] = 9
+    register_plugin_snapshot_intent(
+        lambda: nullcontext(test_db),
+        user_id=test_user.id,
+        device_id="device",
+        payload=latest,
+    )
+    _record(test_db, test_user.id, removal, status="removed")
+    _record(
+        test_db,
+        test_user.id,
+        install,
+        status=older_status,
+        success=older_status == "synced",
+    )
+    test_db.refresh(row)
+    assert row.state == "pending"
+    assert row.actual_release_id == 17
+    _record(test_db, test_user.id, latest)
+    test_db.refresh(row)
+    assert row.state == "installed"
+    assert row.actual_release_id == 17
+
+
+def test_new_uninstall_fences_same_release_reinstall_receipt(test_db, test_user):
+    installed = _installed(test_db, test_user.id, "reinstall")
+    row = _device_row(test_db, installed, state="uninstalling", actual=17)
+    service = PluginDeviceInstallationService()
+    service._ensure_pending_for_devices(
+        test_db,
+        user_id=test_user.id,
+        installed_kind_id=installed.id,
+        desired_release_id=17,
+        device_ids=["device"],
+        reset_failures=False,
+    )
+    test_db.refresh(row)
+    assert row.state == "pending"
+    install = _payload(test_db, installed)
+    installed.is_active = False
+    service.mark_uninstalling(
+        test_db, user_id=test_user.id, installed_kind_id=installed.id
+    )
+    removal = _payload(test_db, installed, removed=True)
+    removal["plugin_sync"]["generation"] = 8
+    register_plugin_snapshot_intent(
+        lambda: nullcontext(test_db),
+        user_id=test_user.id,
+        device_id="device",
+        payload=removal,
+    )
+    # Late preparation and the old successful install must not revive removal.
+    service._ensure_pending_for_devices(
+        test_db,
+        user_id=test_user.id,
+        installed_kind_id=installed.id,
+        desired_release_id=17,
+        device_ids=["device"],
+        reset_failures=False,
+    )
+    _record(test_db, test_user.id, install)
+    test_db.refresh(row)
+    assert row.state == "uninstalling"
+    _record(test_db, test_user.id, removal, status="removed")
+    assert (
+        test_db.query(PluginDeviceInstallation)
+        .filter_by(installed_kind_id=installed.id, device_id="device")
+        .first()
+        is None
+    )
+
+
 def test_newer_complete_intent_fences_old_delta_for_unlisted_plugin(test_db, test_user):
     installed = _installed(test_db, test_user.id, "target")
     row = _device_row(test_db, installed)

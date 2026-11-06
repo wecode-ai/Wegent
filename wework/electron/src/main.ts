@@ -1458,7 +1458,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     ...desktopWindowFrameOptions(),
     ...startupLayout.bounds,
     title: windowTitle,
-    backgroundColor: '#05070d',
+    backgroundColor: startupTheme === 'dark' ? '#05070d' : '#fafafa',
     show: false,
     webPreferences: {
       backgroundThrottling: false,
@@ -1479,7 +1479,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
         if (keepE2EWindowInBackground) return
         const target = startupSplashWindow
         if (!target) throw new Error('Startup splash window is unavailable')
-        if (startupLayout.maximized) await maximizeStartupWindow(target, startupDisplay.workArea)
+        if (startupLayout.maximized) await maximizeStartupWindow(target)
         else target.show()
       },
       setOpacity: opacity => startupSplashWindow?.setOpacity(opacity),

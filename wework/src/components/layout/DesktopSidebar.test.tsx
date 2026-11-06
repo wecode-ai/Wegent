@@ -239,7 +239,7 @@ describe('DesktopSidebar', () => {
         totalTasks: 26,
       },
     })
-    expect(screen.getByTestId('desktop-sidebar')).toHaveClass('font-normal')
+    expect(screen.getByTestId('desktop-sidebar')).not.toHaveClass('font-normal')
     expect(screen.getByText('Wework')).toHaveClass('font-medium')
     await userEvent.click(screen.getByTestId('project-item-button'))
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
@@ -1090,16 +1090,18 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
   })
 
-  test('gates My stand-in behind the experimental features preference', async () => {
+  test('shows My stand-in with a Beta badge regardless of the experimental preference', async () => {
     const onOpenStandIn = vi.fn()
     experimentalFeatures.enabled = false
     const view = renderSidebar({ onOpenStandIn })
-    expect(screen.queryByTestId('personal-stand-in-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('personal-stand-in-button')).toBeVisible()
+    expect(screen.getByTestId('personal-stand-in-beta')).toHaveTextContent('Beta')
+    await userEvent.click(screen.getByTestId('personal-stand-in-button'))
     view.unmount()
     experimentalFeatures.enabled = true
     renderSidebar({ onOpenStandIn })
     await userEvent.click(screen.getByTestId('personal-stand-in-button'))
-    expect(onOpenStandIn).toHaveBeenCalledTimes(1)
+    expect(onOpenStandIn).toHaveBeenCalledTimes(2)
   })
 
   test('opens independent schedules from the sidebar when experimental features are disabled', async () => {

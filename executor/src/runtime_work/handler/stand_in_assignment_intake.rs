@@ -1,6 +1,10 @@
 use super::*;
 use crate::task_runtime::personal_stand_in::{project_role, role_project_matches};
 
+#[cfg(test)]
+#[path = "project_intake_boundary_tests.rs"]
+mod tests;
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn read_assignment_intake(
         &self,

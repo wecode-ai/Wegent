@@ -468,9 +468,6 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   )
   const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
-  // Keep the Popover portal container stable across asynchronous form updates.
-  const [dialogContentElement, setDialogContentElement] = useState<HTMLDivElement | null>(null)
-
   // Reset form when dialog opens/closes or initialData changes
   useEffect(() => {
     if (open) {
@@ -1752,10 +1749,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={open => !open && onClose()}>
-      <DialogContent
-        ref={setDialogContentElement}
-        className="max-w-2xl max-h-[90vh] overflow-y-auto"
-      >
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? t('common:models.edit_title') : t('common:models.create_title')}
@@ -2085,7 +2079,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       )}
                     </Button>
                   </div>
-                  <Popover open={modelIdPopoverOpen} onOpenChange={setModelIdPopoverOpen}>
+                  <Popover modal open={modelIdPopoverOpen} onOpenChange={setModelIdPopoverOpen}>
                     <PopoverTrigger asChild>
                       <Button
                         variant="outline"
@@ -2103,8 +2097,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     <PopoverContent
                       className="w-[--radix-popover-trigger-width] p-0"
                       align="start"
-                      onOpenAutoFocus={e => e.preventDefault()}
-                      container={dialogContentElement}
+                      aria-label={t('common:models.model_id')}
                     >
                       <div className="p-2 border-b">
                         <Input
@@ -2121,10 +2114,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                           </div>
                         ) : (
                           filteredModelOptions.map(option => (
-                            <div
+                            <button
                               key={option.value}
+                              type="button"
+                              data-testid={`model-id-option-${option.value}`}
                               className={cn(
-                                'relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground',
+                                'relative flex min-h-11 w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:min-h-0',
                                 modelId === option.value && 'bg-accent'
                               )}
                               onClick={() => {
@@ -2140,7 +2135,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                                 )}
                               />
                               {option.label}
-                            </div>
+                            </button>
                           ))
                         )}
                       </div>
