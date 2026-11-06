@@ -31,12 +31,17 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
-  it.each(['renamed', null])('serializes atomic tag change target %s without losing null', target => {
-    expect(workspaceHttpRequestBody({
-      version: 2,
-      tagChange: { source: 'old', target },
-    })).toEqual({ version: 2, tag_change: { source: 'old', target } })
-  })
+  it.each(["renamed", null])(
+    "serializes atomic tag change target %s without losing null",
+    (target) => {
+      expect(
+        workspaceHttpRequestBody({
+          version: 2,
+          tagChange: { source: "old", target },
+        }),
+      ).toEqual({ version: 2, tag_change: { source: "old", target } });
+    },
+  );
 
   it("loads devices without fetching the agent resource catalog", async () => {
     const { transport, get } = createTransport();
@@ -46,6 +51,9 @@ describe("createSharedWorkspaceHttpApi", () => {
           id: 42,
           device_id: "runner-42",
           app_device_id: "desktop-installation-42",
+          runtime_instance_id: "runtime-42",
+          last_seen_at: "2026-11-06T00:00:00Z",
+          workspace_ids: ["space-1"],
           name: "Runner",
           device_type: "remote",
           status: "busy",
@@ -66,6 +74,9 @@ describe("createSharedWorkspaceHttpApi", () => {
         device_id: 42,
         device_key: "runner-42",
         app_device_id: "desktop-installation-42",
+        runtime_instance_id: "runtime-42",
+        last_seen_at: "2026-11-06T00:00:00Z",
+        workspace_ids: ["space-1"],
         kind: "cloud_host",
         status: "online",
       },
@@ -504,4 +515,25 @@ it("revalidates workspace grants without reusing an older in-flight catalog", as
   await oldRead;
   await expect(api.workspaces.listAgents("space")).resolves.toEqual([]);
   expect(get).toHaveBeenCalledTimes(2);
+});
+
+it("removes exactly one persisted device registration with offline revalidation", async () => {
+  const { transport, remove } = createTransport();
+  const api = createSharedWorkspaceHttpApi(transport);
+  await api.resources.removeDevice!({
+    id: "42",
+    device_id: 42,
+    device_key: "same-logical-name",
+    name: "MacBook",
+    kind: "local_device",
+    coding_tools: [],
+    status: "offline",
+    updated_at: "",
+    owner_type: "user",
+    owner_id: "7",
+    owner_name: "Owner",
+  });
+  expect(remove).toHaveBeenCalledExactlyOnceWith(
+    "/devices/records/42?offline_only=true",
+  );
 });

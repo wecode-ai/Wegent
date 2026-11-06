@@ -19,7 +19,7 @@ different device types (local, cloud, etc.) in the future.
 
 import copy
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_
@@ -413,6 +413,9 @@ class DeviceService:
                 device_json["spec"]["bindShell"] = bind_shell
             elif "bindShell" not in device_json["spec"]:
                 device_json["spec"]["bindShell"] = "claudecode"
+            device_json.setdefault("status", {})["lastSeenAt"] = datetime.now(
+                timezone.utc
+            ).isoformat(timespec="microseconds")
             device_kind.json = device_json
             flag_modified(device_kind, "json")
             device_kind.updated_at = datetime.now()
@@ -471,6 +474,9 @@ class DeviceService:
                 },
                 "status": {
                     "state": "Available",
+                    "lastSeenAt": datetime.now(timezone.utc).isoformat(
+                        timespec="microseconds"
+                    ),
                 },
             }
             if update_runtime_transfer_port:

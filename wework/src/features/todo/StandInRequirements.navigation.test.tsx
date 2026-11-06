@@ -29,7 +29,8 @@ it('opens the marketplace separately without replacing the requirements draft', 
   }
   render(<Fixture />)
   const editor = screen.getByTestId('stand-in-prompt') as HTMLElement & { value: string }
-  act(() => {
+  // Flush deferred autocomplete updates before retaining the menu element.
+  await act(async () => {
     editor.value = 'Keep these requirements /'
     editor.focus()
   })

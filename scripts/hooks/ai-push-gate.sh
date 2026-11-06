@@ -285,6 +285,7 @@ run_wework_unit_tests() {
                 echo -e "   Running focused renderer unit tests with $(format_worker_count "$test_workers")..."
                 if ! pnpm --filter wework exec vitest run --pool=threads \
                     --maxWorkers "$test_workers" \
+                    --testTimeout "${WEWORK_PRE_PUSH_TEST_TIMEOUT_MS:-15000}" \
                     "${WEWORK_FOCUSED_TEST_FILES[@]}" \
                     >> "$TEMP_DIR/wework_test.log" 2>&1; then
                     test_exit=1

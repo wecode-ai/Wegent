@@ -275,3 +275,19 @@ async def test_busy_cloud_removal_preserves_unfinished_task_history(
     test_db.refresh(device)
     assert task.status == "RUNNING"
     assert device.is_active is (device_type != "cloud")
+
+
+async def test_offline_only_checks_cloud_runtime_route_and_preserves_cloud_removal(
+    test_db, records, isolated_cache
+):
+    row = records[0]
+    row.json = {"spec": {"deviceType": "cloud", "deviceId": "actual-cloud-route"}}
+    test_db.commit()
+    isolated_cache["device:online:7:actual-cloud-route"] = {"status": "online"}
+    with pytest.raises(DeviceIdentityConflictError, match="online or busy"):
+        await record_operations.delete_device_record(
+            test_db, 7, row.id, offline_only=True
+        )
+    test_db.refresh(row)
+    assert row.is_active is True
+    assert await record_operations.delete_device_record(test_db, 7, row.id) is True

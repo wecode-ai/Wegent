@@ -431,6 +431,12 @@ export function createWeworkPlatformApi(
       },
     },
     resources: {
+      async removeDevice(device) {
+        if (!cloudApi.resources?.removeDevice) {
+          throw new Error('Device deletion is unavailable')
+        }
+        await cloudApi.resources.removeDevice(device)
+      },
       devices: {
         ...localApi.resources?.devices,
         ...cloudApi.resources?.devices,

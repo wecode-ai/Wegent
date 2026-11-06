@@ -147,6 +147,7 @@ pub(crate) struct DeviceItem {
     status: String,
     is_default: bool,
     last_heartbeat: Option<RawJson>,
+    last_seen_at: Option<String>,
     device_type: DeviceType,
     connection_mode: String,
     capabilities: Option<RawJson>,
@@ -169,8 +170,21 @@ pub(crate) struct DeviceItem {
 
 #[derive(serde::Serialize)]
 struct DeviceListResponse {
-    items: Vec<DeviceItem>,
+    items: Vec<ManagedDeviceItem>,
     total: usize,
+}
+
+#[derive(serde::Serialize)]
+struct ManagedDeviceItem {
+    #[serde(flatten)]
+    device: DeviceItem,
+    workspace_ids: Vec<String>,
+}
+
+#[derive(brz_mysql::FromMysqlRow)]
+struct DeviceWorkspaceReference {
+    device_id: i64,
+    workspace_id: String,
 }
 
 /// One response `runtime_features` object (`DeviceInfo.runtime_features`
@@ -244,6 +258,14 @@ impl CloudRuntimeFeatures for NoCloudRuntimeFeatures {}
 #[serde(default)]
 struct DeviceDocumentInput {
     spec: Option<DeviceSpecInput>,
+    status: Option<OpaqueJson>,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+struct DeviceStatusInput {
+    #[serde(rename = "lastSeenAt")]
+    last_seen_at: Option<String>,
 }
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default)]
@@ -479,6 +501,7 @@ async fn list_cloud_devices(
                 .unwrap_or_else(|| row.name.clone()),
             status,
             is_default: spec.is_default.unwrap_or(false),
+            last_seen_at: last_seen_at(row.json.0.value.as_ref(), online_state),
             last_heartbeat: online_state
                 .as_ref()
                 .and_then(|info| info.last_heartbeat.as_ref().map(OpaqueJson::to_raw_value)),
@@ -634,6 +657,7 @@ async fn list_mget_devices(
                 .unwrap_or_else(|| row.name.clone()),
             status,
             is_default: spec.is_default.unwrap_or(false),
+            last_seen_at: last_seen_at(row.json.0.value.as_ref(), online_state),
             last_heartbeat: online_state
                 .as_ref()
                 .and_then(|info| info.last_heartbeat.as_ref().map(OpaqueJson::to_raw_value)),
@@ -683,6 +707,20 @@ pub(crate) fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
         .as_ref()
         .and_then(|document| document.spec.clone())
         .unwrap_or_default()
+}
+
+fn last_seen_at(
+    document: Option<&DeviceDocumentInput>,
+    online: Option<&OnlineStateInput>,
+) -> Option<String> {
+    let stored = document
+        .and_then(|document| document.status.as_ref())
+        .and_then(OpaqueJson::project::<DeviceStatusInput>)
+        .and_then(|status| status.last_seen_at);
+    let observed = online
+        .and_then(|info| info.last_heartbeat.as_ref())
+        .and_then(OpaqueJson::project::<String>);
+    crate::device_presence::latest_online_time(stored.as_deref(), observed.as_deref())
 }
 
 /// Reproduce the source `DeviceInfo` projection of the Redis online-state
@@ -804,9 +842,37 @@ async fn get_all_devices(
     #[auth] user: SessionUser,
 ) -> Result<DeviceListResponse, FastApiError> {
     let items = list_all_devices(state, user.id, request_id.as_deref()).await?;
+    let references: Vec<DeviceWorkspaceReference> = if items.is_empty() {
+        Vec::new()
+    } else {
+        state.mysql.fetch_all(
+            "SELECT DISTINCT device.id AS device_id, membership.entity_id AS workspace_id \
+             FROM resource_members membership JOIN kinds device ON device.id = membership.resource_id \
+             WHERE device.user_id = ? AND device.kind = 'Device' AND device.namespace = 'default' \
+             AND device.is_active = true AND membership.resource_type = 'Device' \
+             AND membership.entity_type = 'workspace' AND membership.status = 'approved'",
+            (user.id,),
+        ).await.map_err(|error| {
+            tracing::error!(%error, "device workspace reference lookup failed");
+            internal_error()
+        })?
+    };
+    let mut workspaces = std::collections::HashMap::<i64, Vec<String>>::new();
+    for reference in references {
+        workspaces
+            .entry(reference.device_id)
+            .or_default()
+            .push(reference.workspace_id);
+    }
     Ok(DeviceListResponse {
         total: items.len(),
-        items,
+        items: items
+            .into_iter()
+            .map(|device| ManagedDeviceItem {
+                workspace_ids: workspaces.remove(&device.id).unwrap_or_default(),
+                device,
+            })
+            .collect(),
     })
 }
 

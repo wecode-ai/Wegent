@@ -180,12 +180,15 @@ async def delete_device_by_record(
     record_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
+    offline_only: bool = False,
 ):
     from app.services.device.identity import DeviceIdentityConflictError
     from app.services.device.record_operations import delete_device_record
 
     try:
-        deleted = await delete_device_record(db, current_user.id, record_id)
+        deleted = await delete_device_record(
+            db, current_user.id, record_id, offline_only=offline_only
+        )
     except DeviceIdentityConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (RedisError, TimeoutError) as exc:
