@@ -5,6 +5,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTaskRowByText } from '../modules/task-state-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
 import {
   assistantMessage,
   createSse,
@@ -37,6 +38,12 @@ export function createDesktopScenario({
   let createdTaskId
   let intake
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  const meetingStory = createMeetingUserStory({
+    rpc,
+    workspacePath,
+    modelResponseTimeoutMs,
+    captureScreenshot,
+  })
   async function waitFor(read, ready, timeoutMs) {
     const deadline = Date.now() + timeoutMs
     let latest
@@ -82,6 +89,7 @@ export function createDesktopScenario({
   }
   return {
     async handleHttp(req, response, url) {
+      if (await meetingStory.handleHttp(req, response, url)) return true
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
@@ -446,6 +454,7 @@ export function createDesktopScenario({
           text: 'ORDINARY_FOLLOWUP_DONE',
         })
         await captureScreenshot(control, 'silent-07-primary-continues-ordinary-task.png')
+        await meetingStory.verify(control, model)
       } finally {
         const current = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
         await rpc(control, 'runtime.stand_in.personal.save', {
