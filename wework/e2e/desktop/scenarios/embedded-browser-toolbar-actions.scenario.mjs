@@ -197,14 +197,28 @@ async function waitForButtonDisabled(control, selector, disabled, timeoutMs, mes
   )
 }
 
-async function waitForSafariFrontUrl(expectedUrl, timeoutMs) {
+async function waitForExternalBrowserUrl(expectedUrl, timeoutMs) {
+  const { stdout: browserBundleIdOutput } = await executeFile('/usr/bin/osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    "ObjC.import('AppKit'); const url = $.NSURL.URLWithString('https://example.com'); const app = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpen(url); ObjC.unwrap($.NSBundle.bundleWithURL(app).bundleIdentifier)",
+  ])
+  const browserBundleId = browserBundleIdOutput.trim()
+  const urlQuery =
+    browserBundleId === 'com.apple.Safari'
+      ? 'get URL of front document'
+      : browserBundleId === 'com.google.Chrome'
+        ? 'get URL of active tab of front window'
+        : null
+  assert.ok(urlQuery, `Unsupported default browser for URL inspection: ${browserBundleId}`)
   const startedAt = Date.now()
   let lastUrl = null
   while (Date.now() - startedAt < timeoutMs) {
     try {
       const { stdout } = await executeFile('/usr/bin/osascript', [
         '-e',
-        'tell application "Safari" to get URL of front document',
+        `tell application id "${browserBundleId}" to ${urlQuery}`,
       ])
       lastUrl = stdout.trim()
       if (lastUrl === expectedUrl) return
@@ -213,7 +227,7 @@ async function waitForSafariFrontUrl(expectedUrl, timeoutMs) {
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(`Safari did not open ${expectedUrl}; last URL=${lastUrl}`)
+  throw new Error(`${browserBundleId} did not open ${expectedUrl}; last URL=${lastUrl}`)
 }
 
 function assertFramesEqual(before, after) {
@@ -641,7 +655,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           uiTimeoutMs,
           'Retrying external browser open did not clear its error'
         )
-        await waitForSafariFrontUrl(localFileUrl, uiTimeoutMs)
+        await waitForExternalBrowserUrl(localFileUrl, uiTimeoutMs)
 
         const localDirectoryUrl = `${pathToFileURL(localDirectoryPath).href}/`
         await callBridge(bridgeIdentity, {
@@ -655,7 +669,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           timeoutMs: 5_000,
         })
         await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
-        await waitForSafariFrontUrl(localDirectoryUrl, uiTimeoutMs)
+        await waitForExternalBrowserUrl(localDirectoryUrl, uiTimeoutMs)
       }
     },
   }
