@@ -1,13 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertCircle, Check, Copy, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
-import {
-  applyLocalExecutorCloudConnection,
-  type LocalExecutorCloudConnection,
-} from '@/features/cloud-connection/localExecutorCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getPlatform } from '@/lib/platform'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
@@ -33,7 +29,6 @@ type CopyDebugState = 'idle' | 'copying' | 'copied' | 'failed'
 
 interface LocalRuntimeInitializerProps {
   children: ReactNode
-  initialCloudConnection?: LocalExecutorCloudConnection
   startupReady?: boolean
 }
 
@@ -220,13 +215,11 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
 
 export function LocalRuntimeInitializer({
   children,
-  initialCloudConnection,
   startupReady = true,
 }: LocalRuntimeInitializerProps) {
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
-  const initialCloudConnectionRef = useRef(initialCloudConnection)
   const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
   const [startupAttempt, setStartupAttempt] = useState(0)
   const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
@@ -241,10 +234,6 @@ export function LocalRuntimeInitializer({
     phase: enabled ? 'starting' : 'ready',
     error: null,
   }))
-
-  useEffect(() => {
-    initialCloudConnectionRef.current = initialCloudConnection
-  }, [initialCloudConnection])
 
   useEffect(() => {
     if (!enabled) {
@@ -278,14 +267,6 @@ export function LocalRuntimeInitializer({
       cancelled = true
     }
   }, [enabled, fallbackError, runtimeErrorText])
-
-  useEffect(() => {
-    if (!enabled || state.phase !== 'ready' || !initialCloudConnectionRef.current) return
-
-    void applyLocalExecutorCloudConnection(initialCloudConnectionRef.current).catch(error => {
-      console.error('[Wework] Failed to apply cloud connection to local executor:', error)
-    })
-  }, [enabled, state.phase])
 
   useEffect(() => {
     if (state.phase !== 'failed' || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {

@@ -581,7 +581,10 @@ impl Client {
 
         let result = self.socket.read().await.send(socket_packet).await;
         if result.is_err() {
-            self.outstanding_acks.write().await.retain(|ack| ack.id != id);
+            self.outstanding_acks
+                .write()
+                .await
+                .retain(|ack| ack.id != id);
         }
         result
     }

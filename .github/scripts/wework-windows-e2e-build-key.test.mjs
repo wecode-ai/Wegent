@@ -95,6 +95,7 @@ test('Windows package reuse follows build inputs and toolchain, independently of
       'executor/vendor/dependency/src/lib.rs',
       'backend-rs/src/main.rs',
       'shared/assets/migration.sql',
+      'shared/protocol/runtime_task_create_request_v2.schema.json',
       'packages/collaboration/src/index.ts',
       'pnpm-lock.yaml',
       '.github/actions/build-wework-windows-e2e/action.yml',

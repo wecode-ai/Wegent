@@ -76,6 +76,16 @@ classify_path() {
   esac
 
   case "$path" in
+    backend/app/services/runtime_continuation.py | \
+      executor/src/runtime_work/reader* | \
+      executor/src/workbench_control/* | \
+      executor/src/runtime_work/handler/control.rs | \
+      executor/src/runtime_work/handler/control/* | \
+      executor/src/runtime_work/handler/creation.rs | \
+      executor/src/runtime_work/handler/creation/*)
+      select_target "core:workbench-control"
+      return
+      ;;
     executor/src/local/capabilities/runtime_legacy_sources* | \
       wework/e2e/desktop/scenarios/plugin-legacy-upgrade.scenario.mjs | \
       wework/e2e/desktop/modules/legacy-plugin-executor.mjs)

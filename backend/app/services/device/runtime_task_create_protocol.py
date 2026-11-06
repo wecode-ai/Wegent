@@ -37,10 +37,16 @@ FEATURE_FIELDS: dict[str, tuple[str, ...]] = {
 def negotiate_runtime_task_create_payload(
     payload: dict[str, Any],
     runtime_features: Any,
+    *,
+    require_intent_compilation: bool = False,
 ) -> dict[str, Any]:
     """Select V2 or a lossless V1 representation for one connected Runtime."""
 
     requested_version = _positive_int(payload.get("schemaVersion")) or 1
+    if require_intent_compilation:
+        features = _advertised_features(_runtime_task_create_features(runtime_features))
+        if requested_version != 2 or features.get("intentCompilation") is not True:
+            raise RuntimeTaskCreateProtocolError(("intentCompilation",))
     if requested_version == 1:
         return _without_schema_version(payload)
 
