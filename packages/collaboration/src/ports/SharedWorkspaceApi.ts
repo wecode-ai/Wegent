@@ -141,6 +141,7 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  milestoneId?: string | null;
   title: string;
   description?: string;
   status?: string;
@@ -158,6 +159,7 @@ export interface WorkspaceIssueCreateInput {
 }
 
 export interface WorkspaceIssueUpdateInput {
+  milestoneId?: string | null;
   position?: { beforeItemId: string | null };
   version: number;
   securityLevel?: "open" | "related";
@@ -973,6 +975,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {
     run?(
       projectId: string,

@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 import {
+  resetMissingWorkbenchDirectory,
   migrateWorkbenchDataEntry,
   recoverWorkbenchDataBridge,
 } from './workbench-data-migration.js'
@@ -15,7 +16,9 @@ export function desktopDataMigration(source: string, desktop: string, name: stri
 }
 
 export function prepareDesktopDataSource(source: string, desktop: string): void {
-  recoverWorkbenchDataBridge(desktopDataMigration(source, desktop, 'user-data'))
+  const migration = desktopDataMigration(source, desktop, 'user-data')
+  resetMissingWorkbenchDirectory(migration)
+  recoverWorkbenchDataBridge(migration)
   mkdirSync(source, { recursive: true, mode: 0o700 })
 }
 

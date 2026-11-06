@@ -156,6 +156,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       WEGENT_TEST_MYSQL_ADDRESS: 127.0.0.1:3306
+      WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
     services:
       redis:
         image: redis:7-alpine
@@ -212,6 +213,13 @@ jobs:
           git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
+
+      - name: Verify native MySQL schema lifecycle and initialization
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
 
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs
@@ -446,6 +454,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Verify Windows executor installer release selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .github/scripts/test-local-executor-installer.ps1
+
       - name: Set up shared Rust toolchain and cache
         uses: ./.github/actions/setup-rust-cache
         with:
@@ -457,13 +470,15 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
 
-      - name: Run native index platform regressions
+      - name: Run native file platform regressions
         if: ${{ !cancelled() }}
         shell: bash
         working-directory: ./executor
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
-        run: cargo test --all-features --lib runtime_work::store::tests::atomic_write
+        run: |
+          cargo test --all-features --lib runtime_work::store::tests::atomic_write
+          cargo test --all-features --lib agents::runtime_capabilities::json_file::tests
 
       - name: Run native worktree platform regressions
         if: ${{ !cancelled() }}
@@ -633,14 +648,14 @@ jobs:
           name: frontend-coverage
 
   test-wework:
-    name: Test Wework (${{ matrix.shard }}/2)
+    name: Test Wework (${{ matrix.shard }}/4)
     needs: changes
     if: needs.changes.outputs.wework == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout code
@@ -679,7 +694,7 @@ jobs:
           sandbox_path="$(pnpm --dir wework/electron exec node -p 'require("node:path").join(require("node:path").dirname(require("electron")), "chrome-sandbox")')"
           sudo chown root:root "$sandbox_path"
           sudo chmod 4755 "$sandbox_path"
-          xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
+          dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1
@@ -694,7 +709,7 @@ jobs:
           WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
           pnpm --filter wework exec vitest run \
             --passWithNoTests \
-            --shard=${{ matrix.shard }}/2 &
+            --shard=${{ matrix.shard }}/4 &
           vitest_pid=$!
 
           electron_pid=

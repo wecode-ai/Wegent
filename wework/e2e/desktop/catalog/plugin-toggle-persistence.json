@@ -1,0 +1,12 @@
+{
+  "order": 123000,
+  "scenario": "./scenarios/plugin-installation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 49000,
+      "shard": 2,
+      "position": 6000
+    }
+  }
+}

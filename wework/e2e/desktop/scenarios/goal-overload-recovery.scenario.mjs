@@ -112,7 +112,11 @@ export function createDesktopScenario(options) {
           )
           await control.command('click', '[data-testid="set-goal-button"]')
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${GOAL}_${action}` })
+          // Admit the user mutation before recovery sees the failed native frame.
+          // UI commands must not race the production five-second retry deadline.
+          if (!continuing) await existing.overloadTerminalGate.arm()
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+          if (!continuing) await existing.overloadTerminalGate.wait()
           const stopped = await waitForWorkbenchDebugState(
             control,
             snapshot =>
@@ -161,6 +165,7 @@ export function createDesktopScenario(options) {
           } else {
             if (action === 'clear') await rpc('runtime.tasks.goal.clear', { address })
             else await rpc('runtime.tasks.goal.set', { address, status: action })
+            await existing.overloadTerminalGate.release()
           }
           await waitForWorkbenchDebugState(
             control,
@@ -188,6 +193,7 @@ export function createDesktopScenario(options) {
           address = null
         }
       } finally {
+        await existing.overloadTerminalGate.release()
         releaseRecovered?.()
         releaseContinuation?.()
         if (address) await rpc('runtime.tasks.goal.clear', { address })

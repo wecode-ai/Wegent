@@ -108,7 +108,11 @@ mod tests {
         let mut client = CodexAppServerClient::new("local-notification-restart");
         client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
         let runtime = Arc::clone(&client.state.lock().await.runtime_notifications);
-        let first = CodexNotificationHub::for_runtime(Arc::clone(&runtime));
+        let thread_activity_changed = Arc::new(tokio::sync::Notify::new());
+        let first = CodexNotificationHub::for_runtime(
+            Arc::clone(&runtime),
+            Arc::clone(&thread_activity_changed),
+        );
         let mut receiver = first.subscribe_runtime();
         let mut child = super::super::tests::spawn_idle_app_server_child();
         let stdin = child.stdin.take().unwrap();
@@ -120,7 +124,10 @@ mod tests {
             reader_task: tokio::spawn(std::future::pending()),
         });
         let source = LocalNotificationSource::for_shared_client(client.clone(), None);
-        for hub in [first, CodexNotificationHub::for_runtime(runtime)] {
+        for hub in [
+            first,
+            CodexNotificationHub::for_runtime(runtime, thread_activity_changed),
+        ] {
             client
                 .state
                 .lock()

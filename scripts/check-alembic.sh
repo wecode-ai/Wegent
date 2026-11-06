@@ -25,8 +25,9 @@ NC='\033[0m' # No Color
 # Find the project root directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+node "$PROJECT_ROOT/backend-rs/scripts/check-migrations.mjs" || exit 1
 BACKEND_DIR="$PROJECT_ROOT/backend"
-ALEMBIC_VERSIONS_DIR="$BACKEND_DIR/alembic/versions"
+ALEMBIC_VERSIONS_DIR="$PROJECT_ROOT/backend-rs/migrations/reference/versions"
 
 # Check for --fix flag
 FIX_MODE=0
@@ -142,9 +143,9 @@ if [ $DETECTION_EXIT -eq 1 ] && [ $FIX_MODE -eq 1 ]; then
         echo -e "${GREEN}✅ Merge migration created successfully!${NC}"
         echo ""
         echo -e "${BLUE}Next steps:${NC}"
-        echo -e "   1. Review the new merge migration file in backend/alembic/versions/"
+        echo -e "   1. Review the new merge migration file in backend-rs/migrations/reference/versions/"
         echo -e "   2. Apply migration: ${GREEN}cd backend && alembic upgrade head${NC}"
-        echo -e "   3. Commit the changes: ${GREEN}git add backend/alembic/versions/ && git commit${NC}"
+        echo -e "   3. Commit the changes: ${GREEN}git add backend-rs/migrations/reference/versions/ && git commit${NC}"
         exit 0
     else
         echo -e "${RED}❌ Failed to create merge migration${NC}"

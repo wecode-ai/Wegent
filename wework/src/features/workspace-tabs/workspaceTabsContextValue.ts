@@ -15,6 +15,7 @@ export interface WorkspaceTabsContextValue {
   closeOtherTabs: (tabId: string) => void
   restoreClosedTab: () => void
   moveTab: (sourceId: string, targetId: string) => void
+  updateTab: (tabId: string, updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => void
   updateActiveTab: (updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => void
 }
 

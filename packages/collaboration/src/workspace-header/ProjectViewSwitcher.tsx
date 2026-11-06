@@ -5,6 +5,7 @@
 import type { ReactNode, Ref } from "react";
 
 export type CollaborationProjectView =
+  | "milestones"
   | "board"
   | "calendar"
   | "gantt"

@@ -228,6 +228,7 @@ RUN cd /app/backend && uv pip install --system --no-cache -r pyproject.toml
 # Copy backend application code
 COPY backend/app /app/backend/app
 COPY backend/alembic /app/backend/alembic
+COPY backend-rs/migrations/reference/versions /app/backend-rs/migrations/reference/versions
 COPY backend/alembic.ini /app/backend/alembic.ini
 
 # Copy frontend build (standalone output)
@@ -242,7 +243,7 @@ COPY --from=wework-builder /app/wework/dist /app/wework/dist
 COPY docker/standalone/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copy init_data directory with default resources and skills
-COPY backend/init_data /app/init_data
+COPY backend-rs/init_data /app/init_data
 
 # Copy startup script
 COPY docker/standalone/start.sh /app/start.sh

@@ -3361,7 +3361,9 @@ class KnowledgeService:
 
         # Build organization section
         org_display_name = (
-            org_namespace.display_name if org_namespace else "organization"
+            org_namespace.display_name or org_namespace.name
+            if org_namespace
+            else "organization"
         )
         org_ns_name = org_namespace.name if org_namespace else None
 

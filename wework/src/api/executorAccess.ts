@@ -27,6 +27,7 @@ import type {
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
@@ -101,13 +102,21 @@ export interface ExecutorCommandClient {
 }
 
 export interface ExecutorRuntimeClient {
+  /** Optional point lookup on the owning executor; it never reads transcript bodies. */
+  getRuntimeTask?: (
+    address: RuntimeTaskAddress,
+    options?: Pick<HttpRequestOptions, 'signal'>
+  ) => Promise<RuntimeTaskSummary | null>
   prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
   listRuntimeWork: (
     requestOptions?: RuntimeWorkListRequestOptions
   ) => Promise<RuntimeWorkListResponse>
   prepareDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['prepareDeviceWorkspace']
   deleteDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['deleteDeviceWorkspace']
-  getRuntimeTranscript: (data: RuntimeTranscriptRequest) => Promise<RuntimeTranscriptResponse>
+  getRuntimeTranscript: (
+    data: RuntimeTranscriptRequest,
+    options?: Pick<HttpRequestOptions, 'signal'>
+  ) => Promise<RuntimeTranscriptResponse>
   searchRuntimeTranscript: (
     data: RuntimeTranscriptSearchRequest
   ) => Promise<RuntimeTranscriptSearchResponse>

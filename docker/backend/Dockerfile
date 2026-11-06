@@ -22,13 +22,14 @@ RUN cd /app/backend && uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
 COPY backend /app
+COPY backend-rs/migrations/reference/versions /backend-rs/migrations/reference/versions
 
 # Copy init_data directory with default resources and skills into the image
 # This includes:
 # - 01-default-resources.yaml: Default Ghost, Model, Shell, Bot, Team resources
 # - 02-public-shells.yaml: Public shell configurations
 # - skills/: Skill packages (mermaid-diagram, wiki_submit, sandbox)
-COPY backend/init_data /app/init_data
+COPY backend-rs/init_data /app/init_data
 
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi

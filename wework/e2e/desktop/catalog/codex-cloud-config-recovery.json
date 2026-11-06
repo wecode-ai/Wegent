@@ -1,0 +1,12 @@
+{
+  "order": 103500,
+  "scenario": "./scenarios/codex-cloud-config-recovery.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 103500,
+      "shard": 7,
+      "position": 9000
+    }
+  }
+}

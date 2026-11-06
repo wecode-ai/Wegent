@@ -34,6 +34,22 @@ ruby -ryaml -rpathname -rtmpdir -rfileutils - "$PROJECT_ROOT" <<'RUBY'
 root = ARGV.fetch(0)
 %w[publish-image snapshot-image].each do |name|
   workflow = YAML.load_file(File.join(root, ".github/workflows/#{name}.yml"))
+  if name == 'publish-image'
+    reference = workflow.fetch('env').fetch('GIT_REF')
+    raise 'Manual releases must pin the triggering commit, not a moving branch' unless reference.match?(/\|\|\s*github\.sha\s*}}/)
+    raise 'Merged PR releases must pin the merge commit' unless reference.include?('github.event.pull_request.merge_commit_sha')
+    workflow.fetch('jobs').each do |job, definition|
+      definition.fetch('steps', []).each do |step|
+        if step.fetch('uses', '').start_with?('actions/checkout@')
+          raise "#{job}: checkout must use the shared immutable revision" unless step.dig('with', 'ref') == '${{ env.GIT_REF }}'
+        end
+        arguments = step.dig('with', 'build-args').to_s
+        if arguments.include?('WEWORK_SOURCE_SHA=')
+          raise "#{job}: embedded source must match checkout" unless arguments.include?('WEWORK_SOURCE_SHA=${{ env.GIT_REF }}')
+        end
+      end
+    end
+  end
   workflow.fetch('jobs').each do |job, definition|
     runners = [definition['runs-on'], *definition.dig('strategy', 'matrix', 'include')&.map { |entry| entry['runner'] }].compact
     raise "#{name}/#{job}: retired macOS runner" if runners.any? { |runner| runner.to_s.start_with?('macos-14') }

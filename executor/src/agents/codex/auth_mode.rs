@@ -77,7 +77,7 @@ mod tests {
             .id();
         let launch_result = client.ensure_process_for_launch_config(&launch).await;
         let request_result = client
-            .prepare_request_with_process(true, Some(&launch))
+            .prepare_request_with_process(true, Some(&launch), "model/list", &json!({}))
             .await;
         assert!(
             matches!(launch_result, Err(ref error) if error.contains("authentication mode is busy"))

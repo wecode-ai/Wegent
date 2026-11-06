@@ -5,6 +5,7 @@ import {
   describeDshExecutor,
   requestDshExecutor,
   subscribeDshExecutorEvents,
+  type DshExecutorRequestOptions,
 } from '@/api/dsh/executorTransport'
 import { resolveLocalCodexProxyUrl } from './systemProxy'
 import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-diagnostics'
@@ -671,7 +672,9 @@ export function disconnectLocalExecutorFromBackend(): Promise<LocalExecutorStatu
 
 export function requestLocalExecutor<T = unknown>(
   method: string,
-  params: Record<string, unknown> = {}
+  params: Record<string, unknown> = {},
+  _deviceId?: string,
+  requestOptions?: DshExecutorRequestOptions
 ): Promise<T> {
   const dispatch = (): Promise<T> => {
     if (nextLocalExecutorRequestFailure?.method === method) {
@@ -680,15 +683,28 @@ export function requestLocalExecutor<T = unknown>(
       failure.resolve()
       return Promise.reject(new Error(failure.message))
     }
+    const send = (query: Record<string, unknown>) =>
+      requestOptions
+        ? requestDshExecutor<T>(method, query, requestOptions)
+        : requestDshExecutor<T>(method, query)
     const request =
       method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
-        ? readRuntimeTranscript<T>(params, query => requestDshExecutor(method, query))
-        : requestDshExecutor<T>(method, params)
+        ? readRuntimeTranscript<T>(params, send)
+        : send(params)
     const delivery = isLocalExecutorE2EMode()
       ? request.then(result => gateRuntimeResponse(method, params, result))
       : request
     return delivery.catch((cause: unknown) => {
-      if (isExecutorTransportFailure(cause)) {
+      const signal = requestOptions?.signal
+      const cancelledTranscriptRead =
+        method === 'runtime.tasks.transcript' &&
+        signal?.aborted &&
+        (cause === signal.reason ||
+          (typeof cause === 'object' &&
+            cause !== null &&
+            'name' in cause &&
+            cause.name === 'AbortError'))
+      if (!cancelledTranscriptRead && isExecutorTransportFailure(cause)) {
         bundledPluginUpdateEpoch += 1
         bundledPluginUpdateTasks.clear()
         bundledPluginUpdates.clear()
@@ -734,6 +750,8 @@ export function requestLocalExecutor<T = unknown>(
 
 function isExecutorTransportFailure(cause: unknown): boolean {
   if (!(cause instanceof DshExecutorTransportError)) return true
+  if (['request_timeout', 'request_cancelled', 'runtime_read_busy'].includes(cause.code))
+    return false
   return cause.retryable || cause.code === 'protocol_mismatch' || /^http_\d+$/.test(cause.code)
 }
 

@@ -421,7 +421,7 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
   );
 });
 
-test("platform sharding preserves four runners and every provider shard", () => {
+test("platform sharding uses eight runners and preserves every provider shard", () => {
   const result = spawnSync(
     "ruby",
     [
@@ -438,13 +438,13 @@ test("platform sharding preserves four runners and every provider shard", () => 
   assert.deepEqual(Object.keys(matrix), ["include"]);
   assert.deepEqual(
     matrix.include.map((row) => row.shardIndex).sort(),
-    [1, 2, 3, 4],
+    [1, 2, 3, 4, 5, 6, 7, 8],
   );
   assert.deepEqual(
     matrix.include.map((row) => row.providerShardIndex).sort(),
-    [1, 2, 3, 4],
+    [1, 2, 3, 4, 5, 6, 7, 8],
   );
-  assert(matrix.include.every((row) => row.shardTotal === 4));
+  assert(matrix.include.every((row) => row.shardTotal === 8));
   assert.deepEqual(
     matrix.include
       .filter((row) => row.dingtalkOAuth)

@@ -1094,22 +1094,59 @@ async function runChecked(command, args, options = {}) {
 class BlockingNetworkProxy {
   constructor() {
     this.requests = []
+    this.requestEvents = []
+    this.connections = []
+    this.generation = 0
     this.sockets = new Set()
     this.released = false
     this.server = createTcpServer(socket => {
+      const acceptedAt = Date.now()
+      const acceptedGeneration = this.generation
+      const connectionId = this.connections.length + 1
+      const acceptedWhileReleased = this.released
+      const connection = { connectionId, acceptedAt, acceptedGeneration, acceptedWhileReleased }
+      this.connections.push(connection)
       this.sockets.add(socket)
-      socket.on('close', () => this.sockets.delete(socket))
-      socket.on('error', () => this.sockets.delete(socket))
-      if (this.released) {
-        socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
-        return
-      }
+      socket.on('close', () => {
+        connection.closedAt = Date.now()
+        this.sockets.delete(socket)
+      })
+      socket.on('error', () => {
+        connection.errorAt = Date.now()
+        this.sockets.delete(socket)
+      })
       let request = ''
       socket.on('data', chunk => {
         if (request) return
         request = chunk.toString('utf8').split(/\r?\n/, 1)[0]?.trim() ?? ''
-        if (request) this.requests.push(request)
+        if (request) {
+          connection.firstDataAt = Date.now()
+          connection.releasedAtFirstData = this.released
+          const [method, destination] = request.split(' ')
+          let host = destination?.split(/[/?#]/)[0] ?? ''
+          try {
+            const absoluteHost = new URL(destination).host
+            if (absoluteHost) host = absoluteHost
+          } catch {
+            // CONNECT targets use authority form instead of an absolute URL.
+          }
+          Object.assign(connection, { method, host })
+          if (acceptedWhileReleased) return
+          this.requests.push(request)
+          this.requestEvents.push({
+            connectionId,
+            acceptedAt,
+            acceptedGeneration,
+            receivedAt: Date.now(),
+            receivedGeneration: this.generation,
+            method,
+            host,
+          })
+        }
       })
+      if (acceptedWhileReleased) {
+        socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      }
     })
   }
 
@@ -1145,6 +1182,7 @@ class BlockingNetworkProxy {
   }
 
   block() {
+    this.generation += 1
     this.released = false
   }
 
@@ -1153,6 +1191,10 @@ class BlockingNetworkProxy {
     for (const socket of this.sockets) socket.destroy()
     this.sockets.clear()
     await new Promise(resolvePromise => this.server.close(resolvePromise))
+    await writeFile(
+      join(resultDir, 'blocking-network-proxy-events.json'),
+      JSON.stringify({ connections: this.connections, requests: this.requestEvents }, null, 2)
+    ).catch(error => console.warn('Could not save blocking proxy diagnostics:', error.message))
   }
 }
 

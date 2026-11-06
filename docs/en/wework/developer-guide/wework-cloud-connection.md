@@ -90,6 +90,8 @@ The relay timeout for `device.execute_command` must use the request's `timeout_s
 
 In a multi-instance Backend deployment, the Socket.IO Redis manager forwards RPCs to the worker that owns the executor connection. The Redis device-online record containing the `socket_id` is the routing source. The current worker's in-process connection table must not be used to declare the executor disconnected, because the connection may belong to another worker.
 
+When a connection closes, the client immediately rejects its unacknowledged RPCs and removes their timers and disconnect listeners. It does not wait for the original acknowledgement timeout or replay writes that may already have executed. A lost remote discovery acknowledgement therefore cannot keep the Pending interactions refresh occupied until that timeout; subsequent refreshes read through the new connection. Results already acknowledged are unaffected by a later disconnect. After registering the disconnect listener, verify connection state as well, covering a connection that closed between the asynchronous return from `ensureConnected()` and listener registration.
+
 ## Cloud Terminal Compatibility and Rollout
 
 Terminals relay through `/terminal` → Backend → `/local-executor`. The successful attach response determines the protocol; device capabilities do not advertise a duplicate protocol field.

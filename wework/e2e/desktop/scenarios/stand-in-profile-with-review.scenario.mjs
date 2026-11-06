@@ -120,6 +120,9 @@ export function createDesktopScenario(options) {
         false
       )
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('waitFor', '[data-testid="stand-in-onboarding-time"]:enabled', {
+        timeoutMs: options.uiTimeoutMs,
+      })
       await control.command('fill', '[data-testid="stand-in-onboarding-time"]', { value: '10:30' })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
       await control.command('waitFor', '[data-testid="stand-in-settings-open"]')

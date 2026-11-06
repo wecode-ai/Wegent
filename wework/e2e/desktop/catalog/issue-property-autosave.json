@@ -1,0 +1,12 @@
+{
+  "order": 193001,
+  "scenario": "./scenarios/issue-property-autosave.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 141001, "shard": 7, "position": 10001 } },
+  "paths": [
+    "packages/collaboration/src/SharedIssueDetailEditor.*",
+    "packages/collaboration/src/issue-detail/useIssueFieldSaves.*",
+    "packages/collaboration/src/project-board/useBoardTagFilter.*",
+    "packages/collaboration/src/milestones/MilestonePicker.*"
+  ]
+}

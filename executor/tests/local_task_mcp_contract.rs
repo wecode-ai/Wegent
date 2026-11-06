@@ -16,6 +16,9 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 use serde_json::Value;
 
+#[path = "local_task_mcp_contract/parent_issue.rs"]
+mod parent_issue;
+
 fn context_grant(space_id: &str, item_id: Option<&str>) -> String {
     context_grant_expiring_at(space_id, item_id, 4_102_444_800)
 }

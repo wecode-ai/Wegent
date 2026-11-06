@@ -161,7 +161,22 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-Core 和 Cloud 的分片定义以 `.github/scripts/classify-wework-desktop-e2e.sh` 为准。
+场景注册、模块路径、执行模式和 Core/Cloud 分片统一来自
+`wework/e2e/desktop/catalog/<checkpoint>.json`；文件名就是 checkpoint ID。
+`checkpoints.mjs`、桌面 runner 和 CI 分类器自动读取同一份配置，不再分别维护清单。
+每个场景使用独立文件，新增场景无需修改公共注册表或把名称追加到分片长行。
+`order` 控制默认执行顺序，`ci.core` / `ci.cloud` 的 `shard`、`position`
+控制既有分片和片内顺序；`ci` 中的 `order` 保留分类目录顺序。排序值可在现有间隔中
+插入，相同值按 checkpoint ID 确定顺序，无需重排其他文件。Core 仍为 10 片，Cloud 仍为 8 片。
+`scenario` 指定场景模块，`scenarioOnly` 指定仅执行该模块；组合检查点通过 `members`
+引用成员，`ciHost` 表示复用其他检查点的 CI 生命周期。正式升级检查点继续由
+`upgrade-suite.mjs` 定义。
+
+配置文件自身的改动自动选择对应 CI 检查点；组合成员会选择其 CI 宿主。
+新增场景模块会自动匹配自身配置，也可在配置的 `paths` 数组中添加相关源码的 shell
+glob。`paths` 增加覆盖，保留已有路径规则选中的检查点。跨功能路径规则按优先级保留在
+`.github/scripts/desktop-ci/`，分类契约按功能拆在
+`.github/scripts/ci-classification-tests/`；测试入口自动发现该目录中的 `.sh` 文件。
 
 `collaboration-runtime-reconciliation` 是可独立运行的 Core checkpoint，自动建立隔离的云项目、Issue、智能体和真实 Executor。它通过透明 WebSocket 代理暂存真实完成事件，分别验证快照先到、最终事件先到，以及两个终态事务在真实 MySQL 行锁后交错提交。每种顺序都检查数据库中的完整最终文本、Issue 界面和刷新后的结果。续轮在模型响应暂停期间重放旧完成事件，覆盖重复、乱序、无序号和空内容；每次都等待后端真实确认，再检查新轮、工作流和执行容量未被旧事件改变。代理只调度传输，模型服务之外的组件均保持真实；清理时释放模型、事务锁和代理连接。
 
@@ -173,8 +188,11 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 `split-workbench` 含固定 3 秒的拖拽交互性能断言，使用独立 Linux 分片，
 避免其他全栈实例争抢 CPU 改变性能基准。它仍保留完整功能断言，并记录拖拽移动、
 松开事件分发和分屏就绪的分阶段耗时；其他功能分片仍可运行最多 4 个实例。
-各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。Core 使用 10 个分片（Windows
-复用相同矩阵），Cloud 使用 8 个分片。合并短分片可复用容器初始化、代码检出、
+各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分类器提供 10 个 Core 逻辑分片，
+Windows 保持 10 台 runner；Linux 设置 `CORE_RUNNER_SCALE=1.5`，完整选择时按历史耗时
+重排到 15 台 runner。部分选择按所选矩阵扩容，且不超过可分配的 checkpoint 数；
+不含历史检查点的部分选择保留原矩阵。两个 Core 性能基准分片仍独占 runner。
+Cloud 使用 8 个分片。合并短分片可复用容器初始化、代码检出、
 构建产物下载和运行时准备，不增加每台 runner 内的 checkpoint 并发数。性能基准的
 2 个 Core 分片以及账号认证和长插件列表的 3 个 Cloud 分片仍独立运行。
 并发上限必须不低于完整矩阵的分片数，避免配置强制分批；分类器回归测试同时检查
@@ -182,6 +200,18 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 Lint、单元测试、平台 E2E 和桌面 E2E 的汇总 job 使用 `always() && !cancelled()`：
 测试失败时仍汇总结果，workflow 被新提交取消后停止排队，避免旧汇总阻塞新提交。
 清理和诊断上传步骤继续使用原有的取消处理方式。
+
+PR 的 Wework renderer 单测使用 4 台 runner，继续按已有文件耗时均衡分配；
+Electron 和其他辅助测试仍只执行一次。平台浏览器/API 和 provider-native E2E
+均使用 8 个完整且无重复的逻辑分片，复用共享构建产物，每台 runner 保持独立服务与用户。
+钉钉协议集成、知识库和附件等额外检查继续只在指定分片执行。
+Linux Core 的历史耗时回放中，测试阶段最长路径由 614 秒降至 478 秒；此估算不包含
+构建、环境准备和排队时间，实际收益需由后续 CI 记录确认。扩容会增加 runner 的准备开销。
+
+设备目录选择使用执行器原生 home 查询与目录枚举，不再为默认的 `home_dir`、`ls_dirs`
+启动 `printenv`、`ls` 子进程。CI 日志曾记录两次进程创建分别耗时 6.2、8.1 秒，
+而相同路径在前一轮仅耗时数十毫秒；原生查询消除这项启动依赖，保留隐藏目录、
+符号链接、输出上限和错误处理语义。自定义命令仍走原命令路径，E2E 的 10 秒断言不变。
 
 成功 CI 记录 `39920301020` 和 `39920742402` 的逐步骤耗时用于拆分环境开销。
 前者 42 个分片的非测试步骤合计约 60 机器分钟，占分片执行量约 31%；后者的
@@ -335,11 +365,10 @@ merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再
 macOS 的 pre-push 检查通过 `caffeinate -is -w` 保持执行期间唤醒，hook 退出时自动释放，避免系统休眠造成测试超时。
 Windows 构建、分片和汇总检查共用同一个运行条件，预期任务被跳过时门禁失败。
 Issue MCP 附件场景在 Linux 和 Windows 均通过共享 `setup-minio-e2e` Action 构建并验证同一固定版本的真实 MinIO；仅 main 写入缓存，场景通过 `WEWORK_E2E_MINIO_BIN` 使用当前平台的可执行文件。
-macOS 内存检查直接调用 Node checkpoint runner，构建缓存命中时无需 pnpm。映射规则位于
-`.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
-必须同步登记对应 segment。新增 `DESKTOP_CHECKPOINTS` 检查点时，必须同时把它加入
-Core、Cloud 或正式发布 catalog，分配到对应 shard，为相关源码路径增加最小分类，
-并更新 `.github/scripts/test-classify-ci-changes.sh` 的矩阵期望和专用分类断言。
+macOS 内存检查直接调用 Node checkpoint runner，构建缓存命中时无需 pnpm。
+新增检查点时，在独立 catalog 文件中声明模块、执行方式、CI 分片和源码 `paths`，
+并在对应功能的分类契约文件中增加专用断言。跨功能行为改变时更新相应矩阵期望；
+无需再修改公共 runner、分片清单或测试入口。
 分类器会拒绝只注册在运行器、但没有 CI catalog 覆盖的检查点，避免本地可运行而
 GitHub CI 永远不执行的死覆盖。分段命令也可用于本地快速迭代：
 
