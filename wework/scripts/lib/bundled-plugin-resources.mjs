@@ -1,6 +1,7 @@
 import { cp, readFile, readdir, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 
+/** Materialize bundled plugins with Wework documentation from the same source tree. */
 export async function materializeBundledPluginResources(weworkRoot, destination) {
   const source = join(weworkRoot, 'resources', 'bundled-plugins')
   await rm(destination, { recursive: true, force: true })
