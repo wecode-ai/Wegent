@@ -314,7 +314,11 @@ export function useConversationScrollController({
   }, [currentScrollKey, follow, restoreReaderPositionFromLayout])
   const handleVirtualLayoutChange = useCallback(() => {
     if (latestRef.current.autoScrollSuspended) return
-    if (modeRef.current !== 'follow' || !latestRef.current.streaming) {
+    if (
+      modeRef.current !== 'follow' ||
+      !latestRef.current.streaming ||
+      followBehaviorRef.current !== 'smooth'
+    ) {
       handleContentLayoutChange()
       return
     }
@@ -438,9 +442,9 @@ export function useConversationScrollController({
     } else if (!latestRef.current.streaming) followBehaviorRef.current = 'auto'
     else if (
       messages !== previous.messages &&
-      messages.some((message, index) => {
+      messages.some(message => {
         if (message.status !== 'streaming') return false
-        const before = previous.messages[index]
+        const before = previous.messages.find(candidate => candidate.id === message.id)
         return !before || getMessageLayoutSignature(message) !== getMessageLayoutSignature(before)
       })
     )

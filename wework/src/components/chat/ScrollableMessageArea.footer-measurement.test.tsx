@@ -77,15 +77,16 @@ describe('conversation footer measurement', () => {
     })
     viewport.scrollTop = 800
     let controller: ReturnType<typeof useConversationScrollController>
-    function Conversation() {
+    function Conversation({ stream = messages }: { stream?: typeof messages }) {
       controller = useConversationScrollController({
-        messages,
+        messages: stream,
         externalScrollRef: { current: viewport },
         conversationKey: 'stream-layout-frame',
       })
       return null
     }
     const view = render(<Conversation />)
+    view.rerender(<Conversation stream={[{ ...messages[0], content: 'New foreground output' }]} />)
     readHeight.mockClear()
 
     act(() => {
