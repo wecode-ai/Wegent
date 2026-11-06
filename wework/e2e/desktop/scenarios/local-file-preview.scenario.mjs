@@ -152,7 +152,9 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'Switching local files replaced the current preview with the full loading page'
       )
       assert.match(
-        switchingSnapshot.text,
+        await control.command('getText', '[data-testid="workspace-file-editor-content"]', {
+          visible: true,
+        }),
         /Desktop E2E workspace/,
         'Switching local files cleared the current preview before the next file loaded'
       )
