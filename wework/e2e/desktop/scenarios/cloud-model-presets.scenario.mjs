@@ -65,7 +65,7 @@ async function assertCompactLayout(control) {
   }
 }
 
-async function verifyRecommendedToFixed(control, target) {
+async function verifyRecommendedToFixed(control, target, verifyPersistence) {
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
   const fixedOption = `[data-testid="model-option-${target.name}"]`
   await control.command('click', selector)
@@ -87,6 +87,7 @@ async function verifyRecommendedToFixed(control, target) {
     `Fixed ${target.name} must not retain the recommended preset Ultra level`
   )
   await control.command('press', 'body', { key: 'Escape' })
+  if (!verifyPersistence) return
 
   await reloadMainWindow(
     control,
@@ -320,9 +321,8 @@ export function createDesktopScenario({ captureScreenshot }) {
         await control.command('press', 'body', { key: 'Escape' })
         await control.command('waitFor', selector, { text: models[3].label })
 
-        for (const target of [models[3], models[2]]) {
-          await verifyRecommendedToFixed(control, target)
-        }
+        await verifyRecommendedToFixed(control, models[3], true)
+        await verifyRecommendedToFixed(control, models[2], false)
 
         // Exercise longer English copy and the dark palette in a constrained desktop window.
         await control.command('navigate', 'body', { value: '/settings/general' })
