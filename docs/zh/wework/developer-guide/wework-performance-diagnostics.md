@@ -16,13 +16,21 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 ## 启动耗时诊断
 
-桌面端的启动页只等待本地 executor 通过 stdout 报告 ready；debug 构建不会为了播放完整动画而延迟工作台。冷启动时， Electron 直接启动新的 sidecar，不发现或附着已有 executor。
+桌面启动门控包括本地运行时和当前路由的首屏就绪条件。冷启动时，Electron 直接创建新的 sidecar，executor 通过 stdout 报告 ready。Renderer 在当前首屏所需数据和可操作界面就绪后发送 `renderer.startupReady`，触发窗口交接。debug 和正式包使用同一交接流程。
 
-排查启动页长时间不消失时，对齐前端日志的 `Frontend logging initialized` 与 executor 日志的 `app IPC stdio ready`。两者之间的时间主要反映本地 executor 冷启动；`runtime work list finished` 等后续记录用于判断工作台数据加载耗时。不要把后台云端同步的超时误判为本地启动门控。
+初始窗口首选尺寸为 1440×960；任一维度占满或超出所在屏幕的可用区域时，启动页与主窗口都使用系统标准最大化，否则保持普通窗口。最大化交接直接继承最大化状态，避免将整屏尺寸往返换算为普通窗口边框尺寸。
+
+启动页的动画舞台支持原生窗口拖动，底部状态区域和恢复按钮保留交互。舞台始终使用深色品牌背景；亮暗主题设置决定交接后的主界面。
+
+完整标记和光丝按窗口及底栏上沿等比缩放，呼吸效果也保留安全间距。若极短窗口的底栏已盖过全页中心，暂时不绘制装饰图标；空间恢复后继续同一条动画时间轴。
+
+交接时，启动页在约 200ms 内补齐编织、收束当前呼吸并将进度推至 100%。完成帧经过两次绘制确认并停留 50ms 后，宿主对齐主窗位置和尺寸，使用 `capturePage()` 确认主窗已有非空合成帧，再以 600ms 原生窗口透明度淡出启动页（macOS/Windows）。Linux 的 Electron 原生窗口透明度不生效。启动页关闭并将焦点交给主窗口后，宿主记录启动成功。启用减少动态效果时，直接呈现完成帧并跳过收束、停留和淡出动画。
+
+排查启动页长时间不消失时，对齐 `Frontend logging initialized`、`app IPC stdio ready`、当前路由的数据加载记录（例如 `runtime work list finished`）与宿主的 `renderer-startup-ready`、`main-window-show`、`startup-splash-close` 记录，分别判断 executor 冷启动、首屏数据加载和窗口交接的耗时。`renderer-startup-ready` 到 `startup-splash-close` 之间包含完成帧呈现、主窗合成和淡出，应单独计量。后台云端同步耗时通过对应同步日志排查。
 
 ### 首屏门禁与闲时任务
 
-工作台首屏只依赖本地 executor 可用，不等待 Codex app-server、插件市场同步或可清理目录扫描。需要 Codex 的功能会在用户实际使用时启动它；插件自动升级、内置插件市场准备和临时图片清理等维护工作通过统一的 renderer 闲时任务调度器执行。
+工作台首屏门禁要求本地 executor 可用，并满足当前路由的数据与可操作条件。需要 Codex 的功能会在用户实际使用时启动它。插件自动升级、内置插件市场准备和临时图片清理等维护工作通过统一的 renderer 闲时任务调度器执行。
 
 闲时任务同时满足以下条件才会开始：
 

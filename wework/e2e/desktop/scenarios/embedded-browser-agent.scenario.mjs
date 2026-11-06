@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
+import { createSetupRenderingEvidence } from '../modules/setup-rendering-evidence.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   handleBrowserHistoryModelRequest,
@@ -680,23 +681,53 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
       const redirectUrl = `${control.url}${REDIRECT_PATH}`
       control.setScenario('embedded_browser_setup')
-      await control.command(
-        'waitFor',
-        '[data-testid="chat-message-input"][contenteditable="true"]',
-        {
-          timeoutMs: uiTimeoutMs,
-        }
+      const captureSetupRendering = createSetupRenderingEvidence(
+        control,
+        join(resultDir, 'embedded-browser-setup-rendering.json')
       )
-      await control.command('fill', '[data-testid="chat-message-input"][contenteditable="true"]', {
-        value: EMBEDDED_BROWSER_SETUP_PROMPT,
-      })
-      await control.command('press', '[data-testid="chat-message-input"][contenteditable="true"]', {
-        key: 'Enter',
-      })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
-        timeoutMs: uiTimeoutMs,
-      })
+      let setupCompleted = false
+      try {
+        await control.command(
+          'waitFor',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        await captureSetupRendering('input-ready')
+        await control.command(
+          'fill',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            value: EMBEDDED_BROWSER_SETUP_PROMPT,
+          }
+        )
+        await control.command(
+          'press',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            key: 'Enter',
+          }
+        )
+        await captureSetupRendering('submitted')
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
+          timeoutMs: uiTimeoutMs,
+        })
+        setupCompleted = true
+      } finally {
+        try {
+          await captureSetupRendering(setupCompleted ? 'assistant-visible' : 'setup-failed')
+        } catch (error) {
+          console.error(
+            '[desktop-e2e] Failed to persist embedded-browser setup rendering evidence',
+            {
+              name: error instanceof Error ? error.name : 'Error',
+            }
+          )
+          if (setupCompleted) throw error
+        }
+      }
       const taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
       const browserLabel = await readBrowserPanelLabel(
         control,

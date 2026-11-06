@@ -329,6 +329,16 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/settings/ProxySettingsPage.tsx" \
   "wework/src/desktop/systemProxy.ts"
 
+assert_desktop_case "Codex startup history regression independently selects its CI shards" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"system-proxy"},{"id":"core-2","name":"Core / shard 2","segments":"system-pac"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/codex-startup-history.mjs"
+
 assert_desktop_case "cloud sign-in proxy scenario is invoked by the core CI shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

@@ -767,3 +767,28 @@ Executor restart logs in [42061132998](https://github.com/wecode-ai/Wegent/actio
 Async project callbacks must read current tab state when invoked rather than the tab list and selection captured when the request started. Regression coverage retains the old callback across selection and closure, checking that it neither changes the current task URL nor recreates a closed tab. If redispatch throws after a superseded successful plugin acknowledgement, synchronization returns an explicit failed response and stops the loop instead of reusing stale success. Database coverage verifies exactly two calls and the `plugin_device_sync_failed` result.
 
 Assignment-control and activity receipt timestamps must be compared in one DOM read. Windows logs in [42072191562](https://github.com/wecode-ai/Wegent/actions/runs/42072191562) place the separate reads at 17:42:02.912 and .977. An intervening Issue status update reloaded the version-scoped control receipt, leaving the second read empty; the subsequent page snapshot shows matching timestamps. The assertion now waits for both receipts to load in one snapshot before comparing their exact text. Protocol tests cover the intervening refresh and genuinely different timestamps, which must still fail.
+
+The public stand-in Beta button leaves project headers using their existing
+width-based tab or compact-select navigation. Cloud shard 1 in
+[CI 42196630424](https://github.com/wecode-ai/Wegent/actions/runs/42196630424)
+recorded missing `collaboration-tab-manage` controls in both
+`plugin-source-continuation-evidence.json` and
+`plugin-detail-resilience-evidence.json`. The
+`plugin-detail-resilience-healthy-before-fault.png` capture shows the real
+execution-environment page with a Project settings select in its header.
+`ProjectViewSwitcher` renders only `collaboration-project-view-select` in compact
+mode. Both plugin scenarios therefore reuse `selectCollaborationProjectView`
+instead of assuming an inline Manage tab. Healthy baselines, persistent plugin
+bindings, fault injection, permission and recovery assertions remain intact;
+timeouts and scenario coverage are unchanged.
+
+Long-conversation switching retains its original assertions and wait budgets.
+[CI 42199573796](https://github.com/wecode-ai/Wegent/actions/runs/42199573796/job/127832839476)
+timed out before the initial body following 520 progress messages. The executor
+history already contained that body. Mapping `conversation-switching-initial.cpuprofile`
+through the matching build's source maps identified repeated shared-footer height
+reads from `MessageList` layout callbacks, accounting for about 1.9 seconds of
+synchronous layout. Footer measurement now runs on controller commits and observed
+resizes; virtual rows retain their existing positioning logic. Component coverage
+checks that 520 row updates do not remeasure the footer, while size changes,
+unmounting and remounting still update its height.

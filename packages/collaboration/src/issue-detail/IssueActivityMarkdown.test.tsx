@@ -144,3 +144,22 @@ it("keeps cloud attachment actions and safe external navigation on the same rend
     "noopener,noreferrer",
   );
 });
+
+it("allows long recognized-link labels to wrap inside Issue comments", async () => {
+  const url = `https://github.com/example/repository/commit/${"a".repeat(80)}`;
+  const label = `commit ${"a".repeat(120)}`;
+  await act(async () =>
+    root.render(<IssueActivityMarkdown content={`[${label}](${url})`} />),
+  );
+
+  const link = container.querySelector<HTMLAnchorElement>(
+    '[data-testid="composer-link-chip"]',
+  )!;
+  const linkLabel = link.querySelector<HTMLSpanElement>(
+    ".composer-mention-label",
+  )!;
+  expect(link.classList.contains("composer-link-node")).toBe(true);
+  expect(linkLabel.classList.contains("min-w-0")).toBe(true);
+  expect(linkLabel.classList.contains("whitespace-normal")).toBe(true);
+  expect(linkLabel.classList.contains("[overflow-wrap:anywhere]")).toBe(true);
+});

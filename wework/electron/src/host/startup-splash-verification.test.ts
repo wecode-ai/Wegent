@@ -18,6 +18,7 @@ describe('native startup splash observations', () => {
       structuredClone,
       document: {
         getElementById: (id: string) => (id === 'startup-timeout' ? { hidden: false } : undefined),
+        querySelectorAll: () => [],
       },
     }
     let release: () => void = () => {}
@@ -40,6 +41,43 @@ describe('native startup splash observations', () => {
     expect(await inspection).toMatchObject({
       progress: renderedProgress,
       timeoutHidden: false,
+    })
+  })
+
+  test('inspects real drag registration and excludes hidden controls from its geometry', async () => {
+    const element = (id: string, appRegion: string, visible = true) => ({
+      id,
+      appRegion,
+      checkVisibility: () => visible,
+      getBoundingClientRect: () => ({ x: 0, y: 0, width: 1440, height: 600 }),
+    })
+    const stage = element('startup-window-drag-region', 'drag')
+    const status = element('startup-status', 'no-drag')
+    const retry = element('startup-retry', 'no-drag')
+    const hidden = element('startup-confirmation-submit', 'no-drag', false)
+    const window = {
+      isDestroyed: () => false,
+      webContents: {
+        executeJavaScript: async (script: string) =>
+          runInNewContext(script, {
+            currentUpdate: null,
+            structuredClone,
+            getComputedStyle: (target: typeof stage) => ({
+              getPropertyValue: () => target.appRegion,
+            }),
+            document: {
+              getElementById: (id: string) =>
+                [stage, status].find(candidate => candidate.id === id),
+              querySelectorAll: () => [retry, hidden],
+            },
+          }),
+      },
+    }
+    const snapshot = await inspectStartupSplash(window as unknown as BrowserWindow)
+    expect(snapshot.dragRegions).toEqual({
+      stage: expect.objectContaining({ id: stage.id, appRegion: 'drag' }),
+      status: expect.objectContaining({ id: status.id, appRegion: 'no-drag' }),
+      controls: [expect.objectContaining({ id: retry.id, appRegion: 'no-drag' })],
     })
   })
 
