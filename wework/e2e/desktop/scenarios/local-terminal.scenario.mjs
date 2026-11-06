@@ -210,6 +210,23 @@ async function waitForHarnessExit(control, harnessId, timeoutMs) {
   throw new Error(`The ${harnessId} CLI did not finish within ${timeoutMs}ms`)
 }
 
+async function waitForOpenCodeReply(control, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let remainingMs = timeoutMs
+  while (remainingMs > 0) {
+    const sessions = JSON.parse(
+      await control.command('getLocalHarnessDiagnostics', 'body', {
+        timeoutMs: remainingMs,
+      })
+    )
+    const session = sessions.find(candidate => candidate.harnessId === 'opencode')
+    if (session?.terminal?.output?.includes('Local harness CLI reply')) return
+    await new Promise(resolve => setTimeout(resolve, 50))
+    remainingMs = deadline - Date.now()
+  }
+  throw new Error('OpenCode did not publish its reply to the real terminal')
+}
+
 function writeSse(response, events) {
   response.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -749,6 +766,9 @@ export async function createDesktopScenario({
         // The terminal mounts before OpenCode finishes its real CLI cold startup.
         workbenchReadyTimeoutMs
       )
+      // Wait for the CLI output before leaving the terminal while its first
+      // response is still being processed on the Windows renderer.
+      await waitForOpenCodeReply(control, workbenchReadyTimeoutMs)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {

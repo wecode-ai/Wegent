@@ -562,6 +562,10 @@ export async function createLocalCollaborationProject(control, contentSelector, 
     { text: projectName, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await selectCollaborationProjectView(control, contentSelector, 'board')
+  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-board"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 export async function completeLocalCollaborationFolderImport(control, projectName) {

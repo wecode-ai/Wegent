@@ -13,6 +13,7 @@ import {
   inCollaborationSidebar,
   reloadMainWindow,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -139,7 +140,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     await selectCollaborationDomain(control, CONTENT, 'local')
     await createLocalCollaborationProject(control, CONTENT, name)
     await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     const id = await createCollaborationBoardIssue(
       control,
       'Local unplanned Issue',

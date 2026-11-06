@@ -12,6 +12,8 @@ mod new_conversation;
 mod query;
 mod remote_continuation;
 mod schedules;
+#[cfg(test)]
+mod startup_continuation_tests;
 use remote_continuation::validate_continuation_target;
 #[cfg(all(test, unix))]
 mod local_execution_tests;

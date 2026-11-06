@@ -2,10 +2,17 @@
 
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/ci-policy-paths.sh"
+
 plugin_auth_sdk=false
 
 classify_path() {
   local path="$1"
+
+  if is_ci_policy_path "$path"; then
+    plugin_auth_sdk=true
+    return
+  fi
 
   case "$path" in
     sdk/plugin-auth/* | \
@@ -18,9 +25,7 @@ classify_path() {
       executor/src/plugin_account_auth/* | \
       executor/src/local/plugin_creator.rs | \
       executor/src/process/mod.rs | \
-      executor/tests/plugin_account_auth_contract.rs | \
-      .github/scripts/classify-plugin-auth-sdk.sh | \
-      .github/workflows/plugin-auth-sdk.yml)
+      executor/tests/plugin_account_auth_contract.rs)
       plugin_auth_sdk=true
       ;;
   esac

@@ -29,7 +29,7 @@ function classifiedCoreMatrix() {
 
 const completeMatrix = classifiedCoreMatrix()
 // Improvement requires measured inputs. The full production matrix below also
-// verifies the separate contract that unknown checkpoints freeze their shard.
+// verifies that unknown checkpoints retain their original runner.
 const original = {
   include: completeMatrix.include
     .map(shard => ({
@@ -95,29 +95,79 @@ test('measured Windows scheduling preserves every segment and expanded checkpoin
   )
 })
 
+test('unknown checkpoints retain their runner without freezing measured work behind them', () => {
+  const matrix = {
+    include: [
+      { id: 'core-1', segments: 'stand-in-git,stand-in' },
+      { id: 'core-2', segments: 'native-lifecycle' },
+    ],
+  }
+  const balanced = balanceWindowsMatrix(matrix, {
+    'stand-in': 200,
+    'native-lifecycle': 10,
+  })
+  assert.deepEqual(
+    balanced.include.find(shard => shard.id === 'core-1'),
+    {
+      id: 'core-1',
+      segments: 'stand-in-git',
+    }
+  )
+  assert.deepEqual(segments(balanced).sort(), segments(matrix).sort())
+  assert.equal(balanced.include.length, matrix.include.length)
+})
+
+test('unknown preparation members keep their measured siblings without duplicating setup', () => {
+  const matrix = {
+    include: [
+      {
+        id: 'core-1',
+        segments: 'stand-in-cli,stand-in-identities,stand-in-connections,stand-in',
+      },
+      { id: 'core-2', segments: 'native-lifecycle' },
+    ],
+  }
+  const balanced = balanceWindowsMatrix(matrix, {
+    'stand-in-identities': 20,
+    'stand-in-connections': 30,
+    'stand-in': 200,
+    'native-lifecycle': 10,
+  })
+  assert.equal(
+    balanced.include.find(shard => shard.id === 'core-1').segments,
+    'stand-in-cli,stand-in-identities,stand-in-connections'
+  )
+  assert.deepEqual(segments(balanced).sort(), segments(matrix).sort())
+  assert.equal(
+    balanced.include.filter(shard => shard.segments.includes('stand-in-identities')).length,
+    1
+  )
+})
+
 test('unmeasured checkpoints retain their original shard and partial selection never adds runners', () => {
   const balanced = balanceWindowsMatrix(completeMatrix)
   assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
   assert.deepEqual(checkpoints(balanced).sort(), checkpoints(completeMatrix).sort())
   assert.equal(new Set(checkpoints(balanced)).size, checkpoints(completeMatrix).length)
   assert.equal(balanced.include.length, completeMatrix.include.length)
-  const movable = matrix =>
-    matrix.include.filter(
-      shard =>
-        !['core-9', 'core-10'].includes(shard.id) &&
-        shard.segments.split(',').every(segment => checkpointSeconds(segment) !== null)
-    )
+  // Include the old unknown runner's measured prefix in the baseline: it is
+  // precisely the work redistributed to prevent its 40-minute timeout.
+  const ordinary = matrix =>
+    matrix.include.filter(shard => !['core-9', 'core-10'].includes(shard.id))
   assert.ok(
-    Math.max(...movable(balanced).map(measuredLoad)) <=
-      Math.max(...movable(completeMatrix).map(measuredLoad))
+    Math.max(...ordinary(balanced).map(measuredLoad)) <
+      Math.max(...ordinary(completeMatrix).map(measuredLoad))
   )
+  assert.equal(balanced.include.find(shard => shard.id === 'core-3').segments, 'stand-in-git')
   for (const shard of completeMatrix.include) {
     for (const segment of shard.segments.split(',')) {
       if (checkpointSeconds(segment) !== null) continue
       const result = balanced
-      assert.deepEqual(
-        result.include.find(entry => entry.id === shard.id),
-        shard
+      assert.ok(
+        result.include
+          .find(entry => entry.id === shard.id)
+          .segments.split(',')
+          .includes(segment)
       )
     }
     const partial = { include: [shard] }
@@ -127,6 +177,13 @@ test('unmeasured checkpoints retain their original shard and partial selection n
   }
   assert.deepEqual(balanceWindowsMatrix({ include: [] }), { include: [] })
   assert.deepEqual(balanceWindowsMatrix(original, {}), original)
+  assert.deepEqual(balanceWindowsMatrix(balanced), balanced)
+  for (const id of ['core-9', 'core-10']) {
+    assert.deepEqual(
+      balanced.include.find(shard => shard.id === id),
+      completeMatrix.include.find(shard => shard.id === id)
+    )
+  }
 })
 
 test('duplicate selection is rejected rather than silently losing coverage', () => {
@@ -135,6 +192,14 @@ test('duplicate selection is rejected rather than silently losing coverage', () 
       balanceWindowsMatrix({
         include: [original.include[0], original.include[0]],
       }),
+    /Duplicate/
+  )
+  assert.throws(
+    () =>
+      balanceWindowsMatrix(
+        { include: [{ id: 'core-1', segments: 'stand-in-git,stand-in-git' }] },
+        {}
+      ),
     /Duplicate/
   )
 })
@@ -209,6 +274,11 @@ test('balancing never multiplies expensive conditional preparation from the orig
     completeOriginalLoads.reduce((a, b) => a + b)
   )
   assert.ok(Math.max(...completeBalancedLoads) <= Math.max(...completeOriginalLoads))
+  for (const [index, shard] of completeBalanced.include.entries()) {
+    if (shard.segments.split(',').every(segment => checkpointSeconds(segment) !== null)) {
+      assert.ok(completeBalancedLoads[index] < 40 * 60, `${shard.id} exceeds the Windows gate`)
+    }
+  }
 })
 
 test('timing evidence contains positive successful samples with source run links', () => {

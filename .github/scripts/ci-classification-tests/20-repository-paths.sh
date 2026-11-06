@@ -177,7 +177,7 @@ assert_case "executor E2E resolver changes run platform E2E" \
   ".github/scripts/resolve-executor-e2e-runtime.sh"
 
 wework_e2e_expected="${all_false/wework_e2e=false/wework_e2e=true}"
-assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
+assert_case "Wework workflow changes validate all modules" "$all_true" \
   ".github/workflows/wework-e2e.yml"
 
 assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \

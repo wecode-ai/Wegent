@@ -452,6 +452,7 @@ async function selectHarnessAppModel(control, installationId, label, uiTimeoutMs
   await control.command('waitFor', selector, {
     text: label,
     enabled: true,
+    text: label,
     stableMs: 300,
     timeoutMs: uiTimeoutMs,
   })
