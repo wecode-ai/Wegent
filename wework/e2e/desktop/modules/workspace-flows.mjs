@@ -1657,9 +1657,12 @@ async function verifyExistingTaskBoardAssociation(
   taskTabTestId,
   { captureScreenshots = true } = {}
 ) {
-  await control.command('click', `[data-testid="${taskTabTestId}"]`, {
-    value: 'tracked-task-return',
-  })
+  if (process.platform === 'win32') {
+    await control.command('performanceSnapshot', 'body', {
+      value: JSON.stringify({ collectMemory: false, profile: 'tracked-task-return' }),
+    })
+  }
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
