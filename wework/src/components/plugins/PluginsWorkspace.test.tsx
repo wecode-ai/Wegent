@@ -575,6 +575,7 @@ function mockSystemSkillsFetch(
     marketplaceInstalled: boolean
     deviceId: string
     marketplaceDeviceState: 'installed' | 'failed' | 'pending' | 'uninstalling'
+    marketplaceActualReleaseId: number
     marketplaceInstallError: string
     marketplaceLogo: string
     marketplaceBrandColor: string
@@ -894,7 +895,9 @@ function mockSystemSkillsFetch(
       ? {
           deviceId,
           desiredReleaseId: 1001,
-          actualReleaseId: marketplaceDeviceState === 'installed' ? 1001 : null,
+          actualReleaseId:
+            overrides.marketplaceActualReleaseId ??
+            (marketplaceDeviceState === 'installed' ? 1001 : null),
           state: marketplaceDeviceState,
           errorCode: marketplaceDeviceState === 'failed' ? 'PLUGIN_SYNC_FAILED' : null,
           errorMessage:
@@ -4286,6 +4289,25 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText(/插件自动更新失败/)).toHaveTextContent(
       'plugin-101 (写入 Codex 配置): still broken'
     )
+  })
+
+  test('shows a failed upgrade receipt without aggregate device counts', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'failed',
+      marketplaceActualReleaseId: 1000,
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+      'Codex App Server rejected install'
+    )
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+    expect(screen.queryByText(/\d+ 失败/)).not.toBeInTheDocument()
   })
 
   test('does not automatically update a marketplace plugin with manual policy', async () => {

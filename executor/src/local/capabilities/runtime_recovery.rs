@@ -540,6 +540,10 @@ impl GlobalCapabilityStore {
                             == Some(spec.key.as_str())
                         && self.ensure_runtime_path(&linked, false).is_ok();
                     linked == runtime
+                        || (spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
+                            && !self.codex_only_plugins
+                            && linked == self.plugin_runtime_link(spec)
+                            && entry_owns_path(entry, &linked, "claude_link"))
                         || retained
                         || manifest
                             .get("plugin_runtime_owner_origins")

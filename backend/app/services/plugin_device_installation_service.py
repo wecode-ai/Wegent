@@ -116,7 +116,9 @@ class PluginDeviceInstallationService:
                 )
                 db.add(row)
             desired_changed = row.desired_release_id != desired_release_id
-            reinstalling = row.state == "uninstalling"
+            reinstalling = row.state == "uninstalling" or (
+                row.state == "failed" and row.actual_release_id == desired_release_id
+            )
             row.desired_release_id = desired_release_id
             if desired_changed or reset_failures or reinstalling:
                 row.attempt_count = 0

@@ -444,11 +444,12 @@ def test_newer_other_plugin_intent_does_not_fence_independent_ack(test_db, test_
 
 
 @pytest.mark.parametrize("older_status", ["synced", "failed"])
+@pytest.mark.parametrize("previous_state", ["uninstalling", "failed"])
 def test_same_release_reinstall_waits_for_latest_ack_after_old_removal(
-    test_db, test_user, older_status
+    test_db, test_user, older_status, previous_state
 ):
     installed = _installed(test_db, test_user.id, "reinstall", active=False)
-    row = _device_row(test_db, installed, state="uninstalling", actual=17)
+    row = _device_row(test_db, installed, state=previous_state, actual=17)
     row.attempt_count = 3
     row.error_code = "OLD_REMOVAL_ERROR"
     row.error_message = "Previous removal did not settle"

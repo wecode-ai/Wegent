@@ -109,6 +109,7 @@ import {
 } from '@/features/plugins/waitForLocalConnectorAuthAvailability'
 import {
   getPluginMarketplaceCache,
+  getPluginInventoryMutationVersion,
   capturePluginMarketplaceScope,
   pluginMarketplaceCacheKey,
   sameInstalledPlugins,
@@ -4824,6 +4825,7 @@ export function PluginsWorkspace({
     ? JSON.stringify([
         marketplaceCacheKeyValue,
         currentDeviceId,
+        getPluginInventoryMutationVersion(),
         marketplacePluginDetailSelectionKey(selectedMarketplacePlugin),
         marketplaces.find(
           entry => entry.id === localMarketplaceIdFromItem(selectedMarketplacePlugin)
@@ -5938,7 +5940,8 @@ export function PluginsWorkspace({
           }
           actionError={
             marketplaceDetailLoadError ||
-            (isFailed && selectedMarketplacePlugin.currentDeviceInstallation?.errorMessage) ||
+            (deviceState === 'failed' &&
+              selectedMarketplacePlugin.currentDeviceInstallation?.errorMessage) ||
             pluginDetailActionErrorMessage(pluginDetailActionError, selectedMarketplacePlugin.id)
           }
           onRetryAction={

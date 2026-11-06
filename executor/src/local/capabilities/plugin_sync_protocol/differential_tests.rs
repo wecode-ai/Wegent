@@ -131,6 +131,37 @@ async fn personal_marketplace_publishes_one_entry_for_both_runtimes() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
+async fn personal_marketplace_repairs_an_owned_claude_target_after_recovery() {
+    let (_root, handler) = shared_fixture(false);
+    let mut desired = desired("alpha", 1);
+    desired["marketplace"] = json!(PERSONAL_SHARED_PLUGIN_MARKETPLACE);
+    let spec = PluginSyncSpec::from_value(&desired).unwrap();
+    let installed = handler
+        .apply_sync(complete(10, vec![desired.clone()]))
+        .await
+        .unwrap();
+    assert_eq!(installed["success"], true, "{installed}");
+    let entry = handler
+        .store
+        .personal_marketplace_dir()
+        .join("plugins/alpha");
+    let claude = handler.store.plugin_runtime_link(&spec);
+    fs::remove_file(&entry).unwrap();
+    std::os::unix::fs::symlink(&claude, &entry).unwrap();
+    fs::write(claude.join("payload.txt"), "damaged owned payload").unwrap();
+    let repaired = handler
+        .apply_sync(complete(11, vec![desired]))
+        .await
+        .unwrap();
+    assert_eq!(repaired["success"], true, "{repaired}");
+    assert_eq!(
+        fs::read_to_string(entry.join("payload.txt")).unwrap(),
+        "valid plugin contents"
+    );
+}
+
+#[tokio::test]
 async fn identical_complete_inventory_skips_installation_and_preserves_ordering() {
     for codex_only in [true, false] {
         let (_root, handler) = shared_fixture(codex_only);

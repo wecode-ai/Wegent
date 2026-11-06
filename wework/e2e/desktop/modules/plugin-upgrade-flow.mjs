@@ -340,7 +340,6 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     assert.ok(!snapshot.text.includes('正在卸载'), 'Reinstall must not show old removal state')
     if (snapshot.text.includes('立即对话')) {
       reinstallReady = true
-      break
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }

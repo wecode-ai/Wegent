@@ -113,6 +113,36 @@ test('a failed read stops loading and a retry revision recovers', async () => {
   expect(result.current.error).toBeNull()
 })
 
+test('a confirmed inventory mutation refreshes completed detail without a version change', async () => {
+  const plugin = base('A')
+  const fresh = deferred()
+  const read = vi.fn().mockResolvedValueOnce(plugin.raw).mockReturnValueOnce(fresh.promise)
+  const { result, rerender } = renderHook(
+    ({ mutation }) =>
+      useMarketplacePluginDetail({
+        selectionKey: JSON.stringify(['account/A', mutation]),
+        revision: 0,
+        base: plugin,
+        read,
+        errorMessage: 'failed',
+      }),
+    { initialProps: { mutation: 0 } }
+  )
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  rerender({ mutation: 0 })
+  expect(read).toHaveBeenCalledOnce()
+  rerender({ mutation: 1 })
+  expect(result.current.loading).toBe(true)
+  await act(async () =>
+    fresh.resolve({
+      ...plugin.raw,
+      spec: { ...plugin.raw.spec, description: 'same-version replacement' },
+    })
+  )
+  expect(result.current.detail?.raw.spec.description).toBe('same-version replacement')
+  expect(read).toHaveBeenCalledTimes(2)
+})
+
 test('returning to a selection waits for its new read instead of painting a previous visit', async () => {
   const first = base('A')
   const second = base('B')
