@@ -682,6 +682,15 @@ export function StandInOverviewPage({
       userId={props.userId}
       deviceId={deviceId ?? ''}
       active={active}
+      configuration={{
+        settings: saved,
+        loading: state.loading,
+        error: state.error,
+        projects: props.projects,
+        localDeviceId: state.currentDeviceId,
+        onSave: state.save,
+        onReload: state.reload,
+      }}
       guideOpen={guideOpen}
       onGuideClose={() => setGuideOpen(false)}
       onExampleSelect={text =>

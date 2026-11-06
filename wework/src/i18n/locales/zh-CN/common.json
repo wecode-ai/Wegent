@@ -6029,7 +6029,20 @@
         }
       },
       "guide": "使用示例",
-      "examples_dialog_title": "分身使用示例"
+      "examples_dialog_title": "分身使用示例",
+      "connect_title": "让分身更了解你",
+      "steps_label": "开始使用分身",
+      "connect_step": "连接常用应用",
+      "confirm_step": "开始使用",
+      "connect_help": "连接常用应用，让分身帮你留意重要消息和项目进展。也可以以后再连接。",
+      "confirm_help": "分身会帮你留意重要变化、临近的期限和需要你决定的事情。",
+      "selected_apps": "关注哪些内容",
+      "no_apps": "还没有连接应用。可以先聊天，以后再添加连接。",
+      "attention_help": "开始使用后，分身会按你在连接中选择的方式关注新动态。有重要的事再提醒你；需要执行操作时，遵循你的授权设置。没有连接时，暂时没有应用动态可供分析。",
+      "continue": "继续",
+      "back_apps": "返回连接",
+      "excluded_projects": "不包括：{{names}}",
+      "project_tags": "仅关注标签：{{names}}"
     },
     "authorization": {
       "confirm_each": "发送前逐次确认",

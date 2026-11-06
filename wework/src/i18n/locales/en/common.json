@@ -6034,7 +6034,20 @@
         }
       },
       "guide": "Examples",
-      "examples_dialog_title": "Stand-in examples"
+      "examples_dialog_title": "Stand-in examples",
+      "connect_title": "Let your stand-in get to know you",
+      "steps_label": "Set up your stand-in",
+      "connect_step": "Connect your apps",
+      "confirm_step": "Get started",
+      "connect_help": "Connect the apps you use so your stand-in can help you keep up with important messages and project updates. You can also connect them later.",
+      "confirm_help": "Your stand-in can help you spot important changes, upcoming deadlines, and decisions that need your attention.",
+      "selected_apps": "What to keep an eye on",
+      "no_apps": "No apps connected yet. Start chatting and add connections whenever you like.",
+      "attention_help": "Once you get started, your stand-in follows the handling preferences you chose for each connection. It highlights important updates and follows your permissions when taking action. Without connections, there are no app updates to review yet.",
+      "continue": "Continue",
+      "back_apps": "Back to connections",
+      "excluded_projects": "Excluding: {{names}}",
+      "project_tags": "Only tags: {{names}}"
     },
     "authorization": {
       "confirm_each": "Confirm each send",

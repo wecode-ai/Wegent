@@ -230,9 +230,7 @@ Calendar due runs use the existing per-automation history budget of 100 as their
 
 `runtime.stand_in.onboarding.get/complete` reads and submits feature choices for
 the current account on the selected Executor. Reads require no model, cloud
-catalog or execution preparation. Completing the introduction records completion without creating an arrangement;
-closing does not save. All five examples use equivalent buttons, with no checkbox
-or inline time field. Weekly reviews are scheduled through the conversation after
+catalog or execution preparation. The two-step introduction reuses StandInConnectionSettings for app authorization and scope editing. Continue remains available without connections. Final confirmation saves personal settings and enables the primary identity before recording completion. Failed saves retain drafts; retrying completion does not resubmit already saved settings. Closing protects unsaved connection drafts. No arrangement is created. The question-mark examples retain their equivalent buttons without inline scheduling. Weekly reviews are scheduled through the conversation after
 scope and time confirmation, preserving paused identities and calendar policy.
 
 Onboarding and the calendar share the Executor's `weekly_review` template,
@@ -240,8 +238,7 @@ defaulting to Monday 09:00 in Asia/Shanghai. Deleting an arrangement retains the
 completion record, preventing recreation on repeat submissions. Users may
 explicitly add it again through the primary calendar template.
 
-The onboarding modal offers daily briefings, meeting preparation, project follow-up
-DingTalk mention replies and weekly work reviews, and can be reopened through the question-mark icon. Choosing
+The question-mark examples modal offers daily briefings, meeting preparation, project follow-up, DingTalk mention replies and weekly work reviews. Choosing
 an example selects the primary conversation and appends the business request to
 its editable draft without sending, replacing existing notes or creating schedules.
 A single-person icon distinguishes the primary identity from scenario roles;
@@ -296,15 +293,17 @@ coordinators receive no personal history. History never grants execution authori
 
 ### User stories and acceptance coverage
 
-| User story                            | Acceptance behavior                                                                                                                 | Automated coverage                                                                                             |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Understand the feature on first use   | Review checked by default; device scope, seven days, Beijing time and management entry are visible; no creation before confirmation | Component tests and the existing `stand-in-profile-settings` desktop checkpoint                                |
-| Decide later or opt out               | Closing saves nothing; reopening shows choices; confirming an unchecked review saves only completion                                | Desktop deferred/unchecked states, component tests and durable Executor opt-out tests                          |
-| Adjust the schedule                   | Save a custom Monday time and inspect the calendar entry                                                                            | Desktop onboarding at 10:30 and template editor tests                                                          |
-| Stop reviews                          | Pause or delete without restoration on repeated completion or restart                                                               | Desktop operations, Automation reload and concurrency tests                                                    |
-| Restart reviews and read results      | Add the calendar template and open the report in its original work conversation                                                     | The same desktop checkpoint with real Executor, native MCP and transcripts; only model responses are simulated |
-| Trust evidence boundaries             | Paginate over 100 tasks and 50 messages, fix the seven-day window, reject other accounts, roles and forged runs                     | Executor native protocol pagination and permission tests, plus desktop history reads                           |
-| Use different themes and window sizes | No horizontal overflow; legible light/dark states; keyboard selection; no duplicate pending submissions                             | Desktop captures/geometry checks and component pending/failure recovery tests                                  |
+| User story                            | Acceptance behavior                                                                                                    | Automated coverage                                                                                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Connect apps on first use             | Continue with or without apps; confirm before saving connections and enabling the primary identity; create no schedule | Component tests and the existing `stand-in-profile-settings` desktop checkpoint                                |
+| Protect connection drafts             | Closing saves nothing; returning preserves selected scope; discarding is explicit                                      | Desktop draft checks and component navigation tests                                                            |
+| Recover from concurrent edits         | A real version conflict keeps setup incomplete; reload and confirm without overwriting the other edit                  | Same desktop checkpoint and component failure tests                                                            |
+| Connect apps later                    | Enable the stand-in without apps, then add a connection through existing settings                                      | Same desktop checkpoint                                                                                        |
+| Adjust the schedule                   | Save a custom Monday time and inspect the calendar entry                                                               | Calendar template editor tests                                                                                 |
+| Stop reviews                          | Pause or delete without restoration on repeated completion or restart                                                  | Desktop operations, Automation reload and concurrency tests                                                    |
+| Restart reviews and read results      | Add the calendar template and open the report in its original work conversation                                        | The same desktop checkpoint with real Executor, native MCP and transcripts; only model responses are simulated |
+| Trust evidence boundaries             | Paginate over 100 tasks and 50 messages, fix the seven-day window, reject other accounts, roles and forged runs        | Executor native protocol pagination and permission tests, plus desktop history reads                           |
+| Use different themes and window sizes | No horizontal overflow; legible light/dark states; keyboard selection; no duplicate pending submissions                | Desktop captures/geometry checks and component pending/failure recovery tests                                  |
 
 Review coverage composes with the existing profile checkpoint, retaining every
 original assertion and sharing its build, startup and model protocol fixtures.
