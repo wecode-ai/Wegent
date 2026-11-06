@@ -63,7 +63,8 @@ test("dependency keys follow build inputs and survive application-only changes",
     assert.notEqual(key("backend-rs-deps"), backend);
     writeFileSync(sharedSource, originalSource);
     for (const input of [
-      "shared/assets/gptDefaultInstructions.md",
+      "shared/assets/codexProgressiveInstructions.md",
+      "shared/assets/codexDiscoveryInstructions.md",
       "sdk/plugin-auth/tool.py",
       "sdk/plugin-creator/SKILL.md",
     ]) {
