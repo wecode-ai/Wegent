@@ -922,7 +922,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const handleSimpleExecutorModeChange = (nextMode: SimpleExecutorMode) => {
     if (nextMode === 'simple' && bindMode.some(item => item === 'code' || item === 'task')) {
       handleSimpleBindModeChange(['chat'])
-    } else if (nextMode === 'complex' && bindMode.length === 1 && bindMode[0] === 'chat') {
+    } else if (
+      nextMode === 'complex' &&
+      simpleExecutorMode === 'simple' &&
+      bindMode.length === 1 &&
+      bindMode[0] === 'chat'
+    ) {
       handleSimpleBindModeChange(DEFAULT_NEW_AGENT_BIND_MODE)
     }
     setSimpleField('simpleExecutorMode', nextMode)
