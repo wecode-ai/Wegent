@@ -44,8 +44,6 @@ use crate::ChildEnvironment;
 use std::sync::Arc;
 use wegent_subprocess::{decode_output, run_prepared_command, ProcessTreeGuard};
 pub use wegent_subprocess::{hide_windows_console, spawn_program_parts};
-#[cfg(windows)]
-pub(crate) use wegent_subprocess::{kill_windows_process_tree, windows_shell_command};
 
 mod claude_resume;
 use wegent_runtime_logging::native_stdout as debug_stdout;

@@ -4281,7 +4281,7 @@ fn signal_codex_app_server_child(child: &mut Child) {
     // whole tree down: the app-server owns tool subprocesses of its own.
     #[cfg(windows)]
     if let Some(process_id) = child.id() {
-        crate::process::kill_windows_process_tree(process_id);
+        wegent_subprocess::kill_windows_process_tree(process_id);
         return;
     }
 

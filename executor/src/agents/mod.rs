@@ -73,10 +73,6 @@ pub(crate) use instance_home::{
     task_skills_directory, task_skills_directory_at, TaskSkillsDirectory,
 };
 
-pub(crate) fn has_isolated_native_home(request: &ExecutionRequest) -> bool {
-    instance_home::request_home(request).is_some()
-}
-
 /// Terminates every agent process owned by this executor.
 ///
 /// Call this when the executor's owner goes away, so the agents it was driving

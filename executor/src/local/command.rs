@@ -290,7 +290,7 @@ fn process_command(request: &CommandRequest) -> Command {
 
 #[cfg(windows)]
 fn shell_command(command_line: &str) -> Command {
-    crate::process::windows_shell_command(command_line)
+    wegent_subprocess::windows_shell_command(command_line)
 }
 
 #[cfg(not(windows))]

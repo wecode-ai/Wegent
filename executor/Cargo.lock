@@ -3169,6 +3169,7 @@ dependencies = [
  "wegent-protocol",
  "wegent-runtime-config",
  "wegent-runtime-logging",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
