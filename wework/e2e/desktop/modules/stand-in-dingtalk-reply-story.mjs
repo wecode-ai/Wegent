@@ -100,7 +100,6 @@ export function createDingTalkReplyStory(options) {
     )
     await openStoryPrimary(control)
     await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
     await control.command(
       'clickWhenEnabled',
       `[data-testid="stand-in-activity-task-${selected.taskId}"]`
