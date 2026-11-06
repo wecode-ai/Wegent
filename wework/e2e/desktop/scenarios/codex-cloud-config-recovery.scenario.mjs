@@ -132,7 +132,10 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         const offset = (await readFile(logPath, 'utf8')).length
         const result = await rpc(
           'runtime.codex.app_server.restart',
-          { ifIdle: true },
+          // Force the intentional fault-injection restart; background rate-limit
+          // reads can be in flight and must not turn this setup step into a
+          // confirmation path.
+          { force: true },
           RECOVERY_TIMEOUT_MS
         )
         assert.equal(result.restarted, true, JSON.stringify(result))
