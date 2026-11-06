@@ -67,6 +67,24 @@ export async function verifyAppUpdateRetry(control, { policy, requests, advertis
     ),
     /Release download failed: HTTP 503/
   )
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('clickWhenEnabled', '[data-testid="settings-button"]', { visible: true })
+  await control.command('clickWhenEnabled', '[data-testid="app-update-error-details-button"]')
+  const dialog = '[data-testid="app-update-error-dialog"]'
+  const copyButton = '[data-testid="app-update-error-copy"]'
+  await control.command('waitFor', dialog, { text: 'APP_UPDATE_DOWNLOAD_FAILED' })
+  await control.command('pointerDown', copyButton)
+  await control.command('waitFor', dialog)
+  await control.command('clickWhenEnabled', copyButton)
+  await control.command('waitFor', copyButton, { text: '已复制' })
+  const diagnostics = await control.command('getClipboardText', 'body')
+  assert.match(diagnostics, /APP_UPDATE_DOWNLOAD_FAILED/)
+  assert.match(diagnostics, /HTTP 503/)
+  await control.command('waitFor', dialog)
+  await control.command('click', '[data-testid="app-update-error-dialog-close"]')
+  await control.command('waitFor', dialog, { visible: false })
+  await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]', { visible: true })
+  await control.command('waitFor', button, { visible: true, enabled: true })
   const requestCount = requests.length
   advertise(false)
   await control.command('clickWhenEnabled', button)
