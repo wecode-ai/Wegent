@@ -1062,13 +1062,15 @@ class SqlAlchemySubtaskStore:
         cutoff: datetime,
         max_age_cutoff: datetime,
         limit: int,
+        after_updated_at: datetime | None = None,
+        after_subtask_id: int | None = None,
     ) -> list[StalledRunningSubtask]:
         """Find recent RUNNING assistant subtasks silent since ``cutoff``.
 
         ``created_at`` is indexed, so the bounded recent window keeps this a
         range scan instead of filtering every RUNNING row.
         """
-        rows = (
+        query = (
             db.query(
                 Subtask.task_id,
                 Subtask.id,
@@ -1085,7 +1087,17 @@ class SqlAlchemySubtaskStore:
                 Subtask.created_at >= max_age_cutoff,
                 TaskResource.is_active != TaskResource.STATE_DELETED,
             )
-            .order_by(Subtask.updated_at.asc(), Subtask.id.asc())
+        )
+        if after_updated_at is not None and after_subtask_id is not None:
+            query = query.filter(
+                or_(
+                    Subtask.updated_at > after_updated_at,
+                    (Subtask.updated_at == after_updated_at)
+                    & (Subtask.id > after_subtask_id),
+                )
+            )
+        rows = (
+            query.order_by(Subtask.updated_at.asc(), Subtask.id.asc())
             .limit(limit)
             .all()
         )

@@ -115,6 +115,7 @@ interface ProjectChatComposerProps {
   collapseWhenIdle?: boolean
   alwaysShowComposerToolbar?: boolean
   inputLeadingContext?: ReactNode
+  contextHeader?: ReactNode
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
@@ -203,6 +204,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       collapseWhenIdle = false,
       alwaysShowComposerToolbar = false,
       inputLeadingContext,
+      contextHeader,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
       projectWorkBarMiddleContext,
@@ -299,6 +301,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           supervisorPending={supervisorPending}
           onConfigureSupervisor={onConfigureSupervisor}
           inputLeadingContext={inputLeadingContext}
+          contextHeader={contextHeader}
           onDismissInputLeadingContext={onDismissInputLeadingContext}
           hasToolbarLeadingContext={Boolean(toolbarLeadingContext)}
           planModeActive={planModeActive}
@@ -336,7 +339,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 middleContext={projectWorkBarMiddleContext}
                 trailingContext={projectWorkBarTrailingContext}
                 endContext={projectWorkBarEndContext}
-                className="min-h-10 rounded-t-[26px] bg-background px-4"
+                className="-mb-2 min-h-10 rounded-t-[20px] bg-muted/45 px-3 pb-2"
                 buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
               />
             ))
