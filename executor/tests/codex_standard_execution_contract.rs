@@ -43,6 +43,9 @@ mod streaming;
 #[path = "codex_standard_execution_contract/mcp_forms.rs"]
 mod mcp_forms;
 
+#[path = "codex_standard_execution_contract/file_changes.rs"]
+mod file_changes;
+
 #[derive(Clone)]
 struct ChannelSink(mpsc::UnboundedSender<EventEnvelope>);
 

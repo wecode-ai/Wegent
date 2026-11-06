@@ -27,6 +27,12 @@ case "$url" in
     fi
     ;;
   */runs/7/jobs*)
+    if [[ "$TEST_CASE" == current-terminal-* ]]; then
+      conclusion=success
+      [[ "$TEST_CASE" != current-terminal-failed ]] || conclusion=failure
+      printf '{"jobs":[{"name":"%s","status":"in_progress","conclusion":null,"steps":[{"name":"Build","status":"completed","conclusion":"%s"},{"name":"Complete job","status":"completed","conclusion":"success"}]}]}' "$TEST_PRODUCER_JOB" "$conclusion"
+      exit 0
+    fi
     state=success
     case "$TEST_CASE" in
       current-pending)
@@ -189,7 +195,12 @@ TEST_CASE=current-cached \
   "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$temp_dir/fresh-frontend"
 cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/fresh-frontend/wegent-executor"
 
+TEST_CASE=current-terminal-success \
+  "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$temp_dir/terminal-frontend"
+cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/terminal-frontend/wegent-executor"
+
 for failure_case in current-wrong-sha current-wrong-event \
+  current-terminal-failed \
   current-producer-failure current-producer-cancelled current-producer-timed_out \
   current-producer-skipped current-producer-neutral; do
   rm -f "$temp_dir/requests"

@@ -32,6 +32,38 @@ export function createDesktopScenario(options) {
         assert.deepEqual(provider.resourceKinds, ['group', 'direct'])
         assert.equal(provider.dependencies[0].source.pluginId, 'dingtalk@wework')
         await fixture.install(control)
+        // Startup sync also restarts Codex. Both local markets and the installed
+        // dependency must survive that boundary, rather than exist only in memory.
+        const restarted = await requestExecutor(
+          control,
+          'runtime.codex.app_server.restart',
+          {},
+          uiTimeoutMs
+        )
+        assert.equal(restarted.restarted, true, 'The persistence check must restart real Codex')
+        const persistedMarkets = await requestExecutor(
+          control,
+          'runtime.codex.app_server.request',
+          { method: 'plugin/list', params: { cwds: null, marketplaceKinds: ['local'] } },
+          uiTimeoutMs
+        )
+        for (const name of ['wework', 'wework-personal']) {
+          assert.ok(
+            persistedMarkets.marketplaces.some(market => market.name === name),
+            `Codex restart lost the registered ${name} marketplace`
+          )
+        }
+        const persistedCatalog = await requestExecutor(
+          control,
+          'runtime.connections.catalog',
+          {},
+          uiTimeoutMs
+        )
+        assert.equal(
+          persistedCatalog.items.find(item => item.id === DINGTALK)?.availability.status,
+          'ready',
+          'Codex restart lost the installed DingTalk dependency'
+        )
         const source = {
           id: 'connection-migration-fixture',
           profile: 'connection-test-account',

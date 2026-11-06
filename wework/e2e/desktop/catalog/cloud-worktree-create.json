@@ -1,0 +1,14 @@
+{
+  "order": 142000,
+  "cloudOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 8000,
+      "shard": 2,
+      "position": 5000
+    },
+    "cloudWorktree": {
+      "order": 2000
+    }
+  }
+}

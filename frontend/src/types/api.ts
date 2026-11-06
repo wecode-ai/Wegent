@@ -307,6 +307,23 @@ export interface WorkbenchData {
   originalPrompt: string
   file_changes: FileChange[]
   git_info: GitInfoWorkbench
+  git_type?: 'github' | 'gitlab'
+  git_domain?: string
+}
+
+/** Net Git changes from a task's saved baseline to its current workspace. */
+export interface TaskFileChanges {
+  status: 'active' | 'error'
+  files: {
+    path: string
+    old_path?: string | null
+    change_type: 'created' | 'modified' | 'deleted' | 'renamed'
+    additions: number
+    deletions: number
+    binary: boolean
+  }[]
+  diff: string
+  diff_truncated?: boolean
 }
 
 export interface OpenLinks {

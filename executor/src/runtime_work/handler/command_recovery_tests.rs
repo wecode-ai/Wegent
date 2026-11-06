@@ -9,6 +9,7 @@ fn input() -> (Value, SpawnTurnRequest) {
     let mut request = execution_request(&payload).unwrap();
     apply_runtime_payload_metadata(&mut request, &payload);
     let turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-1".into(),
         runtime: "codex".into(),
         request,
