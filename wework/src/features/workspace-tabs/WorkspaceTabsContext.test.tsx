@@ -599,6 +599,50 @@ describe('WorkspaceTabsProvider routing', () => {
     }
   )
 
+  test.each(['协作 (Beta)', 'Collaboration (Beta)'])(
+    'normalizes fixed collaboration preferences (%s) on startup and delayed loading',
+    title => {
+      const fixedTabs = [
+        { id: 'fixed-board', kind: 'board' as const, title, contentRoute: '/todo', fixed: true },
+        {
+          id: 'named-board',
+          kind: 'board' as const,
+          title: '产品规划',
+          contentRoute: '/todo?projectId=project-1',
+          fixed: true,
+        },
+      ]
+      let current!: WorkspaceTabsContextValue
+      const onContextValue = (value: WorkspaceTabsContextValue) => {
+        current = value
+      }
+      const { unmount } = render(
+        <RoutingHarness
+          fixedTabs={fixedTabs}
+          restoreSessionTabs={false}
+          onContextValue={onContextValue}
+        />
+      )
+      expect(current.tabs.find(tab => tab.id === 'fixed-board')?.title).toBe('协作')
+      expect(current.tabs.find(tab => tab.id === 'named-board')?.title).toBe('产品规划')
+      unmount()
+
+      window.history.replaceState({}, '', '/')
+      const { rerender } = render(
+        <RoutingHarness fixedTabs={[]} restoreSessionTabs={false} onContextValue={onContextValue} />
+      )
+      rerender(
+        <RoutingHarness
+          fixedTabs={fixedTabs}
+          restoreSessionTabs={false}
+          onContextValue={onContextValue}
+        />
+      )
+      expect(current.tabs.find(tab => tab.id === 'fixed-board')?.title).toBe('协作')
+      expect(current.tabs.find(tab => tab.id === 'named-board')?.title).toBe('产品规划')
+    }
+  )
+
   test('the explicit new-tab action still opens a separate tab', () => {
     render(<RoutingHarness />)
 
