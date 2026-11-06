@@ -82,7 +82,7 @@ async function prepareFixture({
         expect(file.type).toBe('text/plain')
         expect(await file.text()).toBe('WEWORK_CONTROL_RESOURCE_CONTENT_E2E')
         uploads.push(file)
-        return new Response(JSON.stringify({ id: 91, status: 'ready' }), { status: 201 })
+        return new Response(JSON.stringify({ id: 91, status: 'ready' }), { status: 200 })
       }
       requests.push({ path, body: options?.body ? JSON.parse(options.body as string) : undefined })
       let result: unknown

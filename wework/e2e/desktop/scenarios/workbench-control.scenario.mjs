@@ -469,7 +469,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         body: form,
         signal: AbortSignal.timeout(uiTimeoutMs),
       })
-      assert.equal(upload.status, 201, `Attachment upload: ${await upload.clone().text()}`)
+      assert.equal(upload.status, 200, `Attachment upload: ${await upload.clone().text()}`)
       attachment = await upload.json()
       assert.ok(attachment.id)
       assert.equal(attachment.status, 'ready')
