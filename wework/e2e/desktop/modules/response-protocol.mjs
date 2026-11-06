@@ -768,11 +768,16 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
       ...selectMcpTool(request, namespace.name, toolName, argumentsValue),
     }
   }
-  if (!advertisesToolSearch && directToolName && names.includes(directToolName)) {
-    return {
-      mode: 'direct',
-      ...selectTool(request, directToolName, argumentsValue),
-    }
+  if (!advertisesToolSearch && directToolName) {
+    const advertisedName = [
+      directToolName,
+      ...(namespaceName ? [`${namespaceName}__${toolName}`] : []),
+    ].find(name => names.includes(name))
+    if (advertisedName)
+      return {
+        mode: 'direct',
+        ...selectTool(request, advertisedName, argumentsValue),
+      }
   }
   return {
     mode: 'search',
