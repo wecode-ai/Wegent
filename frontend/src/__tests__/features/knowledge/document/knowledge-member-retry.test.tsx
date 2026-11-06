@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { KnowledgeGrantForm } from '@/features/knowledge/permission/components/KnowledgeGrantForm'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import { userApis } from '@/apis/user'
+import { searchGroups } from '@/apis/groups'
 const mockT = (key: string) => key
 jest.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: mockT }) }))
 jest.mock('@/features/common/UserContext', () => ({ useUser: () => ({ user: { id: 1 } }) }))
@@ -126,4 +127,50 @@ it('selects several people and teams from one search per type without conflating
   await user.click(teamSearch)
   expect(screen.getByTestId('auth-select-namespace-7')).toBeEnabled()
   expect(screen.getByTestId('remove-auth-user-7')).toBeInTheDocument()
+})
+
+it('hides previous group results throughout the debounce before showing the new query', async () => {
+  jest.useFakeTimers()
+  try {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    render(<KnowledgeGrantForm kbId={29} onChanged={jest.fn()} />)
+    await act(async () => jest.advanceTimersByTime(300))
+    const search = screen.getByTestId('add-namespace-group-search')
+    await user.click(search)
+    expect(screen.getByTestId('auth-select-namespace-7')).toBeInTheDocument()
+    await user.type(search, 'team')
+    expect(screen.queryByTestId('auth-select-namespace-7')).not.toBeInTheDocument()
+    await act(async () => jest.advanceTimersByTime(300))
+    expect(screen.getByTestId('auth-select-namespace-7')).toBeInTheDocument()
+    await user.click(screen.getByTestId('auth-select-namespace-7'))
+    expect(search).toHaveValue('team')
+    expect(screen.getByTestId('auth-select-namespace-7')).toBeDisabled()
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
+it('ignores a previous group response that finishes during the next query debounce', async () => {
+  jest.useFakeTimers()
+  try {
+    let finishOld!: (value: Awaited<ReturnType<typeof searchGroups>>) => void
+    jest.mocked(searchGroups).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishOld = resolve
+        })
+    )
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    render(<KnowledgeGrantForm kbId={29} onChanged={jest.fn()} />)
+    await act(async () => jest.advanceTimersByTime(300))
+    await user.type(screen.getByTestId('add-namespace-group-search'), 'team')
+    await act(async () =>
+      finishOld({ items: [{ id: 99, name: 'old', display_name: 'Old team' }] } as never)
+    )
+    expect(screen.queryByTestId('auth-select-namespace-99')).not.toBeInTheDocument()
+    await act(async () => jest.advanceTimersByTime(300))
+    expect(screen.getByTestId('auth-select-namespace-7')).toBeInTheDocument()
+  } finally {
+    jest.useRealTimers()
+  }
 })

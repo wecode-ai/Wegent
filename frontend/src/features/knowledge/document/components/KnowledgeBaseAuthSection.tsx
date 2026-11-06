@@ -313,6 +313,10 @@ function NamespaceAuthSearch({
 
   // Debounced search when query changes
   useEffect(() => {
+    // Invalidate old requests and hide stale results during the debounce window.
+    searchRevision.current++
+    setSearching(true)
+    setSearchFailed(false)
     const timer = setTimeout(() => {
       performSearch(searchQuery)
     }, 300)

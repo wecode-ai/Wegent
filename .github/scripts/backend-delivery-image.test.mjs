@@ -2,12 +2,81 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  chmodSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
   deliveryImageRequired,
   assertHealthy,
   assertStopped,
   assertRouteOwnership,
   collectAndCleanup,
 } from "./verify-backend-delivery-image.mjs";
+
+test("startup supplies independent internal credentials and redacts them on failure", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "delivery-environment-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const capture = join(directory, "container-arguments.json");
+  const executable = join(directory, "docker");
+  writeFileSync(
+    executable,
+    `#!${process.execPath}
+const fs = require('node:fs')
+const args = process.argv.slice(2)
+if (args[0] === 'image') {
+  console.log(JSON.stringify([{ Id: 'fixture-image', Config: { Labels: { 'org.opencontainers.image.revision': 'fixture-revision' } } }]))
+} else if (args[0] === 'exec') {
+  console.log(args.includes('redis-cli') ? 'PONG' : '1')
+} else if (args[0] === 'run' && args.includes('fixture-image')) {
+  fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args))
+  process.exit(81)
+}
+`,
+  );
+  chmodSync(executable, 0o755);
+  const result = spawnSync(
+    process.execPath,
+    [
+      ".github/scripts/verify-backend-delivery-image.mjs",
+      "--image",
+      "fixture-image",
+      "--revision",
+      "fixture-revision",
+      "--evidence",
+      join(directory, "evidence"),
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+    },
+  );
+  assert.notEqual(
+    result.status,
+    0,
+    "The process fixture deliberately rejects container startup",
+  );
+  const args = JSON.parse(readFileSync(capture, "utf8"));
+  const environment = Object.fromEntries(
+    args.flatMap((value, index) => {
+      if (args[index - 1] !== "-e") return [];
+      const separator = value.indexOf("=");
+      return [[value.slice(0, separator), value.slice(separator + 1)]];
+    }),
+  );
+  assert.match(environment.INTERNAL_SERVICE_TOKEN ?? "", /^[a-f0-9]{64}$/);
+  assert.notEqual(environment.INTERNAL_SERVICE_TOKEN, environment.SECRET_KEY);
+  for (const key of ["INTERNAL_SERVICE_TOKEN", "SECRET_KEY"]) {
+    assert.ok(
+      !(result.stdout + result.stderr).includes(environment[key]),
+      `${key} must be redacted`,
+    );
+  }
+});
 
 test("evidence write failures cannot prevent container and network cleanup", () => {
   const calls = [];

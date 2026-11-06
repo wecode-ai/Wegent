@@ -282,12 +282,14 @@ export async function verifyDeliveryImage({ image, revision, evidence }) {
   const prefix = `wegent-delivery-${randomBytes(6).toString("hex")}`;
   const password = randomBytes(24).toString("hex");
   const secret = randomBytes(32).toString("hex");
+  const internalToken = randomBytes(32).toString("hex");
   const resources = [],
     containers = [],
     results = [];
   const redact = (text) =>
     String(text)
       .replaceAll(password, "<REDACTED>")
+      .replaceAll(internalToken, "<REDACTED>")
       .replaceAll(secret, "<REDACTED>");
   const mysql = `${prefix}-mysql`,
     redis = `${prefix}-redis`;
@@ -350,6 +352,8 @@ export async function verifyDeliveryImage({ image, revision, evidence }) {
         `REDIS_URL=redis://${redis}:6379/0`,
         "-e",
         `SECRET_KEY=${secret}`,
+        "-e",
+        `INTERNAL_SERVICE_TOKEN=${internalToken}`,
         "-e",
         "GRACEFUL_SHUTDOWN_TIMEOUT=5",
         "-e",
