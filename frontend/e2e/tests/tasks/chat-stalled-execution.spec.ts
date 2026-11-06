@@ -420,6 +420,6 @@ test('Chat SSE with a real sandbox survives the stalled-task inspection', async 
       })
     }
     for (const cleanup of cleanups.reverse()) await attempt(cleanup)
-    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'Stalled chat cleanup failed')
+    expect.soft(cleanupErrors, 'Stalled chat cleanup failed').toEqual([])
   }
 })

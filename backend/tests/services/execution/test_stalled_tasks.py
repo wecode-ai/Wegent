@@ -405,7 +405,7 @@ async def test_classify_exempts_execution_evidence_or_unknown(
 
     assert reason is None
     expected_reason = "execution_evidence" if evidence else "execution_evidence_unknown"
-    assert f"reason={expected_reason}" in caplog.text
+    assert f"reason={expected_reason} " in caplog.text
     assert "task_id=100 subtask_id=200" in caplog.text
     assert "last_update=2026-10-27 14:30:00 cutoff=2026-10-27 14:30:00" in caplog.text
 
