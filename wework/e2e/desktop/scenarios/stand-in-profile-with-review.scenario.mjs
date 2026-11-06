@@ -5,6 +5,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { waitForElementWidth } from '../modules/layout-metrics.mjs'
+import { createWeeklyUserStory } from '../modules/stand-in-weekly-user-story.mjs'
 import {
   assistantMessage,
   createSse,
@@ -63,6 +64,7 @@ async function openCalendarReviewTemplate(control) {
 /** Add review coverage to the existing CI checkpoint without another app build or startup. */
 export function createDesktopScenario(options) {
   const original = createProfile(options)
+  const weeklyStory = createWeeklyUserStory(options)
   let readEvidence = false
   let reviewCall
   let reviewSequence = 0
@@ -84,6 +86,7 @@ export function createDesktopScenario(options) {
     ...original,
     verifiesStandInOnboarding: true,
     async handleHttp(req, response, url) {
+      if (await weeklyStory.handleHttp(req, response, url)) return true
       if (req.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname)) {
         const body = await readRequestBody(req)
         if (
@@ -324,6 +327,7 @@ export function createDesktopScenario(options) {
       await control.command('waitFor', 'body', { text: 'WEEKLY_REVIEW_VERIFIED' })
       await options.captureScreenshot(control, 'review-06-report-conversation.png')
       await rpc('runtime.automations.delete', { automationId: recreated.id })
+      await weeklyStory.verify(control, openCalendarReviewTemplate)
     },
   }
 }
