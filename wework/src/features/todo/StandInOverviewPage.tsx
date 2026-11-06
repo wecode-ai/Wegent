@@ -46,6 +46,7 @@ function roleTabClass(selected: boolean) {
   return `inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
 }
 
+/** Hosts personal conversations, work and settings on the selected Executor. */
 export function StandInOverviewPage({
   onOpenTask,
   initialPrimaryProfile = false,
@@ -682,6 +683,15 @@ export function StandInOverviewPage({
       userId={props.userId}
       deviceId={deviceId ?? ''}
       active={active}
+      configuration={{
+        settings: saved,
+        loading: state.loading,
+        error: state.error,
+        projects: props.projects,
+        localDeviceId: state.currentDeviceId,
+        onSave: state.save,
+        onReload: state.reload,
+      }}
       guideOpen={guideOpen}
       onGuideClose={() => setGuideOpen(false)}
       onExampleSelect={text =>

@@ -715,3 +715,20 @@ Windows 桌面运行器在创建普通测试账户前准备 1920×1080 显示模
 异步项目回调还必须在调用时读取当前标签状态，不能依赖启动请求时闭包中的标签列表和活动标签。回归保留旧回调后切换或关闭标签，验证它不会改变当前任务 URL 或重建已关闭标签。插件成功回执被取代后，再次下发若抛出异常，必须返回明确的失败响应并停止本次循环，不能复用旧成功响应；数据库回归验证只发起两次调用并返回 `plugin_device_sync_failed`。
 
 指派回执的控件与活动时间必须在同一次 DOM 读取中比较。[42072191562](https://github.com/wecode-ai/Wegent/actions/runs/42072191562) 的 Windows 日志记录了两次读取分别发生于 17:42:02.912 与 .977，期间 Issue 状态更新使版本绑定的控件回执重新加载，第二次读到空文本；随后页面快照中的两处接收时间一致。该断言现在等待两个回执在同一份快照中加载，再精确比较时间。协议测试同时覆盖版本刷新中间态与真实时间不一致，后者必须仍然失败。
+
+分身 Beta 按钮开放后，项目头部仍按可用宽度切换完整页签和紧凑下拉导航。
+[CI 42196630424](https://github.com/wecode-ai/Wegent/actions/runs/42196630424)
+的 Cloud 第 1 分片中，`plugin-source-continuation-evidence.json` 与
+`plugin-detail-resilience-evidence.json` 均记录找不到 `collaboration-tab-manage`；
+`plugin-detail-resilience-healthy-before-fault.png` 显示真实页面处于“执行环境”，
+顶部已使用“项目设置”下拉框。`ProjectViewSwitcher` 在紧凑模式只渲染
+`collaboration-project-view-select`，因此两处固定页签点击改为复用
+`selectCollaborationProjectView`，兼容两种真实导航形态。故障前健康基线、插件绑定
+持久化、故障注入、权限和恢复断言全部保留，不扩大超时或跳过场景。
+
+长对话切换的原断言和等待窗口保持不变。[CI 42199573796](https://github.com/wecode-ai/Wegent/actions/runs/42199573796/job/127832839476)
+在 520 条进度消息的初始正文处超时；执行器历史已包含正文，渲染器的 CPU 采样
+`conversation-switching-initial.cpuprofile` 经对应构建的 source map 定位到
+`MessageList` 布局回调反复读取共享页脚高度，累计约 1.9 秒同步布局开销。
+页脚测量改为由滚动控制器提交和尺寸观察触发，虚拟行更新继续执行原定位逻辑。
+组件回归验证 520 次行更新不会重复测量页脚，同时保留尺寸变化和页脚移除、重新挂载时的高度更新。
