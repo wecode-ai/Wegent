@@ -261,6 +261,10 @@ export function createDingTalkReplyStory(options) {
         await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
           timeoutMs: options.modelResponseTimeoutMs,
         })
+        await control.command('waitFor', `${STORY_CHAT} [data-testid="message-assistant"]`, {
+          text: '已拟好持续回复授权，请确认这个来源的变更。',
+          timeoutMs: options.modelResponseTimeoutMs,
+        })
         assert.equal(model.proposalSubmitted, true)
         assert.equal(
           (await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })).roles.find(
