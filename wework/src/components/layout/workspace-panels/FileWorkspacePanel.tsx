@@ -653,7 +653,13 @@ export function FileWorkspacePanel({
 
   const selectFile = (entry: WorkspaceFileEntry) => {
     navigateWithDirtyGuard(() => {
-      if (!entry.isDirectory && selectedFilePath && onOpenFileTab && stableTarget) {
+      if (
+        !entry.isDirectory &&
+        selectedFilePath &&
+        selectedFilePath !== entry.path &&
+        onOpenFileTab &&
+        stableTarget
+      ) {
         onOpenFileTab(stableTarget, entry.path)
       } else if (!entry.isDirectory) {
         void openFile(entry)

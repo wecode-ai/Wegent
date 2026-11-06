@@ -30,6 +30,56 @@ const save = () =>
 const edit = (content: string) =>
   replaceWorkspaceEditorText(screen.getByTestId('workspace-file-editor'), content)
 
+test('reopening the current file refreshes its document while retaining the file tab', async () => {
+  const external = { ...initial, content: 'const external = 2', revision: 'external' }
+  const onOpenFileTab = vi.fn()
+  const api = {
+    listWorkspaceEntries: vi.fn(async () => ({
+      path: target.path,
+      entries: [{ name: initial.name, path: initial.path, isDirectory: false, size: initial.size }],
+    })),
+    readWorkspaceTextFile: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(external),
+    writeWorkspaceTextFile: vi.fn(async (_device: string, _path: string, content: string) => ({
+      ...external,
+      content,
+      revision: 'saved',
+    })),
+  }
+  render(
+    <FileWorkspacePanel
+      target={target}
+      workspaceFileApi={api}
+      openFileRequest={{ path: initial.path, id: 1 }}
+      onOpenFileTab={onOpenFileTab}
+    />
+  )
+  await waitFor(() => expect(getWorkspaceCodeText()).toContain(initial.content))
+  fireEvent.click(screen.getByTestId('workspace-file-breadcrumb-/repo'))
+  const menu = await screen.findByTestId('workspace-file-directory-menu')
+  const item = () =>
+    menu
+      .querySelector('[data-testid="workspace-file-picker-tree"]')
+      ?.shadowRoot?.querySelector('[data-item-path="first.ts"]')
+  await waitFor(() => expect(item()).toBeInstanceOf(HTMLElement))
+  fireEvent.click(item()!)
+  await waitFor(() => expect(getWorkspaceCodeText()).toContain(external.content))
+  expect(onOpenFileTab).not.toHaveBeenCalled()
+  const typed = `${external.content}\n// after reopening`
+  await edit(typed)
+  save()
+  await waitFor(() =>
+    expect(api.writeWorkspaceTextFile).toHaveBeenCalledWith(
+      target.deviceId,
+      initial.path,
+      typed,
+      external.revision
+    )
+  )
+  await waitFor(() =>
+    expect(screen.queryByTestId('workspace-file-saving-status')).not.toBeInTheDocument()
+  )
+})
+
 test.each(['listing', 'file', 'same-turn', 'conflict'] as const)(
   'preserves input made during the %s read and respects the save outcome',
   async phase => {
