@@ -86,10 +86,11 @@ export function ProjectSpacePickerMenu({
   }, [triggerRef])
 
   useEffect(() => {
+    // Follow user navigation, not project array refreshes from the workbench.
     menuRef.current
       ?.querySelector<HTMLElement>('[data-active="true"]')
       ?.scrollIntoView?.({ block: 'nearest' })
-  }, [activeIndex, visible])
+  }, [activeKey, groupKey, order, query])
 
   const choose = (option: CloudProject) => {
     close()

@@ -50,6 +50,38 @@ function item(id: string, title: string, overrides: Partial<CloudLoopItem> = {})
 }
 
 describe('TaskBoardAssociationDialog', () => {
+  test('escapes the clipped workbench pane and restores focus when closed', () => {
+    const props = {
+      project: project('target', '研发看板'),
+      currentProject: null,
+      items: [],
+      loading: false,
+      pending: false,
+      onClose: vi.fn(),
+      onCreate: vi.fn(),
+      onSelect: vi.fn(),
+    }
+    const pane = (open: boolean) => (
+      <div style={{ overflow: 'hidden', isolation: 'isolate', transform: 'translateX(0)' }}>
+        <button data-testid="association-trigger">加入项目</button>
+        <TaskBoardAssociationDialog {...props} project={open ? props.project : null} />
+      </div>
+    )
+    const { container, rerender } = render(pane(false))
+    const trigger = screen.getByTestId('association-trigger')
+    trigger.focus()
+
+    rerender(pane(true))
+
+    const dialog = screen.getByRole('dialog', { name: '加入「研发看板」' })
+    expect(container).not.toContainElement(dialog)
+    expect(dialog.parentElement?.parentElement).toBe(document.body)
+    expect(screen.getByTestId('task-board-association-search')).toHaveFocus()
+    rerender(pane(false))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
   test('prevents duplicate actions while an association is pending', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
