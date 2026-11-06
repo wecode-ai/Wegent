@@ -34,6 +34,7 @@ pub(super) fn configure_task_mcp(
                 &launch.thread_config,
             )?);
     }
+    super::stand_in_approval::configure_identity_review(request, launch);
     Ok(())
 }
 

@@ -3,7 +3,7 @@ import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { Folder, Plus } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInHandlingPolicy, StandInProjectRef, StandInRole } from '@/api/personalStandIn'
-import { roleIncludesProject, standInPolicy } from '@/api/personalStandIn'
+import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TagEditor } from '@wegent/collaboration'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
@@ -123,12 +123,12 @@ export function StandInConnections({
                     className="accent-text-primary"
                     data-testid={`stand-in-connect-project-${project.id}`}
                     aria-label={project.name}
-                    checked={roleIncludesProject(role, ref(project))}
+                    checked={roleSelectsProject(role, ref(project))}
                     disabled={
                       disabled ||
                       (!allowLocalProjects &&
                         project.project_store === 'local' &&
-                        !roleIncludesProject(role, ref(project)))
+                        !roleSelectsProject(role, ref(project)))
                     }
                     onChange={event => toggleProject(project, event.target.checked)}
                   />
@@ -143,7 +143,15 @@ export function StandInConnections({
                 </label>
               </div>
             ))}
-          {!projects.length && <p className="py-3 text-text-muted">{t('standIn.no_projects')}</p>}
+          {!projects.length && (
+            <p className="py-3 text-text-muted">
+              {t(
+                source.allProjects
+                  ? 'standIn.workspace.connection_projects_empty_all'
+                  : 'standIn.workspace.connection_projects_empty_selected'
+              )}
+            </p>
+          )}
         </div>
         <details
           className="border-t border-border pt-3"
@@ -182,7 +190,7 @@ export function StandInConnections({
             onChange: (policy: StandInHandlingPolicy) => setSource({ policy }),
           },
           ...projects
-            .filter(project => roleIncludesProject(role, ref(project)))
+            .filter(project => roleSelectsProject(role, ref(project)))
             .map(project => ({
               key: `${project.project_store}:${project.id}`,
               name: project.name,

@@ -110,6 +110,15 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.git.read" => {
+                boxed_rpc(move || async move { super::super::git_connections::read(payload).await })
+            }
+            "runtime.connections.git.webhooks" => {
+                boxed_rpc(move || async move { self.git_connection_webhook(payload).await })
+            }
+            "runtime.connections.git.authTarget" => boxed_rpc(move || async move {
+                super::super::local_connector_auth::gitlab_cli::target(&payload)
+            }),
             "runtime.connections.dependencies.inventory" => boxed_rpc(move || async move {
                 {
                     self.handle_codex_app_server_rpc(
@@ -253,7 +262,10 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.fork_task_at_turn(payload).await })
             }
             "runtime.tasks.commands.get" => {
-                boxed_rpc(move || async move { self.command_receipt(payload).await })
+                boxed_rpc(move || async move { self.review_command_receipt(payload).await })
+            }
+            "runtime.tasks.commands.resolve" => {
+                boxed_rpc(move || async move { self.resolve_command_owner(payload).await })
             }
             "runtime.tasks.send" => {
                 boxed_rpc(move || async move { self.send_message(payload).await })
@@ -385,6 +397,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.test" => boxed_rpc(move || async move { self.test_hook(payload).await }),
             "runtime.runner.catalog" => {
                 boxed_rpc(move || async move { self.runner_catalog().await })
+            }
+            "runtime.runner.local_models.replace" => {
+                boxed_rpc(move || async move { self.replace_local_runner_models(payload) })
             }
             "runtime.codex.models.list" => {
                 boxed_rpc(move || async move { self.list_codex_models(payload).await })

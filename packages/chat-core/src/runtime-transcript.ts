@@ -150,8 +150,10 @@ export function runtimeMessageToWorkbenchMessage(
         : "done";
   const runtimeStatus = normalizedStatus === "cancelled" ? "cancelled" : status;
   const source =
-    role === "user" && message.source?.source === "im"
-      ? ({ ...message.source, source: "im" } as MessageSource)
+    role === "user" &&
+    (message.source?.source === "im" ||
+      message.source?.source === "stand_in_activity")
+      ? ({ ...message.source } as MessageSource)
       : undefined;
   const createdAt = message.createdAt ?? new Date().toISOString();
   const completedAt = message.completedAt ?? message.completed_at ?? undefined;

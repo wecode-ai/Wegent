@@ -12,6 +12,8 @@ mod cargo_cache;
 mod claude_code;
 mod claude_options;
 mod codex;
+#[cfg(test)]
+pub(crate) use codex::turn_context_for_test;
 mod completed_file_changes;
 #[cfg(test)]
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;

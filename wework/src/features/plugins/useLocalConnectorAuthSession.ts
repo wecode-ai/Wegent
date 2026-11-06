@@ -10,6 +10,7 @@ import {
   pollIntervalMs,
   type LocalConnectorAuthResult,
   type LocalConnectorAuthTarget,
+  type LocalConnectorAuthTransport,
 } from '@/api/local/localConnectorAuth'
 
 export type LocalConnectorAuthTranslate = TFunction
@@ -63,6 +64,7 @@ export function localConnectorAuthStatusText(
 }
 
 interface UseLocalConnectorAuthSessionOptions {
+  transport?: LocalConnectorAuthTransport
   enabled: boolean
   target: LocalConnectorAuthTarget
   t: LocalConnectorAuthTranslate
@@ -74,7 +76,11 @@ export function useLocalConnectorAuthSession({
   target,
   t,
   onSuccess,
+  transport,
 }: UseLocalConnectorAuthSessionOptions) {
+  const startAuth = transport?.start ?? localConnectorAuthStart
+  const pollAuth = transport?.poll ?? localConnectorAuthPoll
+  const cancelAuth = transport?.cancel ?? localConnectorAuthCancel
   const [status, setStatus] = useState<LocalConnectorAuthResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -95,6 +101,7 @@ export function useLocalConnectorAuthSession({
   const pluginKey = target.pluginKey
   const connectorSlug = target.connectorSlug
   const pluginRoot = target.pluginRoot ?? null
+  const instance = target.instance ?? undefined
   const intervalMs = pollIntervalMs(target.localAuth)
   // Prefer explicit localAuth from install dialogs; chat resume often omits it and
   // the executor resolves the manifest. Infer browser mode from live status too.
@@ -105,9 +112,9 @@ export function useLocalConnectorAuthSession({
     (authTarget: LocalConnectorAuthTarget, sessionId: string) => {
       if (cancelledAuthSessionsRef.current.has(sessionId)) return
       cancelledAuthSessionsRef.current.add(sessionId)
-      void localConnectorAuthCancel(authTarget, sessionId).catch(() => undefined)
+      void cancelAuth(authTarget, sessionId).catch(() => undefined)
     },
-    []
+    [cancelAuth]
   )
 
   useEffect(() => {
@@ -127,6 +134,7 @@ export function useLocalConnectorAuthSession({
     let disposed = false
     let authenticated = false
     const authTarget: LocalConnectorAuthTarget = {
+      instance,
       pluginKey,
       connectorSlug,
       ...(pluginRoot ? { pluginRoot } : {}),
@@ -143,7 +151,7 @@ export function useLocalConnectorAuthSession({
       try {
         // Always start: chat resume targets may omit localAuth and rely on the
         // executor reading the installed plugin manifest by pluginKey/slug.
-        const started = await localConnectorAuthStart(authTarget)
+        const started = await startAuth(authTarget)
         if (!isCurrent()) {
           if ((disposed || cancelRequestedRef.current) && started.sessionId) {
             cancelAuthSession(authTarget, started.sessionId)
@@ -185,7 +193,7 @@ export function useLocalConnectorAuthSession({
         const tick = async () => {
           if (!isCurrent()) return
           try {
-            const next = await localConnectorAuthPoll(authTarget, authSessionId)
+            const next = await pollAuth(authTarget, authSessionId)
             if (!isCurrent()) return
             setStatus(previous => ({
               ...next,
@@ -270,6 +278,9 @@ export function useLocalConnectorAuthSession({
     intervalMs,
     targetUsesBrowser,
     cancelAuthSession,
+    instance,
+    startAuth,
+    pollAuth,
   ])
 
   const retry = useCallback(() => {
@@ -286,11 +297,12 @@ export function useLocalConnectorAuthSession({
       {
         pluginKey,
         connectorSlug,
+        instance,
         ...(pluginRoot ? { pluginRoot } : {}),
       },
       sessionId
     )
-  }, [cancelAuthSession, connectorSlug, pluginKey, pluginRoot])
+  }, [cancelAuthSession, connectorSlug, pluginKey, pluginRoot, instance])
 
   const canRetry =
     Boolean(error) ||

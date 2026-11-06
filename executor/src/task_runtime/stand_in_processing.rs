@@ -72,6 +72,51 @@ pub(super) fn update_processing_configuration(
 }
 
 impl LocalTaskStore {
+    pub(crate) fn canonical_connection_event_identity(event: &Value) -> Option<Value> {
+        let source = &event["source"];
+        let roles = event["roleIds"].as_array()?;
+        let provider = source["providerId"].as_str()?;
+        let profile = source["profile"]
+            .as_str()
+            .filter(|value| !value.is_empty())?;
+        let object = event["message"]["objectId"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())?;
+        let version = event["message"]["version"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())?;
+        if event["kind"] != "connection"
+            || event["roleScoped"] != true
+            || roles.len() != 1
+            || !roles[0].as_str().is_some_and(|id| !id.is_empty())
+        {
+            return None;
+        }
+        Some(json!([provider, profile, object, version, roles[0]]))
+    }
+
+    pub(crate) fn validate_connection_message_version(
+        message: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        match (message.get("objectId"), message.get("version")) {
+            (None, None) => Ok(()),
+            (Some(object), Some(version))
+                if [object, version].iter().all(|value| {
+                    value.as_str().is_some_and(|text| {
+                        !text.trim().is_empty()
+                            && text.encode_utf16().count() <= 2048
+                            && !text.contains('\0')
+                    })
+                }) =>
+            {
+                Ok(())
+            }
+            _ => Err(TaskRuntimeError::Invalid(
+                "Connection objectId and version must be nonempty strings supplied together".into(),
+            )),
+        }
+    }
+
     pub fn enqueue_stand_in_event(
         &self,
         user: i64,
@@ -80,9 +125,33 @@ impl LocalTaskStore {
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if event["kind"] == "connection" {
+            Self::validate_connection_message_version(&event["message"])?;
+        }
+        let canonical = Self::canonical_connection_event_identity(&event);
         let id = stand_in_record_key("stand-in-event", &json!([user, identity]));
+        let binding = json!({"source":event["source"],"at":event["message"]["at"],"position":event["message"]["position"]});
         if let Some(existing) = get_item_from(&connection, &id, EVENT)? {
-            return Ok(existing.metadata);
+            let mut existing = existing.metadata;
+            if existing["userId"] == user
+                && existing["status"] == "pending"
+                && canonical.as_ref() == Some(&identity)
+                && canonical == Self::canonical_connection_event_identity(&existing)
+            {
+                if !existing["sourceBindings"].is_array() {
+                    existing["sourceBindings"] = json!([{"source":existing["source"],"at":existing["message"]["at"],"position":existing["message"]["position"]}]);
+                }
+                let bindings = existing["sourceBindings"].as_array_mut().unwrap();
+                if !bindings.contains(&binding) {
+                    bindings.push(binding);
+                    write(&connection, EVENT, &existing)?;
+                }
+            }
+            connection.commit()?;
+            return Ok(existing);
+        }
+        if canonical.as_ref() == Some(&identity) {
+            event["sourceBindings"] = json!([binding]);
         }
         event["id"] = json!(id);
         event["userId"] = json!(user);
@@ -104,6 +173,57 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::TaskNotFound);
         }
         write(&connection, EVENT, event)
+    }
+
+    /// Retire the assessed command and its recovery gate in one transaction.
+    pub fn retire_abandoned_stand_in_assessment(
+        &self,
+        user: i64,
+        device: &str,
+        action_id: &str,
+        receipt: Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut action = get_item_from(&connection, action_id, ACTION)?
+            .map(|row| row.metadata)
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        if action["userId"] != user
+            || action["kind"] != "assess"
+            || !matches!(action["status"].as_str(), Some("sending" | "cancelled"))
+            || receipt["state"] != "abandoned"
+            || receipt["commandId"] != action["id"]
+            || receipt["taskId"] != format!("stand-in-coordinator-{user}")
+            || receipt["nativeOutcome"] != "unknown"
+            || receipt["ownerResolution"]["userId"] != user
+            || receipt["ownerResolution"]["deviceId"] != device
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Owner resolution does not match this execution".into(),
+            ));
+        }
+        action["status"] = json!("cancelled");
+        action["resolution"] = json!("owner_abandoned");
+        action["result"] = receipt;
+        action["error"] = Value::Null;
+        write(&connection, ACTION, &action)?;
+        let id = format!("stand-in-processing:{user}");
+        let mut state = get_item_from(&connection, &id, STATE)?
+            .map(|row| row.metadata)
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        if state["error"]["commandId"] == action["id"]
+            && state["error"]["code"] == "coordination_recovery_required"
+        {
+            state["error"] = Value::Null;
+        }
+        if state["batchId"] == action["batchId"] {
+            state["batchId"] = Value::Null;
+            state["snapshot"] = Value::Null;
+            state["routerSnapshot"] = Value::Null;
+        }
+        write(&connection, STATE, &state)?;
+        connection.commit()?;
+        Ok(action)
     }
 
     pub fn stand_in_processing_state(&self, user: i64) -> Result<Value, TaskRuntimeError> {
@@ -168,6 +288,7 @@ impl LocalTaskStore {
                 | "ignore_events"
                 | "defer_events"
                 | "schedule_followup"
+                | "suggest_action"
         ) {
             return Err(TaskRuntimeError::Invalid(
                 "Unknown coordinator action".into(),
@@ -178,7 +299,25 @@ impl LocalTaskStore {
                 "Coordinator action is too large".into(),
             ));
         }
-        let id = stand_in_record_key("stand-in-action", &json!([user, batch, kind, arguments]));
+        let identity = if kind == "suggest_action" {
+            let mut ids = arguments["eventIds"]
+                .as_array()
+                .cloned()
+                .filter(|ids| {
+                    !ids.is_empty() && ids.len() <= 100 && ids.iter().all(Value::is_string)
+                })
+                .ok_or_else(|| {
+                    TaskRuntimeError::Invalid(
+                        "Suggestions require current connection events".into(),
+                    )
+                })?;
+            ids.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+            ids.dedup();
+            json!([user, kind, ids])
+        } else {
+            json!([user, batch, kind, arguments])
+        };
+        let id = stand_in_record_key("stand-in-action", &identity);
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if super::personal_stand_in::read_personal(&connection, user, device)?["primary"]["enabled"]
@@ -241,6 +380,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn suggestion_identity_deduplicates_evidence_across_batches_and_rewritten_offers() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let settings = store.personal_stand_in(7, "mac").unwrap();
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        store
+            .save_stand_in_processing_state(7, &json!({"batchId":"first"}))
+            .unwrap();
+        let first = store
+            .queue_stand_in_action(
+                7,
+                "mac",
+                "first",
+                "suggest_action",
+                json!({"eventIds":["a","b"],"roleId":"default","message":"I can prepare replies"}),
+            )
+            .unwrap();
+        store
+            .save_stand_in_processing_state(7, &json!({"batchId":"next"}))
+            .unwrap();
+        let replay = store
+            .queue_stand_in_action(
+                7,
+                "mac",
+                "next",
+                "suggest_action",
+                json!({"eventIds":["b","a"],"roleId":"default","message":"A rewritten suggestion"}),
+            )
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(store.stand_in_actions(7).unwrap().len(), 1);
+        assert!(store.list_stand_in_work(7, None).unwrap().is_empty());
+        assert!(store
+            .queue_stand_in_action(
+                7,
+                "mac",
+                "next",
+                "suggest_action",
+                json!({"eventIds":[],"roleId":"default","message":"No evidence"})
+            )
+            .is_err());
+        let different = store
+            .queue_stand_in_action(
+                7,
+                "mac",
+                "next",
+                "suggest_action",
+                json!({"eventIds":["c"],"roleId":"default","message":"New evidence"}),
+            )
+            .unwrap();
+        assert_ne!(first["id"], different["id"]);
+    }
+
+    #[test]
     fn connection_timing_changes_cancel_old_commands_and_revoke_old_batch_tools() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
@@ -301,6 +494,73 @@ mod tests {
             .enqueue_stand_in_event(8, identity, json!({}))
             .unwrap();
         assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn connection_object_versions_survive_restart_and_preserve_processing_state() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let source = json!({"providerId":"calendar-plugin/events","profile":"account","kind":"calendar","id":"work"});
+        let mut event = json!({"kind":"connection","roleScoped":true,"roleIds":["@primary"],"source":source,
+            "message":{"id":"delivery-one","objectId":"calendar:work/event:42","version":"v1","text":"Meeting changed","at":"2026-11-05T00:00:00Z"}});
+        let identity = LocalTaskStore::canonical_connection_event_identity(&event).unwrap();
+        let store = LocalTaskStore::open(&path).unwrap();
+        let mut first = store
+            .enqueue_stand_in_event(7, identity.clone(), event.clone())
+            .unwrap();
+        first["status"] = json!("handled");
+        store.save_stand_in_event(7, &first).unwrap();
+        drop(store);
+        let store = LocalTaskStore::open(&path).unwrap();
+        event["message"]["id"] = json!("delivery-retry");
+        let repeated = store
+            .enqueue_stand_in_event(7, identity, event.clone())
+            .unwrap();
+        assert_eq!(repeated, first);
+        event["message"]["version"] = json!("v2");
+        let second = store
+            .enqueue_stand_in_event(
+                7,
+                LocalTaskStore::canonical_connection_event_identity(&event).unwrap(),
+                event.clone(),
+            )
+            .unwrap();
+        assert_ne!(second["id"], first["id"]);
+        assert_eq!(second["status"], "pending");
+        assert_eq!(store.stand_in_events(7).unwrap().len(), 2);
+        for field in ["providerId", "profile"] {
+            let mut isolated = event.clone();
+            isolated["source"][field] = json!("another-identity");
+            let independent = store
+                .enqueue_stand_in_event(
+                    7,
+                    LocalTaskStore::canonical_connection_event_identity(&isolated).unwrap(),
+                    isolated,
+                )
+                .unwrap();
+            assert_ne!(second["id"], independent["id"]);
+        }
+    }
+
+    #[test]
+    fn malformed_connection_versions_are_rejected_before_persistence() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        for message in [
+            json!({"objectId":"pr:1"}),
+            json!({"version":"1"}),
+            json!({"objectId":" ","version":"1"}),
+            json!({"objectId":"pr:1","version":1}),
+        ] {
+            assert!(store
+                .enqueue_stand_in_event(
+                    7,
+                    json!("invalid"),
+                    json!({"kind":"connection","message":message})
+                )
+                .is_err());
+        }
+        assert!(store.stand_in_events(7).unwrap().is_empty());
     }
 
     #[test]

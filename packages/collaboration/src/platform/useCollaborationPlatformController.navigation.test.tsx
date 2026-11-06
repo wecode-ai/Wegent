@@ -631,3 +631,36 @@ it.each(['agents', 'members', 'collaboration-participants', 'collaboration-group
     expect(api.workspaces!.listCollaborationGroups).not.toHaveBeenCalled()
   }
 )
+
+
+it('finishes pending navigation after opening a newly created workspace', async () => {
+  let resolveLocal!: (workspaces: CollaborationWorkspace[]) => void
+  const localApi = apiFor(localWorkspace, [])
+  vi.mocked(localApi.workspaces!.list).mockReturnValue(
+    new Promise(resolve => {
+      resolveLocal = resolve
+    })
+  )
+  const createdWorkspace = { ...cloudWorkspace, project_count: 0 }
+  const cloudApi = apiFor(cloudWorkspace, [])
+  vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([])
+  cloudApi.workspaces!.create = vi.fn(async () => {
+    vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([createdWorkspace])
+    return createdWorkspace
+  })
+  cloudApi.workspaces!.get = vi.fn(async () => createdWorkspace)
+  cloudApi.workspaces!.listMembers = vi.fn(async () => [])
+  const sources = [cloudApi, localApi]
+  await render(sources, { ...location, workspaceId: null, projectId: null })
+  expect(localApi.workspaces!.list).toHaveBeenCalledOnce()
+
+  await act(async () => {
+    await commands.createWorkspace({ name: 'New space' })
+  })
+  await render(sources, { ...location, projectId: null })
+  await act(async () => resolveLocal([localWorkspace]))
+
+  expect(currentState().workspaces.map(workspace => workspace.id).sort())
+    .toEqual(['cloud', 'local'])
+  expect(currentState().navigationIncomplete).toBe(false)
+})
