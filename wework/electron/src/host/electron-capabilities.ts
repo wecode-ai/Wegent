@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import type { ModelConfigurationStore } from './model-configuration-store.js'
 import {
   acknowledgeNotificationReply,
   enqueueNotificationReply,
@@ -139,6 +140,8 @@ function assertE2EEnabled(control: string): void {
 export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
+  modelConfiguration?: ModelConfigurationStore
+  syncLocalModels?: () => Promise<void>
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
   executorPid?: () => number | null
   requestMcpApp?: (payload: Record<string, unknown>) => Promise<unknown>
@@ -430,7 +433,9 @@ export function createElectronCapabilityRouter(
     router,
     window,
     desktopServices.secureStorage,
-    desktopServices.events
+    desktopServices.events,
+    desktopServices.modelConfiguration,
+    desktopServices.syncLocalModels
   )
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 

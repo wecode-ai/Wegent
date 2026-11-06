@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 
 import {
   assistantMessage,
@@ -671,6 +672,21 @@ export async function createDesktopScenario({
       const notification = await waitForHumanNotification(control, modelResponseTimeoutMs)
       humanNotificationUrl = notification.url
       assert.match(humanNotificationUrl, /^wework:\/\/boards\/local\/[^/]+\/issues\/[^/]+$/)
+      const [, projectId, issueId] = new URL(humanNotificationUrl).pathname.match(
+        /^\/local\/([^/]+)\/issues\/([^/]+)$/
+      )
+      const receiptParams = { project_id: projectId, task_id: issueId }
+      const receipts = await requestExecutor(
+        control,
+        'todos.assignment_receipts',
+        receiptParams,
+        uiTimeoutMs
+      )
+      assert.equal(receipts.length, 1, 'Manager dispatch must persist an Issue assignment receipt')
+      assert.equal(receipts[0].target_id, humanUserId)
+      assert.equal(receipts[0].receipt_tracking, true)
+      assert.equal(receipts[0].human_read_at, null)
+      assert.equal(receipts[0].stand_in_received_at, null)
       await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
         visible: false,
         timeoutMs: uiTimeoutMs,
@@ -683,6 +699,19 @@ export async function createDesktopScenario({
       await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', scoped('[data-testid="issue-assignment-receipts"]'), {
+        text: '本人已读',
+        timeoutMs: uiTimeoutMs,
+      })
+      const readReceipts = await requestExecutor(
+        control,
+        'todos.assignment_receipts',
+        receiptParams,
+        uiTimeoutMs
+      )
+      assert.equal(readReceipts[0].id, receipts[0].id)
+      assert.ok(readReceipts[0].human_read_at)
+      assert.equal(readReceipts[0].stand_in_received_at, null)
       await captureScreenshot(
         control,
         'local-coordinate-07-human-notification-opened-issue.png',

@@ -183,6 +183,7 @@ test('legacy read tool declarations belong only to the provider declared depende
             resourceKinds: ['folder'],
             resourceLabels: { folder: 'Folder' },
             eventTypes: ['message.received'],
+            versionedEventTypes: [],
             collectionModes: ['poll'],
             mcpReadTools: { mail: [{ server: 'mail', tool: 'read' }] },
           },
@@ -239,46 +240,6 @@ test('CLI uses the same captured dependency guard and cannot send executable pat
   assert.equal(f.calls.length, 1)
 })
 
-test('DingTalk declares only its five read operations against its exact dependency', async () => {
-  const { readFile } = await import('node:fs/promises')
-  const manifest = JSON.parse(
-    await readFile(new URL('../connection-dingtalk/package.json', import.meta.url), 'utf8')
-  )
-  const parsed = parseConnections(manifest)
-  const declaration = parsed.providers[0].cliReadTools.dingtalk
-  assert.deepEqual(Object.keys(declaration.operations).sort(), [
-    'listMentions',
-    'listProfiles',
-    'searchGroups',
-    'searchMessages',
-    'searchUsers',
-  ])
-  assert.deepEqual(declaration.operations.listProfiles.command, ['profile', 'list'])
-  assert.equal(declaration.operations.listMentions.parameters.group, '--group')
-  assert.deepEqual(declaration.outputArgs, ['--format', 'json'])
-  assert.equal(declaration.toolId, 'dws')
-  assert.equal(declaration.connectorSlug, undefined)
-  for (const mutate of [
-    p => {
-      p.cliReadTools.other = p.cliReadTools.dingtalk
-      delete p.cliReadTools.dingtalk
-    },
-    p => {
-      p.cliReadTools.dingtalk.operations.listProfiles.command = ['']
-    },
-    p => {
-      p.cliReadTools.dingtalk.operations.listProfiles.parameters = { query: '--bad flag' }
-    },
-    p => {
-      p.cliReadTools.dingtalk.outputArgs = ['\0']
-    },
-  ]) {
-    const invalid = structuredClone(manifest)
-    mutate(invalid.wework.connections.providers[0])
-    assert.throws(() => parseConnections(invalid))
-  }
-})
-
 test('multiple aliases of the same installed plugin keep their distinct invocation identities', async () => {
   const f = fixture()
   f.identity.dependencies.push({ ...structuredClone(f.identity.dependencies[0]), alias: 'archive' })
@@ -302,38 +263,69 @@ test('multiple aliases of the same installed plugin keep their distinct invocati
   assert.ok(calls.every(item => item.params.source.pluginId === 'mail@company'))
 })
 
-test('DingTalk CLI reads bind to the actual declared installed marketplace', async () => {
-  const { readFile } = await import('node:fs/promises')
-  const definition = parseConnections(
-    JSON.parse(
-      await readFile(new URL('../connection-dingtalk/package.json', import.meta.url), 'utf8')
-    )
-  )
-  for (const marketplaceId of ['wegent', 'wework']) {
-    const source = { marketplaceId, pluginId: `dingtalk@${marketplaceId}` }
-    const calls = []
-    const tools = connectionTools(
-      {
-        providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
-        signal: new AbortController().signal,
-        dependencies: [{ alias: 'dingtalk', ...definition.dependencies.dingtalk }],
-      },
-      {
-        inventory: async () => [
-          { ...source, name: 'dingtalk', installed: true, enabled: true, version: '0.2.2' },
+test('CLI declarations validate only the synthetic provider dependency and safe arguments', () => {
+  const { alias, ...dependency } = fixture().identity.dependencies[0]
+  const manifest = {
+    name: '@test/mail',
+    wework: {
+      connections: {
+        apiVersion: 1,
+        dependencies: { [alias]: dependency },
+        providers: [
+          {
+            id: 'inbox',
+            displayName: 'Mail',
+            uses: [alias],
+            collectionModes: ['poll'],
+            resourceKinds: ['folder'],
+            resourceLabels: { folder: 'Folder' },
+            eventTypes: ['mail.received'],
+            versionedEventTypes: [],
+            cliReadTools: {
+              [alias]: {
+                toolId: 'declared-tool',
+                outputArgs: ['--format', 'json'],
+                operations: {
+                  read: { command: ['record', 'read'], parameters: { query: '--query' } },
+                },
+              },
+            },
+          },
         ],
       },
-      async (method, params) => {
-        calls.push({ method, params })
-        return { success: true, currentProfile: 'existing-account' }
-      },
-      satisfies
-    )
-    assert.equal(
-      (await tools.cli.callTool('dingtalk', { tool: 'listProfiles' })).currentProfile,
-      'existing-account'
-    )
-    assert.deepEqual(calls[0].params.source, source)
-    assert.equal(calls[0].params.expectedVersion, '0.2.2')
+    },
+  }
+  assert.ok(parseConnections(manifest))
+  const shortcut = structuredClone(manifest)
+  shortcut.wework.connections.providers[0].cliReadTools.mail.operations.read.command = [
+    'record',
+    '+read',
+    '--forward=false',
+  ]
+  assert.ok(parseConnections(shortcut))
+  for (const mutate of [
+    p => {
+      p.cliReadTools.other = p.cliReadTools.mail
+      delete p.cliReadTools.mail
+    },
+    p => {
+      p.cliReadTools.mail.operations.read.command = ['']
+    },
+    p => {
+      p.cliReadTools.mail.operations.read.command = ['record', '\0']
+    },
+    p => {
+      p.cliReadTools.mail.operations.read.command = ['record', 'x'.repeat(4097)]
+    },
+    p => {
+      p.cliReadTools.mail.operations.read.parameters = { query: '--bad flag' }
+    },
+    p => {
+      p.cliReadTools.mail.outputArgs = ['\0']
+    },
+  ]) {
+    const invalid = structuredClone(manifest)
+    mutate(invalid.wework.connections.providers[0])
+    assert.throws(() => parseConnections(invalid))
   }
 })

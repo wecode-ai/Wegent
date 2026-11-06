@@ -42,6 +42,43 @@ describe('MessageTurnNavigation ownership', () => {
     },
   ]
 
+  test('removes only the known host activity marker from the rendered navigation', () => {
+    const scroll = document.createElement('div')
+    const content = document.createElement('div')
+    scroll.append(content)
+    document.body.append(scroll)
+    mockRect(scroll, 0, 300)
+    const props = {
+      translate: (key: string) => key,
+      turnNavigation,
+      scrollRef: { current: scroll },
+      contentRef: { current: content },
+    }
+    const view = render(
+      <MessageTurnNavigation {...props} messages={[olderMessage, latestMessage]} />
+    )
+    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+    view.rerender(
+      <MessageTurnNavigation
+        {...props}
+        messages={[olderMessage, { ...latestMessage, source: { source: 'stand_in_activity' } }]}
+      />
+    )
+    expect(screen.queryByTestId('message-turn-navigation')).not.toBeInTheDocument()
+    view.rerender(
+      <MessageTurnNavigation
+        {...props}
+        messages={[
+          olderMessage,
+          { ...latestMessage, source: { source: 'stand_in_activity_extra' } },
+        ]}
+      />
+    )
+    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+    view.unmount()
+    scroll.remove()
+  })
+
   function setup() {
     const scroll = document.createElement('div')
     const content = document.createElement('div')

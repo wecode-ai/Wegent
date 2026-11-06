@@ -1109,6 +1109,7 @@ async function verifyMarketplacePluginLifecycle({
     const setupStartedAt = Date.now()
     blockingNetworkProxy.release()
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
+    const proxyConfiguredAt = Date.now()
     // Local-first mutations need no app-server. Stop its startup work before measuring egress.
     const codexStopped = await stopCodexForOfflinePluginProbe(control)
     const setupSocketsClosed = await waitForOfflinePluginSetupSockets(blockingNetworkProxy)
@@ -1186,6 +1187,7 @@ async function verifyMarketplacePluginLifecycle({
     )
     const networkEvidence = {
       setupStartedAt,
+      proxyConfiguredAt,
       codexStopped,
       setupSocketsClosed,
       codexStayedStopped,

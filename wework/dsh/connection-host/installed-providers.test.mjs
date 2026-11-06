@@ -33,6 +33,7 @@ test('lists disabled installed connection manifests without running their entryp
                 resourceKinds: ['folder'],
                 resourceLabels: { folder: 'Folder' },
                 eventTypes: ['mail.received'],
+                versionedEventTypes: [],
                 collectionModes: ['poll'],
               },
             ],
