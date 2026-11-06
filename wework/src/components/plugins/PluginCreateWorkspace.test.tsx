@@ -28,9 +28,13 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
   useOptionalCloudConnection: () => localPluginMocks.cloud,
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: vi.fn(),
-}))
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/features/workbench/useWorkbench')>()
+  return {
+    ...actual,
+    useWorkbench: vi.fn(),
+  }
+})
 
 function createWorkbench() {
   const sendCurrentInput = vi.fn().mockResolvedValue(true)
