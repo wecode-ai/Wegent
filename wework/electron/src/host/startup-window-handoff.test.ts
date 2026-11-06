@@ -101,6 +101,41 @@ function fixture() {
 }
 
 describe('preparing the native startup destination', () => {
+  test('accepts the OS maximized frame for the initial splash without requiring work-area bounds', async () => {
+    const { main, bounds, nativeEvents, setMainBounds } = fixture()
+    const nativeBounds = { x: -8, y: -8, width: 1040, height: 736 }
+    setMainBounds(nativeBounds)
+
+    await maximizeStartupWindow(main as unknown as BrowserWindow)
+
+    expect(main.isMaximized()).toBe(true)
+    expect(main.getBounds()).toEqual(nativeBounds)
+    expect(main.getBounds()).not.toEqual(bounds)
+    expect(main.setBounds).not.toHaveBeenCalled()
+    for (const event of ['maximize', 'resize', 'move', 'closed']) {
+      expect(nativeEvents.listenerCount(event)).toBe(0)
+    }
+  })
+
+  test('waits for native maximization when the initial splash already fills the work area', async () => {
+    const { main, nativeEvents, setMaximized } = fixture()
+    main.maximize.mockImplementationOnce(() => {})
+    let completed = false
+    const pending = maximizeStartupWindow(main as unknown as BrowserWindow).then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+
+    setMaximized(true)
+    nativeEvents.emit('maximize')
+    await pending
+
+    expect(completed).toBe(true)
+    expect(main.maximize).toHaveBeenCalledOnce()
+    expect(nativeEvents.listenerCount('maximize')).toBe(0)
+  })
+
   test('aligns geometry and native stacking, then exposes a painted main behind the splash', async () => {
     const { prepare, main, splash, calls, bounds } = fixture()
     expect(await prepare()).toEqual({ main: bounds, splash: bounds })

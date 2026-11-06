@@ -359,6 +359,7 @@ body {
 }
 
 .startup-toast {
+  pointer-events: none;
   position: fixed;
   bottom: 24px;
   left: 50%;

@@ -730,6 +730,7 @@
     "use_existing_folder": "使用现有文件夹",
     "new_project_chat": "问AI",
     "project_space_chat": {
+      "open": "会话",
       "resize": "调整问AI宽度",
       "conversation": "历史会话",
       "new_conversation": "新建会话",
