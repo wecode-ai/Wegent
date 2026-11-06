@@ -312,6 +312,7 @@ async fn assert_configured_process_outcome(raw: String, expected: ExecutionOutco
         CommandSpec::new("cat").stdin(output),
         30,
         std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
     let outcome = tokio::time::timeout(
         Duration::from_secs(10),
@@ -385,6 +386,7 @@ async fn process_continues_to_final_answer_after_oversized_task_output() {
         CommandSpec::new("cat").stdin(output),
         30,
         std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
 
     let outcome = tokio::time::timeout(

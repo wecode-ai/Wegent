@@ -156,6 +156,7 @@ fn stream_process_engine_for(agent_kind: &AgentKind, spec: CommandSpec) -> Strea
                 spec,
                 timeout_seconds,
                 std::sync::Arc::new(crate::process_environment::CredentialEnvironment),
+                env!("CARGO_PKG_VERSION"),
             )
         }
         agent_kind => unreachable!("unsupported process agent kind: {agent_kind:?}"),

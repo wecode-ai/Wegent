@@ -199,6 +199,7 @@ pub struct StreamProcessEngine {
     spec: CommandSpec,
     timeout_seconds: u64,
     environment: Arc<dyn ChildEnvironment>,
+    client_version: &'static str,
 }
 
 impl StreamProcessEngine {
@@ -206,12 +207,14 @@ impl StreamProcessEngine {
         spec: CommandSpec,
         timeout_seconds: u64,
         environment: Arc<dyn ChildEnvironment>,
+        client_version: &'static str,
     ) -> Self {
         assert!(timeout_seconds > 0, "timeout_seconds must be positive");
         Self {
             spec,
             timeout_seconds,
             environment,
+            client_version,
         }
     }
 }
@@ -223,6 +226,7 @@ impl AgentEngine for StreamProcessEngine {
         let spec = self.spec.clone();
         let timeout_seconds = self.timeout_seconds;
         let environment = Arc::clone(&self.environment);
+        let client_version = self.client_version;
         Box::pin(async move {
             let runner = FollowUpCommandRunner::<NoopEventSink>::Silent {
                 environment: Arc::clone(&environment),
@@ -254,6 +258,7 @@ impl AgentEngine for StreamProcessEngine {
                             FollowUpCommandRunner::<NoopEventSink>::Silent {
                                 environment: Arc::clone(&environment),
                             },
+                            client_version,
                         )
                         .await
                     } else {
@@ -310,6 +315,7 @@ impl AgentEngine for StreamProcessEngine {
         let spec = self.spec.clone();
         let timeout_seconds = self.timeout_seconds;
         let environment = Arc::clone(&self.environment);
+        let client_version = self.client_version;
         Box::pin(async move {
             let runner = FollowUpCommandRunner::Streaming {
                 environment: Arc::clone(&environment),
@@ -350,6 +356,7 @@ impl AgentEngine for StreamProcessEngine {
                             summary,
                             timeout_seconds,
                             follow_up_runner,
+                            client_version,
                         )
                         .await
                     } else {
@@ -394,6 +401,7 @@ impl AgentEngine for StreamProcessEngine {
                                         summary,
                                         timeout_seconds,
                                         runner,
+                                        client_version,
                                     )
                                     .await
                                 } else {
@@ -472,6 +480,7 @@ async fn handle_deferred_mcp_loop(
     mut summary: crate::stream::ClaudeStreamSummary,
     timeout_seconds: u64,
     runner: FollowUpCommandRunner<impl EventSink>,
+    client_version: &str,
 ) -> ExecutionOutcome {
     let mut mcp_servers = mcp_servers_from_spec(&base_spec).unwrap_or(Value::Null);
     // Claude expands these references in its child environment. The executor's
@@ -526,20 +535,21 @@ async fn handle_deferred_mcp_loop(
         proxy_fields.push(("tool_use_id", deferred_tool_use.id.clone()));
         proxy_fields.push(("tool_name", deferred_tool_use.name.clone()));
         log_executor_event("deferred mcp proxy started", &proxy_fields);
-        let proxy_result = match proxy_deferred_mcp_tool(&deferred_tool_use, &mcp_servers).await {
-            Ok(proxy_result) => proxy_result,
-            Err(error) => {
-                let decision = deferred_proxy_exception_failure(&deferred_tool_use, &error);
-                let mut failed_fields = proxy_fields.clone();
-                push_error_fields(&mut failed_fields, &error);
-                log_executor_event("deferred mcp proxy failed", &failed_fields);
-                return ExecutionOutcome::Failed {
-                    message: decision
-                        .user_error
-                        .unwrap_or_else(|| "交互式表单生成失败".to_owned()),
-                };
-            }
-        };
+        let proxy_result =
+            match proxy_deferred_mcp_tool(&deferred_tool_use, &mcp_servers, client_version).await {
+                Ok(proxy_result) => proxy_result,
+                Err(error) => {
+                    let decision = deferred_proxy_exception_failure(&deferred_tool_use, &error);
+                    let mut failed_fields = proxy_fields.clone();
+                    push_error_fields(&mut failed_fields, &error);
+                    log_executor_event("deferred mcp proxy failed", &failed_fields);
+                    return ExecutionOutcome::Failed {
+                        message: decision
+                            .user_error
+                            .unwrap_or_else(|| "交互式表单生成失败".to_owned()),
+                    };
+                }
+            };
         let decision = deferred_proxy_response_decision(
             &proxy_result,
             summary.stop_reason.as_deref().unwrap_or("tool_deferred"),

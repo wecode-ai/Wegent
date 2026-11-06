@@ -146,6 +146,7 @@ exit 1
             spec,
             30,
             std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+            env!("CARGO_PKG_VERSION"),
         );
         let request = ExecutionRequest {
             task_id: task.to_owned(),

@@ -215,6 +215,7 @@ pub fn normalize_mcp_tool_result(
 pub async fn proxy_deferred_mcp_tool(
     deferred_tool_use: &DeferredToolUse,
     mcp_servers: &Value,
+    client_version: &str,
 ) -> Result<DeferredMcpProxyResult, String> {
     let request =
         build_deferred_mcp_proxy_request(deferred_tool_use, mcp_servers).map_err(|error| {
@@ -228,7 +229,7 @@ pub async fn proxy_deferred_mcp_tool(
             );
             format!("invalid deferred MCP proxy request: {error:?}")
         })?;
-    let raw_result = call_streamable_http_mcp(&request).await?;
+    let raw_result = call_streamable_http_mcp(&request, client_version).await?;
     Ok(normalize_mcp_tool_result(&request, raw_result))
 }
 
@@ -477,7 +478,10 @@ fn mcp_timeout_value_to_seconds(timeout: u64) -> u64 {
     }
 }
 
-async fn call_streamable_http_mcp(request: &DeferredMcpProxyRequest) -> Result<Value, String> {
+async fn call_streamable_http_mcp(
+    request: &DeferredMcpProxyRequest,
+    client_version: &str,
+) -> Result<Value, String> {
     let timeout = Duration::from_secs(request.timeout_seconds.unwrap_or(300));
     let client = reqwest::Client::builder()
         .timeout(timeout)
@@ -493,7 +497,7 @@ async fn call_streamable_http_mcp(request: &DeferredMcpProxyRequest) -> Result<V
         "params": {
             "protocolVersion": "2025-06-18",
             "capabilities": {},
-            "clientInfo": {"name": "wegent-executor", "version": env!("CARGO_PKG_VERSION")}
+            "clientInfo": {"name": "wegent-executor", "version": client_version}
         }
     });
     let (_initialize_result, session_id) =

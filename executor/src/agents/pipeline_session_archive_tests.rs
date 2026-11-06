@@ -111,6 +111,7 @@ impl AgentEngine for TestClaudeEngine {
                 spec,
                 30,
                 std::sync::Arc::new(crate::process_environment::CredentialEnvironment),
+                env!("CARGO_PKG_VERSION"),
             )
             .run_with_events(request, sink, builder)
             .await
