@@ -42,6 +42,41 @@ fn cleanup_survives_removed_source_worktree_and_recovers_failed_record() {
 }
 
 #[test]
+fn cleanup_removes_orphaned_worktree_residue_after_git_removal() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    super::tests::initialize_repository(&source);
+    let manager = WorktreeManager::new(root.path().join("runtime-work/worktrees.json"));
+    manager
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(root.path().join("managed").display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let record = manager.prepare(&source, "task-1", None, false).unwrap();
+    let path = PathBuf::from(&record.path);
+    super::tests::run_git(&source, &["worktree", "remove", "--force", &record.path]);
+    assert!(!path.exists());
+
+    fs::create_dir_all(path.join(".pids")).unwrap();
+    fs::write(path.join(".pids/terminal.pid"), "123\n").unwrap();
+    let mut state = manager.load();
+    let failed = state.records.get_mut(&normalized_path_key(&path)).unwrap();
+    failed.state = STATE_FAILED.to_owned();
+    failed.last_error =
+        Some("worktree_target_conflict: Existing path is not a linked Git worktree".to_owned());
+    manager.save(&state).unwrap();
+
+    manager.delete(&path, false).unwrap();
+
+    assert!(!path.exists());
+    assert!(!manager
+        .load()
+        .records
+        .contains_key(&normalized_path_key(&path)));
+}
+
+#[test]
 fn cleanup_still_rejects_worktree_from_another_repository() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");

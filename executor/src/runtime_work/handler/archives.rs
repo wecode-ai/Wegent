@@ -410,7 +410,8 @@ impl RuntimeWorkRpcHandler {
                         ("error", error.to_string()),
                     ],
                 );
-                self.delete_archived_link_background(link.clone()).await;
+                self.delete_archived_link_background(link.clone(), false)
+                    .await;
                 false
             }
         };
@@ -441,17 +442,52 @@ impl RuntimeWorkRpcHandler {
             .filter(|link| link.status == "archived" && self.archived_link_is_deleted(link))
             .collect::<Vec<_>>();
         handle.spawn(async move {
+            // A parent thread can be queued before the fork that references it.
+            // Defer only that conflict until incoming cleanup work has drained,
+            // then retry the parent so a bulk delete can finish.
+            let mut deferred = VecDeque::new();
             for link in interrupted {
-                handler.delete_archived_link_background(link).await;
+                if handler
+                    .delete_archived_link_background(link.clone(), true)
+                    .await
+                {
+                    deferred.push_back((link, 1_usize));
+                }
             }
-            while let Some(link) = rx.recv().await {
-                handler.delete_archived_link_background(link).await;
+            loop {
+                let next = tokio::select! {
+                    biased;
+                    message = rx.recv() => match message {
+                        Some(link) => Some((link, 0_usize)),
+                        None => break,
+                    },
+                    _ = sleep(ARCHIVED_BACKGROUND_FORK_RETRY_DELAY), if !deferred.is_empty() => {
+                        deferred.pop_front()
+                    }
+                };
+                let Some((link, attempt)) = next else {
+                    continue;
+                };
+                let allow_retry = attempt < ARCHIVED_BACKGROUND_FORK_RETRY_LIMIT;
+                if handler
+                    .delete_archived_link_background(link.clone(), allow_retry)
+                    .await
+                {
+                    deferred.push_back((link, attempt + 1));
+                }
                 sleep(ARCHIVED_BACKGROUND_DELETE_INTERVAL).await;
+            }
+            while let Some((link, _)) = deferred.pop_front() {
+                handler.delete_archived_link_background(link, false).await;
             }
         });
     }
 
-    pub(super) async fn delete_archived_link_background(&self, link: RuntimeTaskLink) {
+    pub(super) async fn delete_archived_link_background(
+        &self,
+        link: RuntimeTaskLink,
+        allow_fork_reference_retry: bool,
+    ) -> bool {
         let mut errors = Vec::new();
 
         let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
@@ -528,6 +564,20 @@ impl RuntimeWorkRpcHandler {
                     }
                 }
                 Err(error) if codex_thread_is_already_deleted(&error, thread_id) => {}
+                Err(error)
+                    if allow_fork_reference_retry
+                        && codex_thread_has_fork_history_reference(&error) =>
+                {
+                    log_executor_event(
+                        "runtime archived conversation thread delete deferred",
+                        &[
+                            ("local_task_id", link.local_task_id.clone()),
+                            ("thread_id", thread_id.to_owned()),
+                            ("error", error),
+                        ],
+                    );
+                    return true;
+                }
                 Err(error) => {
                     errors.push(error.clone());
                     log_executor_event(
@@ -597,6 +647,7 @@ impl RuntimeWorkRpcHandler {
                 },
             }));
         }
+        false
     }
 
     pub(super) async fn delete_archived_tasks_bulk(
@@ -677,6 +728,10 @@ impl RuntimeWorkRpcHandler {
 fn codex_thread_is_already_deleted(error: &str, thread_id: &str) -> bool {
     codex_error_is_missing_rollout(error, thread_id)
         || error.contains(&format!("thread not found: {thread_id}"))
+}
+
+fn codex_thread_has_fork_history_reference(error: &str) -> bool {
+    error.contains("forked history still references it")
 }
 
 fn cleanup_join_error_response(link: &RuntimeTaskLink, error: tokio::task::JoinError) -> Value {

@@ -845,6 +845,142 @@ async fn app_runtime_background_archive_cleanup_emits_completion_event() {
 }
 
 #[tokio::test]
+async fn app_runtime_retries_archived_thread_delete_after_fork_reference_is_released() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _codex_home = set_temp_codex_home("archive-fork-retry");
+    let log_path = root.path().join("calls.jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let marker = root.path().join("thread-delete-failed-once");
+    set_fake_codex_delete_error_once(
+        &fake_codex,
+        "cannot delete thread thread-1: forked history still references it",
+        &marker,
+    );
+    let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+    let address = json!({"taskId": "thread-1", "workspacePath": "/tmp/project"});
+    for method in [
+        "runtime.tasks.archive",
+        "runtime.archived_conversations.delete",
+    ] {
+        let result = handler
+            .handle_runtime_rpc(json!({"method": method, "payload": address.clone()}))
+            .await
+            .unwrap();
+        assert_eq!(result["accepted"], true);
+    }
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let event = event_rx.recv().await.unwrap();
+            if event["payload"]["data"]["archiveCleanup"].is_object() {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("fork-reference retry must finish archive cleanup");
+
+    assert_eq!(
+        event["payload"]["data"]["archiveCleanup"]["errors"],
+        json!([])
+    );
+    let archived = handler
+        .handle_runtime_rpc(json!({"method": "runtime.archived_conversations.list", "payload": {}}))
+        .await
+        .unwrap();
+    assert!(!archived["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["taskId"] == "thread-1"));
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/delete")
+            .count(),
+        2,
+        "the deferred cleanup must retry thread/delete exactly once"
+    );
+}
+
+#[tokio::test]
+async fn app_runtime_reports_persistent_fork_reference_after_bounded_retries() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _codex_home = set_temp_codex_home("archive-fork-retry-exhausted");
+    let log_path = root.path().join("calls.jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    set_fake_codex_delete_error(
+        &fake_codex,
+        "cannot delete thread thread-1: forked history still references it",
+    );
+    let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+    let address = json!({"taskId": "thread-1", "workspacePath": "/tmp/project"});
+    for method in [
+        "runtime.tasks.archive",
+        "runtime.archived_conversations.delete",
+    ] {
+        let result = handler
+            .handle_runtime_rpc(json!({"method": method, "payload": address.clone()}))
+            .await
+            .unwrap();
+        assert_eq!(result["accepted"], true);
+    }
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let event = event_rx.recv().await.unwrap();
+            if event["payload"]["data"]["archiveCleanup"].is_object() {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("persistent fork-reference retries must eventually report the failure");
+
+    let errors = event["payload"]["data"]["archiveCleanup"]["errors"]
+        .as_array()
+        .unwrap();
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0]
+        .as_str()
+        .unwrap()
+        .contains("forked history still references it"));
+    let archived = handler
+        .handle_runtime_rpc(json!({"method": "runtime.archived_conversations.list", "payload": {}}))
+        .await
+        .unwrap();
+    assert!(archived["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["taskId"] == "thread-1"));
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/delete")
+            .count(),
+        4,
+        "the cleanup must stop retrying after the configured retry limit"
+    );
+}
+
+#[tokio::test]
 async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -1351,6 +1487,22 @@ fn set_fake_codex_delete_error(path: &Path, message: &str) {
         response_start..response_end,
         &format!("      printf '%s\\n' '{{\"id\":'\"$request_id\"',\"error\":{error}}}'\n"),
     );
+    fs::write(path, script).unwrap();
+}
+
+fn set_fake_codex_delete_error_once(path: &Path, message: &str, marker: &Path) {
+    let mut script = fs::read_to_string(path).unwrap();
+    let branch = script
+        .find("    *'\"method\":\"thread/delete\"'*)")
+        .unwrap();
+    let response_start = branch + script[branch..].find('\n').unwrap() + 1;
+    let response_end = branch + script[branch..].find("      ;;").unwrap();
+    let error = json!({"code": -32000, "message": message});
+    let marker = shell_single_quote(marker.to_str().unwrap());
+    let replacement = format!(
+        "      if [ ! -f {marker} ]; then\n        : > {marker}\n        printf '%s\\n' '{{\"id\":'\"$request_id\"',\"error\":{error}}}'\n      else\n        printf '%s\\n' '{{\"id\":'\"$request_id\"',\"result\":{{\"thread\":{{\"id\":\"thread-1\"}}}}}}'\n      fi\n"
+    );
+    script.replace_range(response_start..response_end, &replacement);
     fs::write(path, script).unwrap();
 }
 
