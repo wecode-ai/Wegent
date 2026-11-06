@@ -2,7 +2,7 @@
 name: "subscription-manager"
 description: "Create and manage scheduled subscription tasks. Use when the user wants to set up recurring reminders, periodic reports, scheduled checks, or any automated tasks that run on a schedule. Supports cron expressions, fixed intervals, and one-time executions."
 displayName: "订阅任务管理"
-version: "1.0.0"
+version: "1.1.0"
 author: "Wegent Team"
 tags: ["subscription", "scheduler", "automation", "cron", "periodic"]
 bindShells:
@@ -31,6 +31,26 @@ You now have access to subscription management tools. Use them to create schedul
 5. **Any automated recurring task** - anything that needs to run on a schedule
 
 ## Available Tools
+
+### list_subscriptions
+
+Lists the current user's active subscriptions with their real-time state. Use this whenever the user asks what subscriptions exist, whether one is still enabled, or before giving advice about an existing subscription.
+
+**Key Parameters:**
+- `enabled` (boolean, optional): Filter by enabled state
+- `trigger_type` (string, optional): `"cron"`, `"interval"`, `"one_time"`, or `"event"`
+- `offset` + `limit`: Pagination (default `0` + `20`; maximum limit is `100`)
+
+Rental subscriptions are excluded. Use `get_subscription` when the user provides a subscription ID.
+
+### get_subscription
+
+Reads one subscription by ID with its current state, including `enabled`, `next_execution_time`, `last_execution_status`, and execution counts.
+
+**Key Parameter:**
+- `subscription_id` (integer): Subscription ID to retrieve
+
+Deleted, inactive, or inaccessible subscriptions are reported as not found. This tool cannot enable, disable, or delete a subscription.
 
 ### preview_subscription
 
@@ -69,11 +89,12 @@ Generates a preview of the subscription configuration **without creating it**. T
 
 1. **🚫 NEVER auto-create subscription** - After calling `preview_subscription`, you must wait for user to click the "Confirm" button in the preview card or explicitly send a confirmation message. Do NOT auto-create the subscription after preview.
 2. **ONLY call `create_subscription` when user explicitly confirms via message** - If user sends "确认" or "创建" after preview, then call `create_subscription` with the same parameters to actually create the subscription. If user clicks the Confirm button in UI, frontend handles creation automatically - you do NOT need to call `create_subscription`.
-3. **When time is vague** (e.g., "every morning"), offer 2-3 specific time options
-4. **Use `preserve_history: true`** for tasks needing context continuity (daily reports, monitoring)
-5. **Use `preserve_history: false`** for independent tasks (reminders, checks)
-6. **Name generation**: Create concise, readable names based on task content
-7. **After calling preview_subscription**: Output the message "点击确认按钮或发送\"确认\"消息，来创建订阅任务" then stop and wait for user confirmation
+3. **Use real-time reads for status questions** - Call `list_subscriptions` or `get_subscription` before answering what currently exists, whether a subscription is enabled, or when it will run. Never infer current state from earlier `create_subscription` results.
+4. **When time is vague** (e.g., "every morning"), offer 2-3 specific time options
+5. **Use `preserve_history: true`** for tasks needing context continuity (daily reports, monitoring)
+6. **Use `preserve_history: false`** for independent tasks (reminders, checks)
+7. **Name generation**: Create concise, readable names based on task content
+8. **After calling preview_subscription**: Output the message "点击确认按钮或发送\"确认\"消息，来创建订阅任务" then stop and wait for user confirmation
 
 ## Examples
 
@@ -154,6 +175,43 @@ preview_subscription(
 ```
 
 The frontend will display an interactive preview block card with Confirm/Cancel buttons.
+
+**list_subscriptions returns:**
+```json
+{
+  "success": true,
+  "total": 1,
+  "offset": 0,
+  "limit": 20,
+  "returned": 1,
+  "invalid_schedule_count": 0,
+  "items": [
+    {
+      "id": 2500365,
+      "display_name": "Daily code update",
+      "enabled": true,
+      "is_active": true,
+      "next_execution_time": "2026-11-06T11:00:00"
+    }
+  ]
+}
+```
+
+**get_subscription returns:**
+```json
+{
+  "success": true,
+  "subscription": {
+    "id": 2500365,
+    "display_name": "Daily code update",
+    "enabled": true,
+    "is_active": true,
+    "next_execution_time": "2026-11-06T11:00:00",
+    "last_execution_status": "COMPLETED",
+    "execution_count": 3
+  }
+}
+```
 
 **User confirmation handling:**
 - If user clicks "Confirm" button in the UI: Frontend automatically creates the subscription - you do NOT need to call any other tool

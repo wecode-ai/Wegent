@@ -111,10 +111,7 @@ impl LocalTaskStore {
         value["userId"] = json!(user_id);
         value.as_object_mut().unwrap().remove("projectId");
         value.as_object_mut().unwrap().remove("projectStore");
-        value["enabledAfter"] = before
-            .filter(|role| role["enabled"] == true && value["enabled"] == true)
-            .map(|role| role["enabledAfter"].clone())
-            .unwrap_or_else(|| json!(now()));
+        super::personal_stand_in::stamp_project_enabled(&mut value, before.unwrap_or(&Value::Null));
         let roles = personal["roles"].as_array_mut().unwrap();
         if let Some(index) = roles.iter().position(|role| role["id"] == id) {
             roles[index] = value.clone();

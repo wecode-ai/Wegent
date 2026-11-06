@@ -373,13 +373,14 @@ test.describe('Collaboration group Executor coordination', () => {
         responseContent: `Manager evaluated ${synthesisEvidence} and moved the Issue to review.`,
       },
     ])
+    // Keep both worker responses active while verifying concurrent dispatch (maximum 10s).
     const clearCollectorScenario = await configureIssueDispatchModelScenario(
       request,
       collectorTask,
-      [{ responseContent: collectorEvidence, doneDelayMs: 15_000 }]
+      [{ responseContent: collectorEvidence, doneDelayMs: 10_000 }]
     )
     const clearReviewerScenario = await configureIssueDispatchModelScenario(request, reviewerTask, [
-      { responseContent: reviewerEvidence, doneDelayMs: 15_000 },
+      { responseContent: reviewerEvidence, doneDelayMs: 10_000 },
     ])
     const clearSynthesisScenario = await configureIssueDispatchModelScenario(
       request,
