@@ -37,6 +37,7 @@ impl RuntimeWorkRpcHandler {
             if let Some(automation) = self.automation_store.get(&run.automation_id) {
                 if automation.task_request["standInCalendar"].is_object()
                     && run.status == AutomationRunStatus::Pending
+                    && run.trigger != "manual"
                 {
                     if let Err(error) = self.queue_calendar_run(store, &automation, run) {
                         self.automation_store
@@ -120,10 +121,11 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .filter(active)
         {
-            if self
-                .automation_store
-                .get(&run.automation_id)
-                .is_some_and(|a| a.task_request["standInCalendar"].is_object())
+            if run.trigger != "manual"
+                && self
+                    .automation_store
+                    .get(&run.automation_id)
+                    .is_some_and(|a| a.task_request["standInCalendar"].is_object())
             {
                 if run.status == AutomationRunStatus::Running {
                     self.reconcile_arrangement(&run).await?;

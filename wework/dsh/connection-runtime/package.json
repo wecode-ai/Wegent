@@ -4,19 +4,10 @@
   "private": true,
   "type": "module",
   "main": "index.js",
-  "exports": {
-    ".": {
-      "types": "./index.d.ts",
-      "default": "./index.js"
-    }
-  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  },
-  "dependencies": {
-    "semver": "7.8.5"
   },
   "wework": {
     "connections": {
@@ -39,6 +30,7 @@
           "eventTypes": [
             "mail.received"
           ],
+          "versionedEventTypes": [],
           "locales": {
             "en": {
               "displayName": "Email",
@@ -46,15 +38,145 @@
                 "inbox": "Inbox"
               }
             }
+          },
+          "actions": [
+            {
+              "id": "send_email",
+              "resourceKinds": [
+                "inbox"
+              ],
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "messageId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "workId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "from": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "to": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 998
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20000
+                  },
+                  "reply": {
+                    "type": "boolean"
+                  },
+                  "authorization": {
+                    "enum": [
+                      "one_time",
+                      "continuous_reply"
+                    ]
+                  }
+                },
+                "required": [
+                  "messageId",
+                  "workId",
+                  "from",
+                  "to",
+                  "subject",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              "resultSchema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "const": "sent"
+                  },
+                  "duplicate": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            }
+          ],
+          "assistance": {
+            "observe": [
+              "New mail received after the saved connection boundary; distinguish a new message from already processed mail."
+            ],
+            "prepare": [
+              "Read the authorized message and relevant thread, identify the request, deadline and owner, and prepare a concise summary or reply draft. Verify dates and distinguish original amounts from current balances.",
+              "For a daily briefing or priorities, distinguish today's work from mail received today. Within the authorized scope, inspect recent relevant mail and current thread outcomes for the user's responsibilities, deadlines and unresolved requests; retain older unfinished work that still matters today and exclude resolved or superseded requests. Unread status is a discovery signal, not proof of an outstanding task, and read mail may still require action. Zero messages in today's receipt window does not establish that nothing needs attention. Rank verified current obligations and impact, not just newly received messages; investigate available follow-up evidence before deciding an item is still open, and do not manufacture three priorities.",
+              "For sending or replying use wework_stand_in.send_email with the exact recipient, subject and complete text. reply=true is an original-thread reply to its verified sender; new recipients or reply=false require native confirmation for that operation. A current continuous-reply grant applies only to its original thread and source. Never send via shell or retry an unknown delivery result."
+            ],
+            "notifyWhen": [
+              "A message creates a concrete decision, imminent deadline, material risk or unanswered request relevant to the user. Explain the finding with a real source; keep routine mail quiet.",
+              "Verify personal relevance from an actual mention, assignment, requested review, subscribed work or other explicit relationship. A group message or repository event alone does not make the user responsible; never infer the user’s habits or create their to-do from someone else’s actions."
+            ],
+            "confirmBefore": [
+              "Sending or replying, deleting mail, changing external state, or taking on a new recurring responsibility requires the native single-use approval or an applicable current continuing grant."
+            ]
+          },
+          "read": {
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "since": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Start within the past seven days; omitted defaults to the past 24 hours."
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20,
+                  "default": 20
+                }
+              },
+              "additionalProperties": false
+            },
+            "itemSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "at": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 20000
+                }
+              },
+              "required": [
+                "id",
+                "at",
+                "text"
+              ]
+            },
+            "pagination": "cursor"
           }
         }
       ]
     }
   },
   "peerDependencies": {
-    "@wegent/dsh-secure-storage": "0.1.0",
     "@deepseek-ai/cordis": "~4.0.4",
-    "@wegent/dsh-plugin-runtime": "0.1.0",
-    "@wegent/dsh-executor-runtime": "0.1.0"
+    "@wegent/dsh-connection-host": "0.1.0",
+    "@wegent/dsh-secure-storage": "0.1.0",
+    "@wegent/dsh-plugin-runtime": "0.1.0"
   }
 }

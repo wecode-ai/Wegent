@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.6.5",
+  "version": "0.6.6-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -101,6 +101,8 @@
     "@xyflow/react": "^12.11.2",
     "ag-grid-community": "^36.0.2",
     "ag-grid-react": "^36.0.2",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "archiver": "8.0.0",
     "clsx": "^2.1.1",
     "dequal": "2.0.3",

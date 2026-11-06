@@ -4,13 +4,20 @@
 
 """Tests for the stalled RUNNING subtask sweep."""
 
+import asyncio
+import logging
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
+from app.services.execution.stalled_task_cursor import (
+    STALLED_TASK_CURSOR_KEY,
+    StalledTaskCursor,
+)
 from app.services.execution.stalled_tasks import (
     EXECUTOR_MISSING_ERROR,
     EXECUTOR_NOT_STARTED_ERROR,
@@ -24,6 +31,34 @@ from app.services.execution.stalled_tasks import (
 from app.stores.tasks import subtask_store
 
 NOW = datetime(2026, 10, 27, 15, 0, 0)
+
+
+@pytest.fixture(autouse=True)
+def execution_evidence_probe():
+    with patch(
+        "app.services.execution.stalled_tasks.has_execution_evidence",
+        AsyncMock(return_value=False),
+    ) as probe:
+        yield probe
+
+
+@pytest.fixture(autouse=True)
+def scan_cursor_cache(monkeypatch):
+    values = {}
+
+    async def save(key, payload, *, expire):
+        assert expire is None
+        values[key] = payload
+        return True
+
+    cache = SimpleNamespace(
+        get_or_raise=AsyncMock(side_effect=values.get),
+        set_or_raise=AsyncMock(side_effect=save),
+    )
+    monkeypatch.setattr(
+        "app.services.execution.stalled_task_cursor.cache_manager", cache
+    )
+    return values
 
 
 def _task(task_id: int, user_id: int = 7) -> TaskResource:
@@ -115,6 +150,36 @@ def test_list_stalled_candidates_filters_running_and_old(test_db):
 
     assert [row.subtask_id for row in rows] == [200, 203]
     assert rows[0].user_id == 7
+
+
+def test_existing_cursor_does_not_override_increased_silent_timeout(test_db):
+    test_db.add(_task(100))
+    test_db.add_all(
+        [
+            _subtask(
+                200,
+                100,
+                status=SubtaskStatus.RUNNING,
+                updated_at=NOW - timedelta(minutes=90),
+            ),
+            _subtask(201, 100, status=SubtaskStatus.RUNNING),
+        ]
+    )
+    test_db.commit()
+    sweeper = StalledSubtaskSweeper(
+        silent_timeout_seconds=3600, heartbeat_timeout_seconds=1800
+    )
+    cursor = StalledTaskCursor(
+        scan_cutoff=NOW - timedelta(minutes=15),
+        updated_at=NOW - timedelta(hours=2),
+        subtask_id=199,
+    )
+
+    rows = sweeper.candidates(
+        test_db, now=NOW, max_age_seconds=86400, limit=50, cursor=cursor
+    )
+
+    assert [row.subtask_id for row in rows] == [200]
 
 
 @pytest.mark.asyncio
@@ -242,8 +307,10 @@ async def test_classify_does_not_fail_on_unknown_heartbeat():
 
 
 @pytest.mark.asyncio
-async def test_classify_fails_running_subtask_without_executor():
-    """A RUNNING subtask without any executor never started."""
+async def test_classify_fails_running_subtask_without_executor(
+    execution_evidence_probe,
+):
+    """Keep the existing failure when no execution evidence is found."""
     sweeper = StalledSubtaskSweeper(
         silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
     )
@@ -254,6 +321,9 @@ async def test_classify_fails_running_subtask_without_executor():
         reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
 
     assert reason == (EXECUTOR_NOT_STARTED_ERROR, "executor_not_started")
+    execution_evidence_probe.assert_awaited_once_with(
+        100, 200, since=NOW - timedelta(minutes=30)
+    )
 
 
 @pytest.mark.asyncio
@@ -313,6 +383,333 @@ async def test_classify_keeps_recent_subtask_without_executor():
     candidate = _candidate(executor_name="", updated_at=NOW - timedelta(minutes=5))
 
     assert await sweeper.classify(candidate, now=NOW) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence", [True, None])
+async def test_classify_exempts_execution_evidence_or_unknown(
+    execution_evidence_probe, caplog, evidence
+):
+    execution_evidence_probe.return_value = evidence
+    sweeper = StalledSubtaskSweeper(
+        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+    )
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_dispatch_pending",
+            AsyncMock(return_value=False),
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
+
+    assert reason is None
+    expected_reason = "execution_evidence" if evidence else "execution_evidence_unknown"
+    assert f"reason={expected_reason} " in caplog.text
+    assert "task_id=100 subtask_id=200" in caplog.text
+    assert "last_update=2026-10-27 14:30:00 cutoff=2026-10-27 14:30:00" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [TimeoutError(), RuntimeError("Redis unavailable")])
+async def test_evidence_failure_does_not_interrupt_bound_executor_check(
+    execution_evidence_probe, error
+):
+    execution_evidence_probe.side_effect = error
+    candidates = [_candidate(executor_name=""), _candidate(subtask_id=201)]
+    session = SimpleNamespace(run_sync=AsyncMock(return_value=candidates))
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_dispatch_pending",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_pod_missing",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.fail_stalled_subtask",
+            AsyncMock(return_value=True),
+        ) as fail,
+    ):
+        failed = await sweep_stalled_subtasks(
+            session,
+            silent_timeout_seconds=900,
+            heartbeat_timeout_seconds=1800,
+            max_age_seconds=86400,
+            limit=50,
+            now=NOW,
+        )
+
+    assert failed == [201]
+    fail.assert_awaited_once()
+    assert fail.await_args.kwargs["error_code"] == "executor_missing"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fields", "pending"),
+    [
+        ({"executor_name": "device-example"}, False),
+        ({"executor_name": "inprocess-chat"}, False),
+        ({"executor_name": "inprocess_chat"}, False),
+        ({"executor_namespace": "standalone"}, False),
+        ({}, False),
+        ({"executor_name": "", "updated_at": NOW}, False),
+        ({"executor_name": ""}, True),
+        ({"executor_name": ""}, None),
+    ],
+)
+async def test_other_classification_branches_do_not_probe_evidence(
+    execution_evidence_probe, fields, pending
+):
+    sweeper = StalledSubtaskSweeper(
+        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+    )
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_dispatch_pending",
+            AsyncMock(return_value=pending),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_pod_missing",
+            AsyncMock(return_value=False),
+        ),
+    ):
+        assert await sweeper.classify(_candidate(**fields), now=NOW) is None
+
+    execution_evidence_probe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_exempt_oldest_page_does_not_starve_later_executor(
+    test_db, execution_evidence_probe, scan_cursor_cache
+):
+    test_db.add(_task(100))
+    rows = [
+        _subtask(
+            subtask_id,
+            100,
+            status=SubtaskStatus.RUNNING,
+            executor_name="" if subtask_id < 250 else "missing-executor",
+        )
+        for subtask_id in range(200, 251)
+    ]
+    test_db.add_all(rows)
+    test_db.commit()
+    execution_evidence_probe.return_value = True
+
+    async def run_sync(fn):
+        return fn(test_db)
+
+    session = SimpleNamespace(run_sync=AsyncMock(side_effect=run_sync))
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_dispatch_pending",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_pod_missing",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.fail_stalled_subtask",
+            AsyncMock(return_value=True),
+        ) as fail,
+    ):
+        kwargs = dict(
+            silent_timeout_seconds=900,
+            heartbeat_timeout_seconds=1800,
+            max_age_seconds=86400,
+            limit=50,
+            now=NOW,
+        )
+        assert await sweep_stalled_subtasks(session, **kwargs) == []
+        assert execution_evidence_probe.await_count == 50
+        fail.assert_not_awaited()
+        assert scan_cursor_cache[STALLED_TASK_CURSOR_KEY]["subtask_id"] == 249
+        # Removing an earlier row must not make pagination skip the next one.
+        test_db.delete(rows[0])
+        test_db.commit()
+        assert await sweep_stalled_subtasks(session, **kwargs) == [250]
+        rows[-1].status = SubtaskStatus.COMPLETED
+        test_db.commit()
+        # The cursor is now at the tail. The next sweep must wrap to the head.
+        assert await sweep_stalled_subtasks(session, **kwargs) == []
+
+    fail.assert_awaited_once()
+    assert execution_evidence_probe.await_count == 99
+    assert all(row.updated_at == NOW - timedelta(minutes=30) for row in rows[1:-1])
+
+
+@pytest.mark.asyncio
+async def test_new_candidates_do_not_prevent_rechecking_an_earlier_healthy_pod(
+    test_db, scan_cursor_cache
+):
+    test_db.add(_task(100))
+    test_db.add_all(
+        [
+            _subtask(
+                200, 100, status=SubtaskStatus.RUNNING, executor_name="earlier-pod"
+            ),
+            _subtask(
+                201,
+                100,
+                status=SubtaskStatus.RUNNING,
+                updated_at=NOW - timedelta(minutes=20),
+            ),
+        ]
+    )
+    test_db.commit()
+
+    async def run_sync(fn):
+        return fn(test_db)
+
+    session = SimpleNamespace(run_sync=AsyncMock(side_effect=run_sync))
+    earlier_pod_missing = False
+    checked_pods = []
+
+    async def pod_missing(name, namespace):
+        checked_pods.append(name)
+        return name == "earlier-pod" and earlier_pod_missing
+
+    kwargs = dict(
+        silent_timeout_seconds=900,
+        heartbeat_timeout_seconds=1800,
+        max_age_seconds=86400,
+        limit=1,
+    )
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_pod_missing",
+            AsyncMock(side_effect=pod_missing),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.fail_stalled_subtask",
+            AsyncMock(return_value=True),
+        ) as fail,
+    ):
+        assert await sweep_stalled_subtasks(session, now=NOW, **kwargs) == []
+        first_cutoff = (NOW - timedelta(minutes=15)).isoformat()
+        assert scan_cursor_cache[STALLED_TASK_CURSOR_KEY]["scan_cutoff"] == first_cutoff
+        earlier_pod_missing = True
+        # Newer rows become eligible every sweep, but belong to the next round.
+        for subtask_id, elapsed_minutes in ((300, 10), (301, 20)):
+            test_db.add(
+                _subtask(
+                    subtask_id,
+                    100,
+                    status=SubtaskStatus.RUNNING,
+                    updated_at=NOW + timedelta(minutes=elapsed_minutes - 20),
+                )
+            )
+            test_db.commit()
+            failed = await sweep_stalled_subtasks(
+                session, now=NOW + timedelta(minutes=elapsed_minutes), **kwargs
+            )
+            if subtask_id == 300:
+                assert failed == []
+                assert (
+                    scan_cursor_cache[STALLED_TASK_CURSOR_KEY]["scan_cutoff"]
+                    == first_cutoff
+                )
+            else:
+                assert failed == [200]
+
+    assert checked_pods == ["earlier-pod", "wegent-task-example-abc", "earlier-pod"]
+    fail.assert_awaited_once()
+    assert (
+        scan_cursor_cache[STALLED_TASK_CURSOR_KEY]["scan_cutoff"]
+        == (NOW + timedelta(minutes=5)).isoformat()
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["get_or_raise", "set_or_raise"])
+async def test_cursor_redis_failure_does_not_stop_bound_executor_checks(
+    monkeypatch, operation
+):
+    from app.services.execution import stalled_task_cursor
+
+    monkeypatch.setattr(
+        stalled_task_cursor.cache_manager,
+        operation,
+        AsyncMock(side_effect=TimeoutError()),
+    )
+    session = SimpleNamespace(run_sync=AsyncMock(return_value=[_candidate()]))
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_pod_missing",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.fail_stalled_subtask",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        failed = await sweep_stalled_subtasks(
+            session,
+            silent_timeout_seconds=900,
+            heartbeat_timeout_seconds=1800,
+            max_age_seconds=86400,
+            limit=50,
+            now=NOW,
+        )
+
+    assert failed == [200]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["get_or_raise", "set_or_raise"])
+async def test_blocked_cursor_redis_operation_is_cancelled_and_sweep_continues(
+    monkeypatch, operation
+):
+    from app.services.execution import stalled_task_cursor
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def block(*args, **kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(
+        stalled_task_cursor, "STALLED_TASK_CURSOR_TIMEOUT_SECONDS", 0.01
+    )
+    monkeypatch.setattr(
+        stalled_task_cursor.cache_manager,
+        operation,
+        AsyncMock(side_effect=block),
+    )
+    session = SimpleNamespace(run_sync=AsyncMock(return_value=[_candidate()]))
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_pod_missing",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.fail_stalled_subtask",
+            AsyncMock(return_value=True),
+        ) as fail,
+    ):
+        failed = await asyncio.wait_for(
+            sweep_stalled_subtasks(
+                session,
+                silent_timeout_seconds=900,
+                heartbeat_timeout_seconds=1800,
+                max_age_seconds=86400,
+                limit=50,
+                now=NOW,
+            ),
+            timeout=1,
+        )
+
+    assert started.is_set() and cancelled.is_set()
+    assert failed == [200]
+    fail.assert_awaited_once()
 
 
 @pytest.mark.asyncio

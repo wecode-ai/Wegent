@@ -85,9 +85,9 @@ export function imapError(error) {
     'ClosedAfterConnectTLS',
     'ClosedAfterConnectText',
   ]
-  return mailError(
-    transportCodes.includes(error?.code) ? 'email_transport_failed' : 'email_connection_failed'
-  )
+  if (transportCodes.includes(error?.code))
+    return Object.assign(mailError('email_transport_failed'), { retryAfterMs: 30000 })
+  return mailError('email_connection_failed')
 }
 
 export function mailError(code = 'email_invalid_configuration') {

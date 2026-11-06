@@ -7,6 +7,47 @@ use super::transcript_overlays::{is_running_runtime_command, is_runtime_user_int
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn reconcile_native_transcript_terminal(&self, task_id: &str, thread: &Value) {
+        if thread["timeline"] != true || self.is_active_local_task(task_id) {
+            return;
+        }
+        self.store.update_task_without_snapshot(task_id, |link| {
+            if link.runtime != "codex"
+                || link.running
+                || link.status == "archived"
+                || link.execution_state.is_some()
+                || link.thread_id.as_deref() != thread["id"].as_str()
+            {
+                return;
+            }
+            let Some(turn) = thread["turns"]
+                .as_array()
+                .and_then(|turns| turns.last())
+                .filter(|turn| {
+                    turn["id"].as_str().is_some()
+                        && turn["id"] == link.runtime_handle["lastTurnId"]
+                        && turn["timelineCompleted"] == true
+                })
+            else {
+                return;
+            };
+            let (status, turn_status) = match turn["status"].as_str() {
+                Some("completed") => ("done", "completed"),
+                Some("failed") => ("failed", "failed"),
+                Some("interrupted" | "cancelled") => ("cancelled", "interrupted"),
+                _ => return,
+            };
+            let Some(completed_at) = timestamp_ms_field(turn, "completedAt") else {
+                return;
+            };
+            // Only the exact persisted native completion boundary repairs cold metadata.
+            link.status = status.into();
+            link.turn_status = Some(turn_status.into());
+            link.completed_at = Some(completed_at);
+            link.thread_status = "idle".into();
+        });
+    }
+
     pub(super) fn accepted_reconciliation_ids(
         &self,
         task_id: &str,

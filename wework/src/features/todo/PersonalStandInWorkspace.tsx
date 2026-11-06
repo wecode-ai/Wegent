@@ -84,7 +84,7 @@ export function PersonalStandInWorkspace({
       </p>
     )
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="personal-stand-in-workspace">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="personal-stand-in-workspace">
       {error && (
         <div role="alert" className="flex items-center gap-2 px-5 py-2 text-sm text-error">
           <span>{error}</span>

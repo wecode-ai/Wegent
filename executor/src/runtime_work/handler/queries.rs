@@ -110,11 +110,12 @@ impl RuntimeWorkRpcHandler {
         started_at: Instant,
     ) -> Result<Value, AppIpcError> {
         let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
+        let pending_only = bool_field(payload, "pendingOnly").unwrap_or(false);
         let stage_started_at = Instant::now();
-        let collected_links = if prefer_cached {
-            self.collect_cached_links(false)
+        let (collected_links, catalog_complete) = if prefer_cached {
+            (self.collect_cached_links(false), false)
         } else {
-            self.collect_links(false).await
+            self.collect_query_links(false).await
         };
         for link in &collected_links {
             self.project_runtime_link_status(link);
@@ -126,7 +127,7 @@ impl RuntimeWorkRpcHandler {
             &[("links", collected_links.len().to_string())],
         );
         let stage_started_at = Instant::now();
-        let links = if bool_field(payload, "pendingOnly").unwrap_or(false) {
+        let links = if pending_only {
             collected_links
                 .into_iter()
                 .filter(|link| {
@@ -169,12 +170,14 @@ impl RuntimeWorkRpcHandler {
                 ("tasks", task_count.to_string()),
             ],
         );
-        if prefer_cached {
+        // Pending decisions are framework-owned state, not a provider discovery request.
+        if prefer_cached && !pending_only {
             self.reconcile_codex_threads_after_cached_list();
         }
         Ok(json!({
             "success": true,
             "workspaces": workspaces,
+            "coverage": {"authorized_index_complete":catalog_complete,"unavailable_reasons":if catalog_complete {json!({})} else {json!({"native_catalog_unavailable":1})}},
         }))
     }
 
@@ -205,7 +208,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(archived_conversations_response(Vec::new(), &self.device_id));
         }
 
-        let mut links = self.collect_links(true).await;
+        let (mut links, catalog_complete) = self.collect_query_links(true).await;
         if let Some(workspace_path) = string_field(&payload, "workspacePath")
             .or_else(|| string_field(&payload, "workspace_path"))
         {
@@ -223,7 +226,9 @@ impl RuntimeWorkRpcHandler {
             _ => links.sort_by_key(|link| std::cmp::Reverse(link.updated_at)),
         }
 
-        Ok(archived_conversations_response(links, &self.device_id))
+        let mut result = archived_conversations_response(links, &self.device_id);
+        result["coverage"] = json!({"authorized_index_complete":catalog_complete,"unavailable_reasons":if catalog_complete {json!({})} else {json!({"native_catalog_unavailable":1})}});
+        Ok(result)
     }
 
     pub(super) async fn search_tasks(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -377,7 +382,7 @@ impl RuntimeWorkRpcHandler {
         .await
     }
 
-    async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
+    pub(super) async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -400,15 +405,16 @@ impl RuntimeWorkRpcHandler {
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
+        let conversation_context_only = bool_field(&payload, "conversationContextOnly")
+            .or_else(|| bool_field(&payload, "conversation_context_only"))
+            .unwrap_or(false);
         let full_item_content = search_match_requested
             || include_full_content
+            || conversation_context_only
             || payload
                 .get("transcriptProtocolVersion")
                 .and_then(Value::as_u64)
                 == Some(2);
-        let conversation_context_only = bool_field(&payload, "conversationContextOnly")
-            .or_else(|| bool_field(&payload, "conversation_context_only"))
-            .unwrap_or(false);
         let navigation_only = bool_field(&payload, "navigationOnly")
             .or_else(|| bool_field(&payload, "navigation_only"))
             .unwrap_or(false);

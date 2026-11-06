@@ -87,6 +87,9 @@ macos_inspector_e2e=false
 
 select_target() {
   selected["$1"]=true
+  if [[ "$1" == "core:component-update" ]]; then
+    macos_inspector_e2e=true
+  fi
 }
 
 select_catalog_path_targets() {
@@ -160,6 +163,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in"
   select_target "core:stand-in-identities"
   select_target "core:stand-in-connections"
+  select_target "core:stand-in-git"
   select_target "core:stand-in-mcp"
   select_target "core:stand-in-cli"
   select_target "core:stand-in-plugin-bridge"

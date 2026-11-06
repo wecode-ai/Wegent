@@ -8,6 +8,32 @@ export interface RuntimeTaskNotificationText {
   body: string
 }
 
+export function isPersonalStandInTask(item: Pick<RuntimeTaskReminderItem, 'task'>): boolean {
+  const origin = item.task.runtimeHandle?.origin as { type?: unknown } | undefined
+  return [
+    'stand_in_identity',
+    'stand_in_task',
+    'stand_in_coordinator',
+    'stand_in_schedule',
+    'connection_work',
+    'dingtalk_work',
+  ].includes(String(origin?.type))
+}
+
+export function runtimeTaskNotificationCategory(
+  item: Pick<RuntimeTaskReminderItem, 'task'>
+): 'tasks' | 'stand_in' {
+  const handle = item.task.runtimeHandle
+  const source = handle?.latestUserMessageSource as
+    | { source?: unknown; turnId?: unknown }
+    | undefined
+  return isPersonalStandInTask(item) &&
+    source?.source === 'stand_in_activity' &&
+    source.turnId === handle?.lastTurnId
+    ? 'stand_in'
+    : 'tasks'
+}
+
 const NOTIFICATION_TEXT_MAX_CHARS = 160
 
 function normalizedPreview(value: string | null | undefined): string {
@@ -54,7 +80,10 @@ export function notificationTextFromMessages(
     const reply = assistant ? truncatePreview(textFromMessage(assistant)) : ''
 
     return {
-      title: prompt,
+      title:
+        userMessage.source?.source === 'stand_in_activity'
+          ? i18n.t('common:standIn.title')
+          : prompt,
       body: reply,
     }
   }

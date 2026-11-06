@@ -65,10 +65,15 @@ impl CodexTurnRequestContext {
                     "Codex recovery resumed thread {resumed_id} instead of {thread_id}"
                 ));
             }
-            client.state.lock().await.thread_mcp_configurations.insert(
-                resumed_id,
-                mcp_reload::mcp_thread_configuration(&self.resume_params),
-            );
+            client
+                .state
+                .lock()
+                .await
+                .thread_context_configurations
+                .insert(
+                    resumed_id,
+                    mcp_reload::thread_context_configuration(&self.resume_params),
+                );
         }
         Ok(())
     }

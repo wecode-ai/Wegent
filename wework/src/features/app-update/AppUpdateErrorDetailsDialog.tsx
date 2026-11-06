@@ -115,6 +115,9 @@ export function AppUpdateErrorDetailsDialog({
     <div
       data-testid="app-update-error-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+      // Keep the owning menu mounted until portaled dialog actions receive their click.
+      onPointerDown={event => event.stopPropagation()}
+      onMouseDown={event => event.stopPropagation()}
       onClick={event => {
         if (event.target === event.currentTarget && !retrying) onClose()
       }}

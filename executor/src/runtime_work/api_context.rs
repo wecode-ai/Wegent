@@ -9,6 +9,7 @@ use crate::{agents::request_backend_url, protocol::ExecutionRequest};
 
 const CONTEXT_KEY: &str = "wework.session.current";
 const GUIDANCE: &str = concat!(
+    "Use wework_control for in-app operations when available; it does not need a personal API Key. ",
     "Current Wework HTTP API IDs (not Codex IDs); null means unavailable. ",
     "Session endpoints require api_conversation_supported=true and a separate personal API Key.",
 );
@@ -18,6 +19,12 @@ pub(super) fn inject_current_session(
     device_id: &str,
     local_task_id: &str,
 ) {
+    request
+        .extra
+        .insert("runtimeDeviceId".to_owned(), json!(device_id));
+    request
+        .extra
+        .insert("runtimeLocalTaskId".to_owned(), json!(local_task_id));
     // Establish the same user-message identity sent to Codex and projected by the API.
     let message_id = request
         .extra

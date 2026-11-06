@@ -1,0 +1,25 @@
+{
+  "order": 43500,
+  "scenario": "./scenarios/stand-in-git.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 32500,
+      "shard": 3,
+      "position": 99000
+    }
+  },
+  "paths": [
+    "wework/e2e/desktop/scenarios/stand-in-git.scenario.mjs",
+    "wework/e2e/desktop/modules/stand-in-git-readonly.mjs",
+    "wework/src/features/todo/StandInGitConnections*",
+    "wework/dsh/connection-git/*",
+    "executor/src/runtime_work/git_connections.rs",
+    "executor/src/runtime_work/handler/git_connections.rs",
+    "executor/src/runtime_work/handler/git_webhook_setup.rs",
+    "executor/src/runtime_work/handler/git_source_workspace.rs",
+    "executor/src/runtime_work/local_connector_auth/gitlab_cli.rs",
+    "executor/src/task_runtime/mcp/git_connections.rs",
+    "backend-rs/src/git_connection_inbox/*"
+  ]
+}
