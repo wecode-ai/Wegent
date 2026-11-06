@@ -261,6 +261,118 @@ test('control workflow uses the runner model-response budget instead of the UI-a
   }
 })
 
+test.each(['ready', 'preparing', 'failed'])(
+  'cloud conversation continuation waits for real runtime readiness: %s',
+  async state => {
+    const { scenario, waitForRuntimeTask } = await prepareFixture({})
+    const reachedWorkflow = new Error('Reached workflow wait')
+    await expect(
+      scenario.verify({
+        command: vi.fn(async (action: string, _selector: string, options?: { text?: string }) => {
+          if (action === 'getWorkbenchDebugSnapshot') return SOURCE_SNAPSHOT
+          if (options?.text === 'WEWORK_CONTROL_COMPLETE') throw reachedWorkflow
+        }),
+      })
+    ).rejects.toBe(reachedWorkflow)
+    const sourceId = `conv_${Buffer.from(JSON.stringify([SOURCE_DEVICE.device_id, 'source-task'])).toString('base64url')}`
+    const answers = [
+      { conversation_id: 'controller' },
+      { conversation_id: sourceId },
+      'WEWORK_CONTROL_SOURCE_E2E https://github.com/synthetic/control-e2e/pull/43',
+      {},
+      { resolution: 'unique' },
+      { operation: { delivery_status: 'accepted', operation_id: 'op' }, duplicate: false },
+      { duplicate: true },
+      { operation_id: 'op' },
+      { id: 'rule', name: 'Control CI every five minutes', enabled: false },
+      { id: 'rule' },
+      {},
+      { properties: { options: { properties: { initialGoal: {} } } } },
+      { accepted: true, conversation_id: 'created', taskId: 'created-task' },
+      {
+        conversation_id: 'created',
+        model_selection: {
+          options: { reasoning: 'high', permissionMode: 'read-only', collaborationMode: 'plan' },
+        },
+      },
+    ]
+    const respond = (stage: number, output: unknown) => {
+      const request = Object.assign(
+        Readable.from([
+          JSON.stringify({
+            tools: [{ type: 'function', name: 'mcp__wework_control__invoke_capability' }],
+            input: [
+              { role: 'user', content: 'WEWORK_CONTROL_CONTROLLER_E2E' },
+              {
+                type: 'function_call_output',
+                call_id: `control-step-${stage}`,
+                output: JSON.stringify(output),
+              },
+            ],
+          }),
+        ]),
+        { method: 'POST' }
+      )
+      const response = { writeHead: vi.fn(), end: vi.fn() }
+      return {
+        response,
+        done: scenario.handleHttp(request, response, new URL('http://model.test/responses')),
+      }
+    }
+    try {
+      for (const [index, answer] of answers.entries()) {
+        const call = respond(index, answer)
+        await call.done
+        expect(call.response.writeHead).toHaveBeenCalledWith(200, expect.any(Object))
+      }
+      let release!: () => void
+      const readiness = new Promise<void>(resolve => {
+        release = resolve
+      })
+      waitForRuntimeTask.mockImplementationOnce(async () => {
+        if (state === 'failed') throw new Error('runtime preparation failed')
+        if (state === 'preparing') await readiness
+        return {
+          taskId: 'cloud-task',
+          workspacePath: '/cloud-workspace',
+          title: 'Cloud conversation',
+          runtime: 'codex',
+          status: 'completed',
+        }
+      })
+      const call = respond(14, {
+        accepted: true,
+        conversation_id: 'cloud-created',
+        deviceId: SOURCE_DEVICE.device_id,
+        taskId: 'cloud-task',
+        workspacePath: '/cloud-workspace',
+      })
+      await vi.waitFor(() =>
+        expect(waitForRuntimeTask).toHaveBeenLastCalledWith({
+          deviceId: SOURCE_DEVICE.device_id,
+          taskId: 'cloud-task',
+          workspacePath: '/cloud-workspace',
+        })
+      )
+      if (state === 'preparing') {
+        expect(call.response.end).not.toHaveBeenCalled()
+        release()
+      }
+      await call.done
+      if (state === 'failed') {
+        expect(call.response.writeHead).toHaveBeenCalledWith(500)
+        expect(call.response.end.mock.calls[0][0]).not.toContain('continue_conversation')
+      } else {
+        expect(call.response.writeHead).toHaveBeenCalledWith(200, expect.any(Object))
+        expect(call.response.end.mock.calls[0][0]).toContain('continue_conversation')
+        expect(call.response.end.mock.calls[0][0]).toContain('cloud-created')
+      }
+    } finally {
+      await scenario.cleanup()
+    }
+  }
+)
+
 test.each([
   ['remote device', [{ ...APP_DEVICE, device_type: 'remote' }]],
   ['another physical app', [{ ...APP_DEVICE, app_device_id: 'electron-other-device' }]],

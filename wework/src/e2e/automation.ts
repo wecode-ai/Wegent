@@ -3224,7 +3224,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const startedAt = Date.now()
       logRuntimeTaskCreateStage(
         'desktop-control-click-started',
-        { commandId: command.id, selector: command.selector },
+        { commandId: command.id, selector: command.selector, profile: command.value },
         'debug'
       )
       element.click()

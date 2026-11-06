@@ -766,6 +766,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk protocol fixture" }
           "WEWORK_E2E_DWS_FIXTURE_BIN=$binary" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ('${{ matrix.segments }}'.Split(',') -contains 'stand-in-cli') {
+            $storyBinary = Join-Path $directory "source-story-dws.exe"
+            rustc wework/e2e/desktop/fixtures/source-story-dingtalk-cli.rs --edition 2021 -o $storyBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk reply fixture" }
+            "WEWORK_E2E_DWS_STORY_FIXTURE_BIN=$storyBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e

@@ -1657,7 +1657,9 @@ async function verifyExistingTaskBoardAssociation(
   taskTabTestId,
   { captureScreenshots = true } = {}
 ) {
-  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('click', `[data-testid="${taskTabTestId}"]`, {
+    value: 'tracked-task-return',
+  })
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

@@ -241,10 +241,15 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         project_space: { space_id: String(cloudProject.id), store: 'cloud' },
         options: { attachmentIds: [attachment.id] },
       }),
-      value => {
+      async value => {
         const created = findValue(value, item => item.accepted === true && item.conversation_id)
         assert.ok(created)
         assert.equal(created.deviceId, sourceDeviceId)
+        await cloudEnvironment.waitForRuntimeTask({
+          deviceId: created.deviceId,
+          taskId: created.taskId,
+          workspacePath: created.workspacePath,
+        })
         cloudCreatedId = created.conversation_id
         cloudCreatedTaskId = created.taskId
       },
@@ -258,7 +263,15 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       }),
       value => {
         const receipt = findValue(value, item => item.operation && item.duplicate === false)
-        assert.equal(receipt?.operation.delivery_status, 'accepted')
+        assert.equal(
+          receipt?.operation.delivery_status,
+          'accepted',
+          JSON.stringify({
+            code: receipt?.operation.result?.code,
+            accepted: receipt?.operation.result?.accepted,
+            success: receipt?.operation.result?.success,
+          })
+        )
         assert.equal(receipt.operation.device_id, sourceDeviceId)
         assert.equal(receipt.operation.task_id, cloudCreatedTaskId)
       },

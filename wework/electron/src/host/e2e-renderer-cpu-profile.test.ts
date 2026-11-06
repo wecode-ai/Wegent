@@ -12,18 +12,19 @@ afterEach(() => {
 })
 
 function fixture() {
-  let loaded = () => {}
+  const listeners = new Map<string, (...args: unknown[]) => void>()
   let destroyed = false
   const contents = {
     id: 4,
     isDestroyed: () => destroyed,
-    on: vi.fn((_event: 'did-finish-load', listener: () => void) => {
-      loaded = listener
+    on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+      listeners.set(event, listener)
     }),
   }
   return {
     contents,
-    load: () => loaded(),
+    load: () => listeners.get('did-finish-load')?.(),
+    message: (message: string) => listeners.get('console-message')?.({}, 1, message),
     destroy: () => {
       destroyed = true
     },
@@ -75,4 +76,28 @@ test('caps the total profiles across reloads while the renderer remains alive', 
   await vi.advanceTimersByTimeAsync(60_000)
   expect(contentTracing.startRecording).toHaveBeenCalledTimes(2)
   expect(contentTracing.stopRecording).toHaveBeenCalledTimes(2)
+})
+
+test('captures only the requested interaction and keeps the one-profile budget', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  installE2ERendererCpuProfiling(f.contents, {
+    VITE_WEWORK_E2E: 'true',
+    WEWORK_E2E_CONTROL_URL: 'http://localhost',
+    WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: join(tmpdir(), 'interaction-cpu-evidence'),
+    WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT: '1',
+    WEWORK_E2E_RENDERER_CPU_PROFILE_TRIGGER: 'tracked-task-return',
+  })
+  f.load()
+  f.message('unrelated click')
+  await vi.advanceTimersByTimeAsync(1)
+  expect(contentTracing.startRecording).not.toHaveBeenCalled()
+  f.message('desktop-control-click-started tracked-task-return')
+  f.message('desktop-control-click-started tracked-task-return')
+  await vi.advanceTimersByTimeAsync(20_000)
+  f.load()
+  f.message('tracked-task-return')
+  await vi.advanceTimersByTimeAsync(20_000)
+  expect(contentTracing.startRecording).toHaveBeenCalledOnce()
+  expect(contentTracing.stopRecording).toHaveBeenCalledOnce()
 })

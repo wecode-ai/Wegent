@@ -1,8 +1,23 @@
 import { execFile } from 'node:child_process'
-import { posix, win32 } from 'node:path'
+import { access, rm, symlink, writeFile } from 'node:fs/promises'
+import { join, posix, resolve, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
+
+export async function createClaudeCliAlias(binDirectory, resultDir, platform = process.platform) {
+  const alias = join(resultDir, platform === 'win32' ? 'local-claude.cmd' : 'local-claude')
+  await rm(alias, { force: true })
+  if (platform === 'win32') {
+    // The executor unwraps native shims; nesting another batch file prevents that.
+    const native = resolve(binDirectory, '../@anthropic-ai/claude-code/bin/claude.exe')
+    await access(native)
+    await writeFile(alias, `@echo off\r\n"${native}" %*\r\n`, 'utf8')
+  } else {
+    await symlink(localHarnessCliPath(binDirectory, 'claude', platform), alias)
+  }
+  return alias
+}
 
 export function localHarnessCliPath(binDirectory, name, platform = process.platform) {
   const path = platform === 'win32' ? win32 : posix
