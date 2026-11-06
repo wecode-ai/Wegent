@@ -29,6 +29,7 @@ ManagerDispatch = tuple[CloudProject, LoopItem, ProjectChatAgent, LoopItemExecut
 def manager_dispatch(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> ManagerDispatch:
+    """Create a claimed manager dispatch with a real runtime activity binding."""
     monkeypatch.setattr("app.core.async_utils.schedule_async_task", lambda *args: None)
     monkeypatch.setattr(
         "app.services.collaboration_manager_decisions.push_project_chat_message",
@@ -69,6 +70,7 @@ def _decide(
     manager: ProjectChatAgent,
     dispatch: LoopItemExecution,
 ) -> None:
+    """Submit the same manager review decision for initial and recovery calls."""
     apply_collaboration_manager_decision(
         db,
         project_id=project.id,
@@ -86,6 +88,7 @@ def _decide(
 def test_manager_decision_refreshes_a_stale_dispatch_version(
     test_db: Session, test_user: User, manager_dispatch: ManagerDispatch
 ) -> None:
+    """Complete the dispatch even when the session retained an older version."""
     project, issue, manager, dispatch = manager_dispatch
     stale_version = dispatch.version
     test_db.query(LoopItemExecution).filter_by(id=dispatch.id).update(
@@ -106,6 +109,7 @@ def test_manager_decision_rolls_back_if_dispatch_completion_loses_its_version(
     manager_dispatch: ManagerDispatch,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Roll back a lost completion without consuming the decision's retry key."""
     project, issue, manager, dispatch = manager_dispatch
     previous_status = issue.status
     complete = loop_item_execution_service.complete
@@ -113,6 +117,7 @@ def test_manager_decision_rolls_back_if_dispatch_completion_loses_its_version(
     def advance_version_before_completion(
         db: Session, **kwargs: Any
     ) -> LoopItemExecution | None:
+        """Force a version conflict through the real terminal transition logic."""
         db.query(LoopItemExecution).filter_by(id=dispatch.id).update(
             {LoopItemExecution.version: LoopItemExecution.version + 1},
             synchronize_session=False,
