@@ -88,6 +88,9 @@ windows_installer_e2e=false
 
 select_target() {
   selected["$1"]=true
+  if [[ "$1" == "core:component-update" ]]; then
+    macos_inspector_e2e=true
+  fi
 }
 
 select_catalog_path_targets() {

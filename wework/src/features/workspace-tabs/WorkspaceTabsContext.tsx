@@ -383,11 +383,15 @@ export function WorkspaceTabsProvider({
   storageScope,
   labels,
   startupTabKind,
-  fixedTabs = EMPTY_FIXED_TABS,
+  fixedTabs: restoredFixedTabs = EMPTY_FIXED_TABS,
   startupTabId,
   restoreSessionTabs = true,
   children,
 }: WorkspaceTabsProviderProps) {
+  const fixedTabs = useMemo(
+    () => restoredFixedTabs.map(tab => normalizePersistedTab(tab, labels)),
+    [restoredFixedTabs, labels]
+  )
   const startupTabApplied = useRef(false)
   const previousPathnameRef = useRef(pathname)
   const [state, dispatch] = useReducer(

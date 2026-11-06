@@ -97,7 +97,7 @@ jobs:
         id: linux-matrix
         env:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
-          CORE_RUNNER_SCALE: '1.5'
+          CORE_RUNNER_SCALE: "1.5"
         run: node .github/scripts/order-wework-linux-e2e.mjs --balance-core >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
@@ -1313,13 +1313,18 @@ jobs:
         env:
           CI: true
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          COMPONENT_UPDATE_E2E: ${{ contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'component-update') }}
         run: |
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
+          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design
+          if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
+            segments+=,component-update
+          fi
           node wework/e2e/desktop/run-checkpoints.mjs \
-            --parallel-segments browser-toolbar-actions,tray-lifecycle,browser-annotation-design
+            --parallel-segments "$segments"
 
       - name: Describe verified native macOS runtimes
         env:

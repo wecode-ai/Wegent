@@ -261,6 +261,8 @@ Performance Diagnostics 有意保留独立的采集器：它仍通过 `wework/el
 
 主工作台的全高侧栏和横跨内容区的顶部栏应使用普通语义背景，避免在大面积常驻表面应用 `backdrop-filter`。这类滤镜可能让 Chromium 为整个区域保留额外图形 backing store；排查 Web Content 内存时，应在相同窗口尺寸和页面状态下比较启用前后的 `physical_footprint_kib`，并把 DevTools 堆快照产生的短期可回收内存高水位排除在稳定基线之外。
 
+流式进度文字的扫光宽度直接使用 `ResizeObserverEntry` 的尺寸，不在挂载时同步读取 `getBoundingClientRect()`。尺寸通知到来前，扫光层以零宽度初始化，基础文字保持可见。长轮次会反复挂载进度提示，同步读取布局后再写入样式会累积强制布局开销；排查时应使用同一 CI 构建的 source map 将性能追踪热点映射回源码。
+
 也可以手动打点：
 
 ```js
