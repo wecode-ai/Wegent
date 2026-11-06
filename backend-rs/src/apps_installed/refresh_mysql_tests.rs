@@ -22,6 +22,55 @@ use super::service::{self, ConnectorApp};
 const USER_ID: i64 = 4242;
 const SLUG: &str = "mysql-refresh-fixture";
 
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; included by the existing Rust CI job"]
+async fn old_account_discovery_cannot_update_a_reauthorized_connection() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS").unwrap();
+    assert!(address.starts_with("127.0.0.1:"));
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let old = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .unwrap();
+            rotate_grant(&mysql, "2035-01-01T00:00:00").await;
+            let tools = vec![json!({"name": format!("{SLUG}__private")})];
+
+            refresh::write_discovery_state(
+                &mysql,
+                &old,
+                "old-access",
+                &DiscoveryState {
+                    discovered_at: Some("2026-11-05T00:00:00+00:00"),
+                    tool_summaries: Some(&tools),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            refresh::record_directory_error(
+                &mysql,
+                Some(&old),
+                Some("old-access"),
+                &super::mcp::McpError::Transport("old account failure".into()),
+            )
+            .await;
+
+            let current = read_spec(&mysql).await;
+            assert_eq!(current["accessTokenEncrypted"], "new-access");
+            assert_eq!(current["toolSummaries"], json!([]));
+            assert_eq!(current["toolsDiscoveredAt"], Value::Null);
+            assert_eq!(current["lastError"], Value::Null);
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
 async fn connect(address: &str) -> (MysqlService, MysqlService, String) {
     let url = |database: &str| format!("mysql://root@{address}/{database}?ssl-mode=disabled");
     let admin = MysqlService::connect(&url("mysql")).await.unwrap();
@@ -184,10 +233,12 @@ async fn seed_current_grant(mysql: &MysqlService) {
     seed_expired_grant(mysql, "2035-01-01T00:00:00").await;
     crate::subscriptions_item::crypto::use_test_key();
     let access = crate::subscriptions_item::crypto::encrypt_sensitive_data("A0").unwrap();
+    let refresh = crate::subscriptions_item::crypto::encrypt_sensitive_data("R0").unwrap();
     mysql
         .execute(
-            "UPDATE kinds SET json = JSON_SET(json, '$.spec.accessTokenEncrypted', ?)",
-            (access.as_str(),),
+            "UPDATE kinds SET json = JSON_SET(json, '$.spec.accessTokenEncrypted', ?, \
+             '$.spec.refreshTokenEncrypted', ?)",
+            (access.as_str(), refresh.as_str()),
         )
         .await
         .unwrap();
@@ -268,6 +319,7 @@ async fn discovery_does_not_overwrite_a_rotated_grant() {
             refresh::write_discovery_state(
                 &mysql,
                 &stale,
+                "new-access",
                 &DiscoveryState {
                     discovered_at: Some("2026-10-29T00:00:00+00:00"),
                     tool_summaries: Some(&summaries),
@@ -336,6 +388,7 @@ async fn discovery_does_not_revive_a_rejected_grant() {
             refresh::write_discovery_state(
                 &mysql,
                 &stale,
+                "old-access",
                 &DiscoveryState {
                     discovered_at: Some("2026-10-29T00:00:00+00:00"),
                     tool_summaries: Some(&summaries),
@@ -688,7 +741,7 @@ async fn a_late_tool_rejection_does_not_expire_a_newer_grant() {
     let result = tokio::spawn({
         let mysql = mysql.clone();
         async move {
-            seed_expired_grant(&mysql, "2035-01-01T00:00:00").await;
+            seed_current_grant(&mysql).await;
             let attempted = db::find_connector_connection(&mysql, SLUG, USER_ID)
                 .await
                 .unwrap()
@@ -773,121 +826,5 @@ async fn a_current_tool_rejection_expires_only_the_used_grant() {
     result.unwrap();
 }
 
-/// The installed-app directory must preserve the authorization error instead
-/// of silently removing a rejected app while leaving its status connected.
-#[tokio::test]
-#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
-async fn installed_directory_rejection_expires_the_used_grant() {
-    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
-        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
-    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
-    let (admin, mysql, name) = connect(&address).await;
-    let result = tokio::spawn({
-        let mysql = mysql.clone();
-        async move {
-            seed_current_grant(&mysql).await;
-            let (url, attempted, release) = rejecting_mcp_server(401).await;
-            let apps = [oauth_app_at(&url)];
-            let listing = tokio::spawn({
-                let mysql = mysql.clone();
-                async move { service::installed_apps(&mysql, &apps, &user()).await }
-            });
-            attempted.await.unwrap();
-            release.send(()).unwrap();
-            let response = listing.await.unwrap().unwrap();
-            assert_eq!(response.apps.len(), 1);
-            assert_eq!(response.apps[0].connection.status, "expired");
-
-            let spec = read_spec(&mysql).await;
-            assert_eq!(spec["status"], json!("expired"));
-            assert_eq!(
-                spec["lastError"]["message"],
-                json!("MCP server returned status 401")
-            );
-        }
-    })
-    .await;
-    disconnect(admin, mysql, &name).await;
-    result.unwrap();
-}
-
-/// The MCP directory must apply the same conditional rejection. A delayed
-/// response for A0 must not expire the A1 grant committed while it was in flight.
-#[tokio::test]
-#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
-async fn mcp_directory_late_rejection_keeps_a_newer_grant() {
-    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
-        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
-    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
-    let (admin, mysql, name) = connect(&address).await;
-    let result =
-        tokio::spawn({
-            let mysql = mysql.clone();
-            async move {
-                seed_current_grant(&mysql).await;
-                let (url, attempted, release) = rejecting_mcp_server(403).await;
-                let apps = [oauth_app_at(&url)];
-                let listing = tokio::spawn({
-                    let mysql = mysql.clone();
-                    async move {
-                        crate::mcp::connectors::list_tools_for_user(&mysql, &apps, &user()).await
-                    }
-                });
-                attempted.await.unwrap();
-                rotate_to_a1(&mysql).await;
-                release.send(()).unwrap();
-                assert!(listing.await.unwrap().is_empty());
-
-                let spec = read_spec(&mysql).await;
-                assert_eq!(spec["status"], json!("connected"));
-                assert_eq!(spec["lastError"], json!(null));
-                let current = db::find_connector_connection(&mysql, SLUG, USER_ID)
-                    .await
-                    .unwrap()
-                    .expect("the fixture connection exists");
-                let current = super::connection::ConnectorConnection::from_row(&current);
-                assert_eq!(current.access_token().unwrap(), "A1");
-                assert_eq!(current.refresh_token().as_deref(), Some("R1"));
-            }
-        })
-        .await;
-    disconnect(admin, mysql, &name).await;
-    result.unwrap();
-}
-
-/// A non-auth discovery failure records its diagnostic without invalidating
-/// a credential that the upstream did not reject.
-#[tokio::test]
-#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
-async fn directory_transport_failure_keeps_the_grant_connected() {
-    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
-        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
-    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
-    let (admin, mysql, name) = connect(&address).await;
-    let result = tokio::spawn({
-        let mysql = mysql.clone();
-        async move {
-            seed_current_grant(&mysql).await;
-            let (url, attempted, release) = rejecting_mcp_server(500).await;
-            let apps = [oauth_app_at(&url)];
-            let listing = tokio::spawn({
-                let mysql = mysql.clone();
-                async move { service::installed_apps(&mysql, &apps, &user()).await }
-            });
-            attempted.await.unwrap();
-            release.send(()).unwrap();
-            let response = listing.await.unwrap().unwrap();
-            assert_eq!(response.apps[0].connection.status, "connected");
-
-            let spec = read_spec(&mysql).await;
-            assert_eq!(spec["status"], json!("connected"));
-            assert_eq!(
-                spec["lastError"]["message"],
-                json!("MCP server returned status 500")
-            );
-        }
-    })
-    .await;
-    disconnect(admin, mysql, &name).await;
-    result.unwrap();
-}
+#[path = "refresh_directory_mysql_tests.rs"]
+mod directories;

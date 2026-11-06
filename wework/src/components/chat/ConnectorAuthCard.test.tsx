@@ -40,7 +40,8 @@ vi.mock('@/lib/cloud-authorization-window', () => ({
 
 const syncMocks = vi.hoisted(() => ({ waitForSync: vi.fn(), localFirst: { value: true } }))
 
-vi.mock('@/features/cloud-connection/connectorAppSync', () => ({
+vi.mock('@/features/cloud-connection/connectorAppSync', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/cloud-connection/connectorAppSync')>()),
   waitForLocalConnectorSync: syncMocks.waitForSync,
 }))
 
@@ -558,5 +559,73 @@ describe('CloudConnectorAuthCard', () => {
     )
     expect(cloudMocks.authorize).not.toHaveBeenCalled()
     expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  test.each(['resolve', 'reject'] as const)(
+    'allows a new identity to authorize without applying the old attempt %s',
+    async outcome => {
+      let settleOld!: () => void
+      let settleNew!: () => void
+      cloudMocks.authorize
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              settleOld = () =>
+                outcome === 'resolve'
+                  ? resolve({ status: 'connected' })
+                  : reject(new Error('Old account authorization failed'))
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              settleNew = () => resolve({ status: 'connected' })
+            })
+        )
+      const onSuccess = vi.fn()
+      const props = {
+        slug: 'dingtalk_log',
+        apiBaseUrl: 'https://wegent.test/api',
+        onSuccess,
+      }
+      const view = render(<CloudConnectorAuthCard {...props} token="account-a-token" />)
+      fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+      expect(screen.getByTestId('cloud-connector-auth-authorize')).toBeDisabled()
+
+      view.rerender(<CloudConnectorAuthCard {...props} token="account-b-token" />)
+      expect(screen.getByTestId('cloud-connector-auth-authorize')).toBeEnabled()
+      fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+      expect(cloudMocks.authorize).toHaveBeenCalledTimes(2)
+      await act(async () => settleOld())
+      expect(screen.getByTestId('cloud-connector-auth-authorize')).toBeDisabled()
+      expect(screen.queryByTestId('cloud-connector-auth-error')).not.toBeInTheDocument()
+      expect(cloudMocks.catalog).not.toHaveBeenCalled()
+      expect(onSuccess).not.toHaveBeenCalled()
+
+      await act(async () => settleNew())
+      expect(onSuccess).toHaveBeenCalledTimes(1)
+      expect(cloudMocks.catalog).toHaveBeenCalledExactlyOnceWith(
+        props.apiBaseUrl,
+        'account-b-token',
+        props.slug
+      )
+    }
+  )
+
+  test('reports same-identity authorization errors and allows retry', async () => {
+    cloudMocks.authorize.mockRejectedValue(new Error('Authorization service unavailable'))
+    render(
+      <CloudConnectorAuthCard
+        slug="dingtalk_log"
+        apiBaseUrl="https://wegent.test/api"
+        token="account-a-token"
+        onSuccess={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+    expect(await screen.findByTestId('cloud-connector-auth-error')).toHaveTextContent(
+      'Authorization service unavailable'
+    )
+    expect(screen.getByTestId('cloud-connector-auth-authorize')).toBeEnabled()
   })
 })

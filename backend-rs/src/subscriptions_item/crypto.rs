@@ -37,6 +37,8 @@ pub(crate) enum CryptoError {
     InvalidIv,
     /// The key could not be parsed into an AES-256 key.
     InvalidKey,
+    /// The configured key cannot decrypt the stored ciphertext.
+    Unreadable,
 }
 
 impl std::fmt::Display for CryptoError {
@@ -45,6 +47,7 @@ impl std::fmt::Display for CryptoError {
             Self::MissingIv => formatter.write_str("GIT_TOKEN_AES_IV must be configured"),
             Self::InvalidIv => formatter.write_str("GIT_TOKEN_AES_IV must be 16 UTF-8 bytes"),
             Self::InvalidKey => formatter.write_str("GIT_TOKEN_AES_KEY must be a 32-byte key"),
+            Self::Unreadable => formatter.write_str("stored credential cannot be decrypted"),
         }
     }
 }

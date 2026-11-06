@@ -11,7 +11,7 @@ import secrets
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from fastapi import HTTPException, status
@@ -22,12 +22,16 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.connector import (
     ConnectorOAuthSessionCreateResponse,
     ConnectorOAuthSessionPollResponse,
 )
 from app.services.connector_apps import (
+    CONNECTOR_APP_KIND,
+    CONNECTOR_APP_NAMESPACE,
+    CONNECTOR_APP_USER_ID,
     ConnectorApp,
     ConnectorAppService,
     create_connector_http_client,
@@ -47,6 +51,20 @@ SESSION_KEY_PREFIX = "connector_oauth_session:"
 POLL_INTERVAL_SECONDS = 2
 DISCOVERY_TIMEOUT_SECONDS = 15
 logger = logging.getLogger(__name__)
+
+REJECTED_REFRESH_ERRORS = {"invalid_grant", "bad_refresh_token"}
+
+
+class _RejectedRefresh(ValueError):
+    """The provider explicitly rejected the stored refresh grant."""
+
+
+def _refresh_is_rejected(payload: object) -> bool:
+    return (
+        isinstance(payload, dict)
+        and isinstance(payload.get("error"), str)
+        and payload.get("error") in REJECTED_REFRESH_ERRORS
+    )
 
 
 def _session_key(session_id: str) -> str:
@@ -68,6 +86,13 @@ def _require_github_config() -> None:
 def _pkce_challenge(verifier: str) -> str:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _authorization_url(endpoint: str, parameters: dict[str, str]) -> str:
+    parsed = urlsplit(endpoint)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.update(parameters)
+    return urlunsplit(parsed._replace(query=urlencode(query)))
 
 
 class ConnectorOAuthService:
@@ -114,6 +139,7 @@ class ConnectorOAuthService:
         )
         session_data = {
             "status": "pending",
+            "app_id": app.id,
             "slug": slug,
             "user_id": user_id,
             "poll_token": poll_token,
@@ -129,7 +155,8 @@ class ConnectorOAuthService:
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "Failed to create connector authorization session",
             )
-        params = urlencode(
+        authorize_url = _authorization_url(
+            GITHUB_AUTHORIZE_URL,
             {
                 "client_id": settings.GITHUB_OAUTH_CLIENT_ID,
                 "redirect_uri": settings.GITHUB_OAUTH_REDIRECT_URI,
@@ -137,12 +164,12 @@ class ConnectorOAuthService:
                 "state": state,
                 "code_challenge": _pkce_challenge(verifier),
                 "code_challenge_method": "S256",
-            }
+            },
         )
         return ConnectorOAuthSessionCreateResponse(
             session_id=session_id,
             poll_token=poll_token,
-            authorize_url=f"{GITHUB_AUTHORIZE_URL}?{params}",
+            authorize_url=authorize_url,
             expires_at=now + ttl,
             poll_interval_seconds=POLL_INTERVAL_SECONDS,
         )
@@ -177,6 +204,7 @@ class ConnectorOAuthService:
         )
         session_data = {
             "status": "pending",
+            "app_id": app.id,
             "slug": app.slug,
             "user_id": user_id,
             "poll_token": poll_token,
@@ -197,7 +225,8 @@ class ConnectorOAuthService:
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "Failed to create connector authorization session",
             )
-        params = urlencode(
+        authorize_url = _authorization_url(
+            metadata["authorization_endpoint"],
             {
                 "response_type": "code",
                 "client_id": client["client_id"],
@@ -207,12 +236,12 @@ class ConnectorOAuthService:
                 "state": state,
                 "code_challenge": _pkce_challenge(verifier),
                 "code_challenge_method": "S256",
-            }
+            },
         )
         return ConnectorOAuthSessionCreateResponse(
             session_id=session_id,
             poll_token=poll_token,
-            authorize_url=f"{metadata['authorization_endpoint']}?{params}",
+            authorize_url=authorize_url,
             expires_at=now + ttl,
             poll_interval_seconds=POLL_INTERVAL_SECONDS,
         )
@@ -249,8 +278,6 @@ class ConnectorOAuthService:
             slug=str(session["slug"]),
             user_id=user_id,
         )
-        session["status"] = "claimed"
-        await ConnectorOAuthService._write_session(session_id, session)
         return ConnectorOAuthSessionPollResponse(
             status="success",
             connection=connector_connection_service.response(connection),
@@ -273,15 +300,23 @@ class ConnectorOAuthService:
                 status.HTTP_409_CONFLICT,
                 "Connector authorization session has already completed",
             )
-        if provider_error:
-            session.update({"status": "declined", "error": provider_error})
-            await ConnectorOAuthService._write_session(session_id, session)
-            return "Connector authorization was declined. You can close this window."
-        if not code:
+        if not code and not provider_error:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 "GitHub authorization code is missing",
             )
+        remaining = max(1, int(session["expires_at"]) - int(time.time()))
+        if not await cache_manager.setnx(
+            f"{_session_key(session_id)}:callback", True, expire=remaining
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Connector authorization callback is already being processed",
+            )
+        if provider_error:
+            session.update({"status": "declined", "error": provider_error})
+            await ConnectorOAuthService._write_session(session_id, session)
+            return "Connector authorization was declined. You can close this window."
         try:
             if str(session.get("oauth")) == "dynamic":
                 token_payload = await ConnectorOAuthService._exchange_dynamic_code(
@@ -309,6 +344,7 @@ class ConnectorOAuthService:
                 if expires_in
                 else None
             )
+            ConnectorOAuthService._lock_callback_app(db, session)
             connector_connection_service.save_oauth_connection(
                 db,
                 slug=str(session["slug"]),
@@ -322,6 +358,13 @@ class ConnectorOAuthService:
             )
             if str(session.get("oauth")) == "dynamic":
                 await ConnectorOAuthService._cache_authorized_tools(db, session)
+        except HTTPException:
+            db.rollback()
+            session.update(
+                {"status": "failed", "error": "Connector app is unavailable"}
+            )
+            await ConnectorOAuthService._write_session(session_id, session)
+            raise
         except (httpx.HTTPError, ValueError) as exc:
             db.rollback()
             session.update(
@@ -339,6 +382,38 @@ class ConnectorOAuthService:
         session.pop("code_verifier", None)
         await ConnectorOAuthService._write_session(session_id, session)
         return "Connector is connected. You can close this window."
+
+    @staticmethod
+    def _lock_callback_app(db: Session, session: dict) -> None:
+        """Consent for a removed/reconfigured app must not create a connection."""
+        row = (
+            db.query(Kind)
+            .filter(
+                Kind.id == session["app_id"],
+                Kind.kind == CONNECTOR_APP_KIND,
+                Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.name == session["slug"],
+                Kind.user_id == CONNECTOR_APP_USER_ID,
+                Kind.is_active,
+            )
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+        user = db.get(User, int(session["user_id"]), populate_existing=True)
+        if row is None or user is None or not user.is_active:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+        app = ConnectorAppService._row_to_app(row)
+        if not app.enabled or (
+            app.visibility != "all" and user.role not in app.allowed_roles
+        ):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+        if app.auth_type != "oauth2" or (
+            session.get("oauth") == "dynamic" and app.mcp_url != session["resource"]
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Connector app changed during authorization"
+            )
 
     @staticmethod
     async def _cache_authorized_tools(db: Session, session: dict) -> None:
@@ -433,6 +508,10 @@ class ConnectorOAuthService:
                 )
                 response.raise_for_status()
                 payload = response.json()
+            if _refresh_is_rejected(payload):
+                raise _RejectedRefresh("Connector rejected the refresh grant")
+            if not isinstance(payload, dict):
+                raise ValueError("Connector returned an invalid token payload")
             access_token = str(payload.get("access_token") or "")
             if not access_token or payload.get("error"):
                 raise ValueError("Connector token refresh failed")
@@ -469,17 +548,28 @@ class ConnectorOAuthService:
         except httpx.HTTPStatusError as error:
             # Rate limiting and other transient answers must not invalidate a
             # refresh token the user could reuse once the upstream recovers.
-            transient = error.response.status_code == 429
+            try:
+                rejected = (
+                    error.response.status_code < 500
+                    and error.response.status_code != 429
+                    and _refresh_is_rejected(error.response.json())
+                )
+            except ValueError:
+                rejected = False
             return ConnectorOAuthService._record_refresh_failure(
                 db,
                 connection,
                 grant=grant,
-                clear_refresh_token=not transient and error.response.status_code < 500,
+                clear_refresh_token=rejected,
             )
-        except ValueError:
-            # The payload carried an OAuth error such as `invalid_grant`.
+        except _RejectedRefresh:
             return ConnectorOAuthService._record_refresh_failure(
                 db, connection, grant=grant, clear_refresh_token=True
+            )
+        except ValueError:
+            # Malformed payloads and configuration errors do not revoke grants.
+            return ConnectorOAuthService._record_refresh_failure(
+                db, connection, grant=grant, clear_refresh_token=False
             )
         except httpx.HTTPError:
             # Transport failures are transient; keep the refresh token for a retry.
@@ -612,6 +702,8 @@ class ConnectorOAuthService:
         if (
             stored
             and stored.get("issuer") == metadata.get("issuer")
+            and stored.get("resource") == metadata.get("resource")
+            and stored.get("token_endpoint") == metadata.get("token_endpoint")
             and stored.get("redirect_uri") == settings.CONNECTOR_OAUTH_REDIRECT_URI
         ):
             return stored

@@ -140,6 +140,10 @@ describe('synchronizeConnectorApps', () => {
       'runtime.connectors.configure',
       expect.objectContaining({ syncRevision: 42 })
     )
+    expect(mocks.request).toHaveBeenCalledWith(
+      'runtime.connectors.apps.sync',
+      expect.objectContaining({ syncRevision: 42 })
+    )
   })
 
   test('never writes a configuration once the attempt was superseded', async () => {

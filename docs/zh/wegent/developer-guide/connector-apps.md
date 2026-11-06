@@ -4,7 +4,7 @@ sidebar_position: 19
 
 # Connector Apps 架构与部署
 
-Connector Apps 让 Wework 在不修改 Codex 源码、也不依赖 ChatGPT 登录的前提下连接组织内部系统。上游既可以是 MCP Server，也可以是普通 HTTP API。系统把“App”拆成三个独立职责：Wegent Admin 管理定义、可见范围和固定请求头，Wegent Backend 读取 `kinds` 中的 ConnectorApp 资源并适配上游协议，Executor 向 Codex 统一暴露本地 MCP。Wework 不提供 Connector 设置页面，只在连接 Wegent 云端后同步可用能力。
+Connector Apps 让 Wework 在不修改 Codex 源码、也不依赖 ChatGPT 登录的前提下连接组织内部系统。上游既可以是 MCP Server，也可以是普通 HTTP API。系统把“App”拆成三个独立职责：Wegent Admin 管理定义、可见范围和固定请求头，Wegent Backend 读取 `kinds` 中的 ConnectorApp 资源并适配上游协议，Executor 向 Codex 统一暴露本地 MCP。Wework 连接 Wegent 云端后同步可用能力，并在设置的连接页面提供应用授权和重试入口。
 
 ## 运行链路
 
@@ -14,7 +14,7 @@ Connector Apps 让 Wework 在不修改 Codex 源码、也不依赖 ChatGPT 登�
 4. Wework 使用当前云端会话申请 15 分钟的 Connector 专用 JWT。该 JWT 只有 `connectors:invoke` 权限，不能替代用户登录令牌。
 5. Executor 把自身注册为普通 stdio MCP Server `wegent_apps`。Codex 只连接这个本地进程，不接触上游固定请求头。
 6. `wegent_apps` 子进程从 Executor 私有目录读取自动轮换的短期 JWT，并调用 Wegent Connector Runtime。Backend 解密管理员固定请求头，并连接上游 Streamable HTTP/SSE MCP，或把工具调用转换为普通 HTTP 请求。
-7. 每个可用 App 会生成一个由 Wegent 管理的本地 Skill。Skill 只声明该 App 可使用的工具命名空间，例如 `crm__`，不会包含管理员填写的描述或任何凭据。
+7. 每个可用 App 会生成一个由 Wegent 管理的本地 Skill。Skill 包含应用描述、可使用的工具命名空间（例如 `crm__`）及必要的授权提示，不包含任何凭据。
 
 工具名统一为 `<app_slug>__<upstream_tool_name>`。管理员设置工具白名单后，列表和调用两个入口都会执行同一检查，不能通过直接构造工具名绕过。
 
@@ -73,16 +73,20 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 
 ## 数据与生命周期
 
-- Connector App 定义存储在 `kinds` 表中，`kind = "ConnectorApp"`，`namespace = "system"`，`metadata.name` 对应 app `slug`。
+- Connector App 定义存储在 `kinds` 表中，`kind = "ConnectorApp"`，`namespace = "system"`，`user_id = 0`，`metadata.name` 对应 app `slug`。所有目录入口只读取该系统 owner 的有效应用，其他 owner 或 namespace 的同名资源不能进入目录。
 - App 可声明为 MCP 上游或 HTTP API 上游；主要配置位于 `Kind.json.spec`。
 - 管理员固定请求头加密后存储在 `Kind.json.spec.providerHeadersEncrypted`。
 - Connector App、用户连接和 OAuth 临时会话复用 `kinds` 表，分别使用 `ConnectorApp`、`ConnectorConnection` 和缓存中的短时会话，不引入新的物理表。
 - 动态注册的 OAuth 客户端保存在 `Kind.json.spec.oauthClientEncrypted`。管理员在应用卡片上删除应用是物理删除：`ConnectorApp` 记录、该应用缓存的 OAuth 客户端以及所有用户的 `ConnectorConnection` 会一并移除，因此删除需要两次确认，且不可恢复。内置应用（钉钉文档、钉钉表格、钉钉 AI 表格、钉钉知识库）会在下一次后端启动时由种子逻辑自动补回；管理员手动创建的应用不会被补回。重新添加应用后，下一次授权会重新注册客户端。
 - 最近一次成功发现的工具摘要按用户缓存在 `ConnectorConnection` 的 `toolSummaries` 中；多实例部署共享同一数据库，因此不存在实例本地缓存不一致。动态客户端注册使用共享分布式锁，避免多个实例并发重复注册。
+- 完整重新授权清空旧账号工具摘要；普通 token 刷新保留摘要。发现结果和错误按实际请求使用的凭据条件写入，旧账号的延迟响应不能覆盖新账号状态。
+- OAuth 回调只允许处理一次，成功会话的轮询保持幂等。落库前重新确认应用身份、可见权限及资源地址；授权期间删除、同名重建、停用或改址的应用不能接收旧会话的授权。
+- 修改 MCP 地址或认证方式会清除缓存的 OAuth 客户端，并物理删除该应用原有用户连接，防止旧凭据被发送到新资源。
 - Connector 的出站请求忽略进程级代理设置。建立连接失败时会在连接层重试 2 次，只覆盖 DNS/TCP/TLS 握手，不会重放已经发出的请求；上游网关某个出口短暂返回无效证书时，重试会重新解析并连接其他出口。重试仍失败时，502 响应会区分为 TLS 证书校验失败、连接失败或超时，便于定位问题，其中鉴权类失败仍按未授权处理。
 - App 停用后会立即从用户目录和 Runtime 中消失。
 - 管理员可以替换或显式清除固定请求头；留空编辑框默认保留已加密的现值。
 - Wework 会在下一次同步时移除不可见或已停用 App 对应的本地生成 Skill。
+- Wework 的应用连接区绑定当前账号和后端；切换账号或离开页面后，旧请求和授权结果不能更新新页面。过期连接提供独立的“刷新连接”和“OAuth 授权”操作，刷新失败不会自动打开授权；成功刷新后会重新读取目录并通知本地 Runtime 同步。
 - Connector 专用 JWT 只会写入 Executor 私有目录下权限为 `0600` 的运行时文件，不会写入 Codex 配置；子进程每次请求都重新读取，过期后不可使用。
 - Wework 云端断开后，Executor 删除运行时短凭证文件、移除 `wegent_apps` MCP 配置和生成的 Connector Skills；本地 Codex 工作流继续可用。
 
@@ -108,7 +112,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 | `dingtalk_aitable` | 钉钉 AI 表格 | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
 | `dingtalk_wiki` | 钉钉知识库 | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
 
-补齐是幂等的：只要某个内置 slug 没有可用应用，就会新建一个。删除内置应用后，下一次启动会重新建出它；如需长期移除，请设置 `CONNECTOR_BUILTIN_APPS_ENABLED=False`。
+`CONNECTOR_BUILTIN_APPS_ENABLED` 默认开启。Rust 和 Python 初始化共用 `shared/data/builtin-connector-apps.json` 清单，不依赖开发环境 YAML 初始化。补齐是幂等的：缺失的系统应用会被创建，后续管理员的停用、加载方式和关键词设置会保留；已有相同地址的系统应用不会重复创建。删除内置应用后，下一次启动会重新建出它；如需长期移除，请设置 `CONNECTOR_BUILTIN_APPS_ENABLED=False`。
 
 这四个服务不再使用 provider 配置弹窗，也不再注入"打开配置弹窗"的引导。内置 App 默认使用 `toolLoadingMode: lazy`，并带有钉钉服务关键词；消息命中关键词时提前 preload 对应 `wegent-connector-<slug>` Skill，否则由模型按需 `load_skill`。未授权时仍由对话内的 Connector 授权链接引导。OAuth 授权、工具发现和白名单校验保持原有 Connector 流程不变。Wegent Web 的"设置 → 集成"不再展示钉钉 provider 卡片，改用"应用连接"卡片。
 

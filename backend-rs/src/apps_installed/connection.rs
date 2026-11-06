@@ -253,7 +253,10 @@ pub(crate) fn is_usable(connection: Option<&ConnectorConnection>) -> bool {
     };
     match response(Some(connection)).status.as_str() {
         "connected" => true,
-        "expired" => connection.refresh_token().is_some(),
+        // Stored authorization and decryption readiness are different states.
+        // Let session setup report an unreadable credential as a configuration
+        // fault rather than silently turning it into missing authorization.
+        "expired" => connection.refresh_token_encrypted.is_some(),
         _ => false,
     }
 }
@@ -569,6 +572,15 @@ mod tests {
         })));
         assert!(!is_usable(Some(&without_refresh)));
         assert!(!is_usable(None));
+
+        let unreadable = ConnectorConnection::from_row(&row(serde_json::json!({
+            "status": "connected",
+            "expiresAt": "2020-01-01T00:00:00",
+            "accessTokenEncrypted": encrypt_sensitive_data("access").unwrap(),
+            "refreshTokenEncrypted": "unreadable",
+        })));
+        assert!(is_usable(Some(&unreadable)));
+        assert!(unreadable.refresh_token().is_none());
     }
 
     /// A ciphertext the key cannot read is missing, not a credential to send.

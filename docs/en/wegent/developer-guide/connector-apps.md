@@ -4,7 +4,7 @@ sidebar_position: 19
 
 # Connector Apps Architecture and Deployment
 
-Connector Apps let Wework connect to internal systems without changing Codex source code or requiring a ChatGPT login. The upstream may be either an MCP server or an ordinary HTTP API. Responsibilities are separated: Wegent Admin manages definitions, visibility, and fixed provider headers, Wegent Backend reads ConnectorApp resources from `kinds` and adapts upstream protocols, and Executor exposes one local MCP endpoint to Codex. Wework has no Connector settings page; it only synchronizes available capabilities after connecting to Wegent Cloud.
+Connector Apps let Wework connect to internal systems without changing Codex source code or requiring a ChatGPT login. The upstream may be either an MCP server or an ordinary HTTP API. Responsibilities are separated: Wegent Admin manages definitions, visibility, and fixed provider headers, Wegent Backend reads ConnectorApp resources from `kinds` and adapts upstream protocols, and Executor exposes one local MCP endpoint to Codex. After connecting to Wegent Cloud, Wework synchronizes available capabilities and provides app authorization and retry actions on its connection settings page.
 
 ## Runtime flow
 
@@ -14,7 +14,7 @@ Connector Apps let Wework connect to internal systems without changing Codex sou
 4. Wework exchanges its cloud session for a 15-minute connector JWT. This token only has the `connectors:invoke` scope and cannot replace a user login token.
 5. Executor registers itself as the ordinary stdio MCP server `wegent_apps`. Codex connects only to this local process and never receives fixed provider headers.
 6. The `wegent_apps` child process reads the automatically rotated short token from Executor's private directory and calls Wegent Connector Runtime. Backend decrypts administrator fixed headers and either connects to the upstream Streamable HTTP/SSE MCP server or translates the tool invocation into an ordinary HTTP request.
-7. Every available app gets a Wegent-managed local Skill. The Skill only identifies the app tool namespace, such as `crm__`; it contains neither administrator-provided prose nor credentials.
+7. Every available app gets a Wegent-managed local Skill containing its description, tool namespace (such as `crm__`), and any required authorization guidance. It never contains credentials.
 
 Tools are exposed as `<app_slug>__<upstream_tool_name>`. The same allowlist is enforced during both tool discovery and invocation, so a caller cannot bypass policy by constructing a tool name directly.
 
@@ -73,16 +73,20 @@ Production deployments must configure `CONNECTOR_OAUTH_REDIRECT_URI`. Its value 
 
 ## Data and lifecycle
 
-- Connector App definitions are stored in the `kinds` table with `kind = "ConnectorApp"`, `namespace = "system"`, and `metadata.name` matching the app `slug`.
+- Connector App definitions are stored in the `kinds` table with `kind = "ConnectorApp"`, `namespace = "system"`, `user_id = 0`, and `metadata.name` matching the app `slug`. Every catalog entry point selects only active apps owned by the system; namesakes owned by other users or namespaces cannot enter the catalog.
 - Apps can target MCP upstreams or HTTP API upstreams; the main configuration lives under `Kind.json.spec`.
 - Administrator fixed headers are encrypted into `Kind.json.spec.providerHeadersEncrypted`.
 - Connector Apps, user connections, and short-lived OAuth sessions reuse the `kinds` table and cache as `ConnectorApp`, `ConnectorConnection`, and cached session state; no separate physical tables are introduced.
 - Dynamically registered OAuth clients are stored in `Kind.json.spec.oauthClientEncrypted`. Deleting an app from its card is a hard delete: the `ConnectorApp` record, its cached OAuth client, and every user's `ConnectorConnection` are removed together, so deletion requires two confirmations and cannot be undone. The built-in apps (DingTalk docs, sheets, AI tables, and wiki) are re-created by the startup bootstrap after deletion; apps created manually by an administrator are not restored. After an app is added back, the next authorization registers a new client.
 - Tool summaries from the latest successful discovery are cached per user in `ConnectorConnection.toolSummaries`. Multi-instance deployments share the same database, so there is no per-instance cache drift. Dynamic client registration uses a shared distributed lock to prevent concurrent duplicate registrations.
+- Full re-authorization clears the previous account's tool summaries; ordinary token refresh preserves them. Discovery results and errors are conditionally written against the credential actually used by the request, so a late response cannot overwrite a newer account.
+- OAuth callbacks are processed once, while successful session polling remains idempotent. Before persisting a grant, the backend rechecks app identity, visibility, and resource URL; deleted, recreated, disabled, or reconfigured apps cannot accept consent from the old session.
+- Changing the MCP URL or authentication type clears the cached OAuth client and physically deletes the app's previous user connections, preventing old credentials from reaching a new resource.
 - Connector egress ignores process-level proxy settings. Connection establishment is retried twice, covering only DNS/TCP/TLS handshakes; requests that were already written are never replayed. When one edge of an upstream gateway briefly serves an invalid certificate, the retry re-resolves and connects to another edge. If all attempts fail, the 502 response distinguishes TLS verification failures, connection failures, and timeouts, while authentication failures still surface as an authorization requirement.
 - Disabling an app immediately removes it from user catalogs and Runtime.
 - Administrators can replace or explicitly clear fixed provider headers; leaving the editor blank preserves the encrypted value.
 - Wework removes generated local Skills for unavailable or disabled apps during the next synchronization.
+- Wework's app connection section belongs to the current account and backend. Account changes or navigation invalidate old requests and authorization results. Expired connections expose separate refresh and OAuth authorization actions; a failed refresh never automatically opens consent. Successful refreshes reload the catalog and notify the local runtime to synchronize.
 - The Connector JWT is written only to a mode-`0600` runtime file in Executor's private directory and never to Codex configuration. The child process reads it again for each request, and an expired token cannot be used.
 - Disconnecting Wework from cloud deletes the runtime token file and removes the `wegent_apps` MCP configuration and generated Skills, while local Codex workflows remain available.
 
@@ -108,7 +112,7 @@ DingTalk hosts the document, sheet, AI table, and wiki MCP servers at fixed OAut
 | `dingtalk_aitable` | DingTalk AI Table | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
 | `dingtalk_wiki` | DingTalk Wiki | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
 
-Backfill is idempotent: it creates every built-in slug that has no active app. A deleted built-in app is recreated on the next startup; set `CONNECTOR_BUILTIN_APPS_ENABLED=False` to keep it removed.
+`CONNECTOR_BUILTIN_APPS_ENABLED` defaults to enabled. Rust and Python initialization share `shared/data/builtin-connector-apps.json` independently of development YAML initialization. Backfill creates missing system apps, preserves subsequent administrator changes to enabled state, loading mode, and keywords, and avoids duplicating system apps with the same endpoint. A deleted built-in app is recreated on the next startup; set `CONNECTOR_BUILTIN_APPS_ENABLED=False` to keep it removed.
 
 These four services no longer use the provider configuration popup and inject no "open configuration" guidance. Built-in apps default to `toolLoadingMode: lazy` and carry DingTalk service keywords. A matching user message preloads the corresponding `wegent-connector-<slug>` Skill; otherwise the model loads it on demand through `load_skill`. The conversation authorization link still covers missing grants, and OAuth, tool discovery, and allowlist enforcement keep the existing Connector flow. The Wegent web "Settings → Integrations" page drops the DingTalk provider card in favor of the app-connections card.
 

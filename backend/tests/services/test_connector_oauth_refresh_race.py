@@ -126,7 +126,7 @@ async def test_late_rejection_keeps_the_newer_grant(
     def rotate_then_reject(_data: dict[str, Any]) -> dict[str, Any]:
         with _competing_writer(test_db) as competing:
             _connect(competing, test_user, access="A1", refresh="R1")
-        raise ValueError("invalid_grant")
+        return {"error": "invalid_grant"}
 
     _install_token_endpoint(monkeypatch, rotate_then_reject)
 
@@ -215,9 +215,7 @@ async def test_rejected_grant_is_cleared_when_nothing_else_changed(
     _create_app(test_db, test_user)
     stale = _connect(test_db, test_user, access="A0", refresh="R0")
 
-    _install_token_endpoint(
-        monkeypatch, lambda _data: (_ for _ in ()).throw(ValueError("invalid_grant"))
-    )
+    _install_token_endpoint(monkeypatch, lambda _data: {"error": "invalid_grant"})
 
     assert await ConnectorOAuthService.refresh_connection(test_db, stale) is None
 
@@ -380,10 +378,12 @@ async def test_a_rejection_does_not_reopen_a_reauthorized_account(
     assert current.external_account_name == "other@example.test"
 
 
-def _rate_limit_error(status_code: int) -> httpx.HTTPStatusError:
+def _rate_limit_error(
+    status_code: int, payload: dict[str, str] | None = None
+) -> httpx.HTTPStatusError:
     request = httpx.Request("POST", "https://race.example.test/token")
     response = httpx.Response(
-        status_code, headers={"Retry-After": "1"}, request=request
+        status_code, headers={"Retry-After": "1"}, request=request, json=payload
     )
     return httpx.HTTPStatusError("limited", request=response.request, response=response)
 
@@ -437,7 +437,10 @@ async def test_a_rejected_current_grant_still_clears_its_refresh_token(
     _create_app(test_db, test_user)
     stale = _connect(test_db, test_user, access="A0", refresh="R0")
     _install_token_endpoint(
-        monkeypatch, lambda _data: (_ for _ in ()).throw(_rate_limit_error(400))
+        monkeypatch,
+        lambda _data: (_ for _ in ()).throw(
+            _rate_limit_error(400, {"error": "invalid_grant"})
+        ),
     )
 
     assert await ConnectorOAuthService.refresh_connection(test_db, stale) is None

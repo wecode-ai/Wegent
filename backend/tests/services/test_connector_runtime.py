@@ -21,7 +21,17 @@ from app.services.connector_apps import (
     connector_app_service,
 )
 from app.services.connector_connections import connector_connection_service
-from app.services.connector_runtime import ConnectorRuntimeService
+from app.services.connector_runtime import ConnectorDiscovery, ConnectorRuntimeService
+
+
+def _discovery_mock(tools: list) -> AsyncMock:
+    async def discover(db: Session, app, user: User) -> ConnectorDiscovery:
+        connection = connector_connection_service.get(
+            db, slug=app.slug, user_id=user.id
+        )
+        return ConnectorDiscovery(tools, connection)
+
+    return AsyncMock(side_effect=discover)
 
 
 def _exception_group(message: str, exception: BaseException) -> BaseException:
@@ -143,7 +153,7 @@ async def test_lists_only_allowlisted_tools_with_connector_namespace(
         inputSchema = {"type": "object", "properties": {}}
         annotations = {"readOnlyHint": True}
 
-    upstream_tools = AsyncMock(return_value=[Tool()])
+    upstream_tools = _discovery_mock([Tool()])
     monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", upstream_tools)
 
     tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
@@ -172,7 +182,7 @@ async def test_list_tools_filters_to_scoped_app(
         inputSchema = {"type": "object", "properties": {}}
         annotations = None
 
-    upstream_tools = AsyncMock(return_value=[Tool()])
+    upstream_tools = _discovery_mock([Tool()])
     monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", upstream_tools)
 
     tools = await ConnectorRuntimeService.list_tools(test_db, test_user, app_slug="crm")
@@ -204,7 +214,7 @@ async def test_lazy_apps_are_hidden_from_the_unscoped_surface(
         inputSchema = {"type": "object", "properties": {}}
         annotations = None
 
-    upstream_tools = AsyncMock(return_value=[Tool()])
+    upstream_tools = _discovery_mock([Tool()])
     monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", upstream_tools)
 
     assert await ConnectorRuntimeService.list_tools(test_db, test_user) == []
@@ -300,7 +310,7 @@ async def test_tool_discovery_caches_last_known_tools_on_the_connection(
     monkeypatch.setattr(
         ConnectorRuntimeService,
         "_upstream_tools",
-        AsyncMock(return_value=[Tool()]),
+        _discovery_mock([Tool()]),
     )
 
     tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
@@ -421,7 +431,7 @@ async def test_stale_tool_cache_rediscovers(
     monkeypatch.setattr(
         ConnectorRuntimeService,
         "_upstream_tools",
-        AsyncMock(return_value=[Tool()]),
+        _discovery_mock([Tool()]),
     )
 
     tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
@@ -646,7 +656,7 @@ async def test_successful_discovery_clears_the_previous_error(
     monkeypatch.setattr(
         ConnectorRuntimeService,
         "_upstream_tools",
-        AsyncMock(return_value=[Tool()]),
+        _discovery_mock([Tool()]),
     )
 
     await ConnectorRuntimeService.list_tools(test_db, test_user)
@@ -688,7 +698,7 @@ async def test_same_tool_set_refreshes_the_cache_and_clears_the_error(
         inputSchema = {"type": "object", "properties": {}}
         annotations = None
 
-    upstream = AsyncMock(return_value=[Tool()])
+    upstream = _discovery_mock([Tool()])
     monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", upstream)
     await ConnectorRuntimeService.list_tools(test_db, test_user)
 
@@ -735,7 +745,7 @@ async def test_tool_discovery_isolates_an_unavailable_app(
     async def upstream_tools(_db, app, _user):
         if app.slug == "offline":
             raise HTTPException(502, "upstream unavailable")
-        return [Tool()]
+        return ConnectorDiscovery([Tool()], None)
 
     monkeypatch.setattr(
         ConnectorRuntimeService,

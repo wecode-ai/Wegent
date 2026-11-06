@@ -1,5 +1,5 @@
 import { ExternalLink, Loader2, QrCode } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { openExternalUrl } from '@/lib/external-links'
 import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
@@ -49,11 +49,17 @@ export function CloudConnectorAuthCard({
   const { t } = useTranslation('common')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [identity, setIdentity] = useState({ apiBaseUrl, token, slug })
+  if (identity.apiBaseUrl !== apiBaseUrl || identity.token !== token || identity.slug !== slug) {
+    setIdentity({ apiBaseUrl, token, slug })
+    setBusy(false)
+    setError(null)
+  }
   // One attempt owns one account/backend identity. Changing any of them, or
   // unmounting the card, ends the attempt: its pending poll, catalog wait and
   // local sync must not configure or resume against the next identity.
   const attemptGenerationRef = useRef(0)
-  useEffect(() => {
+  useLayoutEffect(() => {
     attemptGenerationRef.current += 1
     return () => {
       attemptGenerationRef.current += 1
@@ -109,11 +115,11 @@ export function CloudConnectorAuthCard({
     } catch (cause) {
       // A cancelled attempt is not an error: the card is gone or now belongs
       // to another identity.
-      if (cause instanceof ConnectorSyncAbortedError) return
+      if (!isCurrentAttempt() || cause instanceof ConnectorSyncAbortedError) return
       if ((cause as { name?: unknown } | null)?.name === 'AbortError') return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(false)
+      if (isCurrentAttempt()) setBusy(false)
     }
   }
 

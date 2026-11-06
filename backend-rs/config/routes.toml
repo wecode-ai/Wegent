@@ -582,8 +582,8 @@ path = "/api/auth/wework/refresh"
 # patterns remain in `.traffic-e2e/source-traffic-policy.yaml`.
 
 # `POST /api/connector-runtime/token` — issue a connector-scoped access token
-# (`app/api/endpoints/connector_runtime.py`). The `/tools` and `/call` siblings
-# remain on the Python fallback.
+# (`app/api/endpoints/connector_runtime.py`). `/tools` is also Rust-owned;
+# `/call` remains on the Python fallback.
 [[routes]]
 methods = ["POST"]
 path = "/api/connector-runtime/token"

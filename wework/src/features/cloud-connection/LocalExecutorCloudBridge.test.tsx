@@ -537,6 +537,7 @@ describe('LocalExecutorCloudBridge', () => {
       )
     })
     expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.apps.sync', {
+      syncRevision: expect.any(Number),
       apps: [
         {
           slug: 'tickets',

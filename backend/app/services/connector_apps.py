@@ -166,7 +166,11 @@ class ConnectorAppService:
     def update_app(
         db: Session, app: ConnectorApp, payload: ConnectorAppUpdate
     ) -> ConnectorApp:
+        app = ConnectorAppService._row_to_app(
+            ConnectorAppService._lock_app_row(db, app)
+        )
         current = ConnectorAppService._spec(app.row)
+        previous_resource = (current.get("mcpUrl"), current.get("authType"))
 
         values = payload.model_dump(
             mode="json",
@@ -198,6 +202,15 @@ class ConnectorAppService:
             http_tools=list(current.get("httpTools") or []),
             tool_allowlist=list(current.get("toolAllowlist") or []),
         )
+        if previous_resource != (current.get("mcpUrl"), current.get("authType")):
+            # Grants belong to a resource, not just a catalog slug. Never send
+            # the old user's token to an administrator's replacement upstream.
+            current.pop("oauthClientEncrypted", None)
+            db.query(Kind).filter(
+                Kind.kind == CONNECTOR_CONNECTION_KIND,
+                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+                Kind.name == app.slug,
+            ).delete(synchronize_session=False)
         data = dict(app.row.json or {})
         data["spec"] = current
         display_name = str(current.get("name") or app.slug)
@@ -257,6 +270,7 @@ class ConnectorAppService:
                 Kind.id == app_id,
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.user_id == CONNECTOR_APP_USER_ID,
                 Kind.is_active,
             )
             .first()
@@ -410,13 +424,34 @@ class ConnectorAppService:
         stored OAuth client and the connections of every user. Built-in apps
         are re-created by the next startup bootstrap.
         """
+        # Match the callback lock order: app first, then user connections.
+        row = ConnectorAppService._lock_app_row(db, app)
         db.query(Kind).filter(
             Kind.kind == CONNECTOR_CONNECTION_KIND,
             Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
             Kind.name == app.slug,
         ).delete(synchronize_session=False)
-        db.delete(app.row)
+        db.delete(row)
         db.commit()
+
+    @staticmethod
+    def _lock_app_row(db: Session, app: ConnectorApp) -> Kind:
+        row = (
+            db.query(Kind)
+            .filter(
+                Kind.id == app.id,
+                Kind.kind == CONNECTOR_APP_KIND,
+                Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.name == app.slug,
+                Kind.user_id == CONNECTOR_APP_USER_ID,
+            )
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+        return row
 
     @staticmethod
     def _find_row_by_slug(db: Session, slug: str) -> Kind | None:

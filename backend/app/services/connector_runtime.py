@@ -12,6 +12,7 @@ import time
 from asyncio import gather
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
@@ -33,6 +34,7 @@ from app.services.connector_connections import (
     ConnectorConnection,
     connector_connection_service,
 )
+from app.services.connector_errors import exception_texts
 from app.services.connector_oauth import connector_oauth_service
 from shared.telemetry.decorators import trace_async
 
@@ -43,21 +45,10 @@ MAX_HTTP_RESPONSE_BYTES = 1_000_000
 TOOL_CACHE_TTL_SECONDS = 600
 
 
-def _exception_texts(error: BaseException, depth: int = 0) -> list[str]:
-    """Flatten one exception, its groups, and its causes into readable text."""
-    if depth > 8:
-        return []
-    texts = [f"{type(error).__name__}: {error}"]
-    # ``ExceptionGroup`` is built in only from Python 3.11; Python 3.10 may
-    # provide the backported type, so duck-type the nested exceptions instead.
-    children = getattr(error, "exceptions", None)
-    if isinstance(children, (list, tuple)):
-        for item in children:
-            texts.extend(_exception_texts(item, depth + 1))
-    cause = error.__cause__ or error.__context__
-    if cause is not None and cause is not error:
-        texts.extend(_exception_texts(cause, depth + 1))
-    return texts
+@dataclass
+class ConnectorDiscovery:
+    tools: list[Any]
+    connection: ConnectorConnection | None
 
 
 class ConnectorRuntimeService:
@@ -124,13 +115,13 @@ class ConnectorRuntimeService:
                             connector_connection_service.record_tool_error(
                                 db,
                                 connection,
-                                " ".join(_exception_texts(outcome))[:500],
+                                " ".join(exception_texts(outcome))[:500],
                             )
                     continue
-                discovered = ConnectorRuntimeService._visible_tools(app, outcome)
+                discovered = ConnectorRuntimeService._visible_tools(app, outcome.tools)
                 tools.extend(discovered)
                 await ConnectorRuntimeService._cache_tool_summaries(
-                    db, app, user, discovered
+                    db, app, user, discovered, connection=outcome.connection
                 )
             logger.info(
                 "[ConnectorRuntime] user_id=%s apps=%d cached=%d discovered=%d "
@@ -146,7 +137,9 @@ class ConnectorRuntimeService:
         return tools
 
     @staticmethod
-    async def _discover_tools(db: Session, app: ConnectorApp, user: User) -> list[Any]:
+    async def _discover_tools(
+        db: Session, app: ConnectorApp, user: User
+    ) -> ConnectorDiscovery:
         return await ConnectorRuntimeService._upstream_tools(db, app, user)
 
     @staticmethod
@@ -284,7 +277,7 @@ class ConnectorRuntimeService:
         answers: a still-broken upstream keeps its error so the UI cannot claim
         the connection recovered.
         """
-        attempted = None
+        attempted = connector_connection_service.get(db, slug=app.slug, user_id=user.id)
         try:
             attempted = await ConnectorRuntimeService.refresh_tool_summary_cache(
                 db, app, user
@@ -294,12 +287,9 @@ class ConnectorRuntimeService:
                 db, app, user, error, attempted
             ):
                 return
-            connection = connector_connection_service.get(
-                db, slug=app.slug, user_id=user.id
-            )
-            if connection is not None:
+            if attempted is not None:
                 connector_connection_service.record_tool_error(
-                    db, connection, " ".join(_exception_texts(error))[:500]
+                    db, attempted, " ".join(exception_texts(error))[:500]
                 )
 
     @staticmethod
@@ -309,22 +299,23 @@ class ConnectorRuntimeService:
         user: User,
     ) -> ConnectorConnection | None:
         """Cache the current tool surface for later expired-connection views."""
-        attempted = None
         if app.transport == "http":
             app_tools = ConnectorRuntimeService._http_tools(app)
-        else:
-            config, attempted = await ConnectorRuntimeService._server_config(
-                db, app, user
+            attempted = connector_connection_service.get(
+                db, slug=app.slug, user_id=user.id
             )
-            async with ConnectorRuntimeService._mcp_session(config) as session:
-                upstream_tools = await ConnectorRuntimeService._list_all_tools(session)
+        else:
+            discovery = await ConnectorRuntimeService._upstream_tools(db, app, user)
+            attempted = discovery.connection
             allowlist = set(app.tool_allowlist or [])
             app_tools = [
                 ConnectorRuntimeService._tool_from_upstream(app, tool)
-                for tool in upstream_tools
+                for tool in discovery.tools
                 if not allowlist or tool.name in allowlist
             ]
-        await ConnectorRuntimeService._cache_tool_summaries(db, app, user, app_tools)
+        await ConnectorRuntimeService._cache_tool_summaries(
+            db, app, user, app_tools, connection=attempted
+        )
         return attempted
 
     @staticmethod
@@ -333,12 +324,9 @@ class ConnectorRuntimeService:
         app: ConnectorApp,
         user: User,
         tools: list[ConnectorTool],
+        *,
+        connection: ConnectorConnection | None,
     ) -> None:
-        connection = connector_connection_service.get(
-            db,
-            slug=app.slug,
-            user_id=user.id,
-        )
         if not connection:
             return
         summaries = [
@@ -490,7 +478,7 @@ class ConnectorRuntimeService:
     @staticmethod
     def _tool_failure_detail(error: Exception) -> str:
         """Return a safe, actionable summary for an upstream tool failure."""
-        text = " ".join(_exception_texts(error)).casefold()
+        text = " ".join(exception_texts(error)).casefold()
         if "certificate_verify_failed" in text or "self-signed certificate" in text:
             return "Connector upstream TLS certificate verification failed"
         if "timeout" in text or "timed out" in text:
@@ -515,7 +503,7 @@ class ConnectorRuntimeService:
         """
         if app.auth_type == "none":
             return False
-        message = " ".join(_exception_texts(error)).lower()
+        message = " ".join(exception_texts(error)).lower()
         if not any(
             marker in message for marker in ("401", "403", "unauthorized", "forbidden")
         ):
@@ -646,13 +634,15 @@ class ConnectorRuntimeService:
         db: Session,
         app: ConnectorApp,
         user: User,
-    ) -> list[Any]:
+    ) -> ConnectorDiscovery:
+        attempted = None
         try:
             config, attempted = await ConnectorRuntimeService._server_config(
                 db, app, user
             )
             async with ConnectorRuntimeService._mcp_session(config) as session:
-                return await ConnectorRuntimeService._list_all_tools(session)
+                tools = await ConnectorRuntimeService._list_all_tools(session)
+            return ConnectorDiscovery(tools, attempted)
         except HTTPException:
             raise
         except Exception as exc:
@@ -668,6 +658,10 @@ class ConnectorRuntimeService:
                     status.HTTP_401_UNAUTHORIZED,
                     f"Connector '{app.slug}' requires authorization",
                 ) from exc
+            if attempted is not None:
+                connector_connection_service.record_tool_error(
+                    db, attempted, " ".join(exception_texts(exc))[:500]
+                )
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
                 f"Failed to list tools for connector '{app.slug}': "
@@ -876,6 +870,16 @@ class ConnectorRuntimeService:
                 slug=app.slug,
                 user_id=user.id,
             )
+            if connection and (
+                connection.access_token_encrypted
+                and not connection.access_token()
+                or connection.refresh_token_encrypted
+                and not connection.refresh_token()
+            ):
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Connector '{app.slug}' credential cannot be decrypted",
+                )
             if (
                 connection
                 and connector_connection_service.response(connection).status
@@ -884,6 +888,15 @@ class ConnectorRuntimeService:
                 connection = await connector_oauth_service.refresh_connection(
                     db, connection
                 )
+                if connection is None:
+                    current = connector_connection_service.get(
+                        db, slug=app.slug, user_id=user.id
+                    )
+                    if current and current.refresh_token_encrypted:
+                        raise HTTPException(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            f"Connector '{app.slug}' token refresh is unavailable",
+                        )
             if (
                 not connection
                 or connector_connection_service.response(connection).status

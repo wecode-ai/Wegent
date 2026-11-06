@@ -38,5 +38,9 @@ async fn initialize(mysql: &MysqlService) -> Result<()> {
     if let Err(error) = crate::initialization::yaml(mysql).await {
         tracing::error!(%error,"YAML data initialization failed");
     }
-    crate::initialization::plugins(mysql).await
+    crate::initialization::plugins(mysql).await?;
+    if crate::initialization::boolean("CONNECTOR_BUILTIN_APPS_ENABLED", true)? {
+        crate::initialization::connectors(mysql).await?;
+    }
+    Ok(())
 }

@@ -149,7 +149,7 @@ where
              kinds.updated_at AS kinds_updated_at \
              FROM kinds \
              WHERE kinds.kind = 'ConnectorApp' AND kinds.namespace = 'system' \
-             AND kinds.is_active = 1 ORDER BY kinds.name, kinds.id",
+             AND kinds.user_id = 0 AND kinds.is_active = 1 ORDER BY kinds.name, kinds.id",
             (),
         )
         .await

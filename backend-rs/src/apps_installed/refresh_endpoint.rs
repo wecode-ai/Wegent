@@ -83,12 +83,13 @@ where
     }
 
     match probe_upstream(mysql, app, user).await {
-        Ok(tools) => {
+        Ok((tools, attempted_access)) => {
             let discovered_at = Utc::now().to_rfc3339();
             let summaries = tool_summaries(app, &tools);
             let _ = refresh::write_discovery_state(
                 mysql,
                 &row,
+                attempted_access.as_deref().unwrap_or_default(),
                 &refresh::DiscoveryState {
                     discovered_at: Some(&discovered_at),
                     tool_summaries: Some(&summaries),
@@ -113,10 +114,11 @@ where
                 .await;
             }
         }
-        Err(ProbeError::Transport(message)) => {
+        Err(ProbeError::Transport(message, attempted_access)) => {
             let _ = refresh::write_discovery_state(
                 mysql,
                 &row,
+                attempted_access.as_deref().unwrap_or_default(),
                 &refresh::DiscoveryState {
                     last_error: Some(&message),
                     ..Default::default()
@@ -142,21 +144,34 @@ async fn probe_upstream<M>(
     mysql: &M,
     app: &ConnectorApp,
     user: &UserRow,
-) -> Result<Vec<mcp::UpstreamTool>, ProbeError>
+) -> Result<(Vec<mcp::UpstreamTool>, Option<String>), ProbeError>
 where
     M: Mysql,
 {
-    if app.transport == "http" {
-        // HTTP-transport apps carry inline definitions instead of an MCP
-        // session; the recorded deployment exposes none.
-        return Ok(Vec::new());
-    }
     let (headers, attempted_access) = service::session_headers(mysql, app, user)
         .await
-        .map_err(|error| ProbeError::Transport(error.to_string()))?;
-    mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers)
-        .await
-        .map_err(|error| ProbeError::from_mcp(error, attempted_access))
+        .map_err(|error| ProbeError::Transport(error.to_string(), None))?;
+    if app.transport == "http" {
+        // These apps have inline definitions, not an MCP discovery endpoint.
+        // Cache the current operations without invoking them; a probe must
+        // never execute a potentially mutating tool just to refresh metadata.
+        let tools = super::http_tools::definitions(app)
+            .map_err(|error| ProbeError::Transport(error.to_string(), attempted_access.clone()))?
+            .into_iter()
+            .map(|tool| mcp::UpstreamTool {
+                name: tool.name,
+                title: None,
+                description: Some(tool.description),
+                input_schema: tool.input_schema,
+                annotations: None,
+            })
+            .collect();
+        return Ok((tools, attempted_access));
+    }
+    match mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers).await {
+        Ok(tools) => Ok((tools, attempted_access)),
+        Err(error) => Err(ProbeError::from_mcp(error, attempted_access)),
+    }
 }
 
 /// `_cache_tool_summaries`: the cached surface the settings view renders.
@@ -183,14 +198,14 @@ enum ProbeError {
     /// The upstream answered `401`/`403`: the stored grant is rejected.
     Unauthorized(String, Option<String>),
     /// Any other transport, status, or configuration failure.
-    Transport(String),
+    Transport(String, Option<String>),
 }
 
 impl ProbeError {
     fn from_mcp(error: mcp::McpError, attempted_access: Option<String>) -> Self {
         match error {
             mcp::McpError::Unauthorized(message) => Self::Unauthorized(message, attempted_access),
-            mcp::McpError::Transport(message) => Self::Transport(message),
+            mcp::McpError::Transport(message) => Self::Transport(message, attempted_access),
         }
     }
 }
@@ -333,7 +348,7 @@ mod tests {
         ));
         assert!(matches!(
             ProbeError::from_mcp(mcp::McpError::Transport("boom".to_string()), None),
-            ProbeError::Transport(_)
+            ProbeError::Transport(..)
         ));
     }
 }

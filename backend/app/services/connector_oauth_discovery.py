@@ -80,6 +80,11 @@ async def discover_connector_oauth(resource_url: str) -> dict[str, Any]:
     ) as client:
         metadata_url = await _resource_metadata_url(client, resource_url)
         resource = await _get_json(client, metadata_url)
+        if resource.get("resource") != resource_url:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "Connector OAuth resource metadata does not match the resource",
+            )
         authorization_servers = resource.get("authorization_servers")
         if not isinstance(authorization_servers, list) or not authorization_servers:
             raise HTTPException(
@@ -99,6 +104,11 @@ async def discover_connector_oauth(resource_url: str) -> dict[str, Any]:
             f"{issuer_parts.scheme}://{issuer_parts.netloc}"
             f"/.well-known/oauth-authorization-server{issuer_path}",
         )
+        if metadata.get("issuer") != issuer:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "Connector OAuth metadata does not match the issuer",
+            )
 
     authorization_endpoint = _require_secure_url(
         str(metadata.get("authorization_endpoint") or ""),

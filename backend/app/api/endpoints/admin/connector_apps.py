@@ -63,9 +63,9 @@ async def discover_connector_tools(
     if app.transport == "http":
         tools = connector_runtime_service._http_tools(app)
     else:
-        upstream_tools = await connector_runtime_service._upstream_tools(db, app, admin)
+        discovery = await connector_runtime_service._upstream_tools(db, app, admin)
         tools = []
-        for tool in upstream_tools:
+        for tool in discovery.tools:
             tools.append(connector_runtime_service._tool_from_upstream(app, tool))
     return ConnectorToolListResponse(tools=tools)
 

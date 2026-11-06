@@ -115,6 +115,7 @@ export async function synchronizeConnectorApps({
       authorizationRequired: true,
     }))
   const result = await requestLocalExecutor<{ changed: boolean }>('runtime.connectors.apps.sync', {
+    syncRevision,
     apps: [...callable, ...awaitingAuthorization],
   })
   checkCurrent()

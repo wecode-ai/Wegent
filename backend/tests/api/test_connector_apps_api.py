@@ -6,6 +6,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
@@ -28,7 +29,7 @@ from app.services.connector_connections import (
     connector_connection_service,
 )
 from app.services.connector_oauth import ConnectorOAuthService
-from app.services.connector_runtime import ConnectorRuntimeService
+from app.services.connector_runtime import ConnectorDiscovery, ConnectorRuntimeService
 from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 
 
@@ -77,6 +78,34 @@ def _connector_kind(db: Session, slug: str) -> Kind:
         )
         .one()
     )
+
+
+def test_admin_discovery_projects_tools_from_the_credential_snapshot(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_admin_token: str,
+    monkeypatch,
+):
+    app = _create_app(test_db, test_admin_user)
+    upstream = SimpleNamespace(
+        name="search_tickets",
+        title=None,
+        description="Search tickets",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=None,
+    )
+    discover = AsyncMock(return_value=ConnectorDiscovery([upstream], None))
+    monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", discover)
+
+    response = test_client.post(
+        f"/api/admin/connector-apps/{app.id}/tools/discover",
+        headers=_admin_headers(test_admin_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tools"][0]["name"] == "tickets__search_tickets"
+    discover.assert_awaited_once()
 
 
 def test_admin_can_publish_app_without_secret_disclosure(

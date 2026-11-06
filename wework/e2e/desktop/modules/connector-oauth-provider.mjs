@@ -53,6 +53,7 @@ export async function startConnectorOAuthProvider() {
     authorizeRequests: 0,
     tokenRequests: 0,
     accessTokens: new Set(),
+    toolCalls: [],
   }
 
   const server = createServer(async (request, response) => {
@@ -116,6 +117,7 @@ export async function startConnectorOAuthProvider() {
         return
       }
       if (message.method === 'tools/call') {
+        state.toolCalls.push(message.params)
         sendJson(response, 200, {
           jsonrpc: '2.0',
           id,
@@ -221,6 +223,9 @@ export async function startConnectorOAuthProvider() {
     },
     get tokenRequests() {
       return state.tokenRequests
+    },
+    get toolCalls() {
+      return state.toolCalls
     },
     close() {
       return new Promise(resolve => server.close(resolve))

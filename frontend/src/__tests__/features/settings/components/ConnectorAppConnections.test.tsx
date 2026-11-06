@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
 import ConnectorAppConnections from '@/features/settings/components/ConnectorAppConnections'
+import { CONNECTOR_AUTHORIZATION_CHANGED_EVENT } from '@/features/settings/connectorOAuth'
 
 const mockToast = jest.fn()
 const mockT = (key: string) => key
@@ -44,7 +45,72 @@ const baseApp = {
 describe('ConnectorAppConnections', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockedAdminApis.getUserConnectorApps.mockReset()
   })
+
+  it('reports initial catalog failure locally instead of an empty result and retries', async () => {
+    mockedAdminApis.getUserConnectorApps
+      .mockRejectedValueOnce(new Error('Catalog unavailable'))
+      .mockResolvedValueOnce([{ ...baseApp, connection: { status: 'connected' } }])
+    render(<ConnectorAppConnections />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Catalog unavailable')
+    expect(screen.queryByText('common:integrations.connector_apps.empty')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('retry-connector-app-catalog'))
+    expect(await screen.findByText(baseApp.name)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(mockedAdminApis.getUserConnectorApps).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps valid cards visible while refreshing and after a same-scope failure', async () => {
+    let rejectRefresh!: (error: Error) => void
+    mockedAdminApis.getUserConnectorApps
+      .mockResolvedValueOnce([{ ...baseApp, connection: { status: 'connected' } }])
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectRefresh = reject
+          })
+      )
+    render(<ConnectorAppConnections />)
+    await screen.findByText(baseApp.name)
+    act(() => window.dispatchEvent(new Event(CONNECTOR_AUTHORIZATION_CHANGED_EVENT)))
+    expect(screen.getByText(baseApp.name)).toBeInTheDocument()
+    await act(async () => rejectRefresh(new Error('Refresh unavailable')))
+    expect(screen.getByText(baseApp.name)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Refresh unavailable')
+  })
+
+  it.each(['success', 'failure'])(
+    'ignores an older catalog %s after the newest refresh',
+    async outcome => {
+      let resolveOld!: (apps: Awaited<ReturnType<typeof adminApis.getUserConnectorApps>>) => void
+      let rejectOld!: (error: Error) => void
+      mockedAdminApis.getUserConnectorApps
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              resolveOld = resolve
+              rejectOld = reject
+            })
+        )
+        .mockResolvedValueOnce([{ ...baseApp, connection: { status: 'connected' } }])
+      render(<ConnectorAppConnections />)
+      act(() => window.dispatchEvent(new Event(CONNECTOR_AUTHORIZATION_CHANGED_EVENT)))
+      await screen.findByTestId(`disconnect-connector-app-${baseApp.slug}`)
+      await act(async () => {
+        if (outcome === 'success') {
+          resolveOld([{ ...baseApp, connection: { status: 'disconnected' } }])
+        } else {
+          rejectOld(new Error('Obsolete catalog failure'))
+        }
+      })
+      expect(screen.getByTestId(`disconnect-connector-app-${baseApp.slug}`)).toBeInTheDocument()
+      expect(
+        screen.queryByTestId(`authorize-connector-app-${baseApp.slug}`)
+      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    }
+  )
 
   it('shows an authorize button for a disconnected OAuth app', async () => {
     mockedAdminApis.getUserConnectorApps.mockResolvedValue([

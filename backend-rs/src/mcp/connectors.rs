@@ -210,6 +210,7 @@ where
         let (headers, attempted_access) = match service::session_headers(mysql, app, user).await {
             Ok(headers) => headers,
             Err(error) => {
+                refresh::record_session_error(mysql, row.as_ref(), &error).await;
                 tracing::warn!(connector = %app.slug, %error, "skipping unavailable connector");
                 continue;
             }
@@ -252,11 +253,12 @@ where
         }
         // `_cache_tool_summaries`: the settings view and the next listing read
         // this surface instead of probing the upstream again.
-        if let Some(row) = row.as_ref() {
+        if let (Some(row), Some(attempted_access)) = (row.as_ref(), attempted_access.as_deref()) {
             let discovered_at = chrono::Utc::now().to_rfc3339();
             let _ = refresh::write_discovery_state(
                 mysql,
                 row,
+                attempted_access,
                 &refresh::DiscoveryState {
                     discovered_at: Some(&discovered_at),
                     tool_summaries: Some(&discovered),

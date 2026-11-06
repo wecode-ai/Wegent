@@ -2229,12 +2229,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'holdLocalExecutorRequests': {
-      const { method, phase } = JSON.parse(command.value ?? '{}') as {
+      const { method, phase, maxHeldCount } = JSON.parse(command.value ?? '{}') as {
         method?: string
         phase?: 'before-dispatch' | 'after-response'
+        maxHeldCount?: number
       }
       if (!method) throw new Error('holdLocalExecutorRequests requires a method')
-      holdLocalExecutorRequestsForE2E(method, phase)
+      if (maxHeldCount !== undefined && (!Number.isSafeInteger(maxHeldCount) || maxHeldCount < 1)) {
+        throw new Error('maxHeldCount must be a positive integer')
+      }
+      holdLocalExecutorRequestsForE2E(method, phase, maxHeldCount)
       return ''
     }
     case 'awaitLocalExecutorRequestHold':

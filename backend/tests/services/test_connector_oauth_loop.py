@@ -162,6 +162,13 @@ def provider() -> _Provider:
 
 def _session_cache(monkeypatch: pytest.MonkeyPatch) -> dict[str, dict]:
     sessions: dict[str, dict] = {}
+    claims: set[str] = set()
+
+    async def claim(key: str, _value, expire: int) -> bool:
+        if key in claims:
+            return False
+        claims.add(key)
+        return True
 
     async def cache_set(key: str, value: dict, expire: int) -> bool:
         sessions[key] = dict(value)
@@ -172,6 +179,7 @@ def _session_cache(monkeypatch: pytest.MonkeyPatch) -> dict[str, dict]:
 
     monkeypatch.setattr(cache_manager, "set", cache_set)
     monkeypatch.setattr(cache_manager, "get", cache_get)
+    monkeypatch.setattr(cache_manager, "setnx", claim)
     monkeypatch.setattr(
         settings, "CONNECTOR_OAUTH_REDIRECT_URI", "http://localhost:8000/callback"
     )

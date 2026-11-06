@@ -2577,21 +2577,13 @@ function OwnedWorkbenchProvider({
                     ['connected', 'expired'].includes(app.connection.status) &&
                     (app.tool_summaries?.length ?? 0) > 0
                 )
-                const connected = visible.filter(
-                  app => app.callable && app.connection.status === 'connected'
-                )
-                const synced = await requestLocalExecutor<{
+                // Directory reads must not replace the bridge-owned connector
+                // surface or remove authorization-only Skills.
+                const configured = await requestLocalExecutor<{
                   apps: Array<{ slug: string; skillPath: string }>
-                }>('runtime.connectors.apps.sync', {
-                  apps: connected.map(app => ({
-                    slug: app.slug,
-                    name: app.runtime_name ?? app.slug,
-                    description: app.description ?? '',
-                    tools: app.tool_summaries ?? [],
-                  })),
-                })
+                }>('runtime.connectors.status')
                 if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const paths = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
+                const paths = new Map(configured.apps.map(app => [app.slug, app.skillPath]))
                 if (getPluginMarketplaceCache(cacheKey)?.deviceId !== deviceId) return
                 writePluginInventory(cacheKey, deviceId, {
                   connectorApps: visible

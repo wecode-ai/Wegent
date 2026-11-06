@@ -191,11 +191,15 @@ impl ConnectorRuntime {
     }
 
     pub(super) async fn sync_apps(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let sync_revision = payload
+            .get("syncRevision")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| AppIpcError::new("bad_request", "syncRevision is required"))?;
         let apps = payload
             .get("apps")
             .and_then(Value::as_array)
             .ok_or_else(|| AppIpcError::new("bad_request", "apps must be an array"))?;
-        let (tools, revision, generation) = self.discover_tools(apps).await?;
+        let (tools, revision, generation) = self.discover_tools(apps, sync_revision).await?;
         // Waiting for an idle turn must not prevent connector-token refresh.
         let _activation = capability_activation::activate().await;
         let _mutation = self.mutation.lock().await;
@@ -231,9 +235,19 @@ impl ConnectorRuntime {
         Ok(result)
     }
 
-    async fn discover_tools(&self, apps: &[Value]) -> Result<(Vec<Value>, u64, u64), AppIpcError> {
+    async fn discover_tools(
+        &self,
+        apps: &[Value],
+        sync_revision: u64,
+    ) -> Result<(Vec<Value>, u64, u64), AppIpcError> {
         let (cloud, revision, generation) = {
             let _mutation = self.mutation.lock().await;
+            if self.revision.load(Ordering::Acquire) != sync_revision {
+                return Err(AppIpcError::new(
+                    "connector_sync_superseded",
+                    "Connector configuration changed before synchronization",
+                ));
+            }
             let cloud = self.cloud.read().await.clone().ok_or_else(|| {
                 AppIpcError::new(
                     "connector_cloud_disconnected",

@@ -9,8 +9,9 @@
 //! and `_risk_hints` it exercises.
 use brz_mysql::Mysql;
 
-use crate::apps_installed::db::UserRow;
+use crate::apps_installed::db::{self, UserRow};
 use crate::apps_installed::mcp::{self, UpstreamTool};
+use crate::apps_installed::refresh;
 use crate::apps_installed::service::{self as apps, ConnectorApp};
 use crate::http_compat::FastApiError;
 
@@ -91,9 +92,13 @@ where
         }
         // `_upstream_tools` wraps `_server_config` and session failures into a
         // 502 `HTTPException`, which `list_tools` skips.
-        let (headers, _) = match apps::session_headers(mysql, app, user).await {
+        let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
+            .await
+            .map_err(|_| FastApiError::internal())?;
+        let (headers, attempted_access) = match apps::session_headers(mysql, app, user).await {
             Ok(headers) => headers,
             Err(error) => {
+                refresh::record_session_error(mysql, row.as_ref(), &error).await;
                 tracing::warn!(
                     connector = %app.slug,
                     %error,
@@ -108,6 +113,13 @@ where
                 // `except HTTPException`: an app whose discovery failed is
                 // skipped with a warning, not reported to the caller.
                 Err(error) => {
+                    refresh::record_directory_error(
+                        mysql,
+                        row.as_ref(),
+                        attempted_access.as_deref(),
+                        &error,
+                    )
+                    .await;
                     tracing::warn!(
                         connector = %app.slug,
                         %error,

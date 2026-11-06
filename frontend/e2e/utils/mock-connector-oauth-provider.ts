@@ -36,10 +36,14 @@ interface AuthorizationCode {
 interface ProviderState {
   tokenTtlSeconds: number
   rejectRefresh: boolean
+  rejectHttp: boolean
   issued: number
   refreshes: number
   authorizationRequests: number
   toolCalls: Array<{ name: string; arguments: unknown }>
+  toolNames: string[]
+  httpCalls: Array<{ method: string; path: string; query: Record<string, string> }>
+  sseStreams: Map<string, http.ServerResponse>
   clients: Map<string, RegisteredClient>
   codes: Map<string, AuthorizationCode>
   accessTokens: Set<string>
@@ -49,10 +53,14 @@ interface ProviderState {
 const state: ProviderState = {
   tokenTtlSeconds: 3600,
   rejectRefresh: false,
+  rejectHttp: false,
   issued: 0,
   refreshes: 0,
   authorizationRequests: 0,
   toolCalls: [],
+  toolNames: [CONNECTOR_OAUTH_ALLOWED_TOOL, CONNECTOR_OAUTH_HIDDEN_TOOL],
+  httpCalls: [],
+  sseStreams: new Map(),
   clients: new Map(),
   codes: new Map(),
   accessTokens: new Set(),
@@ -63,10 +71,15 @@ const state: ProviderState = {
 export function resetConnectorOAuthProvider(): void {
   state.tokenTtlSeconds = 3600
   state.rejectRefresh = false
+  state.rejectHttp = false
   state.issued = 0
   state.refreshes = 0
   state.authorizationRequests = 0
   state.toolCalls = []
+  state.toolNames = [CONNECTOR_OAUTH_ALLOWED_TOOL, CONNECTOR_OAUTH_HIDDEN_TOOL]
+  state.httpCalls = []
+  for (const stream of state.sseStreams.values()) stream.end()
+  state.sseStreams.clear()
   state.clients.clear()
   state.codes.clear()
   state.accessTokens.clear()
@@ -211,12 +224,12 @@ const TOOL_DEFINITIONS = [
   },
 ]
 
-function mcpCall(res: http.ServerResponse, message: Record<string, unknown>): void {
+function mcpReply(message: Record<string, unknown>): Record<string, unknown> | null {
   const id = message.id ?? null
   const method = String(message.method ?? '')
   const params = (message.params as Record<string, unknown> | undefined) ?? {}
   if (method === 'initialize') {
-    sendJson(res, 200, {
+    return {
       jsonrpc: '2.0',
       id,
       result: {
@@ -224,23 +237,24 @@ function mcpCall(res: http.ServerResponse, message: Record<string, unknown>): vo
         capabilities: { tools: {} },
         serverInfo: { name: 'mock-connector-oauth-mcp', version: '1.0.0' },
       },
-    })
-    return
+    }
   }
   if (method === 'notifications/initialized') {
-    sendEmpty(res, 202)
-    return
+    return null
   }
   if (method === 'tools/list') {
-    sendJson(res, 200, { jsonrpc: '2.0', id, result: { tools: TOOL_DEFINITIONS } })
-    return
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: { tools: TOOL_DEFINITIONS.filter(tool => state.toolNames.includes(tool.name)) },
+    }
   }
   if (method === 'tools/call') {
     const name = String(params.name ?? '')
     const args = params.arguments ?? {}
     state.toolCalls.push({ name, arguments: args })
     const result =
-      name === CONNECTOR_OAUTH_ALLOWED_TOOL
+      name === CONNECTOR_OAUTH_ALLOWED_TOOL && state.toolNames.includes(name)
         ? {
             content: [
               { type: 'text', text: `${CONNECTOR_OAUTH_TOOL_RESULT}:${JSON.stringify(args)}` },
@@ -252,14 +266,19 @@ function mcpCall(res: http.ServerResponse, message: Record<string, unknown>): vo
             content: [{ type: 'text', text: `unknown tool: ${name}` }],
             isError: true,
           }
-    sendJson(res, 200, { jsonrpc: '2.0', id, result })
-    return
+    return { jsonrpc: '2.0', id, result }
   }
-  sendJson(res, 200, {
+  return {
     jsonrpc: '2.0',
     id,
     error: { code: -32601, message: `Method not found: ${method}` },
-  })
+  }
+}
+
+function mcpCall(res: http.ServerResponse, message: Record<string, unknown>): void {
+  const reply = mcpReply(message)
+  if (reply) sendJson(res, 200, reply)
+  else sendEmpty(res, 202)
 }
 
 function control(res: http.ServerResponse, body: string): void {
@@ -275,6 +294,16 @@ function control(res: http.ServerResponse, body: string): void {
   if (typeof payload.rejectRefresh === 'boolean') {
     state.rejectRefresh = payload.rejectRefresh
   }
+  if (typeof payload.rejectHttp === 'boolean') {
+    state.rejectHttp = payload.rejectHttp
+  }
+  if (Array.isArray(payload.toolNames)) {
+    if (!payload.toolNames.every(name => TOOL_DEFINITIONS.some(tool => tool.name === name))) {
+      sendJson(res, 400, { error: 'unknown_tool' })
+      return
+    }
+    state.toolNames = payload.toolNames as string[]
+  }
   if (payload.revokeAll === true) {
     // One-shot: drop every issued token so a later run starts unauthorized.
     state.accessTokens.clear()
@@ -289,9 +318,12 @@ function snapshot(): Record<string, unknown> {
     refreshes: state.refreshes,
     authorizationRequests: state.authorizationRequests,
     toolCalls: state.toolCalls,
+    toolNames: state.toolNames,
+    httpCalls: state.httpCalls,
     clients: state.clients.size,
     tokenTtlSeconds: state.tokenTtlSeconds,
     rejectRefresh: state.rejectRefresh,
+    rejectHttp: state.rejectHttp,
   }
 }
 
@@ -357,6 +389,60 @@ export function handleConnectorOAuthRequest(
 
   if (path === `${CONNECTOR_OAUTH_PREFIX}/_state` && method === 'GET') {
     sendJson(res, 200, snapshot())
+    return true
+  }
+
+  // An unauthenticated legacy MCP endpoint exercises the `sse` + `none`
+  // configuration without changing the protected streamable-HTTP resource.
+  if (path === `${CONNECTOR_OAUTH_PREFIX}/sse`) {
+    if (method !== 'GET') {
+      sendEmpty(res, 405)
+      return true
+    }
+    const sessionId = randomBytes(12).toString('hex')
+    state.sseStreams.set(sessionId, res)
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+    res.write(
+      `event: endpoint\ndata: ${CONNECTOR_OAUTH_PREFIX}/sse/messages?session=${sessionId}\n\n`
+    )
+    res.on('close', () => {
+      state.sseStreams.delete(sessionId)
+    })
+    return true
+  }
+
+  if (path === `${CONNECTOR_OAUTH_PREFIX}/sse/messages` && method === 'POST') {
+    const stream = state.sseStreams.get(url.searchParams.get('session') ?? '')
+    if (!stream || stream.writableEnded) {
+      sendEmpty(res, 404)
+      return true
+    }
+    let message: Record<string, unknown>
+    try {
+      message = JSON.parse(body) as Record<string, unknown>
+    } catch {
+      sendJson(res, 400, { error: 'invalid_json' })
+      return true
+    }
+    const reply = mcpReply(message)
+    if (reply) stream.write(`event: message\ndata: ${JSON.stringify(reply)}\n\n`)
+    sendEmpty(res, 202)
+    return true
+  }
+
+  if (path.startsWith(`${CONNECTOR_OAUTH_PREFIX}/mcp/records/`)) {
+    const token = bearerToken(req.headers.authorization)
+    if (state.rejectHttp || !token || !state.accessTokens.has(token)) {
+      sendEmpty(res, 401)
+      return true
+    }
+    if (method !== 'GET') {
+      sendEmpty(res, 405)
+      return true
+    }
+    const call = { method, path, query: Object.fromEntries(url.searchParams) }
+    state.httpCalls.push(call)
+    sendJson(res, 200, { marker: CONNECTOR_OAUTH_TOOL_RESULT, ...call })
     return true
   }
 

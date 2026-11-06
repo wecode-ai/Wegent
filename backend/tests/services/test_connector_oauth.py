@@ -17,6 +17,19 @@ from app.services.connector_oauth import ConnectorOAuthService
 from shared.utils.crypto import decrypt_sensitive_data
 
 
+@pytest.fixture(autouse=True)
+def callback_claims(monkeypatch: pytest.MonkeyPatch) -> None:
+    claims: set[str] = set()
+
+    async def claim(key: str, _value, expire: int) -> bool:
+        if key in claims:
+            return False
+        claims.add(key)
+        return True
+
+    monkeypatch.setattr(cache_manager, "setnx", claim)
+
+
 @pytest.mark.asyncio
 async def test_github_oauth_session_persists_encrypted_user_connection(
     test_db: Session,
@@ -238,7 +251,9 @@ async def test_rejected_refresh_drops_the_refresh_token(
             raise httpx.HTTPStatusError(
                 "400 Bad Request",
                 request=request,
-                response=httpx.Response(400, request=request),
+                response=httpx.Response(
+                    400, request=request, json={"error": "bad_refresh_token"}
+                ),
             )
 
     class Client:

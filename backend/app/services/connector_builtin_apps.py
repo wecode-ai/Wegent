@@ -11,8 +11,10 @@ account through the same connector OAuth flow.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
+from importlib.resources import files
 from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
@@ -42,65 +44,11 @@ class BuiltinConnectorApp:
     keywords: tuple[str, ...]
 
 
-BUILTIN_CONNECTOR_APPS: tuple[BuiltinConnectorApp, ...] = (
-    BuiltinConnectorApp(
-        slug="dingtalk_docs",
-        name="钉钉文档",
-        mcp_url="https://mcp-gw.dingtalk.com/oauth/server/doc",
-        keywords=(
-            "钉钉文档",
-            "钉钉 文档",
-            "dingtalk docs",
-            "dingtalk document",
-        ),
-    ),
-    BuiltinConnectorApp(
-        slug="dingtalk_sheet",
-        name="钉钉表格",
-        mcp_url="https://mcp-gw.dingtalk.com/oauth/server/sheet",
-        keywords=(
-            "钉钉表格",
-            "钉钉 表格",
-            "dingtalk table",
-            "spreadsheet",
-            "worksheet",
-            "sheet",
-            "dingtalk spreadsheet",
-            "dingtalk worksheet",
-            "dingtalk sheet",
-            "钉钉工作表",
-            "钉钉 工作表",
-            "钉钉单元格",
-            "钉钉 单元格",
-            "钉钉公式",
-            "钉钉 公式",
-        ),
-    ),
-    BuiltinConnectorApp(
-        slug="dingtalk_aitable",
-        name="钉钉 AI 表格",
-        mcp_url="https://mcp-gw.dingtalk.com/oauth/server/aitable",
-        keywords=(
-            "钉钉ai表格",
-            "钉钉 ai 表格",
-            "dingtalk ai table",
-            "ai table",
-            "notable",
-            "钉钉多维表",
-            "钉钉 多维表",
-        ),
-    ),
-    BuiltinConnectorApp(
-        slug="dingtalk_wiki",
-        name="钉钉知识库",
-        mcp_url="https://mcp-gw.dingtalk.com/oauth/server/wiki",
-        keywords=(
-            "钉钉知识库",
-            "钉钉 知识库",
-            "dingtalk wikispace",
-            "dingtalk knowledge base",
-        ),
-    ),
+BUILTIN_CONNECTOR_APPS: tuple[BuiltinConnectorApp, ...] = tuple(
+    BuiltinConnectorApp(**{**definition, "keywords": tuple(definition["keywords"])})
+    for definition in json.loads(
+        files("shared").joinpath("data/builtin-connector-apps.json").read_text("utf-8")
+    )
 )
 
 

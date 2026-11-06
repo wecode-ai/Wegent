@@ -25,7 +25,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo:
-        parsed = parsed.replace(tzinfo=None)
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
     return parsed
 
 
@@ -224,7 +224,7 @@ class ConnectorConnectionService:
                 if not cleared_by_rejection:
                     db.commit()
                     return None
-        if row.is_active:
+        if row.is_active and expected_refresh_token_encrypted is not None:
             # A refresh keeps the existing discovery result: the account and the
             # tools it can see did not change, only the tokens.
             for key in ("toolSummaries", "toolsDiscoveredAt"):
@@ -339,7 +339,9 @@ class ConnectorConnectionService:
         status = ConnectorConnectionService.response(connection).status
         if status == "connected":
             return True
-        return status == "expired" and bool(connection.refresh_token())
+        # Decryption readiness is checked by session setup. A stored grant
+        # that cannot be read is a configuration fault, not missing consent.
+        return status == "expired" and bool(connection.refresh_token_encrypted)
 
     @staticmethod
     def _lock_row(db: Session, *, slug: str, user_id: int) -> Kind | None:
@@ -390,6 +392,11 @@ class ConnectorConnectionService:
             db.commit()
             return connection
         spec = dict((row.json or {}).get("spec") or {})
+        if not row.is_active or str(spec.get("accessTokenEncrypted") or "") != (
+            connection.access_token_encrypted
+        ):
+            db.commit()
+            return ConnectorConnectionService._row_to_connection(row)
         spec["toolSummaries"] = summaries
         spec["toolsDiscoveredAt"] = datetime.now(timezone.utc).isoformat()
         # A successful discovery clears the previous upstream failure.
@@ -410,6 +417,11 @@ class ConnectorConnectionService:
             db.commit()
             return connection
         spec = dict((row.json or {}).get("spec") or {})
+        if not row.is_active or str(spec.get("accessTokenEncrypted") or "") != (
+            connection.access_token_encrypted
+        ):
+            db.commit()
+            return ConnectorConnectionService._row_to_connection(row)
         spec["lastError"] = {
             "message": message[:500],
             "at": datetime.now(timezone.utc).isoformat(),
@@ -461,12 +473,7 @@ class ConnectorConnectionService:
     @staticmethod
     def _row_to_connection(row: Kind) -> ConnectorConnection:
         spec = dict((row.json or {}).get("spec") or {})
-        expires_at_raw = spec.get("expiresAt")
-        expires_at = None
-        if isinstance(expires_at_raw, str) and expires_at_raw:
-            expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00"))
-            if expires_at.tzinfo:
-                expires_at = expires_at.replace(tzinfo=None)
+        expires_at = _parse_timestamp(spec.get("expiresAt"))
         return ConnectorConnection(
             slug=row.name,
             user_id=row.user_id,

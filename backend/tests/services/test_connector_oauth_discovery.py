@@ -37,6 +37,7 @@ async def test_discovery_resolves_protected_resource_and_authorization_server(
 
         def json(self) -> dict:
             return {
+                "issuer": "https://fig.example.test",
                 "authorization_endpoint": "https://fig.example.test/authorize",
                 "token_endpoint": "https://fig.example.test/token",
                 "registration_endpoint": "https://fig.example.test/register",

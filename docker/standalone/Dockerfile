@@ -181,6 +181,7 @@ COPY shared/assets /app/shared/assets
 RUN cd /app/executor && APP_VERSION="${APP_VERSION}" cargo build --release --locked
 
 COPY backend-rs /app/backend-rs
+COPY shared/data/builtin-connector-apps.json /app/shared/data/builtin-connector-apps.json
 RUN cd /app/backend-rs && cargo build --release --locked --bin wegent-backend-rs
 
 # ========== Stage 5: Runtime ==========

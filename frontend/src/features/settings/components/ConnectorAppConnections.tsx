@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Cable, Loader2, Search } from 'lucide-react'
 import { adminApis, type UserConnectorApp } from '@/apis/admin'
 import { Button } from '@/components/ui/button'
@@ -32,10 +32,12 @@ import { sortConnectorAppsByConnection } from '@/features/settings/connectorAppO
 import { matchesConnectorAppQuery } from '@/features/settings/connectorAppSearch'
 
 export default function ConnectorAppConnections() {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const { toast } = useToast()
   const [apps, setApps] = useState<UserConnectorApp[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const loadGenerationRef = useRef(0)
   const [authorizingSlug, setAuthorizingSlug] = useState<string | null>(null)
   const [disconnectingSlug, setDisconnectingSlug] = useState<string | null>(null)
   const [retryingSlug, setRetryingSlug] = useState<string | null>(null)
@@ -43,23 +45,30 @@ export default function ConnectorAppConnections() {
   const [searchQuery, setSearchQuery] = useState('')
 
   const loadApps = useCallback(async () => {
+    const generation = ++loadGenerationRef.current
     setLoading(true)
+    setLoadError(null)
     try {
       const fetched = await adminApis.getUserConnectorApps()
+      if (generation !== loadGenerationRef.current) return
       setApps(sortConnectorAppsByConnection(fetched))
     } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: t('common:integrations.connector_apps.load_failed'),
-        description: (error as Error).message,
-      })
+      if (generation !== loadGenerationRef.current) return
+      setLoadError(
+        error instanceof Error && error.message
+          ? error.message
+          : t('common:integrations.connector_apps.load_failed')
+      )
     } finally {
-      setLoading(false)
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
-  }, [t, toast])
+  }, [t])
 
   useEffect(() => {
     void loadApps()
+    return () => {
+      loadGenerationRef.current += 1
+    }
   }, [loadApps])
 
   useEffect(() => {
@@ -146,16 +155,32 @@ export default function ConnectorAppConnections() {
           {t('common:integrations.connector_apps.description')}
         </p>
       </div>
-      {loading ? (
+      {loadError ? (
+        <div className="mb-3 space-y-2" role="alert" data-testid="connector-app-catalog-error">
+          <p className="text-sm text-error">
+            {t('common:integrations.connector_apps.load_failed')}: {loadError}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void loadApps()}
+            disabled={loading}
+            data-testid="retry-connector-app-catalog"
+          >
+            {t('common:integrations.connector_apps.retry')}
+          </Button>
+        </div>
+      ) : null}
+      {loading && apps.length === 0 ? (
         <div className="flex justify-center py-8">
           <Loader2 className="h-5 w-5 animate-spin text-text-muted" />
         </div>
-      ) : apps.length === 0 ? (
+      ) : apps.length === 0 && !loadError ? (
         <div className="rounded-lg border border-dashed border-border py-8 text-center">
           <Cable className="mx-auto mb-2 h-8 w-8 text-text-muted" />
           <p className="text-sm text-text-muted">{t('common:integrations.connector_apps.empty')}</p>
         </div>
-      ) : (
+      ) : apps.length > 0 ? (
         <div className="space-y-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
@@ -258,7 +283,7 @@ export default function ConnectorAppConnections() {
             )
           })}
         </div>
-      )}
+      ) : null}
       <AlertDialog
         open={Boolean(disconnectTarget)}
         onOpenChange={open => {

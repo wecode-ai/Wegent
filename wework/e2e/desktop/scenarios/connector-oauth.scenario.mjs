@@ -13,20 +13,31 @@
 
 import assert from 'node:assert/strict'
 
-import { ACTIVE_COMPOSER_SELECTOR, ACTIVE_WORKBENCH_SELECTOR } from '../modules/shared.mjs'
+import {
+  ACTIVE_COMPOSER_SELECTOR,
+  ACTIVE_SEND_BUTTON_SELECTOR,
+  ACTIVE_WORKBENCH_SELECTOR,
+} from '../modules/shared.mjs'
 import {
   CONNECTOR_OAUTH_SLUG,
   startConnectorOAuthProvider,
 } from '../modules/connector-oauth-provider.mjs'
+import { verifyConnectorAccountSwitch } from '../modules/connector-account-switch.mjs'
 import {
   assistantMessage,
+  mcpToolRequestEvents,
   readRequestBody,
+  requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 
 const PROMPT = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_PROMPT'
 const RESUME_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_RESUMED'
+const TOOL_PROMPT = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_CALL'
+const TOOL_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_TOOL_COMPLETED'
+const TOOL_CALL_ID = 'connector-oauth-real-echo'
 /** `workbench.plugins_local_auth_resume_prompt` in both shipped locales. */
 const RESUME_FRAGMENTS = ['blocked by authorization', '因授权中断']
 
@@ -53,7 +64,12 @@ function isResumeRequest(body) {
   return RESUME_FRAGMENTS.some(fragment => text.includes(fragment))
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+export function createDesktopScenario({
+  checkpoint,
+  captureScreenshot,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+}) {
   let backend
   let cloudEnvironment
   let provider
@@ -62,12 +78,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   let replySequence = 0
   let catalogAtResume = null
   let localSyncHold = null
+  let accountSwitch = null
 
-  async function api(path, { method = 'GET', body } = {}) {
+  async function api(path, { method = 'GET', body, authToken = backend.authToken } = {}) {
     const response = await fetch(`${backend.backendUrl}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${backend.authToken}`,
+        Authorization: `Bearer ${authToken}`,
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -112,6 +129,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       modelRequests.push(body)
       const text = lastInputText(body)
       replySequence += 1
+      if (JSON.stringify(body).includes(TOOL_PROMPT)) {
+        if (requestContainsToolOutput(body, TOOL_CALL_ID)) {
+          assert.ok(
+            toolOutputText(body, TOOL_CALL_ID)?.includes('CONNECTOR-OAUTH-ECHO-OK'),
+            'The authorized local MCP call must return the upstream success marker'
+          )
+          writeReply(response, `connector-oauth-tool-${replySequence}`, TOOL_COMPLETION)
+        } else {
+          const responseId = `connector-oauth-tool-${replySequence}`
+          response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...mcpToolRequestEvents(body, {
+                toolName: `${CONNECTOR_OAUTH_SLUG}__echo`,
+                argumentsValue: { value: TOOL_PROMPT },
+                directToolName: `mcp__wegent_apps__${CONNECTOR_OAUTH_SLUG}__echo`,
+                searchCallId: `${TOOL_CALL_ID}-search`,
+                toolCallId: TOOL_CALL_ID,
+              }).events,
+              responseCompleted(responseId),
+            ])
+          )
+        }
+        return true
+      }
       if (isResumeRequest(body)) {
         // Ordering evidence: by the time the blocked step resumes, the backend
         // catalog must already expose the connector's tools.
@@ -144,6 +187,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         value: JSON.stringify({ replyPredictionsEnabled: false }),
       })
       await cloudEnvironment.waitForConnectedAppDevice()
+      // Standalone selection establishes its own app/provider and account
+      // fixtures through prepareCloud and the shared account-switch flow.
+      if (checkpoint === 'connector-account-switch') {
+        accountSwitch = await verifyConnectorAccountSwitch({
+          control,
+          backend,
+          api,
+          slug: CONNECTOR_OAUTH_SLUG,
+          mcpUrl: `${provider.url}/mcp`,
+        })
+        return
+      }
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: workbenchReadyTimeoutMs,
       })
@@ -244,8 +299,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const app = installed.apps.find(item => item.slug === CONNECTOR_OAUTH_SLUG)
       assert.equal(app?.connection.status, 'connected', 'The backend must store the grant')
 
+      // A catalog entry is not execution evidence. Send one new model turn
+      // through the actual Codex -> local MCP -> backend -> upstream path.
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: TOOL_PROMPT })
+      await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TOOL_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.deepEqual(provider.toolCalls, [{ name: 'echo', arguments: { value: TOOL_PROMPT } }])
+
       await captureScreenshot(control, 'connector-oauth.png', ACTIVE_WORKBENCH_SELECTOR)
       assert.ok(connectorAppId > 0)
+      accountSwitch = await verifyConnectorAccountSwitch({
+        control,
+        backend,
+        api,
+        slug: CONNECTOR_OAUTH_SLUG,
+        mcpUrl: `${provider.url}/mcp`,
+      })
     },
 
     diagnostics() {
@@ -253,8 +327,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         modelRequests: modelRequests.length,
         authorizeRequests: provider?.authorizeRequests ?? 0,
         tokenRequests: provider?.tokenRequests ?? 0,
+        toolCalls: provider?.toolCalls ?? [],
         catalogAtResume,
         localSyncHold,
+        accountSwitch,
       }
     },
 
