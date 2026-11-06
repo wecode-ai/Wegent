@@ -238,6 +238,7 @@ function ResourceLibraryContent() {
   const [skillMarketProvidersError, setSkillMarketProvidersError] = useState('')
   const [skillMarketProvidersLoading, setSkillMarketProvidersLoading] = useState(false)
   const [skillMarketProvidersLoaded, setSkillMarketProvidersLoaded] = useState(false)
+  const skillMarketProvidersRequestIdRef = useRef(0)
   const activeSkillMarketProviderKey =
     !isMineView && resourceType === 'skill'
       ? resolveExternalMarketplaceKey(skillMarketProviders, requestedMarketplaceParam)
@@ -323,6 +324,7 @@ function ResourceLibraryContent() {
   ])
 
   useEffect(() => {
+    const requestId = ++skillMarketProvidersRequestIdRef.current
     if (isMineView || resourceType !== 'skill' || isMarketplaceSearch) {
       setSkillMarketProviders([])
       setSkillMarketProvidersError('')
@@ -331,44 +333,49 @@ function ResourceLibraryContent() {
       return
     }
 
-    let isMounted = true
     setSkillMarketProvidersLoading(true)
     setSkillMarketProvidersLoaded(false)
     setSkillMarketProvidersError('')
     listSkillMarketProviders()
       .then(providers => {
-        if (!isMounted) return
+        if (requestId !== skillMarketProvidersRequestIdRef.current) return
         setSkillMarketProviders(providers)
       })
       .catch(loadError => {
-        if (!isMounted) return
+        if (requestId !== skillMarketProvidersRequestIdRef.current) return
         setSkillMarketProvidersError(
           loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
         )
       })
       .finally(() => {
-        if (!isMounted) return
+        if (requestId !== skillMarketProvidersRequestIdRef.current) return
         setSkillMarketProvidersLoading(false)
         setSkillMarketProvidersLoaded(true)
       })
 
     return () => {
-      isMounted = false
+      skillMarketProvidersRequestIdRef.current += 1
     }
   }, [isMarketplaceSearch, isMineView, resourceType, skillMarketProvidersLoadFailedLabel])
 
   const retrySkillMarketProviders = () => {
+    const requestId = ++skillMarketProvidersRequestIdRef.current
     setSkillMarketProvidersError('')
     setSkillMarketProvidersLoading(true)
     setSkillMarketProvidersLoaded(false)
     listSkillMarketProviders()
-      .then(setSkillMarketProviders)
+      .then(providers => {
+        if (requestId !== skillMarketProvidersRequestIdRef.current) return
+        setSkillMarketProviders(providers)
+      })
       .catch(loadError => {
+        if (requestId !== skillMarketProvidersRequestIdRef.current) return
         setSkillMarketProvidersError(
           loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
         )
       })
       .finally(() => {
+        if (requestId !== skillMarketProvidersRequestIdRef.current) return
         setSkillMarketProvidersLoading(false)
         setSkillMarketProvidersLoaded(true)
       })
