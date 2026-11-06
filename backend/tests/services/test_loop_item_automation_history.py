@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import ProjectAutomationRule, ProjectAutomationRun
 from app.models.user import User
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
+from app.schemas.issue_assignment import IssueAssignmentResponse
 from app.schemas.project_chat import LoopItemAssign
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_items.service import loop_item_service
@@ -86,6 +87,15 @@ def test_automation_history_snapshots_rule_and_preserves_user(
     response = issue_assignment_service.response_values(test_db, event)
     assert response["automation"] == expected
     assert response["created_by_user_id"] == test_user.id
+    assert (
+        IssueAssignmentResponse.model_validate(response).model_dump()["automation"]
+        == expected
+    )
+    manual_response = {**response, "automation": None}
+    assert (
+        "automation"
+        not in IssueAssignmentResponse.model_validate(manual_response).model_dump()
+    )
     rule.title = "Renamed rule"
     test_db.commit()
     assert item.metadata_json["assignment_history"][-1]["automation"] == expected
