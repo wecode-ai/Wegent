@@ -135,6 +135,8 @@ executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex
 
 ### 前端生命周期投影
 
+侧栏任务列表同样以 `deviceId + taskId` 标识唯一条目。创建期间从项目根目录切换到托管 worktree 时，临时条目必须迁移，不能在两个工作区各留一条。如果执行器列表先于创建响应返回，后到的临时投影必须保留执行器已经确认的分组和状态。`e2e:desktop --segment sidebar-task-identity` 通过延迟真实创建响应覆盖这一时序，并验证发送完成和后续刷新后均只有一条侧栏记录。
+
 Wework 对同一个 `deviceId + taskId` 只维护一份共享的 runtime task lifecycle 状态。可见 pane 拥有 stream 事件的写权限；为了保留布局和快速切换而挂载的隐藏 Provider 可以继续订阅和读取，但不能写入 `turnStarted`、`turnSettled`、goal 状态或 executor snapshot。侧栏、composer 和任务执行遮罩都从同一个不可变 store snapshot 读取，不能再从 Provider 私有 state 或缓存 work list 生成第二份运行状态。
 
 来自 `runtime.tasks.list`、任务创建响应、stream 事件和本地缓存的 task summary 在进入 store 前都经过同一投影规则：
