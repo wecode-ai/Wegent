@@ -3934,8 +3934,12 @@ describe('PluginsWorkspace', () => {
             finishMembership({ marketplaces: [] })
             await membership
           })
-          expect(marketplace.getSyncDeviceCalls()).toBe(0)
-          expect(refresh).toHaveAttribute('data-reconciliation-revision', '0')
+          if (outcome === 'cancels') {
+            expect(marketplace.getSyncDeviceCalls()).toBe(0)
+            expect(refresh).toHaveAttribute('data-reconciliation-revision', '0')
+          } else {
+            await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+          }
 
           await act(async () => {
             finishCloudRefresh()
@@ -3980,6 +3984,186 @@ describe('PluginsWorkspace', () => {
     }
   )
 
+  test.each(['cloud catalog', 'personal catalog'] as const)(
+    'reconciles before an unrelated %s read settles and rejects its stale publication',
+    async heldCatalog => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch()
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      let finishCatalog!: () => void
+      const catalogGate = new Promise<void>(resolve => {
+        finishCatalog = resolve
+      })
+      let finishReconciliation!: () => void
+      const reconciliationGate = new Promise<void>(resolve => {
+        finishReconciliation = resolve
+      })
+      const reconcile = vi
+        .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
+        .mockReturnValue(reconciliationGate)
+      const originalDiskRead = codexPlugins.listPersonalMarketplacePluginsFromDisk
+      let holdNextCatalog = false
+      let heldReadStarted = false
+      let catalogVersion = 'initial catalog'
+      const diskRead = vi
+        .spyOn(codexPlugins, 'listPersonalMarketplacePluginsFromDisk')
+        .mockImplementation(async (...args) => {
+          const result = await originalDiskRead(...args)
+          if (heldCatalog === 'personal catalog' && holdNextCatalog) {
+            holdNextCatalog = false
+            heldReadStarted = true
+            await catalogGate
+          }
+          return result
+        })
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation(async (...args) => {
+        const response = await originalFetch(...args)
+        if (String(args[0]).split('?')[0].endsWith('/api/plugins/marketplace')) {
+          const payload = (await response.json()) as { items: PluginMarketplaceItem[] }
+          const items = payload.items.map(item => ({ ...item, description: catalogVersion }))
+          if (heldCatalog === 'cloud catalog' && holdNextCatalog) {
+            holdNextCatalog = false
+            heldReadStarted = true
+            await catalogGate
+          }
+          return Response.json({ ...payload, items })
+        }
+        return response
+      })
+      const observedDescriptions: Array<string | undefined> = []
+      let unsubscribe = () => {}
+      try {
+        render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        await screen.findByTestId('plugin-marketplace-install-101')
+        const refresh = screen.getByTestId('plugins-refresh-button')
+        await waitFor(() => expect(refresh).toBeEnabled())
+        catalogVersion = 'stale catalog'
+        holdNextCatalog = true
+        await userEvent.click(refresh)
+        await waitFor(() => expect(heldReadStarted).toBe(true))
+        await waitFor(() => expect(reconcile).toHaveBeenCalledOnce())
+        expect(refresh).toBeDisabled()
+        expect(refresh).toHaveAttribute('data-reconciling', 'true')
+
+        catalogVersion = 'confirmed catalog'
+        await act(async () => {
+          finishReconciliation()
+          await reconciliationGate
+        })
+        const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+        await waitFor(() =>
+          expect(
+            getPluginMarketplaceCache(cacheKey)?.marketplaceItems.find(item => item.id === 101)
+              ?.description
+          ).toBe('confirmed catalog')
+        )
+        unsubscribe = subscribePluginMarketplaceCache(snapshot => {
+          if (snapshot?.cacheKey === cacheKey) {
+            observedDescriptions.push(
+              snapshot.marketplaceItems.find(item => item.id === 101)?.description
+            )
+          }
+        })
+        await act(async () => {
+          finishCatalog()
+          await catalogGate
+        })
+        await waitFor(() => expect(refresh).toBeEnabled())
+        expect(refresh).toHaveAttribute('data-reconciliation-revision', '1')
+        expect(
+          getPluginMarketplaceCache(cacheKey)?.marketplaceItems.find(item => item.id === 101)
+            ?.description
+        ).toBe('confirmed catalog')
+        expect(observedDescriptions).not.toContain('stale catalog')
+      } finally {
+        unsubscribe()
+        await act(async () => {
+          finishCatalog()
+          finishReconciliation()
+          await Promise.all([catalogGate, reconciliationGate])
+        })
+        diskRead.mockRestore()
+        reconcile.mockRestore()
+      }
+    }
+  )
+
+  test.each(['local membership', 'cloud installed inventory'] as const)(
+    'does not reconcile while required %s is pending or after it fails',
+    async heldInventory => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch()
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const reconcile = vi
+        .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
+        .mockResolvedValue(undefined)
+      let finishInventory!: () => void
+      const inventoryGate = new Promise<void>(resolve => {
+        finishInventory = resolve
+      })
+      let holdNextInventory = false
+      let heldReadStarted = false
+      const holdAndFailInventory = async () => {
+        holdNextInventory = false
+        heldReadStarted = true
+        await inventoryGate
+        throw new Error('Required installed inventory unavailable')
+      }
+      const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+      vi.mocked(requestLocalExecutor).mockImplementation(async (command, args) => {
+        if (
+          holdNextInventory &&
+          heldInventory === 'local membership' &&
+          command === 'codex.app_server_request' &&
+          (args as { method?: string }).method === 'plugin/installed'
+        ) {
+          return holdAndFailInventory()
+        }
+        return originalInvoke(command, args)
+      })
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation(async (...args) => {
+        if (
+          holdNextInventory &&
+          heldInventory === 'cloud installed inventory' &&
+          String(args[0]).split('?')[0].endsWith('/api/plugins/installed')
+        ) {
+          return holdAndFailInventory()
+        }
+        return originalFetch(...args)
+      })
+      try {
+        render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        await screen.findByTestId('plugin-marketplace-install-101')
+        const refresh = screen.getByTestId('plugins-refresh-button')
+        await waitFor(() => expect(refresh).toBeEnabled())
+        holdNextInventory = true
+        await userEvent.click(refresh)
+        await waitFor(() => expect(heldReadStarted).toBe(true))
+        expect(reconcile).not.toHaveBeenCalled()
+        expect(refresh).toBeDisabled()
+        await act(async () => {
+          finishInventory()
+          await inventoryGate
+        })
+        await waitFor(() => expect(refresh).toBeEnabled())
+        expect(reconcile).not.toHaveBeenCalled()
+        expect(refresh).toHaveAttribute('data-reconciliation-revision', '0')
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+          'data-notice-kind',
+          'error'
+        )
+      } finally {
+        await act(async () => {
+          finishInventory()
+          await inventoryGate
+        })
+        reconcile.mockRestore()
+      }
+    }
+  )
+
   test('disables an open install dialog until a pending reconciliation settles', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch()
@@ -3999,16 +4183,20 @@ describe('PluginsWorkspace', () => {
       render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
       await screen.findByTestId('plugin-marketplace-install-101')
       await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).toBeEnabled())
-      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
       let holdNextRefresh = true
-      vi.mocked(fetch).mockImplementation(async (...args) => {
-        if (holdNextRefresh && String(args[0]).split('?')[0].endsWith('/api/plugins/marketplace')) {
+      vi.mocked(requestLocalExecutor).mockImplementation(async (command, args) => {
+        if (
+          holdNextRefresh &&
+          command === 'codex.app_server_request' &&
+          (args as { method?: string }).method === 'plugin/installed'
+        ) {
           holdNextRefresh = false
           await new Promise<void>(resolve => {
             finishRefresh = resolve
           })
         }
-        return originalFetch(...args)
+        return originalInvoke(command, args)
       })
 
       await userEvent.click(screen.getByTestId('plugins-refresh-button'))
@@ -4107,12 +4295,13 @@ describe('PluginsWorkspace', () => {
         let holdAccountLoad = false
         let accountLoadStarted = false
         vi.mocked(fetch).mockImplementation(async (...args) => {
+          if (holdNext && String(args[0]).split('?')[0].endsWith('/api/plugins/installed')) {
+            holdNext = false
+            refreshStarted = true
+            await refreshGate
+          }
           if (String(args[0]).split('?')[0].endsWith('/api/plugins/marketplace')) {
-            if (holdNext) {
-              holdNext = false
-              refreshStarted = true
-              await refreshGate
-            } else if (holdAccountLoad) {
+            if (holdAccountLoad) {
               accountLoadStarted = true
               await accountGate
             }

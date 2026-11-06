@@ -153,4 +153,46 @@ describe('WorkbenchSearchDialog', () => {
     expect(screen.getByText('Local result')).toBeInTheDocument()
     expect(screen.getByText('Cloud result')).toBeInTheDocument()
   })
+
+  test('excludes the primary identity from local and background cloud search results', async () => {
+    const user = userEvent.setup()
+    const primary = {
+      ...searchItem('Primary identity result', 'result'),
+      address: {
+        deviceId: 'device-1',
+        taskId: 'stand-in-chat-7-primary',
+        runtimeHandle: {
+          origin: { type: 'stand_in_identity', userId: 7, standInId: null },
+        },
+      },
+    }
+    render(
+      <WorkbenchSearchDialog
+        open
+        onClose={vi.fn()}
+        onSearchRuntimeWork={vi.fn().mockResolvedValue({
+          items: [primary, searchItem('Ordinary result', 'result')],
+        })}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    await user.type(screen.getByTestId('workbench-search-input'), 'result')
+    expect(await screen.findByText('Ordinary result')).toBeInTheDocument()
+    expect(screen.queryByText('Primary identity result')).not.toBeInTheDocument()
+    act(() => {
+      notifyWorkbenchCloudSearchResults({
+        request: { query: 'result', limit: 20 },
+        response: {
+          items: [
+            { ...primary, title: 'Cloud primary identity result' },
+            searchItem('Delegated work result', 'result'),
+          ],
+        },
+      })
+    })
+    expect(screen.queryByText('Cloud primary identity result')).not.toBeInTheDocument()
+    expect(screen.getByText('Delegated work result')).toBeInTheDocument()
+    expect(screen.getByText('Ordinary result')).toBeInTheDocument()
+  })
 })

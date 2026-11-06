@@ -47,7 +47,7 @@ export interface WeworkInbox {
 }
 
 export type WeworkNotificationCategory = 'collaboration' | 'general'
-export type WeworkNotificationPreferenceCategory = 'tasks' | WeworkNotificationCategory
+export type WeworkNotificationPreferenceCategory = 'tasks' | 'stand_in' | WeworkNotificationCategory
 export type WeworkNotificationChannel = 'in_app' | 'system' | 'im'
 
 export interface WeworkNotificationChannelPreference {
@@ -60,6 +60,7 @@ export interface WeworkNotificationPreferences {
   tasks: WeworkNotificationChannelPreference
   collaboration: WeworkNotificationChannelPreference
   general: WeworkNotificationChannelPreference
+  stand_in: WeworkNotificationChannelPreference
 }
 
 export interface WeworkNotificationPreferenceUpdate {

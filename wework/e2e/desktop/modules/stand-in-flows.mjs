@@ -45,6 +45,15 @@ export async function discardStandInDraft(control) {
   await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
 }
 
+/** Control-channel readiness precedes the notification shell after reload. */
+export async function openCollaborationNotifications(control) {
+  await control.command('clickWhenEnabled', '[data-testid="wework-notifications-button"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="wework-notifications-category-collaboration"]'
+  )
+}
+
 /** Empty settings show connection types immediately; populated settings use Add connection. */
 export async function openConnectionTypePicker(control) {
   const button = '[data-testid="stand-in-add-connection"]'

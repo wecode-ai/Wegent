@@ -6,6 +6,9 @@ import {
   reconcilePluginRefresh,
   verifyReconciledPluginInventory,
 } from './pluginRefreshReconciliation'
+import { logPluginRefreshPhase } from './pluginRefreshDiagnostics'
+
+vi.mock('./pluginRefreshDiagnostics', () => ({ logPluginRefreshPhase: vi.fn() }))
 
 function plugin(id: number, enabled = true): InstalledPlugin {
   return {
@@ -69,6 +72,30 @@ describe('plugin refresh reconciliation', () => {
     expect(onProgress).toHaveBeenCalledExactlyOnceWith('reading')
     expect(ops.sync).not.toHaveBeenCalled()
     expect(ops.invalidate).not.toHaveBeenCalled()
+  })
+
+  test('reports the pending native phase without changing request order', async () => {
+    vi.mocked(logPluginRefreshPhase).mockClear()
+    const ops = operations()
+    let finish!: (result: PluginDeviceSyncResponse) => void
+    const response = await ops.sync()
+    ops.sync.mockClear().mockReturnValue(new Promise(resolve => (finish = resolve)))
+    const pending = reconcilePluginRefresh({ ...ops, diagnosticRequest: 4 })
+    await vi.waitFor(() => expect(ops.sync).toHaveBeenCalledOnce())
+    expect(logPluginRefreshPhase).toHaveBeenLastCalledWith('reconcile-sync-start', { request: 4 })
+    expect(ops.readCloud).not.toHaveBeenCalled()
+    expect(ops.isCurrent).toHaveBeenCalledTimes(2)
+    finish(response)
+    await pending
+    expect(ops.readStore).toHaveBeenCalledTimes(2)
+    expect(ops.sync).toHaveBeenCalledOnce()
+    expect(ops.readCloud).toHaveBeenCalledOnce()
+    expect(ops.isCurrent).toHaveBeenCalledTimes(4)
+    expect(logPluginRefreshPhase).toHaveBeenLastCalledWith('reconcile-readback-end', {
+      request: 4,
+      elapsedMs: expect.any(Number),
+      outcome: 'completed',
+    })
   })
 
   test('does not report success for HTTP success with failed device synchronization', async () => {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import * as desktopHost from '@/api/dsh/desktopHost'
+import { getDesktopControlDiagnostics } from './desktop-control-diagnostics'
 import {
   fillDesktopControlElement,
   isWeworkAutomationEnabled,
@@ -12,6 +13,7 @@ import {
 import {
   clearLocalModelConfigs,
   listLegacyLocalModelConfigs,
+  listLocalModelConfigs,
 } from '@/features/model-settings/localModelSettings'
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
 import * as codexPlugins from '@/api/local/codexPlugins'
@@ -39,6 +41,32 @@ function providerModel(id: string, enabled = true) {
     enabled,
     updatedAt: '2026-01-01T00:00:00.000Z',
   }
+}
+
+function installNativeModelOwner() {
+  let providers: import('@/features/model-settings/providerModelConfiguration').ModelProvider[] = []
+  let revision = 0
+  const original = desktopHost.invokeDesktopHost
+  return vi.spyOn(desktopHost, 'invokeDesktopHost').mockImplementation(async (method, params) => {
+    if (method === 'modelConfiguration.read')
+      return {
+        providers,
+        revision: String(revision),
+        path: '/fixture/model.yml',
+        loadedAt: '',
+      } as never
+    if (method === 'modelConfiguration.save') {
+      providers = params?.providers as typeof providers
+      revision += 1
+      return { providers, revision: String(revision) } as never
+    }
+    if (method === 'modelConfiguration.runtime')
+      return {
+        revision: String(revision),
+        models: providers.flatMap(provider => provider.models.map(model => ({ provider, model }))),
+      } as never
+    return original(method, params)
+  })
 }
 
 describe('Electron desktop E2E automation', () => {
@@ -373,6 +401,11 @@ describe('Electron desktop E2E automation', () => {
     expect(activate).not.toHaveBeenCalled()
     acknowledgeResult(new Response('{}'))
     await client
+    expect(
+      getDesktopControlDiagnostics()
+        .filter(entry => entry.commandId === 'menu-refresh')
+        .map(entry => entry.phase)
+    ).toEqual(['command-decoded', 'start-acknowledged', 'action-completed', 'result-acknowledged'])
     expect(activate).toHaveBeenCalledExactlyOnceWith('e2e.activateApplicationMenu', {
       id: 'view.refresh',
     })
@@ -783,6 +816,7 @@ describe('Electron desktop E2E automation', () => {
   })
 
   test('seeds local model fixtures without configuring a cloud connection', async () => {
+    const owner = installNativeModelOwner()
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
@@ -793,16 +827,32 @@ describe('Electron desktop E2E automation', () => {
     await seedDesktopE2ERuntime()
 
     expect(fetch).not.toHaveBeenCalled()
-    expect(listLegacyLocalModelConfigs().map(model => model.id)).toEqual(
+    expect(listLocalModelConfigs().map(model => model.id)).toEqual(
       expect.arrayContaining([
         'desktop-e2e-responses',
         'desktop-e2e-vision',
         'desktop-e2e-vision-main',
       ])
     )
+    expect(listLegacyLocalModelConfigs()).toEqual([])
+    expect(owner).toHaveBeenCalledWith('modelConfiguration.save', expect.any(Object))
+  })
+
+  test('does not advertise fixture readiness when native ownership cannot be established', async () => {
+    vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue({
+      providers: [],
+      revision: 'unavailable',
+      error: 'Native model owner unavailable',
+    })
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      modelServerUrl: 'http://127.0.0.1:43111',
+      seedLocalModels: true,
+    }
+    await expect(seedDesktopE2ERuntime()).rejects.toThrow('Native model owner unavailable')
   })
 
   test('propagates cloud identity failures after seeding local models', async () => {
+    const owner = installNativeModelOwner()
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(Response.json({ ok: true, result: {} }))
@@ -817,10 +867,13 @@ describe('Electron desktop E2E automation', () => {
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('identity unavailable')
 
     expect(fetch).toHaveBeenCalledTimes(2)
-    expect(listLegacyLocalModelConfigs().map(model => model.id)).toContain('desktop-e2e-responses')
+    expect(listLocalModelConfigs().map(model => model.id)).toContain('desktop-e2e-responses')
+    expect(listLegacyLocalModelConfigs()).toEqual([])
+    expect(owner).toHaveBeenCalledWith('modelConfiguration.save', expect.any(Object))
   })
 
   test('treats non-successful cloud identity responses as failures', async () => {
+    const owner = installNativeModelOwner()
     vi.stubGlobal(
       'fetch',
       vi
@@ -835,6 +888,8 @@ describe('Electron desktop E2E automation', () => {
     }
 
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('E2E cloud identity returned 401')
+    expect(listLegacyLocalModelConfigs()).toEqual([])
+    expect(owner).toHaveBeenCalledWith('modelConfiguration.save', expect.any(Object))
   })
 
   test('skips a dependent model when Provider owns its vision proxy', () => {

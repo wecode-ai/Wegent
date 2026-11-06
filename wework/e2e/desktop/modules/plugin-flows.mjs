@@ -12,8 +12,6 @@ import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
-import { runtimeTransportGates } from './runtime-transport-gates.mjs'
-import { pluginOperationNetworkRequests } from './plugin-operation-network.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -1100,22 +1098,12 @@ async function verifyMarketplacePluginLifecycle({
   await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
   await control.command('click', '[data-testid="plugin-import-close"]')
 
-  const offlineImportGates = runtimeTransportGates(control)
   try {
     const setupStartedAt = Date.now()
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-    // Proxy changes restart Codex. Finish that setup before measuring local operations.
-    await control.command('reconcileLocalPluginCatalog', 'body')
-    const reconciledAt = Date.now()
-    const { timeOrigin } = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    // Observe without holding: the serial control loop must finish import
-    // before it can read another command. Keep network blocking in place.
-    await offlineImportGates.arm({
-      id: 'offline-local-import',
-      kind: 'request',
-      name: 'executor.plugins.import_package',
-      hold: false,
-    })
+    // Updating the proxy awaits the old Codex process exit. Keep these disk-only
+    // operations independent of a new app-server and its background catalog sync.
+    const proxyConfiguredAt = Date.now()
     blockingNetworkProxy.block()
     const blockedRequestCount = blockingNetworkProxy.requests.length
     const blockedConnectionCount = blockingNetworkProxy.connections.length
@@ -1127,7 +1115,6 @@ async function verifyMarketplacePluginLifecycle({
       })
     )
     const importElapsedMs = Date.now() - importStartedAt
-    const admission = await offlineImportGates.read('offline-local-import')
     await control.awaitTelemetryEvent('plugin_zip_import_succeeded')
     assert.equal(imported.pluginName, 'direct-remote-mcp-plugin')
     assert.ok(
@@ -1180,15 +1167,9 @@ async function verifyMarketplacePluginLifecycle({
           (connection.firstDataAt ?? 0) >= setupStartedAt) &&
         connection.host?.split(':')[0] === startupProbeHost
     )
-    const observed = pluginOperationNetworkRequests(
-      blockingNetworkProxy.requestEvents,
-      timeOrigin,
-      admission
-    )
     const networkEvidence = {
       setupStartedAt,
-      reconciledAt,
-      operationAdmittedAt: observed.operationAdmittedAt,
+      proxyConfiguredAt,
       blockedRequestCount,
       blockedConnectionCount,
       importStartedAt,
@@ -1211,12 +1192,11 @@ async function verifyMarketplacePluginLifecycle({
       `The startup-only marketplace fixture leaked into plugin operations: ${JSON.stringify(startupProbeConnections)}`
     )
     assert.equal(
-      observed.requests.length,
-      0,
+      blockingNetworkProxy.requests.length,
+      blockedRequestCount,
       `Local plugin import or deletion unexpectedly requested external network access: ${JSON.stringify(networkEvidence)}`
     )
   } finally {
-    await offlineImportGates.reset()
     blockingNetworkProxy.release()
     await control.command('setLocalProxyUrl', 'body', { value: '' })
   }

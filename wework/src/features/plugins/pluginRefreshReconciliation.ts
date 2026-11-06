@@ -3,6 +3,7 @@ import {
   linkedCloudInstalledPluginId,
   localPluginId,
 } from '@/components/plugins/installedPluginMerge'
+import { logPluginRefreshPhase } from './pluginRefreshDiagnostics'
 
 export type PluginReconciliationStage = 'waiting' | 'reading' | 'syncing' | 'verifying'
 
@@ -32,6 +33,7 @@ export function verifyReconciledPluginInventory(
 }
 
 export async function reconcilePluginRefresh(options: {
+  diagnosticRequest?: number
   isCurrent: () => boolean
   readStore: () => Promise<InstalledPlugin[]>
   sync: () => Promise<PluginDeviceSyncResponse>
@@ -39,13 +41,29 @@ export async function reconcilePluginRefresh(options: {
   invalidate: () => void
   onProgress?: (stage: PluginReconciliationStage) => void
 }): Promise<void> {
+  const measure = async <T>(phase: string, run: () => Promise<T>): Promise<T> => {
+    const start = Date.now()
+    logPluginRefreshPhase(`${phase}-start`, { request: options.diagnosticRequest })
+    let outcome: 'completed' | 'failed' = 'failed'
+    try {
+      const result = await run()
+      outcome = 'completed'
+      return result
+    } finally {
+      logPluginRefreshPhase(`${phase}-end`, {
+        request: options.diagnosticRequest,
+        elapsedMs: Date.now() - start,
+        outcome,
+      })
+    }
+  }
   // This also checks runtime support before sending a mutating request.
   if (!options.isCurrent()) return
   options.onProgress?.('reading')
-  await options.readStore()
+  await measure('reconcile-inventory', options.readStore)
   if (!options.isCurrent()) return
   options.onProgress?.('syncing')
-  const response = await options.sync()
+  const response = await measure('reconcile-sync', options.sync)
   if (!options.isCurrent()) return
   if (
     !response.reconciled ||
@@ -58,7 +76,9 @@ export async function reconcilePluginRefresh(options: {
   }
   options.onProgress?.('verifying')
   options.invalidate()
-  const [cloud, store] = await Promise.all([options.readCloud(), options.readStore()])
+  const [cloud, store] = await measure('reconcile-readback', () =>
+    Promise.all([options.readCloud(), options.readStore()])
+  )
   if (!options.isCurrent()) return
   verifyReconciledPluginInventory(cloud, store)
 }

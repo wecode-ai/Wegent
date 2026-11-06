@@ -82,7 +82,7 @@ it('opens the shared weekly review template as an unsaved Monday draft', async (
   expect(mocks.onboarding).toHaveBeenCalledWith(7, 'local', expect.any(String))
 })
 
-it('opens an existing review rather than preparing a duplicate', async () => {
+it('shows an existing review once and opens it from the list', async () => {
   const review = entry('existing-review', '@primary')
   review.taskRequest!.standInCalendar = { template: 'weekly_review' }
   mocks.listAutomations.mockResolvedValueOnce({ items: [review] })
@@ -94,7 +94,9 @@ it('opens an existing review rather than preparing a duplicate', async () => {
       standInDeviceId="local"
     />
   )
-  await userEvent.click(await screen.findByTestId('stand-in-weekly-review-template'))
+  const reviewEntry = await screen.findByTestId('automation-open-existing-review')
+  expect(screen.queryByTestId('stand-in-weekly-review-template')).not.toBeInTheDocument()
+  await userEvent.click(reviewEntry)
   expect(await screen.findByTestId('automation-name-input')).toHaveValue('existing-review')
   expect(mocks.onboarding).not.toHaveBeenCalled()
 })

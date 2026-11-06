@@ -8,6 +8,7 @@ export function developmentBuildInputs({
   files,
   excluded,
   readDirectory = readdirSync,
+  onDirectory,
 }) {
   const versions = new Map()
   const collect = (filename, directory, snapshot) => {
@@ -20,6 +21,7 @@ export function developmentBuildInputs({
       throw error
     }
     if (stat.isDirectory()) {
+      onDirectory?.(filename, directory, stat)
       let names
       try {
         names = readDirectory(filename)

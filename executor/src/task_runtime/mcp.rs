@@ -34,7 +34,9 @@ use super::{
 };
 
 mod comments;
+pub(crate) mod connection_context;
 mod context;
+pub(crate) mod git_connections;
 mod parent_issue;
 mod stand_in;
 pub(crate) mod stand_in_tasks;
@@ -413,6 +415,16 @@ pub(crate) async fn handle_request_with_context(
                 tools.len(),
                 names,
             ));
+            if context
+                .stand_in
+                .as_ref()
+                .is_some_and(|identity| identity.coordinator_batch.is_some())
+            {
+                write_space_mcp_log(&format!(
+                    "[wework-space-mcp] stage=coordinator_tool_contracts contracts={}",
+                    stand_in::tool_contract_diagnostics(&tools),
+                ));
+            }
             result_response(id, json!({"tools": tools}))
         }),
         "tools/call" => {

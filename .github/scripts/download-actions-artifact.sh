@@ -37,6 +37,7 @@ request() {
     --connect-timeout 10 \
     --header "Authorization: Bearer $token" \
     --header "Accept: application/vnd.github+json" \
+    --header "Cache-Control: no-cache" \
     --header "X-GitHub-Api-Version: 2022-11-28" \
     "$@"
 }
@@ -81,6 +82,7 @@ artifact_id=""
 while [[ -z "$artifact_id" ]]; do
   polls=$((polls + 1))
   source_run_status=""
+  producer_state="untracked"
   producer_ready=true
   if [[ -n "$source_workflow" ]]; then
     runs_json="$(request \
@@ -146,6 +148,11 @@ if matches:
   fi
   if [[ -n "$artifact_id" ]]; then
     break
+  fi
+  if ((polls == 1 || polls % 15 == 0)); then
+    printf '[actions-artifact] name=%s run=%s phase=discovery-pending producer=%s state=%s ready=%s seconds=%s polls=%s\n' \
+      "$artifact_name" "$run_id" "$source_job" "$producer_state" "$producer_ready" \
+      "$((SECONDS - discovery_started))" "$polls" >&2
   fi
   if [[ "$source_run_status" == "completed" ]]; then
     echo "Workflow $source_workflow run $run_id completed without artifact $artifact_name for $source_head_sha" >&2
