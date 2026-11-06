@@ -13,6 +13,96 @@ pub(super) fn planned_files(
     timestamp: &str,
     previous_states: &Value,
 ) -> Result<BTreeMap<PathBuf, Vec<u8>>, CapabilitySyncError> {
+    plan_files(
+        store,
+        spec,
+        template,
+        staging,
+        timestamp,
+        previous_states,
+        true,
+    )
+}
+
+pub(super) fn metadata_matches(
+    store: &GlobalCapabilityStore,
+    spec: &PluginSyncSpec,
+    previous_states: &Value,
+) -> Result<bool, CapabilitySyncError> {
+    let staging = tempfile::tempdir()?;
+    let files = plan_files(
+        store,
+        spec,
+        &store.plugin_codex_link(spec),
+        staging.path(),
+        "0",
+        previous_states,
+        false,
+    )?;
+    for (path, expected) in files {
+        let actual = fs::read(&path)?;
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            if normalized_metadata(store, spec, &path, &actual)?
+                != normalized_metadata(store, spec, &path, &expected)?
+            {
+                return Ok(false);
+            }
+        } else if actual != expected {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn normalized_metadata(
+    store: &GlobalCapabilityStore,
+    spec: &PluginSyncSpec,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<Value, CapabilitySyncError> {
+    let mut document: Value = serde_json::from_slice(bytes)?;
+    if path.ends_with("marketplace.json") {
+        if let Some(plugins) = document.get_mut("plugins").and_then(Value::as_array_mut) {
+            plugins.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+        }
+    }
+    if path == store.plugins_dir.join("installed_plugins.json") {
+        if let Some(entries) = document
+            .get_mut("plugins")
+            .and_then(|plugins| plugins.get_mut(&spec.key))
+            .and_then(Value::as_array_mut)
+        {
+            for entry in entries {
+                if let Some(entry) = entry.as_object_mut() {
+                    entry.remove("installedAt");
+                    entry.remove("lastUpdated");
+                }
+            }
+        }
+    }
+    if path == store.plugins_dir.join("known_marketplaces.json") {
+        if let Some(entry) = document
+            .get_mut(&spec.marketplace)
+            .and_then(Value::as_object_mut)
+        {
+            entry.remove("lastUpdated");
+        }
+    }
+    Ok(document)
+}
+
+fn plan_files(
+    store: &GlobalCapabilityStore,
+    spec: &PluginSyncSpec,
+    template: &Path,
+    staging: &Path,
+    timestamp: &str,
+    previous_states: &Value,
+    copy_runtime: bool,
+) -> Result<BTreeMap<PathBuf, Vec<u8>>, CapabilitySyncError> {
     let plan = staging.join("planned");
     let mut isolated = store.clone();
     isolated.manifest = ManagedCapabilityManifest::new(plan.join("state/manifest-v2.json"));
@@ -56,21 +146,30 @@ pub(super) fn planned_files(
         if file.is_file() {
             let target = project(file)?;
             fs::create_dir_all(target.parent().unwrap())?;
-            let input = map_metadata_content(file, &fs::read_to_string(file)?, &to_isolated)?;
+            let input = if copy_runtime {
+                map_metadata_content(file, &fs::read_to_string(file)?, &to_isolated)?
+            } else {
+                fs::read(file)?
+            };
             fs::write(target, input)?;
         }
     }
+    let reused = if copy_runtime {
+        BTreeSet::new()
+    } else {
+        isolated.runtime_state_paths(spec).1.into_iter().collect()
+    };
     if !store.codex_only_plugins {
-        isolated.install_claude_plugin_runtime_metadata_at(
-            spec,
-            template,
-            timestamp,
-            &BTreeSet::new(),
-        )?;
+        isolated.install_claude_plugin_runtime_metadata_at(spec, template, timestamp, &reused)?;
     }
     let codex = isolated.plugin_codex_link(spec);
-    copy_dir_atomic(template, &codex)?;
-    isolated.install_codex_marketplace_metadata(spec, &codex, previous_states, &BTreeSet::new())?;
+    let runtime = if copy_runtime {
+        copy_dir_atomic(template, &codex)?;
+        &codex
+    } else {
+        template
+    };
+    isolated.install_codex_marketplace_metadata(spec, runtime, previous_states, &reused)?;
     let mut result = BTreeMap::new();
     for file in files {
         let content = fs::read_to_string(project(&file)?)?;

@@ -34,6 +34,7 @@ import { createSharedCodexAppCatalog } from './codexAppCatalog'
 import { createSharedRemotePluginCatalog } from './codexRemoteCatalog'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
+import { createPluginDetailCache, type PluginDetailReadOptions } from './codexPluginDetails'
 import {
   createVersionedInstalledCatalog,
   ExpiredPluginInventoryRequest,
@@ -298,7 +299,8 @@ export interface LocalCodexPluginApi {
   }): Promise<LocalCodexPluginsState>
   readMarketplacePluginDetail(
     marketplace: LocalCodexMarketplace,
-    pluginName: string
+    pluginName: string,
+    options?: PluginDetailReadOptions
   ): Promise<InstalledPlugin>
   readRemoteCatalog(options?: {
     forceRefetch?: boolean
@@ -328,7 +330,10 @@ export interface LocalCodexPluginApi {
    * Enrich one installed summary via `plugin/read` only. Never calls `plugin/list`
    * / full `readState` — safe for composer send preflight.
    */
-  readInstalledPluginDetail(plugin: InstalledPlugin): Promise<InstalledPlugin>
+  readInstalledPluginDetail(
+    plugin: InstalledPlugin,
+    options?: PluginDetailReadOptions
+  ): Promise<InstalledPlugin>
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
@@ -419,6 +424,7 @@ let inflightWegentStoreList: Promise<InstalledPlugin[]> | null = null
 let didHydrateReadStateSession = false
 let warmupReadStatePromise: Promise<LocalCodexPluginsState> | null = null
 const appCatalog = createSharedCodexAppCatalog(codexAppServerRequest)
+const pluginDetails = createPluginDetailCache<CodexPluginDetail>()
 
 type PersistedReadStateEntry = {
   paramsKey: string
@@ -439,6 +445,7 @@ export function clearLocalCodexPluginsReadStateCache(): void {
 }
 
 function invalidateReadState(deviceId: string | null = null): void {
+  pluginDetails.invalidate()
   installedReadRevision += 1
   activeInventoryMutationVersion = getPluginInventoryMutationVersion()
   installedCatalog.invalidate()
@@ -787,6 +794,7 @@ function readStateMatchesDevice(
 
 function resetInMemoryReadStateForDevice(deviceId: string): void {
   if (activeReadStateDeviceId === deviceId) return
+  pluginDetails.invalidate()
   installedReadRevision += 1
   activeInstalledIdentity = undefined
   lastVerifiedInstalledScope = undefined
@@ -1903,6 +1911,34 @@ function withInitializedBundledMarketplace(
 
 async function readPluginDetail(
   marketplace: LocalCodexMarketplace,
+  pluginName: string,
+  options: PluginDetailReadOptions = {}
+): Promise<CodexPluginDetail> {
+  const scope = await captureInstalledReadScope()
+  const accountEpoch = getPluginMarketplaceAccountEpoch()
+  const identity = JSON.stringify([scope, accountEpoch])
+  const key = JSON.stringify([
+    marketplace.id,
+    marketplace.path,
+    pluginName,
+    options.version ?? null,
+  ])
+  return pluginDetails.read(
+    identity,
+    key,
+    async () => {
+      const detail = await loadPluginDetail(marketplace, pluginName)
+      await verifyInstalledReadCurrent(scope)
+      if (accountEpoch !== getPluginMarketplaceAccountEpoch())
+        throw new ExpiredPluginInventoryRequest()
+      return detail
+    },
+    options.refresh
+  )
+}
+
+async function loadPluginDetail(
+  marketplace: LocalCodexMarketplace,
   pluginName: string
 ): Promise<CodexPluginDetail> {
   const localMarketplace = isLocalMarketplacePath(marketplace.path)
@@ -2671,7 +2707,10 @@ function rememberInstalledPluginDetail(
  * Expand one installed membership summary with `plugin/read` (+ local manifest
  * connectors). Does not call `plugin/list` / full marketplace `readState`.
  */
-async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<InstalledPlugin> {
+async function readDetailForInstalledPlugin(
+  plugin: InstalledPlugin,
+  options: PluginDetailReadOptions = {}
+): Promise<InstalledPlugin> {
   const scope = pluginDetailCacheScope()
   const marketplace = marketplaceEntryFromInstalledPlugin(plugin)
   const pluginName = pluginNameFromInstalledPlugin(plugin)
@@ -2686,7 +2725,11 @@ async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<In
       name: marketplace.name,
       path: marketplace.path ?? marketplace.name,
     },
-    pluginName
+    pluginName,
+    {
+      ...options,
+      version: options.version ?? JSON.stringify([plugin.spec.version, plugin.spec.releaseId]),
+    }
   )
   const detailed = toInstalledPlugin(
     marketplace,
@@ -3266,7 +3309,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         }
       })
     },
-    async readMarketplacePluginDetail(marketplace, pluginName) {
+    async readMarketplacePluginDetail(marketplace, pluginName, options) {
       if (!isDesktopRuntime()) {
         throw new Error('Reading local plugin detail requires the Wework desktop app')
       }
@@ -3285,7 +3328,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         throw new Error('Local plugin marketplace path is unavailable')
       }
       const scope = pluginDetailCacheScope()
-      const detail = await readPluginDetail(marketplaceMeta, normalizedPluginName)
+      const detail = await readPluginDetail(marketplaceMeta, normalizedPluginName, options)
       const detailed = toInstalledPlugin(
         {
           name: marketplaceMeta.id,
@@ -3387,8 +3430,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     rememberMarketplaceSelection(id) {
       rememberSelectedMarketplaceId(id)
     },
-    async readInstalledPluginDetail(plugin) {
-      return readDetailForInstalledPlugin(plugin)
+    async readInstalledPluginDetail(plugin, options) {
+      return readDetailForInstalledPlugin(plugin, options)
     },
     async readInstalledPluginForTrial(id) {
       const findInstalled = (plugins: InstalledPlugin[]) =>

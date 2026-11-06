@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from './shared.mjs'
 import { openComposerPluginPicker } from './conversation-layout.mjs'
 import { holdPluginWriteLease } from './plugin-write-lease.mjs'
+import { verifyConcurrentPluginPreparation } from './plugin-concurrent-preparation.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -21,6 +22,7 @@ export async function verifyPluginWriteCoordination({
   control,
   apiProxy,
   deviceProxy,
+  packageProxy,
   localDeviceId,
   evidence,
   timeoutMs,
@@ -199,6 +201,14 @@ export async function verifyPluginWriteCoordination({
     item: { ...acknowledged, installedId },
     remoteHome,
     refreshSurfaces,
+    evidence,
+    timeoutMs,
+  })
+  await verifyConcurrentPluginPreparation({
+    cloud,
+    control,
+    packageProxy,
+    remoteHome,
     evidence,
     timeoutMs,
   })

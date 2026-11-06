@@ -1,3 +1,14 @@
+export async function sendStandInNotificationFollowUp(control, content, prompt) {
+  const pane = `${content} [data-active-workbench-pane="true"]`
+  const composer = `${pane} [data-testid="chat-message-input"][contenteditable="true"]`
+  await control.command('waitFor', composer, { visible: true })
+  await control.command('fill', composer, { value: prompt })
+  // This flow verifies session routing; IME Enter handling has separate coverage.
+  await control.command('clickWhenEnabled', `${pane} [data-testid="send-message-button"]`, {
+    visible: true,
+  })
+}
+
 /** Open the project picker, follow the explicit link into personal settings. */
 export async function openProjectStandIn(
   control,
