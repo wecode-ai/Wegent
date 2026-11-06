@@ -99,9 +99,19 @@ impl RuntimeWorkRpcHandler {
             .map(|(_, thread, _)| thread.clone())
             .or_else(|| self.local_task_link(&task).and_then(|link| link.thread_id));
         if let Some(thread) = thread {
-            let state = self.read_codex_recent_turns(&thread).await.map_err(|_| AppIpcError::new(
-                "command_resolution_unavailable", "The original native execution could not be checked. It has not been retried or abandoned."))?;
-            if !state.is_idle() {
+            let state = self
+                .read_codex_recent_turns(&thread)
+                .await
+                .map_err(|_| unavailable())?;
+            if !state.is_inactive_for_owner_resolution() {
+                if !state.has_active_owner_resolution_control() {
+                    self.log_command_resolution_control(
+                        &task,
+                        "native-control-unavailable",
+                        Some(state.diagnostic_summary()),
+                    );
+                    return Err(unavailable());
+                }
                 return Err(self.command_resolution_active(
                     &task,
                     "native-control",
@@ -180,11 +190,7 @@ impl RuntimeWorkRpcHandler {
             .lock()
             .expect("preparation map poisoned")
             .contains_key(task);
-        let goal = self
-            .active_goal_turns
-            .lock()
-            .expect("active goal map poisoned")
-            .contains_key(task);
+        let goal = self.command_resolution_has_goal(task);
         log_executor_event(
             "Runtime owner resolution control",
             &[
@@ -198,13 +204,18 @@ impl RuntimeWorkRpcHandler {
         );
     }
 
-    fn command_resolution_is_busy(&self, task: &str) -> bool {
-        self.is_busy_local_task(task)
+    fn command_resolution_has_goal(&self, task: &str) -> bool {
+        self.active_goal_turns
+            .lock()
+            .expect("active goal map poisoned")
+            .contains_key(task)
             || self
-                .active_goal_turns
-                .lock()
-                .expect("active goal map poisoned")
-                .contains_key(task)
+                .local_task_link(task)
+                .is_some_and(|link| link.goal_status.as_deref() == Some("active"))
+    }
+
+    fn command_resolution_is_busy(&self, task: &str) -> bool {
+        self.is_busy_local_task(task) || self.command_resolution_has_goal(task)
     }
 
     fn check_command_resolution_owner(
@@ -239,6 +250,13 @@ impl RuntimeWorkRpcHandler {
 
 fn active() -> AppIpcError {
     AppIpcError::new("command_resolution_active", "The original execution is still active. Stop it through the native task controls before reviewing its result.")
+}
+
+fn unavailable() -> AppIpcError {
+    AppIpcError::new(
+        "command_resolution_unavailable",
+        "The original native execution could not be checked. It has not been retried or abandoned.",
+    )
 }
 
 #[cfg(test)]

@@ -211,7 +211,7 @@ Linux 桌面 E2E 容器必须允许原生 Codex 创建用户和挂载命名空�
 
 重启后按具体 thread 和 turn 核对原生 timeline 的真实完成边界。`thread/turns/list` 可能合成 `interrupted`，单独这一状态不足以证明已取消。无法确认执行事实时返回 `recovery_required`，保留待核对请求，要求在原工作检查状态，不自动重发。Goal 的自主恢复不重新提交原用户命令；真实执行结果和 generation 决定命令收尾，迟到回调不得结算后续命令。
 
-如果真实原生命令结果仍未知且已无活跃 runner，设备 owner 可通过正式审查流程放弃这次未知执行：先用 `runtime.tasks.commands.get` 获取当前 `commandFingerprint`、精确 `native` 三元组及请求时间，再调用 `runtime.tasks.commands.resolve`，传入 `{ taskId, commandId, userId, expectedFingerprint, expectedNative, decision: "abandon", requestId }`。`userId` 只是查询选择器，不授予权限；请求走与停止任务相同的受控设备写通道，并重新核验登录账号、原命令与当前任务的 owner 和设备。缺失设备归属、执行仍活跃、审查后指纹或原生执行变化时均拒绝。
+如果真实原生命令结果仍未知且已无活跃 runner，设备 owner 可通过正式审查流程放弃这次未知执行：先用 `runtime.tasks.commands.get` 获取当前 `commandFingerprint`、精确 `native` 三元组及请求时间，再调用 `runtime.tasks.commands.resolve`，传入 `{ taskId, commandId, userId, expectedFingerprint, expectedNative, decision: "abandon", requestId }`。`userId` 只是查询选择器，不授予权限；请求走与停止任务相同的受控设备写通道，并重新核验登录账号、原命令与当前任务的 owner 和设备。缺失设备归属、执行仍活跃、审查后指纹或原生执行变化时均拒绝。 原生明确的 `notLoaded` 只可证明当前没有加载的 runner，不能证明历史 turn 已完成；仅此 owner 决定流程可在本地 active、queued、preparing、Goal 和已知 transition 均不存在时采用这一事实。无法核验的原生状态仍拒绝放弃，停止任务和历史完成判定仍沿用原有规则。
 
 底层命令继续保留 `recovery_required`，owner 的放弃决定单独持久化；公共回执将这一组合投影为 `abandoned`。旧读取器忽略新增可选决定字段后，仍按未知结果拒绝重放。`abandoned` 回执保留 `nativeOutcome: "unknown"`、原 command/thread/turn 和 owner 决定；它不表示原生执行完成、取消或任何对外操作成功。同一 `requestId` 可幂等读取原决定；原 `commandId` 永远不能重放。决定先与加密命令队列原子持久。协调器随后只消费该正式回执，将对应旧 assessment 记为 owner 放弃，并在同一事务清理该批次的恢复门禁；已有业务 actions 和 receipts 不回滚，尚未处理事件留给新批次。界面确认后检查处理状态，若这一步中断，重启后仍可消费持久回执继续，不需要再次放弃或重发旧命令。
 

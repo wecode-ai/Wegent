@@ -335,3 +335,134 @@ async fn abandoned_receipt_retires_only_original_assessment_after_restart_withou
     assert_eq!(store.stand_in_actions(7).unwrap(), retired);
     cleanup(&handler, root).await;
 }
+
+#[tokio::test]
+async fn native_unloaded_owner_resolution_preserves_unknown_history_and_original_binding() {
+    let (handler, root, _, resolve) = fixture("owner-resolution-native-unloaded");
+    fs::write(
+        root.join("thread_read.json"),
+        json!({"thread":{"id":"thread-1","status":{"type":"notLoaded"}}}).to_string(),
+    )
+    .unwrap();
+    let native = handler.read_codex_recent_turns("thread-1").await.unwrap();
+    assert_eq!(native.diagnostic_summary()["runtimeStatus"], "notLoaded");
+    assert_eq!(
+        native.diagnostic_summary()["latestTurnStatus"],
+        "interrupted"
+    );
+    assert_eq!(native.diagnostic_summary()["derivedActivity"], "Unknown");
+    assert!(!native.is_idle());
+    assert_eq!(native.terminal_task_status(), None);
+    let receipt = handler
+        .dispatch_method("runtime.tasks.commands.resolve", resolve.clone())
+        .await
+        .unwrap();
+    assert_eq!(receipt["state"], "abandoned");
+    assert_eq!(receipt["nativeOutcome"], "unknown");
+    assert_eq!(receipt["native"], resolve["expectedNative"]);
+    assert_eq!(
+        handler.command_journal.lock().unwrap()[&key("task-1", "command")].state,
+        CommandState::RecoveryRequired
+    );
+    let requests = fs::read_to_string(root.join("requests.jsonl")).unwrap();
+    assert!(requests.lines().all(|line| !matches!(
+        serde_json::from_str::<Value>(line).unwrap()["method"].as_str(),
+        Some("turn/start" | "turn/interrupt")
+    )));
+    cleanup(&handler, root).await;
+}
+
+#[tokio::test]
+async fn native_owner_resolution_rejects_positive_activity_and_unavailable_runtime_status() {
+    for (index, status, expected) in [
+        (0, Some("active"), "command_resolution_active"),
+        (1, Some("systemError"), "command_resolution_unavailable"),
+        (2, Some("unrecognized"), "command_resolution_unavailable"),
+        (3, None, "command_resolution_unavailable"),
+    ] {
+        let (handler, root, _, resolve) = fixture(&format!("owner-resolution-runtime-{index}"));
+        let mut thread = json!({"id":"thread-1"});
+        if let Some(status) = status {
+            thread["status"] = json!({"type":status});
+        }
+        fs::write(
+            root.join("thread_read.json"),
+            json!({"thread":thread}).to_string(),
+        )
+        .unwrap();
+        if status.is_none() {
+            fs::write(root.join("thread_turns_list.json"),json!({"data":[{"id":"current","status":"inProgress","items":[]}],"nextCursor":null}).to_string()).unwrap();
+        }
+        assert_eq!(
+            handler
+                .resolve_command_owner(resolve)
+                .await
+                .unwrap_err()
+                .code,
+            expected
+        );
+        let command = handler.command_journal.lock().unwrap()[&key("task-1", "command")].clone();
+        assert_eq!(command.state, CommandState::RecoveryRequired);
+        assert!(command.owner_resolution.is_none());
+        cleanup(&handler, root).await;
+    }
+}
+
+#[tokio::test]
+async fn unloaded_native_does_not_bypass_local_goal_or_queued_admission() {
+    let (handler, root, turn, resolve) = fixture("owner-resolution-unloaded-local-admission");
+    fs::write(
+        root.join("thread_read.json"),
+        json!({"thread":{"id":"thread-1","status":{"type":"notLoaded"}}}).to_string(),
+    )
+    .unwrap();
+    handler
+        .active_goal_turns
+        .lock()
+        .unwrap()
+        .insert("task-1".into(), turn.clone());
+    assert_eq!(
+        handler
+            .resolve_command_owner(resolve.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "command_resolution_active"
+    );
+    handler.active_goal_turns.lock().unwrap().clear();
+    handler
+        .store
+        .update_task("task-1", |link| link.goal_status = Some("active".into()));
+    assert_eq!(
+        handler
+            .resolve_command_owner(resolve.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "command_resolution_active"
+    );
+    handler
+        .store
+        .update_task("task-1", |link| link.goal_status = None);
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .queued_turns
+        .push_back(turn);
+    assert_eq!(
+        handler
+            .resolve_command_owner(resolve)
+            .await
+            .unwrap_err()
+            .code,
+        "command_resolution_active"
+    );
+    handler.turn_scheduler.lock().unwrap().queued_turns.clear();
+    assert!(
+        handler.command_journal.lock().unwrap()[&key("task-1", "command")]
+            .owner_resolution
+            .is_none()
+    );
+    cleanup(&handler, root).await;
+}
