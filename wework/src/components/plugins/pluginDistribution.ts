@@ -2,10 +2,16 @@ import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import {
   isInternalDeviceMarketplaceId,
   isOpenAiOfficialMarketplaceId,
+  isWegentCloudMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 
 export type PluginDistribution = 'official' | 'workspace' | 'personal' | 'public' | 'external'
+
+export function normalizedMarketplaceId(value: string | null | undefined): string {
+  const trimmed = (value ?? '').trim().toLowerCase()
+  return isWegentCloudMarketplaceId(trimmed) ? 'wegent' : trimmed
+}
 
 export function isOfficialMarketplacePlugin(plugin: PluginMarketplaceItem): boolean {
   const distribution = marketplacePluginDistribution(plugin)

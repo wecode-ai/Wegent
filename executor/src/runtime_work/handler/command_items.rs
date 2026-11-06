@@ -17,7 +17,11 @@ pub(super) fn merge_codex_command_item(existing: &Value, mut incoming: Value) ->
     incoming
 }
 
-pub(super) fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {
+pub(super) fn merge_codex_turn_items(
+    turn: &mut Value,
+    active_items: Vec<Value>,
+    observed_order: &[String],
+) {
     let Some(turn_object) = turn.as_object_mut() else {
         return;
     };
@@ -30,25 +34,63 @@ pub(super) fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>)
     let items = items
         .as_array_mut()
         .expect("turn items were normalized to an array");
-    for active_item in active_items {
-        let Some(item_id) = string_field(&active_item, "id") else {
-            continue;
-        };
-        if let Some(existing) = items
-            .iter_mut()
-            .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
-        {
-            let position = existing.get("position").cloned();
-            *existing = merge_codex_command_item(existing, active_item);
-            if let Some(position) = position {
-                existing["position"] = position;
-            }
+    let existing_ids: HashSet<_> = items
+        .iter()
+        .filter_map(|item| string_field(item, "id"))
+        .collect();
+    let mut next_native_id = None;
+    let mut anchors = HashMap::new();
+    for id in observed_order.iter().rev() {
+        if existing_ids.contains(id) {
+            next_native_id = Some(id.clone());
         } else {
-            items.push(active_item);
+            anchors.insert(id.clone(), next_native_id.clone());
         }
     }
+    let mut updates = HashMap::new();
+    let mut before = HashMap::<Option<String>, Vec<Value>>::new();
+    for item in active_items {
+        let Some(id) = string_field(&item, "id") else {
+            continue;
+        };
+        if existing_ids.contains(&id) {
+            updates.insert(id, item);
+        } else {
+            before
+                .entry(anchors.remove(&id).flatten())
+                .or_default()
+                .push(item);
+        }
+    }
+    // A preempted response may never reach native history. Keep it before the
+    // next observed native item instead of appending it after newer guidance.
+    *items = merge_items_at_native_anchors(std::mem::take(items), updates, before);
     // Live notifications do not fill gaps in a paginated historical turn.
     turn_object
         .entry("itemsView".to_owned())
         .or_insert_with(|| Value::String("full".to_owned()));
+}
+
+fn merge_items_at_native_anchors(
+    items: Vec<Value>,
+    mut updates: HashMap<String, Value>,
+    mut before: HashMap<Option<String>, Vec<Value>>,
+) -> Vec<Value> {
+    let mut merged = Vec::new();
+    for mut item in items {
+        let id = string_field(&item, "id");
+        if let Some(additions) = before.remove(&id) {
+            merged.extend(additions);
+        }
+        if let Some(update) = id.and_then(|id| updates.remove(&id)) {
+            let position = item.get("position").cloned();
+            item = merge_codex_command_item(&item, update);
+            if let Some(position) = position {
+                item["position"] = position;
+            }
+        }
+        merged.push(item);
+    }
+    merged.extend(before.remove(&None).into_iter().flatten());
+    merged
 }

@@ -277,8 +277,12 @@ impl RuntimeWorkRpcHandler {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            let observed_order = completed_items
+                .iter()
+                .filter_map(|item| string_field(item, "id"))
+                .collect::<Vec<_>>();
             turn["items"] = Value::Array(active.items);
-            merge_codex_turn_items(&mut turn, completed_items);
+            merge_codex_turn_items(&mut turn, completed_items, &observed_order);
         }
         let thread_id = string_field(notification.params, "threadId")
             .or_else(|| {
@@ -546,9 +550,13 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         };
         let mut active_items = Vec::new();
+        let mut observed_order = Vec::new();
         if let Some(active) = active.filter(|active| active.turn_id == turn_id) {
             for item in &active.items {
                 checkpoint()?;
+                if let Some(id) = string_field(item, "id") {
+                    observed_order.push(id);
+                }
                 // Historical bodies are already covered by the bounded native page.
                 if !positioned || item["lifecycleCompleted"] != true {
                     active_items.push(item.clone());
@@ -589,7 +597,7 @@ impl RuntimeWorkRpcHandler {
                     })
                 })
                 .collect();
-            merge_codex_turn_items(turn, active_items);
+            merge_codex_turn_items(turn, active_items, &observed_order);
             return Ok(());
         }
         if active_items.is_empty() {

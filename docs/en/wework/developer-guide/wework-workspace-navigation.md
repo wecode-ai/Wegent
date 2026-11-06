@@ -24,6 +24,25 @@ Settings temporarily replace the surface and retain the return location.
 Routes containing `workspaceTab` explicitly address a tab and bypass navigation
 events. Non-workspace routes such as login retain page navigation.
 
+## Reading conversation state
+
+The conversation cache owns messages, goals, plans, subagent status, and the send queue.
+Composers read these values through external-store subscriptions instead of copying them
+into another set of component states. Empty queue snapshots retain their identity, so
+ordinary progress blocks do not change queue state. Message rendering keeps its frame
+subscription; edit, retry, and question-response actions read the latest cached messages
+rather than a view snapshot that has not refreshed yet.
+
+## Restoring fixed tab titles
+
+The default collaboration tab displays “Collaboration” without a Beta suffix.
+Session tabs and fixed-tab preferences share `normalizePersistedTab` to update
+legacy titles, both on initial load and when preferences load asynchronously.
+Only built-in legacy titles pointing to the collaboration home are updated;
+custom titles for specific projects remain unchanged.
+`WorkspaceTabsContext.test.tsx` covers legacy Chinese and English titles,
+startup restoration, and asynchronous fixed-tab loading.
+
 ## Regression verification
 
 The `notification-tab-navigation` desktop checkpoint runs in GitHub Core shards.

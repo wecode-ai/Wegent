@@ -100,6 +100,7 @@ import { createStreamingContentChecks } from '../modules/streaming-text-content.
 import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
 import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
 import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
+import { createStreamingGuidanceOrderChecks } from '../modules/streaming-text-guidance-order.mjs'
 import { createInteractiveVisualizationChecks } from '../modules/streaming-interactive-visualization.mjs'
 import { createVisualizationScrollChecks } from '../modules/streaming-visualization-scroll.mjs'
 
@@ -117,7 +118,8 @@ export function createDesktopScenario({
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
-  const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
+  const guidanceOrder = createStreamingGuidanceOrderChecks({ resultDir, uiTimeoutMs })
+  const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
   const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
   const richTaskSwitch = createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqliteHome })
   const composerLayout = createComposerLayoutChecks({ workspacePath, resultDir, uiTimeoutMs })
@@ -284,18 +286,15 @@ export function createDesktopScenario({
     releaseResponse,
   })
   return {
+    cleanup() {
+      guidanceOrder.cleanup()
+    },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     modelProviderAuthToml: '',
     modelProviderConfigToml:
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
-      ...(checkpoint === 'streaming-conversation-switching'
-        ? {
-            WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
-            WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT: '3',
-          }
-        : {}),
     },
 
     async prepareApp({ appEnvironment, codexHome }) {
@@ -310,6 +309,9 @@ export function createDesktopScenario({
       // Rendering assertions exercise direct tools with the shared fixture label.
       model.tool_mode = 'direct'
       model.use_responses_lite = false
+      model.experimental_supported_tools = [
+        ...new Set([...(model.experimental_supported_tools ?? []), 'request_user_input_async']),
+      ]
       model.display_name = DEFAULT_MODEL_LABEL
       const catalogPath = join(codexHome, 'rendering-model-catalog.json')
       await writeFile(catalogPath, JSON.stringify(catalog))
@@ -350,6 +352,7 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
+      if (await guidanceOrder.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
       if (await composerLayout.handleModelRequest(body, response, responseId)) return true
@@ -921,6 +924,7 @@ export function createDesktopScenario({
             await interactiveVisualization.verify(control)
             await visualizationScroll.verify(control)
             await transcriptIdentity.verify(control)
+            await guidanceOrder.verify(control)
           },
         ],
         [
