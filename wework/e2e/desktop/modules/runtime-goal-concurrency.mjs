@@ -13,6 +13,7 @@ const PREFIX = 'WEWORK_GOAL_CONCURRENCY_'
 
 export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }) {
   const requests = []
+  const replacementRequests = new Set()
   const releases = []
   const taskIds = ['goal-concurrency-owner', 'goal-concurrency-waiter']
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
@@ -24,6 +25,7 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
       const index = requests.length
       const held = new Promise(resolve => releases.push(resolve))
       requests.push(taskId)
+      if (text.includes(`${PREFIX}${taskIds[0]}_replacement`)) replacementRequests.add(index)
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.write(createSse([responseCreated(`goal-concurrency-${index}`)]))
       response.flushHeaders()
@@ -40,6 +42,9 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
     cleanup() {
       for (const release of releases) release()
     },
+    diagnostics() {
+      return { requests, replacementRequests: [...replacementRequests] }
+    },
     async verify(control) {
       const original = await rpc(control, 'runtime.settings.get', {})
       const catalog = await rpc(control, 'runtime.runner.catalog', {})
@@ -54,7 +59,7 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
           uiTimeoutMs
         )
       const submit = async (method, taskId, suffix, extra = {}) => {
-        const prompt = `${PREFIX}${taskId}`
+        const prompt = `${PREFIX}${taskId}_${suffix}`
         const result = await rpc(control, method, {
           taskId,
           title: prompt,
@@ -66,7 +71,7 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
             subtask_id: `${taskId}-${suffix}`,
             user_id: 9001,
             prompt,
-            // Distinct policy snapshots force the real cold-resume path on every platform.
+            // Exercise policy reload while preserving native Goal continuation semantics.
             system_prompt: `Goal concurrency fixture ${suffix}`,
             new_session: method === 'runtime.tasks.create',
             bot: [{ shell_type: 'Codex', name: 'Goal concurrency verification' }],
@@ -159,13 +164,28 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
           status: 'complete',
         })
         assert.equal(finished.success, true)
-        releases[5]()
         // Cold resume may run the Goal before the explicitly submitted input.
-        // Both native turns belong to this task and must retain its one slot.
-        await waitRequests(7)
-        assert.deepEqual(requests, [...expected, taskIds[0], taskIds[0]])
+        // Identify actual input delivery rather than assuming a platform's turn count.
+        const replacementIndex = await waitForValue(
+          async () => {
+            for (let index = expected.length; index < requests.length; index++) {
+              if (!replacementRequests.has(index)) releases[index]()
+            }
+            return [...replacementRequests].find(index => index >= expected.length)
+          },
+          index => typeof index === 'number',
+          'The queued replacement input never reached the real model',
+          uiTimeoutMs
+        )
+        assert.deepEqual(requests.slice(0, expected.length), expected)
+        assert.ok(requests.slice(expected.length).every(taskId => taskId === taskIds[0]))
+        assert.equal(
+          replacementRequests.size,
+          1,
+          'The replacement input was submitted more than once'
+        )
         assert.deepEqual((await capacity()).categories.personal.active_task_ids, [taskIds[0]])
-        releases[6]()
+        releases[replacementIndex]()
         for (const taskId of taskIds)
           await waitForCompletedRuntimeTaskThread(control, taskId, uiTimeoutMs)
         await waitForValue(

@@ -956,7 +956,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     },
 
     diagnostics() {
-      return { active, requests, cancelledRequests }
+      return { active, requests, cancelledRequests, goalConcurrency: goalConcurrency.diagnostics() }
     },
   }
 }
