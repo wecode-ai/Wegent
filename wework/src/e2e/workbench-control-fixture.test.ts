@@ -34,16 +34,21 @@ vi.mock('../../e2e/desktop/modules/transport-fault-proxy.mjs', () => ({
   },
 }))
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.clearAllMocks()
+})
 
 async function prepareFixture({
   waitError,
   role = 'executor',
   modelResponseTimeoutMs = 180000,
+  appDeviceType = 'app',
 }: {
   waitError?: Error
   role?: string
   modelResponseTimeoutMs?: number
+  appDeviceType?: string
 }) {
   const workspacePath = '/fixture/exact-remote-workspace'
   const origin = {
@@ -64,10 +69,21 @@ async function prepareFixture({
     return summary
   })
   const requests: Array<{ path: string; body: Record<string, unknown> | undefined }> = []
+  const uploads: File[] = []
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, options?: RequestInit) => {
       const path = new URL(url).pathname
+      if (options?.body instanceof FormData) {
+        expect(path).toBe('/api/attachments/upload')
+        expect(options.headers).toEqual({ Authorization: 'Bearer synthetic' })
+        const file = options.body.get('file') as File
+        expect(file.name).toBe('control-resource.txt')
+        expect(file.type).toBe('text/plain')
+        expect(await file.text()).toBe('WEWORK_CONTROL_RESOURCE_CONTENT_E2E')
+        uploads.push(file)
+        return new Response(JSON.stringify({ id: 91, status: 'ready' }), { status: 201 })
+      }
       requests.push({ path, body: options?.body ? JSON.parse(options.body as string) : undefined })
       let result: unknown
       if (path === '/api/runtime-work/create') {
@@ -84,12 +100,35 @@ async function prepareFixture({
     })
   )
   const restContext = { backendUrl: 'http://backend.test', authToken: 'synthetic' }
-  const environment = { ...restContext, workspacePath, waitForRuntimeTask }
+  const environment = {
+    ...restContext,
+    workspacePath,
+    waitForRuntimeTask,
+    devices: vi.fn(async () => [{ device_type: appDeviceType, device_id: 'local-device' }]),
+  }
   const scenario = createDesktopScenario({ uiTimeoutMs: 1000, modelResponseTimeoutMs })
   await scenario.prepareCloud(restContext)
   scenario.setCloudEnvironment(environment)
-  return { workspacePath, requests, environment, restContext, scenario, waitForRuntimeTask }
+  return {
+    workspacePath,
+    requests,
+    uploads,
+    environment,
+    restContext,
+    scenario,
+    waitForRuntimeTask,
+  }
 }
+
+test('control fixture uploads an owned text resource through the existing multipart API', async () => {
+  const { scenario, uploads } = await prepareFixture({})
+  try {
+    expect(uploads).toHaveLength(1)
+    expect(await uploads[0].text()).toBe('WEWORK_CONTROL_RESOURCE_CONTENT_E2E')
+  } finally {
+    await scenario.cleanup()
+  }
+})
 
 test('scoped control fixture uses the live environment address and waiter, not the REST setup context', async () => {
   const reachedRuntime = new Error('Reached the real runtime wait boundary')
@@ -201,6 +240,22 @@ test('control workflow uses the runner model-response budget instead of the UI-a
       expect.any(Number),
       modelResponseTimeoutMs
     )
+  } finally {
+    await scenario.cleanup()
+  }
+})
+
+test('control fixture rejects a remote source that cannot prove local APP behavior', async () => {
+  const { scenario } = await prepareFixture({ appDeviceType: 'remote' })
+  const command = vi.fn(async (action: string) => {
+    if (action === 'getWorkbenchDebugSnapshot')
+      return JSON.stringify({
+        workbench: { currentRuntimeTask: { deviceId: 'local-device', taskId: 'source-task' } },
+      })
+  })
+  try {
+    await expect(scenario.verify({ command })).rejects.toThrow(/real APP device/)
+    expect(waitForScenarioProgress).not.toHaveBeenCalled()
   } finally {
     await scenario.cleanup()
   }
