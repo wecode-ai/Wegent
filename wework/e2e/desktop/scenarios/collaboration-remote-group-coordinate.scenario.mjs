@@ -754,7 +754,11 @@ export async function createDesktopScenario({
       await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
       await waitForActivityText(control, FIRST_TASK, modelResponseTimeoutMs)
       await waitForActivityText(control, SECOND_TASK, modelResponseTimeoutMs)
-      await waitForActivityText(control, `${LEADER} 负责人 · 分配任务：`, modelResponseTimeoutMs)
+      await waitForActivityText(
+        control,
+        `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
+        modelResponseTimeoutMs
+      )
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
         'in_progress',

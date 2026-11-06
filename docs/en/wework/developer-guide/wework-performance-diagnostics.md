@@ -261,6 +261,8 @@ Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS incl
 
 The workbench's full-height sidebar and content-wide top bar should use ordinary semantic backgrounds instead of applying `backdrop-filter` to large persistent surfaces. These filters can cause Chromium to retain additional graphics backing stores for the entire region. When investigating Web Content memory, compare `physical_footprint_kib` before and after the change at the same window size and page state, and exclude the temporary reclaimable high-water mark created by DevTools heap snapshots from the steady-state baseline.
 
+Streaming activity shimmer widths use dimensions from `ResizeObserverEntry` without synchronously calling `getBoundingClientRect()` on mount. The highlight starts at zero width until dimensions arrive, keeping the base text visible. Long turns repeatedly mount progress indicators, so synchronous layout reads followed by style writes accumulate forced-layout work. Use source maps from the same CI build to map profile hotspots back to source.
+
 Manual marks can also be added:
 
 ```js
