@@ -16,6 +16,10 @@ import {
   STARTUP_SPLASH_HANDOFF_EVENTS,
   verifyStartupSplashHandoff,
 } from '../modules/startup-splash-handoff.mjs'
+import {
+  captureStartupThemeEvidence,
+  seedStoppedStartupTheme,
+} from '../modules/startup-theme-evidence.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
@@ -46,8 +50,18 @@ async function waitForStartupLogs(resultDir) {
 
 export async function createDesktopScenario({ resultDir }) {
   let restartDesktopApp
+  let lightThemeSeed
+  const userDataDirectory = join(resultDir, 'electron-user-data')
   return {
     appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
+
+    async prepareApp() {
+      lightThemeSeed = await seedStoppedStartupTheme({
+        resultDir,
+        userDataDirectory,
+        mode: 'light',
+      })
+    },
 
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
@@ -78,7 +92,12 @@ export async function createDesktopScenario({ resultDir }) {
         'PNG',
         'The Electron startup splash evidence was not a PNG'
       )
-      const userDataDirectory = join(resultDir, 'electron-user-data')
+      await captureStartupThemeEvidence({
+        control,
+        snapshot,
+        seed: lightThemeSeed,
+        resultDir,
+      })
       await waitForStartupProgressEvidence({ userDataDirectory, resultDir })
       const appLog = await waitForStartupLogs(resultDir)
       const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
@@ -154,11 +173,21 @@ export async function createDesktopScenario({ resultDir }) {
       assert.ok(restartDesktopApp, 'The startup focus scenario requires the desktop restart hook')
       const telemetryRequestCountBeforeRestart = control.telemetryRequestCount()
       const afterBytes = (await readFile(join(userDataDirectory, 'logs', 'wework-main.log'))).length
+      let darkThemeSeed
+      const darkSplashCapturePath = join(resultDir, 'startup-theme-dark-splash.png')
       await restartDesktopApp({
+        afterStop: async () => {
+          darkThemeSeed = await seedStoppedStartupTheme({
+            resultDir,
+            userDataDirectory,
+            mode: 'dark',
+          })
+        },
         appEnvironmentOverrides: {
           WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '',
           WEWORK_E2E_STARTUP_SLOW_AFTER_MS: '',
           WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '',
+          WEWORK_E2E_STARTUP_SPLASH_CAPTURE: darkSplashCapturePath,
         },
       })
       const recoveredSplash = await waitForClosedStartupSplash(control)
@@ -166,6 +195,13 @@ export async function createDesktopScenario({ resultDir }) {
         snapshot: recoveredSplash,
         resultDir,
         name: 'startup-recovered-handoff',
+      })
+      await captureStartupThemeEvidence({
+        control,
+        snapshot: recoveredSplash,
+        seed: darkThemeSeed,
+        resultDir,
+        splashCapturePath: darkSplashCapturePath,
       })
       await waitForStartupProgressEvidence({
         userDataDirectory,
