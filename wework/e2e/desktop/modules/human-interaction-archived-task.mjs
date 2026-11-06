@@ -70,7 +70,6 @@ export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
     timeoutMs,
   })
   await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
-  // The refresh control stays disabled while the tab's background poll runs.
   await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-refresh"]`, {
     timeoutMs,
   })
