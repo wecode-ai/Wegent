@@ -76,11 +76,10 @@ Shells provide Bots with the following core capabilities:
 
 When creating or editing an Agent, the standard settings do not require users to understand Shells. Users first choose how the Agent will be used:
 
-- **Everyday chat**: For conversations, knowledge Q&A, and lightweight tasks. Wegent uses Chat.
-- **Complex tasks and coding**: For multi-step work, code changes, files, commands, and connected devices. Users then choose Codex or Claude Code.
-- **Advanced custom**: For advanced users who need a custom Shell.
+- **Everyday questions**: For Q&A, writing, and knowledge lookup. Wegent uses Chat.
+- **Coding and complex tasks**: For multi-step work, code changes, files, commands, and connected devices. Under **Execution engine**, choose Codex, Claude Code, or **Custom**. Choosing **Custom** reveals a dropdown for selecting an existing Shell.
 
-Agno is being decommissioned and is no longer shown as a preset option in the web UI. Dify and other custom Shells remain available through advanced custom settings.
+Agno is being decommissioned and is no longer shown as a preset option in the web UI. Dify and other custom Shells remain available through the **Custom** execution engine option.
 
 ### Codex Runtime
 
@@ -285,9 +284,9 @@ status:
 
 #### spec Section
 
-| Field          | Type   | Required | Description                                                           |
-| -------------- | ------ | -------- | --------------------------------------------------------------------- |
-| `runtime`      | string | Yes      | Runtime type. Common values: `Codex`, `ClaudeCode`, `Dify`, `Chat`    |
+| Field          | Type   | Required | Description                                                               |
+| -------------- | ------ | -------- | ------------------------------------------------------------------------- |
+| `runtime`      | string | Yes      | Runtime type. Common values: `Codex`, `ClaudeCode`, `Dify`, `Chat`        |
 | `supportModel` | array  | No       | List of supported model providers, empty array means all models supported |
 
 **supportModel Explanation**:

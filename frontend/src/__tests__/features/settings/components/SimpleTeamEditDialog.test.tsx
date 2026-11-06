@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
@@ -512,12 +512,16 @@ describe('Simple TeamEditDialog', () => {
     await user.click(await screen.findByRole('option', { name: shell.displayName }))
 
     for (const runtime of ['codex', 'claude_code']) {
-      await user.click(screen.getByTestId(`simple-coding-runtime-${runtime}-card`))
-      expect(screen.getByTestId(`simple-coding-runtime-${runtime}-radio`)).toBeChecked()
+      const runtimeRadio = within(engines).getByRole('radio', {
+        name: runtime === 'codex' ? 'Codex' : 'Claude Code',
+      })
+      await user.click(runtimeRadio)
+      expect(runtimeRadio).toBeChecked()
       expect(within(useCases).getByRole('radio', { name: 'Complex' })).toBeChecked()
       expect(screen.queryByTestId('simple-custom-shell-select')).not.toBeInTheDocument()
-      await user.click(screen.getByTestId('simple-executor-custom-card'))
-      expect(screen.getByRole('radio', { name: 'Custom' })).toBeChecked()
+      const customRadio = within(engines).getByRole('radio', { name: 'Custom' })
+      await user.click(customRadio)
+      expect(customRadio).toBeChecked()
       expect(screen.getByTestId('simple-custom-shell-select')).toHaveTextContent(shell.displayName)
     }
     fireEvent.change(screen.getByTestId('team-display-name-input'), {
@@ -545,6 +549,56 @@ describe('Simple TeamEditDialog', () => {
           })
         )
       }
+    })
+  })
+
+  it('preserves a custom executor when the bot and shell catalogs arrive together', async () => {
+    const user = userEvent.setup()
+    const shell = {
+      name: 'specialized-runtime',
+      displayName: 'Specialized Runner',
+      type: 'user',
+      shellType: 'ClaudeCode',
+    } satisfies UnifiedShell
+    const bot = makeBot({ shell_name: shell.name, shell_type: shell.shellType })
+    const team = makeTeam({ bind_mode: ['chat', 'code', 'task'] })
+    let resolveShells!: (response: { data: UnifiedShell[] }) => void
+    mockedGetUnifiedShells.mockReturnValueOnce(
+      new Promise<{ data: UnifiedShell[] }>(resolve => {
+        resolveShells = resolve
+      })
+    )
+    mockedUpdateBot.mockResolvedValue(bot)
+    const props = {
+      open: true,
+      onClose: jest.fn(),
+      teams: [team],
+      setTeams: jest.fn(),
+      editingTeamId: team.id,
+      setBots: jest.fn(),
+      toast: jest.fn(),
+    }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    expect(screen.getByRole('radio', { name: 'Simple' })).toBeChecked()
+
+    await act(async () => {
+      resolveShells({ data: [...publicShells, shell] })
+      rerender(<TeamEditDialog {...props} bots={[bot]} />)
+    })
+
+    expect(screen.getByRole('radio', { name: 'Custom' })).toBeChecked()
+    expect(screen.getByTestId('simple-custom-shell-select')).toHaveTextContent(shell.displayName)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        bot.id,
+        expect.objectContaining({ shell_name: shell.name })
+      )
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({ bind_mode: ['chat', 'code', 'task'] })
+      )
     })
   })
 

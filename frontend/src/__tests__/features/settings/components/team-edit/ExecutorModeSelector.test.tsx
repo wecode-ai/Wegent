@@ -257,7 +257,12 @@ describe('ExecutorModeSelector', () => {
         />
       )
 
-      fireEvent.click(screen.getByTestId(`simple-coding-runtime-${runtime}-card`))
+      const engines = screen.getByRole('radiogroup', { name: 'Execution engine' })
+      fireEvent.click(
+        within(engines).getByRole('radio', {
+          name: runtime === 'codex' ? 'Codex' : 'Claude Code',
+        })
+      )
 
       expect(onCodingRuntimeChange).toHaveBeenCalledWith(runtime)
       expect(onChange).toHaveBeenCalledWith('complex')
