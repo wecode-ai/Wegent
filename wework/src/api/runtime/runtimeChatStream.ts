@@ -48,7 +48,7 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
   >()
   let nativeCleanup: (() => void) | null = null
   let nativeSubscribePromise: Promise<void> | null = null
-  let pendingStreamEvents: LocalExecutorEvent[] = []
+  let pendingStreamEvent: LocalExecutorEvent | null = null
   let streamEventFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 
   function processNativeEvent(event: LocalExecutorEvent): void {
@@ -121,21 +121,23 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
     }
   }
 
-  function flushPendingStreamEvents(): void {
+  function flushPendingStreamEvent(): void {
     if (streamEventFlushTimer !== null) {
       globalThis.clearTimeout(streamEventFlushTimer)
       streamEventFlushTimer = null
     }
-    const events = pendingStreamEvents
-    pendingStreamEvents = []
-    events.forEach(processNativeEvent)
+    const event = pendingStreamEvent
+    pendingStreamEvent = null
+    if (event) processNativeEvent(event)
   }
 
   function startStreamEventBatchWindow(): void {
-    streamEventFlushTimer = globalThis.setTimeout(
-      flushPendingStreamEvents,
-      STREAM_EVENT_BATCH_INTERVAL_MS
-    )
+    streamEventFlushTimer = globalThis.setTimeout(() => {
+      streamEventFlushTimer = null
+      const event = pendingStreamEvent
+      pendingStreamEvent = null
+      if (event) processNativeEvent(event)
+    }, STREAM_EVENT_BATCH_INTERVAL_MS)
   }
 
   function handleNativeEvent(event: LocalExecutorEvent): void {
@@ -144,7 +146,7 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
 
   function queueNativeEvent(event: LocalExecutorEvent): void {
     if (!isBatchableRuntimeStreamEvent(event)) {
-      flushPendingStreamEvents()
+      flushPendingStreamEvent()
       processNativeEvent(event)
       return
     }
@@ -155,20 +157,20 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       return
     }
 
-    const previous = pendingStreamEvents.at(-1)
-    if (!previous) {
-      pendingStreamEvents.push(event)
+    if (!pendingStreamEvent) {
+      pendingStreamEvent = event
       return
     }
 
-    const merged = mergeBatchableRuntimeStreamEvents(previous, event)
+    const merged = mergeBatchableRuntimeStreamEvents(pendingStreamEvent, event)
     if (merged) {
-      pendingStreamEvents[pendingStreamEvents.length - 1] = merged
+      pendingStreamEvent = merged
       return
     }
 
-    // Distinct blocks share a render batch while retaining every ordered transition.
-    pendingStreamEvents.push(event)
+    flushPendingStreamEvent()
+    processNativeEvent(event)
+    startStreamEventBatchWindow()
   }
 
   function ensureNativeListener(): void {
@@ -223,7 +225,7 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       if (!hasLocalExecutorResponseHandlers(handlers)) {
         return () => undefined
       }
-      flushPendingStreamEvents()
+      flushPendingStreamEvent()
       const subscriptionId = nextRuntimeChatStreamSubscriptionId++
       let released = false
       subscriptions.set(subscriptionId, {
@@ -243,7 +245,7 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       return () => {
         if (released) return
         released = true
-        flushPendingStreamEvents()
+        flushPendingStreamEvent()
         const subscription = subscriptions.get(subscriptionId)
         subscriptions.delete(subscriptionId)
         activeRuntimeChatStreamSubscriptions = Math.max(0, activeRuntimeChatStreamSubscriptions - 1)
@@ -289,8 +291,8 @@ function logRuntimeChatTerminalEvent(
 function isBatchableRuntimeStreamEvent(event: LocalExecutorEvent): boolean {
   return (
     isRuntimeTextDeltaEvent(event) ||
-    event.event === 'response.block.created' ||
-    event.event === 'response.block.updated'
+    isRuntimeBlockContentDeltaEvent(event) ||
+    isRuntimeBlockContentSnapshotEvent(event)
   )
 }
 

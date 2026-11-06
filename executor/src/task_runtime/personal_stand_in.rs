@@ -283,6 +283,12 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
     config["userId"] = json!(user);
     config["tags"] = role["collaboration"]["tags"].clone();
     config["handlingPolicy"] = project_policy(role, project, store);
+    if let Some(boundary) = role["projectBoundaries"].as_array().and_then(|rows| {
+        rows.iter()
+            .find(|row| row["id"] == project && row["store"] == store)
+    }) {
+        config["enabledAfter"] = boundary["enabledAfter"].clone();
+    }
     config
 }
 
@@ -693,18 +699,62 @@ pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value)
     }
 }
 
-fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
-    identity["enabledAfter"] = if identity["enabled"] == previous["enabled"]
-        && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"]
+pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
+    let preserve = identity["enabled"] == previous["enabled"]
+        && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
+    let enabled_at = json!(now());
+    // Explicit projects keep their own boundary when the catch-all scope changes.
+    let mut projects = Vec::new();
+    for source in [identity as &Value, previous] {
+        for rows in [
+            &source["collaboration"]["projects"],
+            &source["collaboration"]["excludedProjects"],
+            &source["projectBoundaries"],
+        ] {
+            for row in rows.as_array().into_iter().flatten() {
+                let project = json!({"id":row["id"],"store":row["store"]});
+                if !projects.contains(&project) {
+                    projects.push(project);
+                }
+            }
+        }
+    }
+    let boundaries: Vec<Value> = projects
+        .into_iter()
+        .filter_map(|mut project| {
+            let id = project["id"].as_str()?;
+            let store = project["store"].as_str()?;
+            if !role_project_matches(identity, id, store) {
+                return None;
+            }
+            project["enabledAfter"] = if preserve && role_project_matches(previous, id, store) {
+                project_role(previous, 0, id, store)["enabledAfter"]
+                    .as_str()
+                    .map(|time| json!(time))
+                    .unwrap_or_else(|| enabled_at.clone())
+            } else {
+                enabled_at.clone()
+            };
+            Some(project)
+        })
+        .collect();
+    identity["enabledAfter"] = if preserve
+        && !(identity["collaboration"]["allProjects"] == true
+            && previous["collaboration"]["allProjects"] != true)
     {
         previous["enabledAfter"]
             .as_str()
             .map(|time| json!(time))
-            .unwrap_or_else(|| json!(now()))
+            .unwrap_or_else(|| enabled_at.clone())
     } else {
-        json!(now())
+        enabled_at
     };
+    identity["projectBoundaries"] = json!(boundaries);
 }
+
+#[cfg(test)]
+#[path = "project_intake_boundary_tests.rs"]
+mod project_intake_boundary_tests;
 
 #[cfg(test)]
 mod email_policy_tests {

@@ -274,6 +274,8 @@ fn old_agent_bindings_are_removed_atomically_without_changing_identity_or_grants
     old["primary"]["agentResourceId"] = json!(88);
     old["roles"][0]["agentId"] = json!("deleted-project-agent");
     old["roles"][0]["agentProject"] = json!({"id":"one","store":"cloud"});
+    old["roles"][0]["projectBoundaries"] =
+        json!([{"id":"one","store":"cloud","enabledAfter":"2026-11-06T12:00:00Z"}]);
     old["roles"][0]["collaboration"]["excludedProjects"] = json!([{"id":"one","store":"cloud"}]);
     old["roles"][1]["agentResourceId"] = json!(99);
     old["roles"][1]["preferences"] = json!("Keep concise");

@@ -12,26 +12,23 @@ import {
 } from '../e2e/desktop/modules/workspace-flows.mjs'
 
 test.each([
-  ['expanded', 'manage', 'collaboration-tab-manage'],
-  ['compact', 'manage', 'collaboration-tab-manage'],
-  ['expanded', 'milestones', 'collaboration-milestones-tab'],
-  ['compact', 'milestones', 'collaboration-milestones-tab'],
-])('selects %s navigation view %s after the switcher mounts', async (layout, view, tabId) => {
-  let selected = null
+  ['manage', 'collaboration-tab-manage'],
+  ['milestones', 'collaboration-milestones-tab'],
+])('selects navigation view %s without a separate layout probe', async (view, tabId) => {
+  const calls = []
   const control = {
-    async command(action, selector, options) {
-      if (action === 'chooseWhenEnabled') {
-        const mountedId = layout === 'compact' ? 'collaboration-project-view-select' : tabId
-        assert.ok(selector.split(', ').includes(`main [data-testid="${mountedId}"]`))
-        assert.ok(options.timeoutMs > 0)
-        selected = options.value
-      } else {
-        throw new Error(`Unexpected action: ${action}`)
-      }
+    command: async (...args) => {
+      calls.push(args)
     },
   }
   await selectCollaborationProjectView(control, 'main', view)
-  assert.equal(selected, view)
+  assert.deepEqual(calls, [
+    [
+      'chooseWhenEnabled',
+      'main [data-testid="collaboration-project-view-select"], main [data-testid="' + tabId + '"]',
+      { value: view, timeoutMs: 10000 },
+    ],
+  ])
 })
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {

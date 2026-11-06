@@ -1,4 +1,5 @@
 import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
+import { verifyProjectIntakeBoundary } from '../modules/stand-in-project-intake-boundary.mjs'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -852,6 +853,14 @@ export async function createDesktopScenario({
       assert.ok(!scopes.includes(`项目 · ${project.id}`), scopes)
       await control.command('click', '[data-testid="stand-in-memory-cancel"]')
       await control.command('click', '[data-testid="stand-in-memory-close"]')
+      await verifyProjectIntakeBoundary({
+        control,
+        rpc: (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        userId: USER_ID,
+        sourceProject: project,
+        waitForExecution,
+        timeoutMs: modelResponseTimeoutMs,
+      })
     },
     diagnostics() {
       return { project: PROJECT, requests, agentRequests, tagRequests }

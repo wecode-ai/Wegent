@@ -3271,17 +3271,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       window.setTimeout(() => element.click(), 100)
       return element.textContent?.trim() ?? ''
     }
-    case 'chooseWhenEnabled': {
-      return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
-        chooseDesktopControlOption(element, command.value ?? '')
-      )
-    }
     case 'clickWhenEnabled': {
       startConversationDiagnosticCapture()
       return waitForDesktopControlElement({ ...command, enabled: true }, element => {
         element.click()
         return element.textContent?.trim() ?? ''
       })
+    }
+    case 'chooseWhenEnabled': {
+      return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
+        chooseDesktopControlOption(element, command.value ?? '')
+      )
     }
     case 'setExpanded': {
       const expected = command.value

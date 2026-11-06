@@ -352,8 +352,9 @@ describe('pane transcript reload ownership', () => {
   })
 })
 
-test('keeps progress updates on the existing frame subscription when the queue is empty', async () => {
+test('publishes buffered progress through the existing subscription when the queue is empty', async () => {
   const { result, unmount } = await renderSession()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   const frames = new Map<number, FrameRequestCallback>()
   let sequence = 0
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -389,12 +390,15 @@ test('keeps progress updates on the existing frame subscription when the queue i
         .at(-1)
         ?.blocks?.map(block => block.id)
     ).toEqual(ids)
-    act(flush)
+    act(() => vi.advanceTimersByTime(99))
+    expect(result.current.messages === before).toBe(true)
+    act(() => vi.advanceTimersByTime(1))
     expect(result.current.messages.at(-1)?.blocks?.map(block => block.id)).toEqual(ids)
     expect(result.current.queuedMessages).toEqual([])
   } finally {
     unmount()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   }
 })
 

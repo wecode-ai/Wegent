@@ -85,6 +85,17 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
           return 'ascending'
         }
         if (action === 'getValue') return 'status'
+        if (action === 'chooseWhenEnabled') {
+          assert.ok(['calendar', 'gantt', 'table'].includes(options.value))
+          assert.deepEqual(
+            selector.split(',').map(part => part.trim()),
+            [
+              '[data-testid="collaboration-project-view-select"]',
+              `[data-testid="collaboration-tab-${options.value}"]`,
+            ]
+          )
+          return
+        }
         if (action === 'getComputedStyleValue') return 'ew-resize'
         if (action === 'getText') return '开始时间 结束时间'
         if (action === 'drag') {
@@ -117,7 +128,6 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
             'waitFor',
             'fill',
             'clickWhenEnabled',
-            'chooseWhenEnabled',
             'select',
             'hover',
           ].includes(action),

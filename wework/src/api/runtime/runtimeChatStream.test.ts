@@ -169,67 +169,6 @@ describe('createRuntimeChatStream', () => {
     expect(calls.at(-1)).toBe('done')
   })
 
-  test.each(['timer', 'completion'])(
-    'publishes a structural block burst in order at the next %s boundary',
-    async boundary => {
-      vi.useFakeTimers()
-      try {
-        let listener!: (event: LocalExecutorEvent) => void
-        subscribe.mockImplementation(async handler => {
-          listener = handler
-          return vi.fn()
-        })
-        const calls: string[] = []
-        const stream = createRuntimeChatStream({ subscribe, request })
-        const unsubscribe = stream.subscribe({
-          onBlockCreated: payload => calls.push(`create:${payload.block.id}`),
-          onBlockUpdated: payload => calls.push(`update:${payload.blockId}:${payload.status}`),
-          onChatDone: () => calls.push('done'),
-        })
-        await Promise.resolve()
-        const expected: string[] = []
-        for (let index = 0; index < 520; index++) {
-          const id = `progress-${index}`
-          listener({
-            event: 'response.block.created',
-            payload: {
-              taskId: 'task',
-              subtaskId: 'turn',
-              data: { block: { id, type: 'text', content: id, status: 'streaming' } },
-            },
-          })
-          listener({
-            event: 'response.block.updated',
-            payload: {
-              taskId: 'task',
-              subtaskId: 'turn',
-              data: { blockId: id, updates: { status: 'done' } },
-            },
-          })
-          expected.push(`create:${id}`, `update:${id}:done`)
-        }
-        expect(calls).toEqual(['create:progress-0'])
-        if (boundary === 'timer') {
-          vi.advanceTimersByTime(16)
-          expect(calls).toEqual(expected)
-        }
-        listener({
-          event: 'response.completed',
-          payload: {
-            taskId: 'task',
-            subtaskId: 'turn',
-            data: { value: 'complete' },
-          },
-        })
-        expect(calls).toEqual([...expected, 'done'])
-        expect(vi.getTimerCount()).toBe(0)
-        unsubscribe()
-      } finally {
-        vi.useRealTimers()
-      }
-    }
-  )
-
   test('coalesces cumulative block content snapshots before terminal events', async () => {
     let listener!: (event: LocalExecutorEvent) => void
     subscribe.mockImplementation(async handler => {

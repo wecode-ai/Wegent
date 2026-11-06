@@ -1,4 +1,4 @@
-import { cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook } from '@testing-library/react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { clearConversationViewportCache } from '../../../../packages/collaboration/src/conversation/conversationViewportCache'
@@ -67,5 +67,42 @@ test('suspending an active pane cancels its in-flight streaming animation', () =
   hook.rerender({ messages, autoScrollSuspended: false })
   expect(frames.size).toBe(1)
   hook.rerender({ messages, autoScrollSuspended: true })
+  expect(frames.size).toBe(0)
+})
+
+test('restoring unchanged streaming history follows footer resizing before paint', () => {
+  const { viewport, geometry, externalScrollRef } = createViewport()
+  const hook = renderHook(() =>
+    useConversationScrollController({
+      messages: [message()],
+      externalScrollRef,
+      conversationKey: 'restored-stream-footer',
+    })
+  )
+  geometry.height += 22
+
+  act(() => hook.result.current.handleVirtualLayoutChange())
+
+  expect(viewport.scrollTop).toBe(geometry.height - geometry.viewportHeight)
+  expect(frames.size).toBe(0)
+})
+
+test('prepending older history keeps unchanged live text in immediate restore mode', () => {
+  const { viewport, geometry, externalScrollRef } = createViewport()
+  const active = message()
+  const hook = renderHook(
+    messages =>
+      useConversationScrollController({
+        messages,
+        externalScrollRef,
+        conversationKey: 'restore-history-prepend',
+      }),
+    { initialProps: [active] }
+  )
+  geometry.height += 1000
+
+  hook.rerender([{ ...message('Older history'), id: 'older', status: 'done' }, active])
+
+  expect(viewport.scrollTop).toBe(geometry.height - geometry.viewportHeight)
   expect(frames.size).toBe(0)
 })
