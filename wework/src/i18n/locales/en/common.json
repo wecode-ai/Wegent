@@ -6111,5 +6111,6 @@
     "title_with_count": "Needs your input, {{count}} pending",
     "cached": "This question was pending when last connected. Syncing its latest state; reconnect the device to respond.",
     "entity_unavailable": "This entity cannot be displayed here. Open its original location."
-  }
+  },
+  "beta": "Beta"
 }

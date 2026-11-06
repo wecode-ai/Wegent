@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createProfile } from './stand-in-profile.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { ensureExperimentalFeaturesDisabled } from '../modules/preferences-automation-flows.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
 import { waitForElementWidth } from '../modules/layout-metrics.mjs'
 import { createWeeklyUserStory } from '../modules/stand-in-weekly-user-story.mjs'
 import {
@@ -172,7 +173,8 @@ export function createDesktopScenario(options) {
       const initialScheduleIds = (await rpc('runtime.automations.list', {})).items
         .map(item => item.id)
         .sort()
-      await ensureExperimentalFeaturesEnabled(control)
+      await ensureExperimentalFeaturesDisabled(control)
+      await control.command('waitFor', '[data-testid="personal-stand-in-beta"]', { text: 'Beta' })
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await verifyGuideExamples(control)
       await options.captureScreenshot(control, 'review-01-onboarding-desktop.png')
@@ -420,6 +422,20 @@ export function createDesktopScenario(options) {
       await options.captureScreenshot(control, 'review-06-report-conversation.png')
       await rpc('runtime.automations.delete', { automationId: recreated.id })
       await weeklyStory.verify(control, openCalendarReviewTemplate)
+      await ensureExperimentalFeaturesDisabled(control)
+      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+      const projects = await rpc('projects.list', {})
+      const project = projects.find(row => row.name === `负责人上下文验证-${process.pid}`)
+      assert.ok(project, 'Reuse the coordinator project from the original profile story')
+      await control.command(
+        'clickWhenEnabled',
+        inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${project.id}"]`)
+      )
+      await control.command('waitFor', '[data-testid="stand-in-project-beta"]', { text: 'Beta' })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-dialog"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-close"]')
+      await control.command('waitFor', '[data-testid="stand-in-dialog"]', { visible: false })
     },
   }
 }

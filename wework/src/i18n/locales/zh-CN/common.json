@@ -6106,5 +6106,6 @@
     "title_with_count": "待你处理，{{count}} 项",
     "cached": "这是上次待处理的问题，正在同步最新状态；设备恢复连接后可以继续回应。",
     "entity_unavailable": "暂时无法显示此对象，请打开原位置查看。"
-  }
+  },
+  "beta": "Beta"
 }

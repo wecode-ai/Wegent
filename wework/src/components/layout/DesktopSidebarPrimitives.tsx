@@ -32,6 +32,7 @@ interface DesktopSidebarNavItemProps {
   icon?: ComponentType<LucideProps>
   iconElement?: ReactNode
   label: string
+  badge?: ReactNode
   onClick: MouseEventHandler<HTMLButtonElement>
   selected?: boolean
   testId?: string
@@ -42,6 +43,7 @@ export function DesktopSidebarNavItem({
   icon: Icon,
   iconElement,
   label,
+  badge,
   onClick,
   selected,
   testId,
@@ -63,6 +65,7 @@ export function DesktopSidebarNavItem({
     >
       {iconElement ?? (Icon ? <Icon className="h-4 w-4 text-current" /> : null)}
       <span>{label}</span>
+      {badge}
     </button>
   )
 }

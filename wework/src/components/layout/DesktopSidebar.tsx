@@ -1,3 +1,4 @@
+import { BetaBadge } from '@/components/common/BetaBadge'
 import {
   Archive,
   AlarmClock,
@@ -4118,11 +4119,12 @@ export function DesktopSidebar({
               testId="new-chat-button"
               onClick={onNewChat}
             />
-            {experimentalFeaturesEnabled && onOpenStandIn && (
+            {onOpenStandIn && (
               <DesktopSidebarNavItem
                 icon={UserRound}
                 label={t('standIn.title')}
                 testId="personal-stand-in-button"
+                badge={<BetaBadge testId="personal-stand-in-beta" />}
                 selected={activeItem === 'stand-in'}
                 onClick={onOpenStandIn}
               />

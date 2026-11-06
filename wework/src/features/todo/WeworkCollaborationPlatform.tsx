@@ -536,9 +536,9 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
-      renderProjectHeaderAction: currentProject =>
-        experimentalFeaturesEnabled ? (
-          <div className="flex items-center gap-2">
+      renderProjectHeaderAction: currentProject => (
+        <div className="flex items-center gap-2">
+          {experimentalFeaturesEnabled && (
             <ProjectCoordinatorConversation
               key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
               api={scopedApi}
@@ -563,19 +563,20 @@ export function WeworkSharedProject({
                 if (focusedItemId) onFocusedItemHandled?.()
               }}
             />
-            <StandInPopover
-              key={currentProject.id}
-              api={standInWorkspaceApi}
-              project={currentProject}
-              devices={devices}
-              readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
-              services={services}
-              userId={Number(userId)}
-              onOpenPersonalSettings={onOpenStandInSettings}
-              initialDeviceId={standInDeviceId}
-            />
-          </div>
-        ) : null,
+          )}
+          <StandInPopover
+            key={currentProject.id}
+            api={standInWorkspaceApi}
+            project={currentProject}
+            devices={devices}
+            readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
+            services={services}
+            userId={Number(userId)}
+            onOpenPersonalSettings={onOpenStandInSettings}
+            initialDeviceId={standInDeviceId}
+          />
+        </div>
+      ),
       capabilities: {
         automation: true,
         dingtalkAitable: true,
@@ -1353,7 +1354,6 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
 
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const templateOwnerId =
@@ -1657,7 +1657,6 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           templateStore,
           templateNavigation: true,
           renderProjectSidebarBadge: project => {
-            if (!experimentalFeaturesEnabled) return null
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
             )

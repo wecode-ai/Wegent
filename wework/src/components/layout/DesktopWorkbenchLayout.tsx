@@ -49,7 +49,6 @@ import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runti
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { TaskBoardView } from '@/features/todo/TaskBoardView'
 import { PersonalStandInWorkspace } from '@/features/todo/PersonalStandInWorkspace'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
@@ -306,11 +305,7 @@ export function DesktopWorkbenchLayout({
       : `${currentPath}${window.location.search}`
   const standInContentRoute =
     ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
-  const standInOpen =
-    experimentalFeaturesEnabled &&
-    !routeWorkItemsOpen &&
-    standInContentRoute.split('?')[0] === '/stand-in'
+  const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
   const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
