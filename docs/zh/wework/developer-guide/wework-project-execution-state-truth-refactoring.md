@@ -114,6 +114,8 @@ Runtime 按执行主体使用三组独立并发额度：个人任务 `maxConcurr
 
 分类来自原任务持久化的 `origin`，并以 `taskKind` 保存到排队记录中；恢复和续聊沿用原主体，不随后续消息上下文变化。分身对话、分身协调、邮件/钉钉工作、分身处理的项目指派和日程都计入分身；项目协调、机器人、项目自动化及带有 Execution ID 的云端看板执行计入智能体。用户手动从事项开启的个人会话计入个人。定时和自动化只是一种触发方式，不单列并发组。
 
+Goal 自动续跑期间持续占用原任务的并发槽位，包括在本轮运行中才设置 Goal 的情况。本地请求控制可以正常结束，并发槽位由原生执行状态决定，不能随本地请求结束而提前释放。Goal 停止后，正在执行的原生轮次仍持有槽位，直到原生终态到达；释放时重新检查当前轮次，避免旧完成事件释放新轮次的额度。`runtime-task-queue` 桌面 E2E 使用真实 Electron、executor、Codex 和受控模型响应，检查原生续跑与排队任务的实际模型请求及容量归属。
+
 `runtime.capacity.get` 的 `categories.personal / standIn / agent` 分别报告 `limit / active / active_task_ids / queued`；顶层同名字段报告三组汇总，汇总上限不是额外的调度门。项目任务的本地领取和云端拉取只检查智能体组容量。机器人已有的跨设备并发配置继续生效。
 
 设备容量是 Runtime 运行态，不写入 Device Kind/MySQL 冒充事实。Local 领取通过 IPC 直接读取 Runtime；Cloud 由 Runtime 心跳上报 `limit/active/active_task_ids/queued/runtimeInstanceId` 到已有 Redis 设备在线状态并受同一 TTL 约束。`active` 必须与唯一、非空的 `active_task_ids` 一一对应。容量观察缺失、过期、身份不完整或 Runtime 实例不匹配时停止 claim；Claim API 明确拒绝调用方自报 `deviceCapacity`，也不回退到固定常量。

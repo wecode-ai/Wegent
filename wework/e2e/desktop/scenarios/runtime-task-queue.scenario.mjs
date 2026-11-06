@@ -1,4 +1,5 @@
 import { createConcurrencyExecutionVerification } from '../modules/runtime-concurrency-execution.mjs'
+import { createGoalConcurrencyVerification } from '../modules/runtime-goal-concurrency.mjs'
 import { verifyIndependentConcurrencySettings } from '../modules/runtime-concurrency-settings.mjs'
 import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
@@ -221,6 +222,7 @@ async function assertRestoredFollowUps(control, prompts, timeoutMs) {
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   const ownerConcurrency = createConcurrencyExecutionVerification({ workspacePath, uiTimeoutMs })
+  const goalConcurrency = createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs })
   let active = false
   const requests = []
   const cancelledRequests = []
@@ -243,6 +245,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       if (await ownerConcurrency.handleBody(body, response)) return true
+      if (await goalConcurrency.handleBody(body, response)) return true
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS)
         .map(candidate => ({ candidate, index: requestText.lastIndexOf(candidate) }))
@@ -941,17 +944,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       releases.get(PROMPTS.fifth)?.()
       await waitForCompletedRuntimeTaskThread(control, fifth.taskId, uiTimeoutMs)
       await ownerConcurrency.verify(control)
+      await goalConcurrency.verify(control)
       active = false
     },
 
     async cleanup() {
       ownerConcurrency.cleanup()
+      goalConcurrency.cleanup()
       active = false
       for (const release of releases.values()) release()
     },
 
     diagnostics() {
-      return { active, requests, cancelledRequests }
+      return { active, requests, cancelledRequests, goalConcurrency: goalConcurrency.diagnostics() }
     },
   }
 }

@@ -4,6 +4,62 @@
 
 use super::*;
 
+#[tokio::test]
+async fn native_continuation_retains_capacity_after_local_control_finishes() {
+    for clear_during_turn in [false, true] {
+        let (handler, root, _) = setup("native-capacity-after-local-control");
+        handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .active_task_ids
+            .insert("task-1".into(), RuntimeTaskKind::Personal);
+        let execution = start_test_execution(&handler, "task-1");
+        handler.route_codex_notification(notification("turn/started", "turn-1"));
+        if !clear_during_turn {
+            handler.route_codex_notification(notification("turn/completed", "turn-1"));
+        }
+        assert!(handler.finish_local_task_execution("task-1", execution));
+        handler.finish_scheduled_turn("task-1").await;
+        assert!(handler.native_task_holds_capacity("task-1"));
+        assert_eq!(handler.get_runtime_capacity().await.unwrap()["active"], 1);
+        assert!(!handler.is_active_local_task("task-1"));
+
+        handler.route_codex_notification(json!({"method":"thread/goal/cleared",
+            "params":{"threadId":"thread-1"}}));
+        if clear_during_turn {
+            assert!(handler.native_task_holds_capacity("task-1"));
+        } else {
+            // A new native turn can overtake asynchronous release of the old one.
+            handler.store.update_task(
+                "task-1",
+                crate::runtime_work::lifecycle::begin_native_request,
+            );
+            tokio::task::yield_now().await;
+            assert_eq!(handler.get_runtime_capacity().await.unwrap()["active"], 1);
+            handler.route_codex_notification(notification("turn/started", "turn-2"));
+        }
+        handler.route_codex_notification(notification(
+            "turn/completed",
+            if clear_during_turn {
+                "turn-1"
+            } else {
+                "turn-2"
+            },
+        ));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while handler.get_runtime_capacity().await.unwrap()["active"] != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let operation = handler.turn_queue_operation.lock().await;
+        drop(operation);
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
 #[test]
 fn recoverable_failure_keeps_execution_owned_until_native_retry_or_process_exit() {
     use crate::runtime_work::lifecycle::NativeExecutionPhase;
