@@ -214,10 +214,11 @@ export function createMeetingUserStory(options) {
         assert.equal(completion.status, 'done')
         assert.equal(completion.turnId, evidence.lastTurnId)
         assert.equal(completion.turnId, worker.task.runtimeHandle.lastTurnId)
-        assert.deepEqual(completion.generation.reportTo, {
-          userId: STORY_USER,
-          taskId: STORY_PRIMARY,
-        })
+        assert.equal(
+          completion.generation.delegation.sourceTaskId,
+          STORY_PRIMARY,
+          'A delegated task must return to its captured original primary conversation'
+        )
         const receipt = evidence.receipt
         assert.ok(receipt)
         assert.deepEqual(
