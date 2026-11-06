@@ -143,10 +143,10 @@ Agno is being decommissioned and is no longer shown as a preset option in the we
 
 | Scenario                                   | Recommended choice                     |
 | ------------------------------------------ | -------------------------------------- |
-| Conversation, Q&A, and knowledge retrieval | Everyday chat                          |
-| Coding with OpenAI models                  | Complex tasks and coding → Codex       |
-| Coding with Anthropic models               | Complex tasks and coding → Claude Code |
-| Dify or a private runtime                  | Advanced custom                        |
+| Conversation, Q&A, and knowledge retrieval | Everyday questions                     |
+| Coding with OpenAI models                  | Coding and complex tasks → Codex       |
+| Coding with Anthropic models               | Coding and complex tasks → Claude Code |
+| Dify or a private runtime                  | Coding and complex tasks → Custom      |
 
 ---
 
@@ -201,7 +201,7 @@ Wegent comes with the following preset Shells that can be used immediately:
 
 ### Method 1: Use Preset Shells (Recommended for Beginners)
 
-In Agent settings, standard users can choose **Complex tasks and coding**, then select **Codex** or **Claude Code**, without creating a Shell manually.
+In Agent settings, standard users can choose **Coding and complex tasks**, then select **Codex** or **Claude Code**, without creating a Shell manually.
 
 The system also includes preset Shells such as `Codex`, `ClaudeCode`, and `Dify`. You can reference them directly when creating a Bot through YAML:
 
