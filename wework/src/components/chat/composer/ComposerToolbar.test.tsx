@@ -69,7 +69,7 @@ describe('ComposerToolbar', () => {
     vi.unstubAllGlobals()
   })
 
-  it('places voice between the model and compact send action with regular text', () => {
+  it('places voice between the model and compact send action with inherited UI text weight', () => {
     render(
       <ComposerToolbar
         canSend={false}
@@ -89,7 +89,8 @@ describe('ComposerToolbar', () => {
     const toolbar = screen.getByTestId('composer-toolbar')
     const actions = toolbar.querySelector('[data-composer-toolbar-group="actions"]')!
     const voice = screen.getByTestId('test-voice-input')
-    expect(toolbar).toHaveClass('font-normal', 'min-h-7')
+    expect(toolbar).toHaveClass('min-h-7')
+    expect(toolbar).not.toHaveClass('font-normal')
     expect(actions).toContainElement(voice)
     expect(screen.getByTestId('model-selector-button').compareDocumentPosition(voice)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING

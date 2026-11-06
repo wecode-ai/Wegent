@@ -168,12 +168,12 @@ such as an animated transition between two heading roles. Third-party content
 that cannot inherit Wework variables requires a narrow documented exception.
 
 The primary Electron UI weight is `445`, matching ChatGPT's platform-adjusted
-normal weight. Explicit `font-normal` content remains `400`, while emphasis and
-headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
+normal weight. Ordinary UI and conversation text inherit this weight instead of forcing
+`font-normal` (`400`) on their containers. Emphasis and headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
 
 Entered composer text uses the primary text color so it reads as content. Normal
 menu labels and composer actions such as the quick-phrase trigger also use the
-primary text color, but remain at regular weight so they stay crisp without
+primary text color, but inherit the UI weight so they stay crisp without
 appearing bold. Descriptions, metadata, and shortcuts use secondary or tertiary
 text colors.
 
@@ -506,7 +506,7 @@ The active-conversation capture is also normative:
 - User messages are right-aligned compact neutral bubbles. Assistant content is
   left-aligned prose, not wrapped in a card. Turn metadata and feedback actions
   are quiet and subordinate.
-- Conversation prose and tool-process rows use regular `400` weight; chat
+- Conversation prose and tool-process rows inherit the primary UI `445` weight; chat
   headings, strong text, and table headings use `500`. Keep document-preview
   typography separate. Tool summaries use tertiary text and expandable details,
   without a full-width divider. Optional MCP App discovery failures do not
