@@ -138,6 +138,7 @@ async def test_quote_of_running_card_reports_rejection_without_new_task(quote_ca
     assert "仍在生成" in receiver._report_error.call_args.args[1]
 
 
+@pytest.mark.asyncio
 async def test_private_quote_uses_delivery_mapping(quote_case):
     receiver, binding, data = quote_case
     binding.incoming_data.update({"conversationId": "dm-a", "conversationType": "1"})

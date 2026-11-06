@@ -4,10 +4,10 @@
 
 """DingTalk conversation protocol values."""
 
-from enum import StrEnum
+from enum import Enum
 
 
-class DingTalkConversationType(StrEnum):
+class DingTalkConversationType(str, Enum):
     """Names for DingTalk's numeric conversationType callback values."""
 
     PRIVATE = "1"
