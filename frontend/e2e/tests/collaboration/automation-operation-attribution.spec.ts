@@ -52,6 +52,7 @@ projectTest(
 
     await page.goto(path)
     await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    await page.getByTestId('cloud-todo-more-properties').click()
     await page.getByTestId('cloud-todo-assignment-chain-trigger').click()
     const automatedRow = page
       .getByTestId('cloud-todo-assignment-chain-popover')
@@ -77,8 +78,9 @@ projectTest(
       },
     })
     await page.reload()
-    if (!(await page.getByTestId('cloud-todo-assignment-chain-trigger').isVisible()))
+    if (!(await page.getByTestId('cloud-todo-more-properties').isVisible()))
       await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    await page.getByTestId('cloud-todo-more-properties').click()
     await page.getByTestId('cloud-todo-assignment-chain-trigger').click()
     const actors = page
       .getByTestId('cloud-todo-assignment-chain-popover')
