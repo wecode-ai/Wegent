@@ -1,3 +1,4 @@
+import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import {
   createPluginTrialGuide,
@@ -698,15 +699,22 @@ export function TemporaryChatPanel({
         return true
       }
 
-      setMessages(
-        applyRuntimeConversationAction(targetAddress, {
-          type: 'user_added',
-          message: createRuntimeUserMessage(message, currentAttachments, {
-            id: queuedMessage.id,
-          }),
-        })
+      const deferLocalMessage = Boolean(
+        pendingRequestUserInputPayload(getRuntimeConversationMessages(targetAddress))
       )
+      const turnIdsBeforeSend = getRuntimeConversationTurnIds(targetAddress)
+      if (!deferLocalMessage) {
+        setMessages(
+          applyRuntimeConversationAction(targetAddress, {
+            type: 'user_added',
+            message: createRuntimeUserMessage(message, currentAttachments, {
+              id: queuedMessage.id,
+            }),
+          })
+        )
+      }
       let sendError: string | null = null
+      let queued = false
       const sendMessage =
         busy && options.interruptWhenBusy
           ? interruptAndSendRuntimePaneMessage
@@ -727,18 +735,33 @@ export function TemporaryChatPanel({
           onError: errorMessage => {
             sendError = errorMessage
           },
+          onQueued: () => {
+            queued = true
+          },
         }
       )
       if (sent) {
+        if (deferLocalMessage && !queued) {
+          setMessages(
+            appendAcceptedRuntimeConversationMessage(
+              targetAddress,
+              createRuntimeUserMessage(message, currentAttachments, { id: queuedMessage.id }),
+              lifecycleStore.getTask(targetAddress)?.turn.id ?? null,
+              turnIdsBeforeSend
+            )
+          )
+        }
         sideChatProjectChat.resetAttachments()
         setSending(false)
         return true
       }
-      setMessages(
-        removeRuntimeConversationTurn(targetAddress, {
-          clientUserMessageId: queuedMessage.id,
-        })
-      )
+      if (!deferLocalMessage) {
+        setMessages(
+          removeRuntimeConversationTurn(targetAddress, {
+            clientUserMessageId: queuedMessage.id,
+          })
+        )
+      }
       if (isRuntimeTaskBusyError(sendError)) {
         conversationQueue.enqueue(queuedMessage, {
           value: lifecycleBeforeSend,
@@ -1004,22 +1027,29 @@ export function TemporaryChatPanel({
                 {t('workbench.sending_message')}
               </div>
             ) : null}
-            {pendingRequest ? (
-              <RequestUserInputCard
-                key={requestUserInputPayloadKey(pendingRequest)}
-                payload={pendingRequest}
-                source={address}
-                disabled={requestUserInputHost?.isDisabled(pendingRequest)}
-                error={requestUserInputHost?.getError(pendingRequest)}
-                messages={messages}
-                draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
-                onDraftAnswersChange={answers =>
-                  requestUserInputHost?.setDraft(pendingRequest, answers)
-                }
-                onSubmit={submitRequestUserInput}
-                onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
-              />
-            ) : (
+            <RequestUserInputComposer
+              payload={pendingRequest}
+              source={address}
+              renderQuestion={onCollapse =>
+                pendingRequest ? (
+                  <RequestUserInputCard
+                    key={requestUserInputPayloadKey(pendingRequest)}
+                    payload={pendingRequest}
+                    source={address}
+                    disabled={requestUserInputHost?.isDisabled(pendingRequest)}
+                    error={requestUserInputHost?.getError(pendingRequest)}
+                    messages={messages}
+                    draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
+                    onDraftAnswersChange={answers =>
+                      requestUserInputHost?.setDraft(pendingRequest, answers)
+                    }
+                    onCollapse={onCollapse}
+                    onSubmit={submitRequestUserInput}
+                    onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
+                  />
+                ) : null
+              }
+            >
               <ComposerCatalogContext.Provider value={composerCatalog}>
                 <BufferedChatInput
                   predictionAddress={address}
@@ -1066,7 +1096,7 @@ export function TemporaryChatPanel({
                   onCancelGoalDraft={() => setGoalDraftActive(false)}
                 />
               </ComposerCatalogContext.Provider>
-            )}
+            </RequestUserInputComposer>
           </>
         )
       }

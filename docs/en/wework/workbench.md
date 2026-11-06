@@ -119,6 +119,8 @@ When in-app notifications are enabled for the relevant source, new questions sho
 
 To leave a question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally.
 
+Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
+
 When you are unsure how to answer a business question, select **Talk it through** on its question card or in the question details in **Needs your input**. Wework opens an independent discussion with the original conversation as context. Ask for evidence or compare options while the original question stays open. Closing and reopening the discussion preserves its conversation and conclusion drafts during the current app session.
 
 After discussing, select **Use the latest complete reply** or write your own conclusion. Choose the question and select **Fill answer**, then review, edit, and submit it in the original question. Filling a draft never sends an answer or approves an operation. Questions that were handled, cancelled, expired, or whose current state cannot be verified cannot receive a draft. Permission approvals and connector authorization retain their native confirmation flows.

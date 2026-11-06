@@ -6075,6 +6075,7 @@
     "unsupported_display_mode": "The app has no supported display mode."
   },
   "question_discussion": {
+    "expand_reply": "Expand reply",
     "open": "Talk it through",
     "title": "Talk it through before deciding",
     "hint": "Explore the options, evidence, and tradeoffs. The original question stays open.",

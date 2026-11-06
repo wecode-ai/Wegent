@@ -6070,6 +6070,7 @@
     "unsupported_display_mode": "应用没有可用的显示模式。"
   },
   "question_discussion": {
+    "expand_reply": "展开回复",
     "open": "先聊聊",
     "title": "先聊聊，再决定",
     "hint": "和模型一起厘清选项、依据和取舍，原问题会继续保留。",

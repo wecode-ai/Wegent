@@ -1,3 +1,4 @@
+import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import {
   getMcpAppPanel,
   isMcpAppPanelTab,
@@ -1886,7 +1887,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       })
     },
-    []
+    [setBrowserStates]
   )
   const allocateBrowserTab = useCallback((): RightWorkspaceBrowserTab => {
     browserTabSequence.current += 1
@@ -2857,6 +2858,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       services,
       setAdditionalHarnessError,
       setCentralHarnessError,
+      setRightPanelOpen,
+      setRightPanelTabs,
+      setRightPanelView,
       t,
     ]
   )
@@ -3404,7 +3408,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }))
       openRightPanelTab(internalId)
     },
-    [openRightPanelTab, t]
+    [openRightPanelTab, setRightPanelExtensionTabs, t]
   )
   const currentWorkItemGuideProject =
     boundCloudProject ??
@@ -3517,6 +3521,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       createBrowserTabState,
       defaultEmbeddedBrowserLabel,
       syncActiveEmbeddedBrowserLabel,
+      setBrowserStates,
+      setRightPanelOpen,
+      setRightPanelTabs,
+      setRightPanelView,
     ]
   )
   const closeSmartAppDevelopmentPreviewBrowser = useCallback(
@@ -4392,7 +4400,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setOpenFileRequest(null)
       openRightPanelTab('files')
     },
-    [setOpenFileRequest, openRightPanelTab]
+    [setOpenFileRequest, openRightPanelTab, setSelectedFileWorkspaceTargetKey]
   )
   const openFileTab = useCallback(
     (target: WorkspaceTarget, path: string) => {
@@ -4409,7 +4417,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setFileTabs(current => (current[tab] ? current : { ...current, [tab]: { target, path } }))
       openRightPanelTab(tab)
     },
-    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile]
+    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile, setFileTabs]
   )
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
@@ -4420,7 +4428,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         isDirectory: selection.isDirectory,
       })
     },
-    [fileWorkspaceTarget]
+    [fileWorkspaceTarget, setSelectedWorkspaceFile]
   )
   const selectBrowserView = useCallback(() => {
     openBrowserTab()
@@ -4793,9 +4801,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () => void clearCurrentGoalAction(),
     [clearCurrentGoalAction]
   )
-  const closeBottomPanelContext = useCallback((key: string) => {
-    setBottomPanelOpenByKey(current => ({ ...current, [key]: false }))
-  }, [])
+  const closeBottomPanelContext = useCallback(
+    (key: string) => {
+      setBottomPanelOpenByKey(current => ({ ...current, [key]: false }))
+    },
+    [setBottomPanelOpenByKey]
+  )
   const handleTerminalTabsEmpty = () => {
     onPaneResourceRetained(paneKey, 'bottom-panel', false)
   }
@@ -5496,44 +5507,54 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                       className="mb-2"
                                     />
                                   )}
-                                  {pendingRequestUserInput ? (
-                                    <RequestUserInputCard
-                                      key={
-                                        requestUserInputPayloadKey(pendingRequestUserInput) ??
-                                        'implementation-plan'
-                                      }
-                                      payload={pendingRequestUserInput}
-                                      source={currentRuntimeTask}
-                                      messages={paneMessages}
-                                      onSubmit={response => {
-                                        const isImplementationPlanRequest =
-                                          isImplementationPlanRequestUserInput(
-                                            pendingRequestUserInput
-                                          )
-                                        const shouldImplementPlan =
-                                          isImplementationPlanRequest &&
-                                          isImplementationPlanConfirmationResponse(response)
-                                        return paneSession.sendRequestUserInputResponse(response, {
-                                          requestUserInputResponses:
-                                            pendingRequestUserInputResponses(
+                                  <RequestUserInputComposer
+                                    payload={pendingRequestUserInput}
+                                    source={currentRuntimeTask}
+                                    renderQuestion={onCollapse =>
+                                      pendingRequestUserInput ? (
+                                        <RequestUserInputCard
+                                          key={
+                                            requestUserInputPayloadKey(pendingRequestUserInput) ??
+                                            'implementation-plan'
+                                          }
+                                          payload={pendingRequestUserInput}
+                                          source={currentRuntimeTask}
+                                          messages={paneMessages}
+                                          onCollapse={onCollapse}
+                                          onSubmit={response => {
+                                            const isImplementationPlanRequest =
+                                              isImplementationPlanRequestUserInput(
+                                                pendingRequestUserInput
+                                              )
+                                            const shouldImplementPlan =
+                                              isImplementationPlanRequest &&
+                                              isImplementationPlanConfirmationResponse(response)
+                                            return paneSession.sendRequestUserInputResponse(
                                               response,
-                                              paneMessages,
-                                              paneSession.answeredRequestUserInputIds
-                                            ),
-                                          appendUserMessage: isImplementationPlanRequest,
-                                          forceDefaultCollaborationMode: shouldImplementPlan,
-                                        })
-                                      }}
-                                      onIgnore={() =>
-                                        paneSession.ignoreRequestUserInput(
-                                          pendingRequestUserInputPayloads(
-                                            paneMessages,
-                                            paneSession.answeredRequestUserInputIds
-                                          )
-                                        )
-                                      }
-                                    />
-                                  ) : (
+                                              {
+                                                requestUserInputResponses:
+                                                  pendingRequestUserInputResponses(
+                                                    response,
+                                                    paneMessages,
+                                                    paneSession.answeredRequestUserInputIds
+                                                  ),
+                                                appendUserMessage: isImplementationPlanRequest,
+                                                forceDefaultCollaborationMode: shouldImplementPlan,
+                                              }
+                                            )
+                                          }}
+                                          onIgnore={() =>
+                                            paneSession.ignoreRequestUserInput(
+                                              pendingRequestUserInputPayloads(
+                                                paneMessages,
+                                                paneSession.answeredRequestUserInputIds
+                                              )
+                                            )
+                                          }
+                                        />
+                                      ) : null
+                                    }
+                                  >
                                     <>
                                       {supervisor && (
                                         <SupervisorSuggestionCards
@@ -5640,7 +5661,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         workspaceFileApi={workspaceFileApi}
                                       />
                                     </>
-                                  )}
+                                  </RequestUserInputComposer>
                                 </>
                               ) : null}
                             </div>

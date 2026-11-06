@@ -1,4 +1,5 @@
 import { SupersededConversationRead } from '@/features/workbench/runtimeConversationSynchronization'
+import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { useRuntimeConversationSnapshot } from '@/features/workbench/useRuntimeConversationSnapshot'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import { useDebugSnapshotPublisher } from '@/features/workbench/useDebugSnapshotPublisher'
@@ -1118,7 +1119,9 @@ export function useWorkbenchPaneSession({
       if (!currentRuntimeTask) return { accepted: false, queued: false }
       const operation = beginRuntimeConversationOperation(currentRuntimeTask)
       try {
-        const appendedLocalMessage = options.appendLocalMessage !== false
+        const appendedLocalMessage =
+          options.appendLocalMessage !== false &&
+          !pendingRequestUserInputPayload(messagesRef.current)
         if (appendedLocalMessage) {
           applyRuntimeConversationAction(currentRuntimeTask, {
             type: 'user_added',

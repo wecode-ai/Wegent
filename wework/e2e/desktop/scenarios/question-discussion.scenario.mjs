@@ -29,6 +29,7 @@ const ADVICE =
   '建议先发给项目成员。这样能覆盖协作需要，也能减少不必要的信息扩散。你更关心协作效率，还是敏感信息的保护？'
 const CONCLUSION = '周报仅发送给项目成员，敏感事项只保留给项目负责人。'
 const COMPLETE = '已确认接收范围，将按这个结论继续整理周报。'
+const ORDINARY_MESSAGE = '先只整理，不发送周报。'
 const DIALOG = '[aria-hidden="false"] > [data-testid="question-discussion-dialog"]'
 const SIDE = `${DIALOG} [data-testid="question-discussion-conversation"]`
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -46,6 +47,7 @@ export function createDesktopScenario({
   let active = false
   let discussionCalls = 0
   let finalAnswers = 0
+  let ordinaryAnswers = 0
   let firstToolName
   return {
     async handleHttp(request, response, url) {
@@ -64,6 +66,9 @@ export function createDesktopScenario({
       if (text.includes('Side conversation boundary.') || text.includes('我对下面的问题还拿不准')) {
         discussionCalls += 1
         events = [assistantMessage(text.includes(FOLLOW_UP) ? CONCLUSION : ADVICE)]
+      } else if (text.includes(ORDINARY_MESSAGE)) {
+        ordinaryAnswers += 1
+        events = [assistantMessage(COMPLETE)]
       } else if (!requestContainsToolOutput(body, callId)) {
         const tool = selectTool(body, 'request_user_input_async', {
           questions: [{ title: QUESTION, options: ['项目成员', '全公司'] }],
@@ -115,6 +120,26 @@ export function createDesktopScenario({
       )
       const source = original.pane.currentRuntimeTask
       await captureScreenshot(control, 'question-discussion-01-original-question.png', 'body')
+      const draftAnswer = `${CARD} [data-testid="request-user-input-custom-question_1"]`
+      await control.command('fill', draftAnswer, { value: '只发给项目成员，先讨论敏感事项。' })
+      await control.command('click', `${CARD} [data-testid="request-user-input-ignore-button"]`)
+      const expandQuestion = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-expand"]`
+      await control.command('waitFor', expandQuestion, { visible: true, text: QUESTION })
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { visible: true })
+      await captureScreenshot(control, 'question-discussion-01a-collapsed-question.png', 'body')
+      await control.command('click', expandQuestion)
+      assert.equal(
+        await control.command('getValue', draftAnswer),
+        '只发给项目成员，先讨论敏感事项。'
+      )
+      await control.command('press', draftAnswer, { key: 'Escape' })
+      await control.command('waitFor', expandQuestion, { visible: true })
+      await control.command('click', expandQuestion)
+      assert.equal(
+        await control.command('getValue', draftAnswer),
+        '只发给项目成员，先讨论敏感事项。'
+      )
+      assert.equal(finalAnswers, 0, 'Folding and reopening cannot cancel or answer the question')
       await control.command('click', `${CARD} [data-testid="request-user-input-discuss"]`)
       await control.command('waitFor', `${SIDE} [data-testid="message-assistant"]`, {
         text: ADVICE,
@@ -258,9 +283,48 @@ export function createDesktopScenario({
       assert.equal(final.pane.currentRuntimeTask.taskId, source.taskId)
       assert.ok(firstToolName, 'The question must originate from the real model tool protocol')
       await captureScreenshot(control, 'question-discussion-06-original-resumed.png', 'body')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      const ordinaryWorkspace = join(workspacePath, 'question-collapse-send')
+      await mkdir(ordinaryWorkspace, { recursive: true })
+      await createSingleRootLocalProject(control, ordinaryWorkspace, '收起问题后继续沟通')
+      await selectE2EModel(control)
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PROMPT })
+      await control.command(
+        'clickWhenEnabled',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+      )
+      await control.command('waitFor', CARD, { text: QUESTION, visible: true })
+      await control.command('click', `${CARD} [data-testid="request-user-input-ignore-button"]`)
+      await control.command('waitFor', expandQuestion, { visible: true })
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ORDINARY_MESSAGE })
+      await control.command(
+        'clickWhenEnabled',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+      )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        { text: COMPLETE, visible: true }
+      )
+      await control.command('waitFor', expandQuestion, { visible: false })
+      await control.command('waitFor', CARD, { visible: false })
+      assert.equal(
+        ordinaryAnswers,
+        1,
+        'Only a delivered ordinary message should dismiss the old question'
+      )
+      await captureScreenshot(
+        control,
+        'question-discussion-07-message-dismissed-question.png',
+        'body'
+      )
       await writeFile(
         join(resultDir, 'question-discussion-user-story.json'),
-        JSON.stringify({ source, discussionCalls, finalAnswers, result: 'passed' }, null, 2)
+        JSON.stringify(
+          { source, discussionCalls, finalAnswers, ordinaryAnswers, result: 'passed' },
+          null,
+          2
+        )
       )
       active = false
     },

@@ -74,6 +74,69 @@ const codeComment = {
 const continuation = 'Authorization is complete. Continue from the blocked operation.'
 let lifecycleStore: RuntimeTaskLifecycleStore
 
+test.each(['accepted', 'rejected', 'queued'] as const)(
+  'retains an unanswered question until an ordinary message is delivered (%s)',
+  async outcome => {
+    const restoreAttachment = vi.fn()
+    Object.assign(mocks.context.projectChat as object, {
+      addExistingAttachmentForScope: restoreAttachment,
+    })
+    const { result } = await renderSession()
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'question-turn',
+          status: 'done',
+          items: [
+            {
+              id: 'question-item',
+              type: 'block',
+              block: {
+                id: 'question-item',
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'done',
+                createdAt: 1,
+                renderPayload: {
+                  kind: 'request_user_input',
+                  delivery: 'async',
+                  itemId: 'question-item',
+                  questions: [{ id: 'audience', question: 'Who receives the report?' }],
+                },
+              },
+            },
+          ],
+        },
+      ])
+    })
+    let finish!: () => void
+    mocks.send.mockImplementationOnce(
+      (_request, options) =>
+        new Promise<boolean>(resolve => {
+          finish = () => {
+            if (outcome === 'queued') options.onQueued?.({ queuePosition: 1 })
+            resolve(outcome !== 'rejected')
+          }
+        })
+    )
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = result.current.send('Continue with project members only')
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    expect(pendingRequestUserInputPayload(result.current.messages)?.itemId).toBe('question-item')
+    await act(async () => {
+      finish()
+      await sending
+    })
+    expect(pendingRequestUserInputPayload(result.current.messages) === null).toBe(
+      outcome === 'accepted'
+    )
+    expect(mocks.cancel).not.toHaveBeenCalled()
+    if (outcome === 'rejected') expect(restoreAttachment).toHaveBeenCalledWith(scopeKey, attachment)
+  }
+)
+
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.send.mockReset().mockResolvedValue(true)

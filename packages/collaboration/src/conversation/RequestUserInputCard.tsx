@@ -38,6 +38,7 @@ export interface RequestUserInputCardProps {
     response: RequestUserInputResponse,
   ) => boolean | void | Promise<boolean | void>;
   onIgnore?: () => void;
+  onCollapse?: () => void;
   additionalActions?: ReactNode;
   onOpenAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
 }
@@ -72,6 +73,7 @@ function RequestUserInputForm({
   disabled = false,
   onSubmit,
   onIgnore,
+  onCollapse,
   additionalActions,
   error,
   draftAnswers,
@@ -166,8 +168,10 @@ function RequestUserInputForm({
   };
 
   const isMcpForm = payload.interactionKind === "mcp_form";
-  const canIgnore = isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore);
+  const canIgnore =
+    Boolean(onCollapse) || (isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore));
   const handleIgnore = () => {
+    if (onCollapse) return onCollapse();
     // Cancel this MCP request, not the containing task or its other questions.
     if (isMcpForm) void submitAnswers({});
     else onIgnore?.();
@@ -235,7 +239,11 @@ function RequestUserInputForm({
           onClick={handleIgnore}
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
         >
-          {t("request_user_input.ignore")}
+          {t(
+            onCollapse
+              ? "request_user_input.collapse"
+              : "request_user_input.ignore",
+          )}
           <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
             ESC
           </kbd>
