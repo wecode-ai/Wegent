@@ -17,21 +17,14 @@ test.each([
   ['expanded', 'milestones', 'collaboration-milestones-tab'],
   ['compact', 'milestones', 'collaboration-milestones-tab'],
 ])('selects %s navigation view %s after the switcher mounts', async (layout, view, tabId) => {
-  let mounted = false
   let selected = null
   const control = {
     async command(action, selector, options) {
-      if (action === 'waitFor') {
-        mounted = true
-      } else if (action === 'getElementCount') {
-        return Number(mounted && layout === 'compact')
-      } else if (action === 'select') {
-        assert.ok(mounted && layout === 'compact')
+      if (action === 'chooseWhenEnabled') {
+        const mountedId = layout === 'compact' ? 'collaboration-project-view-select' : tabId
+        assert.ok(selector.split(', ').includes(`main [data-testid="${mountedId}"]`))
+        assert.ok(options.timeoutMs > 0)
         selected = options.value
-      } else if (action === 'clickWhenEnabled') {
-        assert.equal(layout, 'expanded', 'Compact projects have no tab buttons')
-        assert.equal(selector, `main [data-testid="${tabId}"]`)
-        selected = view
       } else {
         throw new Error(`Unexpected action: ${action}`)
       }

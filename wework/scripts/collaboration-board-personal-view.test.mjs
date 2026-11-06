@@ -8,15 +8,13 @@ const scoped = selector => `${content} ${selector}`
 test.each([true, false])(
   'opens the board using the mounted navigation control (compact=%s)',
   async compact => {
-    const command = vi.fn(async (action, selector) => {
+    let selected
+    const command = vi.fn(async (action, selector, options) => {
       if (action === 'getAttribute') return 'true'
-      if (action === 'getElementCount') return compact ? '1' : '0'
-      if (
-        compact &&
-        action === 'clickWhenEnabled' &&
-        selector.endsWith('[data-testid="collaboration-tab-board"]')
-      ) {
-        throw new Error('Expanded tabs are not mounted in compact layout')
+      if (action === 'chooseWhenEnabled') {
+        const mounted = compact ? 'collaboration-project-view-select' : 'collaboration-tab-board'
+        expect(selector.split(', ')).toContain(scoped(`[data-testid="${mounted}"]`))
+        selected = options.value
       }
       return ''
     })
@@ -26,12 +24,11 @@ test.each([true, false])(
       workspace_id: 'workspace',
     })
     expect(command).toHaveBeenCalledWith(
-      compact ? 'select' : 'clickWhenEnabled',
-      compact
-        ? scoped('[data-testid="collaboration-project-view-select"]')
-        : scoped('[data-testid="collaboration-tab-board"]'),
-      compact ? { value: 'board' } : { timeoutMs: expect.any(Number) }
+      'chooseWhenEnabled',
+      `${scoped('[data-testid="collaboration-project-view-select"]')}, ${scoped('[data-testid="collaboration-tab-board"]')}`,
+      { value: 'board', timeoutMs: expect.any(Number) }
     )
+    expect(selected).toBe('board')
     expect(command).toHaveBeenLastCalledWith(
       'waitFor',
       scoped('[data-testid="collaboration-board"]')
