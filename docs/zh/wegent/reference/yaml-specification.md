@@ -855,7 +855,7 @@ spec:
 | `spec.enabled`                  | boolean | 是   | 是否启用，停用后不会出现在用户目录和 Runtime 中                   |
 | `spec.visibility`               | string  | 是   | `all` 或 `roles`                                                  |
 | `spec.allowedRoles`             | array   | 否   | `visibility: roles` 时允许访问的用户角色                          |
-| `spec.authType`                 | string  | 是   | 当前仅支持 `none`                                                 |
+| `spec.authType`                 | string  | 是   | `none` 使用固定凭据；`oauth2` 支持用户级 OAuth 2.0 发现、DCR 和 PKCE |
 | `spec.transport`                | string  | 是   | `streamable-http`、`sse` 或 `http`                                |
 | `spec.mcpUrl`                   | string  | 是   | MCP endpoint 或 HTTP API 基础地址                                 |
 | `spec.toolLoadingMode`          | string  | 否   | `static`（默认，静态全局加载）或 `lazy`（按需加载） |

@@ -871,7 +871,7 @@ spec:
 | `spec.enabled`                  | boolean | Yes           | Whether the app is enabled; disabled apps are hidden from catalogs/runtime |
 | `spec.visibility`               | string  | Yes           | `all` or `roles`                                                           |
 | `spec.allowedRoles`             | array   | No            | User roles allowed when `visibility: roles`                                |
-| `spec.authType`                 | string  | Yes           | Currently only `none` is supported                                         |
+| `spec.authType`                 | string  | Yes           | `none` for static credentials, or `oauth2` for per-user OAuth 2.0 discovery, DCR and PKCE |
 | `spec.transport`                | string  | Yes           | `streamable-http`, `sse`, or `http`                                        |
 | `spec.mcpUrl`                   | string  | Yes           | MCP endpoint or HTTP API base URL                                          |
 | `spec.toolLoadingMode`          | string  | No            | `static` (default, global static loading) or `lazy` (on-demand loading)     |

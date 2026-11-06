@@ -4,7 +4,12 @@ import { Button } from '@/components/ui/button'
 import { openExternalUrl } from '@/lib/external-links'
 import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
 import { useTranslation } from '@/hooks/useTranslation'
-import { authorizeWegentConnector, waitForConnectorToolCatalog } from '@/api/cloud/connectorApps'
+import {
+  authorizeWegentConnector,
+  connectorAuthorizationErrorMessage,
+  waitForConnectorToolCatalog,
+} from '@/api/cloud/connectorApps'
+import { connectorDisplayName } from '@/components/plugins/connectorDisplayName'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
@@ -117,7 +122,7 @@ export function CloudConnectorAuthCard({
       // to another identity.
       if (!isCurrentAttempt() || cause instanceof ConnectorSyncAbortedError) return
       if ((cause as { name?: unknown } | null)?.name === 'AbortError') return
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(connectorAuthorizationErrorMessage(cause, connectorDisplayName(slug), t))
     } finally {
       if (isCurrentAttempt()) setBusy(false)
     }

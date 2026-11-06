@@ -15,6 +15,7 @@ use std::time::Duration;
 use brz_http::{Client as HttpClient, Endpoint, Response as HttpResponse};
 use serde::Deserialize;
 use serde_json::json;
+use tokio::time::{Instant, timeout_at};
 
 /// Source `streamablehttp_client(timeout=30)` connect/read window.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -393,7 +394,12 @@ where
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/event-stream"));
     let result = if is_event_stream {
-        decode_sse_stream(&mut response, expected_id).await?
+        timeout_at(
+            Instant::now() + REQUEST_TIMEOUT,
+            decode_sse_stream(&mut response, expected_id),
+        )
+        .await
+        .map_err(|_| McpError::Transport("MCP event stream timed out".to_string()))??
     } else {
         let body = response
             .bytes()
@@ -436,7 +442,15 @@ where
             .await
             .map_err(|error| McpError::Transport(error.to_string()))?
         {
-            Some(chunk) => buffer.extend_from_slice(&chunk),
+            Some(chunk) => {
+                buffer.extend_from_slice(&chunk);
+                if buffer.len() > super::mcp_sse::MAX_EVENT_BYTES {
+                    return Err(McpError::Transport(format!(
+                        "MCP event exceeded {} bytes",
+                        super::mcp_sse::MAX_EVENT_BYTES
+                    )));
+                }
+            }
             None => {
                 return Err(McpError::Transport(
                     "MCP event stream ended before the JSON-RPC reply".to_string(),

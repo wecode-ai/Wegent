@@ -46,7 +46,20 @@ describe('stripConnectorAuthMarkers', () => {
     expect(
       connectorAuthSlug('暂时不可用。\n\nconnector_auth_required connectorSlug=dingding_todo')
     ).toBe('dingding_todo')
-    expect(connectorAuthSlug('- `connectorSlug`: `dingtalk_log`')).toBe('dingtalk_log')
     expect(connectorAuthSlug('没有标记的普通回复')).toBeNull()
+    expect(connectorAuthSlug('connectorSlug=dingtalk_log')).toBeNull()
+  })
+
+  test('preserves marker examples inside fenced and inline code', () => {
+    const text = [
+      'Use `connector_auth_required connectorSlug=demo` in code.',
+      '```text',
+      'connector_auth_required',
+      'connectorSlug=demo',
+      '```',
+      'End.',
+    ].join('\n')
+
+    expect(stripConnectorAuthMarkers(text)).toBe(text)
   })
 })

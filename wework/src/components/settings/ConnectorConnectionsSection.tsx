@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   authorizeWegentConnector,
+  connectorAuthorizationErrorMessage,
   listWegentConnectorApps,
   listWegentInstalledConnectorApps,
   notifyConnectorAuthorizationChanged,
@@ -112,7 +113,13 @@ function ConnectorConnectionsSession({ apiBaseUrl, token }: ConnectorConnections
       if (activeRef.current) setLoadRevision(revision => revision + 1)
     } catch (cause) {
       if (!activeRef.current || (cause as { name?: string } | null)?.name === 'AbortError') return
-      setError(cause instanceof Error ? cause.message : t('workbench.connector_refresh_failed'))
+      setError(
+        action === 'refresh'
+          ? cause instanceof Error
+            ? cause.message
+            : t('workbench.connector_refresh_failed')
+          : connectorAuthorizationErrorMessage(cause, app.name, t)
+      )
     } finally {
       if (activeRef.current) setPendingSlug(null)
     }

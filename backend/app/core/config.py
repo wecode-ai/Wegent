@@ -624,8 +624,9 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
     BUILTIN_PLUGINS_DIR: str = "/app/init_data/plugins"
-    # Create the built-in DingTalk connector apps on startup when missing.
-    # Deleted apps stay deleted; this only backfills never-created slugs.
+    # Create missing built-in DingTalk connector apps on every startup.
+    # A physically deleted built-in app is recreated; disable it instead when
+    # it should stay visible but non-callable.
     CONNECTOR_BUILTIN_APPS_ENABLED: bool = True
 
     # Default headers forwarded to the model backend on every LLM call.

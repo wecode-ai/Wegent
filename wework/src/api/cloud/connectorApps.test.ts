@@ -1,6 +1,10 @@
 import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import { afterEach, onTestFinished, describe, expect, test, vi } from 'vitest'
-import { authorizeWegentConnector, waitForConnectorToolCatalog } from './connectorApps'
+import {
+  authorizeWegentConnector,
+  ConnectorAuthorizationError,
+  waitForConnectorToolCatalog,
+} from './connectorApps'
 
 describe('connector OAuth client', () => {
   afterEach(() => {
@@ -187,6 +191,7 @@ describe('connector OAuth client', () => {
     const error = await outcome
 
     expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('network down')
     expect(close).toHaveBeenCalledTimes(1)
   })
 
@@ -239,8 +244,8 @@ describe('connector OAuth client', () => {
     await vi.advanceTimersByTimeAsync(30_000)
 
     const error = await outcome
-    expect(error).toBeInstanceOf(Error)
-    expect(String((error as Error).message)).toContain('关闭')
+    expect(error).toBeInstanceOf(ConnectorAuthorizationError)
+    expect((error as ConnectorAuthorizationError).code).toBe('window_closed')
     expect(close).toHaveBeenCalledTimes(1)
     expect(unhandled).toEqual([])
   })
@@ -333,8 +338,8 @@ describe('connector OAuth client', () => {
     await vi.advanceTimersByTimeAsync(3_000)
 
     const error = await outcome
-    expect(error).toBeInstanceOf(Error)
-    expect(String((error as Error).message)).toContain('关闭')
+    expect(error).toBeInstanceOf(ConnectorAuthorizationError)
+    expect((error as ConnectorAuthorizationError).code).toBe('window_closed')
     expect(close).toHaveBeenCalledTimes(1)
   })
 
@@ -375,8 +380,8 @@ describe('connector OAuth client', () => {
     }
     const error = await outcome
 
-    expect(error).toBeInstanceOf(Error)
-    expect(String((error as Error).message)).toContain('超时')
+    expect(error).toBeInstanceOf(ConnectorAuthorizationError)
+    expect((error as ConnectorAuthorizationError).code).toBe('timeout')
     expect(close).toHaveBeenCalledTimes(1)
   })
 

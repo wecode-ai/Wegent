@@ -1136,7 +1136,7 @@ def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
 
 def test_dingtalk_skill_only_describes_provider_adapter_behavior() -> None:
     skill_path = (
-        Path(__file__).resolve().parents[3].parent
+        Path(__file__).resolve().parents[4]
         / "backend-rs"
         / "init_data"
         / "skills"

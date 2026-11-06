@@ -53,6 +53,7 @@ vi.mock('@/lib/runtime-mode', async importOriginal => {
 import { CloudConnectorAuthCard, ConnectorAuthCard } from './ConnectorAuthCard'
 import { GITHUB_CLI_TARGET } from '@/api/local/githubCli'
 import type { LocalConnectorAuthResult } from '@/api/local/localConnectorAuth'
+import { ConnectorAuthorizationError } from '@/api/cloud/connectorApps'
 
 const browserTarget = {
   pluginKey: 'gitlab-intra',
@@ -628,4 +629,29 @@ describe('CloudConnectorAuthCard', () => {
     )
     expect(screen.getByTestId('cloud-connector-auth-authorize')).toBeEnabled()
   })
+
+  test.each([
+    ['window_closed', '授权窗口已关闭', true],
+    ['declined', '授权已取消', true],
+    ['timeout', '查询应用授权入口超时', false],
+    ['connection_missing', '未返回连接', true],
+  ] as const)(
+    'localizes %s without naming GitHub for a generic connector',
+    async (code, expected, includesName) => {
+      cloudMocks.authorize.mockRejectedValue(new ConnectorAuthorizationError(code))
+      render(
+        <CloudConnectorAuthCard
+          slug="custom_calendar"
+          apiBaseUrl="https://wegent.test/api"
+          token="account-a-token"
+          onSuccess={vi.fn()}
+        />
+      )
+      fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+      const alert = await screen.findByTestId('cloud-connector-auth-error')
+      expect(alert).toHaveTextContent(expected)
+      if (includesName) expect(alert).toHaveTextContent('Custom Calendar')
+      expect(alert).not.toHaveTextContent('GitHub')
+    }
+  )
 })

@@ -67,6 +67,44 @@ export interface ConnectorOAuthPollResult {
   error?: string | null
 }
 
+export type ConnectorAuthorizationErrorCode =
+  | 'window_closed'
+  | 'declined'
+  | 'failed'
+  | 'timeout'
+  | 'connection_missing'
+
+export class ConnectorAuthorizationError extends Error {
+  readonly code: ConnectorAuthorizationErrorCode
+
+  constructor(code: ConnectorAuthorizationErrorCode, message?: string) {
+    super(message || code)
+    this.code = code
+    this.name = 'ConnectorAuthorizationError'
+  }
+}
+
+const CONNECTOR_AUTHORIZATION_ERROR_KEYS: Record<ConnectorAuthorizationErrorCode, string> = {
+  window_closed: 'workbench.plugins_connector_auth_window_closed',
+  declined: 'workbench.plugins_connector_auth_declined',
+  failed: 'workbench.plugins_connector_auth_failed',
+  timeout: 'workbench.plugins_connector_auth_timeout',
+  connection_missing: 'workbench.plugins_connector_auth_connection_missing',
+}
+
+/** Localize an authorization failure without embedding a provider name. */
+export function connectorAuthorizationErrorMessage(
+  cause: unknown,
+  name: string,
+  t: (key: string, values?: Record<string, unknown>) => string
+): string {
+  if (!(cause instanceof ConnectorAuthorizationError)) {
+    return cause instanceof Error ? cause.message : String(cause)
+  }
+  if (cause.code === 'failed' && cause.message !== 'failed') return cause.message
+  return t(CONNECTOR_AUTHORIZATION_ERROR_KEYS[cause.code], { name })
+}
+
 export const CONNECTOR_AUTHORIZATION_CHANGED_EVENT = 'wegent:connector-authorization-changed'
 
 export function notifyConnectorAuthorizationChanged(): void {
@@ -230,21 +268,21 @@ export async function authorizeWegentConnector(
       if (result.status === 'pending') {
         if (windowClosed) {
           attempt.cancel()
-          throw new Error('GitHub 授权窗口已关闭')
+          throw new ConnectorAuthorizationError('window_closed')
         }
         continue
       }
       if (result.status === 'declined') {
         attempt.cancel()
-        throw new Error('GitHub 授权已取消')
+        throw new ConnectorAuthorizationError('declined')
       }
       if (result.status === 'failed') {
         attempt.fail('confirm')
-        throw new Error(result.error || 'GitHub 授权失败')
+        throw new ConnectorAuthorizationError('failed', result.error || undefined)
       }
       if (!result.connection) {
         attempt.fail('confirm')
-        throw new Error('GitHub 授权状态缺失')
+        throw new ConnectorAuthorizationError('connection_missing')
       }
       if (result.connection.status === 'connected') attempt.succeed()
       else attempt.fail('confirm')
@@ -252,7 +290,7 @@ export async function authorizeWegentConnector(
       return result.connection
     }
     attempt.fail('confirm')
-    throw new Error('GitHub 授权已超时')
+    throw new ConnectorAuthorizationError('timeout')
   } catch (error) {
     attempt.fail('request')
     throw error

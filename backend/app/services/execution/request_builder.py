@@ -14,7 +14,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, List, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -2701,7 +2701,7 @@ class TaskRequestBuilder:
         servers from the per-Bot config, where HTTP headers survive the
         executor normalization.
         """
-        if not auth_token or not self._bot_uses_chat_shell(bot):
+        if not auth_token or not self._bot_uses_chat_shell(bot, user.id):
             return []
         from app.mcp_server.server import get_mcp_connectors_config
 
@@ -2740,17 +2740,12 @@ class TaskRequestBuilder:
             )
         return result
 
-    @staticmethod
-    def _bot_uses_chat_shell(bot: Kind) -> bool:
-        payload = getattr(bot, "json", None)
-        if not isinstance(payload, dict):
-            return False
+    def _bot_uses_chat_shell(self, bot: Kind, user_id: int) -> bool:
+        """Resolve the shell type instead of relying on a shell's display name."""
         try:
-            bot_crd = Bot.model_validate(payload)
-        except Exception:
+            return self._resolve_shell_type(bot, user_id) == "Chat"
+        except (ValueError, ValidationError):
             return False
-        shell_ref = bot_crd.spec.shellRef if bot_crd.spec else None
-        return (getattr(shell_ref, "name", "") or "") == "Chat"
 
     def _user_has_callable_connectors(self, user: User) -> bool:
         """Whether the user has at least one static connector app."""
@@ -2783,7 +2778,7 @@ class TaskRequestBuilder:
         apps through the normal Skill catalog. Lazy apps whose admin keywords
         match the user message are preloaded so their MCP is ready immediately.
         """
-        if not auth_token or not self._bot_uses_chat_shell(bot):
+        if not auth_token or not self._bot_uses_chat_shell(bot, user.id):
             return [], [], []
         from app.services.execution.connector_guidance import (
             connector_authorization_link,

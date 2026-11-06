@@ -12,6 +12,8 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -23,6 +25,7 @@ import {
   startConnectorOAuthProvider,
 } from '../modules/connector-oauth-provider.mjs'
 import { verifyConnectorAccountSwitch } from '../modules/connector-account-switch.mjs'
+import { openPlugin, testId, until } from '../modules/plugin-regression-fixture.mjs'
 import {
   assistantMessage,
   mcpToolRequestEvents,
@@ -38,6 +41,7 @@ const RESUME_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_RESUMED'
 const TOOL_PROMPT = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_CALL'
 const TOOL_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_TOOL_COMPLETED'
 const TOOL_CALL_ID = 'connector-oauth-real-echo'
+const CONNECTOR_PLUGIN_SLUG = 'desktop-connector-oauth-plugin'
 /** `workbench.plugins_local_auth_resume_prompt` in both shipped locales. */
 const RESUME_FRAGMENTS = ['blocked by authorization', '因授权中断']
 
@@ -67,6 +71,7 @@ function isResumeRequest(body) {
 export function createDesktopScenario({
   checkpoint,
   captureScreenshot,
+  resultDir,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
@@ -79,6 +84,7 @@ export function createDesktopScenario({
   let catalogAtResume = null
   let localSyncHold = null
   let accountSwitch = null
+  let connectorPlugin = null
 
   async function api(path, { method = 'GET', body, authToken = backend.authToken } = {}) {
     const response = await fetch(`${backend.backendUrl}${path}`, {
@@ -186,7 +192,7 @@ export function createDesktopScenario({
       await control.command('setAppPreferences', 'body', {
         value: JSON.stringify({ replyPredictionsEnabled: false }),
       })
-      await cloudEnvironment.waitForConnectedAppDevice()
+      const appDevice = await cloudEnvironment.waitForConnectedAppDevice()
       // Standalone selection establishes its own app/provider and account
       // fixtures through prepareCloud and the shared account-switch flow.
       if (checkpoint === 'connector-account-switch') {
@@ -299,6 +305,124 @@ export function createDesktopScenario({
       const app = installed.apps.find(item => item.slug === CONNECTOR_OAUTH_SLUG)
       assert.equal(app?.connection.status, 'connected', 'The backend must store the grant')
 
+      // An expired grant whose refresh is rejected must still recover through
+      // provider consent from the installed plugin detail. Recreate the grant
+      // through the real OAuth provider so it carries a renewable token.
+      provider.setAccessTokenTtl(1)
+      const expiredSession = await api(
+        `/api/connector-apps/${CONNECTOR_OAUTH_SLUG}/oauth/sessions`,
+        { method: 'POST' }
+      )
+      const expiredConsent = await fetch(expiredSession.authorize_url, { redirect: 'manual' })
+      assert.equal(expiredConsent.status, 302)
+      const expiredCallback = await fetch(expiredConsent.headers.get('location'))
+      assert.equal(expiredCallback.status, 200)
+      await until(
+        () => api('/api/connector-apps'),
+        apps =>
+          apps.find(app => app.slug === CONNECTOR_OAUTH_SLUG)?.connection.status === 'expired',
+        'The short-lived connector grant never expired',
+        uiTimeoutMs
+      )
+      provider.setAccessTokenTtl(3600)
+      provider.rejectRefresh(true)
+
+      const pluginRoot = join(resultDir, 'connector-oauth-plugin')
+      await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
+      await writeFile(
+        join(pluginRoot, '.codex-plugin/plugin.json'),
+        `${JSON.stringify(
+          {
+            name: CONNECTOR_PLUGIN_SLUG,
+            version: '1.0.0',
+            description: 'Desktop connector authorization recovery fixture',
+            connectors: [
+              {
+                slug: CONNECTOR_OAUTH_SLUG,
+                displayName: 'Desktop connector OAuth',
+                authPolicy: 'on_use',
+              },
+            ],
+          },
+          null,
+          2
+        )}\n`
+      )
+      connectorPlugin = await cloudEnvironment.publishPluginRelease({
+        slug: CONNECTOR_PLUGIN_SLUG,
+        version: '1.0.0',
+        packageRoot: pluginRoot,
+      })
+      await api(
+        `/plugins/marketplace/${connectorPlugin.pluginId}/install?device_id=${encodeURIComponent(
+          appDevice.device_id
+        )}`,
+        { method: 'POST' }
+      )
+      await openPlugin(control, { slug: CONNECTOR_PLUGIN_SLUG })
+      await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
+      const pluginRow = testId(`plugin-marketplace-row-${connectorPlugin.pluginId}`)
+      await control.command('waitFor', pluginRow, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', pluginRow)
+      const manage = `[data-testid="plugin-connection-manage-connector:${CONNECTOR_OAUTH_SLUG}"]`
+      await control.command('waitFor', manage, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      const refreshBefore = provider.refreshRequests
+      const authorizeBefore = provider.authorizeRequests
+      const tokenBefore = provider.tokenRequests
+      await control.command('clickWhenEnabled', manage, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await until(
+        () => api('/api/connector-apps'),
+        apps =>
+          apps.find(app => app.slug === CONNECTOR_OAUTH_SLUG)?.connection.status === 'connected',
+        'Provider consent did not restore the rejected connector grant',
+        uiTimeoutMs
+      )
+      assert.equal(
+        provider.refreshRequests,
+        refreshBefore + 1,
+        'The expired plugin connection must exercise exactly one rejected refresh'
+      )
+      assert.equal(
+        provider.authorizeRequests,
+        authorizeBefore + 1,
+        'A rejected refresh must fall back to exactly one provider consent'
+      )
+      assert.equal(
+        provider.tokenRequests,
+        tokenBefore + 2,
+        'The refresh and consent fallback must each reach the token endpoint once'
+      )
+      await control.command('waitFor', `${manage}:not([disabled])`, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="plugin-detail-action-error"]')
+        ),
+        0,
+        'A rejected refresh must not leave a plugin authorization error'
+      )
+      await control.command('clickWhenEnabled', manage, { timeoutMs: uiTimeoutMs })
+      await control.command(
+        'waitFor',
+        `[data-testid="connector-connection-${CONNECTOR_OAUTH_SLUG}"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('navigate', 'body', { value: '/' })
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+
       // A catalog entry is not execution evidence. Send one new model turn
       // through the actual Codex -> local MCP -> backend -> upstream path.
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: TOOL_PROMPT })
@@ -327,10 +451,12 @@ export function createDesktopScenario({
         modelRequests: modelRequests.length,
         authorizeRequests: provider?.authorizeRequests ?? 0,
         tokenRequests: provider?.tokenRequests ?? 0,
+        refreshRequests: provider?.refreshRequests ?? 0,
         toolCalls: provider?.toolCalls ?? [],
         catalogAtResume,
         localSyncHold,
         accountSwitch,
+        connectorPlugin,
       }
     },
 

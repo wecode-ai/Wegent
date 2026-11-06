@@ -18,6 +18,8 @@ vi.mock('@/api/cloud/connectorApps', () => ({
   listWegentInstalledConnectorApps: api.installed,
   refreshWegentConnector: api.refresh,
   authorizeWegentConnector: api.authorize,
+  connectorAuthorizationErrorMessage: (error: unknown) =>
+    error instanceof Error ? error.message : String(error),
   notifyConnectorAuthorizationChanged: api.changed,
 }))
 vi.mock('@/lib/cloud-authorization-window', () => ({ openCloudAuthorizationWindow: api.open }))

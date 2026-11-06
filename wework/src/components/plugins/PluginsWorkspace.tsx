@@ -46,6 +46,7 @@ import {
 } from '@/api/local/codexPlugins'
 import {
   authorizeWegentConnector,
+  connectorAuthorizationErrorMessage,
   listWegentConnectorApps,
   notifyConnectorAuthorizationChanged,
   refreshWegentConnector,
@@ -3305,11 +3306,16 @@ export function PluginsWorkspace({
         return
       }
       if (app.connection.status === 'expired') {
-        const connection = await refreshWegentConnector(cloudApiBaseUrl, cloudToken, app.slug)
-        if (connection.status === 'connected') {
-          notifyConnectorAuthorizationChanged()
-          navigateTo('/settings/connections')
-          return
+        try {
+          const connection = await refreshWegentConnector(cloudApiBaseUrl, cloudToken, app.slug)
+          if (connection.status === 'connected') {
+            notifyConnectorAuthorizationChanged()
+            navigateTo('/settings/connections')
+            return
+          }
+        } catch {
+          // Token refresh is an optimization. A provider that rejects it must
+          // still recover through the normal consent flow.
         }
       }
       await authorizeWegentConnector(
@@ -3319,7 +3325,7 @@ export function PluginsWorkspace({
         openCloudAuthorizationWindow
       )
     } catch (error) {
-      reportDetailError(error instanceof Error ? error.message : 'Connector authorization failed')
+      reportDetailError(connectorAuthorizationErrorMessage(error, connectorDisplayName(slug), t))
     }
   }
 

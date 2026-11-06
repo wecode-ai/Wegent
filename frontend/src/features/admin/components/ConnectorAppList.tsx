@@ -55,7 +55,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   authorizeConnectorApp,
   CONNECTOR_AUTHORIZATION_CHANGED_EVENT,
-  ConnectorOAuthError,
+  connectorOAuthErrorMessage,
 } from '@/features/settings/connectorOAuth'
 import { matchesConnectorAppQuery } from '@/features/settings/connectorAppSearch'
 
@@ -395,21 +395,10 @@ export default function ConnectorAppList() {
       await authorizeConnectorApp(app.slug)
       toast({ title: t('connector_apps.success.authorized') })
     } catch (error) {
-      const code = error instanceof ConnectorOAuthError ? error.code : null
-      const messageKey = {
-        popup_blocked: 'connector_apps.errors.authorization_popup_blocked',
-        declined: 'connector_apps.errors.authorization_declined',
-        timeout: 'connector_apps.errors.authorization_timeout',
-        failed: 'connector_apps.errors.authorization_failed',
-      }[code ?? 'failed']
       toast({
         variant: 'destructive',
         title: t('connector_apps.errors.authorization_failed'),
-        description: messageKey
-          ? t(messageKey)
-          : error instanceof Error
-            ? error.message
-            : String(error),
+        description: connectorOAuthErrorMessage(t, error),
       })
     } finally {
       setAuthorizingAppId(null)

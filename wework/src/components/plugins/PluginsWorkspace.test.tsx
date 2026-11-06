@@ -1,4 +1,8 @@
-import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  authorizeWegentConnector,
+  listWegentConnectorApps,
+  refreshWegentConnector,
+} from '@/api/cloud/connectorApps'
 import * as fileHash from '@/api/fileHash'
 import * as codexPlugins from '@/api/local/codexPlugins'
 import {
@@ -102,7 +106,11 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 vi.mock('@/telemetry/businessEvents', () => ({ trackPluginEvent: telemetryMocks.track }))
 vi.mock('@/api/cloud/connectorApps', () => ({
   authorizeWegentConnector: vi.fn(),
+  connectorAuthorizationErrorMessage: (error: unknown) =>
+    error instanceof Error ? error.message : String(error),
   listWegentConnectorApps: vi.fn(),
+  notifyConnectorAuthorizationChanged: vi.fn(),
+  refreshWegentConnector: vi.fn(),
 }))
 
 type CodexMarketplaceMock = {
@@ -1814,6 +1822,7 @@ describe('PluginsWorkspace', () => {
       granted_scopes: [],
       expires_at: null,
     })
+    vi.mocked(refreshWegentConnector).mockReset()
     window.localStorage.clear()
     window.sessionStorage.clear()
     clearPluginMarketplaceCache()
@@ -5613,6 +5622,50 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
     await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:github'))
 
+    await waitFor(() => {
+      expect(authorizeWegentConnector).toHaveBeenCalledWith(
+        '/api',
+        'cloud-token',
+        'github',
+        expect.any(Function)
+      )
+    })
+  })
+
+  test('falls back to OAuth consent when an expired connector refresh fails', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceConnectorSlug: 'github',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    vi.mocked(listWegentConnectorApps).mockResolvedValue([
+      {
+        id: 1,
+        slug: 'github',
+        name: 'GitHub',
+        description: 'Connect GitHub',
+        icon_url: 'https://example.com/github.png',
+        auth_type: 'oauth2',
+        connection: {
+          status: 'expired',
+          external_account_name: 'octocat',
+          granted_scopes: ['repo'],
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      },
+    ])
+    vi.mocked(refreshWegentConnector).mockRejectedValue(new Error('refresh rejected'))
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:github'))
+
+    await waitFor(() =>
+      expect(refreshWegentConnector).toHaveBeenCalledWith('/api', 'cloud-token', 'github')
+    )
     await waitFor(() => {
       expect(authorizeWegentConnector).toHaveBeenCalledWith(
         '/api',

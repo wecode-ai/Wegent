@@ -87,6 +87,8 @@ vi.mock('@/api/cloud/connectorApps', () => ({
   listWegentInstalledConnectorApps: vi.fn().mockResolvedValue({ apps: [] }),
   authorizeWegentConnector: vi.fn(),
   refreshWegentConnector: vi.fn(),
+  connectorAuthorizationErrorMessage: (error: unknown) =>
+    error instanceof Error ? error.message : String(error),
   notifyConnectorAuthorizationChanged: vi.fn(),
 }))
 

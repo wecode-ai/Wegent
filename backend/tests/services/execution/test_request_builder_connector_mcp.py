@@ -105,7 +105,9 @@ def test_lazy_mode_apps_build_scoped_skill_configs(
     )
     builder = TaskRequestBuilder(test_db)
     monkeypatch.setattr(
-        TaskRequestBuilder, "_bot_uses_chat_shell", staticmethod(lambda bot: True)
+        TaskRequestBuilder,
+        "_bot_uses_chat_shell",
+        staticmethod(lambda bot, user_id: True),
     )
 
     configs, preload, matched_slugs = builder._connector_skill_configs(
@@ -132,7 +134,9 @@ def test_static_mode_apps_do_not_build_skill_configs(
     _create_app(test_db, test_admin_user, slug="eager-app", auth_type="none")
     builder = TaskRequestBuilder(test_db)
     monkeypatch.setattr(
-        TaskRequestBuilder, "_bot_uses_chat_shell", staticmethod(lambda bot: True)
+        TaskRequestBuilder,
+        "_bot_uses_chat_shell",
+        staticmethod(lambda bot, user_id: True),
     )
 
     configs, preload, matched_slugs = builder._connector_skill_configs(
@@ -156,7 +160,9 @@ def test_lazy_mode_apps_preload_when_message_matches_keywords(
     )
     builder = TaskRequestBuilder(test_db)
     monkeypatch.setattr(
-        TaskRequestBuilder, "_bot_uses_chat_shell", staticmethod(lambda bot: True)
+        TaskRequestBuilder,
+        "_bot_uses_chat_shell",
+        staticmethod(lambda bot, user_id: True),
     )
 
     configs, preload, matched_slugs = builder._connector_skill_configs(
@@ -175,7 +181,9 @@ def test_lazy_mode_apps_preload_when_message_matches_keywords(
 def test_matched_lazy_app_adds_scoped_mcp_server(monkeypatch) -> None:
     builder = TaskRequestBuilder(MagicMock())
     monkeypatch.setattr(
-        TaskRequestBuilder, "_bot_uses_chat_shell", staticmethod(lambda bot: True)
+        TaskRequestBuilder,
+        "_bot_uses_chat_shell",
+        staticmethod(lambda bot, user_id: True),
     )
     monkeypatch.setattr(
         TaskRequestBuilder, "_user_has_callable_connectors", lambda self, user: False
@@ -206,7 +214,9 @@ def test_matched_lazy_app_adds_scoped_mcp_server(monkeypatch) -> None:
 def test_chat_shell_gets_one_authenticated_connector_server(monkeypatch) -> None:
     builder = TaskRequestBuilder(MagicMock())
     monkeypatch.setattr(
-        TaskRequestBuilder, "_bot_uses_chat_shell", staticmethod(lambda bot: True)
+        TaskRequestBuilder,
+        "_bot_uses_chat_shell",
+        staticmethod(lambda bot, user_id: True),
     )
     monkeypatch.setattr(
         TaskRequestBuilder,
@@ -227,7 +237,9 @@ def test_chat_shell_gets_one_authenticated_connector_server(monkeypatch) -> None
 def test_coding_shells_keep_their_local_proxy(monkeypatch) -> None:
     builder = TaskRequestBuilder(MagicMock())
     monkeypatch.setattr(
-        TaskRequestBuilder, "_bot_uses_chat_shell", staticmethod(lambda bot: False)
+        TaskRequestBuilder,
+        "_bot_uses_chat_shell",
+        staticmethod(lambda bot, user_id: False),
     )
 
     servers = builder._connector_mcp_servers(
@@ -235,6 +247,26 @@ def test_coding_shells_keep_their_local_proxy(monkeypatch) -> None:
     )
 
     assert servers == []
+
+
+def test_chat_shell_detection_uses_the_resolved_shell_type(monkeypatch) -> None:
+    builder = TaskRequestBuilder(MagicMock())
+    bot = SimpleNamespace(json={})
+    monkeypatch.setattr(builder, "_resolve_shell_type", lambda bot, user_id: "Chat")
+
+    assert builder._bot_uses_chat_shell(bot, 7) is True
+
+
+def test_chat_shell_detection_rejects_an_unresolvable_shell(monkeypatch) -> None:
+    builder = TaskRequestBuilder(MagicMock())
+    bot = SimpleNamespace(json={})
+
+    def unavailable_shell(_bot, _user_id):
+        raise ValueError("missing shell")
+
+    monkeypatch.setattr(builder, "_resolve_shell_type", unavailable_shell)
+
+    assert builder._bot_uses_chat_shell(bot, 7) is False
 
 
 def test_cloud_coding_shell_gets_the_matched_connector_server(monkeypatch) -> None:

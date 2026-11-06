@@ -52,7 +52,11 @@ export async function startConnectorOAuthProvider() {
     codes: new Map(),
     authorizeRequests: 0,
     tokenRequests: 0,
+    refreshRequests: 0,
+    rejectRefresh: false,
+    accessTokenTtlSeconds: 3600,
     accessTokens: new Set(),
+    refreshTokens: new Set(),
     toolCalls: [],
   }
 
@@ -147,7 +151,7 @@ export async function startConnectorOAuthProvider() {
         token_endpoint: `${base}/token`,
         registration_endpoint: `${base}/register`,
         response_types_supported: ['code'],
-        grant_types_supported: ['authorization_code'],
+        grant_types_supported: ['authorization_code', 'refresh_token'],
         code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: ['none'],
       })
@@ -189,6 +193,31 @@ export async function startConnectorOAuthProvider() {
     if (path === '/token' && method === 'POST') {
       state.tokenRequests += 1
       const form = new URLSearchParams(await readBody(request))
+      if (form.get('grant_type') === 'refresh_token') {
+        state.refreshRequests += 1
+        const refresh = form.get('refresh_token') ?? ''
+        if (state.rejectRefresh || !state.refreshTokens.has(refresh)) {
+          sendJson(response, 400, { error: 'invalid_grant' })
+          return
+        }
+        state.refreshTokens.delete(refresh)
+        const access = `desktop-access-${randomBytes(6).toString('hex')}`
+        const nextRefresh = `desktop-refresh-${randomBytes(6).toString('hex')}`
+        state.accessTokens.add(access)
+        state.refreshTokens.add(nextRefresh)
+        sendJson(response, 200, {
+          access_token: access,
+          refresh_token: nextRefresh,
+          token_type: 'bearer',
+          expires_in: state.accessTokenTtlSeconds,
+          scope: 'mcp.read',
+        })
+        return
+      }
+      if (form.get('grant_type') !== 'authorization_code') {
+        sendJson(response, 400, { error: 'unsupported_grant_type' })
+        return
+      }
       const code = state.codes.get(form.get('code') ?? '')
       const verifier = form.get('code_verifier') ?? ''
       const digest = createHash('sha256').update(verifier).digest('base64url')
@@ -198,11 +227,14 @@ export async function startConnectorOAuthProvider() {
       }
       state.codes.delete(form.get('code') ?? '')
       const access = `desktop-access-${randomBytes(6).toString('hex')}`
+      const refresh = `desktop-refresh-${randomBytes(6).toString('hex')}`
       state.accessTokens.add(access)
+      state.refreshTokens.add(refresh)
       sendJson(response, 200, {
         access_token: access,
+        refresh_token: refresh,
         token_type: 'bearer',
-        expires_in: 3600,
+        expires_in: state.accessTokenTtlSeconds,
         scope: 'mcp.read',
       })
       return
@@ -224,8 +256,17 @@ export async function startConnectorOAuthProvider() {
     get tokenRequests() {
       return state.tokenRequests
     },
+    get refreshRequests() {
+      return state.refreshRequests
+    },
     get toolCalls() {
       return state.toolCalls
+    },
+    rejectRefresh(reject) {
+      state.rejectRefresh = Boolean(reject)
+    },
+    setAccessTokenTtl(seconds) {
+      state.accessTokenTtlSeconds = seconds
     },
     close() {
       return new Promise(resolve => server.close(resolve))

@@ -17,6 +17,7 @@ use std::time::Duration;
 use brz_http::{Client as HttpClient, Endpoint, Response as HttpResponse};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::time::{Instant, timeout_at};
 
 use super::mcp::{
     InitializeResult, McpError, ToolCall, ToolsListResult, UpstreamTool, decode_body,
@@ -26,6 +27,9 @@ use super::mcp::{
 /// Source `sse_client` read window; the session is long-lived, so the bound
 /// applies to each read rather than to the whole exchange.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Bound one incomplete event so a server cannot grow the parser indefinitely.
+pub(super) const MAX_EVENT_BYTES: usize = 1024 * 1024;
 
 /// One open HTTP+SSE MCP session: the subscribed stream plus the message
 /// endpoint that carries every JSON-RPC request of the session.
@@ -40,25 +44,36 @@ struct SseSession {
 
 impl SseSession {
     async fn open(url: &str, headers: &[(String, String)]) -> Result<Self, McpError> {
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
         let client = HttpClient::builder()
             .connect_timeout(REQUEST_TIMEOUT)
             .read_timeout(REQUEST_TIMEOUT)
             .build()
             .map_err(|error| McpError::Transport(error.to_string()))?;
         let mut reader = open_stream(&client, url, headers).await?;
-        let message_url = wait_for_endpoint(&mut reader, url).await?;
+        let message_url = wait_for_endpoint(&mut reader, url, deadline).await?;
 
-        post_message(&client, &message_url, &initialize_body(), headers, None).await?;
-        let initialize: InitializeResult = wait_for_result(&mut reader, &json!(0)).await?;
-        let protocol_version = initialize.protocol_version;
-        post_message(
-            &client,
-            &message_url,
-            &initialized_notification_body(),
-            headers,
-            protocol_version.as_deref(),
+        timeout_at(
+            deadline,
+            post_message(&client, &message_url, &initialize_body(), headers, None),
         )
-        .await?;
+        .await
+        .map_err(|_| McpError::Transport("SSE initialize request timed out".to_string()))??;
+        let initialize: InitializeResult =
+            wait_for_result(&mut reader, &json!(0), deadline).await?;
+        let protocol_version = initialize.protocol_version;
+        timeout_at(
+            deadline,
+            post_message(
+                &client,
+                &message_url,
+                &initialized_notification_body(),
+                headers,
+                protocol_version.as_deref(),
+            ),
+        )
+        .await
+        .map_err(|_| McpError::Transport("SSE initialized notification timed out".to_string()))??;
 
         Ok(Self {
             client,
@@ -78,15 +93,20 @@ impl SseSession {
         if let Some(params) = params {
             body["params"] = params;
         }
-        post_message(
-            &self.client,
-            &self.message_url,
-            &body,
-            &self.headers,
-            self.protocol_version.as_deref(),
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        timeout_at(
+            deadline,
+            post_message(
+                &self.client,
+                &self.message_url,
+                &body,
+                &self.headers,
+                self.protocol_version.as_deref(),
+            ),
         )
-        .await?;
-        wait_for_result::<Value>(&mut self.reader, &json!(id)).await
+        .await
+        .map_err(|_| McpError::Transport("SSE JSON-RPC request timed out".to_string()))??;
+        wait_for_result::<Value>(&mut self.reader, &json!(id), deadline).await
     }
 }
 
@@ -171,9 +191,13 @@ async fn open_stream(
 }
 
 /// Read the `endpoint` event that names the message URL of the session.
-async fn wait_for_endpoint(stream: &mut SseReader, base: &str) -> Result<String, McpError> {
+async fn wait_for_endpoint(
+    stream: &mut SseReader,
+    base: &str,
+    deadline: Instant,
+) -> Result<String, McpError> {
     loop {
-        let Some(event) = stream.next_event().await? else {
+        let Some(event) = next_event_before(stream, deadline, "endpoint event").await? else {
             return Err(McpError::Transport(
                 "SSE stream ended before the endpoint event".to_string(),
             ));
@@ -183,6 +207,17 @@ async fn wait_for_endpoint(stream: &mut SseReader, base: &str) -> Result<String,
         }
         return resolve_endpoint(base, event.data.trim());
     }
+}
+
+/// Wait for one event without letting keep-alive comments renew the deadline.
+async fn next_event_before(
+    stream: &mut SseReader,
+    deadline: Instant,
+    phase: &str,
+) -> Result<Option<SseEvent>, McpError> {
+    timeout_at(deadline, stream.next_event())
+        .await
+        .map_err(|_| McpError::Transport(format!("SSE {phase} timed out")))?
 }
 
 /// Resolve a possibly relative message URL against the session URL.
@@ -234,12 +269,16 @@ async fn post_message(
 }
 
 /// Read the stream until the reply to the request `id` arrives.
-async fn wait_for_result<T>(stream: &mut SseReader, id: &Value) -> Result<T, McpError>
+async fn wait_for_result<T>(
+    stream: &mut SseReader,
+    id: &Value,
+    deadline: Instant,
+) -> Result<T, McpError>
 where
     T: for<'de> Deserialize<'de>,
 {
     loop {
-        let Some(event) = stream.next_event().await? else {
+        let Some(event) = next_event_before(stream, deadline, "JSON-RPC reply").await? else {
             return Err(McpError::Transport(
                 "SSE stream ended before the JSON-RPC reply".to_string(),
             ));
@@ -263,6 +302,7 @@ where
 }
 
 /// One parsed server-sent event.
+#[derive(Debug)]
 pub(super) struct SseEvent {
     pub(super) event: String,
     pub(super) data: String,
@@ -280,6 +320,11 @@ impl SseReader {
         loop {
             if let Some(event) = take_event(&mut self.buffer) {
                 return Ok(Some(event));
+            }
+            if self.buffer.len() > MAX_EVENT_BYTES {
+                return Err(McpError::Transport(format!(
+                    "SSE event exceeded {MAX_EVENT_BYTES} bytes"
+                )));
             }
             if self.eof {
                 return Ok(None);
@@ -408,6 +453,22 @@ mod tests {
         assert!(crlf.is_empty());
     }
 
+    #[tokio::test]
+    async fn next_event_rejects_an_oversized_incomplete_event() {
+        let url = serve(Mode::ClosedStream).await;
+        let client = HttpClient::builder().build().unwrap();
+        let response = client.endpoint(&url).unwrap().get().send().await.unwrap();
+        let mut stream = SseReader {
+            response,
+            buffer: vec![b'x'; MAX_EVENT_BYTES + 1],
+            eof: false,
+        };
+
+        let error = stream.next_event().await.unwrap_err();
+        assert!(matches!(error, McpError::Transport(_)));
+        assert!(error.to_string().contains("exceeded"));
+    }
+
     #[test]
     fn relative_message_urls_resolve_against_the_session_url() {
         assert_eq!(
@@ -438,6 +499,8 @@ mod tests {
     enum Mode {
         /// Serve the `endpoint` event and reply to each posted message.
         Handshake,
+        /// Serve only keep-alive comments instead of the endpoint event.
+        EndpointKeepAlive,
         /// Answer the `GET` with this status and no stream.
         Deny(u16),
         /// Serve an empty stream that closes immediately.
@@ -500,6 +563,19 @@ mod tests {
                         .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n")
                         .await
                         .ok();
+                }
+                Mode::EndpointKeepAlive => {
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n")
+                        .await
+                        .ok();
+                    loop {
+                        if stream.write_all(b": keep-alive\n\n").await.is_err() {
+                            return;
+                        }
+                        let _ = stream.flush().await;
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
                 }
                 Mode::Handshake => {
                     stream
@@ -608,6 +684,23 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "read_doc");
         assert_eq!(tools[0].title.as_deref(), Some("Read"));
+    }
+
+    #[tokio::test]
+    async fn endpoint_wait_has_an_overall_deadline_across_keep_alives() {
+        let url = serve(Mode::EndpointKeepAlive).await;
+        let client = HttpClient::builder().build().unwrap();
+        let mut stream = open_stream(&client, &url, &[]).await.unwrap();
+        let error = wait_for_endpoint(
+            &mut stream,
+            &url,
+            Instant::now() + Duration::from_millis(50),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, McpError::Transport(_)));
+        assert!(error.to_string().contains("timed out"));
     }
 
     /// The transport dispatch keeps streamable-HTTP apps on their own protocol.
