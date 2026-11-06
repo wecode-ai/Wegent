@@ -605,7 +605,7 @@ export async function createDesktopScenario({
         control,
         scoped('[data-testid="cloud-task-activity-list"]'),
         'cloud-task-manager-event-',
-        `${LEADER} 负责人 · 分配任务：`,
+        `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
         modelResponseTimeoutMs
       )
       const assignmentEvent = await control.command(

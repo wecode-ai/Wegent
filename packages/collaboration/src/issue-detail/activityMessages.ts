@@ -82,7 +82,9 @@ export const activityMessages: Record<
     "activity.task_activity_member_role": "执行成员",
     "activity.task_activity_manager_assigned": "分配了任务",
     "activity.task_activity_manager_assigned_to": "分配给 {{name}}",
-    "activity.task_activity_manager_dispatched": "分配任务：{{assignments}}",
+    "activity.task_activity_manager_dispatched":
+      "将「{{task}}」分配给{{assignee}}",
+    "activity.task_activity_manager_assignment_separator": "；",
     "activity.task_activity_manager_planning": "正在规划任务",
     "activity.task_activity_manager_planned": "已完成本轮评估",
     "activity.task_activity_manager_cancelled": "已停止任务规划",
@@ -117,7 +119,7 @@ export const activityMessages: Record<
     "activity.task_activity_status_succeeded": "执行成功",
     "activity.task_activity_stop_execution": "停止执行",
     "activity.task_activity_subagent_execution": "子任务执行",
-    "activity.task_activity_view_execution": "查看执行细节",
+    "activity.task_activity_view_execution": "查看执行",
   },
   en: {
     "activity.app_task_local_only":
@@ -206,7 +208,9 @@ export const activityMessages: Record<
     "activity.task_activity_member_role": "Executor",
     "activity.task_activity_manager_assigned": "assigned tasks",
     "activity.task_activity_manager_assigned_to": "Assigned to {{name}}",
-    "activity.task_activity_manager_dispatched": "Dispatched: {{assignments}}",
+    "activity.task_activity_manager_dispatched":
+      "assigned “{{task}}” to {{assignee}}",
+    "activity.task_activity_manager_assignment_separator": "; ",
     "activity.task_activity_manager_planning": "Planning tasks",
     "activity.task_activity_manager_planned": "Finished this review round",
     "activity.task_activity_manager_cancelled": "Stopped planning tasks",
@@ -244,6 +248,6 @@ export const activityMessages: Record<
     "activity.task_activity_status_succeeded": "Succeeded",
     "activity.task_activity_stop_execution": "Stop execution",
     "activity.task_activity_subagent_execution": "Child task execution",
-    "activity.task_activity_view_execution": "View execution details",
+    "activity.task_activity_view_execution": "View execution",
   },
 };
