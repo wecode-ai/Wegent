@@ -2,12 +2,16 @@ import assert from 'node:assert/strict'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
+import { createDingTalkReplyStory } from '../modules/stand-in-dingtalk-reply-story.mjs'
 
 export function createDesktopScenario(options) {
   const { uiTimeoutMs, workbenchReadyTimeoutMs } = options
   const dingtalk = createStandInDingTalkFixture(options)
+  const story = createDingTalkReplyStory(options)
   return {
-    prepareApp: dingtalk.prepareApp,
+    prepareApp: context => story.prepareApp(context, dingtalk),
+    handleHttp: story.model.handleHttp,
+    reviewApproval: story.model.reviewApproval,
     async verify(control) {
       await dingtalk.install(control)
       // The first catalog request initializes the connection dependency inventory.
@@ -89,6 +93,9 @@ export function createDesktopScenario(options) {
         uiTimeoutMs
       )
       assert.ok(recovered.items.some(item => item.id === provider.id))
+      await story.verify(control, (method, params) =>
+        requestExecutor(control, method, params, uiTimeoutMs)
+      )
     },
   }
 }
