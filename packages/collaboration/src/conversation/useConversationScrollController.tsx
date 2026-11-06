@@ -113,6 +113,7 @@ export function useConversationScrollController({
     velocity: number
     at: number | null
   }>({ frame: null, position: null, velocity: 0, at: null })
+  const layoutFrameRef = useRef<SafeAnimationFrameHandle | null>(null)
   const followBehaviorRef = useRef<'auto' | 'smooth'>('auto')
   const initializedKeyRef = useRef<string | null | undefined>(undefined)
   const commandRef = useRef(false)
@@ -136,6 +137,8 @@ export function useConversationScrollController({
     lastMeasuredLayoutRef.current = null
   }, [])
   const cancelMotion = useCallback(() => {
+    if (layoutFrameRef.current) cancelSafeAnimationFrame(layoutFrameRef.current)
+    layoutFrameRef.current = null
     const motion = motionRef.current
     if (motion.frame !== null) cancelSafeAnimationFrame(motion.frame)
     motion.frame = null
@@ -309,8 +312,8 @@ export function useConversationScrollController({
     } else if (modeRef.current === 'read') restoreReaderPositionFromLayout()
     else follow()
   }, [currentScrollKey, follow, restoreReaderPositionFromLayout])
-  const layoutFrameRef = useRef<SafeAnimationFrameHandle | null>(null)
   const handleVirtualLayoutChange = useCallback(() => {
+    if (latestRef.current.autoScrollSuspended) return
     if (modeRef.current !== 'follow' || !latestRef.current.streaming) {
       handleContentLayoutChange()
       return
@@ -321,13 +324,6 @@ export function useConversationScrollController({
       handleContentLayoutChange()
     })
   }, [handleContentLayoutChange])
-  useLayoutEffect(
-    () => () => {
-      if (layoutFrameRef.current) cancelSafeAnimationFrame(layoutFrameRef.current)
-      layoutFrameRef.current = null
-    },
-    [handleVirtualLayoutChange]
-  )
   const preserveScrollPositionForNextLayout = useCallback(() => {
     cancelMotion()
     if (modeRef.current === 'drag') return
