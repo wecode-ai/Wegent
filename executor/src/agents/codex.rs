@@ -7535,6 +7535,9 @@ pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -
         if let Some(name) = meta.and_then(|meta| meta.get("tool_name")) {
             payload["toolName"] = name.clone();
         }
+        if let Some(call) = meta.and_then(|meta| meta.get("tool_call_id")) {
+            payload["toolCallId"] = call.clone();
+        }
         if let Some(title) = meta.and_then(|meta| meta.get("tool_title")) {
             payload["toolTitle"] = title.clone();
         }

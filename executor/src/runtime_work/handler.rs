@@ -146,6 +146,7 @@ mod git_source_workspace;
 mod git_webhook_setup;
 mod hooks;
 pub(super) mod lifecycle;
+mod mcp_approval_context;
 mod mcp_apps;
 mod notifications;
 mod personal_stand_in;
