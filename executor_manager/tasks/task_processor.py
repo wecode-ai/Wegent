@@ -215,17 +215,23 @@ class TaskProcessor:
                     if result
                     else "No result returned"
                 )
+                error_code = result.get("error_code", "") if result else ""
                 logger.error(
                     f"Failed to process task: ID={task_id}, executor_type={executor_type}, error={error_msg}"
                 )
                 set_span_attribute("error", True)
                 set_span_attribute("error.message", error_msg)
                 set_span_attribute("task.submit_success", False)
-                return result, False
+                return {**result, "error_code": error_code}, False
 
         except Exception as e:
             error_msg = str(e)
+            error_code = getattr(e, "error_code", "")
             logger.error(f"Error processing task {task_id}: {error_msg}")
             set_span_attribute("error", True)
             set_span_attribute("error.message", error_msg)
-            return {"status": "failed", "error_msg": error_msg}, False
+            return {
+                "status": "failed",
+                "error_msg": error_msg,
+                "error_code": error_code,
+            }, False

@@ -40,6 +40,8 @@ def test_failed_result_with_executor_name_is_requeued():
     }
     consumer.queue_service = MagicMock()
     consumer.queue_service.requeue_task.return_value = (True, 1)
+    consumer.queue_service.requeue_task.return_value = (True, 1)
+    consumer.queue_service.requeue_task.return_value = (True, 1)
 
     consumer._process_task_with_retry(_task())
 
@@ -55,6 +57,7 @@ def test_failed_result_without_executor_name_is_requeued():
     }
     consumer.queue_service = MagicMock()
     consumer.queue_service.requeue_task.return_value = (True, 1)
+    consumer.queue_service.requeue_task.return_value = (True, 1)
 
     consumer._process_task_with_retry(_task())
 
@@ -69,6 +72,7 @@ def test_successful_result_is_not_requeued():
         TASK_ID: {"status": "success", "executor_name": "wegent-task-ok"}
     }
     consumer.queue_service = MagicMock()
+    consumer.queue_service.requeue_task.return_value = (True, 1)
 
     consumer._process_task_with_retry(_task())
 
@@ -145,6 +149,7 @@ def test_task_limit_error_is_not_requeued():
             "error_msg": (
                 "User has reached the task limit. Please delete history tasks."
             ),
+            "error_code": "user_task_limit",
         }
     }
     consumer.queue_service = MagicMock()
@@ -175,6 +180,7 @@ def test_deleted_executor_error_is_not_requeued():
             "status": "failed",
             "executor_name": "wegent-task-example-000000000000000",
             "error_msg": "Executor is deleted. Please create a new session.",
+            "error_code": "executor_deleted",
         }
     }
     consumer.queue_service = MagicMock()
@@ -197,14 +203,58 @@ def test_deleted_executor_error_is_not_requeued():
 
 
 def test_non_retryable_error_classification():
-    """Known terminal errors are classified without coupling to every caller."""
-    assert is_non_retryable_error(
-        "User has reached the task limit. Please delete history tasks."
-    )
-    assert is_non_retryable_error("Executor is deleted. Please create a new session.")
-    assert is_non_retryable_error("Default 'docker' executor not found")
-    assert is_non_retryable_error("Invalid JSON in EXECUTOR_CONFIG: bad value")
-    assert is_non_retryable_error("Error loading executors from environment: x")
-    assert not is_non_retryable_error("connection reset by peer")
+    """Retry policy depends on stable codes, not user-facing text."""
+    assert is_non_retryable_error("user_task_limit")
+    assert is_non_retryable_error("executor_deleted")
+    assert is_non_retryable_error("executor_config")
+    assert not is_non_retryable_error("connection_reset")
     assert not is_non_retryable_error("")
     assert not is_non_retryable_error(None)
+
+
+def test_message_text_does_not_control_retry_policy():
+    """Changing error wording must not silently break retry classification."""
+    consumer = _build_consumer()
+    consumer.task_processor = MagicMock()
+    consumer.task_processor.process_tasks.return_value = {
+        TASK_ID: {
+            "status": "failed",
+            "error_msg": "quota reached - rewrite this message freely",
+            "error_code": "user_task_limit",
+        }
+    }
+    consumer.queue_service = MagicMock()
+
+    with patch(
+        "executor_manager.clients.callback_client.get_callback_client"
+    ) as get_client:
+        callback_client = MagicMock()
+        callback_client.send_error = AsyncMock(return_value=True)
+        get_client.return_value = callback_client
+
+        consumer._process_task_with_retry(_task())
+
+    consumer.queue_service.requeue_task.assert_not_called()
+    assert callback_client.send_error.await_args.kwargs["error_message"] == (
+        "quota reached - rewrite this message freely"
+    )
+
+
+def test_unclassified_error_with_terminal_text_still_requeues():
+    """A missing code must remain retryable even if the text looks terminal."""
+    consumer = _build_consumer()
+    consumer.task_processor = MagicMock()
+    consumer.task_processor.process_tasks.return_value = {
+        TASK_ID: {
+            "status": "failed",
+            "error_msg": (
+                "User has reached the task limit. Please delete history tasks."
+            ),
+        }
+    }
+    consumer.queue_service = MagicMock()
+    consumer.queue_service.requeue_task.return_value = (True, 1)
+
+    consumer._process_task_with_retry(_task())
+
+    consumer.queue_service.requeue_task.assert_called_once()

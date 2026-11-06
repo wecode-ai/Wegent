@@ -23,6 +23,7 @@ from executor_manager.config.config import (
     OFFLINE_TASK_EVENING_HOURS,
     OFFLINE_TASK_MORNING_HOURS,
 )
+from executor_manager.common.errors import ExecutorErrorCode
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.services.task_queue_service import TaskQueueService
 from executor_manager.tasks.task_processor import TaskProcessor
@@ -31,24 +32,21 @@ from shared.models.openai_converter import get_metadata_field
 
 logger = setup_logger(__name__)
 
-# Failures that retrying the same payload cannot resolve. Retrying them only
-# delays the terminal callback and can mask the original cause with a second,
-# unrelated error: a quota rejection leaves a phantom executor name on the
-# payload, and the next attempt reports "Executor is deleted" instead.
-NON_RETRYABLE_ERROR_MARKERS = (
-    "User has reached the task limit",
-    "Executor is deleted. Please create a new session.",
-    "Default 'docker' executor not found",
-    "Invalid JSON in EXECUTOR_CONFIG",
-    "Error loading executors from environment",
+# Submission failures that retrying the same payload cannot resolve. Error
+# messages are user-facing text and may change; retry policy depends only on
+# the stable codes produced by the executor layer.
+NON_RETRYABLE_ERROR_CODES = frozenset(
+    {
+        ExecutorErrorCode.USER_TASK_LIMIT,
+        ExecutorErrorCode.EXECUTOR_DELETED,
+        ExecutorErrorCode.EXECUTOR_CONFIG,
+    }
 )
 
 
-def is_non_retryable_error(error_msg: Optional[str]) -> bool:
-    """Return True when retrying the same task payload cannot succeed."""
-    if not error_msg:
-        return False
-    return any(marker in error_msg for marker in NON_RETRYABLE_ERROR_MARKERS)
+def is_non_retryable_error(error_code: Optional[str]) -> bool:
+    """Return True when the stable error code marks a terminal failure."""
+    return error_code in NON_RETRYABLE_ERROR_CODES
 
 
 class TaskQueueConsumer:
@@ -242,16 +240,23 @@ class TaskQueueConsumer:
                 if isinstance(task_result, dict)
                 else "Task processing returned unexpected result"
             )
-            self._handle_task_failure(task, error_msg)
+            error_code = (
+                task_result.get("error_code", "")
+                if isinstance(task_result, dict)
+                else ""
+            )
+            self._handle_task_failure(task, error_msg, error_code)
 
         except Exception as e:
             logger.error(
                 f"[TaskQueueConsumer] Exception processing task "
                 f"{task_id}/{subtask_id}: {e}"
             )
-            self._handle_task_failure(task, str(e))
+            self._handle_task_failure(task, str(e), getattr(e, "error_code", ""))
 
-    def _handle_task_failure(self, task: Dict[str, Any], error_msg: str) -> None:
+    def _handle_task_failure(
+        self, task: Dict[str, Any], error_msg: str, error_code: str = ""
+    ) -> None:
         """Handle a failed task - retry or mark as failed.
 
         Args:
@@ -261,7 +266,7 @@ class TaskQueueConsumer:
         task_id = get_metadata_field(task, "task_id")
         subtask_id = get_metadata_field(task, "subtask_id")
 
-        if is_non_retryable_error(error_msg):
+        if is_non_retryable_error(error_code):
             logger.error(
                 f"[TaskQueueConsumer] Task {task_id}/{subtask_id} failed with "
                 f"non-retryable error: {error_msg}"
