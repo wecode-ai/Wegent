@@ -12,11 +12,7 @@ import {
 import { flushSync } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
-import {
-  isAbsoluteWorkspacePath,
-  normalizeAbsoluteWorkspacePath,
-  normalizeWorkspaceSeparators,
-} from '@/lib/workspace-file-contract'
+import { resolveWorkspaceFilePath, workspaceParentPath } from './workspaceFilePaths'
 import {
   createFilePreviewTraceId,
   filePreviewElapsedMs,
@@ -35,13 +31,13 @@ import type {
   WorkspaceFileEntry,
   WorkspaceFileChunkResponse,
   WorkspaceTarget,
-  WorkspaceTextFileResponse,
 } from '@/types/workspace-files'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileToolbar, WorkspaceFileRootSelector } from './WorkspaceFileToolbar'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { useWorkspaceFileReveal } from './useWorkspaceFileReveal'
 import { useWorkspaceFileNavigation } from './useWorkspaceFileNavigation'
+import { useWorkspaceTextDocument } from './useWorkspaceTextDocument'
 import {
   isLikelyTextContent,
   isMarkdownFile,
@@ -101,50 +97,9 @@ interface FilePreviewLoadingProgress {
   totalBytes: number | null
 }
 
-interface WorkspaceTextDocument {
-  file: WorkspaceTextFileResponse
-  content: string
-  loadVersion: number
-}
-
 function decodeBase64(value: string): Uint8Array {
   const decoded = atob(value)
   return Uint8Array.from(decoded, character => character.charCodeAt(0))
-}
-
-function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
-  const normalizedPath = normalizeWorkspaceSeparators(path, target.path)
-  if (!normalizedPath) return null
-  if (isAbsoluteWorkspacePath(normalizedPath, target.path)) {
-    try {
-      return normalizeAbsoluteWorkspacePath(normalizedPath, 'Workspace file path must be absolute')
-    } catch {
-      return null
-    }
-  }
-
-  const root = normalizeWorkspaceSeparators(target.path).replace(/\/+$/, '') || '/'
-  const prefix = root.endsWith('/') ? root : `${root}/`
-  const relativePath = normalizeWorkspaceSeparators(`${prefix}${normalizedPath}`).slice(
-    prefix.length
-  )
-  const segments: string[] = []
-  for (const segment of relativePath.split('/')) {
-    if (!segment || segment === '.') continue
-    if (segment === '..') return null
-    segments.push(segment)
-  }
-  if (segments.length === 0) return null
-
-  const child = segments.join('/')
-  return root === '/' ? `/${child}` : `${root}/${child}`
-}
-
-function workspaceParentPath(path: string): string {
-  const normalized = path.replace(/\/+$/, '')
-  const separatorIndex = normalized.lastIndexOf('/')
-  const parentPath = separatorIndex > 0 ? normalized.slice(0, separatorIndex) : '/'
-  return /^[a-zA-Z]:$/.test(parentPath) ? `${parentPath}/` : parentPath
 }
 
 function createPreviewLineTarget(
@@ -200,10 +155,17 @@ export function FileWorkspacePanel({
   const [selectedPathIsDirectory, setSelectedPathIsDirectory] = useState(false)
   const [attachmentPreview, setAttachmentPreview] =
     useState<WorkspaceFileOpenRequest['attachment']>()
-  const [textDocument, setTextDocument] = useState<WorkspaceTextDocument | null>(null)
-  const preview = textDocument?.file ?? null
-  const editedContent = textDocument?.content ?? ''
-  const loadVersion = textDocument?.loadVersion
+  const {
+    preview,
+    editedContent,
+    loadVersion,
+    editedContentRef,
+    editVersionRef,
+    acceptRead,
+    acceptSave,
+    clear: clearDocument,
+    edit: handleEditedContentChange,
+  } = useWorkspaceTextDocument()
   const [binaryPreview, setBinaryPreview] = useState<WorkspaceBinaryPreview | null>(null)
   const [previewLineTarget, setPreviewLineTarget] = useState<PreviewLineTarget | null>(null)
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
@@ -225,10 +187,17 @@ export function FileWorkspacePanel({
   const directoryLoadedAtByPath = useRef(new Map<string, number>())
   const fileRequestSequence = useRef(0)
   const previewPathRef = useRef<string | null>(null)
-  const editedContentRef = useRef('')
   const savingRef = useRef(false)
   const pendingNavigationRef = useRef<(() => void) | null>(null)
   const saveFileRef = useRef<() => Promise<boolean>>(async () => false)
+  const canEditPreview = Boolean(preview?.editable && writeWorkspaceTextFile)
+  const dirty = canEditPreview && preview !== null && editedContent !== preview.content
+  const navigateWithDirtyGuard = useWorkspaceFileNavigation({
+    dirty,
+    savingRef,
+    saveFileRef,
+    pendingNavigationRef,
+  })
 
   useEffect(() => {
     previewPathRef.current = preview?.path ?? null
@@ -306,11 +275,20 @@ export function FileWorkspacePanel({
   )
 
   const openFile = useCallback(
-    async (entry: WorkspaceFileEntry, options?: WorkspaceFileOpenOptions) => {
+    async function readFile(
+      entry: WorkspaceFileEntry,
+      options?: WorkspaceFileOpenOptions
+    ): Promise<void> {
       if (!stableTarget || entry.isDirectory) return
       const traceId = options?.traceId ?? createFilePreviewTraceId()
       const pathMetadata = filePreviewPathMetadata(entry.path)
       const requestId = fileRequestSequence.current + 1
+      const readEditVersion = editVersionRef.current
+      const deferIfEdited = () => {
+        if (editVersionRef.current === readEditVersion) return false
+        navigateWithDirtyGuard(() => void readFile(entry, options))
+        return true
+      }
       const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
       logFilePreviewDiagnostic(traceId, 'open_file_start', {
@@ -363,8 +341,10 @@ export function FileWorkspacePanel({
           if (fileRequestSequence.current !== requestId) return
           await preserveElectronE2EFileTransition()
           if (fileRequestSequence.current !== requestId) return
+          if (deferIfEdited()) return
+          pendingNavigationRef.current = null
           setBinaryPreview(null)
-          setTextDocument({ file, content: file.content, loadVersion: requestId })
+          acceptRead(file, requestId)
           const editable = Boolean(file.editable && writeWorkspaceTextFile)
           setEditing(editable)
           setMarkdownMode(editable && isMarkdownFile(file.name) ? 'source' : 'preview')
@@ -437,7 +417,9 @@ export function FileWorkspacePanel({
           fileSize: chunk.size,
           chunkCount: chunks.length,
         })
-        setTextDocument(null)
+        if (deferIfEdited()) return
+        pendingNavigationRef.current = null
+        clearDocument()
         setEditing(false)
         setBinaryPreview({
           path: chunk.path,
@@ -450,12 +432,12 @@ export function FileWorkspacePanel({
         logFilePreviewDiagnostic(traceId, 'binary_preview_state_queued', { requestId })
         scheduleFilePreviewMainThreadProbe(traceId, 'binary_preview_state_queued')
       } catch (error) {
-        if (fileRequestSequence.current !== requestId) return
+        if (fileRequestSequence.current !== requestId || deferIfEdited()) return
         logFilePreviewDiagnostic(traceId, 'open_file_failed', {
           requestId,
           errorName: error instanceof Error ? error.name : 'UnknownError',
         })
-        setTextDocument(null)
+        clearDocument()
         setEditing(false)
         setSaveError(null)
         setBinaryPreview(null)
@@ -481,6 +463,10 @@ export function FileWorkspacePanel({
       }
     },
     [
+      acceptRead,
+      clearDocument,
+      editVersionRef,
+      navigateWithDirtyGuard,
       onSelectionChange,
       readWorkspaceFileChunk,
       readWorkspaceTextFile,
@@ -509,7 +495,7 @@ export function FileWorkspacePanel({
         setSelectedPathIsDirectory(true)
         setActiveDirectoryPath(resolvedPath)
         setDirectoryTreeVisible(true)
-        setTextDocument(null)
+        clearDocument()
         setBinaryPreview(null)
         setPreviewLineTarget(null)
         setPreviewError(null)
@@ -566,11 +552,10 @@ export function FileWorkspacePanel({
           })
           scheduleFilePreviewMainThreadProbe(traceId, 'parent_tree_end')
           const entry = result.entries.find(candidate => candidate.path === resolvedPath)
-          if (entry?.isDirectory) {
-            openDirectoryPath()
-            return
-          }
-          openAsFile()
+          navigateWithDirtyGuard(() => {
+            if (entry?.isDirectory) openDirectoryPath()
+            else openAsFile()
+          })
         },
         error => {
           if (fileRequestSequence.current !== listingRequestId) return
@@ -579,15 +564,20 @@ export function FileWorkspacePanel({
             durationMs: filePreviewElapsedMs(parentListStartedAt),
             errorName: error instanceof Error ? error.name : 'UnknownError',
           })
-          openAsFile()
+          navigateWithDirtyGuard(openAsFile)
         }
       )
     },
-    [listWorkspaceEntries, loadTree, onSelectionChange, openFile, stableTarget]
+    [
+      clearDocument,
+      listWorkspaceEntries,
+      loadTree,
+      navigateWithDirtyGuard,
+      onSelectionChange,
+      openFile,
+      stableTarget,
+    ]
   )
-
-  const canEditPreview = Boolean(preview?.editable && writeWorkspaceTextFile)
-  const dirty = canEditPreview && preview !== null && editedContent !== preview.content
 
   useEffect(() => {
     onDirtyChange?.(dirty)
@@ -617,14 +607,7 @@ export function FileWorkspacePanel({
         contentToSave,
         expectedRevision
       )
-      setTextDocument(current => {
-        if (current?.file.path !== filePath || current.loadVersion !== loadVersion) return current
-        return {
-          ...current,
-          file: saved,
-          content: current.content === contentToSave ? saved.content : current.content,
-        }
-      })
+      acceptSave(filePath, loadVersion, saved, contentToSave)
       if (editedContentRef.current === contentToSave && pendingNavigationRef.current !== null) {
         const action = pendingNavigationRef.current
         pendingNavigationRef.current = null
@@ -642,16 +625,21 @@ export function FileWorkspacePanel({
       savingRef.current = false
       setSaving(false)
     }
-  }, [dirty, editedContent, loadVersion, preview, stableTarget, t, writeWorkspaceTextFile])
+  }, [
+    acceptSave,
+    dirty,
+    editedContent,
+    editedContentRef,
+    loadVersion,
+    preview,
+    stableTarget,
+    t,
+    writeWorkspaceTextFile,
+  ])
 
   useEffect(() => {
     saveFileRef.current = saveFile
   }, [saveFile])
-
-  const handleEditedContentChange = useCallback((content: string) => {
-    editedContentRef.current = content
-    setTextDocument(current => (current ? { ...current, content } : current))
-  }, [])
 
   useEffect(() => {
     if (!dirty || saving || saveError) return
@@ -660,13 +648,6 @@ export function FileWorkspacePanel({
     }, WORKSPACE_FILE_AUTOSAVE_DELAY_MS)
     return () => window.clearTimeout(timeoutId)
   }, [dirty, saveError, saveFile, saving])
-
-  const navigateWithDirtyGuard = useWorkspaceFileNavigation({
-    dirty,
-    savingRef,
-    saveFileRef,
-    pendingNavigationRef,
-  })
 
   useImperativeHandle(ref, () => ({ navigate: navigateWithDirtyGuard }), [navigateWithDirtyGuard])
 
@@ -695,7 +676,7 @@ export function FileWorkspacePanel({
         setSelectedFilePath(null)
         setMarkdownMode('preview')
         setSelectedPathIsDirectory(false)
-        setTextDocument(null)
+        clearDocument()
         setEditing(false)
         setSaveError(null)
         setBinaryPreview(null)
@@ -708,7 +689,7 @@ export function FileWorkspacePanel({
     return () => {
       cancelled = true
     }
-  }, [loadTree, stableTarget])
+  }, [clearDocument, loadTree, stableTarget])
 
   useWorkspaceFileReveal({
     rootPath,
@@ -968,6 +949,7 @@ export function FileWorkspacePanel({
               data-testid="workspace-file-conflict-reload-button"
               className="shrink-0 underline"
               onClick={() => {
+                pendingNavigationRef.current = null
                 setEditing(false)
                 setSaveError(null)
                 openFilePath(selectedFilePath)
