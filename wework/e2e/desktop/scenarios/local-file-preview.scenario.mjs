@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createWindowsMarkdownFileLinks } from '../modules/windows-markdown-file-links.mjs'
 import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
+import { createTextAttachmentPreview } from '../modules/text-attachment-preview.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -94,8 +95,14 @@ async function waitForFileContent(filePath, expectedContent, timeoutMs) {
 
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   const windowsLinks = createWindowsMarkdownFileLinks({ workspacePath, uiTimeoutMs })
+  const textAttachments = createTextAttachmentPreview({ workspacePath, captureScreenshot })
   return {
-    handleHttp: windowsLinks.handleHttp,
+    async handleHttp(request, response, url) {
+      return (
+        (await textAttachments.handleHttp(request, response, url)) ||
+        windowsLinks.handleHttp(request, response, url)
+      )
+    },
     async verify(control) {
       await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
@@ -349,6 +356,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await captureScreenshot(control, 'local-file-preview-03-dark-review.png', 'body')
       await windowsLinks.verify(control)
+      await textAttachments.verify(control)
     },
   }
 }

@@ -118,7 +118,7 @@ export function createDesktopScenario({
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
-  const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
+  const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
   const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
   const richTaskSwitch = createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqliteHome })
   const composerLayout = createComposerLayoutChecks({ workspacePath, resultDir, uiTimeoutMs })
@@ -292,12 +292,6 @@ export function createDesktopScenario({
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
-      ...(checkpoint === 'streaming-conversation-switching'
-        ? {
-            WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
-            WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT: '3',
-          }
-        : {}),
     },
 
     async prepareApp({ appEnvironment, codexHome }) {

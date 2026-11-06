@@ -236,6 +236,8 @@ flowchart LR
 
 图片进入附件区时直接使用浏览器对象 URL 显示预览，直到附件发送、删除或输入框重置时释放。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 预览，Codex 收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
+在 Electron app 中，发送前后的文本附件点击后均在应用内的只读附件预览面板中打开，读取完整原始文件，不受工作区或全局外部应用打开偏好影响；读取失败时可在面板中重试。
+
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 the desktop local-file URL converter 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 
 executor 从原生 Codex session 发现用户消息时，会把 `local_images`、`localImages` 或 `images` 中的本机图片路径写入用户可见文本，保持刷新后仍能看到“用户提到了哪些文件”。如果这些路径在当前设备上可读、是图片 MIME 类型且不超过 5 MB，executor 会额外生成只用于 transcript 渲染的 ready 附件，并把 `local_preview_url` 写成 data URL。这个预览附件不代表 Backend 持久化附件，也不会上传或同步到中心库。
