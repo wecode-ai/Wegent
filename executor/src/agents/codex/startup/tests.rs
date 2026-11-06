@@ -44,7 +44,7 @@ async fn process_fixture() -> (
     #[cfg(not(windows))]
     let mut child = super::super::tests::spawn_idle_app_server_child();
     #[cfg(windows)]
-    let mut child = {
+    let mut child: CodexAppServerChild = {
         // The pause fixture consumes stdin; these tests need a nonreading child.
         let mut command = Command::new("powershell.exe");
         command.args([
@@ -61,6 +61,7 @@ async fn process_fixture() -> (
             .kill_on_drop(true)
             .spawn()
             .unwrap()
+            .into()
     };
     let mut stdin = child.stdin.take().unwrap();
     // Make the pipe writable before manually polling an interrupt into its response wait.

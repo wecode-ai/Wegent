@@ -167,14 +167,16 @@ mod thread_action;
 
 use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
+#[cfg(test)]
+use home::prepare_wework_codex_home;
+#[cfg(all(test, unix))]
+use home::prepare_wework_codex_home_with_auth;
 use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
 pub(crate) use home::{
     executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
 };
-#[cfg(test)]
-use home::{prepare_wework_codex_home, prepare_wework_codex_home_with_auth};
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 mod effective_instructions;
