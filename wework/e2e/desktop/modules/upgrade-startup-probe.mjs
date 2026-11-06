@@ -29,7 +29,7 @@ async function captureStartupNativeStack(child) {
           '-p',
           String(child.pid),
         ]
-      : [String(child.pid), '1']
+      : [String(child.pid), '1', '-file', '/dev/stdout']
   try {
     const { stdout, stderr } = await promisify(execFile)(command, args, {
       timeout: 5_000,
