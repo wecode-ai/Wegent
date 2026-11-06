@@ -8,6 +8,7 @@ import { webApi, writeSharedComposer } from '../../utils/collaboration-test-supp
 
 const GITHUB_URL = 'https://github.com/wecode-ai/Wegent/pull/3966'
 const LONG_GITHUB_URL = `https://github.com/wecode-ai/Wegent/commit/${'a'.repeat(180)}`
+const LONG_GITHUB_LABEL = `${LONG_GITHUB_URL}#source`
 const DOCUMENT_TEXT = 'The Issue comment document opened in a separate page.'
 
 interface Resource {
@@ -235,7 +236,10 @@ commentTest(
 
       const composer = page.getByTestId('collaboration-issue-comment')
       const commentMarker = `Long persisted comment link ${suffix}`
-      await writeSharedComposer(composer, [commentMarker, LONG_GITHUB_URL].join('\n'))
+      await writeSharedComposer(
+        composer,
+        [commentMarker, `[${LONG_GITHUB_LABEL}](${LONG_GITHUB_URL})`].join('\n')
+      )
       const composerLink = composer.getByTestId('composer-link-chip')
       await expect(composerLink).toHaveAttribute('data-composer-link-url', LONG_GITHUB_URL)
       expectWrappedInsideContainer(
@@ -253,14 +257,14 @@ commentTest(
       await page.reload()
 
       const comment = page.locator('.task-detail-comment-card').filter({ hasText: commentMarker })
-      const persistedLink = comment.getByTestId('assistant-markdown-link')
+      const persistedLink = comment.getByTestId('composer-link-chip')
       await expect(persistedLink).toHaveAttribute('href', LONG_GITHUB_URL)
       expectWrappedInsideContainer(
         await longLinkLayout(
           page,
-          'assistant-markdown-link',
+          'composer-link-chip',
           '.task-detail-comment-card',
-          '[data-testid="assistant-markdown-link-label"]'
+          '.composer-mention-label'
         ),
         'Persisted comment'
       )
