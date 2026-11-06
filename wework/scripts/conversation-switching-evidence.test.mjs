@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { setImmediate } from 'node:timers/promises'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
 import {
@@ -84,6 +85,7 @@ test('starts the UI rendering budget only after the initial model response is em
   }
   const verification = expect(checks.verify(control)).rejects.toBe(failure)
   await submitted
+  await setImmediate()
   expect(control.command.mock.calls.some(([action]) => action === 'waitFor')).toBe(false)
 
   const response = { writeHead: vi.fn(), flushHeaders: vi.fn(), write: vi.fn(), end: vi.fn() }
