@@ -18,7 +18,7 @@
       auraOpacity: 0.055,
       fibers: ['212, 242, 255', '118, 186, 255'],
       stream: ['68, 150, 255', '157, 213, 255', '226, 248, 255'],
-      headGlow: { color: '#168eff', core: null, blur: 8 },
+      headGlow: { color: '#168eff', core: null, blur: 0 },
       outline: '94, 180, 255',
       highlight: '209, 242, 255',
       composite: 'screen',
@@ -489,6 +489,7 @@
 
     function syncPlayback() {
       container.classList.toggle('is-paused', paused())
+      container.classList.toggle('is-forming', elapsed < FORMATION_DURATION_MS)
       const waiting =
         elapsed >= WAITING_START_MS &&
         !motionQuery.matches &&
@@ -629,7 +630,7 @@
       motionQuery.removeEventListener('change', motionChanged)
       document.removeEventListener('visibilitychange', visibilityChanged)
       window.removeEventListener('pagehide', destroy)
-      container.classList.remove('is-waiting-gradient', 'is-paused')
+      container.classList.remove('is-waiting-gradient', 'is-forming', 'is-paused')
       if (completion) {
         const pending = completion
         completion = null

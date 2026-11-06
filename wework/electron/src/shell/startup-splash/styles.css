@@ -134,6 +134,10 @@ body {
   transform-origin: 50% 50%;
 }
 
+:root[data-theme='dark'] .startup-brand.is-forming canvas {
+  filter: drop-shadow(0 0 4px rgb(22 142 255 / 65%));
+}
+
 .startup-brand::after {
   position: absolute;
   inset: 0;
