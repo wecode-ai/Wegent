@@ -197,6 +197,7 @@ export function useDeviceOnboarding(props: DeviceOnboardingProps) {
     if (!remoteCommand) return
     try {
       await copyTextToClipboard(remoteCommand.command)
+      setError(null)
       setCopied(true)
     } catch {
       setError(t('workbench.remote_docker_copy_failed'))

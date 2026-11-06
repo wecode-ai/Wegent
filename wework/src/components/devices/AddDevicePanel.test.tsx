@@ -353,6 +353,11 @@ describe('shared device onboarding', () => {
     fireEvent.click(screen.getByTestId('copy-remote-docker-command'))
     expect(await screen.findByRole('alert')).toHaveTextContent('复制 Docker 命令失败')
     expect(screen.getByTestId('copy-remote-docker-command')).not.toHaveTextContent('已复制')
+    fireEvent.click(screen.getByTestId('copy-remote-docker-command'))
+    await waitFor(() =>
+      expect(screen.getByTestId('copy-remote-docker-command')).toHaveTextContent('已复制')
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   test('disables both mutations without a cloud connection', () => {
