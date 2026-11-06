@@ -4,6 +4,80 @@
 use super::*;
 
 #[tokio::test]
+async fn continuation_identity_uses_metadata_while_history_workers_are_saturated() {
+    for runtime in ["codex", "claude_code"] {
+        let (handler, root) = isolated_runtime_work_handler(&format!("identity-{runtime}"));
+        let origin = json!({"type":"project_task","cloudProjectId":"project","loopItemId":"issue"});
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: "task-1".into(),
+            runtime: runtime.into(),
+            workspace_path: "/original/workspace".into(),
+            runtime_handle: json!({
+                "origin": origin,
+                "executionRequest": {"system_prompt":"private profile"},
+                "messages": [{"content":"private transcript"}]
+            }),
+            ..RuntimeTaskLink::default()
+        });
+        let workers = handler.transcript_test_workers.as_ref().unwrap().clone();
+        let slots = (
+            workers.clone().try_acquire_owned().unwrap(),
+            workers.clone().try_acquire_owned().unwrap(),
+        );
+
+        let result = handler
+            .dispatch(
+                "runtime.tasks.transcript",
+                json!({
+                    "taskId":"task-1","identityOnly":true,"transcriptProtocolVersion":2,
+                    "workspacePath":"/forged","threadId":"forged",
+                    "runtimeHandle":{"origin":{"cloudProjectId":"forged"}}
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result["taskId"], "task-1");
+        assert_eq!(result["workspacePath"], "/original/workspace");
+        assert_eq!(result["runtime"], runtime);
+        assert_eq!(result["origin"], origin);
+        assert_eq!(result["turns"], json!([]));
+        assert_eq!(result["messages"], json!([]));
+        assert!(!result.to_string().contains("private"));
+        assert!(!root.join("requests.jsonl").exists());
+        assert_eq!(workers.available_permits(), 0);
+        assert_eq!(
+            handler
+                .dispatch(
+                    "runtime.tasks.transcript",
+                    json!({
+                        "taskId":"pending-task","transcriptProtocolVersion":2
+                    })
+                )
+                .await
+                .unwrap_err()
+                .code,
+            "runtime_read_busy"
+        );
+        assert_eq!(
+            handler
+                .dispatch(
+                    "runtime.tasks.transcript",
+                    json!({
+                        "taskId":"missing","identityOnly":true
+                    })
+                )
+                .await
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        drop(slots);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[tokio::test]
 async fn task_lookup_reads_project_task_without_starting_provider_or_listing() {
     let (handler, root) = isolated_runtime_work_handler("api-task-lookup");
     handler.upsert_local_task(RuntimeTaskLink {

@@ -29,6 +29,7 @@ async def resolve_continuation_address(
             limit=1,
             conversationContextOnly=True,
         ),
+        identity_only=True,
         **(
             {"allow_app_device_task_reading": True}
             if allow_app_device_task_messaging

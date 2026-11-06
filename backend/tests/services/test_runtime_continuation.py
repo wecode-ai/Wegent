@@ -47,6 +47,7 @@ async def test_app_continuation_keeps_existing_im_authorization(
         assert event == "runtime:rpc"
         if body["method"] == "runtime.tasks.transcript":
             assert body["payload"]["conversationContextOnly"] is True
+            assert body["payload"]["identityOnly"] is True
             return {
                 "taskId": "original-task",
                 "workspacePath": "/original/workspace",
@@ -176,6 +177,7 @@ async def test_continuation_reads_native_identity_through_context_projection(
     async def dispatch(**kwargs):
         payload = kwargs["payload"]
         if kwargs["method"] == "runtime.tasks.transcript":
+            assert payload["identityOnly"] is True
             # The navigation index is Codex-specific and has no Claude workspace.
             navigation_only = payload.get("navigationOnly", False)
             return {
@@ -227,6 +229,7 @@ async def test_personal_send_preserves_authorized_native_identity(
     read.assert_awaited_once()
     assert read.await_args.kwargs["address"].device_id == "original-device"
     assert read.await_args.kwargs["address"].local_task_id == "original-task"
+    assert read.await_args.kwargs["identity_only"] is True
     transport.assert_awaited_once()
     call = transport.await_args.kwargs
     assert call["device_id"] == "original-device"

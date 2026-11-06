@@ -41,6 +41,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import { composeDesktopInput } from './input-composition'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { getPlatform } from '@/lib/platform'
 import { decodeDesktopControlImage } from './desktop-control-image'
 import {
   getNativeTerminalDiagnostics,
@@ -1238,7 +1239,7 @@ async function pressNativeDesktopControlKey(
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
-  if (document.activeElement !== element) {
+  if (desktopControlDeepActiveElement() !== element) {
     throw new Error(
       `Keyboard target could not receive focus: ${JSON.stringify({
         selector,
@@ -1248,7 +1249,7 @@ async function pressNativeDesktopControlKey(
         overflowY: getComputedStyle(element).overflowY,
         clientHeight: element.clientHeight,
         scrollHeight: element.scrollHeight,
-        activeTagName: document.activeElement?.tagName,
+        activeTagName: desktopControlDeepActiveElement()?.tagName,
       })}`
     )
   }
@@ -1281,7 +1282,7 @@ async function pressNativeDesktopControlKey(
         viewportBefore: observation.result(),
         viewportAfter: readNativeTerminalViewport(viewportTarget),
       })
-    : (document.activeElement?.getAttribute('data-testid') ?? '')
+    : (desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? '')
 }
 
 let activeDesktopControlPointer: {
@@ -1671,25 +1672,25 @@ export async function fillDesktopControlElement(element: HTMLElement, value: str
     ownValueSetter.call(element, value)
     return
   } else if (element.isContentEditable) {
-    const selection = window.getSelection()
-    const range = document.createRange()
-    range.selectNodeContents(element)
-    selection?.removeAllRanges()
-    selection?.addRange(range)
+    const windowLabel = getDesktopWindowLabel()
+    await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
+      windowLabel,
+    })
+    element.focus()
+    const pressKey = (key: string) =>
+      sendNativeKeyAndWait(element, 'press', () =>
+        invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase: 'press', focus: false })
+      )
+    // Native editors own their selection state as well as the rendered DOM.
+    await pressKey(`${getPlatform() === 'mac' ? 'Meta' : 'Control'}+A`)
     if (!value) {
-      document.execCommand('delete', false)
+      await pressKey('Backspace')
       return
     }
-    const windowLabel = getDesktopWindowLabel()
     const lines = value.replace(/\r\n?/g, '\n').split('\n')
     for (const [index, line] of lines.entries()) {
       if (index > 0) {
-        await invokeDesktopHost('e2e.pressKey', {
-          windowLabel,
-          key: 'Enter',
-          phase: 'press',
-        })
-        await waitForDesktopControlTick()
+        await pressKey('Enter')
       }
       if (!line) continue
       await invokeDesktopHost('e2e.insertText', { windowLabel, text: line })

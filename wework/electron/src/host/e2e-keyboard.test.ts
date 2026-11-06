@@ -89,6 +89,13 @@ describe('isolated native keyboard verification', () => {
   })
 
   test.each([
+    ['Meta+A', 'A', ['meta']],
+    ['Control+A', 'A', ['control']],
+    ['Backspace', 'Backspace', []],
+    ['Meta+z', 'Z', ['meta']],
+    ['Control+z', 'Z', ['control']],
+    ['Meta+Shift+z', 'Z', ['meta', 'shift']],
+    ['Control+Shift+z', 'Z', ['control', 'shift']],
     ['Meta+B', 'B', ['meta']],
     ['Meta+C', 'C', ['meta']],
     ['Control+B', 'B', ['control']],

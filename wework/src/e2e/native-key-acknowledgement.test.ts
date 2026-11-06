@@ -1,6 +1,14 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 
+function nativeEvent(target: HTMLElement, exposedTarget = target, isTrusted = true): KeyboardEvent {
+  return {
+    isTrusted,
+    target: exposedTarget,
+    composedPath: () => [target, exposedTarget, window],
+  } as unknown as KeyboardEvent
+}
+
 afterEach(async () => {
   await vi.runOnlyPendingTimersAsync()
   vi.useRealTimers()
@@ -16,7 +24,7 @@ test('acknowledges delivered native input without waiting for a renderer timer',
   })
   const acknowledged = vi.fn()
   const result = sendNativeKeyAndWait(target, 'press', async () => {
-    listener?.({ isTrusted: true, target } as unknown as KeyboardEvent)
+    listener?.(nativeEvent(target))
   }).then(acknowledged)
 
   for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
@@ -33,12 +41,12 @@ test('ignores synthetic events and native events for another target', async () =
   })
   const acknowledged = vi.fn()
   const result = sendNativeKeyAndWait(target, 'up', async () => {
-    listener?.({ isTrusted: false, target } as unknown as KeyboardEvent)
-    listener?.({ isTrusted: true, target: document.body } as unknown as KeyboardEvent)
+    listener?.(nativeEvent(target, target, false))
+    listener?.(nativeEvent(document.body))
   }).then(acknowledged)
   for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
   expect(acknowledged).not.toHaveBeenCalled()
-  listener?.({ isTrusted: true, target } as unknown as KeyboardEvent)
+  listener?.(nativeEvent(target))
   await result
   expect(acknowledged).toHaveBeenCalledOnce()
   expect(vi.getTimerCount()).toBe(0)
@@ -66,10 +74,25 @@ test('preserves a host failure even if the event was delivered', async () => {
   const remove = vi.spyOn(window, 'removeEventListener')
   await expect(
     sendNativeKeyAndWait(target, 'press', async () => {
-      listener?.({ isTrusted: true, target } as unknown as KeyboardEvent)
+      listener?.(nativeEvent(target))
       throw new Error('Native host rejected the action')
     })
   ).rejects.toThrow('Native host rejected the action')
   expect(remove).toHaveBeenCalledWith('keydown', expect.any(Function), true)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+test('acknowledges native input retargeted through a shadow host', async () => {
+  vi.useFakeTimers()
+  const host = document.createElement('div')
+  const target = document.createElement('textarea')
+  host.attachShadow({ mode: 'open' }).append(target)
+  let listener: ((event: KeyboardEvent) => void) | undefined
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, callback) => {
+    if (type === 'keydown') listener = callback as (event: KeyboardEvent) => void
+  })
+  await sendNativeKeyAndWait(target, 'press', async () => {
+    listener?.(nativeEvent(target, host))
+  })
   expect(vi.getTimerCount()).toBe(0)
 })
