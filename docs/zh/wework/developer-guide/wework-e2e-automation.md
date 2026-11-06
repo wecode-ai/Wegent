@@ -30,6 +30,14 @@ pnpm --filter wework e2e
 pnpm --filter wework e2e:desktop
 ```
 
+仅运行 Codex cloud-config 故障恢复回归：
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
+```
+
+该检查点使用真实 Electron、executor 和 Codex，仅在隔离的模型订阅服务中模拟企业账号的 cloud-config bundle 失败。它覆盖已有线程续聊、新线程、配置和模型读取、Goal 重启恢复、官方订阅认证恢复，以及云模型运行期间的认证并发保护；同时检查最终回复、原生会话记录和重载后的任务状态。测试账号与目录均由 fixture 创建。该检查点通过现有桌面 CI 的 Core 分片执行。
+
 仅运行云端项目桌面 E2E：
 
 ```bash

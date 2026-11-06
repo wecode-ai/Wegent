@@ -71,7 +71,9 @@ export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
   })
   await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
   // Archival changes the inventory signature and can already be refreshing this page.
-  await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-refresh"]`)
+  await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-refresh"]`, {
+    timeoutMs,
+  })
   await control.command('waitFor', `${PAGE} [data-testid="interactions-empty"]`, {
     visible: true,
     timeoutMs,
