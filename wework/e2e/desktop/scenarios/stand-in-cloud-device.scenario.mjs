@@ -65,6 +65,12 @@ export function createDesktopScenario({
     await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
     await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', { visible: false })
   }
+  async function chooseLocalProfile(control) {
+    await control.command('waitFor', '[data-testid="stand-in-workspace-location"]')
+    await control.command('select', '[data-testid="stand-in-workspace-location"]', {
+      value: '@local',
+    })
+  }
   async function chooseCreationDevice(control, deviceId) {
     await control.command('waitFor', '[data-testid="stand-in-role-name"]')
     await control.command('select', '[data-testid="stand-in-device"]', { value: deviceId })
@@ -113,6 +119,22 @@ export function createDesktopScenario({
       )
       const remoteHome = dirname(cloud.remoteCodexHome)
       await ensureExperimentalFeaturesEnabled(control)
+      await control.command('navigate', 'body', { value: '/stand-in' })
+      await control.command(
+        'waitFor',
+        '[data-testid="stand-in-onboarding-setup"] [data-testid="stand-in-device"]'
+      )
+      const firstUseDevice = await control.command(
+        'getValue',
+        '[data-testid="stand-in-onboarding-setup"] [data-testid="stand-in-device"]'
+      )
+      assert.ok(
+        [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].includes(firstUseDevice),
+        'First-use primary setup must default to a cloud device'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
+      await control.command('waitFor', '[data-testid="stand-in-onboarding"]', { visible: false })
       await control.command('navigate', 'body', { value: '/settings/connections' })
       await control.command('clickWhenEnabled', '[data-testid="settings-cloud-disconnect-button"]')
       await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]')
@@ -152,9 +174,7 @@ export function createDesktopScenario({
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('navigate', 'body', { value: '/stand-in' })
-      await control.command('select', '[data-testid="stand-in-workspace-location"]', {
-        value: '@local',
-      })
+      await chooseLocalProfile(control)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="stand-in-overview-role-${localRole.id}"]`
@@ -230,9 +250,7 @@ export function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await control.command('select', '[data-testid="stand-in-workspace-location"]', {
-        value: '@local',
-      })
+      await chooseLocalProfile(control)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="stand-in-overview-role-${localRole.id}"]`
@@ -299,9 +317,7 @@ export function createDesktopScenario({
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-close"]')
       await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', { visible: false })
-      await control.command('select', '[data-testid="stand-in-workspace-location"]', {
-        value: '@local',
-      })
+      await chooseLocalProfile(control)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="stand-in-overview-role-${localRole.id}"]`

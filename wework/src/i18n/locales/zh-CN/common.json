@@ -6050,7 +6050,7 @@
       "allow": "允许此范围内回复",
       "confirm_once": "本次确认后执行"
     },
-    "local_profile": "本机 · 未登录时创建的分身",
+    "local_profile": "本机 · 独立使用的分身",
     "account_local_profile": "本机 · 当前账号的分身",
     "migration": {
       "offer": "云设备已可用，可将此分身的配置和记忆迁到云端。",

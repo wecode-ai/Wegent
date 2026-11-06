@@ -6055,7 +6055,7 @@
       "allow": "Allow replies in this scope",
       "confirm_once": "Run with confirmation this time"
     },
-    "local_profile": "This device · Stand-ins created while signed out",
+    "local_profile": "This device · Standalone stand-ins",
     "account_local_profile": "This device · Current account's stand-ins",
     "migration": {
       "offer": "A cloud device is available. Move this stand-in’s settings and memories to the cloud.",

@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, User } from '@/types/api'
 import { LOCAL_USER } from '@/api/local/localSession'
+import { newStandInRole } from '@/api/personalStandIn'
 import '@/i18n'
 import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
@@ -12,6 +13,7 @@ import type { StandInSettingsHandle } from './StandInSettingsPage'
 const guard = vi.hoisted(() => vi.fn((action: () => void) => action()))
 afterEach(() => {
   cleanup()
+  localStorage.clear()
   guard.mockReset()
   guard.mockImplementation(action => action())
 })
@@ -130,4 +132,108 @@ it('guards location changes with the existing unsaved settings decision', async 
   await userEvent.selectOptions(picker, '@local')
   expect(guard).toHaveBeenCalledOnce()
   expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
+})
+
+it.each([
+  { existing: -1, owner: '7', device: 'cloud-one' },
+  { existing: 0, owner: '0', device: 'mac' },
+  { existing: 7, owner: '7', device: 'mac' },
+])(
+  'resolves first-use to $device for owner $owner while preserving existing local profiles',
+  async ({ existing, owner, device }) => {
+    const personalGet = vi.fn(async (userId: number) => ({
+      userId,
+      executionDeviceId: 'mac',
+      version: userId === existing ? 1 : 0,
+      roles: [newStandInRole('mac', 'default')],
+      primary: { enabled: userId === existing, prompt: '', preferences: '' },
+    }))
+    const services = {
+      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
+      standInApi: { personalGet },
+    } as unknown as WorkbenchServices
+    const { CloudConnectionContext } =
+      await import('@/features/cloud-connection/CloudConnectionContext')
+    render(
+      <CloudConnectionContext.Provider
+        value={
+          {
+            isConnected: true,
+          } as import('@/features/cloud-connection/CloudConnectionContext').CloudConnectionContextValue
+        }
+      >
+        <PersonalStandInWorkspace
+          services={services}
+          user={{ id: 7 } as User}
+          devices={[
+            {
+              device_id: 'cloud-one',
+              device_type: 'cloud',
+              name: 'Cloud one',
+              status: 'online',
+            } as DeviceInfo,
+          ]}
+          active
+          contentRoute="/stand-in"
+          onClose={vi.fn()}
+          onOpenTask={vi.fn()}
+        />
+      </CloudConnectionContext.Provider>
+    )
+    const field = await screen.findByTestId('retained-role-draft')
+    expect(field).toHaveAttribute('data-owner', owner)
+    expect(field).toHaveAttribute('data-device', device)
+  }
+)
+
+it('does not discover profiles for an inactive workspace', async () => {
+  const identity = vi.fn(async () => ({ deviceId: 'mac' }))
+  const p = {
+    services: { getLocalRuntimeSidebarIdentity: identity } as unknown as WorkbenchServices,
+    user: LOCAL_USER as User,
+    devices: [],
+    contentRoute: '/stand-in',
+    onClose: vi.fn(),
+    onOpenTask: vi.fn(),
+  }
+  const view = render(<PersonalStandInWorkspace {...p} active={false} />)
+  expect(identity).not.toHaveBeenCalled()
+  view.rerender(<PersonalStandInWorkspace {...p} active />)
+  await screen.findByTestId('stand-in-workspace-location')
+  expect(identity).toHaveBeenCalledOnce()
+})
+
+it('remembers the explicitly selected cloud profile without sharing it with another account', async () => {
+  const p = {
+    services: {
+      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
+    } as WorkbenchServices,
+    user: { id: 7 } as User,
+    devices: [
+      {
+        device_id: 'cloud-one',
+        device_type: 'cloud',
+        status: 'online',
+        name: 'Cloud',
+      } as DeviceInfo,
+    ],
+    active: true,
+    contentRoute: '/stand-in',
+    onClose: vi.fn(),
+    onOpenTask: vi.fn(),
+  }
+  let view = render(<PersonalStandInWorkspace {...p} />)
+  await userEvent.selectOptions(
+    await screen.findByTestId('stand-in-workspace-location'),
+    'cloud-one'
+  )
+  view.unmount()
+  view = render(<PersonalStandInWorkspace {...p} />)
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute(
+    'data-device',
+    'cloud-one'
+  )
+  view.unmount()
+  render(<PersonalStandInWorkspace {...p} user={{ id: 8 } as User} />)
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
 })

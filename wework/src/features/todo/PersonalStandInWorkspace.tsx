@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
@@ -12,6 +12,22 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { LOCAL_USER } from '@/api/local/localSession'
 import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import { availableStandInDevices } from './standInDevices'
+
+function configuredProfile(profile: PersonalStandInSettings | undefined) {
+  return Boolean(
+    profile &&
+    (profile.version > 0 ||
+      profile.roles.some(
+        role =>
+          role.version > 0 || role.enabled || role.name || role.prompt || role.connections?.length
+      ) ||
+      profile.primary?.prompt ||
+      profile.primary?.preferences)
+  )
+}
 
 export function PersonalStandInWorkspace({
   services,
@@ -31,63 +47,88 @@ export function PersonalStandInWorkspace({
   onOpenTask(address: RuntimeTaskAddress): Promise<void> | void
 }) {
   const { t, i18n } = useTranslation('common')
+  const cloud = useContext(CloudConnectionContext)
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const profileId = query.get('profileId') ?? undefined
   const routeDeviceId = query.get('deviceId') ?? undefined
+  const preferenceKey = `wework.stand-in.cloud-device:${JSON.stringify([cloud?.apiBaseUrl ?? '', user.id])}`
   const [localDeviceId, setLocalDeviceId] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const [hasLocalProfile, setHasLocalProfile] = useState(false)
+  const [initialLocation, setInitialLocation] = useState<{ deviceId: string; local: boolean }>()
   const [location, setLocation] = useState<{
     route: string
     deviceId: string
     local: boolean
     profileId?: string
-  }>()
+  }>(() => {
+    if (routeDeviceId || profileId) return undefined
+    try {
+      const deviceId = localStorage.getItem(preferenceKey)
+      return deviceId ? { route: contentRoute, deviceId, local: false } : undefined
+    } catch {
+      return undefined
+    }
+  })
   const selected = location?.route === contentRoute ? location : undefined
-  const deviceId = selected?.deviceId || routeDeviceId
-  const ownerId = selected?.local ? LOCAL_USER.id : Number(user.id)
+  const resolved = selected ?? (routeDeviceId ? undefined : initialLocation)
+  const deviceId = resolved?.deviceId || routeDeviceId
+  const ownerId = resolved?.local ? LOCAL_USER.id : Number(user.id)
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   useEffect(() => {
-    let active = true
-    void services
-      .getLocalRuntimeSidebarIdentity?.()
-      .then(identity => {
-        if (active && identity) {
-          setLocalDeviceId(identity.deviceId)
-          if (Number(user.id) !== LOCAL_USER.id)
-            void services.standInApi
-              ?.personalGet(LOCAL_USER.id, identity.deviceId)
-              .then(profile => {
-                if (active)
-                  setHasLocalProfile(
-                    Boolean(
-                      profile.roles.length ||
-                      profile.primary?.enabled ||
-                      profile.primary?.prompt ||
-                      profile.primary?.preferences
-                    )
-                  )
-              })
-              .catch(cause => {
-                if (active) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
-              })
-        }
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
-      })
+    if (!active) return
+    let current = true
+    void (async () => {
+      const identity = await services.getLocalRuntimeSidebarIdentity?.()
+      if (!identity) throw new Error('Executor identity is unavailable')
+      const account = Number(user.id)
+      const [owned, local] = await Promise.all([
+        services.standInApi?.personalGet(account, identity.deviceId),
+        account === LOCAL_USER.id
+          ? undefined
+          : services.standInApi?.personalGet(LOCAL_USER.id, identity.deviceId),
+      ])
+      if (!current) return
+      const localExists = configuredProfile(local)
+      const available = cloud?.isConnected ? availableStandInDevices(devices) : []
+      const preferred = available.find(device => device.is_default) ?? available[0]
+      setLocalDeviceId(identity.deviceId)
+      setError(null)
+      setHasLocalProfile(localExists)
+      setInitialLocation(
+        previous =>
+          previous ?? {
+            deviceId:
+              profileId || configuredProfile(owned) || localExists
+                ? identity.deviceId
+                : (preferred?.device_id ?? identity.deviceId),
+            local: !profileId && !configuredProfile(owned) && localExists,
+          }
+      )
+    })().catch(cause => {
+      if (current) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
+    })
     return () => {
-      active = false
+      current = false
     }
-  }, [services, user.id])
+  }, [services, user.id, active, devices, cloud?.isConnected, profileId, attempt])
+  const rememberLocation = (target: string, local = false, profileId?: string) => {
+    try {
+      if (local || target === localDeviceId) localStorage.removeItem(preferenceKey)
+      else localStorage.setItem(preferenceKey, target)
+    } catch {
+      console.warn('[Wework] Could not remember the stand-in device')
+    }
+    setLocation({ route: contentRoute, deviceId: target, local, profileId })
+  }
   const selectLocation = (target: string, local = false) => {
-    const change = () => setLocation({ route: contentRoute, deviceId: target, local })
+    const change = () => rememberLocation(target, local)
     if (overview.current) overview.current.requestLeave(change)
     else change()
   }
   const workView = query.get('view') === 'scheduled' ? 'scheduled' : 'work'
   const [projects, setProjects] = useState<CollaborationProject[]>([])
-  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     if (!active || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
     void invokeDesktopHost<void>('renderer.startupReady').catch(cause => {
@@ -145,7 +186,7 @@ export function PersonalStandInWorkspace({
             data-testid="stand-in-workspace-location"
             className="min-h-11 min-w-0 rounded-md border border-border bg-background px-2 md:min-h-8"
             value={
-              selected?.local || ownerId === LOCAL_USER.id ? '@local' : (deviceId ?? localDeviceId)
+              resolved?.local || ownerId === LOCAL_USER.id ? '@local' : (deviceId ?? localDeviceId)
             }
             onChange={event =>
               selectLocation(
@@ -181,7 +222,7 @@ export function PersonalStandInWorkspace({
           </button>
         </div>
       )}
-      {hasLocalProfile && ownerId !== LOCAL_USER.id && !deviceId && (
+      {hasLocalProfile && !selected && (!deviceId || deviceId === localDeviceId) && (
         <div
           data-testid="stand-in-local-profile-offer"
           className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-sm"
@@ -197,25 +238,29 @@ export function PersonalStandInWorkspace({
           </button>
         </div>
       )}
-      <StandInOverviewPage
-        key={`${ownerId}:${deviceId ?? 'default'}`}
-        ref={overview}
-        onSelectLocation={(target, profileId) =>
-          setLocation({ route: contentRoute, deviceId: target, local: false, profileId })
-        }
-        initialProfileId={selected ? selected.profileId : profileId}
-        initialDeviceId={deviceId}
-        settingsRequestKey={selected ? undefined : (query.get('settingsRequest') ?? undefined)}
-        initialWorkView={workView}
-        api={api}
-        projects={projects}
-        services={services}
-        devices={devices}
-        userId={ownerId}
-        active={active}
-        onCancel={onClose}
-        onOpenTask={onOpenTask}
-      />
+      {services.getLocalRuntimeSidebarIdentity && !initialLocation && !routeDeviceId && !error ? (
+        <p role="status" className="p-5 text-sm">
+          {t('standIn.loading')}
+        </p>
+      ) : (
+        <StandInOverviewPage
+          key={`${ownerId}:${deviceId ?? 'default'}`}
+          ref={overview}
+          onSelectLocation={(target, profileId) => rememberLocation(target, false, profileId)}
+          initialProfileId={selected ? selected.profileId : profileId}
+          initialDeviceId={deviceId}
+          settingsRequestKey={selected ? undefined : (query.get('settingsRequest') ?? undefined)}
+          initialWorkView={workView}
+          api={api}
+          projects={projects}
+          services={services}
+          devices={devices}
+          userId={ownerId}
+          active={active}
+          onCancel={onClose}
+          onOpenTask={onOpenTask}
+        />
+      )}
     </div>
   )
 }

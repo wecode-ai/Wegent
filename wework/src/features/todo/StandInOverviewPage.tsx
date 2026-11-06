@@ -736,6 +736,11 @@ export function StandInOverviewPage({
         error: state.error,
         projects: props.projects,
         localDeviceId: state.currentDeviceId,
+        devices: props.devices,
+        onSelectDevice: device => {
+          if (onSelectLocation) onSelectLocation(device)
+          else state.setDeviceId(device)
+        },
         onSave: state.save,
         onReload: state.reload,
       }}
