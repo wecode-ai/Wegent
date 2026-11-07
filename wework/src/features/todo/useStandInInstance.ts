@@ -25,11 +25,14 @@ export function useStandInInstance(
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const operation = useRef(false)
+  const bindingLoads = useRef<Promise<void> | null>(null)
   const api = services.standInApi
   useEffect(() => {
     if (!active || operation.current) return
     let current = true
-    void (async () => {
+    // A refreshed discovery must read after any earlier native bind has committed.
+    const load = async () => {
+      if (!current) return
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity || !api) throw new Error('Executor identity is unavailable')
       if (current) setLocalDeviceId(identity.deviceId)
@@ -95,9 +98,12 @@ export function useStandInInstance(
         setBinding(value)
         setError(null)
       }
-    })().catch(cause => {
-      if (current) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
-    })
+    }
+    bindingLoads.current = (bindingLoads.current ? bindingLoads.current.then(load) : load()).catch(
+      cause => {
+        if (current) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
+      }
+    )
     return () => {
       current = false
     }

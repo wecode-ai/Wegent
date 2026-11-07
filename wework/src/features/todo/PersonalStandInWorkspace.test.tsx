@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { useImperativeHandle, type ReactNode, type Ref } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -408,3 +408,33 @@ it('initializes one durable binding without restoring the obsolete device prefer
   })
   expect(f.lifecycle).toHaveBeenCalledWith(7, 'mac', 'start')
 })
+
+it.each(['/stand-in', '/stand-in?deviceId=mac'])(
+  'does not restart initial binding when device discovery refreshes unchanged targets: %s',
+  async contentRoute => {
+    const f = fixture({ version: 0, status: 'unbound', target: null })
+    const original = f.binding.getMockImplementation()!
+    let release!: () => void
+    const pending = new Promise<void>(resolve => {
+      release = resolve
+    })
+    f.binding.mockImplementation(async (...args) => {
+      if (args[1] === 'bind') await pending
+      return original(...args)
+    })
+    const view = render(f.workspace({ contentRoute }))
+    await waitFor(() =>
+      expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+    )
+    try {
+      view.rerender(f.workspace({ contentRoute, devices: [...f.props.devices] }))
+      await act(async () => {})
+      expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+    } finally {
+      await act(async () => release())
+    }
+    expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(f.lifecycle).toHaveBeenCalledTimes(1)
+  }
+)
