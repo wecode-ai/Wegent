@@ -21,6 +21,7 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { createSchemeAwareUrlTransform } from '@/lib/scheme'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 import { SandboxedHtmlFrame } from '@/components/common/SandboxedHtmlFrame'
+import { useTranslation } from '@/hooks/useTranslation'
 import { preprocessCjkEmphasis } from '@wegent/collaboration/markdown/preprocessCjkEmphasis'
 
 import 'katex/dist/katex.min.css'
@@ -140,6 +141,7 @@ function splitSpecialMarkdownBlocks(markdown: string): ContentPart[] {
 }
 
 function ArtifactPreview({ title, html }: { title: string; html: string }) {
+  const { t } = useTranslation('common')
   const [scriptError, setScriptError] = useState<{ message: string; line?: number } | null>(null)
   const frameRef = useRef<HTMLIFrameElement | null>(null)
 
@@ -177,8 +179,11 @@ function ArtifactPreview({ title, html }: { title: string; html: string }) {
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            This page script failed{scriptError.line ? ` (line ${scriptError.line})` : ''}:{' '}
-            {scriptError.message}
+            {t('attachment.html.script_error')}
+            {scriptError.line
+              ? ` ${t('attachment.html.script_error_line', { line: scriptError.line })}`
+              : ''}
+            : {scriptError.message}
           </span>
         </div>
       )}

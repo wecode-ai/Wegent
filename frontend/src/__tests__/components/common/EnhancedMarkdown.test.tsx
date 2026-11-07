@@ -12,6 +12,16 @@ jest.mock('next/dynamic', () => () => {
   return DynamicComponent
 })
 
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (key: string, params?: { line?: number }) =>
+      ({
+        'attachment.html.script_error': 'This page script failed',
+        'attachment.html.script_error_line': `(line ${params?.line ?? ''})`,
+      })[key] ?? key,
+  }),
+}))
+
 describe('EnhancedMarkdown', () => {
   it('renders markdown wrapped by horizontal-rule separators as normal content', () => {
     render(
