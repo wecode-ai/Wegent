@@ -5456,14 +5456,16 @@ describe('DesktopWorkbenchLayout', () => {
       expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
         'Persisted zero quantity regression passes.'
       )
-      readWorkspaceTextFile.mockResolvedValue({
+      const followupFile = {
         path: '/workspace/project/fixtures/cart-fixture/followup.md',
         name: 'followup.md',
         content: 'A second click on the same open task.',
         truncated: false,
         size: 36,
         modifiedAt: null,
-      })
+      }
+      const followupRead = createDeferred<typeof followupFile>()
+      readWorkspaceTextFile.mockReturnValueOnce(followupRead.promise)
       act(() => {
         queueWorkbenchWorkspaceLaunch(task.deviceId, task.workspacePath, {
           taskId: task.taskId,
@@ -5478,7 +5480,16 @@ describe('DesktopWorkbenchLayout', () => {
         )
       )
       expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent(
-        'A second click on the same open task.'
+        'Persisted zero quantity regression passes.'
+      )
+      expect(screen.getByTestId('workspace-markdown-preview')).not.toHaveTextContent(
+        followupFile.content
+      )
+      await act(async () => followupRead.resolve(followupFile))
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent(
+          'A second click on the same open task.'
+        )
       )
     }
   )

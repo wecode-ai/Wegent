@@ -1,6 +1,7 @@
 import { useConversationFind } from '@/components/chat/useConversationFind'
 import {
   applyRuntimeConversationAction,
+  archiveRuntimeConversation,
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
@@ -9,6 +10,7 @@ import {
   getRuntimeConversationQueuePaused,
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationSnapshot,
+  unmarkRuntimeConversationArchived,
 } from '@/features/workbench/runtimeConversationCache'
 import {
   getRuntimeConversationQueueController,
@@ -308,6 +310,111 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
 }
 
 describe('pane transcript reload ownership', () => {
+  const restoredTranscript: RuntimePaneTranscript = {
+    messages: [],
+    turns: [
+      {
+        id: 'restored-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'restored-user',
+            type: 'user_message',
+            message: {
+              id: 'restored-user',
+              role: 'user',
+              content: 'Original archived prompt',
+              status: 'done',
+              createdAt: '2026-10-15T00:00:00Z',
+            },
+          },
+        ],
+      },
+    ],
+  }
+
+  const readRestoredTranscript: RuntimeTranscriptLoader = async owner => {
+    replaceRuntimeConversationSnapshot(owner, restoredTranscript.turns)
+    return restoredTranscript
+  }
+
+  test.each(['failed', 'loaded'] as const)(
+    'invalidates an archived owner %s read and reads its restored same-address history',
+    async previousRead => {
+      const load = vi.fn<RuntimeTranscriptLoader>()
+      if (previousRead === 'failed') load.mockRejectedValue(new Error('thread is archived'))
+      else load.mockImplementation(readRestoredTranscript)
+      mocks.context.loadRuntimeTranscriptForPane = load
+      const { result, rerender } = await renderSession()
+      expect(result.current.transcriptError).toBe(
+        previousRead === 'failed' ? 'thread is archived' : null
+      )
+
+      act(() => {
+        archiveRuntimeConversation(address)
+        rerender({ currentRuntimeTask: null })
+      })
+      expect(result.current.transcriptError).toBeNull()
+      const archivedReadCount = load.mock.calls.length
+      load.mockImplementation(readRestoredTranscript)
+      act(() => {
+        unmarkRuntimeConversationArchived(address)
+        rerender({ currentRuntimeTask: { ...address } })
+      })
+      await waitFor(() =>
+        expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+      )
+      expect(load.mock.calls.length).toBeGreaterThan(archivedReadCount)
+      expect(result.current.transcriptError).toBeNull()
+    }
+  )
+
+  test('cancels an archived owner read without a navigation render and ignores its late error', async () => {
+    const load = vi.fn<RuntimeTranscriptLoader>().mockImplementation(readRestoredTranscript)
+    mocks.context.loadRuntimeTranscriptForPane = load
+    const { result, rerender } = await renderSession()
+    let rejectArchived!: (reason: Error) => void
+    const archivedRead = new Promise<RuntimePaneTranscript>((_resolve, reject) => {
+      rejectArchived = reject
+    })
+    load.mockReturnValueOnce(archivedRead)
+    act(() => result.current.reloadRuntimeTranscript())
+    await waitFor(() => expect(load.mock.calls.at(-1)?.[1]?.signal).toBeDefined())
+    const signal = load.mock.calls.at(-1)?.[1]?.signal
+    expect(signal?.aborted).toBe(false)
+    act(() => archiveRuntimeConversation(address))
+    expect(signal?.aborted).toBe(true)
+    const archivedReadCount = load.mock.calls.length
+    act(() => {
+      rerender({ currentRuntimeTask: null })
+      unmarkRuntimeConversationArchived(address)
+      rerender({ currentRuntimeTask: { ...address } })
+    })
+    await waitFor(() => expect(load.mock.calls.length).toBeGreaterThan(archivedReadCount))
+    await waitFor(() =>
+      expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+    )
+    await act(async () => rejectArchived(new Error('late archived response')))
+    expect(result.current.transcriptError).toBeNull()
+    expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+  })
+
+  test('retains history on ordinary navigation and unrelated conversation archival', async () => {
+    const load = vi.fn<RuntimeTranscriptLoader>().mockImplementation(readRestoredTranscript)
+    mocks.context.loadRuntimeTranscriptForPane = load
+    const { result, rerender } = await renderSession()
+    const reads = load.mock.calls.length
+    act(() => {
+      archiveRuntimeConversation({ ...address, taskId: 'unrelated-task' })
+      rerender({ currentRuntimeTask: null })
+    })
+    expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+    expect(result.current.transcriptError).toBeNull()
+    act(() => rerender({ currentRuntimeTask: { ...address } }))
+    expect(load).toHaveBeenCalledTimes(reads)
+    expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+  })
+
   test('keeps an explicit send independent of a reading scope replaced during dispatch', async () => {
     const { result, rerender } = await renderSession()
     act(() => result.current.clearCodeComments())

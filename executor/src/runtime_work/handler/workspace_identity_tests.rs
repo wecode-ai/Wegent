@@ -69,6 +69,81 @@ fn task(path: &Path, source: Option<&str>) -> RuntimeTaskLink {
     link
 }
 
+#[test]
+fn get_task_preserves_only_authoritative_native_turn_identity() {
+    use crate::runtime_work::lifecycle::{
+        begin_native_request, native_execution_state, NativeExecutionPhase,
+    };
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("executor");
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
+    for phase in [NativeExecutionPhase::Running, NativeExecutionPhase::Idle] {
+        let mut link = task(root.path(), Some("local_path"));
+        begin_native_request(&mut link);
+        let mut state = native_execution_state(&link).unwrap();
+        state.phase = phase;
+        state.latest_turn_id = Some("authoritative-native-turn".into());
+        state.turn_id = (phase == NativeExecutionPhase::Running).then(|| "active-turn".into());
+        state.execution_outcome = Some("completed".into());
+        link.execution_state = Some(state);
+        link.runtime_handle["lastTurnId"] = json!("forged-stored-turn");
+        link.runtime_handle["messages"] = json!([{"content":"private-transcript"}]);
+        let path = root.path().join(format!("{phase:?}.json"));
+        let mut handler = RuntimeWorkRpcHandler::new("device", "codex");
+        handler.store = RuntimeWorkStore::new(path.clone());
+        handler.store.upsert_task(link.clone());
+        let read = handler
+            .get_task(&json!({"taskId":link.local_task_id}))
+            .unwrap();
+        assert_eq!(
+            read["task"]["runtimeHandle"]["lastTurnId"],
+            "authoritative-native-turn"
+        );
+        assert_eq!(
+            read["task"]["runtimeHandle"]["threadId"],
+            "native-primary-thread"
+        );
+        for private in [
+            "executionRequest",
+            "private-task-token",
+            "private-runtime-token",
+            "private-account",
+            "private-transcript",
+            "forged-stored-turn",
+            "forged-stored-thread",
+        ] {
+            assert!(
+                !serde_json::to_string(&read).unwrap().contains(private),
+                "{private}"
+            );
+        }
+        // A cold index has no current-process native lifecycle authority.
+        handler.store = RuntimeWorkStore::new(path);
+        let cold = handler
+            .get_task(&json!({"taskId":link.local_task_id}))
+            .unwrap();
+        assert!(cold["task"]["runtimeHandle"].get("lastTurnId").is_none());
+        for stale in [false, true] {
+            if stale {
+                link.execution_state.as_mut().unwrap().epoch = "another-process-epoch".into();
+            } else {
+                link.execution_state = None;
+            }
+            handler.store.upsert_task(link.clone());
+            let read = handler
+                .get_task(&json!({"taskId":link.local_task_id}))
+                .unwrap();
+            assert!(read["task"]["runtimeHandle"].get("lastTurnId").is_none());
+            if !stale {
+                begin_native_request(&mut link);
+                link.execution_state.as_mut().unwrap().latest_turn_id =
+                    Some("wrong-epoch-turn".into());
+            }
+        }
+    }
+}
+
 fn recorded_stand_in_task(path: &Path, origin_type: &str) -> RuntimeTaskLink {
     let mut link = task(path, None);
     link.runtime_project_key = Some("recorded-project".into());
