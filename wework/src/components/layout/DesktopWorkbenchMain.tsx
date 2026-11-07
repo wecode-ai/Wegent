@@ -26,6 +26,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import {
   Archive,
@@ -257,7 +258,11 @@ import {
   type DesktopReviewState,
 } from './desktopWorkbenchPaneTypes'
 import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
-import { consumeWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceLaunchRequest'
+import {
+  consumeWorkbenchWorkspaceLaunch,
+  getWorkbenchWorkspaceLaunch,
+  subscribeWorkbenchWorkspaceLaunch,
+} from '@/features/workbench/workspaceLaunchRequest'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -2154,6 +2159,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const temporaryChatAvailable = !activeLocalHarnessSession
   const canBrowseFiles = Boolean(
     workspaceProject ||
+    workspaceTarget ||
     selectedWorkspaceFile?.target ||
     openFileRequest?.target ||
     openFileRequest?.attachment ||
@@ -4261,30 +4267,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const workspaceLaunchDeviceId = composerWorkspaceTarget?.deviceId
   const workspaceLaunchPath = composerWorkspaceTarget?.path
-  useEffect(() => {
-    if (!paneActive || !paneVisible || !workbenchVisible) return
-    if (!workspaceLaunchDeviceId || !workspaceLaunchPath) return
-    const launch = consumeWorkbenchWorkspaceLaunch(workspaceLaunchDeviceId, workspaceLaunchPath)
-    if (!launch) return
-
-    if (launch.initialInput) {
-      replacePaneInput(launch.initialInput)
-    }
-    if (launch.rightSidebarTab) {
-      rightWorkspaceDshSidebar.openTab(
-        { type: launch.rightSidebarTab.type },
-        rightWorkspaceExtensionScope
-      )
-    }
-  }, [
-    paneActive,
-    paneVisible,
-    rightWorkspaceExtensionScope,
-    replacePaneInput,
-    workbenchVisible,
-    workspaceLaunchDeviceId,
-    workspaceLaunchPath,
-  ])
+  const workspaceLaunchRequest = useSyncExternalStore(
+    subscribeWorkbenchWorkspaceLaunch,
+    getWorkbenchWorkspaceLaunch
+  )
 
   const openReviewFromDiffLoader = useCallback(
     async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {
@@ -4566,6 +4552,39 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       t,
     ]
   )
+
+  useEffect(() => {
+    if (!paneActive || !paneVisible || !workbenchVisible) return
+    if (!workspaceLaunchDeviceId || !workspaceLaunchPath) return
+    const launch = consumeWorkbenchWorkspaceLaunch(
+      workspaceLaunchDeviceId,
+      workspaceLaunchPath,
+      currentRuntimeTask?.taskId
+    )
+    if (!launch) return
+    if (launch.initialInput) replacePaneInput(launch.initialInput)
+    if (launch.rightSidebarTab) {
+      rightWorkspaceDshSidebar.openTab(
+        { type: launch.rightSidebarTab.type },
+        rightWorkspaceExtensionScope
+      )
+    }
+    if (launch.openFile) {
+      const { path, options } = launch.openFile
+      queueMicrotask(() => void openWorkspaceFileFromMessage(path, options))
+    }
+  }, [
+    currentRuntimeTask?.taskId,
+    openWorkspaceFileFromMessage,
+    paneActive,
+    paneVisible,
+    rightWorkspaceExtensionScope,
+    replacePaneInput,
+    workbenchVisible,
+    workspaceLaunchDeviceId,
+    workspaceLaunchPath,
+    workspaceLaunchRequest,
+  ])
 
   const openLocalSkillFile = useCallback(
     async (path: string) => {

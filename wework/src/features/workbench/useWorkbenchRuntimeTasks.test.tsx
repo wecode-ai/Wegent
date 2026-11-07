@@ -63,6 +63,23 @@ function setup(readTask = vi.fn().mockResolvedValue({ success: true, task })) {
 }
 
 describe('opening an unlisted original task', () => {
+  it('hydrates listed tasks from their owner metadata before opening a bare address', async () => {
+    const { result, state, rerender, dispatch, readTask } = setup()
+    state.runtimeWork = {
+      projects: [],
+      chats: [{ deviceId: address.deviceId, workspacePath: task.workspacePath!, tasks: [task] }],
+      totalTasks: 1,
+    }
+    rerender()
+    await act(() => result.current.actions.openRuntimeTask(address))
+    expect(readTask).not.toHaveBeenCalled()
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: 'runtime_task_opened',
+      address: expect.objectContaining({ ...address, workspacePath: task.workspacePath }),
+      project: null,
+    })
+  })
+
   it('restores real task metadata and workspace without adding a sidebar task', async () => {
     const { result, readTask, dispatch, state, rerender } = setup()
     await act(() => result.current.actions.openRuntimeTask(address))

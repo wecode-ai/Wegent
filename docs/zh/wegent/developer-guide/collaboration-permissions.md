@@ -138,6 +138,22 @@ sequenceDiagram
 
 没有 MCP 的插件可通过通用 CLI 读取传输复用已有 `localAuth.tool`。可执行工具、Connector、固定命令和允许参数均来自精确依赖及已安装 Wework 适配插件的读取声明；调用者不能传入命令或增加参数，也不执行 Shell 或 Skill 文本。钉钉采集已使用该路径，专用读取 RPC 已删除；回复继续沿用原来源绑定及确认策略。通用 CLI 契约测试与 `stand-in-cli` CI checkpoint 覆盖写入拒绝、参数注入和旧入口删除。
 
+### 外部工作本地交付元数据
+
+分身委派和外部来源工作仅向当前线程的 Shell 注入 `WEGENT_EXECUTOR_BINARY`、
+`WEGENT_TASK_ID` 和 `WEGENT_TASK_WORKSPACE`，用于工作目录内的本地交付物声明。
+这些元数据不进入共享 App Server 进程；任务凭据、Runtime 和 Skill 身份、
+Connector Broker 凭据及 Backend Task 身份仍不提供给外部工作 Shell。
+本地声明校验文件真实路径、读取文件计算哈希并返回本地路径，不访问 Backend。
+原生审核、权限配置和 MCP 范围保持不变，CP01–CP20 不变。
+`task_artifact_env_tests` 保护精确三字段、线程隔离和 start/resume/fork 权限边界；
+`dots-closed-loops` 桌面 checkpoint 验证真实委派声明及原主会话交付物打开。
+
+任务级工作目录以持久化的执行意图为准：明确的 `workspace_source=local_path`
+保留原目录，即使它位于 Git worktree 内，也不转换为受管 worktree 或提升到仓库根。
+项目分组和 Git 属性不构成执行归属。受管 worktree、历史任务和独立聊天保留原约束；
+`workspace_identity_tests` 用真实 Git worktree 验证 get/list 的一致性和原元数据白名单。
+
 ### 子 Issue 执行的父项只读上下文
 
 协作执行成员的派发范围增加一项只读例外：可以显式指定当前子 Issue 的直接

@@ -114,6 +114,28 @@ The background MCP bridge invokes only read tools of the current provider's decl
 
 Plugins without MCP can reuse existing `localAuth.tool` declarations through the generic CLI read transport. Executable identity, Connector, command prefix and allowed arguments come from the exact dependency and the installed Wework adapter's read declaration. Callers cannot supply commands or grant parameters; neither shell code nor Skill prose is executed. DingTalk collection now uses this path and its dedicated read RPC has been removed. Replies retain existing source binding and confirmation requirements. Generic CLI contracts and the CI-registered `stand-in-cli` checkpoint cover write rejection, argument injection and removal of the old endpoint.
 
+### Local delivery metadata for external work
+
+Stand-in delegation and external-source work receive only `WEGENT_EXECUTOR_BINARY`,
+`WEGENT_TASK_ID` and `WEGENT_TASK_WORKSPACE` in the current thread's shell environment
+for local artifact declaration. This metadata never enters the shared App Server
+process. Task credentials, Runtime and Skill identities, Connector broker credentials
+and Backend Task identity remain unavailable to the external-work shell. Local
+declaration validates the canonical workspace boundary, reads the file to compute
+its hash and returns a local path without contacting Backend. Native review,
+permission profiles and MCP scope remain unchanged; CP01–CP20 are unchanged.
+`task_artifact_env_tests` protects the exact three keys, thread isolation and
+start/resume/fork permission boundaries; the `dots-closed-loops` desktop checkpoint
+verifies real delegated declaration and opening delivery from the original primary.
+
+Task working directories follow persisted execution intent. An explicit
+`workspace_source=local_path` retains its directory even inside a Git worktree;
+it is not converted to a managed worktree or promoted to the repository root.
+Project grouping and Git properties do not define execution ownership. Managed
+worktrees, legacy tasks and standalone chats retain their original constraints.
+`workspace_identity_tests` uses real Git worktrees to protect get/list consistency
+and the original metadata allowlist.
+
 ### Read-only parent context for child Issue executions
 
 Dispatch executors have one read-only exception to their assigned Issue scope:
