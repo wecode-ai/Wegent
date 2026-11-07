@@ -12,10 +12,7 @@ import {
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 import { verifyFirstUsePageLoading } from '../modules/first-use-page-loading.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
-import {
-  STARTUP_SPLASH_HANDOFF_EVENTS,
-  verifyStartupSplashHandoff,
-} from '../modules/startup-splash-handoff.mjs'
+import { verifyStartupSplashHandoff } from '../modules/startup-splash-handoff.mjs'
 import {
   captureStartupThemeEvidence,
   seedStoppedStartupTheme,
@@ -75,11 +72,6 @@ export async function createDesktopScenario({ resultDir }) {
         electronRoot: join(packagedResourcesRoot(appBinary), 'app.asar'),
       })
       const snapshot = await waitForClosedStartupSplash(control)
-      assert.deepEqual(
-        snapshot.events.map(event => event.name),
-        STARTUP_SPLASH_HANDOFF_EVENTS,
-        'The Electron startup splash did not complete its animated lifecycle'
-      )
       await verifyStartupSplashHandoff({ snapshot, resultDir })
       assert.ok(
         snapshot.theme === 'light' || snapshot.theme === 'dark',
