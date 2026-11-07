@@ -522,6 +522,7 @@ jobs:
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
           cargo test --all-features --lib agents::runtime_capabilities::json_file::tests
           cargo test --all-features --lib effective_instructions_tests
+          cargo test -p wegent-executor --all-features --lib side_source
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem atomic_file::tests
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             cargo test --all-features --lib services::turn_file_changes::git_capture::capture_tests

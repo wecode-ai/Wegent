@@ -166,6 +166,7 @@ mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
 mod runtime_owner;
+mod side_source;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
