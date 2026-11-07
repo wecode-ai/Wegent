@@ -60,7 +60,11 @@ fn binding(identity: &StandInMcpIdentity, target: &RuntimeTaskLink) -> String {
                 identity.readonly_worker,
                 identity.review,
                 target.local_task_id,
-                target.thread_id
+                if super::super::conversation_sessions::is_identity_conversation(target) {
+                    None
+                } else {
+                    target.thread_id.clone()
+                }
             ])
             .to_string()
             .as_bytes()

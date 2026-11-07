@@ -202,6 +202,11 @@ impl RuntimeWorkRpcHandler {
             }
         }
         apply_runtime_model_selection(&mut prepared, &payload["options"]);
+        for field in ["startNewSession", "expectedThreadId"] {
+            if let Some(value) = payload["options"].get(field) {
+                prepared[field] = value.clone();
+            }
+        }
         if activity {
             if let Some(expected) = payload.get("expectedOwnerRequest") {
                 prepared["executionRequest"]["standInExpectedOwnerRequest"] = expected.clone();

@@ -140,6 +140,7 @@ mod connections;
 mod context_compaction;
 mod control;
 mod control_metadata;
+mod conversation_sessions;
 mod creation;
 mod execution_control;
 mod fork_transfer;
