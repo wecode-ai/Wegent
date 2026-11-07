@@ -30,6 +30,36 @@ async function waitForCache(control, key, text) {
   assert.fail('The background task did not persist its reply suggestion before reopening')
 }
 
+export async function restoreDisabledReplyPredictions(control, verificationError) {
+  try {
+    await control.command('navigate', 'body', { value: '/settings/general' })
+    await control.command('waitFor', '[data-testid="reply-prediction-enabled"]')
+    await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
+    const checked = await control.command(
+      'getAttribute',
+      '[data-testid="reply-prediction-enabled"]',
+      {
+        value: 'aria-checked',
+      }
+    )
+    if (checked === 'true') {
+      await control.command('click', '[data-testid="reply-prediction-enabled"]')
+    }
+    await control.command(
+      'waitFor',
+      '[data-testid="reply-prediction-enabled"][aria-checked="false"]'
+    )
+  } catch (cleanupError) {
+    if (verificationError) {
+      throw new AggregateError(
+        [verificationError, cleanupError],
+        'Reply prediction verification and cleanup failed'
+      )
+    }
+    throw cleanupError
+  }
+}
+
 // Add background cases to the existing CI checkpoint without changing its assertions.
 export async function createDesktopScenario(options) {
   const existing = await createExistingScenario(options)
@@ -63,6 +93,7 @@ export async function createDesktopScenario(options) {
     async verify(control) {
       await existing.verify(control)
       active = true
+      let verificationError
       try {
         await control.command('click', '[data-testid="reply-prediction-enabled"]')
         await control.command(
@@ -128,17 +159,13 @@ export async function createDesktopScenario(options) {
         await control.command('click', `[data-testid="runtime-local-task-row-${task.taskId}"]`)
         await control.command('waitFor', GHOST, { text: nextSuggestion })
         assert.equal(predictionRequests, 2, 'Task switching duplicated a prediction request')
+      } catch (error) {
+        verificationError = error
+        throw error
       } finally {
         heldTurn?.end()
         heldPrediction?.response.end()
-        await control.command('navigate', 'body', { value: '/settings/general' })
-        await control.command('waitFor', '[data-testid="reply-prediction-enabled"]')
-        await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
-        await control.command('click', '[data-testid="reply-prediction-enabled"]')
-        await control.command(
-          'waitFor',
-          '[data-testid="reply-prediction-enabled"][aria-checked="false"]'
-        )
+        await restoreDisabledReplyPredictions(control, verificationError)
       }
     },
     diagnostics() {
