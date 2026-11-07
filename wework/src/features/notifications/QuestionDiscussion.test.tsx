@@ -709,45 +709,49 @@ test('account switches isolate discussion drafts and late creation without remou
   })
 })
 
-test('a late answer check cannot close a newer discussion', async () => {
-  let resolve!: (page: object) => void
-  mock.load.mockReturnValue(
-    new Promise(value => {
-      resolve = value
+test.each([true, false])(
+  'a late answer check cannot close a newer discussion (closed: %s)',
+  async closeBeforeSwitch => {
+    let resolve!: (page: object) => void
+    mock.load.mockReturnValue(
+      new Promise(value => {
+        resolve = value
+      })
+    )
+    const other = {
+      ...payload,
+      requestId: 99,
+      questions: [{ id: 'format', question: '输出什么格式？' }],
+    }
+    render(
+      <QuestionDiscussionProvider>
+        <WorkbenchPaneContext.Provider
+          value={
+            {
+              createTemporaryRuntimeTask: mock.create,
+              loadRuntimeTranscriptForPane: mock.load,
+              openRuntimeTask: vi.fn(),
+            } as unknown as WorkbenchPaneContextValue
+          }
+        >
+          <QuestionDiscussionScope>
+            <DiscussionTabs />
+            <RequestUserInputCard payload={payload} source={source} onSubmit={submit} />
+            <RequestUserInputCard payload={other} source={source} onSubmit={submit} />
+          </QuestionDiscussionScope>
+        </WorkbenchPaneContext.Provider>
+      </QuestionDiscussionProvider>
+    )
+    fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[0])
+    changeConclusion()
+    apply()
+    if (closeBeforeSwitch)
+      fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
+    fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[1])
+    await act(async () => {
+      resolve({ messages: [originalMessage()], turns: [] })
     })
-  )
-  const other = {
-    ...payload,
-    requestId: 99,
-    questions: [{ id: 'format', question: '输出什么格式？' }],
+    expect(dialog()).toHaveTextContent('输出什么格式？')
+    expect(submit).not.toHaveBeenCalled()
   }
-  render(
-    <QuestionDiscussionProvider>
-      <WorkbenchPaneContext.Provider
-        value={
-          {
-            createTemporaryRuntimeTask: mock.create,
-            loadRuntimeTranscriptForPane: mock.load,
-            openRuntimeTask: vi.fn(),
-          } as unknown as WorkbenchPaneContextValue
-        }
-      >
-        <QuestionDiscussionScope>
-          <DiscussionTabs />
-          <RequestUserInputCard payload={payload} source={source} onSubmit={submit} />
-          <RequestUserInputCard payload={other} source={source} onSubmit={submit} />
-        </QuestionDiscussionScope>
-      </WorkbenchPaneContext.Provider>
-    </QuestionDiscussionProvider>
-  )
-  fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[0])
-  changeConclusion()
-  apply()
-  fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
-  fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[1])
-  await act(async () => {
-    resolve({ messages: [originalMessage()], turns: [] })
-  })
-  expect(dialog()).toHaveTextContent('输出什么格式？')
-  expect(submit).not.toHaveBeenCalled()
-})
+)
