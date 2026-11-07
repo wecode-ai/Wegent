@@ -11,6 +11,7 @@ import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnos
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
+import { readElementVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -711,6 +712,7 @@ function desktopControlElementMetrics(selector: string): string {
         viewportHeight: window.innerHeight,
         viewportWidth: window.innerWidth,
         width: rect.width,
+        ...readElementVisibility(element),
       }
     })
   )

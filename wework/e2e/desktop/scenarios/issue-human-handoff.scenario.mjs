@@ -32,6 +32,10 @@ const CALL = 'issue-human-handoff-question'
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const testId = id => `[data-testid=${JSON.stringify(id)}]`
 const scoped = id => `${ACTIVE} ${testId(id)}`
+const fullyVisible = box =>
+  box?.hitTestVisible === true &&
+  box.visibleIntersection?.width >= box.width - 1 &&
+  box.visibleIntersection?.height >= box.height - 1
 
 export const HUMAN_HANDOFF_USER_STORIES = [
   'creator-owns-idle-issue-without-invented-ai-progress',
@@ -99,24 +103,30 @@ export function createDesktopScenario({
     )
     await writeFile(join(resultDir, `${name}.metrics.json`), JSON.stringify(metrics, null, 2))
   }
-  async function recordPendingRows(control) {
+  async function recordPendingRows(control, expectedQuestions = 1, phase = 'pending') {
     const rows = []
     let selector = scoped('interaction-list-item')
     while (JSON.parse(await control.command('getElementMetrics', selector)).length) {
       const id = await control.command('getAttribute', selector, { value: 'data-interaction-id' })
       assert.ok(id, 'Each pending row must expose its stable interaction identity')
+      const exact = `${scoped('interaction-list-item')}[data-interaction-id=${JSON.stringify(id)}]`
       rows.push({
         id,
         projectIssue: await control.command('getAttribute', selector, {
           value: 'data-project-issue',
         }),
-        text: await control.command('getText', selector),
+        text: await control.command('getText', exact),
       })
       selector += `:not([data-interaction-id=${JSON.stringify(id)}])`
     }
     await writeFile(
-      join(resultDir, 'issue-handoff-pending-rows.json'),
+      join(resultDir, `issue-handoff-${phase}-rows.json`),
       JSON.stringify(rows, null, 2)
+    )
+    assert.equal(
+      rows.filter(row => row.text.includes(QUESTION)).length,
+      expectedQuestions,
+      'Native and canonical sources must share one question and remove it after acceptance'
     )
   }
   async function verifyHeader(control, issueId, kind, name) {
@@ -275,14 +285,16 @@ export function createDesktopScenario({
             'The personal project filter must remain visible in a narrow window'
           )
           const actor = scoped(`issue-participation-${ordinaryId}`)
-          await control.command('scrollIntoView', actor)
+          await control.command('scrollIntoViewAsUser', actor)
           await until(
             async () => JSON.parse(await control.command('getElementMetrics', actor))[0],
-            value => value?.top >= 0 && value.bottom <= value.viewportHeight,
-            'The narrow project screenshot must include the actor, not an offscreen card'
+            fullyVisible,
+            'The narrow actor must be hit-testable and fully inside every ancestor scrollport'
           )
           await recordSurface(control, 'issue-handoff-01b-narrow-project-filter', [
             scoped('cloud-board-toolbar'),
+            scoped('cloud-board-scroll-area'),
+            scoped('cloud-todo-column-dropzone-inbox-viewport'),
             filter,
             scoped(`cloud-todo-card-header-${ordinaryId}`),
             scoped(`issue-participation-${ordinaryId}`),
@@ -393,6 +405,24 @@ export function createDesktopScenario({
         assert.equal(flagged.blocks_progress, true)
         assert.equal(flagged.recipient_user_id, question.recipient_user_id)
         assert.equal(flagged.waiting_since, question.waiting_since)
+        const runtime = await rpc(control, 'runtime.tasks.transcript', {
+          taskId: question.runtime_task_id,
+          limit: 5,
+        })
+        assert.ok(runtime.origin, 'The real Runtime transcript must retain its Issue origin')
+        await writeFile(
+          join(resultDir, 'issue-handoff-source-identity.json'),
+          JSON.stringify(
+            {
+              projectId: project.id,
+              issueId: issue.id,
+              request: flagged,
+              runtimeOrigin: runtime.origin,
+            },
+            null,
+            2
+          )
+        )
         await reloadMainWindow(control, 'Restore the persisted Issue question')
         await control.command('clickWhenEnabled', '[data-testid="wework-notifications-button"]')
         await control.command('waitFor', '[data-testid="wework-notifications-pending"]', {
@@ -479,11 +509,23 @@ export function createDesktopScenario({
           value: JSON.stringify({ width: 480, height: 760 }),
         })
         try {
+          await control.command('scrollIntoViewAsUser', surface)
           const narrow = await until(
             async () => JSON.parse(await control.command('getElementMetrics', surface))[0],
-            value => value?.width > 0 && value.viewportWidth <= 480,
-            'The selected Issue question must remain visible in a narrow window'
+            value => value?.viewportWidth <= 480 && fullyVisible(value),
+            'The narrow question must be hit-testable and fully inside every ancestor scrollport'
           )
+          for (const target of [
+            `${surface} ${testId(`issue-human-request-assignee-${question.id}`)}`,
+            `${surface} ${testId('request-user-input-submit-button')}`,
+          ]) {
+            const [metrics] = JSON.parse(await control.command('getElementMetrics', target))
+            assert.ok(
+              fullyVisible(metrics),
+              `The narrow question control must actually be visible: ${target}`
+            )
+            assert.ok(metrics.width >= 44 && metrics.height >= 44)
+          }
           assert.ok(
             narrow.scrollWidth <= narrow.clientWidth + 1,
             'The question card must not overflow horizontally'
@@ -547,9 +589,26 @@ export function createDesktopScenario({
         )
         assert.equal(answers.length, 1)
         assert.equal(answers[0].thread_root_message_id, root.message_id)
+        await openPending(control)
+        await until(
+          () => control.command('getText', scoped('interaction-list-item')),
+          text => !text.includes(QUESTION),
+          'Accepted questions must disappear from the global pending UI, not only the native inbox'
+        )
+        await recordPendingRows(control, 0, 'accepted')
         await reloadMainWindow(control, 'Answered questions remain resolved after reload')
         const inbox = await rpc(control, 'todos.humanRequests.inbox', { user_id: 0 })
         assert.ok(!inbox.items.some(request => request.id === question.id))
+        await openPending(control)
+        await until(
+          () => control.command('getText', scoped('interaction-list-item')),
+          text => !text.includes(QUESTION),
+          'Accepted questions must not return to the global pending UI after reload'
+        )
+        await recordPendingRows(control, 0, 'reloaded')
+        await recordSurface(control, 'issue-handoff-05-resolved', [
+          scoped('runtime-interactions-page'),
+        ])
       } finally {
         finishIndependentWork()
         active = false

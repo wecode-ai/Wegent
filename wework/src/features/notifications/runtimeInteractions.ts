@@ -17,6 +17,7 @@ import i18n from '@/i18n'
 
 export const INTERACTION_SOURCES = ['task', 'project', 'stand_in'] as const
 export type InteractionSource = (typeof INTERACTION_SOURCES)[number]
+const ISSUE_ORIGIN_TYPES = ['board_comment', 'board_task', 'issue_dispatch', 'project_automation']
 
 export function isInteractionSource(value: unknown): value is InteractionSource {
   return INTERACTION_SOURCES.some(source => source === value)
@@ -44,9 +45,7 @@ export function interactionSource(
     (origin &&
       typeof origin === 'object' &&
       'type' in origin &&
-      ['board_comment', 'board_task', 'issue_dispatch', 'project_automation'].includes(
-        String(origin.type)
-      )) ||
+      ISSUE_ORIGIN_TYPES.includes(String(origin.type))) ||
     item.task?.address.issueExecution ||
     item.task?.address.projectSession ||
     (item.originalUrl && parseWeworkScheme(item.originalUrl)?.kind === 'board')
@@ -193,7 +192,7 @@ export async function readRuntimeInteractions(
     origin &&
     typeof origin === 'object' &&
     'type' in origin &&
-    origin.type === 'board_comment' &&
+    ISSUE_ORIGIN_TYPES.includes(String(origin.type)) &&
     'cloudProjectId' in origin &&
     typeof origin.cloudProjectId === 'string' &&
     'loopItemId' in origin &&
