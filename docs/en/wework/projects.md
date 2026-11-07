@@ -289,7 +289,9 @@ Manual work does not require execution-environment initialization or an extra fo
 
 ## Message AI
 
-Select the always-visible **Chat** button on the right of the board to expand its conversation sidebar. The **New conversation** icon next to a project in the collaboration sidebar also opens it. No collaboration group, AI leader, or experimental feature is required. Both local and cloud projects are supported. New conversations run on the current computer with the current project board as their default context, subject to the user's actual access and execution permissions.
+Select the always-visible **Ask AI** button on the right of the board to expand its conversation sidebar. The **New conversation** icon next to a project in the collaboration sidebar also opens it. No collaboration group, AI leader, or experimental feature is required. Both local and cloud projects are supported. New conversations run on the current computer with the current project board as their default context, subject to the user's actual access and execution permissions.
+
+The board filter toolbar adapts to its pane's available width. In a narrow pane, grouping, group-value, tag, milestone, parent-row, and Ask AI controls collapse to icons, and the search field becomes shorter. This also applies when the conversation sidebar is open. Hover or keyboard-focus an icon for its full label; filtering and switching behavior stay unchanged.
 
 Send a message directly without selecting another project or working directory. The sidebar header identifies the current project. Start new conversations, switch between existing conversations, or reopen the sidebar and choose a previous conversation to continue it. Local and cloud project histories are kept separate. If the local execution environment is unavailable, the sidebar reports the error; send again after recovery.
 

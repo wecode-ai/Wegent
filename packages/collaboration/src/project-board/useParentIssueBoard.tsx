@@ -3,6 +3,7 @@ import { GitBranch } from 'lucide-react'
 import { projectBoardParentRows, type ParentBoardItem } from './parentBoardGrouping'
 import type { ProjectBoardColumn, ProjectBoardStatePort } from './ProjectBoardBody'
 import type { CollaborationTranslate } from '../i18n'
+import { Tooltip } from '../issue-detail/Tooltip'
 
 function readPreference(key: string): boolean {
   try {
@@ -69,24 +70,26 @@ export function useParentIssueBoard<T extends ParentBoardItem>({
         })
       : [],
     toggle: enabled ? (
-      <button
-        type="button"
-        data-testid="cloud-board-parent-layout"
-        aria-pressed={active}
-        title={t('todo.parent_board_layout_hint')}
-        onClick={() => {
-          savePreference(storageKey, !active)
-          setPreference({ scope, value: !active })
-        }}
-        className={`inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs transition max-md:h-11 ${
-          active
-            ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
-            : 'border-border bg-background text-text-secondary hover:bg-muted'
-        }`}
-      >
-        <GitBranch className="h-3.5 w-3.5" />
-        {t('todo.parent_board_layout')}
-      </button>
+      <Tooltip label={t('todo.parent_board_layout_hint')} side="bottom">
+        <button
+          type="button"
+          data-testid="cloud-board-parent-layout"
+          aria-pressed={active}
+          aria-label={t('todo.parent_board_layout')}
+          onClick={() => {
+            savePreference(storageKey, !active)
+            setPreference({ scope, value: !active })
+          }}
+          className={`project-board-compact-action inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs transition max-md:h-11 ${
+            active
+              ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
+              : 'border-border bg-background text-text-secondary hover:bg-muted'
+          }`}
+        >
+          <GitBranch className="h-3.5 w-3.5" />
+          <span className="project-board-action-label">{t('todo.parent_board_layout')}</span>
+        </button>
+      </Tooltip>
     ) : null,
   }
 }

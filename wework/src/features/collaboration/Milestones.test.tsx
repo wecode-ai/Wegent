@@ -53,6 +53,32 @@ async function chooseMilestone(testId: string, value: string) {
 }
 
 describe('Milestones', () => {
+  it('keeps a named icon and selected text for the compact board filter', async () => {
+    const client = api()
+    const onChange = vi.fn()
+    render(
+      <MilestonePicker
+        api={client.milestones}
+        projectId="p1"
+        value="all"
+        onChange={onChange}
+        label="里程碑"
+        allLabel="全部里程碑"
+        noneLabel="无里程碑"
+        errorLabel="加载失败"
+        retryLabel="重试"
+        testId="milestone-filter"
+        compact
+      />
+    )
+    const filter = screen.getByRole('button', { name: '里程碑' })
+    expect(filter).toHaveClass('project-board-compact-action')
+    expect(filter.querySelector('.project-board-action-icon')).not.toBeNull()
+    expect(filter.querySelector('.project-board-action-label')).toHaveTextContent('全部里程碑')
+    await chooseMilestone('milestone-filter', milestone.id)
+    expect(onChange).toHaveBeenCalledWith(milestone.id)
+  })
+
   it.each(['success', 'error'] as const)(
     'hides prior permission counters immediately on downgrade, including %s recovery',
     async outcome => {
