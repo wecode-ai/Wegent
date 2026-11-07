@@ -62,7 +62,7 @@ import {
 import { HostPipeServer } from './host/host-pipe.js'
 import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/startup-telemetry.js'
-import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
+import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.mjs'
 import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
 import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'

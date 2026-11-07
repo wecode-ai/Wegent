@@ -3,8 +3,16 @@ import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { release } from 'node:os'
 import { promisify } from 'node:util'
 import { routeUpgradeRequests } from './upgrade-request-route.mjs'
+import { requiresMacosQuitWorkaround } from '../../../electron/src/host/macos-quit-workaround.mjs'
+
+const forceQuit = requiresMacosQuitWorkaround(process.platform, release())
+export const PROBE_EXPECTED_EXIT = forceQuit ? [null, 'SIGKILL'] : [0, null]
+export const PROBE_QUIT_SCRIPT = forceQuit
+  ? "app.once('quit', () => process.kill(process.pid, 'SIGKILL'))"
+  : ''
 
 async function captureStartupNativeStack(child) {
   if (child.exitCode !== null || child.signalCode !== null) return
@@ -56,6 +64,7 @@ async function createProbeApp(root, index) {
     join(appPath, 'main.cjs'),
     `
     const {app,net} = require('electron')
+    ${PROBE_QUIT_SCRIPT}
     const {writeFileSync} = require('node:fs')
     const pauseArgument = [...process.argv, ...process.execArgv].some(value => value.startsWith('--inspect-brk='))
     const pauseSwitch = app.commandLine.hasSwitch('inspect-brk')
@@ -82,8 +91,7 @@ async function createProbeApp(root, index) {
       mark('response-headers')
       const text = await response.text()
       mark('fetch-complete')
-      console.log('PROBE_RESULT=' + text)
-      app.quit()
+      process.stdout.write('PROBE_RESULT=' + text + '\\n', () => app.quit())
     }).catch(error => {mark('fetch-error');console.error(error);app.exit(1)})
     mark('ready-handler-registered')
     `
@@ -124,7 +132,7 @@ export async function verifyUpgradeStartup({
         recordTransportLog ? join(profile, 'transport.log') : undefined
       ),
     ])
-    assert.deepEqual(exited, [0, null], stderr)
+    assert.deepEqual(exited, PROBE_EXPECTED_EXIT, stderr)
     assert.ok(stdout.includes('PROBE_RESULT=real loopback transport'), stdout)
     const state = JSON.parse(await readFile(tracePath, 'utf8'))
     assert.equal(state.pauseArgument, false)
