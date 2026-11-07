@@ -55,6 +55,24 @@ async function routeRelease(): Promise<boolean> {
       'user-data'
     )
   const root = join(dataDirectory, 'releases')
+  const store = new ReleaseStore(root)
+  const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
+  delete process.env.WEWORK_RELEASE_SUPERVISED
+  if (process.platform === 'darwin' && !supervisedId) {
+    // The installed package owns ordinary startup. Release history only routes
+    // an in-flight update or rollback; it must not relaunch an older package.
+    try {
+      if (!(await store.activation())) {
+        await bindInstalledReleaseComponents(store)
+        return true
+      }
+    } catch (error) {
+      console.warn('[release-bootstrap] Cannot read update history; starting installed app', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      return true
+    }
+  }
   if (
     process.env.WEWORK_RELEASE_ROOT &&
     resolve(process.env.WEWORK_RELEASE_ROOT) !== resolve(root) &&
@@ -62,10 +80,7 @@ async function routeRelease(): Promise<boolean> {
   ) {
     throw new Error('Release root does not match the application data directory')
   }
-  const store = new ReleaseStore(root)
   const active = await store.active()
-  const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
-  delete process.env.WEWORK_RELEASE_SUPERVISED
   const bridge = await optionalText(join(root, 'bridge'))
   // The installed entry owns restoring physical Contents even when activation
   // failed or rollback selected an older payload. A delivered recovery bridge
@@ -162,6 +177,23 @@ async function routeRelease(): Promise<boolean> {
     .then(() => launchSelectedRelease(store, dataDirectory, root))
     .catch(failStartup)
   return false
+}
+
+async function bindInstalledReleaseComponents(store: ReleaseStore): Promise<void> {
+  const release = await store.active()
+  if (
+    !release ||
+    release.version !== metadata.version ||
+    resolve(release.executable) !== resolve(process.execPath) ||
+    !release.macosInstallation
+  )
+    return
+  await enterInstalledMacosRelease(store, release, process.resourcesPath)
+  process.env.WEWORK_HARNESS_RUNTIME_ROOT = release.runtimeRoot
+  process.env.WEWORK_ACTIVE_RELEASE_ID = release.id
+  process.env.WEWORK_RELEASE_ROOT = store.root
+  process.env.WEWORK_COMPONENT_DATA_DIRECTORY =
+    release.componentDataDirectory ?? store.slot(release.id)
 }
 
 async function launchSelectedRelease(

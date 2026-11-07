@@ -11,6 +11,27 @@ afterEach(async () => {
 })
 
 describe('WeworkDesktopControlBridge', () => {
+  test('does not register a service when shutdown overtakes background startup', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-stop-start-'))
+    directories.push(registryDirectory)
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'main',
+      instanceKind: 'main',
+      displayName: 'Wework',
+      projectRoot: null,
+      registryDirectory,
+      window: () => null,
+    })
+    try {
+      const starting = bridge.start()
+      await bridge.stop()
+      await starting
+      expect(await readdir(registryDirectory)).toEqual([])
+    } finally {
+      await bridge.stop()
+    }
+  })
+
   test('registers an authenticated generic desktop instance and removes it on stop', async () => {
     const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-'))
     directories.push(registryDirectory)

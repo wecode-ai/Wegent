@@ -143,15 +143,15 @@ describe('startup window handoff', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  test('keeps the splash opaque when completion evidence is incomplete', async () => {
+  test('opens the ready main window even when decorative progress geometry is incomplete', async () => {
     const { splash, target, options, release } = await fixture()
     const pending = splash.handoff(options)
     release({ ...completion, fillEnd: 1000 })
-    await expect(pending).rejects.toThrow('complete progress line')
-    expect(options.prepareMainWindow).not.toHaveBeenCalled()
-    expect(target.close).not.toHaveBeenCalled()
-    expect(target.setOpacity).toHaveBeenLastCalledWith(1)
-    expect(splash.snapshot().state).toBe('visible')
+    await vi.runAllTimersAsync()
+    await pending
+    expect(options.prepareMainWindow).toHaveBeenCalledOnce()
+    expect(target.close).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('closed')
   })
 
   test('does not reveal the main window when shutdown interrupts completion', async () => {
