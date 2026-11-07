@@ -92,6 +92,36 @@ test('previously frozen Windows shards can use their successful checkpoint measu
   }
 })
 
+test('the successful Dots sample releases Core3 without losing checkpoints or adding runners', () => {
+  const evidence = JSON.parse(
+    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+  )
+  assert.equal(checkpointSeconds('dots-closed-loops'), 166)
+  assert.equal(
+    evidence.checkpointSources['dots-closed-loops'],
+    'https://github.com/wecode-ai/Wegent/actions/runs/42376659459/job/128419185892'
+  )
+  const withoutDots = { ...evidence.seconds }
+  delete withoutDots['dots-closed-loops']
+  const source = completeMatrix.include.find(shard => shard.id === 'core-3')
+  assert.deepEqual(
+    balanceWindowsMatrix(completeMatrix, withoutDots).include.find(shard => shard.id === 'core-3'),
+    source
+  )
+  const balanced = balanceWindowsMatrix(completeMatrix)
+  assert.notDeepEqual(
+    balanced.include.find(shard => shard.id === 'core-3'),
+    source
+  )
+  assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
+  assert.deepEqual(checkpoints(balanced).sort(), checkpoints(completeMatrix).sort())
+  assert.equal(new Set(checkpoints(balanced)).size, checkpoints(completeMatrix).length)
+  assert.equal(balanced.include.length, completeMatrix.include.length)
+  assert.ok(
+    measuredLoad(balanced.include.find(shard => shard.id === 'core-3')) < measuredLoad(source)
+  )
+})
+
 test('measured Windows scheduling preserves every segment and expanded checkpoint exactly once', () => {
   const balanced = balanceWindowsMatrix(original)
   assert.deepEqual(segments(balanced).sort(), segments(original).sort())

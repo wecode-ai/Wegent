@@ -9,7 +9,8 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/42048650293",
     "https://github.com/wecode-ai/Wegent/actions/runs/42255324858",
     "https://github.com/wecode-ai/Wegent/actions/runs/42264710526",
-    "https://github.com/wecode-ai/Wegent/actions/runs/42296468457"
+    "https://github.com/wecode-ai/Wegent/actions/runs/42296468457",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42376659459"
   ],
   "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
   "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
@@ -80,6 +81,7 @@
     "core-dsh-plugin-management": 57,
     "core-task-flow": 356.5,
     "device-artifact-declaration": 65,
+    "dots-closed-loops": 166,
     "drawing-attachment": 25,
     "dsh-owner-capture": 48,
     "embedded-browser": 94,
@@ -194,5 +196,8 @@
   },
   "preparationSources": {
     "dingtalk-protocol-fixture": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293/job/127328527189"
+  },
+  "checkpointSources": {
+    "dots-closed-loops": "https://github.com/wecode-ai/Wegent/actions/runs/42376659459/job/128419185892"
   }
 }
