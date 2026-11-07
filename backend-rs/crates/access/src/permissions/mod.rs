@@ -12,8 +12,9 @@ mod group_roles;
 mod namespace;
 
 pub use group_roles::{
-    GroupRoleEntry, accessible_namespace_ids, effective_roles_in_groups,
+    GroupRoleEntry, accessible_namespace_ids, active_namespace_names, effective_roles_in_groups,
     iter_user_groups_with_roles, list_resources_by_entity_match, organization_names, user_groups,
+    user_groups_for_names,
 };
 pub use wegent_backend_persistence::entity_query::EntityQuery;
 

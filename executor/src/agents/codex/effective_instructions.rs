@@ -133,15 +133,14 @@ pub(super) fn publish(
     }
     fs::create_dir_all(path.parent().expect("policy skill has a parent"))
         .map_err(|error| format!("Failed to create runtime policy directory: {error}"))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap())
-        .map_err(|error| format!("Failed to create runtime policy skill: {error}"))?;
-    use std::io::Write;
-    temporary
-        .write_all(content.as_bytes())
-        .map_err(|error| format!("Failed to write runtime policy skill: {error}"))?;
-    temporary
-        .persist(&path)
-        .map_err(|error| format!("Failed to publish runtime policy skill: {error}"))?;
+    wegent_filesystem::atomic_file::write_atomic_file(&path, content.as_bytes()).map_err(
+        |error| {
+            format!(
+                "Failed to publish runtime policy skill at {}: {error}",
+                path.display(),
+            )
+        },
+    )?;
     Ok(())
 }
 

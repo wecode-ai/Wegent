@@ -138,13 +138,12 @@ export function createDingTalkReplyStory(options) {
           result: { hasMore: false, nextCursor: '0', conversationMessagesList: [] },
         })
       )
-      const preparedBinary = process.env.WEWORK_E2E_DWS_STORY_FIXTURE_BIN
+      const preparedBinary = process.env.WEWORK_E2E_DWS_REPLY_FIXTURE_BIN
       const binary = join(
         options.resultDir,
         process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
       )
       if (preparedBinary) {
-        // The fixture locates its isolated protocol data beside its executable.
         await copyFile(preparedBinary, binary)
       } else {
         await promisify(execFile)('rustc', [

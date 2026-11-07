@@ -15,6 +15,7 @@ import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContext
 import { useTranslation } from '@/hooks/useTranslation'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import {
   interactionResponse,
@@ -201,9 +202,10 @@ function RuntimeInteractionsState({
   }, [])
 
   const archive = useCallback(
-    async (item: RuntimeInteraction, answeredAt = item.createdAt, dismissed = false) => {
-      await navigator.locks.request(historyKey, () => {
-        const next = archiveInteraction(readInteractionHistory(historyKey), {
+    async (item: RuntimeInteraction, answeredAt = item.createdAt) => {
+      await navigator.locks.request(historyKey, async () => {
+        const current = readInteractionHistory(historyKey)
+        const next = archiveInteraction(current, {
           id: item.id,
           source: interactionSource(item),
           title: item.task.task.title,
@@ -213,13 +215,14 @@ function RuntimeInteractionsState({
           sourceMessageIds: item.sourceMessageIds,
           answeredAt,
         })
-        saveInteractionState(historyKey, next)
-        // Keep dismissal and its history in the same synchronous storage batch.
-        if (dismissed) saveInteractionState(acceptancePrefix + item.id, true)
+        if (next !== current) saveInteractionState(historyKey, next)
+        // Renderer queues are independent; retain the lock through the host write
+        // so an older window's snapshot cannot overwrite a newer archive.
+        await flushDesktopLocalStoragePersistence()
         if (mounted.current) setHistory(next)
       })
     },
-    [acceptancePrefix, historyKey]
+    [historyKey]
   )
   useEffect(() => {
     const update = (event: StorageEvent) => {
@@ -506,7 +509,8 @@ function RuntimeInteractionsState({
       setBusy(new Set(inFlight.current))
       try {
         await navigator.locks.request(historyKey + ':' + item.id, async () => {
-          await archive(item, Date.now(), true)
+          await archive(item, Date.now())
+          saveInteractionState(acceptancePrefix + item.id, true)
           if (!mounted.current) return
           markHandled(item.id)
         })
@@ -515,7 +519,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [archive, historyKey, markHandled]
+    [acceptancePrefix, archive, historyKey, markHandled]
   )
   const respond = useCallback(
     async (

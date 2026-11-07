@@ -1769,8 +1769,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       )
 
       const localDirectoryPath = join(resultDir, 'local-directory-fixture')
-      await mkdir(join(localDirectoryPath, 'nested'), { recursive: true })
+      const nestedDirectoryPath = join(localDirectoryPath, 'nested')
+      await mkdir(nestedDirectoryPath, { recursive: true })
       await writeFile(join(localDirectoryPath, LOCAL_DIRECTORY_TEXT), 'directory fixture', 'utf8')
+      await writeFile(join(nestedDirectoryPath, 'nested-entry.txt'), 'nested fixture', 'utf8')
       const localDirectoryOpenResult = await bridgeCall({
         action: 'open',
         url: pathToFileURL(localDirectoryPath).href,
@@ -1798,6 +1800,47 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
           localDirectoryInspect.inspectText.includes('nested/') &&
           localDirectoryInspect.inspectText.includes(LOCAL_DIRECTORY_TEXT),
         `file:// directory was not rendered: ${localDirectoryInspect.inspectText}`
+      )
+
+      const nestedDirectoryUrl = `${pathToFileURL(nestedDirectoryPath).href}/`
+      const nestedNavigation = await bridgeCall({
+        action: 'click',
+        selector: `a[href="${nestedDirectoryUrl}"]`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(nestedNavigation.ok, true, 'Clicking nested/ did not succeed')
+      const nestedDirectoryWait = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: 'nested-entry.txt' } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(nestedDirectoryWait.ok, true, 'Nested directory did not open')
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        nestedDirectoryUrl,
+        uiTimeoutMs,
+        'The browser address did not update to the nested directory'
+      )
+
+      const parentNavigation = await bridgeCall({
+        action: 'click',
+        selector: `a[href="${pathToFileURL(localDirectoryPath).href}/"]`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(parentNavigation.ok, true, 'Clicking the parent directory link failed')
+      const parentDirectoryWait = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: LOCAL_DIRECTORY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(parentDirectoryWait.ok, true, 'Parent directory did not reopen')
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        `${pathToFileURL(localDirectoryPath).href}/`,
+        uiTimeoutMs,
+        'The browser address did not return to the parent directory'
       )
 
       const localZipPath = join(resultDir, 'local-file-fixture.zip')

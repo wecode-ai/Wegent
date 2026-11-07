@@ -312,6 +312,9 @@ impl RuntimeWorkRpcHandler {
         let task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let versioned = transcript_transport::requested(&payload)?;
+        if payload["identityOnly"] == true {
+            return self.transcript_identity(&task_id);
+        }
         let runtime_directory = self
             .store
             .index_path()

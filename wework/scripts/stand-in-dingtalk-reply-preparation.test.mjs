@@ -11,7 +11,7 @@ test('reply story reuses the prepared binary without a compiler in the standard 
   try {
     const prepared = join(resultDir, 'prepared-story.exe')
     await writeFile(prepared, 'precompiled protocol fixture')
-    vi.stubEnv('WEWORK_E2E_DWS_STORY_FIXTURE_BIN', prepared)
+    vi.stubEnv('WEWORK_E2E_DWS_REPLY_FIXTURE_BIN', prepared)
     vi.stubEnv('PATH', '')
     const context = { appEnvironment: {} }
     const baseline = {

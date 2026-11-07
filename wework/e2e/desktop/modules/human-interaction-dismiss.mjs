@@ -103,8 +103,13 @@ export async function verifyInteractionArchiving(control, timeoutMs, taskId) {
       const beforeDismiss = await readUserMessages()
       await control.command('hover', `${PAGE} [data-testid="interaction-list-item"]`)
       await control.command('click', `${PAGE} [data-testid="interaction-dismiss"]`)
+      // Dismissal acquires cross-window locks before committing the archive.
       await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
         text: '0',
+      })
+      await control.command('click', `${PAGE} [data-testid="interactions-history"]`)
+      await control.command('waitFor', `${PAGE} [data-testid="interaction-list-item"]`, {
+        text: item.question,
       })
       await reloadMainWindow(control, 'The dismissed interaction must survive a renderer reload')
       assert.deepEqual(

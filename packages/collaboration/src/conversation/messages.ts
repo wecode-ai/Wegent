@@ -385,8 +385,6 @@ export const conversationMessages: Record<
     "conversation.file_changes.commit_label": "提交",
     "conversation.file_changes.branch_label": "分支",
     "conversation.file_changes.branch_unknown": "当前工作区",
-    "conversation.file_changes.large_diff_single_file_notice":
-      "此差异较大，每次仅显示一个文件",
     "conversation.file_changes.file_list_label": "变更文件",
     "conversation.file_changes.file_search_placeholder": "筛选文件...",
     "conversation.file_changes.file_search_empty": "没有匹配的文件",
@@ -808,8 +806,6 @@ export const conversationMessages: Record<
     "conversation.file_changes.commit_label": "Commit",
     "conversation.file_changes.branch_label": "Branch",
     "conversation.file_changes.branch_unknown": "Current workspace",
-    "conversation.file_changes.large_diff_single_file_notice":
-      "This diff is large, so only one file is shown at a time",
     "conversation.file_changes.file_list_label": "Changed files",
     "conversation.file_changes.file_search_placeholder": "Filter files...",
     "conversation.file_changes.file_search_empty": "No matching files",
