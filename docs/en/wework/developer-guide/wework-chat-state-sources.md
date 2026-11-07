@@ -18,6 +18,39 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## Stand-in Logical Conversations and Execution Sessions
+
+Primary stand-ins, role chats and background coordination retain a stable Runtime task ID.
+The native Codex `threadId` identifies only the current execution session. One Runtime index
+update records the previous thread in `conversationSessions` and binds the new current thread.
+Native messages are neither copied nor stored in a separate chat database. Existing tasks
+read their original thread directly; historical segments are registered on their first switch.
+
+This foundation does not rotate automatically or generate summaries. Call the existing
+`runtime.tasks.send` with `startNewSession: true`, `expectedThreadId` and the first message;
+the stand-in conversation entry accepts these fields in `options`. Existing send locks,
+command deduplication and scheduling remain authoritative. Running or queued executions,
+pending questions or approvals, active Goals and changed thread bindings prevent a switch.
+Ordinary tasks do not support this stand-in-specific option. The caller supplies any required
+business context for the fresh session.
+
+`runtime.tasks.transcript` and search remain the history entry points. Cursors bind the logical
+task, native thread and direction, and segment boundaries reuse native history readers.
+Messages expose `sessionThreadId`; the response `threadId` identifies the active execution
+session. Historical reads must not resume execution, merge current buffers or change lifecycle
+state. Late closed-thread notifications cannot update the active segment, and closed segments
+are not listed as separate tasks. Messages and work results target the stable task, while
+queued continuations resolve its current thread at execution time.
+
+Approvals and structured questions retain their native thread, turn and request binding:
+they are never migrated, recreated or treated as new permissions. Existing scoped memory,
+correction and forgetting rules remain unchanged. The `stand-in-sessions` desktop checkpoint
+uses real Electron, Executor and Codex with only the model simulated. It covers pending-question
+switch rejection, answer completion, fresh model context, cross-session history and search,
+retained cursors, work result delivery, follow-ups and application restart.
+Owner-conversation technical actions retain automatic review; the existing
+`stand-in-action-confirmation` checkpoint verifies manual operation approvals without changing policy.
+
 ## Pending Interaction Membership and Error Cleanup
 
 After successful archival, remove the task through the shared lifecycle Store before updating
