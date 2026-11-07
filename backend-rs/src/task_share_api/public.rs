@@ -459,11 +459,14 @@ fn public_subtask(
 
     let clean_prompt = crate::attachment_block::parse_prompt_blocks(&prompt.unwrap_or_default()).0;
 
-    let result = if show_final_answer_only == Some(true) && role != "USER" {
-        result.map(|json| OpaqueJson::from(redact_final_answer_only(json.to_value())))
-    } else {
-        result
-    };
+    let result = result.map(|json| {
+        let value = if show_final_answer_only == Some(true) && role != "USER" {
+            redact_final_answer_only(json.to_value())
+        } else {
+            json.to_value()
+        };
+        OpaqueJson::from(public_result(value))
+    });
 
     let sender_user_name = sender_user_id.filter(|id| *id > 0).and_then(|id| {
         user_names
@@ -537,6 +540,30 @@ fn redact_final_answer_only(value: Value) -> Value {
                 .into_iter()
                 .filter(|(key, _)| !HIDDEN.contains(&key.as_str()))
                 .map(|(key, item)| (key, redact_final_answer_only(item)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// Keep only result fields consumed by the read-only share page. Citation
+/// fields stay public; executor context such as `messages_chain` stays private
+/// because the model-facing transcript routinely exceeds a megabyte.
+fn public_result(value: Value) -> Value {
+    const PUBLIC_FIELDS: [&str; 7] = [
+        "value",
+        "blocks",
+        "stop_reason",
+        "termination_reason",
+        "annotations",
+        "sources",
+        "retrieval_summary",
+    ];
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .filter(|(key, _)| PUBLIC_FIELDS.contains(&key.as_str()))
                 .collect(),
         ),
         other => other,
@@ -848,6 +875,58 @@ mod tests {
         assert_eq!(
             redact_tool_details(value),
             serde_json::json!({"content": [{"type": "tool_use", "name": "search", "extra": 1}]})
+        );
+    }
+
+    /// The share page keeps only the fields its read-only renderer consumes;
+    /// the model transcript and other executor state stay private.
+    #[test]
+    fn public_results_drop_executor_context() {
+        let value = serde_json::json!({
+            "value": "final answer",
+            "blocks": [{"type": "text", "content": "answer"}],
+            "stop_reason": "end_turn",
+            "termination_reason": "normal_completion",
+            "annotations": [{"id": 1}],
+            "sources": [{"url": "https://example.invalid"}],
+            "retrieval_summary": "research summary",
+            "messages_chain": [{"role": "assistant"}],
+            "reasoning_content": "internal reasoning",
+            "context_metrics": {"used_input_tokens": 1},
+        });
+        assert_eq!(
+            public_result(value),
+            serde_json::json!({
+                "value": "final answer",
+                "blocks": [{"type": "text", "content": "answer"}],
+                "stop_reason": "end_turn",
+                "termination_reason": "normal_completion",
+                "annotations": [{"id": 1}],
+                "sources": [{"url": "https://example.invalid"}],
+                "retrieval_summary": "research summary",
+            })
+        );
+    }
+
+    /// Final-answer-only redaction removes citation fields by design; the
+    /// normal public projection must preserve them for the share renderer.
+    #[test]
+    fn normal_public_results_preserve_citation_fields() {
+        let value = serde_json::json!({
+            "value": "research answer",
+            "annotations": [{"title": "source"}],
+            "sources": [{"url": "https://example.invalid"}],
+            "retrieval_summary": "summary",
+            "messages_chain": [{"role": "assistant"}],
+        });
+        assert_eq!(
+            public_result(value),
+            serde_json::json!({
+                "value": "research answer",
+                "annotations": [{"title": "source"}],
+                "sources": [{"url": "https://example.invalid"}],
+                "retrieval_summary": "summary",
+            })
         );
     }
 }

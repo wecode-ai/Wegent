@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TextPreview } from './TextPreview'
@@ -27,6 +27,8 @@ export function HtmlPreview({
   const [internalIsSourceMode, setInternalIsSourceMode] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
+  const [scriptError, setScriptError] = useState<{ message: string; line?: number } | null>(null)
+  const frameRef = useRef<HTMLIFrameElement | null>(null)
 
   const isSourceMode =
     controlledIsSourceMode !== undefined ? controlledIsSourceMode : internalIsSourceMode
@@ -42,7 +44,30 @@ export function HtmlPreview({
   useEffect(() => {
     setIsLoading(true)
     setHasError(false)
+    setScriptError(null)
   }, [content])
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== frameRef.current?.contentWindow) {
+        return
+      }
+      const data = event.data as
+        | { source?: string; type?: string; message?: string; line?: number }
+        | undefined
+      if (
+        data?.source !== 'wegent-html-preview' ||
+        data.type !== 'script-error' ||
+        typeof data.message !== 'string'
+      ) {
+        return
+      }
+      setScriptError({ message: data.message, line: data.line })
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [])
 
   const handleIframeLoad = () => setIsLoading(false)
   const handleIframeError = () => {
@@ -58,6 +83,28 @@ export function HtmlPreview({
             {isLoading && !hasError && (
               <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-gray-900">
                 <div className="text-text-secondary">{t('actions.loading')}</div>
+              </div>
+            )}
+            {scriptError && !isLoading && !hasError && (
+              <div
+                data-testid="html-preview-script-error"
+                className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 border-b border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800"
+              >
+                <span>
+                  {t('attachment.html.script_error')}
+                  {scriptError.line
+                    ? ` ${t('attachment.html.script_error_line', { line: scriptError.line })}`
+                    : ''}
+                  : {scriptError.message}
+                </span>
+                <button
+                  type="button"
+                  data-testid="html-preview-script-error-view-source"
+                  onClick={() => setIsSourceMode(true)}
+                  className="shrink-0 underline"
+                >
+                  {t('attachment.html.view_source')}
+                </button>
               </div>
             )}
             {hasError && (
@@ -76,12 +123,14 @@ export function HtmlPreview({
               </div>
             )}
             <SandboxedHtmlFrame
+              ref={frameRef}
               title={filename}
               content={content}
               className="w-full h-full border-0"
               sandbox="allow-scripts allow-popups allow-forms"
               onLoad={handleIframeLoad}
               onError={handleIframeError}
+              reportScriptErrors
               style={{ display: isLoading || hasError ? 'none' : 'block' }}
             />
           </>
