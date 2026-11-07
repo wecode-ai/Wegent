@@ -25,6 +25,7 @@ type PersonalStandInWorkspaceProps = {
   devices: DeviceInfo[]
   active: boolean
   contentRoute: string
+  entryRequestKey?: number
   onClose(): void
   onOpenTask(address: RuntimeTaskAddress): Promise<void> | void
 }
@@ -45,6 +46,7 @@ function AccountStandInWorkspace({
   devices,
   active,
   contentRoute,
+  entryRequestKey,
   onClose,
   onOpenTask,
 }: PersonalStandInWorkspaceProps) {
@@ -245,6 +247,8 @@ function AccountStandInWorkspace({
             initialProfileId={routeMatches ? (query.get('profileId') ?? undefined) : undefined}
             initialDeviceId={deviceId}
             localDeviceId={localDeviceId}
+            entryRequestKey={entryRequestKey}
+            entryRoute={contentRoute}
             settingsRequestKey={
               routeMatches ? (query.get('settingsRequest') ?? undefined) : undefined
             }

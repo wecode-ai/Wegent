@@ -3,6 +3,7 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import {
   useContext,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -67,6 +68,8 @@ export function StandInOverviewPage({
   initialSelectedRoleId,
   headerActions,
   localDeviceId,
+  entryRequestKey,
+  entryRoute = '/stand-in',
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -79,6 +82,8 @@ export function StandInOverviewPage({
   initialSelectedRoleId?: string
   headerActions?: ReactNode
   localDeviceId?: string
+  entryRequestKey?: number
+  entryRoute?: string
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
@@ -133,17 +138,15 @@ export function StandInOverviewPage({
     if (panelRef.current) panelRef.current.requestLeave(openSettings)
     else openSettings()
   }, [settingsRequestKey, props.initialProfileId, profile, roleId])
-  useEffect(() => {
-    if (!active) return
-    const onNavigate = (event: Event) => {
-      const route = (event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute
-      if (!route) return
+  const requestNavigation = useCallback(
+    (route: string) => {
       const [pathname, search] = route.split('?')
       if (pathname !== '/stand-in') return
       if (!search) {
         const openPrimary = () => {
           setRoleId(undefined)
           setChatting(false)
+          setCalendarRequest(0)
           setProfile(null)
           reload()
         }
@@ -159,10 +162,25 @@ export function StandInOverviewPage({
       // Preserve settings drafts and guard every request, including the same URL.
       if (panelRef.current) panelRef.current.requestLeave(openView)
       else openView()
+    },
+    [roleId, reload]
+  )
+  const previousEntryRequest = useRef(entryRequestKey)
+  useEffect(() => {
+    if (!active || previousEntryRequest.current === entryRequestKey) return
+    previousEntryRequest.current = entryRequestKey
+    if (entryRequestKey !== undefined) requestNavigation(entryRoute)
+  }, [active, entryRequestKey, entryRoute, requestNavigation])
+  useEffect(() => {
+    if (!active) return
+    const onNavigate = (event: Event) => {
+      const route = (event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute
+      if (!route || (entryRequestKey !== undefined && route !== entryRoute)) return
+      requestNavigation(route)
     }
     window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
     return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
-  }, [active, roleId, reload])
+  }, [active, entryRequestKey, entryRoute, requestNavigation])
   const leavePanel = (action: () => void) => {
     if (panelRef.current) panelRef.current.requestLeave(action)
     else action()

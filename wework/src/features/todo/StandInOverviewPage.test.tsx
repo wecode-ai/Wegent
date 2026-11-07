@@ -167,6 +167,38 @@ it('returns immediately while settings refresh in the background and pauses hidd
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
 
+it('handles primary and calendar entry requests received while the retained page was inactive', async () => {
+  const { props } = fixture()
+  const view = render(
+    <StandInOverviewPage {...props} initialSelectedRoleId="default" entryRequestKey={0} />
+  )
+  await openRoles()
+  expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
+  view.rerender(<StandInOverviewPage {...props} active={false} entryRequestKey={0} />)
+  view.rerender(
+    <StandInOverviewPage {...props} active entryRequestKey={1} entryRoute="/stand-in" />
+  )
+  expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('primary')
+  view.rerender(<StandInOverviewPage {...props} active={false} entryRequestKey={1} />)
+  view.rerender(
+    <StandInOverviewPage
+      {...props}
+      active
+      entryRequestKey={2}
+      entryRoute="/stand-in?view=scheduled"
+    />
+  )
+  expect(await screen.findByTestId('stand-in-calendar-connection')).toBeVisible()
+  view.rerender(
+    <StandInOverviewPage {...props} active entryRequestKey={3} entryRoute="/stand-in" />
+  )
+  await waitFor(() =>
+    expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+  )
+  await userEvent.click(screen.getByTestId('stand-in-settings-open'))
+  expect(await screen.findByTestId('stand-in-preferences')).toBeVisible()
+})
+
 it('places instance lifecycle actions at the right end of the role header outside the scrolling tabs', async () => {
   const { props } = fixture()
   render(
