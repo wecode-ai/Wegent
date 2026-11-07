@@ -132,8 +132,11 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
     await control.command('click', '[data-testid="automation-button"]')
     await control.command('waitFor', '[data-testid="personal-stand-in-button"]')
     await control.command('waitFor', `[data-testid="automation-open-${ordinaryId}"]`)
+    // The retained, hidden calendar is not part of the visible ordinary schedule list.
     assert.equal(
-      await control.command('getElementCount', `[data-testid="automation-open-${id}"]`),
+      await control.command('getElementCount', `[data-testid="automation-open-${id}"]`, {
+        visible: true,
+      }),
       '0'
     )
     await control.command('click', `[data-testid="automation-open-${ordinaryId}"]`)

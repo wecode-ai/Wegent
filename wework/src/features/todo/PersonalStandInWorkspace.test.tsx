@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { useImperativeHandle, type ReactNode, type Ref } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -65,7 +65,8 @@ function fixture(
     version: 1,
     status: 'active',
     target: { userId: 7, deviceId: 'mac' },
-  }
+  },
+  backendUrl = ''
 ) {
   let current = initial
   const binding = vi.fn(
@@ -117,12 +118,76 @@ function fixture(
     onOpenTask: vi.fn(),
   }
   const workspace = (changes: Partial<typeof props> = {}) => (
-    <CloudConnectionContext.Provider value={{ isConnected: true } as CloudConnectionContextValue}>
+    <CloudConnectionContext.Provider
+      value={{ isConnected: true, apiBaseUrl: backendUrl } as CloudConnectionContextValue}
+    >
       <PersonalStandInWorkspace {...props} {...changes} />
     </CloudConnectionContext.Provider>
   )
   return { props, workspace, binding, lifecycle, identity, personalGet }
 }
+
+it('does not report another account while the instance binding is still unknown', async () => {
+  const backendUrl = 'https://cloud.example.test/api/v1'
+  const f = fixture(undefined, backendUrl)
+  let resolve!: (value: StandInInstanceBinding) => void
+  f.binding.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done
+      })
+  )
+  render(f.workspace())
+  await waitFor(() => expect(f.binding).toHaveBeenCalledOnce())
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByRole('status')).toBeVisible()
+  await act(async () =>
+    resolve({ version: 1, status: 'active', target: { userId: 7, deviceId: 'mac', backendUrl } })
+  )
+  expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
+})
+
+it('discovers account and local profiles concurrently before selecting the initial owner', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  let finish!: () => void
+  f.personalGet.mockImplementationOnce(
+    userId =>
+      new Promise(done => {
+        finish = () => done({ userId, executionDeviceId: 'mac', version: 1, roles: [] })
+      })
+  )
+  render(f.workspace())
+  await waitFor(() => expect(f.personalGet).toHaveBeenCalledTimes(2))
+  expect(f.binding).toHaveBeenCalledOnce()
+  expect(f.lifecycle).not.toHaveBeenCalled()
+  await act(async () => finish())
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
+})
+
+it('shares the first binding transaction when device discovery refreshes before bind completes', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  const original = f.binding.getMockImplementation()!
+  let finish!: () => void
+  f.binding.mockImplementation((...args) => {
+    if (args[1] !== 'bind') return original(...args)
+    return new Promise((resolve, reject) => {
+      finish = () => {
+        void original(...args).then(resolve, reject)
+      }
+    })
+  })
+  const view = render(f.workspace())
+  await waitFor(() =>
+    expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+  )
+  view.rerender(f.workspace({ devices: [...f.props.devices] }))
+  await waitFor(() => expect(f.binding.mock.calls.filter(call => !call[1])).toHaveLength(2))
+  await act(async () => finish())
+  expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
+  expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+  expect(f.lifecycle).toHaveBeenCalledOnce()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
 
 async function confirmStop() {
   await userEvent.click(await screen.findByTestId('stand-in-instance-stop'))
