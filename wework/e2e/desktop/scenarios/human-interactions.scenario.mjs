@@ -400,7 +400,7 @@ export function createDesktopScenario({
       }
       await verifyPendingInteractionsTab(control, 1, {
         openFromMenu: true,
-        requireProjectCountKnown: !issueFixture,
+        expectedProjectCount: 0,
       })
       const questionTime = await verifyInteractionTime(control, page)
       await control.command('waitFor', page, { text: CONTEXT })
@@ -650,7 +650,7 @@ export function createDesktopScenario({
       }
       await reloadMainWindow(control, 'The pending inbox did not reconnect after reload')
       await control.command('waitFor', page, { text: QUESTION, timeoutMs: modelResponseTimeoutMs })
-      await verifyPendingInteractionsTab(control, 1)
+      await verifyPendingInteractionsTab(control, 1, { expectedProjectCount: 0 })
       await verifyInteractionTime(control, page, { expected: questionTime })
       await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
       assert.equal(await control.command('getValue', input), ANSWER)
@@ -735,7 +735,7 @@ export function createDesktopScenario({
         '[data-testid="workspace-tab-select-pending-interactions"][data-pending-question-count="0"]',
         { timeoutMs: modelResponseTimeoutMs }
       )
-      await verifyPendingInteractionsTab(control, 0, { requireProjectCountKnown: true })
+      await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: issueFixture ? 1 : 0 })
       await control.command('waitFor', `${page} [data-testid="interactions-pending-count"]`, {
         text: issueFixture ? '1' : '0',
         timeoutMs: modelResponseTimeoutMs,
@@ -771,7 +771,7 @@ export function createDesktopScenario({
         })
       }
       await captureScreenshot(control, '07-accepted-response-clears-pending.png')
-      await verifyPendingInteractionsTab(control, 0)
+      await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: issueFixture ? 1 : 0 })
       await control.command('click', `${page} [data-testid="interactions-history"]`)
       await control.command('waitFor', page, { text: QUESTION })
       const handledTime = await verifyInteractionTime(control, page)

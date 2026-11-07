@@ -42,16 +42,28 @@ const control = {
     if (action === 'getAttribute') return element.getAttribute(options.value ?? '') ?? ''
     if (action === 'getText') return element.textContent ?? ''
     if (action === 'getElementMetrics') {
-      const counter = element.dataset.testid === counterId
-      return JSON.stringify([
-        {
-          left: counter ? 80 : 0,
-          right: 120,
-          width: counter ? 40 : 120,
-          scrollWidth: 40,
-          clientWidth: 40,
-        },
-      ])
+      const requested = options.value?.startsWith('{') ? JSON.parse(options.value) : {}
+      return JSON.stringify(
+        [...document.querySelectorAll<HTMLElement>(selector)].map(element => {
+          const counter = element.dataset.testid === counterId
+          return {
+            testId: element.dataset.testid,
+            text: element.textContent?.trim(),
+            attributes: Object.fromEntries(
+              (requested.attributeNames ?? []).map((name: string) => [
+                name,
+                element.getAttribute(name),
+              ])
+            ),
+            visible: true,
+            left: counter ? 80 : 0,
+            right: 120,
+            width: counter ? 40 : 120,
+            scrollWidth: 40,
+            clientWidth: 40,
+          }
+        })
+      )
     }
     throw new Error(`Unexpected control action: ${action}`)
   },
@@ -60,12 +72,77 @@ const control = {
 afterEach(() => document.body.replaceChildren())
 
 describe('pending tab E2E verifier contract', () => {
+  it('uses the current coherent snapshot when bootstrap discovery completes between commands', async () => {
+    fixture(1, 'unknown', null)
+    const changingControl = {
+      async command(action: string, selector: string, options = {}) {
+        if (action === 'getElementMetrics') {
+          document.body.replaceChildren()
+          fixture(1, 'known', 0)
+        }
+        if (
+          action === 'getAttribute' &&
+          'value' in options &&
+          options.value === 'data-project-count-state'
+        )
+          throw new Error('Do not read count state in another renderer tick')
+        return control.command(action, selector, options)
+      },
+    }
+    await verifyPendingInteractionsTab(changingControl, 1)
+  })
+  it.each([
+    { questions: 1, state: 'unknown', initialProjects: null, expectedProjects: 0 },
+    { questions: 0, state: 'known', initialProjects: 0, expectedProjects: 1 },
+  ])(
+    'waits for exact Q/P readiness through $state P=$initialProjects to P=$expectedProjects',
+    async ({ questions, state, initialProjects, expectedProjects }) => {
+      fixture(questions, state, initialProjects)
+      const gate = `[data-pending-question-count="${questions}"][data-project-count-state="known"][data-project-pending-count="${expectedProjects}"]`
+      const calls: string[] = []
+      const settlingControl = {
+        async command(action: string, selector: string, options = {}) {
+          calls.push(selector)
+          if (action === 'getElementMetrics' && selector.includes(gate)) {
+            document.body.replaceChildren()
+            fixture(questions, 'known', expectedProjects)
+          }
+          if (
+            action === 'getAttribute' &&
+            'value' in options &&
+            options.value === 'data-project-count-state'
+          )
+            throw new Error(
+              'A successful fixture must not derive its badge from a later transient state'
+            )
+          return control.command(action, selector, options)
+        },
+      }
+
+      await verifyPendingInteractionsTab(settlingControl, questions, {
+        expectedProjectCount: expectedProjects,
+      })
+
+      expect(calls[0]).toContain(gate)
+      expect(document.querySelector(`[data-testid="${counterId}"]`)?.textContent).toBe(
+        `（${questions + expectedProjects}）`
+      )
+    }
+  )
+
+  it('rejects a stale known project count instead of accepting its old aggregate', async () => {
+    fixture(0, 'known', 0)
+    await expect(
+      verifyPendingInteractionsTab(control, 0, { expectedProjectCount: 1 })
+    ).rejects.toThrow()
+  })
+
   it('waits for the provider before deriving a bootstrap count and title', async () => {
     fixture(0, 'loading', null)
     const settlingControl = {
       async command(action: string, selector: string, options = {}) {
         if (
-          action === 'waitFor' &&
+          action === 'getElementMetrics' &&
           selector.includes(':not([data-project-count-state="loading"])')
         ) {
           document.body.replaceChildren()
@@ -103,7 +180,10 @@ describe('pending tab E2E verifier contract', () => {
     const settlingControl = {
       async command(action: string, selector: string, options = {}) {
         calls.push(selector)
-        if (action === 'waitFor' && selector.includes('[data-project-count-state="known"]')) {
+        if (
+          action === 'getElementMetrics' &&
+          selector.includes('[data-project-count-state="known"]')
+        ) {
           expect(
             document
               .querySelector(`[data-testid="${tabId}"]`)

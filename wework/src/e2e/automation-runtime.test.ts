@@ -228,6 +228,8 @@ describe('Electron desktop E2E automation', () => {
           devicePixelRatio: window.devicePixelRatio,
         })
         const metrics = JSON.parse(results[2].value!)
+        expect(metrics[0]).not.toHaveProperty('attributes')
+        expect(metrics[0]).not.toHaveProperty('visible')
         if (includeText) {
           expect(
             metrics.map((item: { testId: string; text: string }) => [item.testId, item.text])
@@ -242,6 +244,89 @@ describe('Electron desktop E2E automation', () => {
       } finally {
         surface.remove()
         duplicate.remove()
+      }
+    }
+  )
+
+  test.each(['unknown-to-known', 'project-zero-to-one'])(
+    'captures selected attributes, text and geometry coherently through %s',
+    async transition => {
+      const tab = document.createElement('button')
+      tab.dataset.testid = 'snapshot-tab'
+      tab.dataset.privateFixture = 'never export unrequested attributes'
+      const counter = document.createElement('span')
+      counter.dataset.testid = 'snapshot-counter'
+      vi.spyOn(tab, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 150, 30))
+      vi.spyOn(counter, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 0, 30, 20))
+      const questions = transition === 'unknown-to-known' ? 1 : 0
+      const update = (ready: boolean) => {
+        const projects = ready ? (questions ? 0 : 1) : questions ? null : 0
+        tab.dataset.pendingQuestionCount = String(questions)
+        tab.dataset.projectCountState = projects == null ? 'unknown' : 'known'
+        if (projects == null) delete tab.dataset.projectPendingCount
+        else tab.dataset.projectPendingCount = String(projects)
+        tab.title = projects == null ? '待你处理' : `待你处理（${questions + projects}）`
+        tab.replaceChildren('待你处理')
+        if (projects != null) {
+          counter.textContent = `（${questions + projects}）`
+          tab.append(counter)
+        }
+      }
+      update(false)
+      document.body.append(tab)
+      const results: Array<{ ok: boolean; value?: string }> = []
+      let polls = 0
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          if (++polls > 2) return Promise.resolve(new Response(null, { status: 410 }))
+          return Promise.resolve(
+            Response.json({
+              id: String(polls),
+              action: 'getElementMetrics',
+              selector: '[data-testid="snapshot-tab"], [data-testid="snapshot-counter"]',
+              value: JSON.stringify({
+                includeText: true,
+                attributeNames: [
+                  'title',
+                  'data-pending-question-count',
+                  'data-project-pending-count',
+                  'data-project-count-state',
+                ],
+              }),
+            })
+          )
+        }
+        if (url.endsWith('/results')) {
+          results.push(JSON.parse(String(options?.body)))
+          update(true)
+        }
+        return Promise.resolve(new Response('{}'))
+      })
+      try {
+        await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+        expect(results.map(result => result.ok)).toEqual([true, true])
+        const before = JSON.parse(results[0].value!)
+        const after = JSON.parse(results[1].value!)
+        expect(before[0].attributes['data-project-count-state']).toBe(
+          questions ? 'unknown' : 'known'
+        )
+        expect(before).toHaveLength(questions ? 1 : 2)
+        expect(after).toHaveLength(2)
+        expect(after[0]).toMatchObject({
+          width: 150,
+          text: '待你处理（1）',
+          attributes: {
+            title: '待你处理（1）',
+            'data-project-count-state': 'known',
+            'data-pending-question-count': String(questions),
+            'data-project-pending-count': questions ? '0' : '1',
+          },
+        })
+        expect(after[1]).toMatchObject({ text: '（1）', width: 30, visible: true })
+        expect(JSON.stringify(after)).not.toContain('privateFixture')
+        expect(JSON.stringify(after)).not.toContain('never export')
+      } finally {
+        tab.remove()
       }
     }
   )

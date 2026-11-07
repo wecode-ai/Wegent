@@ -5,48 +5,70 @@ const TAB = '[data-testid="workspace-tab-select-pending-interactions"]'
 export async function verifyPendingInteractionsTab(
   control,
   expectedQuestionCount,
-  { openFromMenu = false, requireProjectCountKnown = false } = {}
+  { openFromMenu = false, requireProjectCountKnown = false, expectedProjectCount } = {}
 ) {
   assert.ok(Number.isInteger(expectedQuestionCount) && expectedQuestionCount >= 0)
-  if (requireProjectCountKnown)
-    await control.command('waitFor', `${TAB}[data-project-count-state="known"]`)
-  await control.command(
-    'waitFor',
-    `${TAB}[data-pending-question-count="${expectedQuestionCount}"]`,
-    { text: '待你处理' }
+  const questions = `${TAB}[data-pending-question-count="${expectedQuestionCount}"]`
+  let readyTab = `${questions}:not([data-project-count-state="loading"])`
+  if (expectedProjectCount !== undefined) {
+    assert.ok(Number.isInteger(expectedProjectCount) && expectedProjectCount >= 0)
+    readyTab = `${questions}[data-project-count-state="known"][data-project-pending-count="${expectedProjectCount}"]`
+  } else if (requireProjectCountKnown) readyTab = `${questions}[data-project-count-state="known"]`
+  const counter = '[data-testid="workspace-tab-pending-count-pending-interactions"]'
+  const metrics = JSON.parse(
+    await control.command('getElementMetrics', `${readyTab}, ${readyTab} ${counter}`, {
+      text: '待你处理',
+      value: JSON.stringify({
+        includeText: true,
+        waitForMatch: true,
+        attributeNames: [
+          'title',
+          'data-pending-question-count',
+          'data-project-pending-count',
+          'data-project-count-state',
+        ],
+      }),
+    })
   )
-  await control.command('waitFor', `${TAB}:not([data-project-count-state="loading"])`)
-  const state = await control.command('getAttribute', TAB, { value: 'data-project-count-state' })
-  assert.ok(['loading', 'unknown', 'known', 'unsupported'].includes(state))
+  const tabs = metrics.filter(item => item.testId === 'workspace-tab-select-pending-interactions')
+  assert.equal(tabs.length, 1)
+  const tab = tabs[0]
+  const state = tab.attributes['data-project-count-state']
+  assert.ok(['unknown', 'known', 'unsupported'].includes(state))
+  assert.equal(tab.attributes['data-pending-question-count'], String(expectedQuestionCount))
+  if (expectedProjectCount !== undefined) {
+    assert.equal(state, 'known')
+    assert.equal(tab.attributes['data-project-pending-count'], String(expectedProjectCount))
+  }
   let total = null
   if (state === 'known' || state === 'unsupported') {
-    const projectCount = await control.command('getAttribute', TAB, {
-      value: 'data-project-pending-count',
-    })
+    const projectCount = tab.attributes['data-project-pending-count']
     assert.match(projectCount, /^\d+$/)
     assert.ok(Number.isSafeInteger(Number(projectCount)))
     if (state === 'unsupported') assert.equal(Number(projectCount), 0)
     total = expectedQuestionCount + Number(projectCount)
   }
   const title = total === null ? '待你处理' : `待你处理（${total}）`
-  const counter = '[data-testid="workspace-tab-pending-count-pending-interactions"]'
+  const counters = metrics.filter(
+    item => item.testId === 'workspace-tab-pending-count-pending-interactions'
+  )
   if (total === null) {
-    await control.command('waitFor', counter, { visible: false })
+    assert.equal(counters.length, 0)
   } else {
-    await control.command('waitFor', counter, { text: String(total), visible: true })
-    assert.equal(await control.command('getText', counter), `（${total}）`)
-    const [counterMetrics] = JSON.parse(await control.command('getElementMetrics', counter))
-    const [tabMetrics] = JSON.parse(await control.command('getElementMetrics', TAB))
+    assert.equal(counters.length, 1)
+    const counterMetrics = counters[0]
+    assert.equal(counterMetrics.visible, true)
+    assert.equal(counterMetrics.text, `（${total}）`)
     assert.ok(
       counterMetrics.width > 0 && counterMetrics.scrollWidth <= counterMetrics.clientWidth + 1,
       'The pending count must be visible without truncation'
     )
     assert.ok(
-      counterMetrics.left >= tabMetrics.left && counterMetrics.right <= tabMetrics.right,
+      counterMetrics.left >= tab.left && counterMetrics.right <= tab.right,
       'The pending count must fit inside its tab'
     )
   }
-  assert.equal(await control.command('getAttribute', TAB, { value: 'title' }), title)
+  assert.equal(tab.attributes.title, title)
   assert.equal(Number(await control.command('getElementCount', TAB)), 1)
   assert.equal(
     Number(
