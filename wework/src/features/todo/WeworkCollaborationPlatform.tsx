@@ -7,7 +7,7 @@ import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/Work
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { MessageSquare } from 'lucide-react'
-import { Tooltip } from '@/components/ui/Tooltip'
+import { Tooltip } from '@/components/ui/tooltip'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
