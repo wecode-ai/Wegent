@@ -434,7 +434,8 @@ export function createDesktopScenario(options) {
     const testId = relative === 'cart.mjs' ? 'assistant-markdown-link' : 'codex-reference-card'
     await control.command(
       'clickWhenEnabled',
-      `${messageScope} [data-testid="${testId}"][aria-label*=${JSON.stringify(basename(path))}]`
+      `${messageScope} [data-testid="${testId}"][aria-label*=${JSON.stringify(basename(path))}]`,
+      { timeoutMs: 30_000 }
     )
     const pathSelector = '[data-testid="workspace-file-path"]'
     await control.command('waitFor', pathSelector, { visible: true })
