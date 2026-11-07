@@ -127,6 +127,17 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
     name: 'runtime.tasks.list',
     holdFollowing: true,
   })
+  // Point refreshes can repair the sidebar too; keep every cleared snapshot held.
+  await gates.arm({
+    id: 'missing-goal-task-lookup',
+    kind: 'response',
+    name: 'runtime.tasks.get',
+    holdFollowing: true,
+    where: [
+      { path: 'params.taskId', equals: goalTaskId },
+      { path: 'result.task.goalStatus', equals: null },
+    ],
+  })
   try {
     const clearResponse = JSON.parse(
       await control.command('clearRuntimeGoalDirectly', 'body', {

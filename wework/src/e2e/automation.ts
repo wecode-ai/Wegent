@@ -689,12 +689,15 @@ function desktopControlElementText(selector: string, visible = false): string {
     .join('\n')
 }
 
-function desktopControlElementMetrics(selector: string): string {
+function desktopControlElementMetrics(selector: string, includeText = false): string {
   const elements = findDesktopControlElements(selector)
   return JSON.stringify(
     elements.map(element => {
       const rect = element.getBoundingClientRect()
       return {
+        ...(includeText
+          ? { testId: element.dataset.testid ?? null, text: element.textContent?.trim() ?? '' }
+          : {}),
         bottom: rect.bottom,
         clientHeight: element.clientHeight,
         clientWidth: element.clientWidth,
@@ -2829,7 +2832,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify({ observed: maxCount > 0, maxCount, samples })
     }
     case 'getElementMetrics':
-      return desktopControlElementMetrics(command.selector)
+      return desktopControlElementMetrics(command.selector, command.value === 'includeText')
     case 'decodeImage': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)

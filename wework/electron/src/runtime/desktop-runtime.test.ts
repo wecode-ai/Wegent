@@ -113,14 +113,20 @@ vi.mock('./desktop-device-id.js', async importOriginal => {
   const original = await importOriginal<typeof import('./desktop-device-id.js')>()
   return {
     ...original,
-    resolveDesktopDeviceId: vi.fn((options: { environment: NodeJS.ProcessEnv }) => {
-      if (!deviceIdentityState.pending) return original.resolveDesktopDeviceId(options)
-      return new Promise<string>(resolve => {
-        deviceIdentityState.resolve = resolve
-      })
-    }),
+    resolveDesktopDeviceId: vi.fn(
+      (options: Parameters<typeof original.resolveDesktopDeviceId>[0]) => {
+        if (!deviceIdentityState.pending) return original.resolveDesktopDeviceId(options)
+        return new Promise<string>(resolve => {
+          deviceIdentityState.resolve = resolve
+        })
+      }
+    ),
   }
 })
+
+vi.mock('systeminformation', () => ({
+  system: vi.fn(async () => ({ uuid: '12345678-1234-5678-9abc-123456789abc' })),
+}))
 
 const created: FakeCoreDsh[] = []
 const createdOptions: DshRuntimeOptions[] = []
@@ -140,6 +146,7 @@ function createRuntime(
   overrides: Partial<DesktopRuntimeOptions> = {}
 ): DesktopRuntime {
   return new DesktopRuntime({
+    applicationId: 'io.wecode.wework',
     environment,
     dataDirectory: '/tmp/wework-desktop-runtime-test/data',
     logDirectory: '/tmp/wework-desktop-runtime-test/logs',
@@ -670,6 +677,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
       .mockReturnValueOnce({ hostPipe: firstPipe, principal: '@wegent/dsh-workbench' })
       .mockReturnValueOnce({ hostPipe: secondPipe, principal: '@wegent/dsh-workbench' })
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
@@ -726,6 +734,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
     const options: unknown[] = []
     const hostPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'core' }) }
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
@@ -763,6 +772,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
   test('never provisions a host pipe for an unauthenticated legacy launch', async () => {
     const createWorkbenchHostPipe = vi.fn()
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
@@ -795,6 +805,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
     const scopedPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'scoped' }) }
     const explicitPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'explicit' }) }
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
