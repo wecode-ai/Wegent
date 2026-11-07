@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readStandInBinding } from '../modules/stand-in-instance-flows.mjs'
+import { verifyStandInInstantReturn } from '../modules/stand-in-instant-open.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { shellCommandPollResponse } from '../modules/shell-command-response.mjs'
@@ -313,6 +314,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await verifyStandInInstantReturn(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-overview-role-default"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')

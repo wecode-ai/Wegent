@@ -135,6 +135,65 @@ it('hosts the original entity instead of building a separate approval or reply f
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
 })
 
+it.each([true, false])('shows request time in the list and detail (desktop: %s)', desktop => {
+  viewport.twoPanes = desktop
+  const date = new Date()
+  date.setHours(10, 24, 30, 0)
+  view(approval.id, {}, { pending: [{ ...approval, createdAt: date.getTime() }] })
+  const times = document.querySelectorAll('time')
+  expect(times).toHaveLength(2)
+  for (const time of times) {
+    expect(time).toHaveAttribute('datetime', date.toISOString())
+    expect(time).toHaveAttribute('title', date.toLocaleString())
+    expect(time).toHaveTextContent(
+      date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    )
+  }
+})
+
+it('shows the handled time in history and its selected detail', () => {
+  const date = new Date('2025-10-21T12:05:00Z')
+  view(
+    undefined,
+    {},
+    {
+      pending: [],
+      history: [
+        {
+          id: approval.id,
+          title: interactionTask.task.title,
+          question: approval.question,
+          address: interactionTask.address,
+          answeredAt: date.getTime(),
+        },
+      ],
+    }
+  )
+  fireEvent.click(screen.getByTestId('interactions-history'))
+  const times = document.querySelectorAll('time')
+  expect(times).toHaveLength(2)
+  for (const time of times) {
+    expect(time).toHaveAttribute('datetime', date.toISOString())
+    expect(time).toHaveAttribute('title', date.toLocaleString())
+    expect(time).toHaveTextContent(
+      date.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+      })
+    )
+  }
+})
+
+it.each([0, -1, NaN, Infinity, 1e20])(
+  'omits unavailable or invalid request time: %s',
+  createdAt => {
+    view(approval.id, {}, { pending: [{ ...approval, createdAt }] })
+    expect(document.querySelector('time')).not.toBeInTheDocument()
+    expect(screen.getByTestId('interaction-question-heading')).toHaveTextContent(approval.question)
+  }
+)
+
 it('groups pending questions by source type and orders each group newest first', () => {
   view(
     undefined,

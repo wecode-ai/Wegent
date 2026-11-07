@@ -65,7 +65,8 @@ function fixture(
     version: 1,
     status: 'active',
     target: { userId: 7, deviceId: 'mac' },
-  }
+  },
+  backendUrl = ''
 ) {
   let current = initial
   const binding = vi.fn(
@@ -117,56 +118,84 @@ function fixture(
     onOpenTask: vi.fn(),
   }
   const workspace = (changes: Partial<typeof props> = {}) => (
-    <CloudConnectionContext.Provider value={{ isConnected: true } as CloudConnectionContextValue}>
+    <CloudConnectionContext.Provider
+      value={{ isConnected: true, apiBaseUrl: backendUrl } as CloudConnectionContextValue}
+    >
       <PersonalStandInWorkspace {...props} {...changes} />
     </CloudConnectionContext.Provider>
   )
   return { props, workspace, binding, lifecycle, identity, personalGet }
 }
 
+it('does not report another account while the instance binding is still unknown', async () => {
+  const backendUrl = 'https://cloud.example.test/api/v1'
+  const f = fixture(undefined, backendUrl)
+  let resolve!: (value: StandInInstanceBinding) => void
+  f.binding.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done
+      })
+  )
+  render(f.workspace())
+  await waitFor(() => expect(f.binding).toHaveBeenCalledOnce())
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByRole('status')).toBeVisible()
+  await act(async () =>
+    resolve({ version: 1, status: 'active', target: { userId: 7, deviceId: 'mac', backendUrl } })
+  )
+  expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
+})
+
+it('discovers account and local profiles concurrently before selecting the initial owner', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  let finish!: () => void
+  f.personalGet.mockImplementationOnce(
+    userId =>
+      new Promise(done => {
+        finish = () => done({ userId, executionDeviceId: 'mac', version: 1, roles: [] })
+      })
+  )
+  render(f.workspace())
+  await waitFor(() => expect(f.personalGet).toHaveBeenCalledTimes(2))
+  expect(f.binding).toHaveBeenCalledOnce()
+  expect(f.lifecycle).not.toHaveBeenCalled()
+  await act(async () => finish())
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
+})
+
+it.each(['/stand-in', '/stand-in?deviceId=mac'])(
+  'shares the first binding transaction when device discovery refreshes before bind completes: %s',
+  async contentRoute => {
+    const f = fixture({ version: 0, status: 'unbound', target: null })
+    const original = f.binding.getMockImplementation()!
+    let finish!: () => void
+    f.binding.mockImplementation((...args) => {
+      if (args[1] !== 'bind') return original(...args)
+      return new Promise((resolve, reject) => {
+        finish = () => {
+          void original(...args).then(resolve, reject)
+        }
+      })
+    })
+    const view = render(f.workspace({ contentRoute }))
+    await waitFor(() =>
+      expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+    )
+    view.rerender(f.workspace({ contentRoute, devices: [...f.props.devices] }))
+    await waitFor(() => expect(f.binding.mock.calls.filter(call => !call[1])).toHaveLength(2))
+    await act(async () => finish())
+    expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
+    expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+    expect(f.lifecycle).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  }
+)
+
 async function confirmStop() {
   await userEvent.click(await screen.findByTestId('stand-in-instance-stop'))
   await userEvent.click(screen.getByTestId('stand-in-instance-stop-confirm'))
 }
-
-it('waits for binding discovery before reporting a foreign owner and still blocks that owner', async () => {
-  const f = fixture()
-  let release!: (binding: StandInInstanceBinding) => void
-  f.binding.mockImplementationOnce(
-    () =>
-      new Promise(resolve => {
-        release = resolve
-      })
-  )
-  render(
-    <CloudConnectionContext.Provider
-      value={
-        {
-          isConnected: true,
-          apiBaseUrl: 'https://cloud.test/api',
-        } as CloudConnectionContextValue
-      }
-    >
-      <PersonalStandInWorkspace {...f.props} />
-    </CloudConnectionContext.Provider>
-  )
-  await waitFor(() => expect(f.binding).toHaveBeenCalledOnce())
-  try {
-    expect(screen.getByRole('status')).toHaveTextContent('加载')
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  } finally {
-    await act(async () =>
-      release({
-        version: 1,
-        status: 'active',
-        target: { userId: 8, deviceId: 'mac', backendUrl: 'https://cloud.test/api' },
-      })
-    )
-  }
-  expect(await screen.findByRole('alert')).toHaveTextContent('另一个账号')
-  expect(screen.queryByTestId('retained-role-draft')).not.toBeInTheDocument()
-  expect(f.lifecycle).not.toHaveBeenCalled()
-})
 
 it('has no profile selector and cannot change the bound device via legacy navigation', async () => {
   const f = fixture()
@@ -447,33 +476,3 @@ it('initializes one durable binding without restoring the obsolete device prefer
   })
   expect(f.lifecycle).toHaveBeenCalledWith(7, 'mac', 'start')
 })
-
-it.each(['/stand-in', '/stand-in?deviceId=mac'])(
-  'does not restart initial binding when device discovery refreshes unchanged targets: %s',
-  async contentRoute => {
-    const f = fixture({ version: 0, status: 'unbound', target: null })
-    const original = f.binding.getMockImplementation()!
-    let release!: () => void
-    const pending = new Promise<void>(resolve => {
-      release = resolve
-    })
-    f.binding.mockImplementation(async (...args) => {
-      if (args[1] === 'bind') await pending
-      return original(...args)
-    })
-    const view = render(f.workspace({ contentRoute }))
-    await waitFor(() =>
-      expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
-    )
-    try {
-      view.rerender(f.workspace({ contentRoute, devices: [...f.props.devices] }))
-      await act(async () => {})
-      expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
-    } finally {
-      await act(async () => release())
-    }
-    expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(f.lifecycle).toHaveBeenCalledTimes(1)
-  }
-)

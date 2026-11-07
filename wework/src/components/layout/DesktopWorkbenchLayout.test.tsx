@@ -2472,6 +2472,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
+  test('retains the stand-in workspace when navigating away and back', async () => {
+    window.history.replaceState({}, '', '/stand-in')
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    const workspace = screen.getByTestId('personal-stand-in-workspace')
+    act(() => navigateTo('/'))
+    expect(workspace).toBeInTheDocument()
+    expect(workspace).not.toBeVisible()
+    act(() => navigateTo('/stand-in'))
+    expect(screen.getByTestId('personal-stand-in-workspace')).toBe(workspace)
+    expect(workspace).toBeVisible()
+  })
+
   test.each(['button', 'menu'])('opens My Tasks from stand-in using the board %s', async entry => {
     window.history.replaceState({}, '', '/stand-in?profileId=default')
     const onNavigate = vi.fn((event: Event) => event.preventDefault())
