@@ -137,6 +137,7 @@ import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
+  E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -152,7 +153,7 @@ const runtimeCleanupWaiters = new Set<{
   reject: (error: Error) => void
   timer: ReturnType<typeof globalThis.setTimeout>
 }>()
-let runtimeCleanupDispatcherSet: Set<(event: E2ERuntimeEvent) => void> | null = null
+let runtimeCleanupListenerSet: Set<(event: E2ERuntimeEvent) => void> | null = null
 let runtimeCleanupRecorder: ((event: E2ERuntimeEvent) => void) | null = null
 
 function runtimeCleanupPayload(taskIds: string[]) {
@@ -174,14 +175,11 @@ function resolveRuntimeCleanupWaiters() {
   }
 }
 
-function ensureRuntimeCleanupRecorder(): Set<(event: E2ERuntimeEvent) => void> {
+function ensureRuntimeCleanupRecorder(): void {
   const root = globalThis as typeof globalThis & {
-    [E2E_RUNTIME_EVENT_DISPATCHERS_KEY]?: Set<(event: E2ERuntimeEvent) => void>
+    [E2E_RUNTIME_EVENT_LISTENERS_KEY]?: Set<(event: E2ERuntimeEvent) => void>
   }
-  const dispatchers = root[E2E_RUNTIME_EVENT_DISPATCHERS_KEY]
-  if (!dispatchers?.size) {
-    throw new Error('No runtime event dispatcher is registered')
-  }
+  const listeners = (root[E2E_RUNTIME_EVENT_LISTENERS_KEY] ??= new Set())
   if (!runtimeCleanupRecorder) {
     runtimeCleanupRecorder = (event: E2ERuntimeEvent) => {
       if (event.event !== 'runtime.work.changed') return
@@ -195,12 +193,11 @@ function ensureRuntimeCleanupRecorder(): Set<(event: E2ERuntimeEvent) => void> {
       resolveRuntimeCleanupWaiters()
     }
   }
-  if (runtimeCleanupDispatcherSet !== dispatchers) {
-    runtimeCleanupDispatcherSet?.delete(runtimeCleanupRecorder)
-    dispatchers.add(runtimeCleanupRecorder)
-    runtimeCleanupDispatcherSet = dispatchers
+  if (runtimeCleanupListenerSet !== listeners) {
+    runtimeCleanupListenerSet?.delete(runtimeCleanupRecorder)
+    listeners.add(runtimeCleanupRecorder)
+    runtimeCleanupListenerSet = listeners
   }
-  return dispatchers
 }
 
 function runtimeCleanupTaskIdList(command: DesktopControlCommand): string[] {
