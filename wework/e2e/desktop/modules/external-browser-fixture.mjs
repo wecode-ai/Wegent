@@ -84,8 +84,15 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
   let sessionId
   let disposed = false
   const preparation = []
+  const preparationStartedAt = performance.now()
   async function record(stage, error) {
-    preparation.push({ stage, ...(error ? { error: error.stack ?? String(error) } : {}) })
+    preparation.push({
+      stage,
+      timestamp: new Date().toISOString(),
+      elapsedMs: Math.round(performance.now() - preparationStartedAt),
+      ...(child ? { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode } : {}),
+      ...(error ? { error: error.stack ?? String(error) } : {}),
+    })
     await writeFile(
       join(resultDir, 'external-browser-preparation.json'),
       JSON.stringify(preparation, null, 2)
