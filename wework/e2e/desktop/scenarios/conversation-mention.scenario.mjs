@@ -126,12 +126,13 @@ async function verifyComposerIssueReference(
 ) {
   assert.ok(issueFixture, 'The conversation mention Issue fixture is missing')
   const expectedIssueId = issueFixture.issue.id
+  const composerIssueReference = `${ACTIVE_WORKBENCH_SELECTOR} [data-composer-reference-kind="issue"]`
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
   await control.command('fill', COMPOSER_SELECTOR, { value: issueReference })
-  await control.command('waitFor', '[data-composer-reference-kind="issue"]', { timeoutMs })
-  await control.command('click', '[data-composer-reference-kind="issue"]')
+  await control.command('waitFor', composerIssueReference, { timeoutMs })
+  await control.command('click', composerIssueReference)
   await control.command(
     'waitFor',
     '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
@@ -168,13 +169,13 @@ async function verifyComposerIssueReference(
   await control.command('fill', COMPOSER_SELECTOR, {
     value: '[$#missing](wework-issue://project-only)',
   })
-  await control.command('waitFor', '[data-composer-reference-kind="issue"]', { timeoutMs })
+  await control.command('waitFor', composerIssueReference, { timeoutMs })
   const activeTaskTabBefore = await control.command(
     'getAttribute',
     '[data-tab-kind="task"][aria-selected="true"]',
     { value: 'data-testid' }
   )
-  await control.command('click', '[data-composer-reference-kind="issue"]')
+  await control.command('click', composerIssueReference)
   await control.command(
     'waitFor',
     '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
