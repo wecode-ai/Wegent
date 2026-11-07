@@ -4,7 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
-import { createHash } from 'node:crypto'
+import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 
@@ -1590,8 +1590,11 @@ async function main() {
         // A profile is not hardware identity. Give each simulated device its own
         // application namespace, and reuse it when returning to that device.
         const profile = activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
-        const suffix = createHash('sha256').update(profile).digest('hex').slice(0, 12)
-        activeAppEnvironment.WEWORK_APP_IDENTIFIER = `${appIdentifier}.device${suffix}`
+        activeAppEnvironment.WEWORK_APP_IDENTIFIER = simulatedDeviceApplicationId({
+          applicationId: appEnvironment.WEWORK_APP_IDENTIFIER,
+          originalProfile: appEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory,
+          profile,
+        })
       }
       app = await startDesktopAppProcess()
       await withTimeout(

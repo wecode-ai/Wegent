@@ -40,10 +40,12 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
       1,
       'Restarting or changing profile must not create a duplicate cloud device'
     )
-    assert.equal(device.device_id, persisted)
+    assert.equal(device.device_id, `device-${persisted}`)
+    assert.notEqual(device.device_id, persisted)
     assert.equal(device.runtime_instance_id, status.runtimeInstanceId)
     const identity = {
       deviceId: persisted,
+      registrationDeviceId: device.device_id,
       runtimeInstanceId: status.runtimeInstanceId,
       cloudRecordId: device.id,
       cloudRouteId: device.execution_target_id,
@@ -63,6 +65,7 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
     },
     prepareApp({ appEnvironment }) {
       applicationId = appEnvironment.WEWORK_APP_IDENTIFIER
+      assert.ok(applicationId, 'The runner must supply the application identifier')
     },
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart

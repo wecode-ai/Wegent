@@ -402,7 +402,7 @@ describe('managed executor runtime', () => {
         .poll(async () => JSON.parse(await readFile(identityPath, 'utf8')))
         .toEqual({
           deviceId: 'test-device',
-          registrationDeviceId: 'test-device',
+          registrationDeviceId: 'device-test-device',
           runtimeInstanceId: 'runtime-test-device',
           deviceName: 'Test Device',
         })

@@ -961,7 +961,7 @@ export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnviro
   assert.ok(local.runtimeInstanceId, 'The real Executor must expose its stable Runtime identity')
   assert.equal(
     appDevice.device_id,
-    local.deviceId,
+    `device-${local.deviceId}`,
     'Cloud registration must use the hardware/application identity of the real Executor'
   )
   assert.equal(appDevice.app_device_id, local.deviceId)

@@ -30,8 +30,9 @@ Electron 主机使用机器硬件 UUID 与当前应用标识（默认 `io.wecode
 或数据目录、删除 `desktop-device-id` 文件都不会改变 ID；不同硬件或应用标识使用不同 ID。
 硬件 UUID 不会作为设备 ID 明文发送，也不会写入身份文件或日志。
 
-受管 Executor 同时使用该 ID 作为云端注册的 `device_id` 和 `app_device_id`，并使用
-`runtime-<device_id>` 作为 `runtime_instance_id`。这些值由主机传入，覆盖旧配置中的
+受管 Executor 使用该 ID 作为本机 IPC 和云端的 `app_device_id`，并分别使用
+`device-<app_device_id>`、`runtime-<app_device_id>` 作为云端注册的 `device_id` 和
+`runtime_instance_id`，保留三种身份各自的路由职责。这些值由主机传入，覆盖旧配置中的
 随机身份；更换 Executor Home 后，云端仍识别为同一设备。账号权限、会话令牌和记录级路由
 继续由原有认证与注册协议控制，不由硬件哈希授予权限。
 

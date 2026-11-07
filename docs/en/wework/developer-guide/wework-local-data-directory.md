@@ -33,8 +33,9 @@ different user Homes or data directories, and deletion of `desktop-device-id`.
 Different hardware or application identifiers produce different IDs. The raw
 hardware UUID is neither sent as the device ID nor written to identity files or logs.
 
-The managed Executor also uses this ID as its cloud registration `device_id`
-and `app_device_id`, and `runtime-<device_id>` as its `runtime_instance_id`.
+The managed Executor uses this ID for local IPC and cloud `app_device_id`,
+`device-<app_device_id>` for cloud `device_id`, and `runtime-<app_device_id>`
+for `runtime_instance_id`, preserving their distinct routing responsibilities.
 The host supplies these values over the existing environment interface,
 overriding legacy random configuration identities. Changing Executor Home
 therefore retains the same cloud device. Account permissions, session tokens
