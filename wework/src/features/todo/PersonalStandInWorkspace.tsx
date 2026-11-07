@@ -4,30 +4,20 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
 import { createWeworkPlatformApi } from './weworkPlatformApi'
 import { StandInOverviewPage } from './StandInOverviewPage'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { LOCAL_USER } from '@/api/local/localSession'
-import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { availableStandInDevices } from './standInDevices'
-
-function configuredProfile(profile: PersonalStandInSettings | undefined) {
-  return Boolean(
-    profile &&
-    (profile.version > 0 ||
-      profile.roles.some(
-        role =>
-          role.version > 0 || role.enabled || role.name || role.prompt || role.connections?.length
-      ) ||
-      profile.primary?.prompt ||
-      profile.primary?.preferences)
-  )
-}
+import { StandInBindingContext } from './StandInBindingContext'
+import { useStandInInstance } from './useStandInInstance'
+import { StandInMigration } from './StandInMigration'
+import { navigateTo } from '@/lib/navigation'
 
 type PersonalStandInWorkspaceProps = {
   services: WorkbenchServices
@@ -41,8 +31,12 @@ type PersonalStandInWorkspaceProps = {
 
 export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   const cloud = useContext(CloudConnectionContext)
-  const accountKey = JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])
-  return <AccountStandInWorkspace key={accountKey} {...props} />
+  return (
+    <AccountStandInWorkspace
+      key={JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])}
+      {...props}
+    />
+  )
 }
 
 function AccountStandInWorkspace({
@@ -57,108 +51,29 @@ function AccountStandInWorkspace({
   const { t, i18n } = useTranslation('common')
   const cloud = useContext(CloudConnectionContext)
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
-  const profileId = query.get('profileId') ?? undefined
-  const routeDeviceId = query.get('deviceId') ?? undefined
-  const preferenceKey = `wework.stand-in.cloud-device:${JSON.stringify([cloud?.apiBaseUrl ?? '', user.id])}`
-  const [localDeviceId, setLocalDeviceId] = useState('')
+  const instance = useStandInInstance(
+    services,
+    Number(user.id),
+    devices,
+    !!cloud?.isConnected,
+    active,
+    cloud?.apiBaseUrl ?? '',
+    query.get('deviceId') ?? undefined
+  )
+  const { binding, localDeviceId, busy } = instance
+  const target = binding?.target
+  const ownerId = target?.userId ?? Number(user.id)
+  const deviceId = target?.deviceId
+  const ownerAvailable =
+    binding?.status === 'stopped' ||
+    ownerId === LOCAL_USER.id ||
+    (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? ''))
+  const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
+  const [confirmStop, setConfirmStop] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [locationError, setLocationError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
-  const [hasLocalProfile, setHasLocalProfile] = useState(false)
-  const [initialLocation, setInitialLocation] = useState<{ deviceId: string; local: boolean }>()
-  const [location, setLocation] = useState<
-    | {
-        route: string
-        deviceId: string
-        local: boolean
-        profileId?: string
-        roleId?: string
-      }
-    | undefined
-  >(() => {
-    if (routeDeviceId || profileId) return undefined
-    try {
-      const deviceId = localStorage.getItem(preferenceKey)
-      return deviceId ? { route: contentRoute, deviceId, local: false } : undefined
-    } catch {
-      return undefined
-    }
-  })
-  const selected = location?.route === contentRoute ? location : undefined
-  const resolved = selected ?? (routeDeviceId ? undefined : initialLocation)
-  const deviceId = resolved?.deviceId || routeDeviceId
-  const ownerId = resolved?.local ? LOCAL_USER.id : Number(user.id)
-  const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
-  useEffect(() => {
-    if (!active) return
-    let current = true
-    void (async () => {
-      const identity = await services.getLocalRuntimeSidebarIdentity?.()
-      if (!identity) throw new Error('Executor identity is unavailable')
-      const account = Number(user.id)
-      const [owned, local] = await Promise.all([
-        services.standInApi?.personalGet(account, identity.deviceId),
-        account === LOCAL_USER.id
-          ? undefined
-          : services.standInApi?.personalGet(LOCAL_USER.id, identity.deviceId),
-      ])
-      if (!current) return
-      const localExists = configuredProfile(local)
-      const available = cloud?.isConnected ? availableStandInDevices(devices) : []
-      const preferred = available.find(device => device.is_default) ?? available[0]
-      setLocalDeviceId(identity.deviceId)
-      setLocationError(null)
-      setHasLocalProfile(localExists)
-      setInitialLocation(
-        previous =>
-          previous ?? {
-            deviceId:
-              profileId || configuredProfile(owned) || localExists
-                ? identity.deviceId
-                : (preferred?.device_id ?? identity.deviceId),
-            local: !profileId && !configuredProfile(owned) && localExists,
-          }
-      )
-    })().catch(cause => {
-      if (current) setLocationError(getStandInErrorMessage(cause, 'load_settings_failed'))
-    })
-    return () => {
-      current = false
-    }
-  }, [services, user.id, active, devices, cloud?.isConnected, profileId, attempt])
-  const rememberLocation = (
-    target: string,
-    local = false,
-    roleId?: string,
-    openSettings = false
-  ) => {
-    try {
-      if (local || target === localDeviceId) localStorage.removeItem(preferenceKey)
-      else localStorage.setItem(preferenceKey, target)
-    } catch {
-      console.warn('[Wework] Could not remember the stand-in device')
-    }
-    setLocation({
-      route: contentRoute,
-      deviceId: target,
-      local,
-      roleId,
-      profileId: openSettings ? roleId : undefined,
-    })
-  }
-  const selectLocation = (target: string, local = false) => {
-    const change = () => rememberLocation(target, local)
-    if (overview.current) overview.current.requestLeave(change)
-    else change()
-  }
-  const workView = query.get('view') === 'scheduled' ? 'scheduled' : 'work'
   const [projects, setProjects] = useState<CollaborationProject[]>([])
-  useEffect(() => {
-    if (!active || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
-    void invokeDesktopHost<void>('renderer.startupReady').catch(cause => {
-      console.error('[Wework] Failed to reveal the personal stand-in workspace', cause)
-    })
-  }, [active])
+  const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const api = useMemo(
     () =>
       createWeworkPlatformApi(
@@ -175,7 +90,13 @@ function AccountStandInWorkspace({
     [services, ownerId, user.user_name, user.email, i18n.language]
   )
   useEffect(() => {
-    if (!api || !active) return
+    if (!active || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
+    void invokeDesktopHost<void>('renderer.startupReady').catch(cause => {
+      console.error('[Wework] Failed to reveal the personal stand-in workspace', cause)
+    })
+  }, [active])
+  useEffect(() => {
+    if (!api || !active || !target || !ownerAvailable || binding?.status !== 'active') return
     let current = true
     void api.projects.list().then(
       rows => {
@@ -194,102 +115,174 @@ function AccountStandInWorkspace({
     return () => {
       current = false
     }
-  }, [api, active, attempt])
-  if (!api)
-    return (
-      <p role="alert" className="p-5 text-sm">
-        {t('standIn.errors.backend_connection_unavailable')}
-      </p>
-    )
+  }, [api, active, target, ownerAvailable, binding?.status, attempt])
+  const actions = (
+    <button
+      type="button"
+      data-testid="stand-in-instance-stop"
+      disabled={busy || !ownerAvailable}
+      className="ml-auto inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-50 md:min-h-8"
+      onClick={() => {
+        const confirm = () => {
+          if (binding) setConfirmStop(binding.version)
+        }
+        if (overview.current) overview.current.requestLeave(confirm)
+        else confirm()
+      }}
+    >
+      {t(binding?.status === 'stopping' ? 'standIn.instance.retry_stop' : 'standIn.instance.stop')}
+    </button>
+  )
+  const failure = instance.error || error
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="personal-stand-in-workspace">
-      {localDeviceId && (
-        <label className="flex items-center gap-2 border-b border-border px-5 py-2 text-sm">
-          <span>{t('standIn.device')}</span>
-          <select
-            data-testid="stand-in-workspace-location"
-            className="min-h-11 min-w-0 rounded-md border border-border bg-background px-2 md:min-h-8"
-            value={
-              resolved?.local || ownerId === LOCAL_USER.id ? '@local' : (deviceId ?? localDeviceId)
-            }
-            onChange={event =>
-              selectLocation(
-                event.target.value === '@local' ? localDeviceId : event.target.value,
-                event.target.value === '@local'
-              )
-            }
-          >
-            <option value="@local">{t('standIn.local_profile')}</option>
-            {Number(user.id) !== LOCAL_USER.id && (
-              <option value={localDeviceId}>{t('standIn.account_local_profile')}</option>
-            )}
-            {devices
-              .filter(device => isCloudDevice(device) || isRemoteDevice(device))
-              .map(device => (
-                <option key={device.device_id} value={device.device_id}>
-                  {device.name}
-                </option>
-              ))}
-          </select>
-        </label>
-      )}
-      {(error || locationError) && (
+      {failure && (
         <div role="alert" className="flex items-center gap-2 px-5 py-2 text-sm text-error">
-          <span>{locationError || error}</span>
+          <span>{failure}</span>
           <button
             type="button"
             data-testid="stand-in-project-catalog-retry"
-            onClick={() => setAttempt(value => value + 1)}
             className="min-h-11 px-2 underline md:min-h-8"
+            onClick={() => {
+              instance.reload()
+              setAttempt(value => value + 1)
+            }}
           >
             {t('standIn.reload')}
           </button>
         </div>
       )}
-      {hasLocalProfile && !selected && (!deviceId || deviceId === localDeviceId) && (
-        <div
-          data-testid="stand-in-local-profile-offer"
-          className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-sm"
-        >
-          <p className="flex-1">{t('standIn.migration.local_available')}</p>
-          <button
-            type="button"
-            data-testid="stand-in-local-profile-open"
-            onClick={() => selectLocation(localDeviceId, true)}
-            className="min-h-11 rounded-md border border-border px-3 md:min-h-8"
-          >
-            {t('standIn.migration.view_local')}
-          </button>
-        </div>
-      )}
-      {services.getLocalRuntimeSidebarIdentity && !initialLocation && !routeDeviceId ? (
-        locationError ? null : (
+      {!ownerAvailable ? (
+        <p role="alert" className="p-5 text-sm">
+          {t('standIn.instance.owner_unavailable')}
+        </p>
+      ) : !binding ? (
+        !failure && (
           <p role="status" className="p-5 text-sm">
             {t('standIn.loading')}
           </p>
         )
+      ) : binding.status === 'stopped' ? (
+        <section className="space-y-4 p-5" data-testid="stand-in-instance-stopped">
+          <h2 className="text-heading-sm font-medium">{t('standIn.instance.stopped')}</h2>
+          <p className="text-sm text-text-secondary">{t('standIn.instance.bind_help')}</p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { userId: LOCAL_USER.id, deviceId: localDeviceId, name: t('standIn.local_profile') },
+              ...(Number(user.id) === LOCAL_USER.id
+                ? []
+                : [
+                    {
+                      userId: Number(user.id),
+                      deviceId: localDeviceId,
+                      name: t('standIn.account_local_profile'),
+                    },
+                  ]),
+              ...(cloud?.isConnected
+                ? availableStandInDevices(devices).map(device => ({
+                    userId: Number(user.id),
+                    deviceId: device.device_id,
+                    name: device.name,
+                  }))
+                : []),
+            ].map(value => (
+              <button
+                key={`${value.userId}:${value.deviceId}`}
+                type="button"
+                data-testid={`stand-in-instance-bind-${value.userId}-${value.deviceId}`}
+                disabled={busy}
+                className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
+                onClick={() =>
+                  void instance.bind({
+                    userId: value.userId,
+                    deviceId: value.deviceId,
+                    backendUrl: value.userId === LOCAL_USER.id ? '' : (cloud?.apiBaseUrl ?? ''),
+                  })
+                }
+              >
+                {value.name}
+              </button>
+            ))}
+          </div>
+          {cloud?.isConnected && target && instance.stoppedProfile && (
+            <StandInMigration
+              devices={devices}
+              sourceDevice={target.deviceId}
+              roles={instance.stoppedProfile.roles}
+              busy={busy}
+              onMigrate={async (deviceId, roleId) => {
+                const role = await instance.migrate(
+                  { userId: Number(user.id), deviceId, backendUrl: cloud.apiBaseUrl ?? '' },
+                  roleId,
+                  t('standIn.title')
+                )
+                if (!role) throw new Error(t('standIn.migration.not_stopped'))
+                navigateTo(
+                  `/stand-in?${new URLSearchParams({ deviceId, profileId: role.id, settingsRequest: crypto.randomUUID() })}`
+                )
+              }}
+            />
+          )}
+        </section>
+      ) : binding.status === 'stopping' ? (
+        <section className="flex items-center gap-2 p-5" data-testid="stand-in-instance-stopping">
+          <p role="status" className="text-sm">
+            {t('standIn.instance.stopping')}
+          </p>
+          {actions}
+        </section>
+      ) : target && api ? (
+        <StandInBindingContext.Provider value={target}>
+          {!routeMatches && (
+            <p role="alert" className="px-5 py-2 text-sm">
+              {t('standIn.instance.stop_before_rebind')}
+            </p>
+          )}
+          <StandInOverviewPage
+            key={`${ownerId}:${deviceId}`}
+            ref={overview}
+            headerActions={actions}
+            initialProfileId={routeMatches ? (query.get('profileId') ?? undefined) : undefined}
+            initialDeviceId={deviceId}
+            settingsRequestKey={
+              routeMatches ? (query.get('settingsRequest') ?? undefined) : undefined
+            }
+            initialWorkView={query.get('view') === 'scheduled' ? 'scheduled' : 'work'}
+            onSelectLocation={next => {
+              if (next !== deviceId) setError(t('standIn.instance.stop_before_rebind'))
+            }}
+            api={api}
+            projects={projects}
+            services={services}
+            devices={devices}
+            userId={ownerId}
+            active={active}
+            onCancel={onClose}
+            onOpenTask={onOpenTask}
+          />
+        </StandInBindingContext.Provider>
       ) : (
-        <StandInOverviewPage
-          key={`${ownerId}:${deviceId ?? 'default'}`}
-          ref={overview}
-          onSelectLocation={(target, roleId, openSettings) =>
-            rememberLocation(target, false, roleId, openSettings)
-          }
-          initialSelectedRoleId={selected?.roleId}
-          initialProfileId={selected ? selected.profileId : profileId}
-          initialDeviceId={deviceId}
-          settingsRequestKey={selected ? undefined : (query.get('settingsRequest') ?? undefined)}
-          initialWorkView={workView}
-          api={api}
-          projects={projects}
-          services={services}
-          devices={devices}
-          userId={ownerId}
-          active={active}
-          onCancel={onClose}
-          onOpenTask={onOpenTask}
-        />
+        <p role="alert" className="p-5 text-sm">
+          {t('standIn.errors.backend_connection_unavailable')}
+        </p>
       )}
+      <ConfirmDialog
+        open={active && confirmStop !== null}
+        title={t('standIn.instance.stop')}
+        description={t('standIn.instance.stop_description')}
+        cancelLabel={t('standIn.cancel')}
+        confirmLabel={t('standIn.instance.stop')}
+        confirmTestId="stand-in-instance-stop-confirm"
+        cancelTestId="stand-in-instance-stop-cancel"
+        pending={busy}
+        destructive
+        onClose={() => setConfirmStop(null)}
+        onConfirm={() => {
+          const version = confirmStop
+          setConfirmStop(null)
+          if (version !== null) void instance.stop(version)
+        }}
+      />
     </div>
   )
 }
