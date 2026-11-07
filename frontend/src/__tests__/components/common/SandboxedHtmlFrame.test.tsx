@@ -74,4 +74,13 @@ describe('SandboxedHtmlFrame', () => {
     expect(srcdoc.startsWith('<script>')).toBe(true)
     expect(srcdoc).toContain(content)
   })
+
+  it('deduplicates repeated bridge reports but keeps distinct errors', () => {
+    const content = '<div>fragment</div>'
+    render(<SandboxedHtmlFrame content={content} title="Fragment" reportScriptErrors />)
+
+    const srcdoc = document.querySelector('iframe')?.getAttribute('srcdoc') ?? ''
+    expect(srcdoc.match(/if\(message===lastMessage\)return/g)).toHaveLength(2)
+    expect(srcdoc.match(/lastMessage=message/g)).toHaveLength(2)
+  })
 })

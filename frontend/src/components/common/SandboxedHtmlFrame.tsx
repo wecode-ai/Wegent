@@ -19,7 +19,8 @@ export interface SandboxedHtmlFrameProps {
   reportScriptErrors?: boolean
 }
 
-const SCRIPT_ERROR_BRIDGE = `<script>(function(){function report(error,line){try{parent.postMessage({source:'wegent-html-preview',type:'script-error',message:String(error&&error.message?error.message:error),line:line?Number(line):undefined},'*')}catch(e){}}var lastMessage;window.addEventListener('error',function(event){var message=event&&event.message?String(event.message):String(event);if(message===lastMessage)return;lastMessage=message;report(event,event.lineno)});window.addEventListener('unhandledrejection',function(event){var reason=event&&event.reason?event.reason:'Unhandled promise rejection';var message=reason&&reason.message?String(reason.message):String(reason);if(message===lastMessage)return;lastMessage=message;report(reason)})})();</script>`
+const SCRIPT_ERROR_BRIDGE =
+  `<script>(function(){function report(error,line){try{parent.postMessage({source:'wegent-html-preview',type:'script-error',message:String(error&&error.message?error.message:error),line:line?Number(line):undefined},'*')}catch(e){}}var lastMessage;window.addEventListener('error',function(event){var message=event&&event.message?String(event.message):String(event);if(message===lastMessage)return;lastMessage=message;report(event,event.lineno)});window.addEventListener('unhandledrejection',function(event){var reason=event&&event.reason?event.reason:'Unhandled promise rejection';var message=reason&&reason.message?String(reason.message):String(reason);if(message===lastMessage)return;lastMessage=message;report(reason)})})();</script>`.trim()
 
 function prependErrorBridge(content: string): string {
   if (/<head(\s[^>]*)?>/i.test(content)) {
