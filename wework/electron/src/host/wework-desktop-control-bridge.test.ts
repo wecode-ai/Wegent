@@ -11,6 +11,32 @@ afterEach(async () => {
 })
 
 describe('WeworkDesktopControlBridge', () => {
+  test.each([false, true])(
+    'does not register a service when shutdown overtakes background startup (Python=%s)',
+    async python => {
+      const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-stop-start-'))
+      directories.push(registryDirectory)
+      const bridge = new WeworkDesktopControlBridge({
+        instanceId: 'main',
+        instanceKind: 'main',
+        displayName: 'Wework',
+        projectRoot: null,
+        registryDirectory,
+        window: () => null,
+        ensurePython: python ? vi.fn() : undefined,
+      })
+      try {
+        const starting = bridge.start()
+        await bridge.stop()
+        await starting
+        expect(await readdir(registryDirectory)).toEqual([])
+        expect(bridge.environment()).toEqual({})
+      } finally {
+        await bridge.stop()
+      }
+    }
+  )
+
   test('shares only download descriptors with child windows through the Python capability', async () => {
     const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-downloads-'))
     directories.push(registryDirectory)

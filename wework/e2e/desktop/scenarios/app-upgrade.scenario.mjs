@@ -23,6 +23,7 @@ import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
+import { assertInstalledStartupWithStaleHistory } from '../modules/installed-startup-history.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
 import {
   installPreparedSource,
@@ -681,6 +682,29 @@ export async function createDesktopScenario(options) {
         'The restored task did not execute through the real runtime'
       )
       console.log('[upgrade-e2e] Persisted task continued through the real runtime')
+      if (process.platform === 'darwin' && checkpoint === 'app-rollback') {
+        await assertInstalledStartupWithStaleHistory({
+          root,
+          restartDesktopApp,
+          installedVersion,
+          expectedVersion: pair.to.version,
+          control,
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: ANSWER,
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
+        const requestsBeforeRestartedTask = modelRequests
+        await send(`${PROMPT} continue after ordinary startup with old release history`)
+        assert.ok(
+          modelRequests > requestsBeforeRestartedTask,
+          'The installed package did not continue the task after stale-history startup'
+        )
+        console.log(
+          '[upgrade-e2e] Installed target restarted with stale history and continued its task'
+        )
+      }
       if (
         verifiesUnstartedActivation ||
         verifiesRefreshedUpdate ||

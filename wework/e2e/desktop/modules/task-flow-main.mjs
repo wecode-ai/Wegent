@@ -147,7 +147,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
-import { captureFailureFollowup } from './failure-followup.mjs'
+import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -4679,6 +4679,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    // Anchor the follow-up measurement to the failure itself; the diagnostic
+    // captures below can consume several seconds of wall-clock time.
+    const failedAt = Date.now()
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),
@@ -4786,9 +4789,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       'utf8'
     )
     try {
-      // Record whether the observed state settled after the step timeout so
-      // slow asynchronous updates are distinguishable from stuck states.
-      await captureFailureFollowup(control, resultDir)
+      // Observe the failed condition itself: record the measured convergence
+      // time or that no change happened within the budget, so slow
+      // asynchronous updates are distinguishable from stuck states (#4293).
+      // failedAt anchors the measurement to the actual step failure, before
+      // the diagnostic captures above have consumed wall-clock time.
+      await captureFailureFollowup(control, resultDir, {
+        condition: failedWaitCondition(error, control.commandHistory),
+        failedAt,
+      })
     } catch {
       // The follow-up is best-effort evidence; never mask the original failure.
     }

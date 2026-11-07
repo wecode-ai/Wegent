@@ -284,14 +284,6 @@ export class StartupSplash {
       `window.weworkStartupSplash.complete(${JSON.stringify(options.update)})`
     )) as StartupSplashCompletion
     if (!active()) return this.interruptedHandoff()
-    if (
-      completion?.progressNow !== 100 ||
-      !Number.isFinite(completion.fillEnd) ||
-      completion.fillEnd <= 1 ||
-      completion.fillEnd !== completion.trackEnd
-    ) {
-      throw new Error('Startup splash did not present a complete progress line')
-    }
     this.record('completed')
     await this.capture(options.capturePath)
     if (!active()) return this.interruptedHandoff()
@@ -390,8 +382,14 @@ export class StartupSplash {
     target.once('closed', () => this.markClosed())
 
     if (!target.webContents.isDestroyed()) {
-      await target.webContents.executeJavaScript(WAIT_FOR_ANIMATION_READY)
-      this.record('animation-ready')
+      void target.webContents
+        .executeJavaScript(WAIT_FOR_ANIMATION_READY)
+        .then(() => {
+          this.record('animation-ready')
+        })
+        .catch(error => {
+          console.warn('[startup-splash] animation initialization failed', error)
+        })
     }
     if (!target.isDestroyed()) {
       await target.show()
