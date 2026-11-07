@@ -218,6 +218,45 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(pickerProjects[1])
   })
 
+  test('preserves manual scrolling across project refreshes and scrolls for user navigation', async () => {
+    const user = userEvent.setup()
+    const projects = Array.from({ length: 40 }, (_, index) => ({
+      ...teamProject,
+      id: `project-${index}`,
+      name: `Project ${index}`,
+      project_key: `PROJECT-${index}`,
+    }))
+    const props = { project: projects[0], projects, onSelectProject: vi.fn() }
+    const { rerender } = render(<WorkItemComposerGuide {...props} />)
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    const search = screen.getByTestId('project-space-picker-search')
+    await waitFor(() => expect(search).toHaveFocus())
+    const list = screen.getByRole('listbox')
+    const options = projectOptions().getAllByRole('option')
+    const scrollIntoView = vi.fn(function (this: HTMLElement) {
+      list.scrollTop = options.indexOf(this) * 48
+    })
+    options.forEach(option => {
+      option.scrollIntoView = scrollIntoView
+    })
+    list.scrollTop = 48 * 32
+    fireEvent.scroll(list)
+
+    rerender(
+      <WorkItemComposerGuide {...props} projects={projects.map(option => ({ ...option }))} />
+    )
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(list.scrollTop).toBe(48 * 32)
+    await user.keyboard('{ArrowDown}')
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(options[1])
+    expect(search).toHaveAttribute('aria-activedescendant', options[1].id)
+    await user.selectOptions(screen.getByTestId('project-space-picker-sort'), 'name-desc')
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(options[39])
+    await user.type(search, 'Project 25')
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(options[25])
+  })
+
   test('restores focus for keyboard dismissal and preserves native focus on outside clicks', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()

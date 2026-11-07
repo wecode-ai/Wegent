@@ -14,8 +14,16 @@ import {
 } from './shared.mjs'
 
 async function verifyAssociationDialogLayout(control, existingItem) {
+  const dialog = '[data-testid="task-board-association-dialog"]'
   const search = '[data-testid="task-board-association-search"]'
   const item = `[data-testid="task-board-association-item-${existingItem.id}"]`
+  await control.command('waitFor', `body > .z-modal > ${dialog}`, { visible: true })
+  const [dialogBounds] = JSON.parse(await control.command('getElementMetrics', dialog))
+  const [viewportBounds] = JSON.parse(await control.command('getElementMetrics', 'body'))
+  assert.ok(
+    Math.abs(dialogBounds.left + dialogBounds.width / 2 - viewportBounds.width / 2) <= 1,
+    'The association dialog must be centered above all workbench panes'
+  )
   await control.command(
     'waitFor',
     '[data-testid="task-board-association-list"][aria-busy="false"]',
@@ -128,7 +136,7 @@ async function verifyDraft(control, project, existingItem) {
       { text: project.name, value: 'draft-target-project', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
     if (verifyLayout) {
-      await control.command('startElementMetricsSampling', content, {
+      await control.command('startElementMetricsSampling', 'body', {
         value: String(DEFAULT_STEP_TIMEOUT_MS),
         target: ['dialog', 'search', 'create']
           .map(id => `[data-testid="task-board-association-${id}"]`)
