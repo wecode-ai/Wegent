@@ -6,6 +6,43 @@ import { describe, expect, test } from 'vitest'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 describe('pendingRequestUserInputPayload', () => {
+  test.each(['pending', 'streaming', 'failed'] as const)(
+    'retains a question across an undelivered %s message',
+    status => {
+      const payload = {
+        kind: 'request_user_input' as const,
+        delivery: 'async',
+        itemId: 'pending-guidance',
+        questions: [{ id: 'detail', question: 'Which rule?' }],
+      }
+      const question: WorkbenchMessage = {
+        id: 'question',
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        createdAt: '',
+        blocks: [
+          {
+            id: 'question',
+            type: 'tool',
+            status: 'done',
+            toolName: 'request_user_input_async',
+            renderPayload: payload,
+          },
+        ],
+      }
+      const reply: WorkbenchMessage = {
+        id: 'guidance',
+        role: 'user',
+        content: 'Keep the original rule',
+        status,
+        runtimeGuidance: true,
+        createdAt: '',
+      }
+      expect(pendingRequestUserInputPayload([question, reply])).toEqual(payload)
+      expect(pendingRequestUserInputPayload([question, { ...reply, status: 'done' }])).toBeNull()
+    }
+  )
   test('detects only explicit implementation plan confirmation responses', () => {
     expect(
       isImplementationPlanConfirmationResponse({

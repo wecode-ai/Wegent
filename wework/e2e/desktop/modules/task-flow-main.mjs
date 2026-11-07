@@ -54,11 +54,11 @@ import {
 import {
   buildDesktopApp,
   buildExecutor,
-  codexUpstreamApiFormat,
   mcpElicitationConfigToml,
   prepareHarnessRuntimeRoots,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
+  setMatrixUpstreamProtocol,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyDisabledRemoteSessionCapabilities,
@@ -296,6 +296,7 @@ import {
   verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
+import { verifyRuntimeWorkSilentRefresh } from './runtime-work-silent-refresh.mjs'
 
 import {
   verifyAttachmentComposerClearsOnSubmit,
@@ -1219,6 +1220,7 @@ async function main() {
   const control = new DesktopE2EServer(workspacePath, workspacePath, null, {
     enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
   })
+  control.matrixEvidenceDirectory = resultDir
   const modelSwitchVerification = []
   let app
   const applicationProcessHistory = []
@@ -1283,7 +1285,10 @@ async function main() {
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
         scenarioConfigToml:
-          SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
+          shouldRunDesktopCheckpoint('rendering-extensions') ||
+          shouldRunDesktopCheckpoint('model-routing')
+            ? toolDetailsMcpConfigToml()
+            : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
@@ -1323,7 +1328,9 @@ async function main() {
         codexHome,
         desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${
-          shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
+          shouldConfigureToolDetailsMcp() || shouldRunDesktopCheckpoint('model-routing')
+            ? toolDetailsMcpConfigToml()
+            : ''
         }\n${
           DESKTOP_SEGMENT === 'permission-modes'
             ? mcpElicitationConfigToml(join(resultDir, 'mcp-elicitation-result.jsonl'))
@@ -1846,12 +1853,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           control,
           cloudEnvironment,
           setCodexUpstreamProtocol: protocol =>
-            writeCodexConfig(
-              join(executorHome, 'codex'),
-              control.url,
-              '',
-              codexUpstreamApiFormat(protocol)
-            ),
+            setMatrixUpstreamProtocol(join(executorHome, 'codex'), protocol),
           workspacePath,
         })
       }
@@ -3485,6 +3487,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The request-user-input task did not expose its runtime task ID'
       )
       const requestInputTaskRowTestId = `runtime-local-task-row-${requestInputTaskId}`
+      await verifyRuntimeWorkSilentRefresh(
+        control,
+        requestInputDebugSnapshot.workbench.currentRuntimeTask
+      )
       await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })

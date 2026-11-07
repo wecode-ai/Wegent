@@ -35,6 +35,7 @@ import {
   resetLocalExecutorStateForTests,
   subscribeLocalExecutorEvents,
 } from './localExecutor'
+import { marketplace, mockStartup } from './localExecutor.test-fixtures'
 
 vi.mock('@/api/dsh/executorTransport', async importOriginal => ({
   ...(await importOriginal<typeof import('@/api/dsh/executorTransport')>()),
@@ -47,36 +48,6 @@ const describeDshExecutorMock = vi.mocked(describeDshExecutor)
 const requestDshExecutorMock = vi.mocked(requestDshExecutor)
 const subscribeDshExecutorEventsMock = vi.mocked(subscribeDshExecutorEvents)
 
-const marketplace = {
-  id: 'wework-personal',
-  path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
-  pluginCount: 1,
-  defaultPluginNames: ['smart-app-builder'],
-  contentHash: 'abc123',
-}
-
-function mockStartup(): void {
-  describeDshExecutorMock.mockResolvedValue({
-    protocol_version: 1,
-    device_id: 'electron-device',
-    runtime_instance_id: 'electron-runtime',
-    version: '1.8.6',
-    capabilities: ['executor.plugins'],
-    renderer_methods: ['runtime.*'],
-    transports: ['local-endpoint-ndjson'],
-  })
-  requestDshExecutorMock.mockImplementation(async method => {
-    if (method === 'runtime.codex.ensure_started') {
-      return { ready: true, started: true, initializeElapsedMs: 37 }
-    }
-    if (method === 'executor.plugins.initialize_bundled_marketplace') return marketplace
-    if (method === 'runtime.codex.plugin.reconcile_bundled_marketplace')
-      return { marketplaceName: marketplace.id, action: 'unchanged' }
-    if (method === 'runtime.codex.plugin.sync_bundled') return { status: 'ready', updated: false }
-    return {}
-  })
-}
-
 describe('localExecutor', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -87,49 +58,6 @@ describe('localExecutor', () => {
     subscribeDshExecutorEventsMock.mockReset()
     subscribeDshExecutorEventsMock.mockReturnValue(() => undefined)
     mockStartup()
-  })
-
-  test('negotiates bounded transcript transport while accepting an older executor response', async () => {
-    const transcript = { messages: [], turns: [], fullContent: false }
-    requestDshExecutorMock.mockResolvedValue(transcript)
-    expect(await requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' })).toBe(
-      transcript
-    )
-    expect(requestDshExecutorMock).toHaveBeenCalledExactlyOnceWith('runtime.tasks.transcript', {
-      taskId: 'task-1',
-      transcriptProtocolVersion: 2,
-    })
-  })
-
-  test('reports executor availability without starting Codex or copying plugins', async () => {
-    await expect(ensureLocalExecutorAvailable()).resolves.toEqual({
-      running: true,
-      ready: true,
-      deviceId: 'electron-device',
-      runtimeInstanceId: 'electron-runtime',
-      version: '1.8.6',
-    })
-
-    expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(requestDshExecutorMock).not.toHaveBeenCalled()
-    expect(getInitializedBundledPluginMarketplace()).toBeNull()
-    expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
-  })
-
-  test('forwards read cancellation through bounded transcript transport', async () => {
-    const controller = new AbortController()
-    requestDshExecutorMock.mockResolvedValue({ messages: [], turns: [], fullContent: false })
-    await requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' }, undefined, {
-      signal: controller.signal,
-    })
-    expect(requestDshExecutorMock).toHaveBeenCalledWith(
-      'runtime.tasks.transcript',
-      {
-        taskId: 'task-1',
-        transcriptProtocolVersion: 2,
-      },
-      { signal: controller.signal }
-    )
   })
 
   test('starts the Electron-managed DSH executor and caches its marketplace', async () => {
@@ -626,63 +554,6 @@ describe('localExecutor', () => {
         ([method]) => method === 'runtime.codex.ensure_started'
       )
     ).toHaveLength(1)
-  })
-
-  test.each(['request_timeout', 'request_cancelled', 'runtime_read_busy'])(
-    'keeps runtime readiness after an operation fails with %s',
-    async code => {
-      await ensureLocalExecutorStarted()
-      requestDshExecutorMock.mockRejectedValueOnce(new DshExecutorTransportError(code, code, true))
-      await expect(
-        requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' })
-      ).rejects.toThrow(code)
-      await ensureLocalExecutorStarted()
-      expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-      expect(
-        requestDshExecutorMock.mock.calls.filter(
-          ([method]) => method === 'runtime.codex.ensure_started'
-        )
-      ).toHaveLength(1)
-    }
-  )
-
-  test('keeps runtime readiness after a native transcript abort', async () => {
-    await ensureLocalExecutorStarted()
-    const controller = new AbortController()
-    controller.abort()
-    const error = new DOMException('The operation was aborted', 'AbortError')
-    requestDshExecutorMock.mockRejectedValueOnce(error)
-
-    await expect(
-      requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' }, undefined, {
-        signal: controller.signal,
-      })
-    ).rejects.toBe(error)
-    await ensureLocalExecutorStarted()
-
-    expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(
-      requestDshExecutorMock.mock.calls.filter(
-        ([method]) => method === 'runtime.codex.ensure_started'
-      )
-    ).toHaveLength(1)
-  })
-
-  test('retains actual transport failures when a transcript signal is also aborted', async () => {
-    await ensureLocalExecutorStarted()
-    const controller = new AbortController()
-    controller.abort()
-    requestDshExecutorMock.mockRejectedValueOnce(new Error('IPC disconnected'))
-
-    await expect(
-      requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' }, undefined, {
-        signal: controller.signal,
-      })
-    ).rejects.toThrow('IPC disconnected')
-    mockStartup()
-    await ensureLocalExecutorStarted()
-
-    expect(describeDshExecutorMock).toHaveBeenCalledTimes(2)
   })
 
   test('retains validated installation identity while disconnected and replaces it on reconnect', async () => {

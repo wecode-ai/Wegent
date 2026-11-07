@@ -1,9 +1,49 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { routeUpgradeRequests } from './upgrade-request-route.mjs'
+
+async function captureStartupNativeStack(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  if (process.platform !== 'linux' && process.platform !== 'darwin') return
+  const command = process.platform === 'linux' ? 'sudo' : '/usr/bin/sample'
+  const args =
+    process.platform === 'linux'
+      ? [
+          '-n',
+          'gdb',
+          '--quiet',
+          '--nx',
+          '--batch',
+          '-ex',
+          'set pagination off',
+          '-ex',
+          'set debuginfod enabled off',
+          '-ex',
+          'set print frame-arguments none',
+          '-ex',
+          'thread apply all bt',
+          '-p',
+          String(child.pid),
+        ]
+      : [String(child.pid), '1', '-file', '/dev/stdout']
+  try {
+    const { stdout, stderr } = await promisify(execFile)(command, args, {
+      timeout: 5_000,
+      maxBuffer: 2 * 1024 * 1024,
+    })
+    console.error('Isolated startup native stack:', stdout, stderr)
+  } catch (error) {
+    console.error('Isolated startup native stack unavailable:', {
+      code: error.code,
+      stdout: error.stdout,
+      stderr: error.stderr,
+    })
+  }
+}
 
 async function createProbeApp(root, index) {
   const profile = join(root, `startup-${index}`)
@@ -92,6 +132,8 @@ export async function verifyUpgradeStartup({
     assert.equal(state.phase, 'fetch-complete')
     return { path, phases: state.events, recordTransportLog }
   } catch (error) {
+    // Inspect only this probe's synthetic child, after failure and before cleanup.
+    await captureStartupNativeStack(child)
     console.error('Isolated startup probe diagnostics:', {
       index,
       recordTransportLog,

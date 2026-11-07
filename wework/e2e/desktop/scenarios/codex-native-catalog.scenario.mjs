@@ -68,10 +68,21 @@ export function createDesktopScenario(options) {
         return result.result.models
       }
       const entries = await readCatalog()
+      const progressive = await readFile(
+        new URL('../../../../shared/assets/codexProgressiveInstructions.md', import.meta.url),
+        'utf8'
+      )
       for (const model of bundledModels) {
         const entry = entries.find(entry => entry.slug === model.slug)
         assert.ok(entry, `Missing native Catalog: ${model.slug}`)
-        assert.deepEqual(entry.baseline, model, `Native Catalog changed: ${model.slug}`)
+        const expected = {
+          ...model,
+          base_instructions: progressive,
+          include_skills_usage_instructions: false,
+        }
+        if (model.model_messages)
+          expected.model_messages = { ...model.model_messages, instructions_template: progressive }
+        assert.deepEqual(entry.baseline, expected, `Native Catalog changed: ${model.slug}`)
       }
       const baseline = entries.find(entry => entry.slug === MODEL_ID).baseline
       await control.command('navigate', 'body', { value: '/settings/personal/models' })

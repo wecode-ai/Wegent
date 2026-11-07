@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
-import { runInNewContext } from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
 import {
   createStartupReadyHandler,
@@ -87,6 +84,7 @@ class FakeSplashWindow implements StartupSplashWindow {
   readonly show = vi.fn(() => {
     this.visible = true
   })
+  readonly setOpacity = vi.fn()
   readonly webContents = {
     capturePage: vi.fn(async () => ({
       toPNG: () => Buffer.from('splash-png'),
@@ -130,354 +128,7 @@ function createFixture(theme: StartupSplashTheme = 'light', onCloseRequest?: () 
   return { show, splash, target, writePng }
 }
 
-class FakeSplashElement {
-  readonly classList = {
-    add: vi.fn(),
-    remove: vi.fn(),
-    toggle: vi.fn(),
-  }
-  readonly dataset: Record<string, string> = {}
-  readonly listeners = new Map<string, () => void>()
-  readonly style: Record<string, string> = {}
-  disabled = false
-  hidden = true
-  textContent = ''
-
-  addEventListener(event: string, listener: () => void): void {
-    this.listeners.set(event, listener)
-  }
-
-  click(): void {
-    this.listeners.get('click')?.()
-  }
-
-  focus(): void {}
-
-  setAttribute(): void {}
-}
-
 describe('StartupSplash', () => {
-  test('ships a visible loading animation that reports readiness after two frames', async () => {
-    const electronRoot =
-      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-    const splashAsset = (name: string) =>
-      readFile(join(electronRoot, 'src', 'shell', 'startup-splash', name), 'utf8')
-
-    const [html, styles, script] = await Promise.all([
-      splashAsset('index.html'),
-      splashAsset('styles.css'),
-      splashAsset('splash.js'),
-    ])
-
-    expect(html).toContain('class="workbench-scene"')
-    expect(html).toContain('class="ambient-workflow"')
-    expect(html).toContain('stage-corner-top-left')
-    expect(html).toContain('id="morph-primary"')
-    expect(html).toContain('class="robot"')
-    expect(html).toContain('class="human"')
-    expect(html).toContain('class="human-working-arm"')
-    expect(html).toContain('class="robot-working-arm"')
-    expect(html).toContain('id="splash-progress"')
-    expect(html).toContain('aria-valuemax="100"')
-    expect(html).toContain('id="splash-activity"')
-    expect(html).toContain('aria-hidden="true"')
-    expect(html).toContain('id="splash-step-count"')
-    expect(html).toContain('id="splash-elapsed"')
-    expect(html).toContain('id="startup-slow"')
-    expect(html).toContain('id="startup-timeout"')
-    expect(html).toContain('id="startup-failure"')
-    expect(html).toContain('id="startup-recover"')
-    expect(html).toContain('id="startup-reset-open"')
-    expect(html).toContain('id="startup-confirmation"')
-    expect(html).toContain('id="startup-timeout-actions"')
-    expect(html).toContain('data-testid="startup-timeout-copy-button"')
-    expect(html).toContain('data-testid="startup-timeout-open-logs-button"')
-    expect(html).not.toContain('startup-timeout-retry')
-    expect(html).toContain('data-testid="startup-copy-diagnostics-button"')
-    expect(html).toContain('data-testid="startup-open-logs-button"')
-    expect(html).toContain('id="startup-toast"')
-    expect(styles).toContain('@keyframes robot-bob')
-    expect(styles).toContain('@keyframes human-bob')
-    expect(styles).toContain('@keyframes splash-enter')
-    expect(styles).toContain('@keyframes ambient-line-arrive')
-    expect(styles).toContain('@keyframes progress-breathe')
-    expect(styles).toContain('.startup-progress-fill')
-    expect(styles).toContain('.startup-toast')
-    expect(styles).toContain('.startup-timeout-actions')
-    expect(html).toContain('document.documentElement.dataset.theme = theme')
-    expect(styles).toContain(":root[data-theme='dark']")
-    expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
-    expect(script).toContain('stageTimeoutMs()')
-    expect(script).toContain('weworkStartupProgress')
-    expect(script).toContain('weworkStartupDiagnostics')
-    expect(script).toContain('openStartupLogs')
-    expect(script).toContain('copyStartupDiagnostics')
-    expect(script).toContain('requestAnimationFrame(animateMorph)')
-    expect(script).toContain("navigator.language.toLowerCase().startsWith('zh')")
-    expect(script).toContain("progressElement.setAttribute('aria-valuenow'")
-    expect(script).toContain('启动比预期慢')
-    expect(script).not.toContain('启动超时')
-    expect(script).toContain('首次启动可能较慢')
-    expect(script).toContain('正在准备本地环境…')
-    expect(script).toContain("'wework-startup-error'")
-    expect(script).toContain("runRecoveryAction('retry')")
-    expect(script).toContain("showConfirmation('recover')")
-    expect(script).toContain("showConfirmation('resetAppState')")
-    expect(script).toContain("runRecoveryAction('disablePlugin', failedPluginName)")
-    expect(script).toContain('屏蔽 ${failedPluginName} 并重启')
-    expect(script).toMatch(
-      /requestAnimationFrame\(\(\) => \{\s+requestAnimationFrame\(\(\) => \{\s+document\.documentElement\.dataset\.animationReady = 'true'/
-    )
-  })
-
-  test.each([
-    ['#startup-recover', 'recoverWorkbench'],
-    ['#startup-reset-open', 'resetAppState'],
-  ])('retries failed cleanup selected by %s', async (selector, action) => {
-    const electronRoot =
-      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-    const script = await readFile(
-      join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
-      'utf8'
-    )
-    const elements = new Map<string, FakeSplashElement>()
-    const element = (selector: string) => {
-      const existing = elements.get(selector)
-      if (existing) return existing
-      const created = new FakeSplashElement()
-      elements.set(selector, created)
-      return created
-    }
-    const cleanup = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('Cleanup failed'))
-      .mockResolvedValue(undefined)
-    const retry = vi.fn()
-    const windowListeners = new Map<string, () => void>()
-    const documentElement = element('documentElement')
-
-    runInNewContext(script, {
-      URLSearchParams,
-      document: {
-        activeElement: null,
-        body: element('body'),
-        documentElement,
-        querySelector: (selector: string) => element(selector),
-        querySelectorAll: () => [
-          new FakeSplashElement(),
-          new FakeSplashElement(),
-          new FakeSplashElement(),
-        ],
-      },
-      HTMLElement: FakeSplashElement,
-      navigator: { language: 'en-US' },
-      performance: { now: () => 0 },
-      requestAnimationFrame: vi.fn(),
-      window: {
-        location: { search: '' },
-        addEventListener: (event: string, listener: () => void) => {
-          windowListeners.set(event, listener)
-        },
-        matchMedia: () => ({ matches: true }),
-        requestAnimationFrame: vi.fn(),
-        setInterval: vi.fn(),
-        setTimeout: vi.fn(),
-        weworkStartupRecovery: {
-          [action]: cleanup,
-          retry,
-        },
-      },
-    })
-
-    element('#startup-retry').click()
-    expect(retry).toHaveBeenCalledOnce()
-    retry.mockClear()
-    element(selector).click()
-    element('#startup-confirmation-submit').click()
-    await Promise.resolve()
-
-    expect(cleanup).toHaveBeenCalledOnce()
-    await vi.waitFor(() => expect(element('#startup-action-error').hidden).toBe(false))
-    element('#startup-retry').click()
-    await Promise.resolve()
-    expect(cleanup).toHaveBeenCalledTimes(2)
-    expect(retry).not.toHaveBeenCalled()
-  })
-
-  test.each([
-    { search: '', slowAfterMs: 30_000 },
-    { search: '?slowAfterMs=500', slowAfterMs: 500 },
-    { search: '?slowAfterMs=invalid', slowAfterMs: 30_000 },
-    { search: '?slowAfterMs=-1', slowAfterMs: 30_000 },
-    { search: '?slowAfterMs=0', slowAfterMs: 30_000 },
-    { search: '?slowAfterMs=1.5', slowAfterMs: 30_000 },
-  ])(
-    'shows slow and timeout states with timer query "$search"',
-    async ({ search, slowAfterMs }) => {
-      const electronRoot =
-        basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-      const script = await readFile(
-        join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
-        'utf8'
-      )
-      const elements = new Map<string, FakeSplashElement>()
-      const element = (selector: string) => {
-        const existing = elements.get(selector)
-        if (existing) return existing
-        const created = new FakeSplashElement()
-        elements.set(selector, created)
-        return created
-      }
-      let progressListener: ((update: unknown) => void) | undefined
-      const interval = vi.fn()
-
-      runInNewContext(script, {
-        URLSearchParams,
-        document: {
-          activeElement: null,
-          body: element('body'),
-          documentElement: element('documentElement'),
-          querySelector: (selector: string) => element(selector),
-          querySelectorAll: () => [],
-        },
-        HTMLElement: FakeSplashElement,
-        navigator: { language: 'en-US' },
-        performance: { now: () => 0 },
-        requestAnimationFrame: vi.fn(),
-        window: {
-          location: { search },
-          addEventListener: vi.fn(),
-          matchMedia: () => ({ matches: true }),
-          requestAnimationFrame: vi.fn(),
-          setInterval: interval,
-          setTimeout: vi.fn(),
-          weworkStartupProgress: {
-            onUpdate: (listener: (update: unknown) => void) => {
-              progressListener = listener
-            },
-          },
-        },
-      })
-
-      const update = (index: number, elapsedMs: number, timeoutMs: number) => ({
-        index,
-        total: 9,
-        completedWeight: index * 10,
-        startedAt: Date.now() - elapsedMs,
-        stage: {
-          id: `stage-${index}`,
-          label: { en: `Stage ${index}`, zh: `步骤 ${index}` },
-          detail: { en: `Working on stage ${index}`, zh: `正在处理步骤 ${index}` },
-          weight: 10,
-          expectedMs: 1_000,
-          timeoutMs,
-        },
-      })
-
-      expect(progressListener).toBeTypeOf('function')
-      progressListener?.(update(1, Math.min(5_000, slowAfterMs / 2), 60_000))
-      expect(element('#startup-slow').hidden).toBe(true)
-      expect(element('#startup-timeout').hidden).toBe(true)
-      expect(element('#startup-timeout-actions').hidden).toBe(true)
-      expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
-      expect(element('#splash-step-count').textContent).toBe('Step 2 of 9 · Stage 1')
-      expect(element('#splash-activity').textContent).toBe('Working on stage 1')
-
-      progressListener?.({
-        ...update(1, 1_000, 60_000),
-        activity: { kind: 'scan', path: 'plugins/foo/bar/index.js' },
-      })
-      expect(element('#splash-activity').textContent).toBe('Scanning plugins/foo/bar/index.js')
-
-      progressListener?.({
-        ...update(1, 1_000, 60_000),
-        activity: { kind: 'scan', path: `plugins/${'segment/'.repeat(10)}index.js` },
-      })
-      const shortenedActivity = element('#splash-activity').textContent
-      expect(shortenedActivity.startsWith('Scanning …/')).toBe(true)
-      expect(shortenedActivity.endsWith('index.js')).toBe(true)
-      expect(shortenedActivity.length).toBeLessThanOrEqual(60)
-
-      progressListener?.(update(1, slowAfterMs + 1_000, 60_000))
-      expect(element('#startup-slow').hidden).toBe(false)
-      expect(element('#startup-timeout').hidden).toBe(true)
-      expect(element('#startup-timeout-actions').hidden).toBe(true)
-      expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
-
-      progressListener?.(update(1, 61_000, 60_000))
-      expect(element('#startup-slow').hidden).toBe(true)
-      expect(element('#startup-timeout').hidden).toBe(false)
-      expect(element('#startup-timeout-actions').hidden).toBe(false)
-      expect(element('#startup-timeout-title').textContent).toBe('First startup can take longer')
-      expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
-      expect(element('#startup-recovery').hidden).toBe(true)
-
-      progressListener?.(update(2, Math.min(1_000, slowAfterMs / 2), 60_000))
-      expect(element('#startup-slow').hidden).toBe(true)
-      expect(element('#startup-timeout').hidden).toBe(true)
-      expect(element('#startup-timeout-actions').hidden).toBe(true)
-      expect(element('#startup-recovery').hidden).toBe(true)
-      expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
-      expect(element('#splash-step-count').textContent).toBe('Step 3 of 9 · Stage 2')
-      expect(element('#splash-activity').textContent).toBe('Working on stage 2')
-      expect(interval).toHaveBeenCalledWith(expect.any(Function), 100)
-    }
-  )
-
-  test('copies diagnostics and opens the log folder from the timeout actions', async () => {
-    const electronRoot =
-      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-    const script = await readFile(
-      join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
-      'utf8'
-    )
-    const elements = new Map<string, FakeSplashElement>()
-    const element = (selector: string) => {
-      const existing = elements.get(selector)
-      if (existing) return existing
-      const created = new FakeSplashElement()
-      elements.set(selector, created)
-      return created
-    }
-    const copy = vi.fn(async () => ({ ok: true, characters: 42 }))
-    const openLogs = vi.fn(async () => ({ ok: true }))
-
-    runInNewContext(script, {
-      URLSearchParams,
-      document: {
-        activeElement: null,
-        body: element('body'),
-        documentElement: element('documentElement'),
-        querySelector: (selector: string) => element(selector),
-        querySelectorAll: () => [],
-      },
-      HTMLElement: FakeSplashElement,
-      navigator: { language: 'zh-CN' },
-      performance: { now: () => 0 },
-      requestAnimationFrame: vi.fn(),
-      window: {
-        location: { search: '' },
-        addEventListener: vi.fn(),
-        matchMedia: () => ({ matches: true }),
-        requestAnimationFrame: vi.fn(),
-        setInterval: vi.fn(),
-        setTimeout: vi.fn(),
-        weworkStartupProgress: { onUpdate: vi.fn() },
-        weworkStartupDiagnostics: { copy, openLogs },
-      },
-    })
-
-    element('#startup-copy-diagnostics').click()
-    await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
-    element('#startup-open-logs').click()
-    await vi.waitFor(() => expect(openLogs).toHaveBeenCalledOnce())
-
-    element('#startup-timeout-copy').click()
-    await vi.waitFor(() => expect(copy).toHaveBeenCalledTimes(2))
-    element('#startup-timeout-open-logs').click()
-    await vi.waitFor(() => expect(openLogs).toHaveBeenCalledTimes(2))
-  })
-
   test('shows the branded animation in the main startup window and records its timeline', async () => {
     const { show, target } = createFixture()
 
@@ -509,6 +160,73 @@ describe('StartupSplash', () => {
     const snapshot = await show()
 
     expect(snapshot.theme).toBe('dark')
+  })
+
+  test('waits for native presentation before marking the splash visible', async () => {
+    const { show, splash, target } = createFixture()
+    let finishPresentation!: () => void
+    const presentation = new Promise<void>(resolve => {
+      finishPresentation = resolve
+    })
+    let presentationStarted!: () => void
+    const started = new Promise<void>(resolve => {
+      presentationStarted = resolve
+    })
+    const originalShow = target.show.getMockImplementation()!
+    target.show.mockImplementationOnce(async () => {
+      originalShow()
+      presentationStarted()
+      await presentation
+    })
+    const showing = show()
+    await started
+    expect(splash.snapshot().state).toBe('loading')
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+    ])
+    finishPresentation()
+    expect((await showing).state).toBe('visible')
+    expect(splash.snapshot().events.at(-1)?.name).toBe('shown')
+  })
+
+  test('propagates native presentation failure without reporting a shown splash', async () => {
+    const { show, splash, target } = createFixture()
+    const error = new Error('Native maximize failed')
+    target.show.mockImplementationOnce(async () => {
+      throw error
+    })
+    await expect(show()).rejects.toBe(error)
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+    ])
+  })
+
+  test('keeps a closed splash closed when pending native presentation finishes', async () => {
+    const { show, splash, target } = createFixture()
+    let finishPresentation!: () => void
+    const presentation = new Promise<void>(resolve => {
+      finishPresentation = resolve
+    })
+    let presentationStarted!: () => void
+    const started = new Promise<void>(resolve => {
+      presentationStarted = resolve
+    })
+    target.show.mockImplementationOnce(async () => {
+      presentationStarted()
+      await presentation
+    })
+    const showing = show()
+    await started
+    await splash.close()
+    finishPresentation()
+    expect((await showing).state).toBe('closed')
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+      'closed',
+    ])
   })
 
   test('replays the latest startup stage once the splash is visible', async () => {

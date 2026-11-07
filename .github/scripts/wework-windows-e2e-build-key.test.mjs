@@ -95,6 +95,8 @@ test('Windows package reuse follows build inputs and toolchain, independently of
       'executor/vendor/dependency/src/lib.rs',
       'backend-rs/src/main.rs',
       'shared/assets/migration.sql',
+      'shared/rust/protocol/src/execution.rs',
+      'shared/rust/crypto/src/lib.rs',
       'shared/protocol/runtime_task_create_request_v2.schema.json',
       'packages/collaboration/src/index.ts',
       'pnpm-lock.yaml',

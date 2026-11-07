@@ -1,4 +1,7 @@
-import { copyDshBrowserAuthentication } from '../runtime/dsh-browser-auth.js'
+import {
+  copyDshBrowserAuthentication,
+  dshBrowserRequestHeaders,
+} from '../runtime/dsh-browser-auth.js'
 import {
   app,
   BrowserWindow,
@@ -366,7 +369,7 @@ export class EmbeddedBrowserManager {
         next = { ...next, ...rule.headers }
       }
     }
-    return next
+    return dshBrowserRequestHeaders(rawUrl, next)
   }
 
   private requiredBackgroundPage(id: string) {

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { useEffect, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -67,6 +67,84 @@ describe('ComposerToolbar', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('places voice between the model and compact send action with inherited UI text weight', () => {
+    render(
+      <ComposerToolbar
+        canSend={false}
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        isModelSelectionReady
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    const toolbar = screen.getByTestId('composer-toolbar')
+    const actions = toolbar.querySelector('[data-composer-toolbar-group="actions"]')!
+    const voice = screen.getByTestId('test-voice-input')
+    expect(toolbar).toHaveClass('min-h-7')
+    expect(toolbar).not.toHaveClass('font-normal')
+    expect(actions).toContainElement(voice)
+    expect(screen.getByTestId('model-selector-button').compareDocumentPosition(voice)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(voice.compareDocumentPosition(screen.getByTestId('send-message-button'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(screen.getByTestId('send-message-button')).toHaveClass('h-7', 'w-7')
+  })
+
+  it.each([400, 800])('places permissions immediately after quick phrases at width %i', width => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private callback: ResizeObserverCallback) {}
+        observe() {
+          this.callback(
+            [{ contentRect: { width } }] as ResizeObserverEntry[],
+            this as unknown as ResizeObserver
+          )
+        }
+        disconnect() {}
+      }
+    )
+    const onSelectModelOption = vi.fn()
+    render(
+      <ComposerToolbar
+        canSend={false}
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{ permissionMode: 'workspace-write' }}
+        isModelSelectionReady
+        onSelectModel={vi.fn()}
+        onSelectModelOption={onSelectModelOption}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    const toolbar = screen.getByTestId('composer-toolbar')
+    const features = toolbar.querySelector('[data-composer-toolbar-group="features"]')!
+    const actions = toolbar.querySelector('[data-composer-toolbar-group="actions"]')!
+    const permission = screen.getByTestId('permission-mode-menu-button')
+    expect(toolbar).toHaveAttribute('data-compact', width < 475 ? 'true' : 'false')
+    expect(features).toContainElement(permission)
+    expect(actions).not.toContainElement(permission)
+    expect(screen.getByTestId('quick-phrase-layout').nextElementSibling).toContainElement(
+      permission
+    )
+    fireEvent.click(permission)
+    fireEvent.click(screen.getByTestId('permission-mode-read-only'))
+    expect(onSelectModelOption).toHaveBeenCalledWith('permissionMode', 'read-only')
   })
 
   it('renders the unavailable model selector after the catalog has returned models', () => {

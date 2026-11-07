@@ -27,7 +27,6 @@ type SearchableMessageAreaProps = Omit<
   DesktopConversationPresentationProp
 > & {
   mcpApp?: McpAppConversationServices
-  workspacePath?: string
   imageTarget?: { deviceId: string; workspacePath: string } | null
   virtualize?: boolean
   transcriptError?: string | null
@@ -53,7 +52,6 @@ type SearchableMessageAreaProps = Omit<
 
 export function ScrollableMessageArea({
   mcpApp,
-  workspacePath,
   imageTarget,
   virtualize,
   transcriptError,
@@ -92,8 +90,7 @@ export function ScrollableMessageArea({
     void onLoadSearchContext?.(direction).catch(() => {})
   }
   const presentation = useDesktopConversationPresentation(
-    visibleSearchPage?.messages ?? props.messages,
-    workspacePath
+    visibleSearchPage?.messages ?? props.messages
   )
   const historyError = useMemo(
     () =>

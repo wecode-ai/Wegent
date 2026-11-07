@@ -234,10 +234,23 @@ mod tests {
             };
         }
         collect!(__http_registry_http_apis);
-        collect!(__http_registry_runtime_check);
-        collect!(__http_registry_models_unified);
-        collect!(__http_registry_remote_workspace_status);
-        collect!(__http_registry_remote_workspace_tree);
+        for (path, methods) in wegent_runtime_check::registered_routes()
+            .into_iter()
+            .chain(wegent_models::registered_routes())
+            .chain(wegent_capabilities::registered_routes())
+            .chain(wegent_backend_users::registered_routes())
+            .chain(wegent_authentication::registered_routes())
+            .chain(wegent_oidc::registered_routes())
+            .chain(wegent_remote_workspace::registered_routes())
+            .chain(wegent_sites::registered_routes())
+            .chain(wegent_git_repositories::registered_routes())
+        {
+            for (bit, method) in METHODS.into_iter().enumerate() {
+                if methods & (1 << bit) != 0 {
+                    registered.insert((method.to_owned(), path.to_owned()));
+                }
+            }
+        }
         // The LLM proxy route forwards dynamic `x-wegent-upstream-header-*`
         // headers through a hand-written handler merged into the router, so it
         // is not discoverable through the macro inventory.
@@ -386,11 +399,9 @@ mod tests {
 
         // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
         const GET: u16 = 1 << 1;
-        let registered =
-            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
-                .into_iter()
-                .flat_map(|entry| (entry.0.routes)())
-                .any(|route| route.path == PATH && route.methods & GET != 0);
+        let registered = wegent_capabilities::registered_routes()
+            .into_iter()
+            .any(|(path, methods)| path == PATH && methods & GET != 0);
         assert!(registered, "GET {PATH} must be registered by the router");
     }
 

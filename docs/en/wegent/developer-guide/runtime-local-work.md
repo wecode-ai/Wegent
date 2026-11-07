@@ -137,6 +137,8 @@ To diagnose a reply whose text is complete while the sidebar and composer still 
 
 ### Frontend lifecycle projection
 
+The sidebar also identifies each unique task by `deviceId + taskId`. When creation moves a task from its project root to a managed worktree, move the optimistic entry instead of retaining it in both workspaces. If the executor list arrives before the create response, the late optimistic projection must preserve the confirmed executor grouping and state. `e2e:desktop --segment sidebar-task-identity` delays a real create response to cover this ordering and verifies one sidebar row after submission and subsequent refresh.
+
 Wework maintains one shared runtime task lifecycle state for each `deviceId + taskId`. The visible pane owns write access for stream events. A hidden Provider that remains mounted for layout preservation and fast switching may keep subscribing and reading, but it cannot write `turnStarted`, `turnSettled`, goal status, or executor snapshots. The sidebar, composer, and task execution overlay all read the same immutable store snapshot; they must not derive another running state from Provider-private state or a cached work list.
 
 Task summaries from `runtime.tasks.list`, task creation responses, stream events, and local caches pass through the same projection rules before entering the store:
@@ -237,6 +239,8 @@ flowchart LR
 ```
 
 Images use a browser object URL as soon as they enter the attachment area and release it when the attachment is sent, removed, or the composer is reset. Image attachments keep `local_preview_url` so sent messages can preview them through the desktop local-file capability, and Codex receives the same path as a `localImage` input. Text-like local attachments are not injected in full; the executor adds only a bounded preview of the first 10 lines or 4 KiB, whichever comes first, plus the `Local File Path` so Codex can read the full file when needed. Wework keeps `text_length` and `text_preview` on local attachment metadata so refreshes can still render compact text-preview attachments. When Wework is connected to Backend and uses uploaded attachments, persisted attachment ids remain the source of truth after refresh.
+
+In the Electron app, clicking a text attachment before or after sending opens the full original file in the read-only attachment preview panel. Workspace and global external-app preferences do not affect this preview, and failed reads can be retried in the panel.
 
 When rendering a message that already has persisted image attachments, Wework prefers those attachment previews and ignores local image file mentions embedded in the Codex prompt. This avoids showing both the uploaded attachment and a temporary local path. Codex local image mentions are used only as a same-device preview fallback when no attachment record exists. If the current environment cannot convert the local path through the desktop local-file URL converter, or the converted image fails to load, the frontend does not display that local path.
 

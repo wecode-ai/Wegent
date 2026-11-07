@@ -6,6 +6,7 @@ import { StandInProposalSources } from './StandInProposalSources'
 
 type Identity = Partial<StandInIdentity & StandInRole>
 
+/** Show owner-reviewable changes to a proposed identity configuration without applying them. */
 export function StandInProposalDiff({
   name,
   identity,
@@ -72,10 +73,6 @@ export function StandInProposalDiff({
       )}
       {!dequal(identity.modelOptions, previous?.modelOptions) && (
         <p className="text-sm">{t('standIn.workspace.model_options_changed')}</p>
-      )}
-      {(identity.agentId !== previous?.agentId ||
-        identity.agentResourceId !== previous?.agentResourceId) && (
-        <p className="text-sm">{t('standIn.workspace.agent_changed')}</p>
       )}
     </div>
   )

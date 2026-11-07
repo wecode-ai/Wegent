@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CalendarDays, ClipboardList, History, MessageSquare, Sunrise } from 'lucide-react'
 import type { StandInExecutorApi, StandInOnboardingResult } from '@/api/standIn'
@@ -6,6 +6,12 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+
+import {
+  StandInOnboardingSetup,
+  type StandInOnboardingConfiguration,
+} from './StandInOnboardingSetup'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
 
 const examples = [
   { id: 'daily_brief', icon: Sunrise },
@@ -15,6 +21,7 @@ const examples = [
   { id: 'weekly_review', icon: History },
 ] as const
 
+/** Loads account-scoped setup and keeps optional usage examples separate from activation. */
 export function StandInOnboarding({
   api,
   userId,
@@ -26,6 +33,7 @@ export function StandInOnboarding({
   onExampleSelect,
   onClose,
   children,
+  configuration,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -36,6 +44,7 @@ export function StandInOnboarding({
   onGuideClose?(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
+  configuration: StandInOnboardingConfiguration
   children: ReactNode
 }) {
   const { t, i18n } = useTranslation('common')
@@ -50,15 +59,24 @@ export function StandInOnboarding({
     setPreviousActive(active)
     if (!active) setDismissed(false)
   }
-  const open = active && (guideOpen || (!bypass && !dismissed && !result?.state.completed))
-  const close = () => {
-    if (saving) return
+  const checking = active && !bypass && !dismissed && !result && !error
+  const open =
+    active &&
+    (guideOpen || (!bypass && !dismissed && !!(result || error) && !result?.state.completed))
+  const setupRef = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
+  const [setupBusy, setSetupBusy] = useState(false)
+  const dismiss = () => {
+    if (saving || setupBusy) return
     setDismissed(true)
     if (guideOpen) {
       onGuideClose?.()
       return
     }
     onClose?.()
+  }
+  const close = () => {
+    if (setupRef.current) setupRef.current.requestLeave(dismiss)
+    else dismiss()
   }
   const dialogRef = useDialogKeyboard<HTMLElement>(close, open)
   useEffect(() => {
@@ -110,6 +128,11 @@ export function StandInOnboarding({
         data-testid="stand-in-onboarding-content"
       >
         {result || dismissed || bypass || !active ? children : null}
+        {checking && !guideOpen ? (
+          <p role="status" className="p-5 text-sm text-text-secondary">
+            {t('standIn.onboarding.loading')}
+          </p>
+        ) : null}
       </div>
       {open &&
         createPortal(
@@ -129,14 +152,33 @@ export function StandInOnboarding({
               data-testid="stand-in-onboarding"
             >
               <div className="flex w-full flex-col gap-5">
-                <h2 id={`${scopeId}-title`} className="heading-md font-medium">
-                  {t(
-                    result?.state.completed
-                      ? 'standIn.onboarding.examples_dialog_title'
-                      : 'standIn.onboarding.title'
-                  )}
-                </h2>
-                {result ? (
+                <div className="flex items-start justify-between gap-3">
+                  <h2 id={`${scopeId}-title`} className="heading-md font-medium">
+                    {t(
+                      guideOpen
+                        ? 'standIn.onboarding.examples_dialog_title'
+                        : 'standIn.onboarding.connect_title'
+                    )}
+                  </h2>
+                  <Button
+                    variant="ghost"
+                    className="h-11 md:h-9"
+                    data-testid="stand-in-onboarding-close"
+                    disabled={saving || setupBusy}
+                    onClick={close}
+                  >
+                    {t('standIn.close')}
+                  </Button>
+                </div>
+                {result && !guideOpen ? (
+                  <StandInOnboardingSetup
+                    ref={setupRef}
+                    configuration={configuration}
+                    api={api}
+                    onComplete={complete}
+                    onBusyChange={setSetupBusy}
+                  />
+                ) : result ? (
                   <>
                     <p className="text-sm text-text-secondary">
                       {t('standIn.onboarding.description')}
@@ -152,8 +194,7 @@ export function StandInOnboarding({
                             key={id}
                             data-testid={`stand-in-onboarding-example-${id}`}
                             disabled={saving || !onExampleSelect}
-                            onClick={async () => {
-                              if (!result.state.completed && !(await complete())) return
+                            onClick={() => {
                               setDismissed(true)
                               onGuideClose?.()
                               onExampleSelect?.(t(`standIn.onboarding.examples.${id}.prompt`))
@@ -188,49 +229,14 @@ export function StandInOnboarding({
                     {error}
                   </p>
                 ) : null}
-                <div className="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 bg-background pt-3">
+                {!result && error ? (
                   <Button
-                    variant="ghost"
-                    className="h-11 md:h-9"
-                    data-testid="stand-in-onboarding-close"
-                    disabled={saving}
-                    onClick={close}
+                    data-testid="stand-in-onboarding-retry"
+                    onClick={() => setAttempt(value => value + 1)}
                   >
-                    {t(result?.state.completed ? 'standIn.close' : 'standIn.onboarding.later')}
+                    {t('standIn.reload')}
                   </Button>
-                  {result && !result.state.completed ? (
-                    <>
-                      {error ? (
-                        <Button
-                          variant="ghost"
-                          className="h-11 md:h-9"
-                          data-testid="stand-in-onboarding-reload"
-                          onClick={() => setAttempt(value => value + 1)}
-                        >
-                          {t('standIn.reload')}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="primary"
-                        className="h-11 min-w-28 md:h-9"
-                        data-testid="stand-in-onboarding-complete"
-                        aria-busy={saving}
-                        disabled={saving}
-                        onClick={() => void complete()}
-                      >
-                        {t(saving ? 'standIn.onboarding.saving' : 'standIn.onboarding.start')}
-                      </Button>
-                    </>
-                  ) : error ? (
-                    <Button
-                      className="h-11 md:h-9"
-                      data-testid="stand-in-onboarding-retry"
-                      onClick={() => setAttempt(value => value + 1)}
-                    >
-                      {t('standIn.reload')}
-                    </Button>
-                  ) : null}
-                </div>
+                ) : null}
               </div>
             </section>
           </div>,

@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -154,7 +155,7 @@ export function createGithubAuthBoundaries({
           chars: '',
           yield_time_ms: 1000,
         })
-        return functionCall(result.pollId, tool.name, tool.arguments)
+        return selectedToolCall(result.pollId, tool)
       }
       if (result) {
         probe.output = result.output
@@ -166,7 +167,7 @@ export function createGithubAuthBoundaries({
       }
       assert.ok(latestModelInputText(body).includes(probe.prompt))
       const tool = selectShellToolCommand(body, probe.command)
-      return functionCall(probe.callId, tool.name, tool.arguments)
+      return selectedToolCall(probe.callId, tool)
     },
     async verify(control, { api, cloud, deviceId }) {
       // Local devices cannot be sync targets. Reuse the existing real cloud

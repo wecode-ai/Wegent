@@ -93,7 +93,6 @@ export interface StandInProcessingStatus {
 }
 import {
   publishPersonalStandIn,
-  type PersonalStandInAgent,
   type PersonalStandInSettings,
   type StandInSourceConnection,
 } from './personalStandIn'
@@ -310,7 +309,6 @@ export interface StandInExecutorApi {
     userId: number,
     deviceId: string
   ): Promise<void>
-  personalAgents(userId: number, deviceId: string): Promise<PersonalStandInAgent[]>
   personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
@@ -530,14 +528,6 @@ export function createStandInExecutorApi(
         deviceId
       )
     },
-    personalAgents: async (userId, deviceId) =>
-      (
-        await request<{ items: PersonalStandInAgent[] }>(
-          'runtime.stand_in.personal.agents',
-          { userId },
-          deviceId
-        )
-      ).items,
     personalGet: (userId, deviceId) =>
       request('runtime.stand_in.personal.get', { userId }, deviceId),
     personalSave: async (userId, settings, deviceId) => {
@@ -549,7 +539,25 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    readTask: (deviceId, taskId) => request('runtime.tasks.get', { taskId }, deviceId),
+    readTask: async (deviceId, taskId) => {
+      try {
+        return await request<Awaited<ReturnType<StandInExecutorApi['readTask']>>>(
+          'runtime.tasks.get',
+          { taskId },
+          deviceId
+        )
+      } catch (error) {
+        // A missing first conversation is an empty lookup on both transports.
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'task_not_found'
+        )
+          return { success: false, code: 'task_not_found' }
+        throw error
+      }
+    },
     assignmentTasks: (userId, deviceId, assignments) =>
       request('runtime.stand_in.assignment_tasks', { userId, assignments }, deviceId),
     catalog: deviceId => request('runtime.runner.catalog', {}, deviceId),

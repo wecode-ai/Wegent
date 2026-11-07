@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ComputerUseService } from './computer-use-service.js'
+import { restoreComputerUseAfterStartup } from './computer-use-startup.js'
 
 const mocks = vi.hoisted(() => ({
   callTool: vi.fn(),
@@ -265,6 +266,107 @@ describe('ComputerUseService', () => {
     await expect(service.setEnabled(true)).resolves.toMatchObject({ running: true, error: null })
     expect(mocks.create).toHaveBeenCalledTimes(2)
     await service.stop()
+  })
+
+  test('lazy startup preserves an explicitly enabled generation after its driver crashes', async () => {
+    const { service } = await openBridge()
+    const onExit = mocks.create.mock.calls[0][0] as (error: Error) => void
+    onExit(new Error('Computer use driver exited (SIGKILL); action outcome is unknown'))
+    await expect(service.status()).resolves.toMatchObject({
+      enabled: true,
+      running: false,
+      error: expect.stringContaining('SIGKILL'),
+    })
+
+    await restoreComputerUseAfterStartup({
+      isShuttingDown: () => false,
+      readPreferences: async () => ({ computerUseEnabled: true }),
+      setEnabled: enabled => service.restoreEnabled(enabled),
+    })
+
+    await expect(service.status()).resolves.toMatchObject({
+      enabled: true,
+      running: false,
+      error: expect.stringContaining('SIGKILL'),
+    })
+    expect(mocks.create).toHaveBeenCalledOnce()
+  })
+
+  test('lazy startup initializes an untouched service from its enabled preference', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-computer-use-startup-'))
+    directories.push(executorHome)
+    const service = new ComputerUseService(executorHome, 'darwin')
+    services.push(service)
+
+    await restoreComputerUseAfterStartup({
+      isShuttingDown: () => false,
+      readPreferences: async () => ({ computerUseEnabled: true }),
+      setEnabled: enabled => service.restoreEnabled(enabled),
+    })
+
+    await expect(service.status()).resolves.toMatchObject({
+      enabled: true,
+      running: true,
+      error: null,
+    })
+    expect(mocks.create).toHaveBeenCalledOnce()
+  })
+
+  test('lazy startup cannot apply stale enabled preferences after the user disables computer use', async () => {
+    const { service } = await openBridge()
+    let finishRead!: (preferences: { computerUseEnabled: boolean }) => void
+    const read = new Promise<{ computerUseEnabled: boolean }>(resolve => {
+      finishRead = resolve
+    })
+    const restoring = restoreComputerUseAfterStartup({
+      isShuttingDown: () => false,
+      readPreferences: () => read,
+      setEnabled: enabled => service.restoreEnabled(enabled),
+    })
+    await service.setEnabled(false)
+    finishRead({ computerUseEnabled: true })
+    await restoring
+
+    await expect(service.status()).resolves.toMatchObject({
+      enabled: false,
+      running: false,
+    })
+    expect(mocks.create).toHaveBeenCalledOnce()
+  })
+
+  test('an explicit disable waits for in-flight startup and remains the final service state', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-computer-use-startup-order-'))
+    directories.push(executorHome)
+    const service = new ComputerUseService(executorHome, 'darwin')
+    services.push(service)
+    let finishStartup!: () => void
+    const ready = new Promise<void>(resolve => {
+      finishStartup = resolve
+    })
+    mocks.create.mockImplementationOnce(async () => {
+      await ready
+      return {
+        callTool: mocks.callTool,
+        listToolsJson: mocks.listToolsJson,
+        shutdown: mocks.shutdown,
+      }
+    })
+    const restoring = service.restoreEnabled(true)
+    try {
+      await vi.waitFor(() => expect(mocks.create).toHaveBeenCalledOnce())
+      const disabling = service.setEnabled(false)
+      expect(mocks.shutdown).not.toHaveBeenCalled()
+      finishStartup()
+      await restoring
+      await disabling
+      await expect(service.status()).resolves.toMatchObject({ enabled: false, running: false })
+      await expect(
+        readFile(join(executorHome, 'runtime/computer-use-bridge.json'), 'utf8')
+      ).rejects.toThrow()
+      expect(mocks.shutdown).toHaveBeenCalledOnce()
+    } finally {
+      finishStartup()
+    }
   })
 
   test('waits for the failed native generation to stop before creating a replacement', async () => {

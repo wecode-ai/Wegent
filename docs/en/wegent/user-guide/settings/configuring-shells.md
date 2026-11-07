@@ -76,11 +76,10 @@ Shells provide Bots with the following core capabilities:
 
 When creating or editing an Agent, the standard settings do not require users to understand Shells. Users first choose how the Agent will be used:
 
-- **Everyday chat**: For conversations, knowledge Q&A, and lightweight tasks. Wegent uses Chat.
-- **Complex tasks and coding**: For multi-step work, code changes, files, commands, and connected devices. Users then choose Codex or Claude Code.
-- **Advanced custom**: For advanced users who need a custom Shell.
+- **Everyday questions**: For Q&A, writing, and knowledge lookup. Wegent uses Chat.
+- **Coding and complex tasks**: For multi-step work, code changes, files, commands, and connected devices. Under **Execution engine**, choose Codex, Claude Code, or **Custom**. Choosing **Custom** reveals a dropdown for selecting an existing Shell.
 
-Agno is being decommissioned and is no longer shown as a preset option in the web UI. Dify and other custom Shells remain available through advanced custom settings.
+Agno is being decommissioned and is no longer shown as a preset option in the web UI. Dify and other custom Shells remain available through the **Custom** execution engine option.
 
 ### Codex Runtime
 
@@ -144,10 +143,10 @@ Agno is being decommissioned and is no longer shown as a preset option in the we
 
 | Scenario                                   | Recommended choice                     |
 | ------------------------------------------ | -------------------------------------- |
-| Conversation, Q&A, and knowledge retrieval | Everyday chat                          |
-| Coding with OpenAI models                  | Complex tasks and coding → Codex       |
-| Coding with Anthropic models               | Complex tasks and coding → Claude Code |
-| Dify or a private runtime                  | Advanced custom                        |
+| Conversation, Q&A, and knowledge retrieval | Everyday questions                     |
+| Coding with OpenAI models                  | Coding and complex tasks → Codex       |
+| Coding with Anthropic models               | Coding and complex tasks → Claude Code |
+| Dify or a private runtime                  | Coding and complex tasks → Custom      |
 
 ---
 
@@ -202,7 +201,7 @@ Wegent comes with the following preset Shells that can be used immediately:
 
 ### Method 1: Use Preset Shells (Recommended for Beginners)
 
-In Agent settings, standard users can choose **Complex tasks and coding**, then select **Codex** or **Claude Code**, without creating a Shell manually.
+In Agent settings, standard users can choose **Coding and complex tasks**, then select **Codex** or **Claude Code**, without creating a Shell manually.
 
 The system also includes preset Shells such as `Codex`, `ClaudeCode`, and `Dify`. You can reference them directly when creating a Bot through YAML:
 
@@ -285,9 +284,9 @@ status:
 
 #### spec Section
 
-| Field          | Type   | Required | Description                                                           |
-| -------------- | ------ | -------- | --------------------------------------------------------------------- |
-| `runtime`      | string | Yes      | Runtime type. Common values: `Codex`, `ClaudeCode`, `Dify`, `Chat`    |
+| Field          | Type   | Required | Description                                                               |
+| -------------- | ------ | -------- | ------------------------------------------------------------------------- |
+| `runtime`      | string | Yes      | Runtime type. Common values: `Codex`, `ClaudeCode`, `Dify`, `Chat`        |
 | `supportModel` | array  | No       | List of supported model providers, empty array means all models supported |
 
 **supportModel Explanation**:

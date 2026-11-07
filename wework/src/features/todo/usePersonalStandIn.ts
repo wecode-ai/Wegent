@@ -1,26 +1,19 @@
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { dequal } from 'dequal'
-import type {
-  PersonalStandInAgent,
-  PersonalStandInSettings,
-  StandInRole,
-} from '@/api/personalStandIn'
+import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
+/** Load and save account settings on the selected Executor while preserving dirty drafts and conflicts. */
 export function usePersonalStandIn(
   services: WorkbenchServices,
   userId: number,
-  initialDeviceId?: string,
-  loadAgents = true
+  initialDeviceId?: string
 ) {
   const [saved, setSaved] = useState<PersonalStandInSettings | null>(null)
   const [draft, setDraft] = useState<PersonalStandInSettings | null>(null)
   const [currentDeviceId, setCurrentDeviceId] = useState('')
   const [deviceId, setDeviceId] = useState(initialDeviceId ?? '')
-  const [agents, setAgents] = useState<PersonalStandInAgent[]>([])
-  const [agentError, setAgentError] = useState<string | null>(null)
-  const [agentReload, setAgentReload] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -63,28 +56,6 @@ export function usePersonalStandIn(
     }
   }, [services, userId, deviceId, reload])
 
-  useEffect(() => {
-    if (!loadAgents) return
-    let active = true
-    void (async () => {
-      const identity = await services.getLocalRuntimeSidebarIdentity?.()
-      if (!identity) throw new Error('Executor identity is unavailable')
-      return services.standInApi!.personalAgents(userId, deviceId || identity.deviceId)
-    })()
-      .then(rows => {
-        if (active) {
-          setAgents(rows)
-          setAgentError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) setAgentError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [services, userId, deviceId, agentReload, loadAgents])
-
   const updateRole = useCallback((id: string, update: (role: StandInRole) => StandInRole) => {
     setDraft(
       current =>
@@ -118,9 +89,6 @@ export function usePersonalStandIn(
     draft,
     setDraft,
     updateRole,
-    agents: loadAgents ? agents : [],
-    agentError: loadAgents ? agentError : null,
-    reloadAgents: () => setAgentReload(value => value + 1),
     error,
     setError,
     loading,

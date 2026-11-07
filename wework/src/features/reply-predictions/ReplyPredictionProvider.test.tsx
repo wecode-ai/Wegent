@@ -108,19 +108,14 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
-  it.each(['failure'])('refreshes a cached %s when the session model changes', async state => {
-    const predict = vi.fn<Predict>()
-    if (state === 'failure') predict.mockRejectedValueOnce(new Error('401'))
-    else predict.mockResolvedValueOnce({ suggestion: '旧模型建议' })
-    predict.mockResolvedValueOnce({ suggestion: '新模型建议' })
+  it('refreshes a cached failure when the session model changes', async () => {
+    const predict = vi
+      .fn<Predict>()
+      .mockRejectedValueOnce(new Error('401'))
+      .mockResolvedValueOnce({ suggestion: '新模型建议' })
     const { rerender } = render(fixture(predict))
-    await waitFor(() =>
-      expect(
-        state === 'failure'
-          ? screen.getByTestId('reply-prediction-error')
-          : screen.getByRole('button')
-      ).toBeVisible()
-    )
+    await waitFor(() => expect(screen.getByText('empty')).toBeVisible())
+    expect(screen.queryByTestId('reply-prediction-error')).not.toBeInTheDocument()
     const updated = {
       ...source,
       modelSelection: { modelName: 'new-session-model', modelType: 'runtime' as const },
@@ -136,18 +131,35 @@ describe('reply prediction provider', () => {
     expect(predict).toHaveBeenCalledTimes(2)
   })
 
-  it('shows a failure without exposing provider details and clears it on the next turn', async () => {
+  it('keeps failures silent and recovers on the next turn', async () => {
     const predict = vi
       .fn()
       .mockRejectedValueOnce(new Error('401 secret provider details'))
       .mockResolvedValueOnce({ suggestion: '恢复后的建议' })
     const { rerender } = render(fixture(predict))
-    await waitFor(() => expect(screen.getByTestId('reply-prediction-error')).toBeVisible())
+    await waitFor(() => expect(screen.getByText('empty')).toBeVisible())
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('reply-prediction-error')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByText(/secret provider details/)).not.toBeInTheDocument()
     expect(screen.queryByText('正在生成建议…')).not.toBeInTheDocument()
     rerender(fixture(predict, { ...source, latestTurnId: 'turn-2' }))
     await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('恢复后的建议'))
     expect(screen.queryByTestId('reply-prediction-error')).not.toBeInTheDocument()
+  })
+
+  it('keeps cached failures silent after remounting without repeating the request', async () => {
+    const predict = vi.fn().mockRejectedValue(new Error('401'))
+    const { unmount } = render(fixture(predict))
+    await waitFor(() => expect(screen.getByText('empty')).toBeVisible())
+    unmount()
+
+    render(fixture(predict))
+
+    await waitFor(() => expect(screen.getByText('empty')).toBeVisible())
+    expect(screen.queryByTestId('reply-prediction-error')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(predict).toHaveBeenCalledTimes(1)
   })
 
   it('does not let an unavailable pane cancel another pane sharing the API', async () => {

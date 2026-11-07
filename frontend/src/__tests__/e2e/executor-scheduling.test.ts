@@ -24,7 +24,7 @@ const expectedCounts: Record<string, number> = {
   'tasks/claude-background-lifecycle.spec.ts': 3,
   'tasks/provider-native-claudecode.spec.ts': 2,
   'collaboration/collaboration-agent-execution.spec.ts': 1,
-  'collaboration/issue-dispatch-executor.spec.ts': 2,
+  'collaboration/issue-dispatch-executor.spec.ts': 4,
 }
 
 type ListedSuite = {
@@ -56,7 +56,7 @@ describe('Executor scheduling boundaries', () => {
     }
   })
 
-  it('discovers the original 40 tests and the upstream large-output regression exactly once through CI', () => {
+  it('discovers every registered Executor scenario exactly once through CI', () => {
     const cli = join(dirname(require.resolve('@playwright/test/package.json')), 'cli.js')
     const listed = spawnSync(
       process.execPath,
@@ -101,7 +101,16 @@ describe('Executor scheduling boundaries', () => {
       for (const child of suite.suites || []) visit(child)
     }
     for (const suite of report.suites) visit(suite)
-    expect(identities.size).toBe(41)
+    expect(identities.size).toBe(
+      Object.values(expectedCounts).reduce((total, count) => total + count, 0)
+    )
+    for (const deviceSetup of ['authorized', 'configure']) {
+      expect(
+        identities.has(
+          `collaboration/issue-dispatch-executor.spec.ts:applies a marketplace template with an ${deviceSetup} project APP device and preserves edits across refresh`
+        )
+      ).toBe(true)
+    }
     expect(
       identities.has(
         'tasks/claude-background-lifecycle.spec.ts:ClaudeCode persists a child message above 1 MiB and completes after a real background notification'

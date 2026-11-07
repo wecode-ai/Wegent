@@ -45,6 +45,7 @@ import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktop
 import { replyToInteractionProject } from './interactionProjectReply'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -115,7 +116,7 @@ export function RuntimeInteractionsProvider({
         publish={publish}
         setDraft={setDraft}
       />
-      {children}
+      <QuestionDiscussionProvider accountKey={accountKey}>{children}</QuestionDiscussionProvider>
     </RuntimeInteractionsContext.Provider>
   )
 }

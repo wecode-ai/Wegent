@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import type { CollaborationGroupMember } from '../types'
 import type { CollaborationLocale } from '../i18n'
@@ -272,6 +272,7 @@ export function TemplateBindingsDialog({
   existingNames = [],
   onApply,
   onClose,
+  renderConfiguration,
 }: {
   document: CollaborationTemplate
   locale: CollaborationLocale
@@ -283,6 +284,7 @@ export function TemplateBindingsDialog({
     document: CollaborationTemplate
   ): Promise<void>
   onClose(): void
+  renderConfiguration?(disabled: boolean): ReactNode
 }) {
   const m = templateMessages[locale]
   const [selection, setSelection] = useState<{
@@ -363,6 +365,7 @@ export function TemplateBindingsDialog({
         onChange={(drafts, document) => setSelection(drafts ? { drafts, document } : null)}
       />
       {!selection && <p className="collaboration-template-muted">{m.unbound}</p>}
+      {renderConfiguration?.(busy || failed)}
       {error && (
         <p role="alert" className="collaboration-template-error">
           {error}

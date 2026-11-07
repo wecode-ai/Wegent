@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 
 async function readWindowState(control) {
   return JSON.parse(await control.command('getNativeWindowState', 'body'))
@@ -31,6 +32,7 @@ async function assertNaturalLanguageWindowControlText(control, testId, attribute
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
     async verify(control) {
+      await waitForClosedStartupSplash(control)
       const initial = await waitForWindowState(
         control,
         state => state.visible && !state.minimized,
@@ -78,6 +80,17 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         ]) {
           await assertNaturalLanguageWindowControlText(control, testId, 'title')
           await assertNaturalLanguageWindowControlText(control, testId, 'aria-label')
+        }
+
+        // Small displays start maximized. Establish the normal state before testing both toggles.
+        if (initial.maximized) {
+          await control.command('click', '[data-testid="window-maximize-button"]')
+          await waitForWindowState(
+            control,
+            state => !state.maximized,
+            'The initially maximized window did not return to its normal state',
+            uiTimeoutMs
+          )
         }
 
         await control.command('click', '[data-testid="window-minimize-button"]')

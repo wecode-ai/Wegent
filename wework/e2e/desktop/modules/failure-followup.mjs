@@ -17,7 +17,9 @@ const DEFAULT_FAILURE_FOLLOWUP_BUDGET_MS = 10_000
 export function failureFollowupDelayMs(rawValue = process.env.WEWORK_E2E_FAILURE_FOLLOWUP_MS) {
   if (rawValue === undefined || rawValue === '') return DEFAULT_FAILURE_FOLLOWUP_DELAY_MS
   const parsed = Number(rawValue)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_FAILURE_FOLLOWUP_DELAY_MS
+  return Number.isFinite(parsed) && parsed >= 0
+    ? Math.min(parsed, 5_000)
+    : DEFAULT_FAILURE_FOLLOWUP_DELAY_MS
 }
 
 function withDeadline(promise, deadlineAt, label) {
@@ -47,6 +49,7 @@ export async function captureFailureFollowup(
   delayMs = failureFollowupDelayMs()
 ) {
   if (!Number.isFinite(delayMs) || delayMs <= 0) return null
+  delayMs = Math.min(delayMs, 5_000)
   const deadlineAt = Date.now() + DEFAULT_FAILURE_FOLLOWUP_BUDGET_MS
   await new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
   const [snapshot, workbenchDebug] = await withDeadline(

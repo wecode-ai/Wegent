@@ -1,4 +1,6 @@
 import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
+import type { Cookie } from 'electron'
 import { createInterface } from 'node:readline'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -6,14 +8,31 @@ import { HostCapabilityRouter } from '../host/capability-router.js'
 import { HostPipeServer } from '../host/host-pipe.js'
 import { DshRuntime } from './dsh-runtime.js'
 
-const { browserFetch } = vi.hoisted(() => ({ browserFetch: vi.fn() }))
-vi.mock('electron', () => ({ session: { defaultSession: { fetch: browserFetch } } }))
+const { browserFetch, cookies, cookieJar } = vi.hoisted(() => {
+  const cookieJar: Cookie[] = []
+  return {
+    browserFetch: vi.fn(),
+    cookieJar,
+    cookies: {
+      get: vi.fn(async (filter: { name?: string }) =>
+        cookieJar.filter(cookie => !filter.name || cookie.name === filter.name)
+      ),
+      remove: vi.fn(async (_url: string, name: string) => {
+        const index = cookieJar.findIndex(cookie => cookie.name === name)
+        if (index !== -1) cookieJar.splice(index, 1)
+      }),
+    },
+  }
+})
+vi.mock('electron', () => ({ session: { defaultSession: { fetch: browserFetch, cookies } } }))
 
 const servers: Array<ReturnType<typeof createServer>> = []
 
 afterEach(async () => {
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
+  cookieJar.splice(0)
+  browserFetch.mockReset()
   await Promise.all(
     servers.splice(0).map(
       server =>
@@ -25,6 +44,79 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test.each(['stop', 'failed-start', 'crash'])(
+    'reclaims authentication on %s while preserving another running runtime',
+    async outcome => {
+      browserFetch.mockImplementation(async (input: string) => {
+        const url = new URL(input)
+        if (url.searchParams.has('token')) {
+          cookieJar.push({
+            name: `dsh-auth-${createHash('sha256').update(url.host).digest('base64url')}`,
+            value: 'test-session',
+            domain: url.hostname,
+            path: '/',
+            secure: false,
+            httpOnly: true,
+            session: false,
+            sameSite: 'strict',
+          })
+        }
+        return fetch(input)
+      })
+      const managedRuntime = (fail: boolean) =>
+        new DshRuntime({
+          url: 'http://127.0.0.1:0/',
+          command: process.execPath,
+          args: [
+            '-e',
+            `
+              const server = require('node:http').createServer((req, res) => {
+                if (req.url === '/crash') res.once('finish', () => process.exit(1))
+                res.writeHead(${fail} && req.url.includes('?token=') ? 503 : 200)
+                res.end()
+              })
+              server.listen(0, '127.0.0.1', () => {
+                const url = 'http://127.0.0.1:' + server.address().port
+                console.log('dsh web: ' + url)
+                require('node:fs').writeSync(5, JSON.stringify({ url: url + '/?token=test' }) + '\\n')
+              })
+            `,
+          ],
+          env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
+          startTimeoutMs: 2_000,
+        })
+      const survivor = managedRuntime(false)
+      const runtime = managedRuntime(outcome === 'failed-start')
+      try {
+        await survivor.start()
+        const survivorCookie = cookieJar[0]
+        if (outcome === 'failed-start') {
+          await expect(runtime.start()).rejects.toThrow('browser authentication failed')
+        } else {
+          await runtime.start()
+          expect(cookieJar).toHaveLength(2)
+          if (outcome === 'crash') {
+            const previousPid = runtime.pid()
+            await fetch(`${runtime.url()}/crash`)
+            // A logical runtime retains its authentication while the supervisor recovers it.
+            await vi.waitFor(() => {
+              expect(runtime.pid()).not.toBeNull()
+              expect(runtime.pid()).not.toBe(previousPid)
+              expect(cookieJar).toHaveLength(2)
+            })
+          }
+        }
+        await runtime.stop()
+        expect(cookieJar).toEqual([survivorCookie])
+        expect((await fetch(survivor.url())).status).toBe(200)
+      } finally {
+        await runtime.stop()
+        await survivor.stop()
+      }
+      expect(cookieJar).toEqual([])
+    }
+  )
+
   test.each(['inherited', 'overridden', 'omitted'] as const)(
     'preserves %s child environment semantics',
     async mode => {
