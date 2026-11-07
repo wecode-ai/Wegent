@@ -30,6 +30,7 @@ export async function assertDelayedRecoveryHandoffs(options) {
     const log = join(options.resultDir, `delayed-recovery-${nativeRecovery}.log`)
     appendProcessOutput(child.stdout, log)
     appendProcessOutput(child.stderr, log)
+    let handedOff = false
     try {
       await routeUpgradeRequests(child, options.origin, log)
       await control.awaitReadyAfter(readyCount, options.timeoutMs)
@@ -41,8 +42,10 @@ export async function assertDelayedRecoveryHandoffs(options) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: options.timeoutMs,
       })
+      assert.equal(child.exitCode, 0, 'The recovery bootstrap did not exit after its handoff')
+      handedOff = true
     } finally {
-      await stopProcessGroup(child)
+      if (!handedOff) await stopProcessGroup(child)
     }
   }
 }
