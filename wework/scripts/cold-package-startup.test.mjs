@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { test } from 'vitest'
 import { waitForColdPackageStartup } from '../e2e/desktop/modules/cold-package-startup.mjs'
 
@@ -14,6 +15,17 @@ const phases = [
 const event = (step, status, elapsedMs) =>
   `[startup] {\n  step: '${step}',\n  status: '${status}',\n  elapsedMs: ${elapsedMs}\n}\n`
 const neverReady = () => new Promise(() => {})
+
+test('current-package cold scenarios declare phase-bounded startup waiting', async () => {
+  for (const name of ['component-update', 'release-package-startup']) {
+    const scenario = await readFile(
+      new URL(`../e2e/desktop/scenarios/${name}.scenario.mjs`, import.meta.url),
+      'utf8'
+    )
+    assert.ok(scenario.includes('usesReleasePackageRuntimeAssets: true'), name)
+    assert.ok(scenario.includes('usesColdPackageStartup: true'), name)
+  }
+})
 
 function clock(readLog) {
   let time = 0

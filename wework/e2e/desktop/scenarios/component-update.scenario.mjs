@@ -147,6 +147,7 @@ export async function createDesktopScenario({
   let restartDesktopApp
   return {
     usesReleasePackageRuntimeAssets: true,
+    usesColdPackageStartup: true,
     appEnvironment: {
       WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '0',
       WEWORK_UPDATE_BASE_URL: origin,

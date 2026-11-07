@@ -224,6 +224,15 @@ and `idle-executor-requests` (39 seconds) samples lets both shards participate i
 full balancing again, without changing tests or budgets. Never record unfinished
 or step-timeout-interrupted checkpoints as successful duration samples.
 
+Current-package startup and component-update scenarios declare
+`usesColdPackageStartup` and reuse phase-bounded cold-start waiting. Each phase
+keeps the existing startup budget; stalls, phase regression, native failure and
+phase timeouts remain failures, and real controller readiness is still required.
+Do not combine serial materialization and runtime startup into one phase budget.
+`usesReleasePackageRuntimeAssets` only selects asset ownership, not this mode:
+historical upgrade sources may lack complete phase logs. Ordinary startup keeps
+its original total budget.
+
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
 within a runner. The two Core benchmark shards and three Cloud account-auth and
