@@ -38,7 +38,13 @@ During builds, `prepare-codex-binary.mjs` downloads the locked version through n
 pnpm --filter wework ai:verify start
 ```
 
-The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Electron app-data namespace, and diagnostics directory, then starts the real `dev-mac-app.sh`. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
+The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Electron app-data namespace, and diagnostics directory, then starts real Electron from the source application directory. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
+
+When the user explicitly selects their local Codex account, set `WEWORK_E2E_NATIVE_CODEX_HOME` to that signed-in native Codex directory. The existing native account mechanism supplies authentication to the isolated instance; never read, print or manually copy authentication contents. To reuse your own isolated data, `--executor-home` must be absolute, and `--device-id` explicitly retains that Home's device identity.
+
+Before launching the app, new sessions record the actual auth path, whether an entry already exists and the native managed marker's metadata. Normal stop, controller shutdown and failed startup share ownership-aware cleanup: only newly created managed links or copies whose marker and file identity still match are removed. Native source accounts, pre-existing auth and user replacements remain intact. Legacy sessions without ownership records retain default private-Home cleanup; explicit reused Homes are conservatively preserved. An older link can be cleaned by stopping the original default session that owns it.
+
+The native creator writes a versioned ownership marker binding the session nonce to file metadata, without auth contents. Session state uses a cross-process lock and atomic replacement; cleanup rereads the latest state so concurrent observers and stale snapshots cannot overwrite cleanup results. Unknown ownership protocols conservatively preserve auth.
 
 ## Shared desktop E2E runtime images
 

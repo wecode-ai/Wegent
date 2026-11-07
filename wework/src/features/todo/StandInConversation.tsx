@@ -50,7 +50,19 @@ export function StandInConversation({
       .readTask(deviceId, taskId)
       .then(result => {
         if (active) {
-          setAddress(result.task ? { deviceId, taskId } : null)
+          setAddress(
+            result.task
+              ? {
+                  deviceId,
+                  taskId,
+                  runtime: result.task.runtime,
+                  threadId: result.task.threadId,
+                  workspacePath: result.task.workspacePath,
+                  workspaceKind: result.task.workspaceKind,
+                  runtimeHandle: result.task.runtimeHandle,
+                }
+              : null
+          )
           setFailure(null)
         }
       })

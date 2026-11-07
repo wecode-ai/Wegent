@@ -63,6 +63,50 @@ function setup(readTask = vi.fn().mockResolvedValue({ success: true, task })) {
 }
 
 describe('opening an unlisted original task', () => {
+  it('keeps listed navigation addresses separate from their owner summary metadata', async () => {
+    const { result, state, rerender, dispatch, readTask } = setup()
+    state.runtimeWork = {
+      projects: [],
+      chats: [{ deviceId: address.deviceId, workspacePath: task.workspacePath!, tasks: [task] }],
+      totalTasks: 1,
+    }
+    rerender()
+    await act(() => result.current.actions.openRuntimeTask(address))
+    expect(readTask).not.toHaveBeenCalled()
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: 'runtime_task_opened',
+      address,
+      project: null,
+    })
+  })
+
+  it('preserves the exact popup file owner address when its task is already listed', async () => {
+    const { result, state, rerender, dispatch, readTask } = setup()
+    state.runtimeWork = {
+      projects: [],
+      chats: [{ deviceId: address.deviceId, workspacePath: '/listed-root', tasks: [task] }],
+      totalTasks: 1,
+    }
+    rerender()
+    const ownerAddress: RuntimeTaskAddress = {
+      ...address,
+      runtime: 'codex',
+      threadId: 'owner-thread',
+      workspacePath: task.workspacePath,
+      workspaceKind: 'workspace',
+      runtimeHandle: { threadId: 'owner-thread' },
+      projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+      issueExecution: { projectId: 'project-1', issueId: 'issue-1' },
+    }
+    await act(() => result.current.actions.openRuntimeTask(ownerAddress))
+    expect(readTask).not.toHaveBeenCalled()
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: 'runtime_task_opened',
+      address: ownerAddress,
+      project: null,
+    })
+  })
+
   it('restores real task metadata and workspace without adding a sidebar task', async () => {
     const { result, readTask, dispatch, state, rerender } = setup()
     await act(() => result.current.actions.openRuntimeTask(address))

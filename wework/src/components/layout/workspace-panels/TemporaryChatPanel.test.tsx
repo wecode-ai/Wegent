@@ -26,6 +26,11 @@ import type {
 } from '@/types/api'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import {
+  clearWorkbenchWorkspaceLaunch,
+  consumeWorkbenchWorkspaceLaunch,
+} from '@/features/workbench/workspaceLaunchRequest'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const attachment: Attachment = {
   id: -1,
@@ -57,6 +62,7 @@ const mocks = vi.hoisted(() => ({
       },
   catalogBindings: new Map<string, ComposerCatalogBinding>(),
   readCatalog: vi.fn(),
+  readTask: vi.fn(),
   mainListApps: vi.fn(),
   usageHandlers: [] as Array<{ onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }>,
   resetAttachments: vi.fn(),
@@ -136,7 +142,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     }>
     onRetryFailedMessage?: (message: unknown) => void
     onSwitchModelForFailedMessage?: (message: unknown) => void
-    onOpenWorkspaceFile?: (path: string) => void
+    onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
     onOpenFileChangesReview?: () => void
     onOpenAssistantPlan?: () => void
     onRequestUserInputSubmit?: (response: {
@@ -208,7 +214,9 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
         <button
           type="button"
           data-testid="mock-open-file"
-          onClick={() => onOpenWorkspaceFile('/tmp/workspace/file.ts')}
+          onClick={() =>
+            onOpenWorkspaceFile('cart-fixture/cart-review.md', { lineStart: 3, lineEnd: 7 })
+          }
         >
           打开文件
         </button>
@@ -369,6 +377,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     services: {
+      standInApi: { readTask: mocks.readTask },
       deviceApi: { readWorkspaceFileChunk: vi.fn() },
       composerCatalogApi: { readCatalog: mocks.readCatalog },
     },
@@ -511,11 +520,13 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 
 describe('TemporaryChatPanel', () => {
   beforeEach(() => {
+    clearWorkbenchWorkspaceLaunch()
     mocks.renderToolBlocks = false
     mocks.inputHost = undefined
     mocks.catalogBindings.clear()
     mocks.mainListApps.mockClear()
     mocks.readCatalog.mockReset()
+    mocks.readTask.mockReset()
     mocks.readCatalog.mockImplementation(async (target: RuntimeTaskAddress) => ({
       taskId: target.taskId,
       workspacePath: '/side',
@@ -567,6 +578,74 @@ describe('TemporaryChatPanel', () => {
       if (value) mocks.inputByScope[scope] = value
       else delete mocks.inputByScope[scope]
     })
+  })
+
+  it('preserves the first file action and line range while navigating to its owning task', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    const onOpenRuntimeTask = vi.fn(async () => {
+      expect(
+        consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, 'wrong-task')
+      ).toBeNull()
+      expect(
+        consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+      ).toEqual({
+        taskId: address.taskId,
+        openFile: {
+          path: 'cart-fixture/cart-review.md',
+          options: { lineStart: 3, lineEnd: 7 },
+        },
+      })
+    })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="primary-deliverable"
+        initialAddress={address}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+    await waitFor(() => expect(onOpenRuntimeTask).toHaveBeenCalledExactlyOnceWith(address))
+  })
+
+  it('does not guess a workspace or attach another task metadata when opening a file', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.readTask.mockResolvedValue({ success: true, task: { ...address, taskId: 'other' } })
+    const onOpenRuntimeTask = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="unresolved-deliverable"
+        initialAddress={{ deviceId: address.deviceId, taskId: address.taskId }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+    await waitFor(() =>
+      expect(mocks.readTask).toHaveBeenCalledWith(address.deviceId, address.taskId)
+    )
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(
+      consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+    ).toBeNull()
   })
 
   it('places contextual configuration decisions beside the composer and hides them when inactive', () => {

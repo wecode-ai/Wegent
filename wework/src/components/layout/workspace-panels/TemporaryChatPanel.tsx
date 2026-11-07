@@ -63,6 +63,9 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { createRuntimeContextUsageStore } from '@wegent/chat-core/runtime-context-usage'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { queueWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceLaunchRequest'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { getErrorMessage } from '@/lib/error-message'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 import { runtimeGoalCreateInput } from '@/lib/runtime-goal'
@@ -883,6 +886,29 @@ export function TemporaryChatPanel({
     void onOpenRuntimeTask(address)
   }, [address, onOpenRuntimeTask])
 
+  const openWorkspaceFile = useCallback(
+    async (path: string, options?: WorkspaceFileOpenOptions) => {
+      if (!address || !onOpenRuntimeTask) return
+      try {
+        const result = address.workspacePath
+          ? { success: true, task: address }
+          : await services.standInApi?.readTask(address.deviceId, address.taskId)
+        const task = result?.success ? result.task : undefined
+        if (!task?.workspacePath || task.taskId !== address.taskId)
+          throw new Error(t('workbench.runtime_task_load_failed'))
+        const target = { ...address, workspacePath: task.workspacePath }
+        queueWorkbenchWorkspaceLaunch(target.deviceId, task.workspacePath, {
+          taskId: target.taskId,
+          openFile: { path, options },
+        })
+        await onOpenRuntimeTask(target)
+      } catch (cause) {
+        setError(getErrorMessage(cause, t('workbench.runtime_task_load_failed')))
+      }
+    },
+    [address, onOpenRuntimeTask, services.standInApi, t]
+  )
+
   const retryFailedMessage = useCallback(
     async (message: WorkbenchMessage): Promise<boolean> => {
       if (!address || retryInFlightRef.current) return false
@@ -1180,7 +1206,7 @@ export function TemporaryChatPanel({
             : undefined
         }
         onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}
-        onOpenWorkspaceFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
+        onOpenWorkspaceFile={onOpenRuntimeTask ? openWorkspaceFile : undefined}
         onOpenLocalSkillFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
         onRequestUserInputSubmit={address && !readOnly ? submitRequestUserInput : undefined}
         onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}

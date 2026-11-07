@@ -5393,6 +5393,107 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test.each(['workspace', 'worktree'])(
+    'preserves the owner boundary for a queued unlisted %s subdirectory deliverable',
+    async workspaceKind => {
+      const { queueWorkbenchWorkspaceLaunch } =
+        await import('@/features/workbench/workspaceLaunchRequest')
+      const workspace = createCloudWorkspacePanelState()
+      const task = {
+        deviceId: workspace.devices[0].device_id,
+        taskId: 'stand-in-chat-7-primary',
+        workspacePath: '/workspace/project/fixtures',
+        workspaceKind,
+        ...(workspaceKind === 'worktree' ? { worktreeId: 'ancestor-worktree' } : {}),
+      }
+      const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+        path: '/workspace/project/fixtures/cart-fixture/cart-review.md',
+        name: 'cart-review.md',
+        content: 'Persisted zero quantity regression passes.',
+        truncated: false,
+        size: 42,
+        modifiedAt: null,
+      })
+      queueWorkbenchWorkspaceLaunch(task.deviceId, task.workspacePath, {
+        taskId: task.taskId,
+        openFile: { path: 'cart-fixture/cart-review.md', options: { lineStart: 2, lineEnd: 4 } },
+      })
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{ ...baseProps.state, ...workspace, currentRuntimeTask: task }}
+          workspaceFileApi={{
+            listWorkspaceEntries: vi
+              .fn()
+              .mockResolvedValue({ path: task.workspacePath, entries: [] }),
+            readWorkspaceTextFile,
+          }}
+          projectWork={{
+            ...baseProps.projectWork,
+            projects: workspace.projects,
+            devices: workspace.devices,
+            currentProjectId: workspace.currentProject.id,
+          }}
+        />
+      )
+      if (workspaceKind === 'worktree') {
+        await act(async () => {})
+        const { getWorkbenchWorkspaceLaunch, clearWorkbenchWorkspaceLaunch } =
+          await import('@/features/workbench/workspaceLaunchRequest')
+        expect(getWorkbenchWorkspaceLaunch()?.options.taskId).toBe(task.taskId)
+        expect(readWorkspaceTextFile).not.toHaveBeenCalled()
+        expect(screen.queryByTestId('workspace-file-path')).not.toBeInTheDocument()
+        act(() => clearWorkbenchWorkspaceLaunch())
+        return
+      }
+      await waitFor(() =>
+        expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+          task.deviceId,
+          '/workspace/project/fixtures/cart-fixture/cart-review.md',
+          task.workspacePath
+        )
+      )
+      expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'Persisted zero quantity regression passes.'
+      )
+      const followupFile = {
+        path: '/workspace/project/fixtures/cart-fixture/followup.md',
+        name: 'followup.md',
+        content: 'A second click on the same open task.',
+        truncated: false,
+        size: 36,
+        modifiedAt: null,
+      }
+      const followupRead = createDeferred<typeof followupFile>()
+      readWorkspaceTextFile.mockReturnValueOnce(followupRead.promise)
+      act(() => {
+        queueWorkbenchWorkspaceLaunch(task.deviceId, task.workspacePath, {
+          taskId: task.taskId,
+          openFile: { path: 'cart-fixture/followup.md' },
+        })
+      })
+      await waitFor(() =>
+        expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+          task.deviceId,
+          '/workspace/project/fixtures/cart-fixture/followup.md',
+          task.workspacePath
+        )
+      )
+      expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'Persisted zero quantity regression passes.'
+      )
+      expect(screen.getByTestId('workspace-markdown-preview')).not.toHaveTextContent(
+        followupFile.content
+      )
+      await act(async () => followupRead.resolve(followupFile))
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent(
+          'A second click on the same open task.'
+        )
+      )
+    }
+  )
+
   test('right workspace panel shows file tree and read-only preview', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
