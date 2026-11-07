@@ -40,8 +40,6 @@ def test_failed_result_with_executor_name_is_requeued():
     }
     consumer.queue_service = MagicMock()
     consumer.queue_service.requeue_task.return_value = (True, 1)
-    consumer.queue_service.requeue_task.return_value = (True, 1)
-    consumer.queue_service.requeue_task.return_value = (True, 1)
 
     consumer._process_task_with_retry(_task())
 
@@ -56,7 +54,6 @@ def test_failed_result_without_executor_name_is_requeued():
         TASK_ID: {"status": "failed", "error_msg": "pod pending"}
     }
     consumer.queue_service = MagicMock()
-    consumer.queue_service.requeue_task.return_value = (True, 1)
     consumer.queue_service.requeue_task.return_value = (True, 1)
 
     consumer._process_task_with_retry(_task())
@@ -108,6 +105,9 @@ def test_exhausted_retries_report_failure_to_backend():
     assert callback_client.send_error.await_args.kwargs["subtask_id"] == SUBTASK_ID
     assert callback_client.send_error.await_args.kwargs["error_message"] == (
         "Task failed after 4 retries: initial dispatch failed"
+    )
+    assert callback_client.send_error.await_args.kwargs["error_code"] == (
+        "task_queue_failure"
     )
     consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID)
 
@@ -168,6 +168,9 @@ def test_task_limit_error_is_not_requeued():
     assert callback_client.send_error.await_args.kwargs["error_message"] == (
         "User has reached the task limit. Please delete history tasks."
     )
+    assert callback_client.send_error.await_args.kwargs["error_code"] == (
+        "user_task_limit"
+    )
     consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID)
 
 
@@ -198,6 +201,9 @@ def test_deleted_executor_error_is_not_requeued():
     callback_client.send_error.assert_awaited_once()
     assert callback_client.send_error.await_args.kwargs["error_message"] == (
         "Executor is deleted. Please create a new session."
+    )
+    assert callback_client.send_error.await_args.kwargs["error_code"] == (
+        "executor_deleted"
     )
     consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID)
 
@@ -238,6 +244,22 @@ def test_message_text_does_not_control_retry_policy():
     assert callback_client.send_error.await_args.kwargs["error_message"] == (
         "quota reached - rewrite this message freely"
     )
+    assert callback_client.send_error.await_args.kwargs["error_code"] == (
+        "user_task_limit"
+    )
+
+
+def test_missing_result_preserves_error_message_and_stays_retryable():
+    """No executor result must not be masked by a mapping unpacking error."""
+    consumer = _build_consumer()
+    consumer.task_processor = MagicMock()
+    consumer.task_processor.process_tasks.return_value = {}
+    consumer.queue_service = MagicMock()
+    consumer.queue_service.requeue_task.return_value = (True, 1)
+
+    consumer._process_task_with_retry(_task())
+
+    consumer.queue_service.requeue_task.assert_called_once()
 
 
 def test_unclassified_error_with_terminal_text_still_requeues():

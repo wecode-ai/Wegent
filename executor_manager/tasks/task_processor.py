@@ -222,7 +222,10 @@ class TaskProcessor:
                 set_span_attribute("error", True)
                 set_span_attribute("error.message", error_msg)
                 set_span_attribute("task.submit_success", False)
-                return {**result, "error_code": error_code}, False
+                return {
+                    **(result or {"status": "failed", "error_msg": error_msg}),
+                    "error_code": error_code,
+                }, False
 
         except Exception as e:
             error_msg = str(e)

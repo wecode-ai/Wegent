@@ -18,12 +18,12 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from executor_manager.common.errors import ExecutorErrorCode
 from executor_manager.config.config import (
     EXECUTOR_DISPATCHER_MODE,
     OFFLINE_TASK_EVENING_HOURS,
     OFFLINE_TASK_MORNING_HOURS,
 )
-from executor_manager.common.errors import ExecutorErrorCode
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.services.task_queue_service import TaskQueueService
 from executor_manager.tasks.task_processor import TaskProcessor
@@ -275,6 +275,7 @@ class TaskQueueConsumer:
                 task_id=task_id,
                 subtask_id=subtask_id,
                 error_message=error_msg,
+                error_code=error_code,
             )
             return
 
@@ -296,6 +297,7 @@ class TaskQueueConsumer:
             task_id=task_id,
             subtask_id=subtask_id,
             error_message=f"Task failed after {retry_count} retries: {error_msg}",
+            error_code="task_queue_failure",
         )
 
     def _report_terminal_failure(
@@ -304,6 +306,7 @@ class TaskQueueConsumer:
         task_id: Any,
         subtask_id: Any,
         error_message: str,
+        error_code: str,
     ) -> None:
         """Send the terminal FAILED callback for a task that cannot run."""
         if not (task_id and subtask_id):
@@ -327,7 +330,7 @@ class TaskQueueConsumer:
                         task_id=task_id,
                         subtask_id=subtask_id,
                         error_message=error_message,
-                        error_code="task_queue_failure",
+                        error_code=error_code,
                     )
                 )
             finally:
