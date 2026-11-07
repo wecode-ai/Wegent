@@ -61,12 +61,10 @@ export function IssueAssignmentReceipts({
 }) {
   const containerRef = useRef<HTMLSpanElement>(null)
   const [state, setState] = useState<IssueAssignmentReceiptState | null>(null)
+  // An Issue version refresh does not change receipt ownership. Keep the same
+  // receipt nodes mounted so a status update cannot discard an active tooltip.
   const scopedState =
-    state?.issueId === issueId &&
-    state.version === version &&
-    state.assigneeUserId === assigneeUserId
-      ? state
-      : null
+    state?.issueId === issueId && state.assigneeUserId === assigneeUserId ? state : null
 
   useEffect(() => {
     if (scopedState) onStateChange?.(scopedState)
