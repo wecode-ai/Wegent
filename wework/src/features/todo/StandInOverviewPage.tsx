@@ -1,8 +1,6 @@
 import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/lib/navigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
-import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { StandInMigration } from './StandInMigration'
 import {
   useContext,
   useEffect,
@@ -11,6 +9,7 @@ import {
   useState,
   type ComponentProps,
   type Ref,
+  type ReactNode,
 } from 'react'
 import {
   Brain,
@@ -66,6 +65,7 @@ export function StandInOverviewPage({
   ref,
   onSelectLocation,
   initialSelectedRoleId,
+  headerActions,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -76,10 +76,10 @@ export function StandInOverviewPage({
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
   onSelectLocation?(deviceId: string, roleId?: string, openSettings?: boolean): void
   initialSelectedRoleId?: string
+  headerActions?: ReactNode
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const cloud = useContext(CloudConnectionContext)
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId)
   const { saved, setDraft, reload } = state
   const [roleId, setRoleId] = useState<string | undefined>(
@@ -417,35 +417,8 @@ export function StandInOverviewPage({
           >
             <HelpCircle aria-hidden="true" className="h-4 w-4" />
           </button>
+          {headerActions}
         </header>
-        {api &&
-          deviceId === state.currentDeviceId &&
-          !state.loading &&
-          cloud?.isConnected &&
-          cloud.user &&
-          saved &&
-          (roleId ||
-            saved.primary?.enabled ||
-            saved.primary?.prompt ||
-            saved.primary?.preferences) && (
-            <StandInMigration
-              key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
-              api={api}
-              devices={props.devices}
-              sourceUser={props.userId}
-              sourceDevice={deviceId!}
-              roleId={roleId}
-              targetUser={Number(cloud.user.id)}
-              requestLeave={leavePanel}
-              onMigrated={(device, role) => {
-                if (onSelectLocation) onSelectLocation(device, role, true)
-                else {
-                  reload()
-                  state.setDeviceId(device)
-                }
-              }}
-            />
-          )}
         {state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-muted">
             {t('standIn.loading')}

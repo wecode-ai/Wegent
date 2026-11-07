@@ -629,6 +629,7 @@ impl LocalTaskStore {
             }
         }
         let previous = read_personal(connection, user, device)?;
+        super::stand_in_lifecycle::preserve_stopped_import(&previous, &mut value)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
         }
