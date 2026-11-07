@@ -102,6 +102,8 @@ test('previously frozen Windows shards can use their successful checkpoint measu
     'stand-in-git',
     'stand-in-profile',
     'collaboration-milestones',
+    'dots-closed-loops',
+    'idle-executor-requests',
   ]) {
     assert.notEqual(checkpointSeconds(segment), null, segment)
   }
@@ -313,6 +315,9 @@ test('balancing never multiplies expensive conditional preparation from the orig
     completeOriginalLoads.reduce((a, b) => a + b)
   )
   assert.ok(Math.max(...completeBalancedLoads) <= Math.max(...completeOriginalLoads))
+  const testStep = steps.find(step => step.name === 'Run Windows Wework desktop Core shard E2E')
+  assert.ok(testStep?.['timeout-minutes'] > 0)
+  assert.ok(Math.max(...completeBalancedLoads) < testStep['timeout-minutes'] * 60)
 })
 
 test('timing evidence contains positive successful samples with source run links', () => {

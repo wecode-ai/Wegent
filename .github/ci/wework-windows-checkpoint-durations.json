@@ -10,7 +10,8 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/42255324858",
     "https://github.com/wecode-ai/Wegent/actions/runs/42264710526",
     "https://github.com/wecode-ai/Wegent/actions/runs/42296468457",
-    "https://github.com/wecode-ai/Wegent/actions/runs/42392978141"
+    "https://github.com/wecode-ai/Wegent/actions/runs/42392978141",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42400229326"
   ],
   "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
   "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
@@ -83,6 +84,7 @@
     "core-task-flow": 356.5,
     "device-artifact-declaration": 65,
     "devtools-performance": 36,
+    "dots-closed-loops": 178,
     "drawing-attachment": 25,
     "dsh-owner-capture": 48,
     "embedded-browser": 94,
@@ -101,6 +103,7 @@
     "human-interactions-browser": 87,
     "human-interactions-hidden": 91.5,
     "human-interactions-issue": 70.5,
+    "idle-executor-requests": 39,
     "issue-notification-read": 77,
     "issue-property-autosave": 63,
     "latest-conversation-history": 63,
@@ -197,9 +200,9 @@
     "workspace-tabs": 88
   },
   "refresh": {
-    "run": "https://github.com/wecode-ai/Wegent/actions/runs/42392978141",
-    "checkpoints": 8,
-    "note": "Added only previously unmeasured successful Windows checkpoints. Failed dots-closed-loops remains unmeasured. Core shard 3 exceeded its step deadline before stand-in-git completed."
+    "run": "https://github.com/wecode-ai/Wegent/actions/runs/42400229326",
+    "checkpoints": 2,
+    "note": "Added only successful dots-closed-loops and idle-executor-requests samples from Windows Core 3 and 5. Durations are rounded up from successful PASS logs. Core 4 and 8 hit the step deadline; their unfinished scenarios are not samples. All earlier observations remain unchanged."
   },
   "preparationSources": {
     "dingtalk-protocol-fixture": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293/job/127328527189"
