@@ -10,6 +10,7 @@ sidebar_position: 3
 <!-- ui-source: ../packages/collaboration/src/platform/ResourceCatalogPage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/templates/CollaborationTemplatePage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/milestones/MilestonesPage.tsx -->
+<!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
 
 ## 协作空间与全局资源目录
 
