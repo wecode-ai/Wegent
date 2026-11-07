@@ -152,10 +152,30 @@ impl CodexAppServerClient {
             }
             state.thread_generations.contains_key(source_thread_id)
         };
+        // Cold resume can immediately continue a persisted Goal. Read eligibility
+        // without loading the runtime, before acquiring its native writer.
+        let goal = self
+            .request("thread/goal/get", json!({"threadId": source_thread_id}))
+            .await?;
+        if goal.pointer("/goal/status").and_then(Value::as_str) == Some("active") {
+            return Ok(None);
+        }
+        let turns = self.request("thread/turns/list", json!({
+            "threadId": source_thread_id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded",
+        })).await?;
+        if !prediction_turn_is_eligible(
+            turns
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|turns| turns.first()),
+            expected_turn_id,
+        ) || cancellation.try_recv() != Err(oneshot::error::TryRecvError::Empty)
+        {
+            return Ok(None);
+        }
         let result = self
             .fork_prediction_parent(
                 source_thread_id,
-                expected_turn_id,
                 cancellation,
                 if retained {
                     json!({"threadId": source_thread_id, "excludeTurns": true})
@@ -186,7 +206,6 @@ impl CodexAppServerClient {
     async fn fork_prediction_parent(
         &self,
         source_thread_id: &str,
-        expected_turn_id: Option<&str>,
         cancellation: &mut oneshot::Receiver<()>,
         resume_params: Value,
     ) -> Result<Option<String>, String> {
@@ -198,17 +217,7 @@ impl CodexAppServerClient {
         {
             return Ok(None);
         }
-        let turns = self.request("thread/turns/list", json!({
-            "threadId": source_thread_id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded",
-        })).await?;
-        if !prediction_turn_is_eligible(
-            turns
-                .get("data")
-                .and_then(Value::as_array)
-                .and_then(|turns| turns.first()),
-            expected_turn_id,
-        ) || cancellation.try_recv() != Err(oneshot::error::TryRecvError::Empty)
-        {
+        if cancellation.try_recv() != Err(oneshot::error::TryRecvError::Empty) {
             return Ok(None);
         }
         // Inherit the loaded parent's effective configuration and cached prefix.
@@ -378,8 +387,17 @@ while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
+    *'"method":"thread/goal/get"'*)
+      if [ '__MODE__' = 'active-goal' ]; then
+        printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id"
+      elif [ '__MODE__' = 'goal-error' ]; then
+        printf '{"id":%s,"error":{"code":-32603,"message":"goal read failed"}}\n' "$id"
+      else printf '{"id":%s,"result":{"goal":null}}\n' "$id"; fi ;;
     *'"method":"thread/resume"'*) printf '{"id":%s,"result":{"thread":{"id":"source"},"model":"parent-model","modelProvider":"openai"}}\n' "$id" ;;
-    *'"method":"thread/turns/list"'*) printf '{"id":%s,"result":{"data":[{"id":"latest","status":"completed"}]}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*)
+      if [ '__MODE__' = 'interrupted' ]; then
+        printf '{"id":%s,"result":{"data":[{"id":"latest","status":"interrupted"}]}}\n' "$id"
+      else printf '{"id":%s,"result":{"data":[{"id":"latest","status":"completed"}]}}\n' "$id"; fi ;;
     *'"method":"thread/fork"'*)
       if [ '__MODE__' = 'fork-error' ]; then
         printf '{"id":%s,"error":{"code":-32602,"message":"prediction unsupported"}}\n' "$id"
@@ -653,6 +671,31 @@ done
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn prediction_checks_cold_parent_eligibility_without_resuming_its_goal() {
+        for mode in ["active-goal", "interrupted", "goal-error"] {
+            let fixture = Fixture::new(mode);
+            let (_cancel, receiver) = oneshot::channel();
+            let result = fixture.predict(Some("latest"), receiver).await;
+            if mode == "goal-error" {
+                assert!(result.unwrap_err().contains("goal read failed"));
+            } else {
+                assert_eq!(result.unwrap(), json!({"suggestion": null}));
+            }
+            assert!(
+                !fixture.calls().iter().any(|call| {
+                    matches!(
+                        call["method"].as_str(),
+                        Some("thread/resume" | "thread/fork" | "turn/start" | "thread/unsubscribe")
+                    )
+                }),
+                "Ineligible prediction must not load, run, or release the parent's runtime: {mode}"
+            );
+            fixture.stop().await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn prediction_does_not_fork_a_stale_or_cancelled_request() {
         let fixture = Fixture::new("complete");
         let (_cancel, receiver) = oneshot::channel();
@@ -669,7 +712,7 @@ done
         assert!(!fixture
             .calls()
             .iter()
-            .any(|call| call["method"] == "thread/fork"));
+            .any(|call| call["method"] == "thread/fork" || call["method"] == "thread/resume"));
         fixture.stop().await;
     }
 

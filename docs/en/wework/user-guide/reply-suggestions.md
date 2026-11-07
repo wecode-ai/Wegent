@@ -16,7 +16,9 @@ While the window is running, switching tasks does not stop prediction generation
 
 Predictions use the current conversation model's allowance. Wework forks an ephemeral Codex prediction thread, inheriting the original history, effective configuration, instructions, and tool definitions. It adds a prediction prompt and requests low reasoning effort. The prompt instructs the model not to call tools or perform actions; predictions are not added to the original conversation history. Starting another turn or disabling the feature cancels pending predictions. New conversations without a completed Codex turn do not generate suggestions.
 
-Preserving the original prompt prefix helps reuse the model service's cache, but cache hits and fees depend on the provider. Predictions still make model requests and are not guaranteed to be free or always cheaper than short-context requests. Wework bundles Codex 0.163.0-alpha.5 to support the prediction fork protocol.
+Goals that remain active do not generate suggestions, including interrupted Goals waiting in the queue. Predictions do not resume these Goals to read their history or change their status.
+
+Preserving the original prompt prefix helps reuse the model service's cache, but cache hits and fees depend on the provider. Predictions still make model requests and are not guaranteed to be free or always cheaper than short-context requests. Wework's bundled Codex supports the prediction fork protocol.
 
 While generating, the composer toolbar shows a small “Generating a suggestion…” status. Typing hides it; completion, cancellation, or failure removes it.
 
