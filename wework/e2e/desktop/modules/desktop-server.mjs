@@ -1419,14 +1419,17 @@ class DesktopE2EServer {
       if (
         this.desktopScenario &&
         request.method === 'POST' &&
-        ['/responses', '/v1/responses'].includes(url.pathname) &&
-        (await this.writeNativeApprovalReview(
-          response,
-          await readRequestBody(request),
-          'responses'
-        ))
-      )
-        return
+        ['/responses', '/v1/responses'].includes(url.pathname)
+      ) {
+        const body = await readRequestBody(request)
+        if (await this.writeNativeApprovalReview(response, body, 'responses')) return
+        // Prediction history carries the task's ordinary markers. Route its
+        // model request before scenario counters and held task responses.
+        if (isReplyPredictionRequest(body) && !this.desktopScenario.handlesReplyPredictions) {
+          await this.handleModelResponse(request, response, 'responses')
+          return
+        }
+      }
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
     } catch (error) {
       console.error(

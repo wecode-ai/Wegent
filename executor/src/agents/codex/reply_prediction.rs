@@ -84,40 +84,18 @@ impl CodexAppServerClient {
     ) -> Result<Value, String> {
         let started = Instant::now();
         let mut notifications = self.subscribe_notifications().await?;
-        let parent = self
-            .request(
-                "thread/resume",
-                // Prediction may cold-load the parent before a regular turn or history read.
-                // Restore task shell identity without overriding the parent's model/settings.
-                prediction_parent_resume_params(source_thread_id, request, launch_config),
+        let Some(thread_id) = self
+            .prepare_prediction_fork(
+                source_thread_id,
+                expected_turn_id,
+                request,
+                &mut cancellation,
+                launch_config,
             )
-            .await?;
-        if parent
-            .pointer("/collaborationMode/mode")
-            .and_then(Value::as_str)
-            == Some("plan")
-        {
+            .await?
+        else {
             return Ok(json!({"suggestion": null}));
-        }
-        let turns = self.request("thread/turns/list", json!({
-            "threadId": source_thread_id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded",
-        })).await?;
-        if !prediction_turn_is_eligible(
-            turns
-                .get("data")
-                .and_then(Value::as_array)
-                .and_then(|turns| turns.first()),
-            expected_turn_id,
-        ) || cancellation.try_recv() != Err(oneshot::error::TryRecvError::Empty)
-        {
-            return Ok(json!({"suggestion": null}));
-        }
-        // Inherit the loaded parent's effective configuration and cached prefix.
-        // Configuration overrides are forbidden in prediction mode.
-        let response = self
-            .request("thread/fork", prediction_fork_params(source_thread_id))
-            .await?;
-        let thread_id = thread_id_from_response("thread/fork", &response, None)?;
+        };
         self.mark_thread_active(&thread_id).await;
         let result = async {
             if let Some(registration) =
@@ -152,6 +130,93 @@ impl CodexAppServerClient {
             ],
         );
         result
+    }
+
+    async fn prepare_prediction_fork(
+        &self,
+        source_thread_id: &str,
+        expected_turn_id: Option<&str>,
+        request: &ExecutionRequest,
+        cancellation: &mut oneshot::Receiver<()>,
+        launch_config: Option<&CodexLaunchConfig>,
+    ) -> Result<Option<String>, String> {
+        let gate = self.thread_lifecycle_gate(source_thread_id).await;
+        let _admission = gate.lock().await;
+        let retained = {
+            let state = self.state.lock().await;
+            if state
+                .active_threads_snapshot()
+                .contains_key(source_thread_id)
+            {
+                return Ok(None);
+            }
+            state.thread_generations.contains_key(source_thread_id)
+        };
+        let result = self
+            .fork_prediction_parent(
+                source_thread_id,
+                expected_turn_id,
+                cancellation,
+                if retained {
+                    json!({"threadId": source_thread_id, "excludeTurns": true})
+                } else {
+                    prediction_parent_resume_params(source_thread_id, request, launch_config)
+                },
+            )
+            .await;
+        // A cold prediction reader must release the parent's native writer before
+        // admitting the next real turn, including failures and ineligible turns.
+        if !retained {
+            if let Err(cleanup) = self
+                .release_thread_subscription_under_admission(source_thread_id, true)
+                .await
+            {
+                if let Ok(Some(thread_id)) = &result {
+                    self.unsubscribe_thread(thread_id).await;
+                }
+                return Err(match result {
+                    Err(error) => format!("{error}; prediction parent cleanup failed: {cleanup}"),
+                    Ok(_) => cleanup,
+                });
+            }
+        }
+        result
+    }
+
+    async fn fork_prediction_parent(
+        &self,
+        source_thread_id: &str,
+        expected_turn_id: Option<&str>,
+        cancellation: &mut oneshot::Receiver<()>,
+        resume_params: Value,
+    ) -> Result<Option<String>, String> {
+        let parent = self.request("thread/resume", resume_params).await?;
+        if parent
+            .pointer("/collaborationMode/mode")
+            .and_then(Value::as_str)
+            == Some("plan")
+        {
+            return Ok(None);
+        }
+        let turns = self.request("thread/turns/list", json!({
+            "threadId": source_thread_id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded",
+        })).await?;
+        if !prediction_turn_is_eligible(
+            turns
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|turns| turns.first()),
+            expected_turn_id,
+        ) || cancellation.try_recv() != Err(oneshot::error::TryRecvError::Empty)
+        {
+            return Ok(None);
+        }
+        // Inherit the loaded parent's effective configuration and cached prefix.
+        // Configuration overrides are forbidden in prediction mode.
+        let response = self
+            .request("thread/fork", prediction_fork_params(source_thread_id))
+            .await?;
+        thread_id_from_response("thread/fork", &response, None).map(Some)
     }
 
     async fn run_prediction_turn(
@@ -328,7 +393,8 @@ while IFS= read -r line; do
       elif [ '__MODE__' = 'parent-start' ]; then
         printf '%s\n' '{"method":"turn/started","params":{"threadId":"source","turn":{"id":"new-parent-turn"}}}'
       fi ;;
-    *'"method":"turn/interrupt"'*|*'"method":"thread/unsubscribe"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
+    *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
+    *'"method":"thread/unsubscribe"'*) printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
   esac
 done
 "#;
@@ -519,6 +585,69 @@ done
             .calls()
             .iter()
             .any(|call| call["method"] == "thread/start" || call["method"] == "turn/start"));
+        assert!(fixture.calls().iter().any(|call| {
+            call["method"] == "thread/unsubscribe" && call["params"]["threadId"] == "source"
+        }));
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prediction_releases_a_cold_parent_before_starting_its_fork() {
+        let fixture = Fixture::new("complete");
+        let (_cancel, receiver) = oneshot::channel();
+        fixture.predict(None, receiver).await.unwrap();
+        let calls = fixture.calls();
+        let release = calls
+            .iter()
+            .position(|call| {
+                call["method"] == "thread/unsubscribe" && call["params"]["threadId"] == "source"
+            })
+            .unwrap();
+        let start = calls
+            .iter()
+            .position(|call| call["method"] == "turn/start")
+            .unwrap();
+        assert!(release < start);
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prediction_preserves_a_retained_parent_without_reconfiguring_it() {
+        let fixture = Fixture::new("complete");
+        fixture.client.subscribe_notifications().await.unwrap();
+        fixture.client.mark_thread_active("source").await;
+        fixture.client.mark_thread_idle("source", true).await;
+        let (_cancel, receiver) = oneshot::channel();
+        fixture.predict(None, receiver).await.unwrap();
+        let calls = fixture.calls();
+        let resume = calls
+            .iter()
+            .find(|call| call["method"] == "thread/resume")
+            .unwrap();
+        assert!(resume["params"].get("config").is_none());
+        assert!(!calls.iter().any(|call| {
+            call["method"] == "thread/unsubscribe" && call["params"]["threadId"] == "source"
+        }));
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prediction_does_not_resume_an_active_parent() {
+        let fixture = Fixture::new("complete");
+        fixture.client.subscribe_notifications().await.unwrap();
+        fixture.client.mark_thread_active("source").await;
+        let (_cancel, receiver) = oneshot::channel();
+        assert_eq!(
+            fixture.predict(None, receiver).await.unwrap(),
+            json!({"suggestion": null})
+        );
+        assert!(!fixture
+            .calls()
+            .iter()
+            .any(|call| call["method"] == "thread/resume"));
         fixture.stop().await;
     }
 
