@@ -155,6 +155,21 @@ export function processIsAlive(processId) {
   return true
 }
 
+export async function waitForOwnedProcessExit(
+  snapshot,
+  { timeoutMs = PROCESS_STOP_TIMEOUT_MS, isAlive = processIsAlive } = {}
+) {
+  const pids = ownedCrashTargets({ pid: snapshot.applicationPid }, snapshot)
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const survivors = pids.filter(isAlive)
+    if (survivors.length === 0) return
+    if (Date.now() >= deadline)
+      throw new Error(`Owned application processes survived shutdown: ${survivors.join(', ')}`)
+    await new Promise(accept => setTimeout(accept, PROCESS_GROUP_POLL_INTERVAL_MS))
+  }
+}
+
 export function processInstanceMatches(expected, actual) {
   const validate = identity => {
     if (
