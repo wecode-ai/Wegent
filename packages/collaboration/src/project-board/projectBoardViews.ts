@@ -102,7 +102,7 @@ export function savedBoardColumns(
       ? {
           ...column,
           unmatchedColumns: matchedColumns,
-          unmatchedFilter: view.filter
+          unmatchedFilter: { ...view.filter, needs_my_input: false }
         }
       : column
   )

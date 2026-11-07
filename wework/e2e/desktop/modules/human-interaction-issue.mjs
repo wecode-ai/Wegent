@@ -57,6 +57,10 @@ export async function assignHumanInteractionIssueToResponsible(
     timeoutMs
   )
   assert.equal(assigned.status, 'pending', 'Assignment must not consume the question')
+  await control.command('waitFor', `${notice} [data-testid="interaction-notice-reply"]`, {
+    visible: true,
+    enabled: true,
+  })
 }
 
 /** Real persisted Issue comments and server-owned execution, with only the model mocked. */

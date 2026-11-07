@@ -255,6 +255,22 @@ async fn questions_and_recipient_index_survive_transfer_and_rollback() {
     assert_eq!(row.metadata.0["human_requests"], json!(questions));
     let count:Count = mysql.fetch_one("SELECT COUNT(*) AS count FROM loop_items WHERE resource_type='human_request_index' AND assignee_user_id=8",()).await.unwrap();
     assert_eq!(count.count, 1);
+    mysql.execute("CREATE TABLE wework_notifications (id INT PRIMARY KEY,user_id BIGINT NOT NULL,is_read BOOLEAN NOT NULL DEFAULT FALSE,read_status_changed_at DATETIME,payload JSON,created_at DATETIME,INDEX idx_wework_notifications_inbox(user_id,created_at,id))",()).await.unwrap();
+    mysql.execute("INSERT INTO wework_notifications(id,user_id,is_read,payload) VALUES (1,7,FALSE,JSON_OBJECT('humanRequestId','question')),(2,8,FALSE,JSON_OBJECT('humanRequestId','question')),(3,7,FALSE,JSON_OBJECT('humanRequestId','other-question'))",()).await.unwrap();
+    mysql
+        .with_transaction(async |tx| acknowledge_previous_recipient(tx, 7, "question").await)
+        .await
+        .unwrap();
+    let count: Count = mysql
+        .fetch_one(
+            "SELECT COUNT(*) AS count FROM wework_notifications WHERE id=1 AND is_read=true",
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(count.count, 1);
+    let count:Count = mysql.fetch_one("SELECT COUNT(*) AS count FROM wework_notifications WHERE id IN (2,3) AND is_read=false",()).await.unwrap();
+    assert_eq!(count.count, 2);
     mysql.close().await;
     admin
         .execute(format!("DROP DATABASE `{database}`"), ())

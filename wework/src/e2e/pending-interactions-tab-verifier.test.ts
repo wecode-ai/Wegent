@@ -60,6 +60,22 @@ const control = {
 afterEach(() => document.body.replaceChildren())
 
 describe('pending tab E2E verifier contract', () => {
+  it('waits for the provider before deriving a bootstrap count and title', async () => {
+    fixture(0, 'loading', null)
+    const settlingControl = {
+      async command(action: string, selector: string, options = {}) {
+        if (
+          action === 'waitFor' &&
+          selector.includes(':not([data-project-count-state="loading"])')
+        ) {
+          document.body.replaceChildren()
+          fixture(0, 'unsupported', 0)
+        }
+        return control.command(action, selector, options)
+      },
+    }
+    await verifyPendingInteractionsTab(settlingControl, 0)
+  })
   it('checks exact questions plus projects using the rendered localized badge', async () => {
     fixture(2, 'known', 3)
     await verifyPendingInteractionsTab(control, 2)

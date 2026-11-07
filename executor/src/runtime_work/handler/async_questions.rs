@@ -117,7 +117,7 @@ impl RuntimeWorkRpcHandler {
                         url.path_segments_mut().map_err(|_| "Invalid Backend URL")?.pop_if_empty().push(report["issue_id"].as_str().unwrap_or_default()).push("human-requests");
                         let response = crate::agents::backend_url::backend_http_client()?.post(url).bearer_auth(&connection.auth_token).json(&json!({"runtime_device_id":handler.device_id,"runtime_task_id":task,"item_id":item,"question":report["question"],"questions":report["questions"]})).send().await.map_err(|error| error.to_string())?;
                         if !response.status().is_success() {
-                            if response.status().is_client_error() {
+                            if is_permanent_question_rejection(response.status()) {
                                 handler.store.update_task(&task,|link| { link.runtime_handle["issueHumanRequestOutbox"][&item]["error"] = json!(format!("Question publication rejected: {}",response.status())); });
                             }
                             return Err(format!("Question publication rejected: {}",response.status()));
@@ -133,6 +133,10 @@ impl RuntimeWorkRpcHandler {
             });
         }
     }
+}
+
+pub(super) fn is_permanent_question_rejection(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 400 | 404 | 409 | 422)
 }
 
 fn question_belongs_to_current_turn(

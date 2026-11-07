@@ -86,6 +86,25 @@ impl LocalTaskStore {
         error: &str,
         requeue: bool,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.fail_execution_with_outcome(execution_id, error, requeue, false)
+    }
+
+    /// Record a definite Runtime refusal; transport uncertainty must use `fail_execution`.
+    pub fn reject_runtime_dispatch(
+        &self,
+        execution_id: i64,
+        error: &str,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.fail_execution_with_outcome(execution_id, error, false, true)
+    }
+
+    fn fail_execution_with_outcome(
+        &self,
+        execution_id: i64,
+        error: &str,
+        requeue: bool,
+        rejected: bool,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = execution_row(&transaction, execution_id)?;
@@ -112,6 +131,9 @@ impl LocalTaskStore {
             return execution_row(&connection, execution_id).map(Some);
         }
         update_agent_comment(&transaction, execution_id, "failed", &error, &timestamp)?;
+        if rejected {
+            human_requests::reject_execution_reply(&transaction, &current)?;
+        }
         if requeue && current.retry_attempt < current.max_retries {
             transaction.execute(
                 "INSERT INTO loop_item_executions (

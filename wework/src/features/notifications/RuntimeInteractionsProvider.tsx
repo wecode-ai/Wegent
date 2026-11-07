@@ -18,14 +18,14 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import { useIssueHumanInteractions } from './useIssueHumanInteractions'
-import { issueHumanInteraction, issueQuestionIdentity } from './issueHumanInteractions'
+import { issueQuestionIdentity } from './issueHumanInteractions'
+import { createIssueQuestionEnricher } from './enrichIssueQuestions'
 import {
   interactionResponse,
   interactionId,
   interactionSource,
   interactionOriginalScheme,
   canReplyToInteraction,
-  canQuickReply,
   interactionAllowsNativeReply,
   readRuntimeInteractions,
   type RuntimeInteraction,
@@ -381,6 +381,11 @@ function RuntimeInteractionsState({
             loadedRef.current[item.key]?.some(request => !request.answered)
         )
         // Limit concurrent history reads without blocking unrelated tasks on one failure.
+        const enrichQuestions = createIssueQuestionEnricher(
+          current.services,
+          current.userId,
+          () => issueDiscoveryRef.current.items
+        )
         let index = 0
         await Promise.all(
           Array.from({ length: Math.min(4, items.length) }, async () => {
@@ -415,38 +420,7 @@ function RuntimeInteractionsState({
               let operation: 'transcript' | 'archive' = 'transcript'
               try {
                 stage = `transcript:${item.address.taskId}`
-                let requests = await readRuntimeInteractions(item, api)
-                const projectQuestions = requests.filter(
-                  request => request.project && canQuickReply(request.payload)
-                )
-                for (const question of projectQuestions) {
-                  const project = question.project!
-                  const sharedApi =
-                    project.store === 'local'
-                      ? current.services?.localIssueHumanRequestsApi
-                      : current.services?.issueHumanRequestsApi
-                  if (!sharedApi) continue
-                  const shared = (
-                    await sharedApi.list(project.projectId, project.issueId)
-                  ).items.find(
-                    request =>
-                      request.item_id === question.payload.itemId &&
-                      request.runtime_task_id === question.task.address.taskId
-                  )
-                  if (!shared) continue
-                  const user = project.store === 'local' ? 0 : current.userId
-                  const addressed =
-                    shared.recipient_user_id === user ||
-                    (shared.recipient_user_id === null && shared.responsible_user_id === user)
-                  requests = requests.filter(request => request !== question)
-                  if (addressed && ['pending', 'answering'].includes(shared.status))
-                    requests.push({
-                      ...question,
-                      id: issueHumanInteraction(shared, project.store).id,
-                      sharedRequest: shared,
-                      answered: false,
-                    })
-                }
+                const requests = await enrichQuestions(await readRuntimeInteractions(item, api))
                 if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
                 successfulReads.current.set(item.key, {
                   signature: readSignature,

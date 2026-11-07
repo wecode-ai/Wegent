@@ -3477,9 +3477,14 @@ class LoopItemExecutionService:
         # Any accepted observation identifies the current turn, even when the
         # created event lost a concurrent lease update or arrived out of order.
         self._bind_activity_runtime_turn(db, row, payload)
+        from app.services.project_chat.execution_snapshot import (
+            runtime_event_client_message_id,
+        )
         from app.services.project_chat.human_requests import settle_execution_reply
 
-        settle_execution_reply(db, row)
+        settle_execution_reply(
+            db, row, observed_message_id=runtime_event_client_message_id(payload)
+        )
         from app.services.project_chat.service import project_chat_service
 
         project_chat_service._commit(db)

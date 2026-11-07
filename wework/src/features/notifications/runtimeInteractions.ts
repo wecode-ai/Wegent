@@ -66,6 +66,7 @@ export interface RuntimeInteraction {
   answered: boolean
   running?: boolean
   cached?: boolean
+  replyUnavailable?: boolean
   originalUrl?: string
   sourceMessageIds?: string[]
   project?: {
@@ -116,6 +117,7 @@ export function interactionAllowsNativeReply(payload: RequestUserInputPayload): 
 }
 
 export function canReplyToInteraction(item: RuntimeInteraction): boolean {
+  if (item.replyUnavailable) return false
   if (item.sharedRequest)
     return (
       !item.cached &&

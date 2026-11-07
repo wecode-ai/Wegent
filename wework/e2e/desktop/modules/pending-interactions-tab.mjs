@@ -15,6 +15,7 @@ export async function verifyPendingInteractionsTab(
     `${TAB}[data-pending-question-count="${expectedQuestionCount}"]`,
     { text: '待你处理' }
   )
+  await control.command('waitFor', `${TAB}:not([data-project-count-state="loading"])`)
   const state = await control.command('getAttribute', TAB, { value: 'data-project-count-state' })
   assert.ok(['loading', 'unknown', 'known', 'unsupported'].includes(state))
   let total = null

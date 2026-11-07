@@ -111,6 +111,13 @@ def settle_reply(
         )
     )
     db.query(WeworkNotification).filter(
+        WeworkNotification.user_id.in_(
+            {
+                target[key]
+                for key in ("recipient_user_id", "responsible_user_id")
+                if target.get(key) is not None
+            }
+        ),
         WeworkNotification.payload["humanRequestId"].as_string() == request_id,
         WeworkNotification.is_read.is_(False),
     ).update(
@@ -125,11 +132,14 @@ def settle_reply(
     project_chat_service._queue_loop_item_change(db, item)
 
 
-def settle_execution_reply(db: Session, execution: LoopItemExecution) -> None:
+def settle_execution_reply(
+    db: Session, execution: LoopItemExecution, *, observed_message_id: str | None
+) -> None:
+    """Task-level sequence acceptance alone does not prove answer delivery."""
     context = execution.runtime_origin_context
     request_id = context.get("human_request_id")
     message_id = context.get("comment_trigger_message_id")
-    if request_id and message_id:
+    if request_id and message_id and observed_message_id == message_id:
         settle_reply(
             db,
             issue_id=execution.loop_item_id,

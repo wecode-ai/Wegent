@@ -379,6 +379,13 @@ pub(super) fn reject_unstarted_execution_reply(
     {
         return Ok(());
     }
+    reject_execution_reply(connection, execution)
+}
+
+pub(super) fn reject_execution_reply(
+    connection: &Connection,
+    execution: &LocalExecution,
+) -> Result<(), TaskRuntimeError> {
     update_execution_reply(connection, execution, false)
 }
 

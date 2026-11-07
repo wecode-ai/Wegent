@@ -236,7 +236,7 @@ impl RuntimeWorkRpcHandler {
                 }
                 Ok(response) => {
                     let error = format!("Runtime rejected local Issue dispatch: {response}");
-                    let _ = store.fail_execution(execution.id, &error, false);
+                    let _ = store.reject_runtime_dispatch(execution.id, &error);
                     return;
                 }
                 Err(error) => {

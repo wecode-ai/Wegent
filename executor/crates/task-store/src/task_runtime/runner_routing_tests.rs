@@ -43,6 +43,20 @@ fn setup() -> (
 
 #[test]
 fn human_request_reply_keeps_current_identity_and_claim_is_atomic() {
+    human_request_reply_dispatch_outcome("accepted");
+}
+
+#[test]
+fn human_request_explicit_runtime_rejection_releases_reply_atomically() {
+    human_request_reply_dispatch_outcome("rejected");
+}
+
+#[test]
+fn human_request_transport_failure_keeps_claim_uncertain() {
+    human_request_reply_dispatch_outcome("uncertain");
+}
+
+fn human_request_reply_dispatch_outcome(outcome: &str) {
     let (_directory, store, project, agent, issue, catalog) = setup();
     let comment = |text: &str, root: Option<String>| {
         store
@@ -178,6 +192,69 @@ fn human_request_reply_keeps_current_identity_and_claim_is_atomic() {
     store
         .request_runtime_start(continued.id, device, task, 300)
         .unwrap();
+    if outcome == "uncertain" {
+        store
+            .fail_execution(continued.id, "Transport disconnected", false)
+            .unwrap();
+        let pending = store
+            .list_issue_human_requests(&project.id, &issue.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(pending["status"], "answering");
+        assert_eq!(pending["answer_message_id"], retry.message_id);
+        let duplicate = comment("Must not dispatch twice", Some(root.message_id.clone()));
+        assert!(store
+            .enqueue_execution(
+                &project.id,
+                &issue.id,
+                &agent.id,
+                json!({"human_request_id":id}),
+                Some(&duplicate.message_id)
+            )
+            .is_err());
+        return;
+    }
+    if outcome == "rejected" {
+        let failed = store
+            .reject_runtime_dispatch(continued.id, "Runtime refused dispatch")
+            .unwrap()
+            .unwrap();
+        assert_eq!(failed.status, "failed");
+        let pending = store
+            .list_issue_human_requests(&project.id, &issue.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(pending["status"], "pending");
+        assert!(pending["answer_message_id"].is_null());
+        assert_eq!(pending["delivery_error"], "rejected");
+        let version = pending["version"].clone();
+        store
+            .reject_runtime_dispatch(continued.id, "Duplicate rejection")
+            .unwrap();
+        assert_eq!(
+            store
+                .list_issue_human_requests(&project.id, &issue.id)
+                .unwrap()[0]["version"],
+            version
+        );
+        let next = comment("After explicit rejection", Some(root.message_id.clone()));
+        store
+            .enqueue_execution(
+                &project.id,
+                &issue.id,
+                &agent.id,
+                json!({"human_request_id":id}),
+                Some(&next.message_id),
+            )
+            .unwrap();
+        let claimed = store
+            .claim_next_execution_with_catalog(Some(device), "instance", 300, Some(&catalog))
+            .unwrap()
+            .unwrap();
+        store
+            .request_runtime_start(claimed.id, device, task, 300)
+            .unwrap();
+    }
     store.mark_runtime_running(task).unwrap();
     assert_eq!(
         store

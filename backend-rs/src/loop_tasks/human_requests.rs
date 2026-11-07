@@ -601,8 +601,12 @@ async fn assign(
     }
     let recipient = match payload.recipient_user_id {
         Some(recipient) => {
-            let target = read_issue(state, item_id, recipient).await?;
-            require_write(state, &target, recipient).await?;
+            let target = read_issue(state, item_id, recipient)
+                .await
+                .map_err(recipient_access_error)?;
+            require_write(state, &target, recipient)
+                .await
+                .map_err(recipient_access_error)?;
             #[derive(FromMysqlRow)]
             struct User {
                 user_name: String,
@@ -654,7 +658,9 @@ async fn assign(
         let saved = request.clone();
         save_requests(tx,item_id,&all).await?;
         // Transfer acknowledges the obsolete recipient's notification, not the question.
-        tx.execute("UPDATE wework_notifications SET is_read=true,read_status_changed_at=UTC_TIMESTAMP() WHERE JSON_UNQUOTE(JSON_EXTRACT(payload,'$.humanRequestId'))=? AND is_read=false",(request_id,)).await?;
+        if let Some(previous) = previous {
+            acknowledge_previous_recipient(tx, previous, request_id).await?;
+        }
         let notification = if let Some((recipient,_)) = recipient.as_ref().filter(|_| !payload.cancel) {
             Some(notifications::create_on(tx,state,i64::from(*recipient),i64::from(user.id),"mention","Issue 等你处理",saved["question"].as_str().unwrap_or_default(),json!({"projectId":issue.cloud_project_id,"itemId":item_id,"itemTitle":issue.title,"commentId":saved["root_comment_id"],"humanRequestId":request_id,"action":"human_input"})).await?)
         } else { None };
@@ -673,9 +679,47 @@ async fn assign(
     Ok(saved)
 }
 
+async fn acknowledge_previous_recipient(
+    tx: &mut impl MysqlTransaction,
+    previous: i64,
+    request_id: &str,
+) -> brz_mysql::MysqlResult<()> {
+    tx.execute("UPDATE wework_notifications SET is_read=true,read_status_changed_at=UTC_TIMESTAMP() WHERE user_id=? AND is_read=false AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.humanRequestId'))=?",(previous,request_id)).await?;
+    Ok(())
+}
+
+fn recipient_access_error(failure: FastApiError) -> FastApiError {
+    if matches!(
+        failure.status(),
+        StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+    ) {
+        error(StatusCode::UNPROCESSABLE_ENTITY, "Recipient is unavailable")
+    } else {
+        failure
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recipient_access_errors_preserve_infrastructure_failures() {
+        for status in [StatusCode::FORBIDDEN, StatusCode::NOT_FOUND] {
+            assert_eq!(
+                recipient_access_error(error(status, "denied")).status(),
+                StatusCode::UNPROCESSABLE_ENTITY
+            );
+        }
+        for status in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            assert_eq!(
+                recipient_access_error(error(status, "database unavailable")).status(),
+                status
+            );
+        }
+    }
     fn blocking_payload() -> BlockingUpdate {
         serde_json::from_value(json!({
             "operation":"set_blocking", "version":3, "blocks_progress":true,
