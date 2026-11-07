@@ -1410,7 +1410,7 @@ export function registerAppUpdateCapabilities(
   // appUpdate.downloadProgress until it reports a terminal phase.
   router.register('appUpdate.download', params => {
     void requiredAppUpdates(appUpdates)
-      .download(updateChannelParam(params))
+      .download(updateChannelParam(params), optionalStringParam(params, 'retryToken'))
       .catch(() => undefined)
     return null
   })

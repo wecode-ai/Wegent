@@ -212,10 +212,95 @@ test('rejects a policy for another platform or channel', async () => {
   catalog.channel = 'beta'
   await expect(service.check('stable')).rejects.toThrow('target mismatch')
 })
-test('a rolled-back target is not automatically offered again', async () => {
-  const { service, store } = await fixture()
+test('a rolled-back target remains reachable but cannot download without explicit confirmation', async () => {
+  const { service, store, fetch, shutdown } = await fixture()
   await atomicReleaseWrite(join(store.root, 'rolled-back-versions.json'), JSON.stringify(['1.1.0']))
-  await expect(service.check('stable')).rejects.toMatchObject({ code: 'UPGRADE_PATH_UNAVAILABLE' })
+  const update = await service.check('stable')
+  expect(update).toMatchObject({
+    version: '1.1.0',
+    retryConfirmation: { reason: 'legacy-rollback' },
+  })
+  await expect(service.download('stable')).rejects.toMatchObject({
+    code: 'UPDATE_RETRY_CONFIRMATION_REQUIRED',
+  })
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(0)
+  expect(shutdown).not.toHaveBeenCalled()
+  await expect(service.download('stable', update!.retryConfirmation!.token)).rejects.toThrow(
+    'integrity'
+  )
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(1)
+  expect(await store.rollbackHistory()).toHaveLength(1)
+})
+
+test.each(['update-rollback-history.json', 'rolled-back-versions.json'])(
+  'unreadable %s blocks checks and downloads until repaired',
+  async name => {
+    const { service, store, fetch, shutdown, restart } = await fixture()
+    const path = join(store.root, name)
+    await atomicReleaseWrite(path, '{')
+
+    await expect(service.check('stable')).rejects.toThrow()
+    await expect(service.download('stable')).rejects.toThrow()
+
+    expect(await readFile(path, 'utf8')).toBe('{')
+    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(0)
+    expect(shutdown).not.toHaveBeenCalled()
+    expect(restart).not.toHaveBeenCalled()
+    expect((await store.active())?.id).toBe('source')
+
+    await atomicReleaseWrite(path, '[]')
+    expect(await service.check('stable')).toMatchObject({ version: '1.1.0' })
+  }
+)
+
+test.each(['update-rollback-history.json', 'rolled-back-versions.json'])(
+  'damage to %s after preparation cannot bypass the install consent check',
+  async name => {
+    const { service, store, shutdown, restart } = await readyFixture()
+    const install = service.createInstallAction()
+    const path = join(store.root, name)
+    await atomicReleaseWrite(path, '{')
+
+    await expect(install()).rejects.toThrow()
+
+    expect(await readFile(path, 'utf8')).toBe('{')
+    expect(shutdown).not.toHaveBeenCalled()
+    expect(restart).not.toHaveBeenCalled()
+    expect((await store.active())?.id).toBe('source')
+    expect(await store.activation()).toBeNull()
+  }
+)
+
+test('retry consent is bound to the failed attempt and cannot authorize a different attempt', async () => {
+  const { service, store, fetch } = await fixture()
+  const failed = { token: 'first', version: '1.1.0', reason: 'startup-failed' }
+  await atomicReleaseWrite(
+    join(store.root, 'update-rollback-history.json'),
+    JSON.stringify([failed])
+  )
+  const update = await service.check('stable')
+  await atomicReleaseWrite(
+    join(store.root, 'update-rollback-history.json'),
+    JSON.stringify([{ ...failed, token: 'second' }])
+  )
+  await expect(service.download('stable', update!.retryConfirmation!.token)).rejects.toMatchObject({
+    code: 'UPDATE_RETRY_CONFIRMATION_REQUIRED',
+  })
+  expect(service.downloadProgress().update?.retryConfirmation?.token).not.toBe(
+    update!.retryConfirmation!.token
+  )
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(0)
+})
+
+test('local retry confirmation never overrides a revoked server release', async () => {
+  const { service, store, catalog, fetch } = await fixture()
+  await atomicReleaseWrite(join(store.root, 'rolled-back-versions.json'), JSON.stringify(['1.1.0']))
+  const update = await service.check('stable')
+  catalog.releases[1].revoked = true
+  await expect(service.download('stable', update!.retryConfirmation!.token)).rejects.toMatchObject({
+    code: 'UPGRADE_PATH_UNAVAILABLE',
+  })
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(0)
 })
 test('corrupt downloads fail once, retain the active release, and never shut down the app', async () => {
   const { service, fetch, shutdown, restart, store } = await fixture()
@@ -433,6 +518,33 @@ test('reuses a ready package without another catalog or archive request', async 
   expect(preparation).toHaveBeenCalledOnce()
 })
 
+test('reusing a prepared package binds the newly confirmed channel without downloading again', async () => {
+  const { service, store, catalog, fetch, preparation, shutdown } = await readyFixture()
+  await atomicReleaseWrite(
+    join(store.root, 'update-rollback-history.json'),
+    JSON.stringify([{ token: 'failed-attempt', version: '1.1.0', reason: 'startup-failed' }])
+  )
+  const stable = await service.check('stable')
+  expect(stable?.readyToInstall).toBe(false)
+  await service.download('stable', stable!.retryConfirmation!.token)
+  expect(service.downloadProgress().update?.readyToInstall).toBe(true)
+  catalog.channel = 'beta'
+  const beta = await service.check('beta')
+  expect(beta?.readyToInstall).toBe(false)
+  expect(beta!.retryConfirmation!.token).not.toBe(stable!.retryConfirmation!.token)
+  await expect(service.download('beta', stable!.retryConfirmation!.token)).rejects.toMatchObject({
+    code: 'UPDATE_RETRY_CONFIRMATION_REQUIRED',
+  })
+  fetch.mockClear()
+  await service.download('beta', beta!.retryConfirmation!.token)
+  expect(service.downloadProgress().update?.readyToInstall).toBe(true)
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(0)
+  expect(preparation).toHaveBeenCalledOnce()
+  shutdown.mockRejectedValueOnce(new Error('Reached shutdown after current retry consent'))
+  await expect(service.createInstallAction('1.1.0')()).rejects.toThrow('Reached shutdown')
+  expect(shutdown).toHaveBeenCalledOnce()
+})
+
 test('revalidates the requested channel after an earlier check changes the prepared offer', async () => {
   const { service, catalog, fetch, preparation } = await readyFixture()
   catalog.releases[1].notes = 'Stable offer'
@@ -495,7 +607,7 @@ test('invalidates a prepared package when its declared source identity changes',
 })
 
 test('checking clears readiness after the prepared plugin profile changes', async () => {
-  const { service, options } = await readyFixture()
+  const { service, options, fetch, preparation } = await readyFixture()
   await writeFile(
     join(currentCoreProfile(options.dataDirectory), 'package.json'),
     '{"name":"changed-profile"}'
@@ -504,6 +616,11 @@ test('checking clears readiness after the prepared plugin profile changes', asyn
   expect(await service.check('stable')).toMatchObject({ readyToInstall: false })
   expect(service.downloadProgress().phase).not.toBe('ready')
   expect(() => service.createInstallAction('1.1.0')).toThrow('not ready')
+  fetch.mockClear()
+  await service.download('stable')
+  expect(preparation).toHaveBeenCalledTimes(2)
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(0)
+  expect(service.downloadProgress().phase).toBe('ready')
 })
 
 test('installation revalidation rejects changed source identity before shutdown', async () => {
@@ -515,6 +632,36 @@ test('installation revalidation rejects changed source identity before shutdown'
   await expect(install()).rejects.toThrow('revoked or changed')
 
   expect(shutdown).not.toHaveBeenCalled()
+})
+
+test('a newer safe offer cannot bypass changed retry consent for the prepared package', async () => {
+  const { service, store, catalog, shutdown } = await readyFixture()
+  const record = { token: 'first', version: '1.1.0', reason: 'startup-failed' }
+  await atomicReleaseWrite(
+    join(store.root, 'update-rollback-history.json'),
+    JSON.stringify([record])
+  )
+  const offer = await service.check('stable')
+  await service.download('stable', offer!.retryConfirmation!.token)
+  publishNextTarget(catalog)
+  await atomicReleaseWrite(
+    join(store.root, 'update-rollback-history.json'),
+    JSON.stringify([{ ...record, token: 'second' }])
+  )
+  await expect(service.createInstallAction('1.1.0')()).rejects.toThrow('retry confirmation changed')
+  expect(shutdown).not.toHaveBeenCalled()
+})
+
+test('an unrelated failed newer offer cannot block installation of the prepared package', async () => {
+  const { service, store, catalog, shutdown } = await readyFixture()
+  publishNextTarget(catalog)
+  await atomicReleaseWrite(
+    join(store.root, 'update-rollback-history.json'),
+    JSON.stringify([{ token: 'unrelated', version: '1.2.0', reason: 'startup-failed' }])
+  )
+  shutdown.mockRejectedValueOnce(new Error('Reached shutdown for the selected package'))
+  await expect(service.createInstallAction('1.1.0')()).rejects.toThrow('Reached shutdown')
+  expect(shutdown).toHaveBeenCalledOnce()
 })
 
 test('duplicate readable schemas cannot hide a changed package compatibility declaration', async () => {
