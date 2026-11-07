@@ -4,6 +4,16 @@ import { describe, expect, test } from 'vitest'
 import { getAssistantReferences } from './codexReferences'
 
 describe('getAssistantReferences', () => {
+  test('extracts a document card from a URI-encoded Windows Markdown destination', () => {
+    const path = String.raw`D:\workspace\cart-fixture\cart-review.md`
+
+    expect(
+      getAssistantReferences([], `Verified [cart-fixture/cart-review.md](<${encodeURI(path)}>)`)
+    ).toEqual([
+      { path, title: 'cart-fixture/cart-review.md', lineStart: undefined, lineEnd: undefined },
+    ])
+  })
+
   test.each(['./design.md'])(
     'merges %s with the corresponding absolute assistant link',
     relativePath => {
