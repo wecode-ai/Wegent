@@ -95,6 +95,25 @@ fn native_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
     (handler, root)
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn native_history_uses_an_immutable_executable_with_isolated_quoted_data_paths() {
+    let (mut handler, root) = native_handler("native-static-fixture ' root");
+    let binary = root.join("native-history.sh");
+    assert!(fs::symlink_metadata(&binary)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_link(&binary).unwrap(),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native-history.sh")
+    );
+    let response = read_and_stop(&mut handler).await.unwrap();
+    assert_eq!(response["messages"][0]["content"], "Superseded");
+    assert!(root.join("requests.jsonl").is_file());
+    fs::remove_dir_all(root).unwrap();
+}
+
 async fn read_and_stop(handler: &mut RuntimeWorkRpcHandler) -> Result<Value, AppIpcError> {
     let result = handler
         .handle_runtime_rpc(json!({
