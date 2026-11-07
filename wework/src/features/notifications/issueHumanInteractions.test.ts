@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { IssueHumanRequest } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { issueHumanInteraction, issueQuestionIdentity } from './issueHumanInteractions'
+import {
+  isResolvedIssueQuestion,
+  issueHumanInteraction,
+  issueQuestionIdentity,
+} from './issueHumanInteractions'
 import { canReplyToInteraction } from './runtimeInteractions'
 import { replyToInteractionProject } from './interactionProjectReply'
 
@@ -24,6 +28,35 @@ const request: IssueHumanRequest = {
 }
 
 describe('shared Issue handoff', () => {
+  it('matches only validated canonical resolution while preserving explicit Issue and store scopes', () => {
+    const canonical = issueHumanInteraction(request, 'backend')
+    const native = { ...canonical, sharedRequest: undefined }
+    expect(isResolvedIssueQuestion(native, [canonical])).toBe(true)
+    expect(isResolvedIssueQuestion({ ...native, project: undefined }, [canonical])).toBe(true)
+    expect(
+      isResolvedIssueQuestion(
+        {
+          ...native,
+          id: 'alias',
+          task: { ...native.task, address: { ...native.task.address, deviceId: 'alias-device' } },
+        },
+        [canonical]
+      )
+    ).toBe(true)
+    for (const project of [
+      { ...native.project!, issueId: 'OTHER' },
+      { ...native.project!, projectId: 'OTHER' },
+      { ...native.project!, store: 'local' as const },
+    ])
+      expect(isResolvedIssueQuestion({ ...native, project }, [canonical])).toBe(false)
+    expect(
+      isResolvedIssueQuestion(
+        { ...native, payload: { ...native.payload, itemId: 'independent-question' } },
+        [canonical]
+      )
+    ).toBe(false)
+    expect(isResolvedIssueQuestion(native, [])).toBe(false)
+  })
   it('matches durable questions despite a native request ID or local device alias', () => {
     const canonical = issueHumanInteraction(request, 'backend')
     const native = {

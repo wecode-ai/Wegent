@@ -17,6 +17,19 @@ export function issueQuestionIdentity(item: RuntimeInteraction): string | null {
   ])
 }
 
+/** Only server-validated resolved questions supersede a retained native snapshot. */
+export function isResolvedIssueQuestion(
+  native: RuntimeInteraction,
+  validatedResolved: readonly RuntimeInteraction[]
+): boolean {
+  const identity = issueQuestionIdentity(native)
+  return validatedResolved.some(resolved =>
+    identity
+      ? identity === issueQuestionIdentity(resolved)
+      : !native.project && native.id === resolved.id
+  )
+}
+
 /** Shared Issue questions never require access to another member's private runtime. */
 export function issueHumanInteraction(
   request: IssueHumanRequest,

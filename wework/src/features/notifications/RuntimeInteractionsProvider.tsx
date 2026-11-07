@@ -18,7 +18,7 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import { useIssueHumanInteractions } from './useIssueHumanInteractions'
-import { issueQuestionIdentity } from './issueHumanInteractions'
+import { isResolvedIssueQuestion, issueQuestionIdentity } from './issueHumanInteractions'
 import { createIssueQuestionEnricher } from './enrichIssueQuestions'
 import {
   interactionResponse,
@@ -503,6 +503,7 @@ function RuntimeInteractionsState({
       .filter(
         item =>
           !item.answered &&
+          !isResolvedIssueQuestion(item, issueInteractions.resolved) &&
           !submitted.has(item.id) &&
           localStorage.getItem(acceptancePrefix + item.id) === null &&
           visible.has(item.task.key) &&
@@ -543,6 +544,7 @@ function RuntimeInteractionsState({
     source?.items,
     submitted,
     issueInteractions.items,
+    issueInteractions.resolved,
   ])
 
   useEffect(() => {
