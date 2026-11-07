@@ -628,20 +628,21 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn login_shell_fixture(directory: &std::path::Path) -> PathBuf {
+        let script_path = directory.join("shell");
+        let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = fixture_root.join("tests/fixtures/login-shell.sh");
+        // A parallel fork can inherit a freshly written executable's writer (ETXTBSY).
+        std::os::unix::fs::symlink(fixture_path, &script_path)
+            .expect("login shell fixture should be linked");
+        script_path
+    }
+
+    #[cfg(unix)]
     #[test]
     fn shell_environment_loader_falls_back_to_the_next_shell() {
-        use std::os::unix::fs::PermissionsExt;
-
         let directory = tempfile::tempdir().expect("temp directory should be created");
-        let script_path = directory.path().join("shell");
-        let script = format!(
-            "#!/bin/sh\nprintf 'startup noise{0}PATH=/Users/test/.npm-global/bin:/usr/bin\\n\
-             CUSTOM_ENV=loaded\\n{0}'\n",
-            SHELL_ENV_DELIMITER
-        );
-        std::fs::write(&script_path, script).expect("script should be written");
-        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
-            .expect("script should be executable");
+        let script_path = login_shell_fixture(directory.path());
 
         // The whole test binary shares a thread pool, so a generous timeout
         // keeps this stable while hundreds of other tests run in parallel.
@@ -672,19 +673,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn shell_environment_loader_uses_a_non_interactive_login_shell() {
-        use std::os::unix::fs::PermissionsExt;
-
         let directory = tempfile::tempdir().expect("temp directory should be created");
         let arguments_path = directory.path().join("arguments");
-        let script_path = directory.path().join("shell");
-        let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$1\" > '{1}'\nprintf '{0}PATH=/usr/bin\\n{0}'\n",
-            SHELL_ENV_DELIMITER,
-            arguments_path.display()
-        );
-        std::fs::write(&script_path, script).expect("script should be written");
-        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
-            .expect("script should be executable");
+        let script_path = login_shell_fixture(directory.path());
 
         load_shell_environment_from_candidates(
             &[script_path.display().to_string()],

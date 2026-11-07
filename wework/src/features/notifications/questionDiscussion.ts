@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useEffect, useRef } from 'react'
 import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   hasRequestUserInputResponse,
@@ -102,6 +102,9 @@ export function questionDiscussionDrafts(
 export interface QuestionDiscussionStore {
   accountKey: string
   sessions: Record<string, QuestionDiscussionSession>
+  panelRequest: QuestionDiscussionRequest | null
+  requestPanel(request: QuestionDiscussionRequest): void
+  consumePanelRequest(request: QuestionDiscussionRequest): void
   update(
     key: string,
     update: (session: QuestionDiscussionSession | undefined) => QuestionDiscussionSession
@@ -113,14 +116,55 @@ export interface QuestionDiscussionStore {
 }
 
 export const QuestionDiscussionStoreContext = createContext<QuestionDiscussionStore | null>(null)
+export type QuestionDiscussionTab = `discussion:${string}`
+export function isQuestionDiscussionTab(tab: string): tab is QuestionDiscussionTab {
+  return tab.startsWith('discussion:')
+}
+
+export interface QuestionDiscussionRequest {
+  key: string
+  source: RuntimeTaskAddress
+}
+
 export const QuestionDiscussionContext = createContext<{
   open(source: RuntimeTaskAddress, payload: RequestUserInputPayload): void
-  close(): void
-  isOpen?: boolean
+  restoreFocus?(key: string): void
+  request?: QuestionDiscussionRequest | null
+  consume?(request: QuestionDiscussionRequest): void
 } | null>(null)
 
 export function useQuestionDiscussion() {
   return useContext(QuestionDiscussionContext)
+}
+
+/** Route discussion commands only to the active pane of their source task. */
+export function useQuestionDiscussionWorkspacePanel({
+  address,
+  active,
+  openTab,
+}: {
+  address: RuntimeTaskAddress | null | undefined
+  active: boolean
+  openTab(tab: QuestionDiscussionTab): void
+}) {
+  const discussion = useQuestionDiscussion()
+  const request = discussion?.request
+  const consume = discussion?.consume
+  const handled = useRef<QuestionDiscussionRequest | null>(null)
+  useEffect(() => {
+    if (
+      !active ||
+      !request ||
+      handled.current === request ||
+      request.source.deviceId !== address?.deviceId ||
+      request.source.taskId !== address?.taskId
+    )
+      return
+    handled.current = request
+    consume?.(request)
+    const tab: QuestionDiscussionTab = `discussion:${request.key}`
+    openTab(tab)
+  }, [request, consume, active, address?.deviceId, address?.taskId, openTab])
 }
 
 export function questionDiscussionPrompt(

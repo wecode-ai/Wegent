@@ -19,6 +19,22 @@ import {
 import { cn } from '@/lib/utils'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
 import { canDiscussQuestion, useQuestionDiscussion } from './questionDiscussion'
+import { formatNotificationTime } from './notificationTime'
+
+function InteractionTime({ timestamp, testId }: { timestamp: number; testId: string }) {
+  const date = new Date(timestamp)
+  if (!Number.isFinite(date.getTime()) || timestamp <= 0) return null
+  return (
+    <time
+      data-testid={testId}
+      className="block text-xs text-text-secondary"
+      dateTime={date.toISOString()}
+      title={date.toLocaleString()}
+    >
+      {formatNotificationTime(timestamp)}
+    </time>
+  )
+}
 
 interface PendingWorkRow {
   id: string
@@ -280,6 +296,10 @@ export function RuntimeInteractionsPage({
                         {!history && entry.source === 'project' && (
                           <IssueWaitingTime since={entry.waitingSince ?? null} />
                         )}
+                        <InteractionTime
+                          timestamp={entry.timestamp}
+                          testId="interaction-list-time"
+                        />
                       </span>
                     </button>
                     {!history &&
@@ -362,6 +382,10 @@ export function RuntimeInteractionsPage({
                 <p className="mt-1 truncate text-sm text-text-secondary" title={row.title}>
                   {row.title}
                 </p>
+                <InteractionTime
+                  timestamp={'timestamp' in row ? row.timestamp : row.answeredAt}
+                  testId="interaction-detail-time"
+                />
               </div>
               {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
                 <button

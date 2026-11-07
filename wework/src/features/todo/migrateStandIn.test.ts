@@ -8,13 +8,14 @@ function fixture() {
     userId: 0,
     executionDeviceId: 'mac',
     version: 3,
+    lifecycle: { status: 'stopped' },
     primary: { enabled: false, prompt: 'Shared instructions', preferences: 'Prefer Chinese' },
     roles: [
       {
         ...newStandInRole('mac', 'review'),
         name: 'Reviewer',
         prompt: 'Review risks',
-        enabled: true,
+        enabled: false,
         workspace: { projectKey: 'private-local-path' },
         connections: [
           {
@@ -121,12 +122,12 @@ test('merges portable settings and role-visible memories without moving history 
   expect(f.imported.every(row => row.scope.kind === 'role' && row.scope.roleId === role.id)).toBe(
     true
   )
-  expect(f.personalSave.mock.calls.at(-1)?.[2]).toBe('mac')
-  expect(f.personalSave.mock.calls.at(-1)?.[1].roles[0].enabled).toBe(false)
-  expect(f.source.roles[0].enabled).toBe(true)
+  expect(f.personalSave.mock.calls.every(call => call[2] === 'cloud')).toBe(true)
+  expect(f.source.lifecycle?.status).toBe('stopped')
+  expect(f.source.roles[0].enabled).toBe(false)
 })
 
-test('a failed cloud memory write leaves local intake unchanged and retry reuses the prepared role', async () => {
+test('a failed cloud memory write leaves the whole source stopped and retry reuses the prepared role', async () => {
   const f = fixture()
   f.saveMemory.mockRejectedValueOnce(new Error('cloud offline'))
   await expect(migrateStandIn(f.api, f.input)).rejects.toThrow('cloud offline')
@@ -148,7 +149,7 @@ test('retry deduplicates already copied memories and never overwrites existing c
   expect(f.personalSave).toHaveBeenCalledTimes(calls)
 })
 
-test('a concurrent source edit prevents pausing local intake after copying', async () => {
+test('a concurrent source edit prevents committing migration after copying', async () => {
   const f = fixture()
   const original = f.personalGet.getMockImplementation()!
   let reads = 0
@@ -166,8 +167,17 @@ test('migrates the primary profile as a separate role without replacing the clou
   const role = await migrateStandIn(f.api, { ...f.input, roleId: undefined })
   expect(role.name).toBe('My stand-in')
   expect(f.imported.map(row => row.content)).toEqual(['Shared memory'])
-  expect(f.personalSave.mock.calls.at(-1)?.[1].primary?.enabled).toBe(false)
-  expect(f.personalSave.mock.calls.at(-1)?.[1].roles[0].enabled).toBe(true)
+  expect(f.source.primary?.enabled).toBe(false)
+  expect(f.source.roles[0].enabled).toBe(false)
+  expect(f.personalSave.mock.calls.every(call => call[2] === 'cloud')).toBe(true)
+})
+
+test('requires a completed whole-profile stop before writing any target configuration or memories', async () => {
+  const f = fixture()
+  delete f.source.lifecycle
+  await expect(migrateStandIn(f.api, f.input)).rejects.toMatchObject({ code: 'not_stopped' })
+  expect(f.personalSave).not.toHaveBeenCalled()
+  expect(f.saveMemory).not.toHaveBeenCalled()
 })
 
 test('rejects same-device transfers before reading or writing any data', async () => {

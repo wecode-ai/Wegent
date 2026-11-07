@@ -75,6 +75,8 @@ mod stand_in;
 
 #[path = "personal_stand_in.rs"]
 pub mod personal_stand_in;
+#[path = "stand_in_lifecycle.rs"]
+mod stand_in_lifecycle;
 
 #[path = "stand_in_proposals.rs"]
 mod stand_in_proposals;

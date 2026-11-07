@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 
 import { STARTUP_PROGRESS_CHANNEL, type StartupProgressUpdate } from './startup-progress.js'
 import type { StartupWindowBounds } from './startup-window-handoff.js'
+import { finishStartupAnimation } from './startup-tasks.js'
 
 export type StartupSplashEventName =
   | 'created'
@@ -280,13 +281,17 @@ export class StartupSplash {
       options.shouldContinue()
     this.state = 'completing'
     this.record('completion-started')
-    const completion = (await this.options.window.webContents.executeJavaScript(
-      `window.weworkStartupSplash.complete(${JSON.stringify(options.update)})`
+    const completion = (await finishStartupAnimation(() =>
+      this.options.window.webContents.executeJavaScript(
+        `window.weworkStartupSplash.complete(${JSON.stringify(options.update)})`
+      )
     )) as StartupSplashCompletion
     if (!active()) return this.interruptedHandoff()
     this.record('completed')
-    await this.capture(options.capturePath)
+    await finishStartupAnimation(() => this.capture(options.capturePath))
     if (!active()) return this.interruptedHandoff()
+    // Native window preparation has its own bounds/capture deadlines. It must
+    // not consume the subsequent fade's independent animation budget.
     const bounds = await options.prepareMainWindow()
     if (!active()) return this.interruptedHandoff()
     this.handoffEvidence = {
@@ -296,7 +301,9 @@ export class StartupSplash {
       bounds,
     }
     this.record('main-prepared')
-    if (!(await this.fadeOut(completion.reducedMotion, active))) return this.interruptedHandoff()
+    if (!(await finishStartupAnimation(() => this.fadeOut(completion.reducedMotion, active)))) {
+      return this.interruptedHandoff()
+    }
     return this.close()
   }
 

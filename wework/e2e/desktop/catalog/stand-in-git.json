@@ -10,6 +10,7 @@
     }
   },
   "paths": [
+    "wework/e2e/desktop/modules/stand-in-instance-flows.mjs",
     "wework/e2e/desktop/scenarios/stand-in-git.scenario.mjs",
     "wework/e2e/desktop/modules/stand-in-git-readonly.mjs",
     "wework/src/features/todo/StandInGitConnections*",

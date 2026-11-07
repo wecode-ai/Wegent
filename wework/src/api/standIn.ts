@@ -20,6 +20,18 @@ export interface StandInOnboardingResult {
   reviewTemplate: Omit<Automation, 'source'>
 }
 
+export interface StandInBindingTarget {
+  userId: number
+  deviceId: string
+  backendUrl?: string
+}
+
+export interface StandInInstanceBinding {
+  version: number
+  status: 'unbound' | 'active' | 'stopping' | 'stopped'
+  target: StandInBindingTarget | null
+}
+
 export interface ConnectionProviderDescriptor {
   id: string
   displayName: string
@@ -198,6 +210,17 @@ export interface StandInExecutorApi {
     update?: ProjectCoordinationUpdate
   ): Promise<ProjectCoordinationState>
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
+  binding(
+    deviceId: string,
+    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop',
+    version?: number,
+    target?: StandInBindingTarget
+  ): Promise<StandInInstanceBinding>
+  lifecycle(
+    userId: number,
+    deviceId: string,
+    operation: 'start' | 'stop'
+  ): Promise<PersonalStandInSettings>
   taskCommands: RuntimeTaskCommandsApi
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
@@ -530,6 +553,17 @@ export function createStandInExecutorApi(
     },
     personalGet: (userId, deviceId) =>
       request('runtime.stand_in.personal.get', { userId }, deviceId),
+    binding: (deviceId, operation = 'get', version, target) =>
+      request('runtime.stand_in.binding', { operation, version, target }, deviceId),
+    lifecycle: async (userId, deviceId, operation) => {
+      const saved = await request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.lifecycle',
+        { userId, operation },
+        deviceId
+      )
+      publishPersonalStandIn(saved)
+      return saved
+    },
     personalSave: async (userId, settings, deviceId) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
