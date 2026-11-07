@@ -318,6 +318,10 @@ test('balancing never multiplies expensive conditional preparation from the orig
   const testStep = steps.find(step => step.name === 'Run Windows Wework desktop Core shard E2E')
   assert.ok(testStep?.['timeout-minutes'] > 0)
   assert.ok(Math.max(...completeBalancedLoads) < testStep['timeout-minutes'] * 60)
+  assert.ok(
+    Math.max(...completeBalancedLoads) + evidence.runnerOverheadSeconds <
+      testStep['timeout-minutes'] * 60
+  )
 })
 
 test('timing evidence contains positive successful samples with source run links', () => {
@@ -332,4 +336,34 @@ test('timing evidence contains positive successful samples with source run links
   for (const seconds of Object.values(evidence.preparationSeconds))
     assert.ok(Number.isFinite(seconds) && seconds > 0)
   assert.match(evidence.preparationSource, /\/actions\/runs\/\d+\/job\/\d+$/)
+  assert.ok(Number.isFinite(evidence.runnerOverheadSeconds) && evidence.runnerOverheadSeconds > 0)
+  assert.match(evidence.runnerOverheadSource, /\/actions\/runs\/\d+\/job\/\d+$/)
+})
+
+test('replayed successful Windows observations fit the step deadline with runner overhead', () => {
+  const replay = JSON.parse(
+    readFileSync(new URL('./fixtures/wework-windows-deadline-replay.json', import.meta.url))
+  )
+  const evidence = JSON.parse(
+    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+  )
+  const workflow = readFileSync(new URL('../workflows/wework-e2e.yml', import.meta.url), 'utf8')
+  const budget =
+    Number(
+      workflow.match(
+        /name: Run Windows Wework desktop Core shard E2E[\s\S]*?timeout-minutes: (\d+)/
+      )?.[1]
+    ) * 60
+  assert.ok(budget > 0)
+  const observed = { ...evidence.seconds, ...replay.seconds }
+  for (const shard of balanceWindowsMatrix(completeMatrix).include) {
+    if (['core-9', 'core-10'].includes(shard.id)) continue
+    const seconds = shard.segments
+      .split(',')
+      .reduce(
+        (total, segment) => total + checkpointSeconds(segment, observed),
+        replay.runnerOverheadSeconds
+      )
+    assert.ok(seconds < budget, `${shard.id}: replay ${seconds}s exceeds ${budget}s`)
+  }
 })

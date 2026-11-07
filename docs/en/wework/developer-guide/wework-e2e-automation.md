@@ -217,6 +217,16 @@ retain their original matrix. The two Core benchmarks keep dedicated runners.
 Cloud uses 8 shards.
 
 Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
+Refresh existing weights as scenarios evolve, not only unknown entries. In run
+42411289396, Core 2 and 6 reached the step deadline after all completed checkpoints
+passed; profile-settings and plugin-bridge had been underestimated for three runs.
+Ordinary-shard weights use medians of successful scheduler start/end durations,
+rounded up, from the three latest evidenced runs. Unobserved weights and exclusive
+benchmarks remain unchanged. Budget checks also include the largest measured
+successful runner overhead of 125 seconds for standard-user startup, orchestration
+gaps and cleanup. An immutable replay fixture contains only successful timings
+and source links, not raw logs. Old weights fail that replay; refreshed weights
+still require full CI verification.
 In run `42400229326`, Core 4 and 8 exhausted their step budgets while still
 executing checkpoints normally, whereas Core 3 finished after only its previously
 unmeasured Dots checkpoint. Recording successful `dots-closed-loops` (178 seconds)
