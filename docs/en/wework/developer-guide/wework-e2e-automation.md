@@ -232,6 +232,10 @@ Do not combine serial materialization and runtime startup into one phase budget.
 `usesReleasePackageRuntimeAssets` only selects asset ownership, not this mode:
 historical upgrade sources may lack complete phase logs. Ordinary startup keeps
 its original total budget.
+Codex idle-only restarts and configuration mutations must also protect turn
+preparation: thread resume and MCP authority reload own the shared process before
+native thread admission. Background model-catalog refresh must defer restarting
+during this window, not terminate the process or bypass Native teardown barriers.
 
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
