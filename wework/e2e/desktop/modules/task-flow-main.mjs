@@ -1282,6 +1282,8 @@ async function main() {
         backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
+        initialExecutorLatestVersion:
+          SELECTED_DESKTOP_SEGMENT === 'cloud-device-lifecycle' ? '1.0.0' : undefined,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
         scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
