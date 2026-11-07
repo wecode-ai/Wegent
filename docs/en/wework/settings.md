@@ -354,12 +354,18 @@ Open **Settings → Personal → Appearance**. Changes stay on this device. **Re
 | Feature                                  | Steps and result                                                                                                            |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Theme                                    | Select light, dark or system                                                                                                |
+| Light theme, Dark theme                  | Choose independent named palettes from 29 names and 44 light/dark variants matching the installed ChatGPT Desktop, including Tokyo Night; system mode uses the corresponding choice |
 | Accent, Contrast                         | Choose a color or move the slider to adjust emphasis and contrast                                                           |
+| Restore theme accent                     | After customizing the accent, click Restore to use the current light/dark theme's accent again; fonts and background images remain unchanged |
 | Translucent sidebar                      | Toggle transparency; system and window background affect the result                                                         |
 | Use different light and dark backgrounds | Enable to configure each mode separately; disable for a shared background                                                   |
 | Background image                         | Select or remove an image on the relevant mode card; adjust visibility and blur and choose main, sidebar or top-bar regions |
 | UI font, UI font size                    | Enter the interface font and adjust its size                                                                                |
 | Code font, Code font size                | Set the font and size for code/monospace content separately                                                                 |
+
+Named themes cover application interfaces, menus, detached windows, code, terminals and visualizations.
+Startup flow and startup colors follow upstream, and remote Wegent Agent content retains its own theme.
+Reselecting a palette resets its color overrides; the light and dark choices remain independent.
 
 ## Context and default instructions
 
