@@ -4,8 +4,8 @@ import { join, resolve } from 'node:path'
 
 const APPEARANCE_KEY = 'wework.appearance'
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
-// The Wework default is the ChatGPT entry in the named theme catalogue.
-// Inspect the Wework tokens and their actual consumers as well as the host body.
+// The desktop ChatGPT defaults are owned by the named theme catalogue.
+// Core DSH owns body styles; inspect the Wework tokens and their actual consumers.
 const WEWORK_PALETTE = {
   light: { background: '255 255 255', text: '13 13 13' },
   dark: { background: '17 17 17', text: '252 252 252' },
@@ -77,6 +77,11 @@ export async function captureStartupThemeEvidence({
   assert.equal(snapshot.theme, mode, 'The native startup resolved a different target theme')
   assert.equal(snapshot.state, 'closed')
   assert.equal(snapshot.handoff?.completion?.progressNow, 100)
+  const stageAppearance = snapshot.handoff.completion.appearance
+  assert.equal(stageAppearance.theme, mode, 'The splash rendered a different theme')
+  assert.equal(stageAppearance.colorScheme, mode)
+  assert.equal(stageAppearance.background, mode === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)')
+  assert.equal(stageAppearance.footerBackground, stageAppearance.background)
   const createdAt = snapshot.events.find(event => event.name === 'created')?.timestamp
   const closedAt = snapshot.events.find(event => event.name === 'closed')?.timestamp
   assert.ok(createdAt >= seed.seededAt, 'The splash evidence belongs to an earlier launch')
@@ -143,7 +148,7 @@ export async function captureStartupThemeEvidence({
   )
   const evidence = {
     targetTheme: mode,
-    stageAppearance: 'persisted-theme',
+    stageAppearance,
     source: 'native-electron-capturePage',
     generation: { seededAt: seed.seededAt, createdAt, documentTimeOrigin: timeOrigin, closedAt },
     rendered,

@@ -17,7 +17,7 @@
     "wework/src/lib/xterm-theme*",
     "wework/src/lib/visualization-theme*",
     "wework/electron/src/host/appearance-theme*",
-    "wework/electron/src/shell/*",
+    "wework/src/components/code/PierreCodeProvider.tsx",
     "wework/e2e/desktop/modules/appearance-theme.mjs"
   ]
 }

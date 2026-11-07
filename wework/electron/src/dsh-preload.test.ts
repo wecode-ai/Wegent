@@ -17,37 +17,6 @@ async function preloadSource() {
 }
 
 describe('DSH preload', () => {
-  test.each(['file:', 'http:'])(
-    'limits the startup palette bridge to local documents: %s',
-    async protocol => {
-      const exposeInMainWorld = vi.fn()
-      const on = vi.fn()
-      const off = vi.fn()
-      const compiled = transpileModule(await preloadSource(), {
-        compilerOptions: { module: ModuleKind.CommonJS },
-      }).outputText
-      runInNewContext(compiled, {
-        exports: {},
-        process: { env: {} },
-        location: { protocol },
-        require: () => ({ contextBridge: { exposeInMainWorld }, ipcRenderer: { on, off } }),
-      })
-      const appearance = exposeInMainWorld.mock.calls.find(([name]) => name === 'weworkAppearance')
-      expect(Boolean(appearance)).toBe(protocol === 'file:')
-      if (!appearance) return
-
-      const listener = vi.fn()
-      const dispose = appearance[1].onChanged(listener)
-      const [channel, handler] = on.mock.calls[0]
-      expect(channel).toBe('appearance:changed')
-      const snapshot = { mode: 'dark', themeId: 'tokyo-night', variables: {} }
-      handler({}, snapshot)
-      expect(listener).toHaveBeenCalledWith(snapshot)
-      dispose()
-      expect(off).toHaveBeenCalledWith(channel, handler)
-    }
-  )
-
   test('routes candidate lifecycle and expected owner through the credential IPC boundary', async () => {
     const exposeInMainWorld = vi.fn()
     const invoke = vi.fn()

@@ -6,7 +6,10 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/40718345759",
     "https://github.com/wecode-ai/Wegent/actions/runs/40747839908",
     "https://github.com/wecode-ai/Wegent/actions/runs/41393673619",
-    "https://github.com/wecode-ai/Wegent/actions/runs/42048650293"
+    "https://github.com/wecode-ai/Wegent/actions/runs/42048650293",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42255324858",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42264710526",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42296468457"
   ],
   "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
   "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
@@ -132,6 +135,7 @@
     "running-plan-history": 40,
     "running-sidebar-state": 73.5,
     "runtime-input-answer-persistence": 75.5,
+    "runtime-policy": 48,
     "runtime-task-queue": 84.5,
     "send-key-preference": 17.5,
     "split-workbench": 140,
@@ -144,6 +148,7 @@
     "stand-in-connections": 46,
     "stand-in-controls": 50.5,
     "stand-in-email": 84,
+    "stand-in-git": 54,
     "stand-in-identities": 49,
     "stand-in-list-confirmation": 157,
     "stand-in-mcp": 33.5,

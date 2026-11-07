@@ -5,8 +5,6 @@ import {
   type AppearanceThemeVariantSnapshot,
 } from './appearance-theme-contract.js'
 
-export const APPEARANCE_THEME_CHANNEL = 'appearance:changed'
-
 export interface ResolvedHostAppearance extends AppearanceThemeVariantSnapshot {
   mode: AppearanceThemeMode
   backgroundColor: string
@@ -15,10 +13,6 @@ export interface ResolvedHostAppearance extends AppearanceThemeVariantSnapshot {
 interface AppearanceWindow {
   isDestroyed: () => boolean
   setBackgroundColor: (color: string) => void
-  webContents: {
-    isDestroyed: () => boolean
-    send: (channel: string, appearance: ResolvedHostAppearance) => void
-  }
 }
 
 interface AppearanceHost {
@@ -26,7 +20,7 @@ interface AppearanceHost {
     themeSource: AppearanceThemeMode | 'system'
     readonly shouldUseDarkColors: boolean
   }
-  windows: () => Array<{ window: AppearanceWindow | null; transparent?: boolean }>
+  windows: () => Array<AppearanceWindow | null>
 }
 
 const DEFAULT_VARIABLES = {
@@ -81,7 +75,7 @@ export function resolveHostAppearance(
   }
 }
 
-/** Keeps native frames and the independent startup documents on the same palette. */
+/** Keeps opaque workbench windows on the selected palette after startup. */
 export class DesktopAppearanceController {
   private preferences: Record<string, unknown> = {}
 
@@ -97,12 +91,9 @@ export class DesktopAppearanceController {
     const source = mode === 'light' || mode === 'dark' ? mode : 'system'
     if (this.host.nativeTheme.themeSource !== source) this.host.nativeTheme.themeSource = source
     const appearance = this.current()
-    for (const { window, transparent } of this.host.windows()) {
+    for (const window of this.host.windows()) {
       if (!window || window.isDestroyed()) continue
-      if (!transparent) window.setBackgroundColor(appearance.backgroundColor)
-      if (!window.webContents.isDestroyed()) {
-        window.webContents.send(APPEARANCE_THEME_CHANNEL, appearance)
-      }
+      window.setBackgroundColor(appearance.backgroundColor)
     }
   }
 }

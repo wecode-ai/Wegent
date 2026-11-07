@@ -5,7 +5,7 @@ export interface AppearanceThemeVariantSnapshot {
   variables: Record<string, string>
 }
 
-/** Both variants are saved so startup can follow a changed system appearance. */
+/** Native workbench windows resolve the selected palette for either system mode. */
 export interface AppearanceThemeSnapshot {
   light: AppearanceThemeVariantSnapshot
   dark: AppearanceThemeVariantSnapshot

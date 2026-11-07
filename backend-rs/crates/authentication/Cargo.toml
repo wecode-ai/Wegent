@@ -1,0 +1,37 @@
+[package]
+name = "wegent-authentication"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Password and device authentication endpoints"
+
+[dependencies]
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt"] }
+wegent-backend-config = { path = "../config" }
+wegent-identity = { path = "../identity" }
+wegent-http-compat = { path = "../http-compat" }
+brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
+anyhow = "1"
+base64 = "0.23.1"
+bcrypt = "0.19"
+brz-http = { version = "=0.0.14", features = ["json"] }
+brz-http-server = { version = "=0.0.33", features = ["macros"] }
+brz-json = "=0.0.11"
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+erased-serde = "0.4"
+getrandom = "0.2"
+jsonwebtoken = { version = "9.3", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }
+wegent-identity = { path = "../identity", features = ["test-support"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }

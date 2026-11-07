@@ -27,9 +27,11 @@ import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 import { PluginPublicationProgressCard } from './PluginPublicationProgressCard'
 import { BundledPluginUpdateNotice } from './BundledPluginUpdateNotice'
 import { installedPluginMarketplaceId } from './pluginDistribution'
+import { PluginDetailLoadingSkeleton } from './PluginDetailLoadingSkeleton'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
+  detailLoading?: boolean
   onBack: () => void
   backLabel?: string
   onToggle: () => void
@@ -339,21 +341,6 @@ function pluginCapabilitySummary(plugin: InstalledPluginItem): string {
   return componentTypes.join(', ') || 'Plugin'
 }
 
-function pluginDeviceSummary(plugin: InstalledPluginItem): string {
-  const devices = plugin.raw.status.devices ?? []
-  if (devices.length === 0) return ''
-  const installed = devices.filter(device => device.state === 'installed').length
-  const failed = devices.filter(device => device.state === 'failed').length
-  const pending = devices.length - installed - failed
-  return [
-    `${installed}/${devices.length} 已安装`,
-    pending > 0 ? `${pending} 等待同步` : '',
-    failed > 0 ? `${failed} 失败` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
-}
-
 function componentTypeLabel(type: string, t: ReturnType<typeof useTranslation>['t']): string {
   switch (type) {
     case 'skill':
@@ -449,6 +436,7 @@ function detailRows(
 
 export function PluginDetailView({
   plugin,
+  detailLoading = false,
   onBack,
   backLabel,
   onToggle,
@@ -668,7 +656,6 @@ export function PluginDetailView({
   const version = formatPluginVersion(plugin.version)
   const description = pluginDisplayDescription(plugin)
   const guideExamples = pluginGuideExamples(plugin)
-  const deviceSummary = pluginDeviceSummary(plugin)
   const PrimaryActionIcon =
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
   const showMenuCopy = Boolean(tertiaryActionLabel && onTertiaryAction)
@@ -884,9 +871,6 @@ export function PluginDetailView({
               {headerMetadata.join(' · ')}
               {version ? ` · v${version}` : ''}
             </p>
-            {deviceSummary && (
-              <p className="mt-1 text-xs leading-4 text-text-muted">{deviceSummary}</p>
-            )}
             {submissionStatus === 'pending' && (
               <p
                 data-testid="plugin-detail-submission-status"
@@ -955,188 +939,194 @@ export function PluginDetailView({
           </div>
         ) : null}
 
-        <p className="mt-6 rounded-xl bg-surface px-5 py-4 text-sm leading-5 text-text-secondary">
-          {description}
-        </p>
+        {detailLoading ? (
+          <PluginDetailLoadingSkeleton />
+        ) : (
+          <>
+            <p className="mt-6 rounded-xl bg-surface px-5 py-4 text-sm leading-5 text-text-secondary">
+              {description}
+            </p>
 
-        {installedPluginMarketplaceId(raw) === 'wework-personal' && (
-          <BundledPluginUpdateNotice name={raw.spec.source.pluginKey} />
-        )}
-        {actionError && (
-          <div
-            role="alert"
-            data-testid="plugin-detail-action-error"
-            className="mt-4 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm leading-5 text-destructive"
-          >
-            {actionError}
-            {onRetryAction && (
-              <Button
-                variant="outline"
-                className="ml-3"
-                data-testid="plugin-detail-load-retry"
-                onClick={onRetryAction}
-              >
-                {t('common.retry', '重试')}
-              </Button>
+            {installedPluginMarketplaceId(raw) === 'wework-personal' && (
+              <BundledPluginUpdateNotice name={raw.spec.source.pluginKey} />
             )}
-          </div>
-        )}
-
-        {guideTemplateSection}
-
-        {accessScopeSection}
-
-        {publication && onViewPublication ? (
-          <PluginPublicationProgressCard
-            publication={publication}
-            withdrawing={publicationWithdrawing}
-            onView={onViewPublication}
-            onWithdraw={onWithdrawPublication}
-            onCreateRevision={onCreatePublicationRevision}
-            historyCount={publicationHistoryCount}
-            onViewHistory={onViewPublicationHistory}
-          />
-        ) : null}
-
-        {autoUpdateSection}
-
-        <PluginConnectorSection
-          key={plugin.id}
-          connectors={plugin.raw.spec.components.connectors ?? []}
-          installed={isInstalled}
-          authBySlug={connectorAuthBySlug}
-          busySlug={connectorAuthBusySlug}
-          onManage={onManageConnector}
-        />
-
-        {capabilityItems.length > 0 && (
-          <section className="mt-7 space-y-3" data-testid="plugin-detail-capabilities">
-            <h2 className="text-base font-medium leading-5 text-text-primary">
-              {t('workbench.plugin_detail_capabilities', '包含能力')}{' '}
-              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
-                {capabilityItems.length}
-              </span>
-            </h2>
-            <div className="overflow-hidden rounded-xl border border-border/30">
-              {capabilityItems.map(item => {
-                const Icon = componentIcon(item.type)
-                const enabled = componentStates[item.componentKey] ?? true
-                const rowBody = (
-                  <>
-                    <div className="mt-1 flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 space-y-0.5">
-                      <p className="truncate text-xs leading-4 text-text-muted">
-                        {componentTypeLabel(item.type, t)}
-                      </p>
-                      <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
-                      <p className="line-clamp-2 text-sm leading-5 text-text-secondary">
-                        {item.description}
-                      </p>
-                    </div>
-                  </>
-                )
-                return (
-                  <div
-                    key={item.key}
-                    className={[
-                      'grid grid-cols-[38px_minmax(0,1fr)_auto] items-start gap-3 border-b border-border/25 px-4 py-4 transition-colors last:border-b-0',
-                      item.type === 'skill' ? 'hover:bg-muted' : '',
-                    ].join(' ')}
-                  >
-                    {item.type === 'skill' ? (
-                      <button
-                        type="button"
-                        data-testid={`plugin-skill-open-${item.name}`}
-                        className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
-                        onClick={() => setSelectedSkill(item)}
-                      >
-                        {rowBody}
-                      </button>
-                    ) : (
-                      <div className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3">
-                        {rowBody}
-                      </div>
-                    )}
-                    {item.toggleable && isInstalled && !shareRecipient && (
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        aria-label={item.name}
-                        data-testid={`plugin-component-toggle-${item.componentKey}`}
-                        className={[
-                          'relative h-[22px] w-[38px] rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
-                          enabled ? 'bg-primary' : 'bg-border',
-                        ].join(' ')}
-                        onClick={() => onComponentToggle(item.componentKey, !enabled)}
-                      >
-                        <span
-                          className={[
-                            'absolute left-[3px] top-[3px] h-4 w-4 rounded-full shadow-sm transition-transform',
-                            enabled ? 'bg-primary-contrast' : 'bg-background',
-                            enabled ? 'translate-x-4' : 'translate-x-0',
-                          ].join(' ')}
-                        />
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        )}
-
-        <section className="mt-7 space-y-3" data-testid="plugin-detail-info">
-          <h2 className="text-base font-medium leading-5 text-text-primary">
-            {t('workbench.plugin_detail_info', '信息')}
-          </h2>
-          <dl className="border-t border-border/25">
-            {rows.map(row => (
+            {actionError && (
               <div
-                key={row.label}
-                className="grid gap-2 border-b border-border/25 py-3 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]"
+                role="alert"
+                data-testid="plugin-detail-action-error"
+                className="mt-4 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm leading-5 text-destructive"
               >
-                <dt className="font-medium text-text-muted">{row.label}</dt>
-                <dd className="min-w-0 text-text-primary">
-                  {row.href ? (
-                    <a
-                      href={row.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-focus hover:underline"
-                    >
-                      {row.value}
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  ) : (
-                    row.value
-                  )}
-                </dd>
-              </div>
-            ))}
-            {onOpenOriginPersonalPlugin ? (
-              <div className="grid gap-2 border-b border-border/25 py-3 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]">
-                <dt className="font-medium text-text-muted">
-                  {t('workbench.plugin_detail_origin_personal', '个人原件')}
-                </dt>
-                <dd>
-                  <button
-                    type="button"
-                    data-testid="plugin-detail-open-origin-personal"
-                    className="inline-flex items-center gap-1 text-focus hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
-                    onClick={onOpenOriginPersonalPlugin}
+                {actionError}
+                {onRetryAction && (
+                  <Button
+                    variant="outline"
+                    className="ml-3"
+                    data-testid="plugin-detail-load-retry"
+                    onClick={onRetryAction}
                   >
-                    {originPersonalActionLabel ||
-                      t('workbench.plugin_detail_view_origin_personal', '查看个人创建版本')}
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
-                </dd>
+                    {t('common.retry', '重试')}
+                  </Button>
+                )}
               </div>
+            )}
+
+            {guideTemplateSection}
+
+            {accessScopeSection}
+
+            {publication && onViewPublication ? (
+              <PluginPublicationProgressCard
+                publication={publication}
+                withdrawing={publicationWithdrawing}
+                onView={onViewPublication}
+                onWithdraw={onWithdrawPublication}
+                onCreateRevision={onCreatePublicationRevision}
+                historyCount={publicationHistoryCount}
+                onViewHistory={onViewPublicationHistory}
+              />
             ) : null}
-          </dl>
-        </section>
+
+            {autoUpdateSection}
+
+            <PluginConnectorSection
+              key={plugin.id}
+              connectors={plugin.raw.spec.components.connectors ?? []}
+              installed={isInstalled}
+              authBySlug={connectorAuthBySlug}
+              busySlug={connectorAuthBusySlug}
+              onManage={onManageConnector}
+            />
+
+            {capabilityItems.length > 0 && (
+              <section className="mt-7 space-y-3" data-testid="plugin-detail-capabilities">
+                <h2 className="text-base font-medium leading-5 text-text-primary">
+                  {t('workbench.plugin_detail_capabilities', '包含能力')}{' '}
+                  <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                    {capabilityItems.length}
+                  </span>
+                </h2>
+                <div className="overflow-hidden rounded-xl border border-border/30">
+                  {capabilityItems.map(item => {
+                    const Icon = componentIcon(item.type)
+                    const enabled = componentStates[item.componentKey] ?? true
+                    const rowBody = (
+                      <>
+                        <div className="mt-1 flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 space-y-0.5">
+                          <p className="truncate text-xs leading-4 text-text-muted">
+                            {componentTypeLabel(item.type, t)}
+                          </p>
+                          <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
+                          <p className="line-clamp-2 text-sm leading-5 text-text-secondary">
+                            {item.description}
+                          </p>
+                        </div>
+                      </>
+                    )
+                    return (
+                      <div
+                        key={item.key}
+                        className={[
+                          'grid grid-cols-[38px_minmax(0,1fr)_auto] items-start gap-3 border-b border-border/25 px-4 py-4 transition-colors last:border-b-0',
+                          item.type === 'skill' ? 'hover:bg-muted' : '',
+                        ].join(' ')}
+                      >
+                        {item.type === 'skill' ? (
+                          <button
+                            type="button"
+                            data-testid={`plugin-skill-open-${item.name}`}
+                            className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
+                            onClick={() => setSelectedSkill(item)}
+                          >
+                            {rowBody}
+                          </button>
+                        ) : (
+                          <div className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3">
+                            {rowBody}
+                          </div>
+                        )}
+                        {item.toggleable && isInstalled && !shareRecipient && (
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={enabled}
+                            aria-label={item.name}
+                            data-testid={`plugin-component-toggle-${item.componentKey}`}
+                            className={[
+                              'relative h-[22px] w-[38px] rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
+                              enabled ? 'bg-primary' : 'bg-border',
+                            ].join(' ')}
+                            onClick={() => onComponentToggle(item.componentKey, !enabled)}
+                          >
+                            <span
+                              className={[
+                                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full shadow-sm transition-transform',
+                                enabled ? 'bg-primary-contrast' : 'bg-background',
+                                enabled ? 'translate-x-4' : 'translate-x-0',
+                              ].join(' ')}
+                            />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+
+            <section className="mt-7 space-y-3" data-testid="plugin-detail-info">
+              <h2 className="text-base font-medium leading-5 text-text-primary">
+                {t('workbench.plugin_detail_info', '信息')}
+              </h2>
+              <dl className="border-t border-border/25">
+                {rows.map(row => (
+                  <div
+                    key={row.label}
+                    className="grid gap-2 border-b border-border/25 py-3 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]"
+                  >
+                    <dt className="font-medium text-text-muted">{row.label}</dt>
+                    <dd className="min-w-0 text-text-primary">
+                      {row.href ? (
+                        <a
+                          href={row.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-focus hover:underline"
+                        >
+                          {row.value}
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      ) : (
+                        row.value
+                      )}
+                    </dd>
+                  </div>
+                ))}
+                {onOpenOriginPersonalPlugin ? (
+                  <div className="grid gap-2 border-b border-border/25 py-3 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]">
+                    <dt className="font-medium text-text-muted">
+                      {t('workbench.plugin_detail_origin_personal', '个人原件')}
+                    </dt>
+                    <dd>
+                      <button
+                        type="button"
+                        data-testid="plugin-detail-open-origin-personal"
+                        className="inline-flex items-center gap-1 text-focus hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
+                        onClick={onOpenOriginPersonalPlugin}
+                      >
+                        {originPersonalActionLabel ||
+                          t('workbench.plugin_detail_view_origin_personal', '查看个人创建版本')}
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            </section>
+          </>
+        )}
       </div>
       {selectedSkill && (
         <SkillDetailDialog

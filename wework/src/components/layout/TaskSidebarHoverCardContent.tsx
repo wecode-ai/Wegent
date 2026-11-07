@@ -67,10 +67,7 @@ export function TaskSidebarHoverCardContent({
 }: TaskSidebarHoverCardContentProps) {
   const { t } = useTranslation('common')
   return (
-    <div
-      data-testid={`runtime-local-task-hover-content-${taskId}`}
-      className="space-y-2.5 font-normal"
-    >
+    <div data-testid={`runtime-local-task-hover-content-${taskId}`} className="space-y-2.5">
       <div className="flex min-w-0 items-start gap-3">
         <div className="line-clamp-2 min-w-0 flex-1 text-base font-medium leading-5 text-text-primary">
           {title}

@@ -1,0 +1,16 @@
+[package]
+name = "wegent-mcp-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "MCP configuration, deferred-tool protocol, and context rebinding"
+
+[dependencies]
+http = "1"
+wegent-protocol = { path = "../../../shared/rust/protocol" }
+wegent-runtime-logging = { path = "../logging" }
+regex = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+url = "2"

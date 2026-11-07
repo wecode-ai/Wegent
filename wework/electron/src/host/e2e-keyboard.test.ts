@@ -89,6 +89,13 @@ describe('isolated native keyboard verification', () => {
   })
 
   test.each([
+    ['Meta+A', 'A', ['meta']],
+    ['Control+A', 'A', ['control']],
+    ['Backspace', 'Backspace', []],
+    ['Meta+z', 'Z', ['meta']],
+    ['Control+z', 'Z', ['control']],
+    ['Meta+Shift+z', 'Z', ['meta', 'shift']],
+    ['Control+Shift+z', 'Z', ['control', 'shift']],
     ['Meta+B', 'B', ['meta']],
     ['Meta+C', 'C', ['meta']],
     ['Control+B', 'B', ['control']],
@@ -141,6 +148,23 @@ describe('isolated native keyboard verification', () => {
     expect(focusWindow).toHaveBeenCalledOnce()
     expect(view.focus).toHaveBeenCalledOnce()
     expect(view.insertText).toHaveBeenCalledWith('第一行')
+  })
+
+  test('waits for native insertion and propagates its failure', async () => {
+    const { view, contents, focusWindow } = fixture()
+    let fail!: (error: Error) => void
+    view.insertText.mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        fail = reject
+      })
+    )
+    const settled = vi.fn()
+    const insertion = sendE2EText(contents, 'text', focusWindow, environment)
+    void insertion.then(settled, settled)
+    await vi.waitFor(() => expect(view.insertText).toHaveBeenCalledWith('text'))
+    expect(settled).not.toHaveBeenCalled()
+    fail(new Error('Native insertion failed'))
+    await expect(insertion).rejects.toThrow('Native insertion failed')
   })
 
   test.each([{}, { WEWORK_E2E_CONTROL_URL: environment.WEWORK_E2E_CONTROL_URL }])(

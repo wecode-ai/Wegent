@@ -16,6 +16,7 @@ Wework 是面向 AI 协作的桌面工作台。你可以直接打开本地项目
 
 ## 使用指南
 
+- [界面导航与功能位置](./interface-navigation.md)：查找按钮、菜单和设置的具体入口
 - [快速开始](./getting-started.md)
 - [项目与工作区](./projects.md)
 - [与 AI 协作](./tasks.md)

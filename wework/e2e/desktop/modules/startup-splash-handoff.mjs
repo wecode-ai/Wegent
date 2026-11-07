@@ -34,9 +34,19 @@ function assertCompletedFrame(completion) {
 
 export function assertStartupSplashHandoff(snapshot) {
   assert.equal(snapshot.state, 'closed', 'The handoff did not close the startup splash')
+  const names = snapshot.events.map(event => event.name)
+  const readiness = names.indexOf('animation-ready')
+  assert.ok(
+    readiness > 0 &&
+      readiness < names.indexOf('completion-started') &&
+      names.lastIndexOf('animation-ready') === readiness,
+    'The startup splash did not record animation readiness before completion'
+  )
+  // Showing the window does not wait for animation initialization. Either event
+  // may arrive first, while every other handoff stage retains its strict order.
   assert.deepEqual(
-    snapshot.events.map(event => event.name),
-    STARTUP_SPLASH_HANDOFF_EVENTS,
+    names.filter(name => name !== 'animation-ready'),
+    STARTUP_SPLASH_HANDOFF_EVENTS.filter(name => name !== 'animation-ready'),
     'The startup splash did not complete its painted-completion and fade lifecycle'
   )
   assert.ok(

@@ -9,6 +9,7 @@ import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
 import { interactionTask } from './runtimeInteractions.fixtures'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { openWeworkScheme } from './schemeEvents'
+import { QuestionDiscussionContext } from './questionDiscussion'
 
 vi.mock('./schemeEvents', () => ({ openWeworkScheme: vi.fn() }))
 
@@ -37,6 +38,30 @@ const approval: RuntimeInteraction = {
   },
   answered: false,
 }
+
+it('opens discussion from pending-work details without answering or dismissing the question', () => {
+  const open = vi.fn()
+  const question: RuntimeInteraction = {
+    ...approval,
+    id: 'question',
+    payload: {
+      requestId: 42,
+      questions: [{ id: 'audience', question: 'Who should receive it?' }],
+    },
+  }
+  const value = interactionValue({ pending: [question] })
+  render(
+    <QuestionDiscussionContext.Provider value={{ open }}>
+      <RuntimeInteractionsContext.Provider value={value}>
+        <RuntimeInteractionsPage selectedId="question" />
+      </RuntimeInteractionsContext.Provider>
+    </QuestionDiscussionContext.Provider>
+  )
+  fireEvent.click(screen.getByTestId('interaction-discuss'))
+  expect(open).toHaveBeenCalledWith(question.task.address, question.payload)
+  expect(value.respond).not.toHaveBeenCalled()
+  expect(value.dismiss).not.toHaveBeenCalled()
+})
 
 function interactionValue(
   overrides: Partial<RuntimeInteractionsValue> = {}

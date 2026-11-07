@@ -1731,6 +1731,12 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async binding(deviceId, operation, version, target) {
+        return (await standInApiForDevice(deviceId)).binding(deviceId, operation, version, target)
+      },
+      async lifecycle(userId, deviceId, operation) {
+        return (await standInApiForDevice(deviceId)).lifecycle(userId, deviceId, operation)
+      },
       taskCommands: {
         async get(deviceId, target) {
           return (await standInApiForDevice(deviceId)).taskCommands.get(deviceId, target)
@@ -1897,9 +1903,6 @@ export function createHybridWorkbenchServices(
           userId,
           deviceId
         )
-      },
-      async personalAgents(userId, deviceId) {
-        return (await standInApiForDevice(deviceId)).personalAgents(userId, deviceId)
       },
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)

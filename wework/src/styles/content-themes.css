@@ -1,13 +1,5 @@
 /* Only desktop-owned documents opt into these renderer adapters. */
 html[data-appearance-theme] {
-  --markdown-code-background: var(--color-code-bg);
-  --markdown-code-foreground: var(--color-text-primary);
-  --markdown-code-muted: var(--color-text-secondary);
-  --markdown-code-border: var(--color-border);
-  --markdown-code-hover: var(--color-text-primary);
-  --markdown-code-focus: var(--color-focus);
-  --markdown-code-scrollbar: var(--color-text-muted);
-  --markdown-code-scrollbar-hover: var(--color-text-secondary);
   --file-change-error-bg: var(--color-diff-removed) / 0.08;
   --file-change-error: var(--color-diff-removed);
 }

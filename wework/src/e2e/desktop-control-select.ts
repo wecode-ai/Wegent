@@ -1,5 +1,16 @@
 export type DesktopControlSelectMode = 'label' | 'value'
 
+export function chooseDesktopControlOption(element: HTMLElement, selection: string): string {
+  if (element instanceof HTMLSelectElement) {
+    return selectDesktopControlOption(element, selection)
+  }
+  if (!(element instanceof HTMLButtonElement)) {
+    throw new Error('Choice target must be a select or button element')
+  }
+  element.click()
+  return element.textContent?.trim() ?? ''
+}
+
 export function selectDesktopControlOption(
   element: HTMLSelectElement,
   selection: string,

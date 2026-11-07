@@ -360,6 +360,7 @@ async fn assert_automation_maintains_index(mysql: &MysqlService) {
                     7,
                     true,
                     "automation",
+                    &serde_json::Value::Null,
                 )
                 .await
             })
@@ -417,7 +418,18 @@ async fn assert_automation_maintains_index(mysql: &MysqlService) {
     let failed = mysql
         .with_transaction(async |tx| {
             let issue = store::locked(tx, "task", "issue-1").await?.unwrap();
-            assignments::record(tx, &issue, "human", "53", "Other", 7, true, "automation").await
+            assignments::record(
+                tx,
+                &issue,
+                "human",
+                "53",
+                "Other",
+                7,
+                true,
+                "automation",
+                &serde_json::Value::Null,
+            )
+            .await
         })
         .await;
     assert_eq!(failed.unwrap_err().database_code(), Some(1062));

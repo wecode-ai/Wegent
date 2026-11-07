@@ -615,32 +615,6 @@ describe('MessageList desktop virtualization', () => {
     view.unmount()
   })
 
-  test('preserves mounted rows when a retained workspace is hidden and revealed', () => {
-    const observers = new Map<Element, ResizeObserverCallback>()
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        constructor(private callback: ResizeObserverCallback) {}
-        observe = (element: Element) => observers.set(element, this.callback)
-        unobserve = (element: Element) => observers.delete(element)
-        disconnect = vi.fn()
-      }
-    )
-    const messages = buildMessages(20, 'retained-workspace')
-    render(
-      <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
-    )
-    const message = screen.getByText('retained-workspace message 19')
-    const column = message.closest('[data-message-row]')!.parentElement!
-    const width = vi.spyOn(column, 'clientWidth', 'get').mockReturnValue(0)
-    act(() => observers.get(column)!([], {} as ResizeObserver))
-    expect(screen.getByText('retained-workspace message 19')).toBe(message)
-    expect(useVirtualizerMock).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }))
-    width.mockReturnValue(800)
-    act(() => observers.get(column)!([], {} as ResizeObserver))
-    expect(screen.getByText('retained-workspace message 19')).toBe(message)
-  })
-
   test('reuses measured heights without preparing the full transcript again on return', () => {
     const messages = buildMessages(20, 'reopened')
     cacheConversationVirtualMeasurements(

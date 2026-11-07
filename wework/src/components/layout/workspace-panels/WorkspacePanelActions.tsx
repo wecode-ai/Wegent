@@ -449,6 +449,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 onClick={onToggleRightPanelExpanded}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  'disabled:opacity-50',
                   rightPanelExpanded && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelExpandedTitle}
@@ -490,6 +491,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 onClick={onToggleRightPanel}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  'disabled:opacity-50',
                   rightPanelOpen && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelTitle}

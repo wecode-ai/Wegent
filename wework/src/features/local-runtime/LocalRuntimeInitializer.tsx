@@ -182,12 +182,12 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
   return (
     <div
       data-testid="local-runtime-slow-startup-help"
-      className="mt-5 flex w-full max-w-[480px] flex-col items-stretch gap-3 rounded-lg border border-warning/20 bg-warning/10 px-3.5 py-3 text-left sm:flex-row sm:items-center sm:px-4"
+      className="mt-5 flex w-full max-w-[480px] flex-col items-stretch gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3.5 py-3 text-left sm:flex-row sm:items-center sm:px-4"
     >
       <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
         <span
           data-testid="local-runtime-slow-startup-icon"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-warning/15 text-warning sm:h-8 sm:w-8"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-amber-700 sm:h-8 sm:w-8 dark:text-amber-300"
         >
           <AlertCircle className="h-4 w-4" />
         </span>
@@ -334,7 +334,7 @@ export function LocalRuntimeInitializer({
           <section className="flex w-full max-w-[520px] flex-col items-center text-center">
             {failed ? (
               <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary">
-                <AlertCircle className="h-6 w-6 text-warning" />
+                <AlertCircle className="h-6 w-6 text-amber-600" />
               </div>
             ) : null}
             <h1 className="heading-base">{failed ? t('failed_title') : t('starting_title')}</h1>

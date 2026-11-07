@@ -2,91 +2,48 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-mod agent_session;
+use wegent_native_home::agent_session;
 pub mod agents;
 pub mod app;
 pub mod artifact_cli;
 mod artifact_workspace;
-pub mod attachments;
+pub use wegent_multimodal::attachments;
 pub mod browser_mcp;
 pub mod callback;
 mod codex_phase;
 pub mod computer_use_mcp;
-pub mod config;
+pub use wegent_runtime_config as config;
 mod connector_gateway;
 pub mod connector_mcp;
-pub(crate) mod directory_link;
-pub mod emitter;
+pub use wegent_execution_contracts::emitter;
+pub(crate) use wegent_filesystem::directory_link;
 pub mod envd;
-mod file_lease;
+pub(crate) use wegent_filesystem::file_lease;
 pub mod heartbeat;
-pub mod hooks;
-pub mod image_preprocessor;
+pub use wegent_hooks as hooks;
+pub use wegent_multimodal::image_preprocessor;
 pub mod local;
-pub mod logging;
-pub mod mcp_utils;
-mod path_compat;
+pub(crate) use wegent_filesystem::path_compat;
+pub use wegent_mcp_runtime::mcp_utils;
+pub use wegent_runtime_logging as logging;
 pub mod plugin_account_auth;
 pub mod plugin_workspace_cli;
-pub mod process;
+pub use wegent_claude_harness::process;
 pub mod process_environment;
-pub mod prompt_enrichment;
+pub use wegent_multimodal::prompt_enrichment;
 mod prompt_mentions;
-pub mod protocol;
-mod repository_identity;
+pub use wegent_protocol as protocol;
+use wegent_workspace::repository_identity;
 pub mod runner;
 pub mod runtime_work;
 pub mod server;
 pub mod services;
-pub mod stream;
+pub use wegent_claude_harness::stream;
 pub mod task_runtime;
-mod url_origin;
 pub mod version;
 pub(crate) mod workbench_control;
-mod workspace_paths;
+pub(crate) use wegent_runtime_config::workspace_paths;
 pub use workspace_paths::metadata::migrate as migrate_workspace_metadata;
 
 #[cfg(test)]
-pub(crate) mod test_env {
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    // The desktop app exports host-specific WEGENT_* variables (for example
-    // WEGENT_BUNDLED_HOOKS_DIR pointing inside the installed app bundle) into
-    // every process it spawns, including `cargo test`. Tests that rely on a
-    // hermetic environment must not observe them, so scrub the variables that
-    // leak host machine state before any test runs. Constructors execute
-    // single-threaded ahead of main, which makes the mutation safe. Keep this
-    // list narrow: variables like WEGENT_EXTRA_PATHS configure the runner and
-    // must survive.
-    const HOST_STATE_VARS: &[&str] = &[
-        "WEGENT_BUNDLED_HOOKS_DIR",
-        "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR",
-        "WEGENT_MANAGED_HOOKS_DIR",
-        "WEGENT_EXECUTOR_HOME",
-        "WEGENT_NATIVE_CODEX_HOME",
-    ];
-
-    #[used]
-    #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
-    #[cfg_attr(windows, link_section = ".CRT$XCU")]
-    #[cfg_attr(all(unix, not(target_os = "macos")), link_section = ".init_array")]
-    static SCRUB_WEGENT_ENV: extern "C" fn() = {
-        extern "C" fn scrub() {
-            for key in HOST_STATE_VARS {
-                // SAFETY: constructors run single-threaded before main.
-                unsafe { std::env::remove_var(key) };
-            }
-        }
-        scrub
-    };
-
-    pub(crate) fn lock() -> MutexGuard<'static, ()> {
-        // Recover from poisoning so a single panicking test does not cascade
-        // into unrelated PoisonError failures across the shared test binary.
-        ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
+pub(crate) use wegent_executor_test_support as test_env;

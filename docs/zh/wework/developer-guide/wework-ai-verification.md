@@ -38,7 +38,13 @@ Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换
 pnpm --filter wework ai:verify start
 ```
 
-命令会输出 session 文件路径和本地控制地址。它会创建独立的 Executor Home、项目目录、设备 ID、IPC socket、Electron app-data namespace 和诊断目录，并启动真实的 `dev-mac-app.sh`。任务、项目、应用数据和单实例锁不会与正式版或其他验证会话共享。所有日志位于 `wework/test-results/ai-verify/<run-id>/`。
+命令会输出 session 文件路径和本地控制地址。它会创建独立的 Executor Home、项目目录、设备 ID、IPC socket、Electron app-data namespace 和诊断目录，并从源码应用目录启动真实 Electron。任务、项目、应用数据和单实例锁不会与正式版或其他验证会话共享。所有日志位于 `wework/test-results/ai-verify/<run-id>/`。
+
+用户明确选择本机 Codex 账号时，设置 `WEWORK_E2E_NATIVE_CODEX_HOME` 为已登录的本机 Codex 目录，让原生账号机制为隔离实例提供认证。不得读取、打印或手工复制认证内容。复用自己的隔离数据时，`--executor-home` 必须为绝对路径；通过 `--device-id` 显式保留该 Home 的设备身份。
+
+新会话在应用启动前记录实际认证路径、原有文件或链接是否存在以及原生 managed 标记的元数据。正常停止、控制器关闭和启动失败使用同一所有权清理：仅移除本会话新建、仍匹配标记与文件身份的认证链接或副本，不删除本机源账号、原有认证或用户替换文件。旧会话没有所有权记录时，默认私有 Home 保持原清理规则，指定的复用 Home 则保守保留；旧链接应由原始拥有它的默认会话执行 `stop` 清理。
+
+认证所有权由原生创建器写入版本化标记，绑定会话随机标识和文件元数据，不包含认证内容。会话状态通过跨进程锁和原子替换写入，清理时重新读取最新状态，避免并发观察或旧快照覆盖已清理结果。不认识的所有权协议保守保留认证。
 
 ## 共享桌面 E2E 运行时镜像
 

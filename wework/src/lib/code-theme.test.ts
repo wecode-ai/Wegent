@@ -6,6 +6,7 @@ test('tokenizes code with live palette references instead of fixed theme colors'
   const highlighter = await getSharedHighlighter({
     themes: [WEWORK_CODE_THEME],
     langs: ['typescript'],
+    preferredHighlighter: 'highlights',
   })
   const html = highlighter.codeToHtml('const message = "hello" // comment', {
     lang: 'typescript',
@@ -21,6 +22,7 @@ test('keeps types and operators distinct from function names and keywords', asyn
   const highlighter = await getSharedHighlighter({
     themes: [WEWORK_CODE_THEME],
     langs: ['typescript'],
+    preferredHighlighter: 'highlights',
   })
   const html = highlighter.codeToHtml('type Person = { name: string }; const value = 1 + 2', {
     lang: 'typescript',

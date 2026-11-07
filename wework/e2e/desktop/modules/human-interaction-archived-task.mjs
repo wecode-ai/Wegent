@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import {
   assistantMessage,
@@ -27,7 +28,7 @@ export function handleArchivedTaskInteractionModel(body, response) {
           const tool = selectTool(body, 'request_user_input_async', {
             questions: [{ title: QUESTION }],
           })
-          return functionCall(PROMPT, tool.name, tool.arguments, 1)
+          return selectedToolCall(PROMPT, tool, 1)
         })()
       : [assistantMessage('问题已提出，等待归档测试。')]
   response.end(createSse([responseCreated(PROMPT), ...items, responseCompleted(PROMPT)]))

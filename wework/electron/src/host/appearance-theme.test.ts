@@ -1,10 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import { normalizeAppearanceThemeSnapshot } from './appearance-theme-contract.js'
-import {
-  APPEARANCE_THEME_CHANNEL,
-  DesktopAppearanceController,
-  resolveHostAppearance,
-} from './appearance-theme.js'
+import { DesktopAppearanceController, resolveHostAppearance } from './appearance-theme.js'
 
 const snapshot = {
   light: {
@@ -63,16 +59,13 @@ describe('desktop appearance snapshot', () => {
 })
 
 describe('DesktopAppearanceController', () => {
-  test('updates all native windows and startup documents while preserving transparency', () => {
+  test('updates workbench windows for palette and system mode changes', () => {
     const createWindow = () => ({
       isDestroyed: vi.fn(() => false),
       setBackgroundColor: vi.fn(),
-      webContents: { isDestroyed: vi.fn(() => false), send: vi.fn() },
     })
     const main = createWindow()
     const detached = createWindow()
-    const splash = createWindow()
-    const transparent = createWindow()
     const closed = createWindow()
     closed.isDestroyed.mockReturnValue(true)
     const nativeTheme = {
@@ -81,27 +74,15 @@ describe('DesktopAppearanceController', () => {
     }
     const controller = new DesktopAppearanceController({
       nativeTheme,
-      windows: () => [
-        { window: main },
-        { window: detached },
-        { window: splash },
-        { window: transparent, transparent: true },
-        { window: closed },
-      ],
+      windows: () => [main, detached, closed, null],
     })
 
     controller.update({ appearanceMode: 'system', appearanceThemeSnapshot: snapshot })
 
-    for (const window of [main, detached, splash]) {
+    for (const window of [main, detached]) {
       expect(window.setBackgroundColor).toHaveBeenCalledWith('#1a1b26')
-      expect(window.webContents.send).toHaveBeenCalledWith(
-        APPEARANCE_THEME_CHANNEL,
-        expect.objectContaining({ mode: 'dark', themeId: 'tokyo-night' })
-      )
     }
-    expect(transparent.setBackgroundColor).not.toHaveBeenCalled()
-    expect(transparent.webContents.send).toHaveBeenCalledOnce()
-    expect(closed.webContents.send).not.toHaveBeenCalled()
+    expect(closed.setBackgroundColor).not.toHaveBeenCalled()
 
     nativeTheme.shouldUseDarkColors = false
     controller.update()

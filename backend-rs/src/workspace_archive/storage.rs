@@ -12,8 +12,8 @@
 //! bucket existence, object existence, and presigned download URLs.
 use brz_http::Client as HttpClient;
 
-use crate::attachments::minio_client::{encode_object_path, object_request};
-use crate::attachments::s3_signing;
+use wegent_storage::minio_client::{encode_object_path, object_request};
+use wegent_storage::s3_signing;
 
 /// The source `WORKSPACE_ARCHIVE_BUCKET` default (`app/core/config.py`).
 const DEFAULT_BUCKET: &str = "wegent-archives";
@@ -302,7 +302,7 @@ impl ArchiveStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attachments::minio_client::metrics_tests::{scrape, serve_objects};
+    use wegent_backend_test_support::object_store::{scrape, serve_objects};
 
     fn storage(endpoint: &str, use_ssl: bool) -> ArchiveStorage {
         ArchiveStorage {

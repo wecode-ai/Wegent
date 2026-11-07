@@ -1,9 +1,13 @@
 import { createCSSVariablesTheme, registerCustomTheme } from '@pierre/diffs'
+import { PIERRE_SYNTAX_COLORS, SYNTAX_COLOR_NAMES } from '@wegent/collaboration/theme'
 
 // Stable CSS references preserve mounted code views when the palette changes.
 export const WEWORK_CODE_THEME = 'wework-semantic'
 
 const variableDefaults = {
+  ...Object.fromEntries(
+    SYNTAX_COLOR_NAMES.map(color => [`token-${color}`, `rgb(var(--color-syntax-${color}))`])
+  ),
   foreground: 'rgb(var(--color-text-primary))',
   background: 'rgb(var(--color-bg-base))',
   'token-keyword': 'rgb(var(--color-syntax-keyword))',
@@ -30,22 +34,12 @@ const theme = createCSSVariablesTheme({
   fontStyle: false,
 })
 
-// Shiki's generic CSS theme groups types with functions and operators with keywords.
-// Keep those syntax roles distinct, as they are in the editor and Markdown adapter.
-theme.tokenColors = [
-  ...(theme.tokenColors ?? []),
-  {
-    scope: ['entity.name.type', 'entity.other.inherited-class', 'support.type'],
-    settings: { foreground: 'rgb(var(--color-syntax-type))' },
-  },
-  {
-    scope: 'keyword.operator',
-    settings: { foreground: 'rgb(var(--color-syntax-operator))' },
-  },
-  {
-    scope: ['variable.other.readwrite', 'variable.other.property', 'entity.other.attribute-name'],
-    settings: { foreground: 'rgb(var(--color-syntax-variable))' },
-  },
-]
+// The upstream Highlights backend uses Zed syntax categories.
+theme.zed!.style.syntax = {
+  ...theme.zed!.style.syntax,
+  ...Object.fromEntries(
+    Object.entries(PIERRE_SYNTAX_COLORS).map(([category, color]) => [category, `token-${color}`])
+  ),
+}
 
-registerCustomTheme(WEWORK_CODE_THEME, () => Promise.resolve(theme))
+registerCustomTheme(WEWORK_CODE_THEME, () => Promise.resolve(theme), 'diffs')

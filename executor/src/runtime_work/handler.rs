@@ -166,6 +166,7 @@ mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
 mod runtime_owner;
+mod side_source;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
@@ -179,6 +180,7 @@ mod stand_in_events;
 mod stand_in_execution;
 mod stand_in_history;
 mod stand_in_ingress;
+mod stand_in_lifecycle;
 mod stand_in_memory;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
@@ -536,6 +538,7 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+    stand_in_lifecycle_gate: Arc<Mutex<()>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
@@ -902,6 +905,7 @@ impl RuntimeWorkRpcHandler {
             event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
+            stand_in_lifecycle_gate: Arc::new(Mutex::new(())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
                 runtime_settings,
                 queued_turns,
@@ -929,7 +933,9 @@ impl RuntimeWorkRpcHandler {
             notification_router: Arc::new(Mutex::new(None)),
             local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
-            automation_store: AutomationStore::from_env(),
+            automation_store: AutomationStore::new(
+                super::store::runtime_work_dir().join("automations.json"),
+            ),
             task_store_path: Arc::new(LocalTaskStore::default_path()),
             store,
             worktrees,
@@ -938,7 +944,10 @@ impl RuntimeWorkRpcHandler {
             )),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
-            hook_service: HookService::from_env(),
+            hook_service: HookService::new(
+                crate::hooks::registry::HookRegistryStore::from_env(),
+                crate::agents::wework_codex_home(),
+            ),
             backend_connection: Arc::new(Mutex::new(None)),
         };
         for (local_task_id, turn) in handler
@@ -1190,6 +1199,8 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
         || method.starts_with("runtime.stand_in.telemetry.")
         || method.starts_with("runtime.stand_in.onboarding.")
         || method == "runtime.stand_in.processing.status"
+        || method == "runtime.stand_in.binding"
+        || method == "runtime.stand_in.personal.lifecycle"
     {
         return false;
     }

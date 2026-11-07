@@ -7,14 +7,6 @@ if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
 }
 
 if (location.protocol === 'file:') {
-  contextBridge.exposeInMainWorld('weworkAppearance', {
-    onChanged: (listener: (appearance: unknown) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, appearance: unknown) =>
-        listener(appearance)
-      ipcRenderer.on('appearance:changed', handler)
-      return () => ipcRenderer.off('appearance:changed', handler)
-    },
-  })
   contextBridge.exposeInMainWorld('weworkElectron', {
     getRuntimeState: () => ipcRenderer.invoke('runtime:get-state'),
     onRuntimeChanged: (listener: () => void) => {

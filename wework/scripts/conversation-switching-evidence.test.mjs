@@ -1,6 +1,5 @@
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { setImmediate } from 'node:timers/promises'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
 import {
@@ -62,43 +61,6 @@ test('reports native ingestion progress without retaining transcript text or ide
     hasSuffix: false,
   })
   expect(JSON.stringify(summary)).not.toMatch(/private|TASK_SWITCH/)
-})
-
-test('starts the UI rendering budget only after the initial model response is emitted', async () => {
-  vi.spyOn(console, 'info').mockImplementation(() => {})
-  const checks = createConversationSwitchingChecks({ uiTimeoutMs: 10000 })
-  const failure = new Error('UI prefix was absent')
-  let resolveSubmitted
-  const submitted = new Promise(resolve => {
-    resolveSubmitted = resolve
-  })
-  devtools.create.mockRejectedValue(new Error('CPU sampling unavailable'))
-  vi.mocked(requestExecutor).mockRejectedValue(new Error('Owner diagnostics unavailable'))
-  const control = {
-    command: vi.fn(async action => {
-      if (action === 'press') resolveSubmitted()
-      if (action === 'waitFor') throw failure
-      if (action === 'getWorkbenchDebugSnapshot') {
-        return JSON.stringify({ workbench: { currentRuntimeTask: { taskId: 'task' } } })
-      }
-    }),
-  }
-  const verification = expect(checks.verify(control)).rejects.toBe(failure)
-  await submitted
-  await setImmediate()
-  expect(control.command.mock.calls.some(([action]) => action === 'waitFor')).toBe(false)
-
-  const response = { writeHead: vi.fn(), flushHeaders: vi.fn(), write: vi.fn(), end: vi.fn() }
-  const stream = checks.handleModelRequest(
-    { input: 'WEWORK_NATIVE_ORDER_TASK_SWITCH' },
-    response,
-    'fixture'
-  )
-  await verification
-  await expect(stream).resolves.toBe(true)
-  expect(control.command.mock.calls.find(([action]) => action === 'waitFor')[2]).toEqual({
-    text: 'TASK_SWITCH_RUNNING',
-  })
 })
 
 test.each([
@@ -175,6 +137,7 @@ test.each([
     await expect(stream).resolves.toBe(true)
     expect(control.command.mock.calls.find(([action]) => action === 'waitFor')[2]).toEqual({
       text: 'TASK_SWITCH_RUNNING',
+      timeoutMs: 30000,
     })
     expect(requestExecutor).toHaveBeenCalledWith(
       control,

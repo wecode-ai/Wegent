@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { MilestonesApi } from './types'
 import { useMilestones } from './useMilestones'
 import { IssueDetailSearchableSelect } from '../issue-detail/IssueDetailControls'
+import { Tooltip } from '../issue-detail/Tooltip'
 import './milestones.css'
 
 export function MilestonePicker({
@@ -68,46 +69,57 @@ export function MilestonePicker({
       {!compact && appearance !== 'property' && !allLabel ? (
         <span className="shrink-0 text-text-secondary">{label}</span>
       ) : null}
-      <IssueDetailSearchableSelect
-        testId={testId}
-        accessibleLabel={label}
-        value={value ?? ''}
-        disabled={disabled || busy || query.loading || query.error}
-        searchPlaceholder={searchLabel}
-        emptyLabel={emptyLabel}
-        className={
-          appearance === 'property'
-            ? 'task-detail-state-assignee'
-            : `${allLabel ? 'milestone-picker-filter ' : ''}inline-flex min-h-8 min-w-0 max-w-full items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:min-h-11`
-        }
-        triggerContent={
-          <>
-            {appearance === 'property' ? <Flag aria-hidden="true" size={16} /> : null}
-            <span className="max-w-40 truncate" title={selectedTitle}>
-              {selectedTitle}
-            </span>
-            <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
-          </>
-        }
-        options={[
-          ...(allLabel ? [{ value: 'all', label: allLabel }] : []),
-          { value: '', label: noneLabel },
-          ...(value && value !== 'all' && !query.items.some(item => item.id === value)
-            ? [{ value, label }]
-            : []),
-          ...query.items
-            .filter(item => allLabel || item.state === 'open' || item.id === value)
-            .map(item => ({ value: item.id, label: item.title })),
-        ]}
-        onChange={next => {
-          setBusy(true)
-          setFailed(false)
-          void Promise.resolve()
-            .then(() => onChange(next || null))
-            .catch(() => setFailed(true))
-            .finally(() => setBusy(false))
-        }}
-      />
+      <Tooltip label={selectedTitle} side="bottom" className="min-w-0 max-w-full shrink">
+        <IssueDetailSearchableSelect
+          testId={testId}
+          accessibleLabel={label}
+          value={value ?? ''}
+          disabled={disabled || busy || query.loading || query.error}
+          searchPlaceholder={searchLabel}
+          emptyLabel={emptyLabel}
+          className={
+            appearance === 'property'
+              ? 'task-detail-state-assignee'
+              : `${allLabel ? 'milestone-picker-filter project-board-compact-action ' : ''}inline-flex min-h-8 min-w-0 max-w-full items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:min-h-11`
+          }
+          triggerContent={
+            <>
+              {appearance === 'property' ? <Flag aria-hidden="true" size={16} /> : null}
+              {allLabel && appearance !== 'property' ? (
+                <Flag className="project-board-action-icon h-4 w-4" aria-hidden="true" />
+              ) : null}
+              <span
+                className={`${allLabel && appearance !== 'property' ? 'project-board-action-label ' : ''}max-w-40 truncate`}
+                title={selectedTitle}
+              >
+                {selectedTitle}
+              </span>
+              <ChevronDown
+                className={`${allLabel && appearance !== 'property' ? 'project-board-action-chevron ' : ''}h-3 w-3 shrink-0`}
+                aria-hidden="true"
+              />
+            </>
+          }
+          options={[
+            ...(allLabel ? [{ value: 'all', label: allLabel }] : []),
+            { value: '', label: noneLabel },
+            ...(value && value !== 'all' && !query.items.some(item => item.id === value)
+              ? [{ value, label }]
+              : []),
+            ...query.items
+              .filter(item => allLabel || item.state === 'open' || item.id === value)
+              .map(item => ({ value: item.id, label: item.title })),
+          ]}
+          onChange={next => {
+            setBusy(true)
+            setFailed(false)
+            void Promise.resolve()
+              .then(() => onChange(next || null))
+              .catch(() => setFailed(true))
+              .finally(() => setBusy(false))
+          }}
+        />
+      </Tooltip>
       {query.error || failed ? (
         <span role="alert" className="text-destructive">
           {errorLabel}

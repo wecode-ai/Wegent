@@ -1,5 +1,4 @@
-import { app, type BrowserWindow } from 'electron'
-import { focusE2EWindow } from './e2e-window-focus.js'
+import type { BrowserWindow } from 'electron'
 import type { StartupProgressUpdate } from './startup-progress.js'
 
 export interface StartupSplashInspection extends Record<string, unknown> {
@@ -116,17 +115,6 @@ export async function clickStartupSplash(
     return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) }
   })()`)
   if (!position) throw new Error(`Startup splash action is unavailable: ${testId}`)
-  const focusedBefore = window.isFocused()
-  await focusE2EWindow(window, () => {
-    app.focus({ steal: true })
-    window.focus()
-  })
-  window.webContents.focus()
-  console.info('[startup-splash-input]', {
-    testId,
-    focusedBefore,
-    focusedAfter: window.isFocused(),
-  })
   window.webContents.sendInputEvent({ type: 'mouseMove', ...position })
   window.webContents.sendInputEvent({
     type: 'mouseDown',

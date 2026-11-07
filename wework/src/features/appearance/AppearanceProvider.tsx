@@ -66,7 +66,7 @@ export function AppearanceProvider({
         },
       },
     }).catch(error => {
-      console.error('[Wework] Failed to persist the startup appearance mode:', error)
+      console.error('[Wework] Failed to persist the desktop appearance:', error)
     })
   }, [persist, state.appearance])
 

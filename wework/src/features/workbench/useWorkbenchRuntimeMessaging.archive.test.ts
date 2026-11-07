@@ -187,7 +187,7 @@ describe('runtime message archival', () => {
     expect(store.getTask(address)).toBeNull()
   })
 
-  test('does not append an accepted message after archival during work-list refresh', async () => {
+  test('does not restore an accepted conversation archived during background work-list refresh', async () => {
     const { messaging, store, send, refresh, archive } = fixture()
     const refreshed = deferred<void>()
     send.mockResolvedValue({ accepted: true, taskId: address.taskId })
@@ -197,10 +197,13 @@ describe('runtime message archival', () => {
       sendRuntimePaneMessage: messaging.sendRuntimePaneMessage,
     })
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+    await expect(sending).resolves.toEqual({ accepted: true, queued: false })
+    expect(getRuntimeConversationMessages(address)).toContainEqual(
+      expect.objectContaining({ role: 'user', content: queuedMessage.content })
+    )
     archive()
     refreshed.resolve()
-
-    await expect(sending).resolves.toEqual({ accepted: false, queued: false })
+    await refreshed.promise
     expect(store.getTask(address)).toBeNull()
     expect(getRuntimeConversationMessages(address)).toEqual([])
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])

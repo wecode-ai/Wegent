@@ -6,6 +6,7 @@ import { useCallback, useRef, useState, type SetStateAction } from 'react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum } from '@/apis/models'
+import type { UnifiedShell } from '@/apis/shells'
 import type { Bot, KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
 
 import {
@@ -15,6 +16,7 @@ import {
 } from '../../services/bots'
 import { stringifyMcpConfig } from '../../utils/mcpConfig'
 import {
+  normalizeExecutorForBindMode,
   resolveSimpleExecutorFromBot,
   type CodingExecutorRuntime,
   type SimpleExecutorMode,
@@ -118,10 +120,41 @@ export function useSimpleTeamDraft() {
     [initialize]
   )
 
+  const normalizeExecutor = useCallback((shells: UnifiedShell[]) => {
+    // Normalize the latest draft so catalog hydration cannot be overwritten.
+    setDraft(current => {
+      const normalized = normalizeExecutorForBindMode(
+        current.simpleExecutorMode,
+        current.bindMode,
+        shells,
+        current.simpleCustomShellName,
+        current.simpleCodingRuntime
+      )
+      if (
+        normalized.mode === current.simpleExecutorMode &&
+        normalized.codingRuntime === current.simpleCodingRuntime
+      ) {
+        return current
+      }
+      return {
+        ...current,
+        simpleExecutorMode: normalized.mode,
+        simpleCodingRuntime: normalized.codingRuntime,
+      }
+    })
+  }, [])
+
   const setBindMode = useCallback(
     (value: SetStateAction<TaskType[]>) => setField('bindMode', value),
     [setField]
   )
 
-  return { draft, setField, setBindMode, initializeBotFields, initializeNewDraft }
+  return {
+    draft,
+    setField,
+    setBindMode,
+    initializeBotFields,
+    initializeNewDraft,
+    normalizeExecutor,
+  }
 }

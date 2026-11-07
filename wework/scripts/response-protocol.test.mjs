@@ -147,6 +147,7 @@ describe('programmatic exec', () => {
     expect(selectProgrammaticExec(request, 'text("ok")')).toEqual({
       name: 'exec',
       input: 'text("ok")',
+      namespace: 'functions',
     })
   })
 
@@ -156,7 +157,15 @@ describe('programmatic exec', () => {
       'Real Codex did not advertise exactly one programmatic exec tool: 0'
     )
 
-    const duplicateExecRequest = { input: [request.input[0], request.input[0]] }
+    const duplicateExecRequest = {
+      input: [
+        request.input[0],
+        {
+          ...request.input[0],
+          tools: request.input[0].tools.map(tool => ({ ...tool, name: 'other_functions' })),
+        },
+      ],
+    }
     expect(requestAdvertisesProgrammaticExec(duplicateExecRequest)).toBe(true)
     expect(() => selectProgrammaticExec(duplicateExecRequest, 'text("ok")')).toThrow(
       'Real Codex did not advertise exactly one programmatic exec tool: 2'
@@ -234,6 +243,54 @@ describe('selectMcpTool', () => {
 })
 
 describe('selectMcpToolRequest', () => {
+  test('does not select a same-named tool from another MCP server', () => {
+    expect(() =>
+      selectMcpToolRequest(
+        { tools: [functionTool('another_server__list_tasks')] },
+        'list_tasks',
+        {},
+        'mcp__wework_stand_in__list_tasks'
+      )
+    ).toThrow('Real Codex did not advertise exactly one deferred tool search')
+  })
+
+  test('rejects ambiguous advertised direct MCP identities', () => {
+    expect(() =>
+      selectMcpToolRequest(
+        {
+          tools: [
+            functionTool('wework_stand_in__list_tasks'),
+            functionTool('mcp__wework_stand_in__list_tasks'),
+          ],
+        },
+        'list_tasks',
+        {},
+        'mcp__wework_stand_in__list_tasks'
+      )
+    ).toThrow('Ambiguous direct MCP tool')
+  })
+
+  test.each(['wework_stand_in__list_tasks', 'mcp__wework_stand_in__list_tasks'])(
+    'calls the exact advertised direct MCP name %s without inventing tool search',
+    name => {
+      const response = mcpToolRequestEvents(
+        { tools: [functionTool(name)] },
+        {
+          toolName: 'list_tasks',
+          directToolName: 'mcp__wework_stand_in__list_tasks',
+          argumentsValue: { limit: 50 },
+          searchCallId: 'search-tasks',
+          toolCallId: 'list-tasks',
+        }
+      )
+      const call = response.events.find(event => event.type === 'response.output_item.done').item
+      expect(response.mode).toBe('direct')
+      expect(call.name).toBe(name)
+      expect(JSON.parse(call.arguments)).toEqual({ limit: 50 })
+      expect(call.call_id).toBe('list-tasks')
+    }
+  )
+
   test('uses direct Chat Shell calls throughout the manager state machine', () => {
     const request = {
       tools: [
@@ -312,71 +369,6 @@ describe('selectMcpToolRequest', () => {
       JSON.stringify({ query: 'get_board_item', limit: 8 })
     )
     expect(response.events.some(event => event.item?.call_id === 'read-board-item')).toBe(false)
-  })
-
-  test('uses the qualified Responses bridge name when deferred search is absent', () => {
-    const request = {
-      tools: [
-        functionTool('wework_stand_in__continue_task'),
-        functionTool('another_server__continue_task'),
-      ],
-    }
-    const response = mcpToolRequestEvents(request, {
-      toolName: 'continue_task',
-      argumentsValue: { taskId: 'original-work', message: 'Resume the work' },
-      directToolName: 'mcp__wework_stand_in__continue_task',
-      searchCallId: 'resume-search',
-      toolCallId: 'resume-work',
-    })
-    const completedCall = response.events.find(event => event.type === 'response.output_item.done')
-
-    expect(response.mode).toBe('direct')
-    expect(completedCall?.item).toMatchObject({
-      type: 'function_call',
-      call_id: 'resume-work',
-      name: 'wework_stand_in__continue_task',
-      arguments: JSON.stringify({ taskId: 'original-work', message: 'Resume the work' }),
-    })
-    expect(response.events.some(event => event.item?.call_id === 'resume-search')).toBe(false)
-  })
-
-  test('rejects a converted tool from a different namespace', () => {
-    const request = { tools: [functionTool('another_server__continue_task')] }
-
-    expect(() =>
-      selectMcpToolRequest(request, 'continue_task', {}, 'mcp__wework_stand_in__continue_task')
-    ).toThrow('Real Codex did not advertise exactly one deferred tool search')
-  })
-
-  test('rejects ambiguous native and converted names for the same MCP tool', () => {
-    const request = {
-      tools: [
-        functionTool('mcp__wework_stand_in__continue_task'),
-        functionTool('wework_stand_in__continue_task'),
-      ],
-    }
-
-    expect(() =>
-      selectMcpToolRequest(request, 'continue_task', {}, 'mcp__wework_stand_in__continue_task')
-    ).toThrow('Ambiguous MCP tool mcp__wework_stand_in__continue_task')
-  })
-
-  test('still searches when the converted MCP tool and deferred search are both advertised', () => {
-    const request = {
-      tools: [
-        functionTool('search_deferred_tools'),
-        functionTool('wework_stand_in__continue_task'),
-      ],
-    }
-
-    expect(
-      selectMcpToolRequest(request, 'continue_task', {}, 'mcp__wework_stand_in__continue_task')
-    ).toEqual({
-      mode: 'search',
-      name: 'search_deferred_tools',
-      native: false,
-      arguments: { query: 'wework_stand_in continue_task', limit: 8 },
-    })
   })
 
   test('still rejects a Codex request without exactly one deferred search', () => {

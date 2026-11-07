@@ -5,40 +5,10 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   observeStartupSplash,
   inspectStartupSplash,
-  clickStartupSplash,
   type StartupSplashInspection,
 } from './startup-splash-verification.js'
 
-vi.mock('electron', () => ({ app: { focus: vi.fn() } }))
-
 afterEach(() => vi.useRealTimers())
-
-test('waits for native focus before clicking the splash after opening an external window', async () => {
-  const calls: string[] = []
-  const window = Object.assign(new EventEmitter(), {
-    isDestroyed: () => false,
-    isFocused: vi.fn(() => false),
-    focus: vi.fn(),
-    webContents: {
-      executeJavaScript: vi.fn(async () => ({ x: 64, y: 32 })),
-      focus: vi.fn(() => calls.push('contents-focus')),
-      sendInputEvent: vi.fn((event: { type: string }) => calls.push(event.type)),
-    },
-  })
-  const clicking = clickStartupSplash(
-    window as unknown as BrowserWindow,
-    'startup-open-logs-button'
-  )
-  await Promise.resolve()
-  expect(window.focus).toHaveBeenCalledOnce()
-  expect(window.webContents.sendInputEvent).not.toHaveBeenCalled()
-  window.isFocused.mockReturnValue(true)
-  window.emit('focus')
-  await clicking
-  expect(calls).toEqual(['contents-focus', 'mouseMove', 'mouseDown', 'mouseUp'])
-  expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(3)
-  expect(window.listenerCount('focus')).toBe(0)
-})
 
 describe('native startup splash observations', () => {
   test('keeps the rendered stage with its timeout state while the host advances', async () => {

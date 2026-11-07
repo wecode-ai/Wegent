@@ -69,12 +69,14 @@ interface RuntimeRecord {
 export class WeworkDesktopControlBridge {
   private server: Server | null = null
   private runtimePath: string | null = null
+  private lifecycleGeneration = 0
   private readonly scripts = new Map<string, string>()
 
   constructor(private readonly options: WeworkDesktopControlBridgeOptions) {}
 
   async start(): Promise<void> {
     if (this.server) return
+    const generation = this.lifecycleGeneration
     const token = randomBytes(32).toString('base64url')
     const server = createServer((request, response) => {
       void this.handleRequest(request, response, token)
@@ -86,6 +88,10 @@ export class WeworkDesktopControlBridge {
         resolve()
       })
     })
+    if (generation !== this.lifecycleGeneration) {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      return
+    }
     const address = server.address()
     if (!address || typeof address === 'string') {
       server.close()
@@ -111,11 +117,19 @@ export class WeworkDesktopControlBridge {
       server.close()
       throw error
     }
+    if (generation !== this.lifecycleGeneration) {
+      await Promise.all([
+        rm(runtimePath, { force: true }),
+        new Promise<void>(resolve => server.close(() => resolve())),
+      ])
+      return
+    }
     this.server = server
     this.runtimePath = runtimePath
   }
 
   async stop(): Promise<void> {
+    this.lifecycleGeneration += 1
     this.options.devtools?.close()
     const server = this.server
     const runtimePath = this.runtimePath

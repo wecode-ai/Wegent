@@ -527,7 +527,9 @@ async def test_real_dispatch_preserves_old_wire_and_commits_new_intent_before_rp
         assert "plugin_sync" not in calls[0]
         assert "removed_plugins" not in calls[0]
         assert "plugin_sync" not in result.model_dump()
-        assert result.desired_plugin_snapshot is None
+        assert result.desired_plugin_snapshot is not None
+        assert result.desired_plugin_snapshot["plugins"] == calls[0]["plugins"]
+        assert "desired_plugin_snapshot" not in result.model_dump()
 
 
 @pytest.mark.parametrize("change", ["update", "uninstall"])

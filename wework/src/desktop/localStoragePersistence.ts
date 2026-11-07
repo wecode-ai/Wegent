@@ -58,13 +58,9 @@ function storageEntries(storage: Storage): Record<string, string> {
 }
 
 function replaceStorage(storage: Storage, entries: Record<string, string>): void {
-  // Auxiliary windows share this origin with the owning window. Clearing it
-  // broadcasts a transient reset to every mounted preference consumer.
-  for (const key of Object.keys(storageEntries(storage))) {
-    if (!Object.hasOwn(entries, key)) storage.removeItem(key)
-  }
+  storage.clear()
   for (const [key, value] of Object.entries(entries)) {
-    if (storage.getItem(key) !== value) storage.setItem(key, value)
+    storage.setItem(key, value)
   }
 }
 

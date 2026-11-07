@@ -344,7 +344,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   return (
     <MarkdownCustomLinkContext.Provider value={renderLink}>
       <div
-        className={`${variant === 'user' ? 'user-markdown' : variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words ${variant === 'document' ? '' : 'font-normal'}`}
+        className={`${variant === 'user' ? 'user-markdown' : variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
       >
         {contentParts.map((part, index) =>
           part.kind === 'visualization' ? (

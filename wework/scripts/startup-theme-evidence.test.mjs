@@ -46,7 +46,21 @@ function captureFixture(mode, options = {}) {
       { name: 'created', timestamp: 1100 },
       { name: 'closed', timestamp: 2000 },
     ],
-    handoff: { completion: { progressNow: 100, fillEnd: 100, trackEnd: 100 } },
+    handoff: {
+      completion: {
+        progressNow: 100,
+        fillEnd: 100,
+        trackEnd: 100,
+        appearance: {
+          theme: options.splashTheme ?? mode,
+          colorScheme: mode,
+          background:
+            options.splashBackground ?? (mode === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)'),
+          footerBackground:
+            options.footerBackground ?? (mode === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)'),
+        },
+      },
+    },
   }
   const control = {
     async command(action, selector, params = {}) {
@@ -110,12 +124,12 @@ for (const mode of ['light', 'dark']) {
     })
   })
 
-  test(`records the actual ${mode} main renderer and completed themed splash separately`, async t => {
+  test(`records matching ${mode} splash and main renderer appearances`, async t => {
     const { resultDir } = await directory(t)
     const fixture = captureFixture(mode)
     const evidence = await captureStartupThemeEvidence({ ...fixture, resultDir })
     assert.equal(evidence.targetTheme, mode)
-    assert.equal(evidence.stageAppearance, 'persisted-theme')
+    assert.deepEqual(evidence.stageAppearance, fixture.snapshot.handoff.completion.appearance)
     assert.equal(evidence.source, 'native-electron-capturePage')
     assert.equal(evidence.rendered.owner, 'wework')
     assert.deepEqual(evidence.rendered.palette, {
@@ -133,6 +147,19 @@ for (const mode of ['light', 'dark']) {
     assert.deepEqual(await readFile(join(resultDir, evidence.captures.splash)), PNG)
     const saved = JSON.parse(await readFile(join(resultDir, `startup-theme-${mode}.json`), 'utf8'))
     assert.equal(saved.generation.documentTimeOrigin, 1500)
+  })
+}
+
+for (const incorrect of [
+  { splashTheme: 'dark' },
+  { splashBackground: 'rgb(5, 7, 13)' },
+  { footerBackground: 'rgb(255, 255, 255)' },
+]) {
+  test(`rejects a light startup with inconsistent splash ${Object.keys(incorrect)[0]}`, async t => {
+    const { resultDir } = await directory(t)
+    const fixture = captureFixture('light', incorrect)
+    await assert.rejects(captureStartupThemeEvidence({ ...fixture, resultDir }))
+    assert.deepEqual(fixture.calls, [])
   })
 }
 

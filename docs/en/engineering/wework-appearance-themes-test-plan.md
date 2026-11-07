@@ -13,8 +13,8 @@ The acceptance inventory is independent of application data to detect omissions.
 
 Themes cover Wework-owned chrome, tabs, sidebars, every settings page, authentication, plugins,
 applications, automations, interactions, projects, boards, Issues, project Agent editors, menus and
-dialogs. Startup animation, recovery and error documents, detached windows, quick windows, Process
-Explorer, and system drag surfaces also consume the theme. Code, diffs, terminal ANSI colors,
+dialogs. Detached windows, quick windows, Process Explorer, and system drag surfaces also consume
+the theme. Startup flow, startup colors, recovery and error documents follow upstream. Code, diffs, terminal ANSI colors,
 Markdown, rich text, file viewer controls, and interactive visualizations use semantic colors.
 The remote Wegent Agent content is excluded; its Wework chrome still follows the theme.
 Images, document paper, explicitly formatted cells, video, brand icons, QR codes, and web content
@@ -23,7 +23,7 @@ retain their content colors.
 Changing a theme preserves fonts, font sizes and background images. Schema 2 of `wework.appearance`
 stores theme IDs and explicit overrides rather than resolved palettes. Legacy default palette snapshots
 migrate to theme defaults while user color changes survive. The main window saves both native theme
-snapshots so a system appearance change while the app is closed is respected on the next launch.
+snapshots for workbench and Process Explorer windows; startup animation does not consume named themes.
 Auxiliary windows consume preferences without overwriting them. Shared collaboration Web defaults
 remain independent of desktop theme selection.
 
@@ -45,7 +45,7 @@ removes isolated files and processes.
 | `background-terminals`        | Start real background tools, read output, change appearance and stop processes                               | Terminal and ANSI palette update; PTY lifecycle, scrolling and screenshot coverage remain                                 |
 | `application-menu`            | Open Process Explorer through the native menu; switch the main window between Tokyo Night and Matrix         | The independent window updates without restarting; existing language, mode and window checks remain                       |
 | `streaming-content`           | Write a real visualization through a tool, change calculator inputs, then switch between two dark themes     | The iframe URL, inputs and calculated result survive; sandbox isolation remains                                           |
-| Unit and contract tests       | Catalogue, migration, invalid data, modes, storage, overrides/reset, code/ANSI/visualization and host/splash | Normal, failure and recovery paths collected by existing renderer and host CI                                             |
+| Unit and contract tests       | Catalogue, migration, invalid data, modes, storage, overrides/reset, Pierre code/ANSI/visualization and host | Normal, failure and recovery paths collected by existing renderer and host CI                                             |
 
 Declarations live in `wework/e2e/desktop/catalog/`. Theme paths select the related content and window
 regressions. Existing CI uploads screenshots and diagnostics from `wework/test-results/`; generated

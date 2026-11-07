@@ -147,10 +147,10 @@ describe('LocalRuntimeInitializer', () => {
     const slowStartupHelp = screen.getByTestId('local-runtime-slow-startup-help')
     expect(slowStartupHelp).toHaveTextContent('启动时间有点久')
     expect(slowStartupHelp.className).toContain('sm:flex-row')
-    expect(slowStartupHelp.className).toContain('bg-warning/10')
+    expect(slowStartupHelp.className).toContain('bg-amber-500/10')
     expect(
       within(slowStartupHelp).getByTestId('local-runtime-slow-startup-icon').className
-    ).toContain('text-warning')
+    ).toContain('dark:text-amber-300')
     expect(screen.getByTestId('local-runtime-copy-debug-button').className).toContain(
       'hover:bg-muted'
     )

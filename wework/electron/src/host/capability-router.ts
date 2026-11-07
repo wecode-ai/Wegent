@@ -44,6 +44,7 @@ export const HOST_CAPABILITIES = [
   'browser.navigate',
   'browser.notifyAgentCursorArrived',
   'browser.open',
+  'browser.openExternal',
   'browser.pageState',
   'browser.backgroundPageState',
   'browser.pauseDownload',

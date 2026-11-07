@@ -1,5 +1,5 @@
-import type { CodeViewItem } from '@pierre/diffs'
-import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
+import type { CodeViewFileItem } from '@pierre/diffs'
+import { CodeView, EditProvider, type CodeViewHandle } from '@pierre/diffs/react'
 import FileViewer from '@file-viewer/react'
 import engineeringRenderers from '@file-viewer/preset-engineering'
 import officeRenderers from '@file-viewer/preset-office'
@@ -35,7 +35,8 @@ import { installCodeViewTextDrag } from './codeViewTextDrag'
 import { WEWORK_CODE_THEME } from '@/lib/code-theme'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
-import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
+import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
+import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
 import { isMarkdownFile } from './workspaceFileTypes'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
@@ -127,6 +128,7 @@ interface WorkspaceFilePreviewProps {
   onAddCodeComment?: (context: CodeCommentContext) => void
   editing?: boolean
   editedContent?: string
+  loadVersion?: number
   onEditedContentChange?: (content: string) => void
   onSave?: () => void
   markdownMode?: 'preview' | 'source'
@@ -309,6 +311,11 @@ interface WorkspaceFilePreviewContentProps {
   targetLineStart?: number
   targetLineEnd?: number
   onAddCodeComment?: (context: CodeCommentContext) => void
+  editing?: boolean
+  editedContent?: string
+  loadVersion?: number
+  onEditedContentChange?: (value: string) => void
+  onSave?: () => void
 }
 
 function isHtmlFile(file: WorkspaceTextFileResponse) {
@@ -366,6 +373,25 @@ function normalizeTargetLineRange(
   }
 }
 
+function createWorkspaceCodeItem(
+  file: WorkspaceTextFileResponse,
+  editing: boolean,
+  editedContent?: string,
+  version = 0
+): CodeViewFileItem<undefined> {
+  return {
+    id: file.path,
+    type: 'file',
+    edit: editing,
+    version,
+    file: {
+      name: file.path || file.name,
+      contents: editing ? (editedContent ?? file.content) : file.content,
+      cacheKey: editing ? undefined : `${file.path}:${file.revision}`,
+    },
+  }
+}
+
 function WorkspaceFilePreviewContent({
   file,
   themeType,
@@ -373,10 +399,18 @@ function WorkspaceFilePreviewContent({
   targetLineStart,
   targetLineEnd,
   onAddCodeComment,
+  editing = false,
+  editedContent,
+  loadVersion = 0,
+  onEditedContentChange,
+  onSave,
 }: WorkspaceFilePreviewContentProps & { codeFontSize: number }) {
   const { t } = useTranslation('common')
-  const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
+  const codeViewRef = useRef<CodeViewHandle<undefined, undefined>>(null)
   const codeViewHostRef = useRef<HTMLDivElement>(null)
+  const editor = useWorkspaceCodeEditor(file.path, codeViewHostRef, targetLineStart, targetLineEnd)
+  const currentPathRef = useRef(file.path)
+  const currentLoadVersion = useRef(loadVersion)
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [commentState, setCommentState] = useState<CommentState>({
     filePath: null,
@@ -391,24 +425,34 @@ function WorkspaceFilePreviewContent({
     ? `${file.path}:${targetLineRange.start}:${targetLineRange.end}`
     : `${file.path}:none`
   const codeLineHeight = Math.round(codeFontSize * 1.8)
-  const codeViewItems = useMemo<CodeViewItem[]>(
-    () => [
-      {
-        id: file.path,
-        type: 'file',
-        file: {
-          name: file.path || file.name,
-          contents: file.content,
-          cacheKey: `${file.path}:${file.content.length}`,
-        },
-        version: file.content.length,
-      },
-    ],
-    [file.content, file.name, file.path]
-  )
+  const [initialItems] = useState(() => [createWorkspaceCodeItem(file, editing, editedContent)])
+
+  // Pierre owns the live document and undo stack. Saving must not echo a disk
+  // snapshot back over edits made while the write request was in flight.
+  useLayoutEffect(() => {
+    const view = codeViewRef.current
+    if (
+      view &&
+      (currentPathRef.current !== file.path || currentLoadVersion.current !== loadVersion)
+    ) {
+      view.removeItem(currentPathRef.current)
+      view.addItems([createWorkspaceCodeItem(file, editing, editedContent)])
+      currentPathRef.current = file.path
+      currentLoadVersion.current = loadVersion
+      return
+    }
+    const item = view?.getItem(file.path)
+    if (!view || !item || item.type !== 'file') return
+    if (item.edit && editing) return
+    const cacheKey = `${file.path}:${file.revision}`
+    if (item.edit === editing && item.file.cacheKey === cacheKey) return
+    const nextItem = createWorkspaceCodeItem(file, editing, editedContent, (item.version ?? 0) + 1)
+    view.updateItem({ ...item, ...nextItem, file: item.edit ? item.file : nextItem.file })
+  }, [editedContent, editing, file, loadVersion])
   const activeSelection =
     selection?.filePath === file.path && selection.targetKey === targetLineKey ? selection : null
-  const activeCommentSelection = activeSelection?.source === 'line' ? activeSelection : null
+  const activeCommentSelection =
+    !editing && activeSelection?.source === 'line' ? activeSelection : null
   const comment = commentState.filePath === file.path ? commentState.value : ''
   const selectedLines = useMemo<WorkspaceCodeViewLineSelection | null>(
     () =>
@@ -490,7 +534,7 @@ function WorkspaceFilePreviewContent({
   const codeViewOptions = useMemo(
     () => ({
       disableFileHeader: true,
-      enableLineSelection: true,
+      enableLineSelection: !editing,
       lineHoverHighlight: 'both' as const,
       overflow: 'scroll' as const,
       stickyHeaders: false,
@@ -500,7 +544,7 @@ function WorkspaceFilePreviewContent({
       themeType,
       unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
     }),
-    [codeLineHeight, themeType]
+    [codeLineHeight, editing, themeType]
   )
 
   const addComment = () => {
@@ -532,6 +576,13 @@ function WorkspaceFilePreviewContent({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (editing) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        onSave?.()
+      }
+      return
+    }
     if (isEditableShortcutTarget(event.target)) return
     const usesShortcutModifier = event.ctrlKey || event.metaKey
     if (
@@ -547,6 +598,7 @@ function WorkspaceFilePreviewContent({
   }
 
   const handleCopy = (event: ClipboardEvent<HTMLElement>) => {
+    if (editing) return
     if (!allLinesSelected) return
     event.preventDefault()
     event.clipboardData.setData('text/plain', file.content)
@@ -554,15 +606,23 @@ function WorkspaceFilePreviewContent({
 
   return (
     <section
-      data-testid="workspace-file-preview"
-      draggable={Boolean(activeCommentSelection)}
+      data-testid={editing ? 'workspace-file-editor' : 'workspace-file-preview'}
+      data-pierre-editor-surface={editing ? '' : undefined}
+      data-theme={themeType}
+      draggable={!editing && Boolean(activeCommentSelection)}
       onDragStart={event => {
+        if (editing) {
+          editor.onDragStart(event)
+          return
+        }
         if (!activeCommentSelection) return
         writeSelectedTextDragData(event.dataTransfer, activeCommentSelection.selectedText)
       }}
       className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
       onCopy={handleCopy}
       onKeyDown={handleKeyDown}
+      onKeyUp={editing ? editor.publishSelection : undefined}
+      onMouseUp={editing ? editor.publishSelection : undefined}
     >
       <div
         data-testid="workspace-file-preview-code-view"
@@ -570,22 +630,28 @@ function WorkspaceFilePreviewContent({
         data-theme={themeType}
         className="min-h-0 flex-1 bg-background"
       >
-        <CodeView
-          ref={codeViewRef}
-          containerRef={codeViewHostRef}
-          items={codeViewItems}
-          selectedLines={selectedLines}
-          onSelectedLinesChange={captureLineSelection}
-          options={codeViewOptions}
-          className="h-full min-h-0 w-full scrollbar-soft"
-          style={
-            {
-              height: '100%',
-              overflow: 'auto',
-              '--wework-workspace-code-line-height': `${codeLineHeight}px`,
-            } as CSSProperties
-          }
-        />
+        <PierreCodeProvider>
+          <EditProvider createEditor={editor.createEditor}>
+            <CodeView
+              ref={codeViewRef}
+              containerRef={codeViewHostRef}
+              initialItems={initialItems}
+              selectedLines={editing ? null : selectedLines}
+              onSelectedLinesChange={captureLineSelection}
+              options={codeViewOptions}
+              onItemEditChange={event => onEditedContentChange?.(event.file.contents)}
+              onItemEditComplete={() => 'accept'}
+              className="h-full min-h-0 w-full scrollbar-soft"
+              style={
+                {
+                  height: '100%',
+                  overflow: 'auto',
+                  '--wework-workspace-code-line-height': `${codeLineHeight}px`,
+                } as CSSProperties
+              }
+            />
+          </EditProvider>
+        </PierreCodeProvider>
       </div>
       {file.truncated && (
         <div className="shrink-0 border-t border-border bg-background px-4 py-2 text-xs text-warning">
@@ -649,7 +715,8 @@ export function WorkspaceFilePreview({
   targetLineEnd,
   onAddCodeComment,
   editing = false,
-  editedContent = '',
+  editedContent,
+  loadVersion,
   onEditedContentChange,
   onSave,
   markdownMode = 'preview',
@@ -720,33 +787,21 @@ export function WorkspaceFilePreview({
     )
   }
 
-  if (editing && onEditedContentChange && onSave) {
-    return (
-      <section className="flex min-w-0 flex-1 overflow-hidden bg-background">
-        <WorkspaceTextFileEditor
-          key={file.path}
-          path={file.path}
-          value={editedContent}
-          themeType={themeType}
-          targetLineStart={targetLineStart}
-          targetLineEnd={targetLineEnd}
-          onChange={onEditedContentChange}
-          onSave={onSave}
-        />
-      </section>
-    )
-  }
-
-  if (isHtmlFile(file)) {
+  if (!editing && isHtmlFile(file)) {
     return <WorkspaceHtmlPreview file={file} />
   }
 
-  if (isMarkdownFile(file.name) && markdownMode === 'preview') {
+  if (!editing && isMarkdownFile(file.name) && markdownMode === 'preview') {
     return <WorkspaceMarkdownPreview file={file} />
   }
 
   return (
     <WorkspaceFilePreviewContent
+      editing={editing}
+      editedContent={editedContent}
+      loadVersion={loadVersion}
+      onEditedContentChange={onEditedContentChange}
+      onSave={onSave}
       file={file}
       themeType={themeType}
       codeFontSize={codeFontSize}

@@ -178,21 +178,14 @@ function showToast(message) {
   }, 2200)
 }
 
-async function copyStartupDiagnostics(button) {
+async function copyStartupDiagnostics() {
   const diagnostics = window.weworkStartupDiagnostics
   if (!diagnostics || typeof diagnostics.copy !== 'function') {
     showToast(isChinese ? '诊断信息暂不可用' : 'Diagnostics are unavailable')
     return
   }
-  const originalLabel = button?.textContent ?? ''
   try {
     await diagnostics.copy()
-    if (button) {
-      button.textContent = isChinese ? '已复制' : 'Copied'
-      window.setTimeout(() => {
-        button.textContent = originalLabel
-      }, 1600)
-    }
     showToast(
       isChinese
         ? '诊断信息已复制，可直接发给技术支持'
@@ -372,12 +365,20 @@ async function completeProgress(signal, duration) {
 function completionEvidence() {
   const canvas = document.querySelector('#startup-brand-canvas').getBoundingClientRect()
   const wordmark = document.querySelector('.startup-brand-name')
+  const rootStyle = window.getComputedStyle(document.documentElement)
   return {
     reducedMotion: motionPreference.matches,
     progressNow: Number(progressElement.getAttribute('aria-valuenow')),
     fillEnd: Number(progressFillElement.getAttribute('x2')),
     trackEnd: Number(progressTrackElement.getAttribute('x2')),
     wordmarkVisible: wordmark?.checkVisibility() ?? false,
+    appearance: {
+      theme: document.documentElement.dataset.theme,
+      colorScheme: rootStyle.colorScheme,
+      background: rootStyle.backgroundColor,
+      footerBackground: window.getComputedStyle(document.querySelector('#startup-status'))
+        .backgroundColor,
+    },
     canvas: { x: canvas.x, y: canvas.y, width: canvas.width, height: canvas.height },
     viewport: { width: window.innerWidth, height: window.innerHeight },
   }
@@ -557,13 +558,13 @@ retryButton.addEventListener('click', () => {
 recoverButton.addEventListener('click', () => showConfirmation('recover'))
 resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
 copyDiagnosticsButton.addEventListener('click', () => {
-  void copyStartupDiagnostics(copyDiagnosticsButton)
+  void copyStartupDiagnostics()
 })
 openLogsButton.addEventListener('click', () => {
   void openStartupLogs()
 })
 timeoutCopyButton.addEventListener('click', () => {
-  void copyStartupDiagnostics(timeoutCopyButton)
+  void copyStartupDiagnostics()
 })
 timeoutOpenLogsButton.addEventListener('click', () => {
   void openStartupLogs()

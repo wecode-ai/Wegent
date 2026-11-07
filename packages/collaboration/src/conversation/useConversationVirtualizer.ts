@@ -1,6 +1,5 @@
 import {
   elementScroll,
-  observeElementRect,
   observeElementOffset,
   useVirtualizer,
   type Virtualizer,
@@ -55,12 +54,6 @@ export function useConversationVirtualizer({
     scrollMargin: prefix,
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
-    observeElementRect: (instance, callback) =>
-      observeElementRect(instance, rect => {
-        // A retained workspace can be hidden while settings is open. A zero
-        // viewport must not discard its mounted interactive content.
-        if (rect.width > 0 && rect.height > 0) callback(rect)
-      }),
     observeElementOffset: (instance, callback) => {
       readOffsetRef.current = callback
       const dispose = observeElementOffset(instance, callback)
@@ -98,15 +91,9 @@ export function useConversationVirtualizer({
           () => elementScroll(offset, settings, instance)
         )
       const after = element?.scrollTop ?? before
-      // A clamped no-op write emits no native scroll event. Without its read-back,
-      // the engine can retain an estimated offset beyond a short conversation.
-      if (
-        element &&
-        settings.behavior !== 'smooth' &&
-        after === before &&
-        Math.abs(after - offset - (settings.adjustments ?? 0)) > 1
-      )
-        readOffsetRef.current?.(after, false)
+      // Instant writes have already landed. A native scroll event can be delayed
+      // or absent, so acknowledge the actual offset before the next commit.
+      if (element && settings.behavior !== 'smooth') readOffsetRef.current?.(after, false)
       onScrollAdjustment?.(after - before)
     },
   })

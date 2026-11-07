@@ -12,7 +12,6 @@ import userEvent from '@testing-library/user-event'
 import {
   cloudRunnerModels,
   runnerModelKey,
-  type WorkspaceProjectAgent,
   type WorkspaceStandInSettings,
 } from '@wegent/collaboration'
 import { useState } from 'react'
@@ -49,17 +48,18 @@ const work = {
   ],
 } as RuntimeWorkListResponse
 
+/** Render a stateful configuration editor so model and workspace changes exercise real draft updates. */
 function Fixture({
   save,
   initial,
+  initialModel,
   services,
-  selectedAgent,
   showPrompt = true,
 }: {
   save: ReturnType<typeof vi.fn>
   initial?: WorkspaceStandInSettings['workspace']
+  initialModel?: WorkspaceStandInSettings['model']
   services?: WorkbenchServices
-  selectedAgent?: WorkspaceProjectAgent
   showPrompt?: boolean
 }) {
   const [draft, setDraft] = useState<WorkspaceStandInSettings>({
@@ -68,20 +68,19 @@ function Fixture({
     executionDeviceId: 'mac',
     version: 0,
     workspace: initial,
+    model: initialModel,
   })
   const [valid, setValid] = useState(false)
   return (
     <>
       <StandInComposer
         draft={draft}
-        selectedAgent={selectedAgent}
         showPrompt={showPrompt}
         onChange={setDraft}
         onSave={async prompt => save({ ...draft, prompt })}
         onValidityChange={setValid}
         disabled={false}
         submitDisabled={false}
-        controls={<button data-testid="stand-in-agent">Agent</button>}
         deviceControl={<button data-testid="stand-in-device">Mac</button>}
         runtimeWork={work}
         services={services}
@@ -155,36 +154,33 @@ describe('Stand-in configuration composer', () => {
     }
   )
 
-  it('persists a fixed agent model when agent details arrive after the default model', async () => {
-    const save = vi.fn()
-    const model = {
-      runtime: 'codex' as const,
-      provider: 'local',
-      model_id: 'default',
-      is_default: true,
+  it.each(['codex', 'claude_code'] as const)(
+    'preserves the stand-in’s explicit %s model across a catalog refresh',
+    async runtime => {
+      const save = vi.fn()
+      const selected = { runtime, provider: 'native', model_id: 'saved-model' }
+      const catalog = vi.fn(async () => ({
+        models: [
+          { ...selected, model_id: 'device-default', is_default: true },
+          { ...selected, is_default: false },
+        ],
+      }))
+      const services = {
+        standInApi: { catalog },
+        modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+      } as unknown as WorkbenchServices
+      const { rerender } = render(
+        <Fixture save={save} services={services} initialModel={selected} />
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('model-selector-button')).toHaveTextContent('saved-model')
+      )
+      rerender(<Fixture save={save} services={{ ...services }} initialModel={selected} />)
+      await waitFor(() => expect(catalog).toHaveBeenCalledTimes(2))
+      await userEvent.click(screen.getByTestId('stand-in-save'))
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: selected }))
     }
-    const services = {
-      standInApi: { catalog: vi.fn(async () => ({ models: [model] })) },
-      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
-    } as unknown as WorkbenchServices
-    const { rerender } = render(<Fixture save={save} services={services} />)
-    await waitFor(() => expect(screen.getByTestId('stand-in-save')).toBeEnabled())
-    const fixed = { runtime: 'codex' as const, provider: 'local', model_id: 'fixed' }
-    rerender(
-      <Fixture
-        save={save}
-        services={services}
-        selectedAgent={{
-          id: 'reviewer',
-          name: 'Reviewer',
-          runtime: 'codex',
-          modelPolicy: { mode: 'fixed', model: fixed },
-        }}
-      />
-    )
-    await userEvent.click(screen.getByTestId('stand-in-save'))
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: fixed }))
-  })
+  )
 
   it('allows settings to be saved while the model catalog is loading', async () => {
     const save = vi.fn(async () => true)
@@ -381,10 +377,8 @@ describe('Stand-in configuration composer', () => {
     const bar = screen.getByTestId('stand-in-workspace-bar')
     const follows = (first: HTMLElement, second: HTMLElement) =>
       Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(bar).toContainElement(screen.getByTestId('stand-in-agent'))
-    expect(
-      follows(screen.getByTestId('stand-in-agent'), screen.getByTestId('stand-in-device'))
-    ).toBe(true)
+    expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
+    expect(bar).toContainElement(screen.getByTestId('stand-in-device'))
     expect(
       follows(screen.getByTestId('stand-in-device'), screen.getByTestId('project-work-button'))
     ).toBe(true)

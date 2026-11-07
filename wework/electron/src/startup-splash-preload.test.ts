@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 describe('startup splash preload', () => {
-  test('exposes startup appearance and recovery actions without file access', async () => {
+  test('exposes only the startup recovery actions', async () => {
     const sourcePath = resolve(
       process.cwd(),
       basename(process.cwd()) === 'electron'
@@ -14,8 +14,6 @@ describe('startup splash preload', () => {
 
     expect(source).not.toMatch(/from\s+['"]\.\.?\//)
     expect(source).toContain("'weworkStartupRecovery'")
-    expect(source).toContain("'weworkAppearance'")
-    expect(source).toContain("'appearance:changed'")
     expect(source).toContain("'startup-recovery:retry'")
     expect(source).toContain("'startup-recovery:recover-workbench'")
     expect(source).toContain("'startup-recovery:reset-app-state'")

@@ -775,8 +775,13 @@ function shouldStopAfterDesktopCheckpoint(checkpoint) {
 }
 
 function shouldConfigureToolDetailsMcp() {
-  if (TOOL_BLOCK_ORDER_ONLY) return true
-  return getActiveOnlyModes().length === 0 && shouldRunDesktopCheckpoint('rendering-extensions')
+  if (TOOL_BLOCK_ORDER_ONLY || MODEL_SWITCH_ONLY) return true
+  const selectedCheckpointNeedsTools =
+    shouldRunDesktopCheckpoint('rendering-extensions') ||
+    shouldRunDesktopCheckpoint('model-routing')
+  // Cloud model matrices use these tools; unrelated only modes never do.
+  if (CLOUD_ONLY) return selectedCheckpointNeedsTools
+  return getActiveOnlyModes().length === 0 && selectedCheckpointNeedsTools
 }
 
 function shouldRunPluginSegment(segment) {
