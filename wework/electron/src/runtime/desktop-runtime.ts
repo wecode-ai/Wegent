@@ -15,7 +15,6 @@ import {
 import { DshRuntime, type DshRuntimeOptions } from './dsh-runtime.js'
 import {
   ManagedExecutorRuntime,
-  managedExecutorHome,
   type ManagedExecutorRuntimeOptions,
 } from './managed-executor-runtime.js'
 import {
@@ -32,6 +31,7 @@ const CORE_APP_PATH = '/'
 const CORE_DSH_START_TIMEOUT_MS = 120_000
 
 export interface DesktopRuntimeOptions {
+  applicationId: string
   environment: NodeJS.ProcessEnv
   dataDirectory: string
   logDirectory: string
@@ -435,9 +435,9 @@ export class DesktopRuntime {
 
   private resolveDesktopDeviceId(): Promise<string> {
     this.desktopDeviceId ??= resolveDesktopDeviceId({
+      applicationId: this.options.applicationId,
       environment: this.options.environment,
       dataDirectory: this.options.dataDirectory,
-      executorHome: managedExecutorHome(this.options),
     })
     return this.desktopDeviceId
   }

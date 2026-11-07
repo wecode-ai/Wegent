@@ -435,10 +435,8 @@ export async function verifyPluginScopeBoundaries({
           mode: 0o600,
         }
       )
-      const bId = `electron-${randomUUID()}`
-      await writeFile(join(bUserData, 'desktop-device-id'), bId, { flag: 'wx', mode: 0o600 })
       const copiedStorage = []
-      Object.assign(result, { deviceB: bId, copiedStorage })
+      Object.assign(result, { copiedStorage })
       const faultStart = apiProxy.requests.length
       apiProxy.rule = entry =>
         entry.method === 'GET' && entry.path === '/api/plugins/installed'
@@ -494,6 +492,9 @@ export async function verifyPluginScopeBoundaries({
         timeoutMs,
       })
       const status = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+      const bId = (await readFile(join(bUserData, 'desktop-device-id'), 'utf8')).trim()
+      assert.match(bId, /^electron-[0-9a-f]{64}$/)
+      result.deviceB = bId
       assert.equal(status.deviceId, bId)
       assert.notEqual(status.deviceId, deviceId)
       await refreshCatalog()

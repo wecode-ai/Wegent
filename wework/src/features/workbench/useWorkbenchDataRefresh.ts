@@ -896,6 +896,29 @@ export function useWorkbenchDataRefresh({
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
       const supervisorRequestRevision = supervisorSnapshotsRef.current.capture()
+      // Goal updates and settlement checks concern one execution, not its device catalog.
+      // Project sessions retain their project-authorized list read path.
+      if (executorClient.runtime.getRuntimeTask && !address.projectSession) {
+        const task = await executorClient.runtime.getRuntimeTask(address)
+        if (!task) return null
+        const work = applyRuntimeTaskOverrides(
+          {
+            projects: [],
+            chats: [
+              {
+                deviceId: address.deviceId,
+                workspacePath: task.workspacePath,
+                available: true,
+                tasks: [task],
+              },
+            ],
+            totalTasks: 1,
+          },
+          true,
+          supervisorRequestRevision
+        )
+        return { ...work.chats[0].tasks[0], optimistic: false }
+      }
       const device = devicesRef.current.find(item => item.device_id === address.deviceId)
       const listCloudRuntimeWork =
         device && (isCloudDevice(device) || isRemoteDevice(device))

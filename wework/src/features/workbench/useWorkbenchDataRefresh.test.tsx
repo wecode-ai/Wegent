@@ -96,6 +96,83 @@ describe('useWorkbenchDataRefresh', () => {
     sessionStorage.clear()
   })
 
+  test('refreshes Goal and settlement snapshots by address without reloading the catalog', async () => {
+    const hook = setup()
+    await waitFor(() => expect(hook.result.current.state.runtimeWorkLoad.phase).toBe('ready'))
+    const task = { ...work.chats[0].tasks[0], running: true, optimistic: true }
+    const getTask = vi.fn().mockResolvedValue(task)
+    hook.executorClient.runtime.getRuntimeTask = getTask
+    hook.listRuntimeWork.mockClear()
+    const address = { deviceId: 'local-device', taskId: 'task-1', workspacePath: '/workspace' }
+    await act(async () => {
+      for (let index = 0; index < 8; index++) {
+        expect(await hook.result.current.refreshRuntimeTask(address)).toEqual({
+          ...task,
+          optimistic: false,
+        })
+      }
+    })
+    expect(getTask).toHaveBeenCalledTimes(8)
+    expect(getTask).toHaveBeenLastCalledWith(address)
+    expect(hook.listRuntimeWork).not.toHaveBeenCalled()
+    getTask.mockResolvedValue(null)
+    expect(await hook.result.current.refreshRuntimeTask(address)).toBeNull()
+    expect(hook.listRuntimeWork).not.toHaveBeenCalled()
+    getTask.mockRejectedValue(new Error('owner unavailable'))
+    await expect(hook.result.current.refreshRuntimeTask(address)).rejects.toThrow(
+      'owner unavailable'
+    )
+    expect(hook.listRuntimeWork).not.toHaveBeenCalled()
+  })
+
+  test('preserves newer title and supervisor events while a point snapshot is pending', async () => {
+    const hook = setup()
+    await waitFor(() => expect(hook.result.current.state.runtimeWorkLoad.phase).toBe('ready'))
+    const pending = deferred<RuntimeWorkListResponse['chats'][number]['tasks'][number]>()
+    hook.executorClient.runtime.getRuntimeTask = vi.fn().mockReturnValue(pending.promise)
+    const address = { deviceId: 'local-device', taskId: 'task-1', workspacePath: '/workspace' }
+    let refresh!: ReturnType<typeof hook.result.current.refreshRuntimeTask>
+    act(() => {
+      refresh = hook.result.current.refreshRuntimeTask(address)
+      hook.result.current.updateLocalRuntimeTaskTitle(address, 'New title')
+      hook.result.current.updateLocalRuntimeTaskSupervisor(address, null)
+    })
+    await act(async () => {
+      pending.resolve({
+        ...work.chats[0].tasks[0],
+        supervisor: {
+          mode: 'auto',
+          status: 'active',
+          instructions: '',
+          intervalSeconds: 30,
+          suggestions: [],
+        },
+      })
+      expect(await refresh).toMatchObject({
+        title: 'New title',
+        supervisor: null,
+        optimistic: false,
+      })
+    })
+  })
+
+  test('keeps project sessions on their project-authorized read path', async () => {
+    const hook = setup()
+    await waitFor(() => expect(hook.result.current.state.runtimeWorkLoad.phase).toBe('ready'))
+    const getTask = vi.fn()
+    hook.executorClient.runtime.getRuntimeTask = getTask
+    hook.listRuntimeWork.mockClear()
+    await act(async () => {
+      await hook.result.current.refreshRuntimeTask({
+        deviceId: 'local-device',
+        taskId: 'task-1',
+        projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+      })
+    })
+    expect(getTask).not.toHaveBeenCalled()
+    expect(hook.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
   test('refreshes changed work without rediscovering unchanged devices', async () => {
     const hook = setup()
     await waitFor(() => expect(hook.result.current.state.devices).toHaveLength(1))
