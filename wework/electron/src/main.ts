@@ -1044,6 +1044,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       )
       if (!pluginName || quitting || contents.isDestroyed()) return
       console.warn('[core-dsh] plugin failed to load', { pluginName })
+      logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
     })
   } catch (error) {
     primaryDshLoaded = false
@@ -1659,7 +1660,9 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
   const target = mainWindow
   const splash = startupSplash
   const splashWindow = startupSplashWindow
-  const shouldContinue = () => !quitting && !lastStartupFailure && !target.isDestroyed()
+  let handoffActive = true
+  const canPresent = () => !quitting && !lastStartupFailure && !target.isDestroyed()
+  const shouldContinue = () => handoffActive && canPresent()
   try {
     if (!splash || !splashWindow) throw new Error('Startup splash is unavailable for handoff')
     await finishStartupAnimation(() =>
@@ -1690,7 +1693,8 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
                     }
                   : null,
               })
-            }
+            },
+            shouldContinue
           )
           logStartupStep('main-window-show', 'completed')
           return bounds
@@ -1703,7 +1707,8 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
     }
   } catch (error) {
     if (quitting) return
-    if (!shouldContinue()) throw error
+    if (!canPresent()) throw error
+    handoffActive = false
     console.warn('[startup-window-handoff] presenting the ready window without animation', error)
     target.setOpacity(1)
     if (!keepE2EWindowInBackground) target.show()
@@ -1882,11 +1887,10 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   })
 }
 
-function recordStartupFailure(error: unknown, source: string, pluginName?: string): void {
+function recordStartupFailure(error: unknown, source: string): void {
   lastStartupFailure = startupFailureSnapshot(error, {
     source,
     stage: startupProgress.currentUpdate()?.stage.id,
-    ...(pluginName ? { pluginName } : {}),
   })
   runtimeError = lastStartupFailure.message
   runtimePhase = 'failed'

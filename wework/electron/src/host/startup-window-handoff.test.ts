@@ -75,14 +75,16 @@ function fixture() {
   const prepare = (
     show = true,
     onTrace?: (event: StartupWindowHandoffTrace) => void,
-    displays: StartupWindowDisplays = { main: 1, splash: 1 }
+    displays: StartupWindowDisplays = { main: 1, splash: 1 },
+    shouldContinue?: () => boolean
   ) =>
     prepareStartupMainWindow(
       main as unknown as BrowserWindow,
       splash as unknown as BrowserWindow,
       show,
       displays,
-      onTrace
+      onTrace,
+      shouldContinue
     )
   return {
     prepare,
@@ -101,6 +103,39 @@ function fixture() {
 }
 
 describe('preparing the native startup destination', () => {
+  test('cancels pending maximization without restacking or capturing the fallback window', async () => {
+    vi.useFakeTimers()
+    const { prepare, main, splash, nativeEvents } = fixture()
+    splash.isMaximized = () => true
+    main.maximize.mockImplementation(() => {})
+    let active = true
+    try {
+      const pending = prepare(true, undefined, undefined, () => active)
+      const cancelled = expect(pending).rejects.toThrow('preparation was cancelled')
+      expect(main.maximize).toHaveBeenCalledOnce()
+      active = false
+      await vi.advanceTimersByTimeAsync(16)
+      await cancelled
+      expect(splash.moveAbove).not.toHaveBeenCalled()
+      expect(main.webContents.capturePage).not.toHaveBeenCalled()
+      expect(main.setOpacity).toHaveBeenLastCalledWith(1)
+      for (const event of ['maximize', 'resize', 'move', 'closed']) {
+        expect(nativeEvents.listenerCount(event)).toBe(0)
+      }
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('does not touch a window after presentation has already taken over', async () => {
+    const { prepare, main, splash, calls } = fixture()
+    await expect(prepare(true, undefined, undefined, () => false)).rejects.toThrow('cancelled')
+    expect(calls).toEqual([])
+    expect(main.setBounds).not.toHaveBeenCalled()
+    expect(splash.moveAbove).not.toHaveBeenCalled()
+  })
+
   test('accepts the OS maximized frame for the initial splash without requiring work-area bounds', async () => {
     const { main, bounds, nativeEvents, setMainBounds } = fixture()
     const nativeBounds = { x: -8, y: -8, width: 1040, height: 736 }
