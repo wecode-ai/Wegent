@@ -21,9 +21,14 @@ impl LocalTaskStore {
                AND deleted_at IS NULL
              ORDER BY sort_order, updated_at DESC, id",
         )?;
-        let rows = statement.query_map([project_id], |row| map_loop_item(&connection, row))?;
+        let rows = statement.query_map([project_id], projections::map_loop_item_fields)?;
         let mut items = collect_items(rows)?;
         drop(statement);
+        crate::task_runtime::runner_history::enrich_project_tasks(
+            &connection,
+            project_id,
+            &mut items,
+        )?;
         let executions = latest_executions_for_project(&connection, project_id)?;
         for item in &mut items {
             if let Some((id, status)) = executions.get(&item.id) {
