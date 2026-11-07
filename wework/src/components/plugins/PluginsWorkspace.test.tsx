@@ -66,6 +66,7 @@ const localExecutorMocks = vi.hoisted(() => ({
   request: vi.fn(),
 }))
 const desktopHostMock = vi.hoisted(() => vi.fn())
+const ensurePythonMock = vi.hoisted(() => vi.fn())
 
 function mockKnownExecutorDevice(deviceId: string, deviceRouteId: string | null = null): void {
   const routeId = deviceRouteId ?? deviceId
@@ -1847,6 +1848,13 @@ describe('PluginsWorkspace', () => {
     delete window.__WEWORK_RUNTIME_CONFIG__
     telemetryMocks.track.mockClear()
     desktopHostMock.mockReset()
+    ensurePythonMock.mockReset().mockResolvedValue({ state: 'installed' })
+    window.weworkElectronExecutionEnvironments = {
+      list: vi.fn().mockResolvedValue([]),
+      ensurePython: ensurePythonMock,
+      chooseNodeExecutable: vi.fn().mockResolvedValue(null),
+      useBuiltinNode: vi.fn().mockResolvedValue(undefined),
+    }
     localExecutorMocks.ensureStarted.mockReset()
     localExecutorMocks.ensureAvailable.mockReset()
     mockKnownExecutorDevice('current-device')
@@ -4962,6 +4970,7 @@ describe('PluginsWorkspace', () => {
       '/api/plugins/marketplace/101/install?device_id=current-device',
       expect.objectContaining({ method: 'POST' })
     )
+    expect(ensurePythonMock).not.toHaveBeenCalled()
     expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_installed', {
       source: 'cloud',
       plugin_distribution: 'official',
@@ -4969,7 +4978,38 @@ describe('PluginsWorkspace', () => {
     })
   })
 
-  test.each([false])(
+  test.each(['pending', 'failed'] as const)(
+    'installs a marketplace package while Python preparation is %s',
+    async pythonState => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      if (pythonState === 'pending') {
+        ensurePythonMock.mockImplementation(() => new Promise(() => {}))
+      } else {
+        ensurePythonMock.mockRejectedValue(new Error('Python download failed'))
+      }
+      mockSystemSkillsFetch()
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+      await screen.findByTestId('plugin-marketplace-install-101')
+      await installPluginFromMarketCard('plugin-marketplace-install-101')
+
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('Documents 已安装')
+      )
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/marketplace/101/install?device_id=current-device',
+        expect.objectContaining({ method: 'POST' })
+      )
+      expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+        'data-notice-kind',
+        'success'
+      )
+      expect(ensurePythonMock).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([false, true])(
     'defers background device synchronization until a foreground install settles (auto-update=%s)',
     async autoUpdate => {
       window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
@@ -5079,6 +5119,47 @@ describe('PluginsWorkspace', () => {
       expect.anything()
     )
   })
+
+  test.each(['install', 'manage'] as const)(
+    'does not restart Python preparation through login after a %s failure',
+    async action => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceName: 'wiki',
+        marketplaceDisplayName: 'Wiki',
+        marketplaceConnectorSlug: 'wiki',
+        marketplaceConnectorLocal: true,
+        marketplaceInstalled: action === 'manage',
+      })
+      mockCodexAppServerInvoke({
+        deviceId: 'current-device',
+        localConnectorAuthHealth: async () => {
+          throw Object.assign(new Error('Managed Python preparation failed'), {
+            code: 'python_runtime_unavailable',
+          })
+        },
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      if (action === 'install') {
+        await screen.findByTestId('plugin-marketplace-install-101')
+        await installPluginFromMarketCard('plugin-marketplace-install-101')
+        await waitFor(() =>
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('Wiki 已安装')
+        )
+      } else {
+        await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+        await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:wiki'))
+        expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+          '插件 Python 环境准备失败'
+        )
+      }
+      expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
+      expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+        'runtime.local_connector_auth.start',
+        expect.anything()
+      )
+    }
+  )
 
   test.each([
     { name: 'catalog omits account auth', catalogAccountAuth: false, installedAuth: 'account' },
@@ -8847,6 +8928,73 @@ describe('PluginsWorkspace', () => {
       expect(await screen.findByTestId('plugin-github-cli-auth-dialog')).toBeInTheDocument()
     }
   )
+
+  test('keeps fallback plugin logos contained on the detail page', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'personal',
+          displayName: 'Personal',
+          path: '/Users/test/.codex/plugins/marketplaces/personal',
+          plugins: [
+            {
+              ...defaultCodexPlugin,
+              id: 'code-review',
+              name: 'code-review',
+              displayName: 'Code Review',
+              logo: '',
+              defaultPrompt: [
+                'Review my current working-tree changes.',
+                'Compare this branch with its merge base.',
+                'Inspect the latest commit for high-risk issues.',
+              ],
+            },
+          ],
+        },
+      ],
+    })
+
+    // Flush the deferred local catalog's transition before exercising the detail UI.
+    await act(async () => {
+      render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+    })
+
+    expect(screen.getByText('Code Review')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
+    expect(screen.queryByText('Code Review')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-personal'))
+    await userEvent.click((await screen.findAllByTestId(/^plugin-marketplace-row-/))[0])
+
+    expect(screen.getByTestId('plugin-detail-logo')).toHaveClass('plugin-logo-fallback')
+    expect(screen.getByRole('heading', { name: '试试这些任务' })).toBeInTheDocument()
+    expect(screen.getAllByTestId(/^plugin-prompt-/)).toHaveLength(3)
+    expect(screen.getByTestId('plugin-prompt-1')).toHaveTextContent(
+      'Code Review Compare this branch with its merge base.'
+    )
+    expect(screen.getByTestId('plugin-prompt-1')).toHaveAttribute(
+      'data-plugin-distribution',
+      'personal'
+    )
+    const actionsBar = screen.getByTestId('plugin-detail-actions-bar')
+    const actionMenu = screen.getByTestId('plugin-detail-actions-code-review')
+    const installAction = screen.getByTestId('plugin-detail-toggle-code-review')
+    expect(Array.from(actionsBar.children).indexOf(actionMenu.parentElement!)).toBeLessThan(
+      Array.from(actionsBar.children).indexOf(installAction)
+    )
+    await userEvent.click(actionMenu)
+    await userEvent.click(screen.getByTestId('plugin-detail-delete-code-review'))
+    expect(screen.getByTestId('delete-personal-plugin-dialog')).toHaveTextContent(
+      '将永久删除「Code Review」的本地插件源码'
+    )
+    await userEvent.click(screen.getByTestId('plugin-delete-confirm-button'))
+    await waitFor(() =>
+      expect(requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
+        marketplacePath: '/Users/test/.codex/plugins/marketplaces/personal',
+        pluginName: 'code-review',
+      })
+    )
+  })
 
   test('paints plugin detail from a route on the first frame when the catalog is warm', () => {
     setPluginMarketplaceCache({

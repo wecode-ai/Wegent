@@ -92,11 +92,11 @@ jobs:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
         run: node .github/scripts/balance-wework-windows-e2e.mjs >> "$GITHUB_OUTPUT"
 
-      - name: Balance Linux Core checkpoints across additional runners
+      - name: Balance Linux Core checkpoints within existing runners
         id: linux-matrix
         env:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
-          CORE_RUNNER_SCALE: "1.5"
+          CORE_RUNNER_SCALE: "1"
         run: node .github/scripts/order-wework-linux-e2e.mjs --balance-core >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
@@ -946,8 +946,8 @@ jobs:
           fi
           gh --version
 
-      - name: Prepare the pinned native DWS compiler for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth-dws')
+      - name: Prepare the pinned native compiler for account authentication E2E
+        if: contains(matrix.segments, 'plugin-account-auth-dws') || contains(matrix.segments, 'plugin-account-auth-password')
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"

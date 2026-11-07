@@ -6,6 +6,7 @@ import {
 import { tmpdir } from 'node:os'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
+import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -1228,6 +1229,7 @@ async function main() {
   let blockingNetworkProxy
   let cloudEnvironment
   let cloudHistorySearch
+  let nativeCloudLogin
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
@@ -1307,14 +1309,15 @@ async function main() {
     }
     desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = buildDesktopApp(appIdentifier, codexBinary)
-    const desktopApp = cloudEnvironment
-      ? (
-          await Promise.all([
-            desktopAppPromise,
-            cloudEnvironment.startRemoteExecutor(executorBinary),
-          ])
-        )[0]
-      : await desktopAppPromise
+    const desktopApp =
+      cloudEnvironment && desktopScenario?.requiresRemoteExecutor !== false
+        ? (
+            await Promise.all([
+              desktopAppPromise,
+              cloudEnvironment.startRemoteExecutor(executorBinary),
+            ])
+          )[0]
+        : await desktopAppPromise
     desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
@@ -1344,6 +1347,7 @@ async function main() {
     }
 
     const needsPackagedHarnessRuntime =
+      desktopScenario?.requiresPackagedHarnessRuntime === true ||
       SELECTED_DESKTOP_SEGMENT?.startsWith('harness-app-') ||
       (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
     const usesReleasePackageRuntimeAssets =
@@ -1388,6 +1392,7 @@ async function main() {
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
       WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
+      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
@@ -1484,6 +1489,15 @@ async function main() {
       Object.assign(appEnvironment, cleanEnvironment)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    if (desktopScenario?.requiresNativeCloudAuthorization) {
+      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
+      nativeCloudLogin = nativeCloudAuthorizationFixture(
+        cloudEnvironment,
+        electronUserDataDirectory,
+        appBinary
+      )
+      await nativeCloudLogin.authorize()
+    }
     await desktopScenario?.prepareUserDataLaunch?.()
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
@@ -4798,6 +4812,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    await runTeardownStep('native cloud authorization', async () => nativeCloudLogin?.restore())
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('default upgrade Home', async () => {

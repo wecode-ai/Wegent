@@ -1,13 +1,59 @@
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { gzipSync } from 'node:zlib'
-import { once } from 'node:events'
-import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
+import {
+  ExecutorRuntimeClient,
+  ExecutorRuntimeError,
+  executorRequestTimeoutMs,
+} from './executor-runtime-client.js'
 import { LocalEndpointTransport } from './local-endpoint-transport.js'
+
+test('keeps auth RPC alive while the host prepares Python', () => {
+  for (const method of [
+    'executor.plugin_auth.migrate',
+    'executor.plugin_auth.run',
+    'runtime.connections.cli',
+    'runtime.local_connector_auth.health',
+    'runtime.local_connector_auth.start',
+  ]) {
+    assert.equal(executorRequestTimeoutMs(method, 120_000), 21 * 60_000 + 5_000)
+  }
+  assert.equal(executorRequestTimeoutMs('executor.health', 120_000), 120_000)
+})
+
+test('request applies the Python budget while preserving explicit and ordinary budgets', async context => {
+  const fixture = await executorFixture({ rendererMethods: ['executor.plugin_auth.*'] })
+  const client = new ExecutorRuntimeClient({
+    transport: new LocalEndpointTransport({ endpoint: fixture.endpoint, token: fixture.token }),
+    requestTimeoutMs: 120_000,
+  })
+  try {
+    await client.start()
+    const schedule = globalThis.setTimeout
+    const delays = []
+    context.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+      delays.push(delay)
+      return schedule(callback, delay, ...args)
+    })
+    await client.request('executor.plugin_auth.run')
+    await client.request('executor.health')
+    await client.request('executor.plugin_auth.run', {}, 5_000)
+    // The socket fixture also queues zero-delay response callbacks.
+    assert.deepEqual(
+      delays.filter(delay => delay > 0),
+      [21 * 60_000 + 5_000, 120_000, 5_000]
+    )
+  } finally {
+    context.mock.restoreAll()
+    await client.stop()
+    await fixture.stop()
+  }
+})
 
 test('preserves only bounded collection retry metadata from native responses', () => {
   const client = new ExecutorRuntimeClient({ transport: { on() {} } })
@@ -359,6 +405,7 @@ async function executorFixture(options = {}) {
                     'codex.app_server_request',
                     'executor.health',
                     'runtime.tasks.*',
+                    ...(options.rendererMethods ?? []),
                   ],
                   transports: ['local-endpoint-ndjson'],
                   features: {

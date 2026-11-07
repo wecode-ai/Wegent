@@ -93,6 +93,7 @@ import {
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
+import { cloudIdentityFailure } from './cloud-identity-diagnostics'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
   getAppPreferences,
@@ -593,7 +594,7 @@ async function seedDesktopE2ECloudConnection(
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10000),
   })
-  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+  if (!response.ok) throw await cloudIdentityFailure(response, `${config.apiBaseUrl}/users/me`)
   const user = await response.json()
   const connection = {
     ...config,

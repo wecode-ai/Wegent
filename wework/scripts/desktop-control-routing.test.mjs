@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
-import { test, vi } from 'vitest'
+import { onTestFinished, test, vi } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
 
@@ -234,6 +234,91 @@ test('updates the selected window client after a renderer reload', async t => {
   control.activateWindow('main')
   await register(control, 'main', 'main-2')
   assert.equal(control.activeControlClientId, 'main-2')
+})
+
+test.each(['result-first', 'replacement-first'])(
+  'completes an explicitly refreshing click in %s order without changing its timeout',
+  async order => {
+    const control = await startControl({ onTestFinished })
+    await register(control, 'main', 'main-1')
+    const readyCount = control.readyCount
+    const result = control.command('click', '[data-testid="workbench-crash-retry"]', {
+      expectClientReplacement: true,
+    })
+    const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+    const command = await response.json()
+    assert.equal(command.timeoutMs, DEFAULT_STEP_TIMEOUT_MS)
+    assert.equal(command.expectClientReplacement, undefined)
+    await post(control, 'started', { id: command.id, clientId: 'main-1' })
+    if (order === 'result-first')
+      await post(control, 'results', { id: command.id, clientId: 'main-1', ok: true, value: '' })
+    await register(control, 'main', 'main-2')
+    assert.equal(await result, '')
+    await control.awaitReadyAfter(readyCount)
+    assert.equal(control.activeControlClientId, 'main-2')
+    assert.equal(control.commandResults.size, 0)
+  }
+)
+
+test.each(['ordinary-click', 'not-started'])('still rejects replacement for %s', async mode => {
+  const control = await startControl({ onTestFinished })
+  await register(control, 'main', 'main-1')
+  const outcome = control
+    .command('click', 'button', {
+      expectClientReplacement: mode === 'not-started',
+    })
+    .then(
+      () => null,
+      error => error
+    )
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  if (mode === 'ordinary-click')
+    await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await register(control, 'main', 'main-2')
+  assert.match((await outcome).message, /was replaced/)
+})
+
+test('a different window replacement cannot complete the refreshing click', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  await register(control, 'popout-window', 'popout-1')
+  const result = control.command('click', 'button', { expectClientReplacement: true })
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await register(control, 'popout-window', 'popout-2')
+  assert.equal(control.commandResults.has(command.id), true)
+  await post(control, 'results', { id: command.id, clientId: 'main-1', ok: true, value: 'clicked' })
+  assert.equal(await result, 'clicked')
+})
+
+test('an explicitly refreshing click still propagates execution failure', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const outcome = control.command('click', 'button', { expectClientReplacement: true }).then(
+    () => null,
+    error => error
+  )
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await post(control, 'results', {
+    id: command.id,
+    clientId: 'main-1',
+    ok: false,
+    error: 'Button missing',
+  })
+  assert.match((await outcome).message, /Button missing/)
+})
+
+test('non-click commands cannot opt into replacement completion', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  await assert.rejects(
+    control.command('getText', 'body', { expectClientReplacement: true }),
+    /Only clicks/
+  )
 })
 
 test('retires unknown and replaced clients instead of starting an empty poll loop', async t => {

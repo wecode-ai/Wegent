@@ -63,6 +63,35 @@ On the **Plugins** page, choose **Create → Import plugin** to import a standar
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
 
+## Managed local Python
+
+After startup, Wework asynchronously inspects locally installed, enabled plugins. Python adapters, commands, scripts, or runtime declarations request background preparation of the client-pinned Python 3.12.12. Installing or enabling a plugin also checks demand. Users without Python plugins do not automatically download Python; an existing healthy runtime is reused. Preparation does not block the main window or ordinary tasks. Chat execution, authorization, and background preparation share one installation. A failed automatic preparation is not retried repeatedly during the same application launch; users can retry from the notice or execution environment settings. The notice shows actual download progress and installation and verification stages. The interpreter and launchers remain under `managed-runtimes/python/` in application data without changing ordinary tasks' `PATH` or Python configuration.
+
+Plugin package installation is independent of Python preparation: packages can still be installed while Python is downloading or after preparation fails. Before actual execution, the host selects an interpreter, waiting for managed Python by default. Preparation failures return a runtime error while preserving previous task results. Open **Settings → Execution environments** to inspect the installation state or retry manually.
+
+During preparation, a validated local Python can temporarily run a plugin only when its `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json` explicitly declares a compatible local Python minor version and no externally installed dependencies:
+
+```json
+{
+  "runtimeRequirements": {
+    "python": {
+      "systemFallback": {
+        "version": "3.12",
+        "dependencies": []
+      }
+    }
+  }
+}
+```
+
+`version` is the accepted local interpreter major and minor version; ranges are unsupported. `dependencies` must explicitly be empty. The host searches its executable path and verifies the interpreter version and baseline standard library in isolation without executing plugin code. Temporary execution uses `-B -E -s -S` to ignore Python environment variables and user/global site-packages. Only that plugin child's interpreter and search path change; no dependencies are installed. Chat scripts, Python account adapters, and direct Python commands support this selection. Shell wrappers continue waiting for managed Python, as do plugins with missing declarations, unknown dependencies, or failed validation. Background installation continues, and the notice identifies the temporary local Python version. Running processes retain their interpreter; new invocations prefer managed Python once ready.
+
+Codex and ClaudeCode chats receive host-owned execution instructions that route plugin Skill examples using `python`, `python3`, or `uv` to `"$WEGENT_EXECUTOR_BINARY" plugin-python /absolute/plugin/path/scripts/example.py [script arguments]`; PowerShell uses `& $env:WEGENT_EXECUTOR_BINARY plugin-python <script-path> <arguments>`. The runner checks that the script belongs to a package with a valid plugin manifest, prepares managed Python on demand, and preserves the task working directory, script arguments, output, and exit code. Python environment cleanup and the host-selected interpreter apply only to the plugin child; ordinary project scripts keep their existing environment. This routing does not intercept arbitrary shell commands. Preparation failures stop the current plugin invocation; after retrying preparation, the user can ask to continue execution.
+
+Background account synchronization and revocation only check managed runtime readiness. Python connectors are deferred until background preparation or explicit preparation completes; maintenance then resumes before creating a migration intent or claiming a revocation lease. Python and non-Python connectors within the same plugin are also independent: waiting for Python or a preparation failure does not block other connectors. Each synchronization or revocation cycle runs at most four provider operations concurrently; preparation does not occupy an operation slot. Identity and plugin definitions are validated again when claiming an operation. External callers should create manual migration intents after Python is ready so downloading does not consume their five-minute lifetime. An intent that expires while waiting is rejected and must be created again.
+
+The managed runtime provides a shared interpreter and standard library. It does not create an application-wide virtual environment or automatically install third-party libraries for every plugin. Plugins own their dependencies: pure Python dependencies can be bundled directly; plugins that need an isolated environment should pin the complete dependency set and checksums, bundle installation artifacts for the target operating system and CPU architecture, and prepare those dependencies offline in a private plugin environment rather than installing into the shared interpreter. This is the plugin delivery contract, not a claim that every existing plugin has migrated.
+
 ## View, share, and request company-wide publishing
 
 > Implementation status (2026-08-29): the interaction below is implemented on the current feature branch and has local verification. Production publication is not enabled: HTTPS, GitLab protection rules, native Windows/macOS Runners, and a new Release credential remain external P0 gates. This section is therefore not a production-availability claim.

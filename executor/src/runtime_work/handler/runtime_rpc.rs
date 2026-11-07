@@ -106,6 +106,15 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))?;
             if matches!(
                 method.as_str(),
+                "plugin/install"
+                    | "plugin/uninstall"
+                    | "marketplace/upgrade"
+                    | "config/value/write"
+            ) {
+                crate::services::capability_activation::notify_changed();
+            }
+            if matches!(
+                method.as_str(),
                 "marketplace/add" | "marketplace/remove" | "plugin/list" | "plugin/installed"
             ) {
                 let marketplace_names = response

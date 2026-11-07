@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { selectCollaborationProjectView } from './workspace-flows.mjs'
+import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 
 // Called by the existing shared-core checkpoint after creating its own project.
 export async function verifyCollaborationMemberSettings(

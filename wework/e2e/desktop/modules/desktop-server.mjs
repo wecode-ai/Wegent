@@ -1255,6 +1255,11 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
+    const { expectClientReplacement = false, ...commandOptions } = options
+    assert.ok(
+      !expectClientReplacement || action === 'click',
+      'Only clicks may expect client replacement'
+    )
     const observesElectronState = ELECTRON_OBSERVATION_ACTIONS.has(action)
     const availableAt = observesElectronState
       ? 0
@@ -1272,7 +1277,7 @@ class DesktopE2EServer {
       id,
       action,
       selector,
-      ...options,
+      ...commandOptions,
       timeoutMs: options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
     }
     let resolveDelivery
@@ -1290,6 +1295,7 @@ class DesktopE2EServer {
         reject,
         resolveDelivery,
         started: false,
+        expectClientReplacement,
       })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery })
@@ -2112,7 +2118,9 @@ class DesktopE2EServer {
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
           this.commandResults.delete(id)
-          pending.reject(replacementError)
+          // A started refresh click may replace its renderer before reporting its result.
+          if (pending.expectClientReplacement && pending.started) pending.resolve('')
+          else pending.reject(replacementError)
         }
       }
       this.ready = ready
