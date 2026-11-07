@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { processIsAlive } from '../process-lifecycle.mjs'
 
-async function quitInstalledHost(root, control) {
+export async function quitInstalledHost(root, control) {
   const pid = Number((await readFile(join(root, 'active-pid'), 'utf8')).trim())
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'The upgraded host has no real process ID')
   await control.command('quitApp', 'body')
