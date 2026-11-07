@@ -29,7 +29,6 @@ import {
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   nowMs,
-  readCachedDeviceList,
   resolveDeviceListWithCache,
   selectCloudWorkStatus,
   selectRuntimeWorkView,
@@ -305,6 +304,7 @@ export function useWorkbenchDataRefresh({
         standaloneDeviceId: string | null
         standaloneWorkspacePath?: string | null
         trigger?: 'bootstrap' | 'manual-refresh' | 'device-event'
+        refreshDevices?: boolean
         isCancelled?: () => boolean
       }
     ) => {
@@ -312,8 +312,9 @@ export function useWorkbenchDataRefresh({
       const backgroundApi = services.cloudBackgroundApi
       const supervisorRequestRevision = supervisorSnapshotsRef.current.capture()
       const activeChecks: CloudWorkCheckKey[] = []
-      if (backgroundApi?.listTeams) activeChecks.push('teams')
-      if (backgroundApi?.listDevices) activeChecks.push('devices')
+      if (options?.refreshDevices !== false && backgroundApi?.listTeams) activeChecks.push('teams')
+      if (options?.refreshDevices !== false && backgroundApi?.listDevices)
+        activeChecks.push('devices')
       if (backgroundApi?.listRuntimeWork) activeChecks.push('runtimeWork')
 
       if (activeChecks.length === 0) return
@@ -340,23 +341,26 @@ export function useWorkbenchDataRefresh({
         updateCloudRuntimeState(startedState)
         const revision = startedState.inFlightRevision
 
-        const teamsRequest = backgroundApi?.listTeams
-          ? timedWorkbenchBootstrapRequest(
-              'cloudTeams',
-              () => backgroundApi.listTeams?.({ signal: controller.signal }) ?? Promise.resolve([]),
-              CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
-              controller.signal
-            )
-          : Promise.resolve(undefined)
-        const devicesRequest = backgroundApi?.listDevices
-          ? timedWorkbenchBootstrapRequest(
-              'cloudDevices',
-              () =>
-                backgroundApi.listDevices?.({ signal: controller.signal }) ?? Promise.resolve([]),
-              CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
-              controller.signal
-            )
-          : Promise.resolve(undefined)
+        const teamsRequest =
+          options?.refreshDevices !== false && backgroundApi?.listTeams
+            ? timedWorkbenchBootstrapRequest(
+                'cloudTeams',
+                () =>
+                  backgroundApi.listTeams?.({ signal: controller.signal }) ?? Promise.resolve([]),
+                CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
+                controller.signal
+              )
+            : Promise.resolve(undefined)
+        const devicesRequest =
+          options?.refreshDevices !== false && backgroundApi?.listDevices
+            ? timedWorkbenchBootstrapRequest(
+                'cloudDevices',
+                () =>
+                  backgroundApi.listDevices?.({ signal: controller.signal }) ?? Promise.resolve([]),
+                CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
+                controller.signal
+              )
+            : Promise.resolve(undefined)
         const runtimeWorkRequest = backgroundApi?.listRuntimeWork
           ? timedWorkbenchBootstrapRequest(
               'cloudRuntimeWork',
@@ -662,33 +666,31 @@ export function useWorkbenchDataRefresh({
           address => !unarchivedTaskKeys.has(getRuntimeTaskRouteKey(address))
         )
       }
-      const deviceRevision = ++deviceListRevisionRef.current
-      const devicesRequest = executorClient.commands
-        .listDevices()
-        .catch(error => {
-          const cachedDevices = readCachedDeviceList(cacheScope)
-          if (cachedDevices.length === 0) throw error
-          return cachedDevices
-        })
-        .then(rawDevices => {
-          if (!isCurrent() || deviceRevision !== deviceListRevisionRef.current) return
-          const devices = resolveDeviceListWithCache(cacheScope, rawDevices, {
-            useCacheFallback: false,
+      const refreshDeviceList = options?.refreshDevices !== false
+      const deviceRevision = refreshDeviceList
+        ? ++deviceListRevisionRef.current
+        : deviceListRevisionRef.current
+      const devicesRequest = !refreshDeviceList
+        ? Promise.resolve(devicesRef.current)
+        : loadDevicesForRefresh(executorClient, cacheScope).then(rawDevices => {
+            if (!isCurrent() || deviceRevision !== deviceListRevisionRef.current) return
+            const devices = resolveDeviceListWithCache(cacheScope, rawDevices, {
+              useCacheFallback: false,
+            })
+            const visibleDevices = selectVisibleDevices(devices, cloudRuntimeStateRef.current)
+            devicesRef.current = visibleDevices
+            dispatch({
+              type: 'devices_refreshed',
+              devices: visibleDevices,
+              user,
+              standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
+                visibleDevices,
+                state.standaloneDeviceId,
+                state.standaloneWorkspacePath
+              ),
+            })
+            return devices
           })
-          const visibleDevices = selectVisibleDevices(devices, cloudRuntimeStateRef.current)
-          devicesRef.current = visibleDevices
-          dispatch({
-            type: 'devices_refreshed',
-            devices: visibleDevices,
-            user,
-            standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
-              visibleDevices,
-              state.standaloneDeviceId,
-              state.standaloneWorkspacePath
-            ),
-          })
-          return devices
-        })
       const runtimeRequest = loadLocalRuntimeWork(false, isCurrent)
       const refreshRevision = workListRefreshRevisionRef.current
       const results = await Promise.allSettled([devicesRequest, runtimeRequest])
@@ -700,13 +702,14 @@ export function useWorkbenchDataRefresh({
         devicesResult.value
       ) {
         void refreshCloudBackgroundData(
-          devicesResult.value,
+          refreshDeviceList ? devicesResult.value : devicesRef.current,
           localRuntimeWorkRef.current ?? EMPTY_RUNTIME_WORK,
           {
             projects: state.projects,
             standaloneDeviceId: state.standaloneDeviceId,
             standaloneWorkspacePath: state.standaloneWorkspacePath,
             trigger: 'manual-refresh',
+            refreshDevices: refreshDeviceList,
             isCancelled: () => !isCurrent(),
           }
         ).catch(error => console.error('[Wework] Workbench cloud refresh failed', error))

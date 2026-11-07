@@ -1,0 +1,20 @@
+{
+  "order": 166100,
+  "scenario": "./scenarios/idle-executor-requests.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/idle-executor-requests*",
+    "wework/e2e/desktop/modules/idle-executor-requests*",
+    "wework/src/desktop/localExecutor*",
+    "wework/src/telemetry/StandInTelemetryAgent*",
+    "wework/src/features/workbench/useWorkbenchDataRefresh*",
+    "wework/src/features/workbench/WorkbenchProvider.tsx"
+  ],
+  "ci": {
+    "core": {
+      "order": 111100,
+      "shard": 5,
+      "position": 13100
+    }
+  }
+}

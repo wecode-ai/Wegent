@@ -2097,7 +2097,7 @@ function OwnedWorkbenchProvider({
               t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
             )
           }
-          void stableRefreshWorkLists()
+          void stableRefreshWorkLists({ refreshDevices: false })
         },
       }),
     [resolvedServices.chatStream, stableRefreshWorkLists, t]

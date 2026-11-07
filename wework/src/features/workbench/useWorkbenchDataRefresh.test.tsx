@@ -96,6 +96,67 @@ describe('useWorkbenchDataRefresh', () => {
     sessionStorage.clear()
   })
 
+  test('refreshes changed work without rediscovering unchanged devices', async () => {
+    const hook = setup()
+    await waitFor(() => expect(hook.result.current.state.devices).toHaveLength(1))
+    await waitFor(() => expect(hook.result.current.state.runtimeWork?.totalTasks).toBe(1))
+    hook.listRuntimeWork.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+
+    await act(async () => hook.result.current.refreshWorkLists({ refreshDevices: false }))
+
+    expect(hook.listDevices).toHaveBeenCalledOnce()
+    expect(hook.listRuntimeWork).toHaveBeenCalledTimes(2)
+    expect(hook.result.current.state.runtimeWork?.totalTasks).toBe(0)
+    expect(hook.result.current.state.devices).toEqual(devices)
+    await act(async () => hook.result.current.refreshWorkLists())
+    expect(hook.listDevices).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not invalidate pending bootstrap discovery during a work-only refresh', async () => {
+    const pendingDevices = deferred<DeviceInfo[]>()
+    const hook = setup(undefined, vi.fn().mockReturnValue(pendingDevices.promise))
+    await waitFor(() => expect(hook.result.current.state.runtimeWork?.totalTasks).toBe(1))
+    let refresh!: Promise<void>
+    act(() => {
+      refresh = hook.result.current.refreshWorkLists({ refreshDevices: false })
+    })
+    await act(async () => {
+      pendingDevices.resolve(devices)
+      await refresh
+    })
+    expect(hook.listDevices).toHaveBeenCalledOnce()
+    expect(hook.result.current.state.devices).toEqual(devices)
+    expect(hook.result.current.state.isBootstrapping).toBe(false)
+  })
+
+  test('keeps cloud navigation while refreshing only the changed work inventory', async () => {
+    const cloudDevice = {
+      ...devices[0],
+      device_id: 'remote-device',
+      device_type: 'remote' as const,
+      app_device_id: null,
+      socket_device_id: null,
+      runtime_instance_id: null,
+    }
+    const cloudApi = {
+      listTeams: vi.fn().mockResolvedValue([]),
+      listDevices: vi.fn().mockResolvedValue([cloudDevice]),
+      listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+    }
+    const hook = setup(undefined, undefined, { cloudBackgroundApi: cloudApi } as WorkbenchServices)
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('available'))
+    const initialDevices = hook.result.current.state.devices
+    expect(initialDevices.some(device => device.device_id === 'remote-device')).toBe(true)
+
+    await act(async () => hook.result.current.refreshWorkLists({ refreshDevices: false }))
+    await waitFor(() => expect(cloudApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+
+    expect(hook.listDevices).toHaveBeenCalledOnce()
+    expect(cloudApi.listDevices).toHaveBeenCalledOnce()
+    expect(cloudApi.listTeams).toHaveBeenCalledOnce()
+    expect(hook.result.current.state.devices).toEqual(initialDevices)
+  })
+
   test('publishes initial tasks without waiting for device discovery', async () => {
     const pendingDevices = deferred<DeviceInfo[]>()
     const hook = setup(undefined, vi.fn().mockReturnValue(pendingDevices.promise))

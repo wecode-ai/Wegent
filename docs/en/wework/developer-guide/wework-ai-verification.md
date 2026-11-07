@@ -6,6 +6,18 @@ sidebar_position: 39
 
 Wework can start an isolated development verification session so an AI can operate and assert against the real Electron application. It reuses the desktop E2E WebView control channel, never drives an external Chrome window, and does not attach to a developer's everyday Wework window.
 
+## Idle Executor request regression
+
+`idle-executor-requests` uses isolated real Electron and Executor instances with no tasks and no cloud connection. It reuses the shared runner's initial telemetry refusal, reloads the main window, and observes requests. Worktree capability discovery, telemetry configuration, and the shared SSE subscription must each occur once after reload. Foreground and close-to-background observation windows each last 6.5 seconds, crossing the five-second poll interval: pending-interaction discovery and Runtime identity checks must continue, without full task-catalog polling or repeated startup configuration. Known asynchronous bootstrap requests, such as plugin initialization, may finish; a fixed delay is not used to infer startup readiness.
+
+Identity descriptions share only not-yet-dispatched requests within the same synchronous batch; post-operation identity checks still fetch fresh descriptions. Confirmed local Runtime telemetry policy is not rewritten on idle polls. Runtime, account, API, or policy changes resynchronize it, and failed writes retry. Work-list changes refresh task data only; device events and explicit refresh retain device discovery.
+
+```bash
+pnpm --filter wework e2e:desktop --segment idle-executor-requests
+```
+
+The independent checkpoint is registered in an existing Core CI shard and does not require earlier scenarios. Local macOS arm64 verification took approximately 52 seconds including startup and cleanup, excluding the shared build. Its result directory contains `idle-executor-requests.json` with method names, timestamps, statuses, and necessary boolean flags only, never request parameters, headers, or query strings. Do not commit logs or screenshots.
+
 ## Periodic plugin recovery E2E
 
 The `plugin-periodic-reconcile` checkpoint uses real Electron, Executor, Socket.IO, database, and plugin package storage. It discards one real plugin change notification, then verifies timer-driven recovery, persisted acknowledgements, device identity, and unchanged unrelated plugin content. Its isolated instances set `LOCAL_PLUGIN_RECONCILE_INTERVAL=90` and `LOCAL_PLUGIN_RECONCILE_JITTER=18` (seconds), with the existing `LOCAL_HEARTBEAT_INTERVAL=1` configuration preserving the assertion of at least 10 heartbeats. The 90-second base period leaves room for plugin setup after registration before the first reconciliation.
