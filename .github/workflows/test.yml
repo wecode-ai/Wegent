@@ -324,6 +324,13 @@ jobs:
           set -o pipefail
           cargo test --locked --test assignments_read_only -- --ignored --test-threads=1 --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignments-http.log
 
+      - name: Verify connector discovery keeps rotated grants with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib apps_installed::refresh_mysql_tests -- --ignored --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/connector-refresh-mysql.log
+
       - name: Upload Rust backend test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -384,7 +391,10 @@ jobs:
         env:
           MCP_OAUTH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           MCP_OAUTH_TEST_REDIS_URL: redis://127.0.0.1:6379/15
-        run: uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
+          CONNECTOR_REFRESH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/
+        run: |
+          uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
+          uv run pytest tests/integration/connector_refresh_mysql.py -n 0
 
       - name: Upload MCP OAuth concurrency results
         if: always()

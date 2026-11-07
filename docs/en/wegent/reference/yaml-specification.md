@@ -837,6 +837,8 @@ spec:
   authType: none
   transport: http
   mcpUrl: https://tickets.example.com/api
+  toolLoadingMode: static
+  keywords: []
   providerHeadersEncrypted: "base64-encrypted-json"
   toolAllowlist:
     - get_ticket
@@ -869,14 +871,18 @@ spec:
 | `spec.enabled`                  | boolean | Yes           | Whether the app is enabled; disabled apps are hidden from catalogs/runtime |
 | `spec.visibility`               | string  | Yes           | `all` or `roles`                                                           |
 | `spec.allowedRoles`             | array   | No            | User roles allowed when `visibility: roles`                                |
-| `spec.authType`                 | string  | Yes           | Currently only `none` is supported                                         |
+| `spec.authType`                 | string  | Yes           | `none` for static credentials, or `oauth2` for per-user OAuth 2.0 discovery, DCR and PKCE |
 | `spec.transport`                | string  | Yes           | `streamable-http`, `sse`, or `http`                                        |
 | `spec.mcpUrl`                   | string  | Yes           | MCP endpoint or HTTP API base URL                                          |
+| `spec.toolLoadingMode`          | string  | No            | `static` (default, global static loading) or `lazy` (on-demand loading)     |
+| `spec.keywords`                 | array   | No            | Lazy loading match keywords; a match adds the scoped MCP to `mcp_servers`   |
 | `spec.providerHeadersEncrypted` | string  | No            | Fixed provider headers JSON encrypted with the project sensitive-data tool |
 | `spec.toolAllowlist`            | array   | No            | Upstream tool names allowed for discovery and invocation                   |
 | `spec.httpTools`                | array   | Conditionally | Required for `transport: http`; maps ordinary HTTP APIs to MCP tools       |
 
 `providerHeadersEncrypted` must be an encrypted JSON string. The administrator API accepts plaintext `provider_headers` and encrypts them before storage; do not commit plaintext API keys, service tokens, or headers in hand-written YAML.
+
+`toolLoadingMode: static` adds the app's tools to the shared `wegent-connectors` MCP. `toolLoadingMode: lazy` creates a `wegent-connector-<slug>` Skill and connects the app only after the Skill is selected, a keyword matches, or the Skill is loaded. Keywords are substring matches; a phrase with spaces requires every word to be present. Existing resources without this field default to `static`; legacy `direct`/`skill` values normalize to `static`/`lazy`.
 
 ---
 

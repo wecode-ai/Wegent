@@ -191,11 +191,15 @@ impl ConnectorRuntime {
     }
 
     pub(super) async fn sync_apps(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let sync_revision = payload
+            .get("syncRevision")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| AppIpcError::new("bad_request", "syncRevision is required"))?;
         let apps = payload
             .get("apps")
             .and_then(Value::as_array)
             .ok_or_else(|| AppIpcError::new("bad_request", "apps must be an array"))?;
-        let (tools, revision, generation) = self.discover_tools(apps).await?;
+        let (tools, revision, generation) = self.discover_tools(apps, sync_revision).await?;
         // Waiting for an idle turn must not prevent connector-token refresh.
         let _activation = capability_activation::activate().await;
         let _mutation = self.mutation.lock().await;
@@ -231,9 +235,19 @@ impl ConnectorRuntime {
         Ok(result)
     }
 
-    async fn discover_tools(&self, apps: &[Value]) -> Result<(Vec<Value>, u64, u64), AppIpcError> {
+    async fn discover_tools(
+        &self,
+        apps: &[Value],
+        sync_revision: u64,
+    ) -> Result<(Vec<Value>, u64, u64), AppIpcError> {
         let (cloud, revision, generation) = {
             let _mutation = self.mutation.lock().await;
+            if self.revision.load(Ordering::Acquire) != sync_revision {
+                return Err(AppIpcError::new(
+                    "connector_sync_superseded",
+                    "Connector configuration changed before synchronization",
+                ));
+            }
             let cloud = self.cloud.read().await.clone().ok_or_else(|| {
                 AppIpcError::new(
                     "connector_cloud_disconnected",
@@ -422,8 +436,22 @@ fn materialize_skills(
                     .join("\n")
             )
         };
+        let authorization_section = if app
+            .get("authorizationRequired")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            format!(
+                "\nThis app is not authorized for the current user yet, so its tools are unavailable.\n\
+                 When the user's request needs it, say briefly that authorization is required and end the turn with\n\
+                 `connector_auth_required` and `connectorSlug={slug}` so Wework shows its authorization card.\n\
+                 Do not claim the app does not exist and do not guess credentials.\n"
+            )
+        } else {
+            String::new()
+        };
         let body = format!(
-            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{tool_section}"
+            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{authorization_section}{tool_section}"
         );
         write_skill_if_changed(&skill_path, &body, changed)?;
         let marker = tool_definitions_marker(tools.iter().filter(|tool| {

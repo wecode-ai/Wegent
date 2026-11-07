@@ -9,8 +9,9 @@
 //! and `_risk_hints` it exercises.
 use brz_mysql::Mysql;
 
-use crate::apps_installed::db::UserRow;
+use crate::apps_installed::db::{self, UserRow};
 use crate::apps_installed::mcp::{self, UpstreamTool};
+use crate::apps_installed::refresh;
 use crate::apps_installed::service::{self as apps, ConnectorApp};
 use crate::http_compat::FastApiError;
 
@@ -39,16 +40,65 @@ where
     };
     for app in connected {
         if app.transport == "http" {
-            // `_http_tools` projects the app's inline `httpTools` definitions
-            // through `ConnectorHttpToolDefinition`; the recorded catalog
-            // defines an empty list, so this transport contributes no tools.
+            // `_http_tools`: inline `httpTools` definitions filtered by the
+            // administrator allowlist, projected exactly like the MCP entry.
+            match crate::apps_installed::http_tools::definitions(app) {
+                Ok(definitions) => {
+                    for tool in definitions {
+                        if !app.tool_allowlist.is_empty()
+                            && !app.tool_allowlist.contains(&tool.name)
+                        {
+                            continue;
+                        }
+                        tools.push(ConnectorTool {
+                            name: format!("{}__{}", app.slug, tool.name),
+                            title: None,
+                            description: tool.description,
+                            input_schema: tool
+                                .input_schema
+                                .as_ref()
+                                .filter(|schema| schema.is_nonempty_object())
+                                .cloned()
+                                .unwrap_or_else(default_input_schema),
+                            annotations: None,
+                            connector_id: app.slug.clone(),
+                            connector_slug: app.slug.clone(),
+                            connector_name: app.name.clone(),
+                            raw_tool_name: tool.name,
+                            model_visible: true,
+                            risk_hints: RiskHints {
+                                destructive: Some(matches!(
+                                    tool.method.to_ascii_uppercase().as_str(),
+                                    "DELETE" | "PUT" | "PATCH"
+                                )),
+                                open_world: Some(true),
+                            },
+                            source_transport: "http".to_string(),
+                            app_id: app.id,
+                            app_slug: app.slug.clone(),
+                            app_name: app.name.clone(),
+                        });
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "skipping invalid HTTP connector during tool discovery"
+                    );
+                }
+            }
             continue;
         }
         // `_upstream_tools` wraps `_server_config` and session failures into a
         // 502 `HTTPException`, which `list_tools` skips.
-        let headers = match apps::session_headers(mysql, app, user).await {
+        let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
+            .await
+            .map_err(|_| FastApiError::internal())?;
+        let (headers, attempted_access) = match apps::session_headers(mysql, app, user).await {
             Ok(headers) => headers,
             Err(error) => {
+                refresh::record_session_error(mysql, row.as_ref(), &error).await;
                 tracing::warn!(
                     connector = %app.slug,
                     %error,
@@ -57,19 +107,27 @@ where
                 continue;
             }
         };
-        let upstream = match mcp::list_tools_with_headers(&app.mcp_url, &headers).await {
-            Ok(upstream) => upstream,
-            // `except HTTPException`: an app whose discovery failed is
-            // skipped with a warning, not reported to the caller.
-            Err(error) => {
-                tracing::warn!(
-                    connector = %app.slug,
-                    %error,
-                    "skipping unavailable connector during tool discovery"
-                );
-                continue;
-            }
-        };
+        let upstream =
+            match mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers).await {
+                Ok(upstream) => upstream,
+                // `except HTTPException`: an app whose discovery failed is
+                // skipped with a warning, not reported to the caller.
+                Err(error) => {
+                    refresh::record_directory_error(
+                        mysql,
+                        row.as_ref(),
+                        attempted_access.as_deref(),
+                        &error,
+                    )
+                    .await;
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "skipping unavailable connector during tool discovery"
+                    );
+                    continue;
+                }
+            };
         let allowlist = &app.tool_allowlist;
         for tool in upstream {
             if !allowlist.is_empty() && !allowlist.contains(&tool.name) {

@@ -345,6 +345,7 @@ function mockComposerDirectoryRoute(resolveRoute: () => string) {
       if (method === 'executor.codex_home.config.read')
         return { enabledPluginKeys: [], disabledPluginKeys: [] }
       if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+      if (method === 'runtime.connectors.status') return { apps: [] }
       if (method === 'executor.plugins.links.list') return []
       if (method === 'codex.app_server_request') {
         const request = params as { method?: string }
@@ -3494,7 +3495,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -4115,7 +4116,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
           if (request.method === 'plugin/list') return { marketplaces: [] }
@@ -4230,7 +4231,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -4359,7 +4360,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         if (method === 'executor.plugins.device_route')
           return { device_id: 'local-device', device_route_id: 'runtime-record-70' }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -4422,7 +4423,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() => expect(getComposerApps().map(app => app.id)).toContain('plugin:documents'))
     expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
-    await waitFor(() => expect(listWegentInstalledConnectorApps).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.connectors.status'
+      )
+    )
+    expect(listWegentInstalledConnectorApps).toHaveBeenCalled()
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.some(
+        ([method]) => method === 'runtime.connectors.apps.sync'
+      )
+    ).toBe(false)
 
     act(() => {
       window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
@@ -4436,7 +4447,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }

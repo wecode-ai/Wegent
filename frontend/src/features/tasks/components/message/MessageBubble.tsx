@@ -36,6 +36,7 @@ import MixedContentView from './thinking/MixedContentView'
 import ThinkingDisplay from './thinking/ThinkingDisplay'
 import FinalPromptMessage from './FinalPromptMessage'
 import { parseMarkdownFinalPrompt } from './finalPromptParser'
+import { connectorAuthSlug, stripConnectorAuthMarkers } from '@/lib/connectorAuthMarkers'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
 import ContextBadgeList from './ContextBadgeList'
 import StreamingWaitIndicator from './StreamingWaitIndicator'
@@ -362,11 +363,13 @@ function canSaveToKnowledge(
  * The full content is stored across all TextBlock entries in msg.result.blocks.
  */
 function getCopyableContentFromBlocks(blocks: MessageBlock[]): string {
-  return blocks
-    .filter(isTextBlock)
-    .map(b => b.content)
-    .join('\n\n')
-    .trim()
+  return stripConnectorAuthMarkers(
+    blocks
+      .filter(isTextBlock)
+      .map(b => b.content)
+      .join('\n\n')
+      .trim()
+  )
 }
 
 function getSaveableMarkdown(
@@ -695,7 +698,13 @@ const MessageBubble = memo(
       // Process [cite: X, Y, Z] patterns to clickable markdown links
       // Only process when annotations are available from Gemini Deep Research
       const annotations = msg.result?.annotations
-      const normalizedResult = getSaveableMarkdown(rawMarkdownResult, annotations)
+      const connectorSlug = connectorAuthSlug(rawMarkdownResult)
+      let visibleResult = stripConnectorAuthMarkers(rawMarkdownResult)
+      if (connectorSlug && !visibleResult.includes('wegent://modal/connector-oauth')) {
+        const authorizeLabel = t('chat:actions.authorize_connector')
+        visibleResult = `${visibleResult}\n\n[${authorizeLabel}](wegent://modal/connector-oauth?slug=${encodeURIComponent(connectorSlug)})`
+      }
+      const normalizedResult = getSaveableMarkdown(visibleResult, annotations)
       const saveableMarkdown = `${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`
 
       const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/)

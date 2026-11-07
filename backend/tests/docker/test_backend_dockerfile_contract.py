@@ -52,17 +52,28 @@ def test_rust_builder_contains_embedded_migration_assets(tmp_path: Path) -> None
     dockerfile = BACKEND_DOCKERFILE.read_text(encoding="utf-8")
     builder = dockerfile.split("FROM rust-builder-deps AS rust-builder\n", 1)[1]
     builder = builder.split("\nFROM ", 1)[0]
-    image_root = tmp_path / "backend-rs"
+    context_root = tmp_path / "context"
+    image_root = context_root / "backend-rs"
+    image_root.mkdir(parents=True, exist_ok=True)
     for source, destination in re.findall(r"^COPY (\S+) (\S+)$", builder, re.M):
         source_path = REPO_ROOT / source
+        target = context_root / destination.lstrip("/")
+        target.parent.mkdir(parents=True, exist_ok=True)
         if source_path.is_dir():
-            shutil.copytree(source_path, image_root / destination, dirs_exist_ok=True)
+            shutil.copytree(source_path, target, dirs_exist_ok=True)
         else:
-            target = image_root / destination
-            target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source_path, target)
-
     migration_sources = REPO_ROOT / "backend-rs/src/migrations"
+    shutil.copytree(
+        migration_sources,
+        image_root / "src/migrations",
+        dirs_exist_ok=True,
+    )
+    shutil.copytree(
+        REPO_ROOT / "backend-rs/migrations",
+        image_root / "migrations",
+        dirs_exist_ok=True,
+    )
     includes = [
         (source, asset)
         for source in migration_sources.rglob("*.rs")

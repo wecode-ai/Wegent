@@ -68,10 +68,10 @@ test.describe('Provider-native binding state and contracts', () => {
     await configureDingTalkService(request, resources.token, 'docs', false)
     await request.post(`${PROVIDER_NATIVE_MOCK_URL}/clear-requests`)
     const missingPrompt = makePrompt('012-missing', '输出唯一断言标记。')
-    const modalLink = 'wegent://modal/mcp-provider-config?provider=dingtalk&service=docs'
+    const modalLink = 'wegent://modal/connector-oauth?slug=dingtalk_docs'
     await scenario(request, missingPrompt, [
       {
-        responseContent: `当前会话还没有可用的钉钉文档 MCP。请点击 [打开钉钉文档 MCP 配置弹窗](${modalLink}) 完成配置。`,
+        responseContent: `当前会话还没有完成钉钉文档授权。请点击 [打开 钉钉文档 授权](${modalLink}) 完成配置。`,
       },
     ])
     const guidanceTask = await sendCurrentTask(page, request, missingPrompt)
@@ -81,33 +81,27 @@ test.describe('Provider-native binding state and contracts', () => {
     const missingRequestText = modelRequestText(missingBodies)
     const missingToolNames = modelToolNames(missingBodies)
     expect(missingBodies.length).toBeGreaterThan(0)
-    expect(missingRequestText).toContain('Configuration Required')
+    expect(missingRequestText).toContain('These apps require OAuth authorization')
     expect(missingRequestText).toContain(modalLink)
     expect(missingToolNames.some(name => name.includes('dingtalk-docs'))).toBe(false)
     expect(missingToolNames.some(name => /knowledge_search$/.test(name))).toBe(false)
-    expect(extractTaskAnswer(guidanceTask)).toContain(modalLink)
+    expect(extractTaskAnswer(guidanceTask)).toContain('打开 钉钉文档 授权')
     expect(extractTaskAnswer(guidanceTask)).not.toContain(DINGTALK_D1)
-    await expect(page.getByRole('link', { name: '打开钉钉文档 MCP 配置弹窗' })).toHaveAttribute(
+    await expect(page.getByRole('link', { name: '打开 钉钉文档 授权' })).toHaveAttribute(
       'href',
       modalLink
     )
 
-    await page.getByRole('link', { name: '打开钉钉文档 MCP 配置弹窗' }).click()
+    await page.getByRole('link', { name: '打开 钉钉文档 授权' }).click()
     const dialog = page.getByRole('dialog')
     await expect(dialog).toBeVisible()
-    await expect(page.getByTestId('dingtalk-docs-auth-mode-oauth')).toBeVisible()
-    const oauthInput = page.getByTestId('dingtalk-mcp-dialog-url-input')
-    await expect(oauthInput).toBeVisible()
-    await expect(oauthInput).toHaveValue('')
-    await expect(page.getByTestId('dingtalk-docs-oauth-connect')).toBeDisabled()
-    await expect(page.getByTestId('save-dingtalk-mcp-dialog-button')).toBeDisabled()
-
-    await oauthInput.fill(`${PROVIDER_NATIVE_MOCK_URL}/oauth/server/docs`)
-    await expect(page.getByTestId('dingtalk-docs-oauth-connect')).toBeEnabled()
-    await expect(page.getByTestId('save-dingtalk-mcp-dialog-button')).toBeDisabled()
+    await expect(page.getByTestId('connector-oauth-dialog')).toBeVisible()
+    await expect(page.getByTestId('connector-oauth-cancel')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
 
+    // A provider-selected lazy app is exposed even when the message itself
+    // does not repeat the app's keywords.
     await configureDingTalkService(request, resources.token, 'docs', true)
     const retryPrompt = makePrompt('012-retry', '输出唯一断言标记。')
     await scenario(request, retryPrompt, [

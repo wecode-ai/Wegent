@@ -17,6 +17,32 @@ import { UPGRADE_CHECKPOINTS } from '../e2e/desktop/upgrade-suite.mjs'
 const root = new URL('../../', import.meta.url)
 const definitions = readDesktopCheckpointDefinitions()
 
+test('Connector account isolation is selectable and runs inside the existing cloud OAuth checkpoint', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  assert.deepEqual(expandDesktopCheckpoints(['connector-account-switch']), [
+    'connector-account-switch',
+  ])
+  assert.ok(catalog.DESKTOP_CHECKPOINTS.includes('connector-account-switch'))
+  assert.equal(
+    catalog.DESKTOP_CHECKPOINT_CI_HOSTS.get('connector-account-switch'),
+    'connector-oauth'
+  )
+  assert.equal(
+    catalog.CHECKPOINT_SCENARIO_MODULES['connector-account-switch'],
+    './scenarios/connector-oauth.scenario.mjs'
+  )
+  assert.ok(catalog.CLOUD_ONLY_CHECKPOINTS.has('connector-account-switch'))
+  assert.ok(catalog.ci.cloud_shards[7].split(',').includes('connector-oauth'))
+  assert.equal(catalog.ci.cloud_segments.includes('connector-account-switch'), false)
+  for (const path of [
+    'wework/e2e/desktop/catalog/connector-account-switch.json',
+    'wework/e2e/desktop/modules/connector-account-switch.mjs',
+    'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
+  ]) {
+    assert.ok(catalog.PATH_TARGETS.get(path)?.includes('cloud:connector-oauth'), path)
+  }
+})
+
 test('every registered checkpoint retains a real module and a CI execution owner', () => {
   const catalog = loadDesktopCheckpointCatalog()
   const ciCheckpoints = expandDesktopCheckpoints([
@@ -172,6 +198,21 @@ test('a feature config selects its existing shard rather than all desktop suites
   })
   assert.equal(result.wework_desktop_cloud_e2e, 'false')
   assert.equal(result.wework_desktop_other_e2e, 'false')
+})
+
+test('Connector fixture and standalone checkpoint edits select only their existing cloud host', () => {
+  for (const path of [
+    'wework/e2e/desktop/catalog/connector-account-switch.json',
+    'wework/e2e/desktop/modules/connector-account-switch.mjs',
+    'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
+  ]) {
+    const result = classified(path)
+    assert.deepEqual(JSON.parse(result.wework_desktop_cloud_e2e_matrix), {
+      include: [{ id: 'cloud-8', name: 'Cloud / shard 8', segments: 'connector-oauth' }],
+    })
+    assert.equal(result.wework_desktop_core_e2e, 'false')
+    assert.equal(result.wework_desktop_other_e2e, 'false')
+  }
 })
 
 test('extracted routing and test modules retain their parent CI gates', () => {

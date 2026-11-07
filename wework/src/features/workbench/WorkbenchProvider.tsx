@@ -2574,31 +2574,29 @@ function OwnedWorkbenchProvider({
             void listWegentInstalledConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token)
               .then(async installedConnectors => {
                 if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const connected = installedConnectors.apps.filter(
-                  app => app.enabled && app.callable
+                const visible = installedConnectors.apps.filter(
+                  app =>
+                    app.enabled &&
+                    ['connected', 'expired'].includes(app.connection.status) &&
+                    (app.tool_summaries?.length ?? 0) > 0
                 )
-                const synced = await requestLocalExecutor<{
+                // Directory reads must not replace the bridge-owned connector
+                // surface or remove authorization-only Skills.
+                const configured = await requestLocalExecutor<{
                   apps: Array<{ slug: string; skillPath: string }>
-                }>('runtime.connectors.apps.sync', {
-                  apps: connected.map(app => ({
-                    slug: app.slug,
-                    name: app.runtime_name ?? app.slug,
-                    description: app.description ?? '',
-                    tools: app.tool_summaries ?? [],
-                  })),
-                })
+                }>('runtime.connectors.status')
                 if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const paths = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
+                const paths = new Map(configured.apps.map(app => [app.slug, app.skillPath]))
                 if (getPluginMarketplaceCache(cacheKey)?.deviceId !== deviceId) return
                 writePluginInventory(cacheKey, deviceId, {
-                  connectorApps: connected
+                  connectorApps: visible
                     .filter(app => !isSystemApplicationConnectorSlug(app.slug))
                     .map(app => ({
                       id: `wegent:${app.slug}`,
                       name: app.runtime_name ?? app.slug,
                       description: app.description ?? '',
                       logoUrl: app.icon_url ?? null,
-                      isAccessible: true,
+                      isAccessible: app.connection.status === 'connected',
                       isEnabled: true,
                       pluginDisplayNames: ['Wegent Cloud'],
                       source: 'wegent-connector',

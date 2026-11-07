@@ -821,6 +821,8 @@ spec:
   authType: none
   transport: http
   mcpUrl: https://tickets.example.com/api
+  toolLoadingMode: static
+  keywords: []
   providerHeadersEncrypted: "base64-encrypted-json"
   toolAllowlist:
     - get_ticket
@@ -853,14 +855,18 @@ spec:
 | `spec.enabled`                  | boolean | 是   | 是否启用，停用后不会出现在用户目录和 Runtime 中                   |
 | `spec.visibility`               | string  | 是   | `all` 或 `roles`                                                  |
 | `spec.allowedRoles`             | array   | 否   | `visibility: roles` 时允许访问的用户角色                          |
-| `spec.authType`                 | string  | 是   | 当前仅支持 `none`                                                 |
+| `spec.authType`                 | string  | 是   | `none` 使用固定凭据；`oauth2` 支持用户级 OAuth 2.0 发现、DCR 和 PKCE |
 | `spec.transport`                | string  | 是   | `streamable-http`、`sse` 或 `http`                                |
 | `spec.mcpUrl`                   | string  | 是   | MCP endpoint 或 HTTP API 基础地址                                 |
+| `spec.toolLoadingMode`          | string  | 否   | `static`（默认，静态全局加载）或 `lazy`（按需加载） |
+| `spec.keywords`                 | array   | 否   | `lazy` 模式下用于消息命中的关键词；命中后把 scoped MCP 写入 `mcp_servers` |
 | `spec.providerHeadersEncrypted` | string  | 否   | 使用项目敏感数据加密工具加密后的固定请求头 JSON                   |
 | `spec.toolAllowlist`            | array   | 否   | 允许暴露和调用的上游工具名                                        |
 | `spec.httpTools`                | array   | 条件 | `transport: http` 时必填，定义普通 HTTP API 暴露成 MCP 工具的方式 |
 
 `providerHeadersEncrypted` 必须是加密后的 JSON 字符串。管理 API 接收明文 `provider_headers` 后会负责加密；手写 YAML 时不要提交明文 API Key、服务令牌或请求头。
+
+`toolLoadingMode: static` 会把该应用的工具加入共享 `wegent-connectors` MCP；`toolLoadingMode: lazy` 会生成 `wegent-connector-<slug>` Skill，只有 Skill 被选中、`keywords` 命中或加载后才连接该应用。`keywords` 按子串匹配，含空格的词组要求所有词同时出现。旧资源缺少该字段时按 `static` 处理；旧值 `direct`/`skill` 会分别兼容为 `static`/`lazy`。
 
 ---
 

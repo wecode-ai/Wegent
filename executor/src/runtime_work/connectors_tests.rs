@@ -152,6 +152,34 @@ fn skill_materialization_rejects_path_traversal_slugs() {
 }
 
 #[test]
+fn unauthorized_app_skill_guides_the_agent_to_request_authorization() {
+    let temp = tempfile::tempdir().expect("temporary directory should be created");
+    let skills_root = temp.path().join("skills");
+
+    materialize_skills(
+        &skills_root,
+        &[json!({
+            "slug": "dingtalk_log",
+            "name": "钉钉日志",
+            "authorizationRequired": true,
+            "tools": [],
+        })],
+        &[],
+        &mut false,
+    )
+    .expect("guidance skill should materialize");
+
+    let content = fs::read_to_string(
+        skills_root
+            .join("wegent-connector-dingtalk_log")
+            .join("SKILL.md"),
+    )
+    .expect("skill should be readable");
+    assert!(content.contains("connector_auth_required"));
+    assert!(content.contains("connectorSlug=dingtalk_log"));
+}
+
+#[test]
 fn revision_rejects_stale_cloud_mutations() {
     let revision = AtomicU64::new(0);
 
@@ -370,7 +398,7 @@ async fn repeated_sync_does_not_reload_codex_and_reports_real_skill_changes() {
     let temp = tempfile::tempdir().unwrap();
     let gateway = tools_gateway(json!({"tools": []})).await;
     let runtime = isolated_runtime(temp.path().join("codex"), gateway.api_base_url.clone());
-    let mut payload = json!({"apps": [{"slug": "tickets", "name": "Tickets"}]});
+    let mut payload = json!({"syncRevision": 0, "apps": [{"slug": "tickets", "name": "Tickets"}]});
 
     assert_eq!(
         runtime.sync_apps(payload.clone()).await.unwrap()["changed"],
@@ -407,7 +435,7 @@ async fn incomplete_catalog_does_not_publish_skills_or_markers() {
     .await;
     let home = temp.path().join("codex");
     let runtime = isolated_runtime(home.clone(), gateway.api_base_url.clone());
-    let mut payload = json!({"apps": [{
+    let mut payload = json!({"syncRevision": 0, "apps": [{
         "slug": "tickets", "name": "Tickets", "tools": [{"name": "tickets__search"}]
     }]});
     runtime.sync_apps(payload.clone()).await.unwrap();
@@ -442,7 +470,10 @@ async fn first_empty_catalog_does_not_change_capabilities() {
     let gateway = tools_gateway(json!({"tools": []})).await;
     let runtime = isolated_runtime(temp.path().join("codex"), gateway.api_base_url.clone());
 
-    let result = runtime.sync_apps(json!({"apps": []})).await.unwrap();
+    let result = runtime
+        .sync_apps(json!({"syncRevision": 0, "apps": []}))
+        .await
+        .unwrap();
 
     assert_eq!(result["changed"], false);
     assert!(result["apps"].as_array().unwrap().is_empty());
@@ -486,7 +517,7 @@ async fn superseded_network_response_cannot_publish_or_block_token_renewal() {
     let pending_runtime = runtime.clone();
     let pending = tokio::spawn(async move {
         pending_runtime
-            .sync_apps(json!({"apps": [{
+            .sync_apps(json!({"syncRevision": 0, "apps": [{
                 "slug": "tickets", "name": "Tickets", "tools": [{"name": "tickets__search"}]
             }]}))
             .await
@@ -579,7 +610,7 @@ async fn assert_reversed_discovery(latest_discovery_fails: bool) {
         task: tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }),
     };
     let runtime = isolated_runtime(temp.path().join("codex"), gateway.api_base_url.clone());
-    let old_payload = json!({"apps": [{
+    let old_payload = json!({"syncRevision": 0, "apps": [{
         "slug": "tickets", "name": "Tickets", "description": "Search tickets",
         "tools": [{"name": "tickets__search"}]
     }]});
@@ -637,7 +668,7 @@ async fn waiting_skill_activation_does_not_block_token_refresh() {
     let gateway = tools_gateway(json!({"tools": []})).await;
     let runtime = isolated_runtime(temp.path().join("codex"), gateway.api_base_url.clone());
     let execution = capability_activation::begin_execution().await;
-    let mut sync = Box::pin(runtime.sync_apps(json!({"apps": []})));
+    let mut sync = Box::pin(runtime.sync_apps(json!({"syncRevision": 0, "apps": []})));
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(20), &mut sync)
             .await
@@ -650,6 +681,27 @@ async fn waiting_skill_activation_does_not_block_token_refresh() {
     drop(token_refresh);
     drop(execution);
     assert_eq!(sync.await.unwrap()["changed"], false);
+}
+
+#[tokio::test]
+async fn queued_old_account_catalog_cannot_use_new_account_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = isolated_runtime(temp.path().join("codex"), "http://127.0.0.1:1".to_owned());
+    runtime.revision.store(2, Ordering::Release);
+    let before = runtime.status().await.unwrap();
+
+    let error = runtime
+        .sync_apps(json!({
+            "syncRevision": 1,
+            "apps": [{"slug": "old-account", "name": "Old", "authorizationRequired": true}]
+        }))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "connector_sync_superseded");
+    assert_eq!(runtime.status().await.unwrap(), before);
+    assert!(!runtime.codex_home.join("skills").exists());
+    assert_eq!(runtime.sync_generation.load(Ordering::Acquire), 0);
 }
 
 #[tokio::test]

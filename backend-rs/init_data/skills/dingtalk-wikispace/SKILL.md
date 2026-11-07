@@ -1,16 +1,12 @@
 ---
 description: "Read and manage DingTalk knowledge bases through the DingTalk Wikispace MCP. Use this skill when the user explicitly refers to a DingTalk knowledge base, space, page, or wiki."
 displayName: "钉钉知识库"
-version: "1.0.1"
+version: "1.2.0"
 author: "Wegent Team"
 tags: ["dingtalk", "wikispace", "knowledge"]
 bindShells:
   - Chat
   - ClaudeCode
-config:
-  unconfiguredGuide:
-    modalLink: "wegent://modal/mcp-provider-config?provider=dingtalk&service=wikispace"
-    modalText: "打开钉钉知识库 MCP 配置弹窗"
 mcpServers:
   dingtalk_wikispace:
     type: streamable-http
@@ -19,9 +15,9 @@ mcpServers:
 
 # DingTalk Wikispaces
 
-If this session has no configured DingTalk Wikispace MCP, ask the user to [打开钉钉知识库 MCP 配置弹窗](wegent://modal/mcp-provider-config?provider=dingtalk&service=wikispace). Do not try to access DingTalk knowledge bases until configuration is complete.
+DingTalk knowledge bases are reachable through either a personal Streamable HTTP MCP the user already configured (`dingtalk_wikispace` server) or the shared `wegent-connectors` MCP server. Use whichever tools this session exposes and never request credentials. If a tool reports that the connector requires authorization, tell the user briefly and end the turn with `connector_auth_required` and `connectorSlug=dingtalk_wiki`.
 
-When configured, use the DingTalk Wikispace MCP for the knowledge base explicitly identified by the user.
+Operate only on the knowledge base explicitly identified by the user.
 
 - Read only the requested knowledge base, subtree, or page.
 - Use create, update, or delete tools only when the user explicitly requests that mutation.

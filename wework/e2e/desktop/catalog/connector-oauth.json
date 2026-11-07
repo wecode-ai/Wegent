@@ -1,0 +1,17 @@
+{
+  "order": 15500,
+  "scenario": "./scenarios/connector-oauth.scenario.mjs",
+  "scenarioOnly": true,
+  "cloudOnly": true,
+  "paths": [
+    "wework/e2e/desktop/modules/connector-oauth-provider.mjs",
+    "wework/e2e/desktop/modules/connector-account-switch.mjs"
+  ],
+  "ci": {
+    "cloud": {
+      "order": 5500,
+      "shard": 8,
+      "position": 4000
+    }
+  }
+}

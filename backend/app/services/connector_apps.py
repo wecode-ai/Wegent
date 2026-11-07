@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -35,6 +36,36 @@ from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 CONNECTOR_APP_KIND = "ConnectorApp"
 CONNECTOR_APP_NAMESPACE = "system"
 CONNECTOR_APP_USER_ID = 0
+# Upstream gateways (for example DingTalk) resolve to a pool of edge nodes and
+# one node can briefly serve an invalid certificate while it is redeployed.
+# httpcore only replays connection establishment, so retrying cannot duplicate
+# a tool call that already reached the upstream.
+CONNECTOR_CONNECT_RETRIES = 2
+
+
+def create_connector_http_client(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+    follow_redirects: bool = True,
+) -> httpx.AsyncClient:
+    """Create an HTTP client for connector traffic.
+
+    trust_env=False keeps connector calls off ambient HTTP(S)_PROXY
+    settings: connector endpoints are configured explicitly and ambient
+    proxies make upstream connections fail non-deterministically.
+
+    ``retries`` only covers DNS/TCP/TLS establishment. Requests that were
+    already written are never replayed, which keeps tool calls idempotent.
+    """
+    return httpx.AsyncClient(
+        headers=headers,
+        timeout=timeout,
+        auth=auth,
+        follow_redirects=follow_redirects,
+        trust_env=False,
+        transport=httpx.AsyncHTTPTransport(retries=CONNECTOR_CONNECT_RETRIES),
+    )
 
 
 @dataclass
@@ -50,8 +81,12 @@ class ConnectorApp:
     visibility: str
     allowed_roles: list[str]
     auth_type: str
+    oauth_scope: str | None
+    oauth_client_encrypted: str | None
     transport: str
     mcp_url: str
+    tool_loading_mode: str
+    keywords: list[str]
     provider_headers_encrypted: str | None
     forward_user_context_headers: bool
     tool_allowlist: list[str]
@@ -131,7 +166,11 @@ class ConnectorAppService:
     def update_app(
         db: Session, app: ConnectorApp, payload: ConnectorAppUpdate
     ) -> ConnectorApp:
+        app = ConnectorAppService._row_to_app(
+            ConnectorAppService._lock_app_row(db, app)
+        )
         current = ConnectorAppService._spec(app.row)
+        previous_resource = (current.get("mcpUrl"), current.get("authType"))
 
         values = payload.model_dump(
             mode="json",
@@ -140,10 +179,14 @@ class ConnectorAppService:
             exclude={
                 "provider_headers",
                 "clear_provider_headers",
+                "clear_oauth_client",
             },
         )
         for key, value in values.items():
             current[ConnectorAppService._spec_key(key)] = value
+
+        if payload.clear_oauth_client:
+            current.pop("oauthClientEncrypted", None)
 
         if payload.provider_headers is not None:
             current["providerHeadersEncrypted"] = _encrypt_json(
@@ -159,6 +202,15 @@ class ConnectorAppService:
             http_tools=list(current.get("httpTools") or []),
             tool_allowlist=list(current.get("toolAllowlist") or []),
         )
+        if previous_resource != (current.get("mcpUrl"), current.get("authType")):
+            # Grants belong to a resource, not just a catalog slug. Never send
+            # the old user's token to an administrator's replacement upstream.
+            current.pop("oauthClientEncrypted", None)
+            db.query(Kind).filter(
+                Kind.kind == CONNECTOR_CONNECTION_KIND,
+                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+                Kind.name == app.slug,
+            ).delete(synchronize_session=False)
         data = dict(app.row.json or {})
         data["spec"] = current
         display_name = str(current.get("name") or app.slug)
@@ -218,6 +270,7 @@ class ConnectorAppService:
                 Kind.id == app_id,
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.user_id == CONNECTOR_APP_USER_ID,
                 Kind.is_active,
             )
             .first()
@@ -254,8 +307,12 @@ class ConnectorAppService:
             visibility=app.visibility,
             allowed_roles=list(app.allowed_roles or []),
             auth_type=app.auth_type,
+            oauth_scope=app.oauth_scope,
+            oauth_client_registered=bool(app.oauth_client_encrypted),
             transport=app.transport,
             mcp_url=app.mcp_url,
+            tool_loading_mode=app.tool_loading_mode,
+            keywords=list(app.keywords or []),
             provider_header_names=sorted(provider_headers),
             provider_headers_configured=bool(provider_headers),
             forward_user_context_headers=app.forward_user_context_headers,
@@ -273,6 +330,7 @@ class ConnectorAppService:
             .filter(
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.user_id == CONNECTOR_APP_USER_ID,
                 Kind.is_active,
             )
             .order_by(Kind.name, Kind.id)
@@ -288,6 +346,41 @@ class ConnectorAppService:
             for app in apps
             if app.visibility == "all" or user.role in (app.allowed_roles or [])
         ]
+
+    @staticmethod
+    def split_by_availability(
+        db: Session, user: User
+    ) -> tuple[list[ConnectorApp], list[ConnectorApp]]:
+        """Split visible apps into (callable now, needs authorization).
+
+        Single source of truth for "can this user use the app", shared by the
+        request builder's MCP injection and the conversation guidance.
+        """
+        visible_apps = ConnectorAppService.list_visible_apps(db, user)
+        if not visible_apps:
+            return [], []
+        connections = connector_connection_service.list_for_user(db, user_id=user.id)
+        available: list[ConnectorApp] = []
+        pending: list[ConnectorApp] = []
+        for app in visible_apps:
+            if app.auth_type == "none":
+                available.append(app)
+            elif connector_connection_service.is_usable(connections.get(app.slug)):
+                # An expired grant with a refresh token is still usable; the
+                # runtime renews it on the next upstream call.
+                available.append(app)
+            else:
+                pending.append(app)
+        return available, pending
+
+    @staticmethod
+    def split_by_loading_mode(
+        apps: list[ConnectorApp],
+    ) -> tuple[list[ConnectorApp], list[ConnectorApp]]:
+        """Split apps into static and lazy tool loading."""
+        static = [app for app in apps if app.tool_loading_mode == "static"]
+        lazy = [app for app in apps if app.tool_loading_mode == "lazy"]
+        return static, lazy
 
     @staticmethod
     def user_response(
@@ -315,43 +408,50 @@ class ConnectorAppService:
             description=app.description,
             icon_url=app.icon_url,
             auth_type=app.auth_type,
+            tool_loading_mode=app.tool_loading_mode,
+            keywords=list(app.keywords or []),
             connection=connection,
         )
 
     @staticmethod
-    def disable_app(db: Session, app: ConnectorApp) -> None:
-        app.row.is_active = False
-        spec = ConnectorAppService._spec(app.row)
-        spec["enabled"] = False
-        data = dict(app.row.json or {})
-        data["spec"] = spec
-        app.row.json = data
-        flag_modified(app.row, "json")
-        connections = (
+    def delete_app(
+        db: Session,
+        app: ConnectorApp,
+    ) -> None:
+        """Permanently delete an app and every user connection bound to it.
+
+        Connector apps are shared by all users, so deletion also removes the
+        stored OAuth client and the connections of every user. Built-in apps
+        are re-created by the next startup bootstrap.
+        """
+        # Match the callback lock order: app first, then user connections.
+        row = ConnectorAppService._lock_app_row(db, app)
+        db.query(Kind).filter(
+            Kind.kind == CONNECTOR_CONNECTION_KIND,
+            Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+            Kind.name == app.slug,
+        ).delete(synchronize_session=False)
+        db.delete(row)
+        db.commit()
+
+    @staticmethod
+    def _lock_app_row(db: Session, app: ConnectorApp) -> Kind:
+        row = (
             db.query(Kind)
             .filter(
-                Kind.kind == CONNECTOR_CONNECTION_KIND,
-                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+                Kind.id == app.id,
+                Kind.kind == CONNECTOR_APP_KIND,
+                Kind.namespace == CONNECTOR_APP_NAMESPACE,
                 Kind.name == app.slug,
-                Kind.is_active,
+                Kind.user_id == CONNECTOR_APP_USER_ID,
             )
-            .all()
+            .populate_existing()
+            .with_for_update()
+            .first()
         )
-        for row in connections:
-            connection_data = dict(row.json or {})
-            connection_spec = dict(connection_data.get("spec") or {})
-            connection_spec.update(
-                {
-                    "status": "disconnected",
-                    "accessTokenEncrypted": None,
-                    "refreshTokenEncrypted": None,
-                }
-            )
-            connection_data["spec"] = connection_spec
-            row.json = connection_data
-            row.is_active = False
-            flag_modified(row, "json")
-        db.commit()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+        return row
 
     @staticmethod
     def _find_row_by_slug(db: Session, slug: str) -> Kind | None:
@@ -361,6 +461,7 @@ class ConnectorAppService:
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
                 Kind.name == slug,
+                Kind.user_id == CONNECTOR_APP_USER_ID,
                 Kind.is_active,
             )
             .first()
@@ -380,8 +481,12 @@ class ConnectorAppService:
                 "visibility": payload.visibility,
                 "allowedRoles": payload.allowed_roles,
                 "authType": payload.auth_type,
+                "oauthScope": payload.oauth_scope,
+                "oauthClientEncrypted": None,
                 "transport": payload.transport,
                 "mcpUrl": payload.mcp_url,
+                "toolLoadingMode": payload.tool_loading_mode,
+                "keywords": payload.keywords,
                 "providerHeadersEncrypted": _encrypt_json(payload.provider_headers),
                 "forwardUserContextHeaders": payload.forward_user_context_headers,
                 "toolAllowlist": payload.tool_allowlist,
@@ -411,8 +516,22 @@ class ConnectorAppService:
             visibility=str(spec.get("visibility") or "all"),
             allowed_roles=list(spec.get("allowedRoles") or []),
             auth_type=str(spec.get("authType") or "none"),
+            oauth_scope=spec.get("oauthScope"),
+            oauth_client_encrypted=spec.get("oauthClientEncrypted"),
             transport=str(spec.get("transport") or "streamable-http"),
             mcp_url=str(spec.get("mcpUrl") or ""),
+            tool_loading_mode=(
+                "lazy" if spec.get("toolLoadingMode") in {"lazy", "skill"} else "static"
+            ),
+            keywords=(
+                [
+                    keyword.strip()
+                    for keyword in spec.get("keywords")
+                    if isinstance(keyword, str) and keyword.strip()
+                ]
+                if isinstance(spec.get("keywords"), list)
+                else []
+            ),
             provider_headers_encrypted=spec.get("providerHeadersEncrypted"),
             forward_user_context_headers=bool(
                 spec.get("forwardUserContextHeaders", False)
@@ -431,7 +550,10 @@ class ConnectorAppService:
             "icon_url": "iconUrl",
             "allowed_roles": "allowedRoles",
             "auth_type": "authType",
+            "oauth_scope": "oauthScope",
             "mcp_url": "mcpUrl",
+            "tool_loading_mode": "toolLoadingMode",
+            "keywords": "keywords",
             "forward_user_context_headers": "forwardUserContextHeaders",
             "tool_allowlist": "toolAllowlist",
             "http_tools": "httpTools",

@@ -53,7 +53,13 @@ import {
   listPersonalMarketplacePluginsFromDisk,
   peekLocalCodexPluginsReadState,
 } from '@/api/local/codexPlugins'
-import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  authorizeWegentConnector,
+  connectorAuthorizationErrorMessage,
+  listWegentConnectorApps,
+  notifyConnectorAuthorizationChanged,
+  refreshWegentConnector,
+} from '@/api/cloud/connectorApps'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import {
   installedPluginTelemetryIdentity,
@@ -3352,6 +3358,19 @@ export function PluginsWorkspace({
         navigateTo('/settings/connections')
         return
       }
+      if (app.connection.status === 'expired') {
+        try {
+          const connection = await refreshWegentConnector(cloudApiBaseUrl, cloudToken, app.slug)
+          if (connection.status === 'connected') {
+            notifyConnectorAuthorizationChanged()
+            navigateTo('/settings/connections')
+            return
+          }
+        } catch {
+          // Token refresh is an optimization. A provider that rejects it must
+          // still recover through the normal consent flow.
+        }
+      }
       await authorizeWegentConnector(
         cloudApiBaseUrl,
         cloudToken,
@@ -3359,7 +3378,7 @@ export function PluginsWorkspace({
         openCloudAuthorizationWindow
       )
     } catch (error) {
-      reportDetailError(error instanceof Error ? error.message : 'Connector authorization failed')
+      reportDetailError(connectorAuthorizationErrorMessage(error, connectorDisplayName(slug), t))
     }
   }
 
