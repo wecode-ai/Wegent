@@ -41,10 +41,10 @@ describe('Issue reception receipts', () => {
       getIssueAssignmentReceipts: vi.fn().mockResolvedValue(rows),
       acknowledgeIssueAssignment: vi.fn(),
     }
-    const view = (version: number, assigneeUserId = 7) => (
+    const view = (version: number, assigneeUserId = 7, issueId = 'issue') => (
       <IssueAssignmentReceipts
         api={api as never}
-        issueId="issue"
+        issueId={issueId}
         version={version}
         currentUserId={8}
         assigneeUserId={assigneeUserId}
@@ -73,6 +73,8 @@ describe('Issue reception receipts', () => {
     rerender(view(3, 9))
     expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    rerender(view(4, 7, 'another-issue'))
+    expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
   })
 
   it('does not acknowledge when detail loading fails and recovers on the next poll', async () => {
