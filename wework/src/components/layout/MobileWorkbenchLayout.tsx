@@ -507,38 +507,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         onCancel={connectorAuthRecovery.clearPending}
                       />
                     )
-                  ) : pendingRequestUserInput ? (
-                    <RequestUserInputCard
-                      key={
-                        requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
-                      }
-                      payload={pendingRequestUserInput}
-                      messages={paneMessages}
-                      onSubmit={response => {
-                        const isImplementationPlanRequest =
-                          isImplementationPlanRequestUserInput(pendingRequestUserInput)
-                        const shouldImplementPlan =
-                          isImplementationPlanRequest &&
-                          isImplementationPlanConfirmationResponse(response)
-                        return paneSession.sendRequestUserInputResponse(response, {
-                          requestUserInputResponses: pendingRequestUserInputResponses(
-                            response,
-                            paneMessages,
-                            paneSession.answeredRequestUserInputIds
-                          ),
-                          appendUserMessage: isImplementationPlanRequest,
-                          forceDefaultCollaborationMode: shouldImplementPlan,
-                        })
-                      }}
-                      onIgnore={() =>
-                        paneSession.ignoreRequestUserInput(
-                          pendingRequestUserInputPayloads(
-                            paneMessages,
-                            paneSession.answeredRequestUserInputIds
-                          )
-                        )
-                      }
-                    />
                   ) : (
                     <RequestUserInputComposer
                       payload={pendingRequestUserInput}
