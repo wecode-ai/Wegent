@@ -43,6 +43,7 @@ import {
   createDotsCheckedCommand,
   cartProgram,
   comparableDotsPath,
+  dotsFileLink,
   followupProgram,
   launchProgram,
   launchReadProgram,
@@ -232,12 +233,12 @@ export function createDesktopScenario(options) {
     const text =
       phase === 3 && story === 'REVENUE'
         ? 'Validation error: Invalid amount: not-a-number. Previous report preserved; fix the CSV and continue.'
-        : `Verified real files and command results. [${file}](<${encodeURI(join(root, file))}>)`
+        : `Verified real files and command results. ${dotsFileLink(file, join(root, file))}`
     const extra =
       story === 'CART'
-        ? `\n[cart.mjs](<${encodeURI(join(root, 'cart-fixture/cart.mjs'))}>)`
+        ? `\n${dotsFileLink('cart.mjs', join(root, 'cart-fixture/cart.mjs'))}`
         : story === 'REVENUE' && phase === 2
-          ? `\n[followup-plan.md](<${encodeURI(join(root, 'revenue-fixture/followup-plan.md'))}>)`
+          ? `\n${dotsFileLink('followup-plan.md', join(root, 'revenue-fixture/followup-plan.md'))}`
           : ''
     return [assistantMessage(`${RESULT(story, phase)}: ${text}${extra}`)]
   }
