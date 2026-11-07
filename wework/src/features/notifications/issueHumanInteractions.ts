@@ -2,6 +2,11 @@ import type { IssueHumanRequest } from '@wegent/collaboration'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { interactionId } from './runtimeInteractions'
 
+export interface ValidatedIssueResolution {
+  questionIdentity: string
+  nativeInteractionId: string
+}
+
 /** The durable item identity survives native request IDs and device aliases. */
 export function issueQuestionIdentity(item: RuntimeInteraction): string | null {
   const request = item.sharedRequest
@@ -22,12 +27,26 @@ export function isResolvedIssueQuestion(
   native: RuntimeInteraction,
   validatedResolved: readonly RuntimeInteraction[]
 ): boolean {
+  return validatedResolved.some(resolved => {
+    const questionIdentity = issueQuestionIdentity(resolved)
+    return (
+      questionIdentity &&
+      matchesIssueResolution(native, {
+        questionIdentity,
+        nativeInteractionId: resolved.id,
+      })
+    )
+  })
+}
+
+export function matchesIssueResolution(
+  native: RuntimeInteraction,
+  resolution: ValidatedIssueResolution
+): boolean {
   const identity = issueQuestionIdentity(native)
-  return validatedResolved.some(resolved =>
-    identity
-      ? identity === issueQuestionIdentity(resolved)
-      : !native.project && native.id === resolved.id
-  )
+  return identity
+    ? identity === resolution.questionIdentity
+    : !native.project && native.id === resolution.nativeInteractionId
 }
 
 /** Shared Issue questions never require access to another member's private runtime. */

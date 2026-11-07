@@ -22,6 +22,32 @@ function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
+function validIssueResolution(value: unknown, id: string): boolean {
+  if (
+    !record(value) ||
+    typeof value.questionIdentity !== 'string' ||
+    value.nativeInteractionId !== id
+  )
+    return false
+  try {
+    const identity: unknown = JSON.parse(value.questionIdentity)
+    const native: unknown = JSON.parse(id)
+    return (
+      Array.isArray(identity) &&
+      identity.length === 5 &&
+      ['local', 'backend'].includes(identity[0]) &&
+      identity.every(part => typeof part === 'string' && part.length > 0) &&
+      Array.isArray(native) &&
+      native.length === 3 &&
+      native.every(part => typeof part === 'string' && part.length > 0) &&
+      native[1] === identity[3] &&
+      native[2] === `item:${identity[4]}`
+    )
+  } catch {
+    return false
+  }
+}
+
 /** Last-known requests remain visible offline, but never carry response authority. */
 export function readPendingInteractionCache(key: string): RuntimeInteraction[] {
   const rows = read(key)
@@ -141,6 +167,8 @@ export function readInteractionHistory(key: string): InteractionHistory[] {
       (row): row is InteractionHistory =>
         record(row) &&
         typeof row.id === 'string' &&
+        (row.resolvedIssueQuestion === undefined ||
+          validIssueResolution(row.resolvedIssueQuestion, row.id)) &&
         (row.source === undefined || isInteractionSource(row.source)) &&
         typeof row.title === 'string' &&
         typeof row.question === 'string' &&
@@ -182,7 +210,17 @@ export function archiveInteraction(
   current: InteractionHistory[],
   entry: InteractionHistory
 ): InteractionHistory[] {
-  if (current.some(row => row.id === entry.id)) return current
+  const previous = current.find(row => row.id === entry.id)
+  if (previous) {
+    if (
+      !entry.resolvedIssueQuestion ||
+      JSON.stringify(previous.resolvedIssueQuestion) === JSON.stringify(entry.resolvedIssueQuestion)
+    )
+      return current
+    return current.map(row =>
+      row === previous ? { ...row, resolvedIssueQuestion: entry.resolvedIssueQuestion } : row
+    )
+  }
   const next = [...current, entry].sort((a, b) => b.answeredAt - a.answeredAt).slice(0, 100)
   return next.some((row, index) => row !== current[index]) ? next : current
 }

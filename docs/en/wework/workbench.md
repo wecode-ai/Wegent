@@ -140,6 +140,8 @@ After discussing, select the text you want to use and choose **Fill answer** fro
 
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
 
+A queued Issue answer does not clear the wait. After confirmed acceptance, local history retains settlement identity scoped to the original project, Issue, Runtime and question. This prevents a stale native snapshot from reappearing after a failed read, device-route alias change or offline restart. The record only reconciles the same question: it grants no reply or device access permission and cannot clear another Issue's question.
+
 <a id="project-pending-work"></a>
 
 ### Project work and waiting time

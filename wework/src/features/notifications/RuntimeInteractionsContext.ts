@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import type { InteractionSource, RuntimeInteraction } from './runtimeInteractions'
+import type { ValidatedIssueResolution } from './issueHumanInteractions'
 
 export interface InteractionHistory {
   source?: InteractionSource
@@ -10,6 +11,7 @@ export interface InteractionHistory {
   originalUrl?: string
   sourceMessageIds?: string[]
   answeredAt: number
+  resolvedIssueQuestion?: ValidatedIssueResolution
 }
 
 export interface RuntimeInteractionsValue {

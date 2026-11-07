@@ -18,7 +18,11 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import { useIssueHumanInteractions } from './useIssueHumanInteractions'
-import { isResolvedIssueQuestion, issueQuestionIdentity } from './issueHumanInteractions'
+import {
+  isResolvedIssueQuestion,
+  issueQuestionIdentity,
+  matchesIssueResolution,
+} from './issueHumanInteractions'
 import { createIssueQuestionEnricher } from './enrichIssueQuestions'
 import {
   interactionResponse,
@@ -189,7 +193,7 @@ function RuntimeInteractionsState({
     readInteractionHistory(historyKey)
   )
   const [submitted, setSubmitted] = useState<Set<string>>(
-    () => new Set(history.map(item => item.id))
+    () => new Set(history.filter(item => !item.resolvedIssueQuestion).map(item => item.id))
   )
   const submittedRef = useRef(submitted)
   const handledNativeReplies = useMemo(
@@ -224,7 +228,11 @@ function RuntimeInteractionsState({
   }, [])
 
   const archive = useCallback(
-    async (item: RuntimeInteraction, answeredAt = item.createdAt) => {
+    async (
+      item: RuntimeInteraction,
+      answeredAt = item.createdAt,
+      resolvedIssueQuestion?: InteractionHistory['resolvedIssueQuestion']
+    ) => {
       await navigator.locks.request(historyKey, async () => {
         const current = readInteractionHistory(historyKey)
         const next = archiveInteraction(current, {
@@ -236,18 +244,30 @@ function RuntimeInteractionsState({
           originalUrl: interactionOriginalScheme(item),
           sourceMessageIds: item.sourceMessageIds,
           answeredAt,
+          ...(resolvedIssueQuestion ? { resolvedIssueQuestion } : {}),
         })
         if (next !== current) saveInteractionState(historyKey, next)
         // Renderer queues are independent; retain the lock through the host write
         // so an older window's snapshot cannot overwrite a newer archive.
         await flushDesktopLocalStoragePersistence()
-        if (mounted.current) setHistory(next)
+        if (mounted.current) {
+          setHistory(next)
+          if (resolvedIssueQuestion && submittedRef.current.has(item.id)) {
+            submittedRef.current = new Set(submittedRef.current)
+            submittedRef.current.delete(item.id)
+            setSubmitted(submittedRef.current)
+          }
+        }
       })
     },
     [historyKey]
   )
   useEffect(() => {
-    for (const item of issueInteractions.resolved) void archive(item, Date.now())
+    for (const item of issueInteractions.resolved) {
+      const questionIdentity = issueQuestionIdentity(item)
+      if (questionIdentity)
+        void archive(item, Date.now(), { questionIdentity, nativeInteractionId: item.id })
+    }
   }, [archive, issueInteractions.resolved])
   useEffect(() => {
     const update = (event: StorageEvent) => {
@@ -261,7 +281,13 @@ function RuntimeInteractionsState({
       if (event.key !== historyKey) return
       const next = readInteractionHistory(historyKey)
       setHistory(next)
-      submittedRef.current = new Set([...submittedRef.current, ...next.map(item => item.id)])
+      const qualified = new Set(
+        next.filter(item => item.resolvedIssueQuestion).map(item => item.id)
+      )
+      submittedRef.current = new Set([
+        ...[...submittedRef.current].filter(id => !qualified.has(id)),
+        ...next.filter(item => !item.resolvedIssueQuestion).map(item => item.id),
+      ])
       setSubmitted(submittedRef.current)
     }
     window.addEventListener('storage', update)
@@ -504,6 +530,11 @@ function RuntimeInteractionsState({
         item =>
           !item.answered &&
           !isResolvedIssueQuestion(item, issueInteractions.resolved) &&
+          !history.some(
+            entry =>
+              entry.resolvedIssueQuestion &&
+              matchesIssueResolution(item, entry.resolvedIssueQuestion)
+          ) &&
           !submitted.has(item.id) &&
           localStorage.getItem(acceptancePrefix + item.id) === null &&
           visible.has(item.task.key) &&
@@ -545,6 +576,7 @@ function RuntimeInteractionsState({
     submitted,
     issueInteractions.items,
     issueInteractions.resolved,
+    history,
   ])
 
   useEffect(() => {
@@ -600,7 +632,25 @@ function RuntimeInteractionsState({
         return false
       inFlight.current.add(item.id)
       setBusy(new Set(inFlight.current))
+      const confirmedResolved = () =>
+        isResolvedIssueQuestion(item, issueDiscoveryRef.current.resolved) ||
+        readInteractionHistory(historyKey).some(
+          row =>
+            row.resolvedIssueQuestion && matchesIssueResolution(item, row.resolvedIssueQuestion)
+        )
+      const clearHandledDraft = () => {
+        setDraft(item.id, '')
+        setErrors(current => {
+          const next = { ...current }
+          delete next[item.id]
+          return next
+        })
+      }
       try {
+        if (confirmedResolved()) {
+          clearHandledDraft()
+          return false
+        }
         if (item.sharedRequest) {
           const services = sourceRef.current?.services
           if (!services) return false
@@ -623,20 +673,21 @@ function RuntimeInteractionsState({
         if (!api) return false
         return await navigator.locks.request(historyKey + ':' + item.id, async () => {
           if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
+          if (confirmedResolved()) {
+            clearHandledDraft()
+            return false
+          }
           // The request lock and persisted acceptance are shared by every workbench window.
           if (
             submittedRef.current.has(item.id) ||
             localStorage.getItem(acceptancePrefix + item.id) !== null ||
-            readInteractionHistory(historyKey).some(row => row.id === item.id)
+            readInteractionHistory(historyKey).some(
+              row => !row.resolvedIssueQuestion && row.id === item.id
+            )
           ) {
             submittedRef.current = new Set(submittedRef.current).add(item.id)
             setSubmitted(submittedRef.current)
-            setDraft(item.id, '')
-            setErrors(current => {
-              const next = { ...current }
-              delete next[item.id]
-              return next
-            })
+            clearHandledDraft()
             return false
           }
           // Revalidate the exact request before answering; old notifications are not authority.

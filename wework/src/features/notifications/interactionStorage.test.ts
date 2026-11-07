@@ -25,6 +25,47 @@ const entry = (index: number): InteractionHistory => ({
 
 beforeEach(() => localStorage.clear())
 
+const resolution = {
+  questionIdentity: JSON.stringify(['backend', 'project', 'ISSUE-1', 'review', 'question']),
+  nativeInteractionId: JSON.stringify(['device', 'review', 'item:question']),
+}
+
+it('persists only complete internally consistent canonical resolution identities', () => {
+  const resolved = {
+    ...entry(1),
+    id: resolution.nativeInteractionId,
+    resolvedIssueQuestion: resolution,
+  }
+  saveInteractionState('history', [resolved])
+  expect(readInteractionHistory('history')).toEqual([resolved])
+  for (const invalid of [
+    {},
+    { ...resolution, questionIdentity: 'broken JSON' },
+    { ...resolution, nativeInteractionId: 'different' },
+    {
+      ...resolution,
+      questionIdentity: JSON.stringify(['backend', 'project', 'ISSUE-1', 'other-task', 'question']),
+    },
+  ]) {
+    saveInteractionState('history', [{ ...resolved, resolvedIssueQuestion: invalid }])
+    expect(readInteractionHistory('history')).toEqual([])
+  }
+})
+
+it('upgrades an existing history row with validated resolution without duplicating or rewriting it', () => {
+  const ordinary = { ...entry(1), id: resolution.nativeInteractionId }
+  const upgraded = archiveInteraction([ordinary], {
+    ...ordinary,
+    answeredAt: 5,
+    resolvedIssueQuestion: resolution,
+  })
+  expect(upgraded).toEqual([{ ...ordinary, resolvedIssueQuestion: resolution }])
+  expect(archiveInteraction(upgraded, { ...ordinary, resolvedIssueQuestion: resolution })).toBe(
+    upgraded
+  )
+  expect(archiveInteraction(upgraded, ordinary)).toBe(upgraded)
+})
+
 it('retains source grouping across offline cache and handled-history reloads', async () => {
   const [item] = await readRuntimeInteractions(interactionTask, {
     getRuntimeTranscript: vi.fn().mockResolvedValue(interactionTranscript()),
