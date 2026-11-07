@@ -38,6 +38,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import { waitForElementInsideScroller, waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
+  assignHumanInteractionIssueToResponsible,
   startHumanInteractionIssue,
   verifyHumanInteractionIssueReply,
 } from '../modules/human-interaction-issue.mjs'
@@ -348,6 +349,9 @@ export function createDesktopScenario({
         visible: true,
       })
       await control.command('hover', '[data-testid="runtime-interaction-notice"]')
+      if (issueFixture) {
+        await assignHumanInteractionIssueToResponsible(issueFixture, control, QUESTION, uiTimeoutMs)
+      }
       await control.command('click', '[data-testid="interaction-notice-reply"]')
       try {
         await control.command(
@@ -391,18 +395,11 @@ export function createDesktopScenario({
           'waitFor',
           '[data-testid="workspace-tab-select-pending-interactions"][data-project-count-state="known"]'
         )
-      } else if (
-        (await control.command(
-          'getAttribute',
-          '[data-testid="workspace-tab-select-pending-interactions"]',
-          { value: 'data-project-count-state' }
-        )) === 'unknown'
-      ) {
-        await control.command('waitFor', `${page} [data-testid^="project-work-error-"]`, {
-          visible: true,
-        })
       }
-      await verifyPendingInteractionsTab(control, 1, { openFromMenu: true })
+      await verifyPendingInteractionsTab(control, 1, {
+        openFromMenu: true,
+        requireProjectCountKnown: !issueFixture,
+      })
       const questionTime = await verifyInteractionTime(control, page)
       await control.command('waitFor', page, { text: CONTEXT })
       if (issueFixture) {

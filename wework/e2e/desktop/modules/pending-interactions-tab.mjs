@@ -5,9 +5,11 @@ const TAB = '[data-testid="workspace-tab-select-pending-interactions"]'
 export async function verifyPendingInteractionsTab(
   control,
   expectedQuestionCount,
-  { openFromMenu = false } = {}
+  { openFromMenu = false, requireProjectCountKnown = false } = {}
 ) {
   assert.ok(Number.isInteger(expectedQuestionCount) && expectedQuestionCount >= 0)
+  if (requireProjectCountKnown)
+    await control.command('waitFor', `${TAB}[data-project-count-state="known"]`)
   await control.command(
     'waitFor',
     `${TAB}[data-pending-question-count="${expectedQuestionCount}"]`,
@@ -31,7 +33,7 @@ export async function verifyPendingInteractionsTab(
     await control.command('waitFor', counter, { visible: false })
   } else {
     await control.command('waitFor', counter, { text: String(total), visible: true })
-    assert.equal(await control.command('getText', counter), String(total))
+    assert.equal(await control.command('getText', counter), `（${total}）`)
     const [counterMetrics] = JSON.parse(await control.command('getElementMetrics', counter))
     const [tabMetrics] = JSON.parse(await control.command('getElementMetrics', TAB))
     assert.ok(

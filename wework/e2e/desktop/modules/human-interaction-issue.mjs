@@ -4,6 +4,61 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { readProjectChatMessages } from './project-chat-snapshot.mjs'
 import { runChecked } from './shared.mjs'
 
+async function waitForIssueQuestion(fixture, match, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `${fixture.backendUrl}/api/v1/loop-items/${encodeURIComponent(fixture.issueId)}/human-requests`,
+      {
+        headers: { Authorization: `Bearer ${fixture.authToken}` },
+        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      }
+    )
+    const result = await response.json()
+    assert.ok(response.ok, `Read owning Issue questions: ${JSON.stringify(result)}`)
+    assert.ok(Array.isArray(result.items))
+    const request = result.items.find(match)
+    if (request) return request
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail('The original Issue question did not reach its expected persisted assignment')
+}
+
+/** A shared question needs an explicit recipient before a compact draft can be accepted. */
+export async function assignHumanInteractionIssueToResponsible(
+  fixture,
+  control,
+  question,
+  timeoutMs
+) {
+  const request = await waitForIssueQuestion(
+    fixture,
+    item => item.root_comment_id === fixture.rootId,
+    timeoutMs
+  )
+  assert.ok(request.question.includes(question))
+  assert.equal(request.recipient_user_id, null)
+  assert.ok(Number.isInteger(request.responsible_user_id))
+  const notice = '[data-testid="runtime-interaction-notice"]'
+  await control.command('waitFor', `${notice} [data-testid="interaction-open-original-action"]`, {
+    visible: true,
+  })
+  await control.command('click', `${notice} [data-testid="interaction-open-original-action"]`)
+  const surface = `[data-workspace-tab-content][aria-hidden="false"] [data-testid="issue-human-request-${request.id}"]`
+  await control.command('waitFor', surface, { text: question })
+  await control.command(
+    'select',
+    `${surface} [data-testid="issue-human-request-assignee-${request.id}"]`,
+    { value: String(request.responsible_user_id) }
+  )
+  const assigned = await waitForIssueQuestion(
+    fixture,
+    item => item.id === request.id && item.recipient_user_id === request.responsible_user_id,
+    timeoutMs
+  )
+  assert.equal(assigned.status, 'pending', 'Assignment must not consume the question')
+}
+
 /** Real persisted Issue comments and server-owned execution, with only the model mocked. */
 export async function startHumanInteractionIssue({
   cloud,
