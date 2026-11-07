@@ -225,32 +225,35 @@ test('routes the default update URL through the real Electron network stack', as
   }
 })
 
-test('the upgrade transport follows a real Electron relaunch', { timeout: 30_000 }, async context => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-upgrade-handoff-'))
-  const appPath = join(root, 'app')
-  const resultPath = join(root, 'handoff.json')
-  const readyPath = join(root, 'ready.json')
-  let readyResponse
-  const requests = []
-  const server = createServer((request, response) => {
-    if (request.url === '/handoff-ready') {
-      readyResponse = response
-      server.emit('handoff-ready')
-      return
-    }
-    requests.push(request.url)
-    response.end('real loopback transport')
-  })
-  let child
-  let stdout = ''
-  let stderr = ''
-  try {
-    await new Promise(accept => server.listen(0, '127.0.0.1', accept))
-    await mkdir(appPath)
-    await writeFile(join(appPath, 'package.json'), JSON.stringify({ main: 'main.cjs' }))
-    await writeFile(
-      join(appPath, 'main.cjs'),
-      `
+test(
+  'the upgrade transport follows a real Electron relaunch',
+  { timeout: 30_000 },
+  async context => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-upgrade-handoff-'))
+    const appPath = join(root, 'app')
+    const resultPath = join(root, 'handoff.json')
+    const readyPath = join(root, 'ready.json')
+    let readyResponse
+    const requests = []
+    const server = createServer((request, response) => {
+      if (request.url === '/handoff-ready') {
+        readyResponse = response
+        server.emit('handoff-ready')
+        return
+      }
+      requests.push(request.url)
+      response.end('real loopback transport')
+    })
+    let child
+    let stdout = ''
+    let stderr = ''
+    try {
+      await new Promise(accept => server.listen(0, '127.0.0.1', accept))
+      await mkdir(appPath)
+      await writeFile(join(appPath, 'package.json'), JSON.stringify({ main: 'main.cjs' }))
+      await writeFile(
+        join(appPath, 'main.cjs'),
+        `
       const {app,net} = require('electron')
       const {writeFileSync} = require('node:fs')
       const handoff = process.argv.includes('--handoff-probe')
@@ -287,74 +290,79 @@ test('the upgrade transport follows a real Electron relaunch', { timeout: 30_000
         app.quit()
       }).catch(error => {console.error(error);app.exit(1)})
       `
-    )
-    const env = { ...process.env }
-    delete env.ELECTRON_RUN_AS_NODE
-    child = spawn(require('electron'), ['--inspect-brk=127.0.0.1:0', appPath], {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    child.stdout.on('data', chunk => (stdout += chunk))
-    child.stderr.on('data', chunk => (stderr += chunk))
-    const signal = AbortSignal.any([context.signal, AbortSignal.timeout(20_000)])
-    const origin = `http://127.0.0.1:${server.address().port}`
-    // Observe both transitions concurrently: either may finish first on a native relaunch.
-    // The test runner's timeout alone does not cancel a pending event promise.
-    const [exited, , port] = await Promise.all([
-      once(child, 'exit', { signal }),
-      once(server, 'handoff-ready', { signal }),
-      routeUpgradeRequests(child, origin, undefined, { followHandoffs: true }),
-    ])
-    assert.deepEqual(exited, PROBE_EXPECTED_EXIT, stderr)
-    const { pid } = JSON.parse(await readFile(readyPath, 'utf8'))
-    await assert.rejects(
-      routeRunningUpgradeRequests(port, process.pid, origin),
-      /another release process/
-    )
-    await routeRunningUpgradeRequests(port, pid, origin)
-    readyResponse.end('ready')
-    let result
-    const deadline = Date.now() + 15_000
-    while (Date.now() < deadline) {
-      context.signal.throwIfAborted()
-      result = await readFile(resultPath, 'utf8')
+      )
+      const env = { ...process.env }
+      delete env.ELECTRON_RUN_AS_NODE
+      child = spawn(require('electron'), ['--inspect-brk=127.0.0.1:0', appPath], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      child.stdout.on('data', chunk => (stdout += chunk))
+      child.stderr.on('data', chunk => (stderr += chunk))
+      const signal = AbortSignal.any([context.signal, AbortSignal.timeout(20_000)])
+      const origin = `http://127.0.0.1:${server.address().port}`
+      // Observe both transitions concurrently: either may finish first on a native relaunch.
+      // The test runner's timeout alone does not cancel a pending event promise.
+      const [exited, , port] = await Promise.all([
+        once(child, 'exit', { signal }),
+        once(server, 'handoff-ready', { signal }),
+        routeUpgradeRequests(child, origin, undefined, { followHandoffs: true }),
+      ])
+      assert.deepEqual(exited, PROBE_EXPECTED_EXIT, stderr)
+      const { pid } = JSON.parse(await readFile(readyPath, 'utf8'))
+      await assert.rejects(
+        routeRunningUpgradeRequests(port, process.pid, origin),
+        /another release process/
+      )
+      await routeRunningUpgradeRequests(port, pid, origin)
+      readyResponse.end('ready')
+      let result
+      const deadline = Date.now() + 15_000
+      while (Date.now() < deadline) {
+        context.signal.throwIfAborted()
+        result = await readFile(resultPath, 'utf8')
+          .then(JSON.parse)
+          .catch(error => {
+            if (error.code !== 'ENOENT') throw error
+            return null
+          })
+        if (result && !processIsAlive(result.pid)) break
+        await new Promise(accept => setTimeout(accept, 25))
+      }
+      assert.ok(result, 'The relaunched Electron process did not report its network result')
+      assert.equal(processIsAlive(result.pid), false, 'The relaunched process must exit normally')
+      assert.equal(result.text, 'real loopback transport', JSON.stringify({ result, requests }))
+      assert.deepEqual(requests, [
+        '/components-stable-macos-arm64.json?first',
+        '/components-stable-macos-arm64.json?handoff',
+      ])
+    } catch (error) {
+      console.error('Electron relaunch diagnostics:', {
+        exitCode: child?.exitCode,
+        signalCode: child?.signalCode,
+        stdout,
+        stderr,
+        requests,
+        source: await readFile(join(root, 'source-startup.json'), 'utf8').catch(
+          error => error.code
+        ),
+        target: await readFile(join(root, 'target-startup.json'), 'utf8').catch(
+          error => error.code
+        ),
+      })
+      throw error
+    } finally {
+      if (child?.exitCode === null && child?.signalCode === null) child.kill('SIGKILL')
+      const target = await readFile(join(root, 'target-startup.json'), 'utf8')
         .then(JSON.parse)
         .catch(error => {
           if (error.code !== 'ENOENT') throw error
           return null
         })
-      if (result && !processIsAlive(result.pid)) break
-      await new Promise(accept => setTimeout(accept, 25))
+      if (target && processIsAlive(target.pid)) process.kill(target.pid, 'SIGKILL')
+      server.closeAllConnections()
+      await new Promise(accept => server.close(accept))
+      await rm(root, { recursive: true, force: true })
     }
-    assert.ok(result, 'The relaunched Electron process did not report its network result')
-    assert.equal(processIsAlive(result.pid), false, 'The relaunched process must exit normally')
-    assert.equal(result.text, 'real loopback transport', JSON.stringify({ result, requests }))
-    assert.deepEqual(requests, [
-      '/components-stable-macos-arm64.json?first',
-      '/components-stable-macos-arm64.json?handoff',
-    ])
-  } catch (error) {
-    console.error('Electron relaunch diagnostics:', {
-      exitCode: child?.exitCode,
-      signalCode: child?.signalCode,
-      stdout,
-      stderr,
-      requests,
-      source: await readFile(join(root, 'source-startup.json'), 'utf8').catch(error => error.code),
-      target: await readFile(join(root, 'target-startup.json'), 'utf8').catch(error => error.code),
-    })
-    throw error
-  } finally {
-    if (child?.exitCode === null && child?.signalCode === null) child.kill('SIGKILL')
-    const target = await readFile(join(root, 'target-startup.json'), 'utf8')
-      .then(JSON.parse)
-      .catch(error => {
-        if (error.code !== 'ENOENT') throw error
-        return null
-      })
-    if (target && processIsAlive(target.pid)) process.kill(target.pid, 'SIGKILL')
-    server.closeAllConnections()
-    await new Promise(accept => server.close(accept))
-    await rm(root, { recursive: true, force: true })
   }
-})
+)
