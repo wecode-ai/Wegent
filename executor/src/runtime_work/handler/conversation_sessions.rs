@@ -155,6 +155,7 @@ impl RuntimeWorkRpcHandler {
             return Err(invalid_cursor());
         }
         let all = payload["navigationOnly"] == true
+            || payload["navigation_only"] == true
             || payload["includeFullContent"] == true
             || payload["include_full_content"] == true;
         if all && cursor.is_none() && before.is_none() && after.is_none() {

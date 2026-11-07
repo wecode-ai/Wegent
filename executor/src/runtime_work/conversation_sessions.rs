@@ -172,6 +172,17 @@ mod tests {
     }
 
     #[test]
+    fn conversation_sessions_keep_logical_creation_time_on_native_refresh() {
+        let projected = RuntimeTaskLink::from_thread_metadata(
+            &json!({"id":"second", "createdAt":500, "status":{"type":"idle"}}),
+            Some(conversation()),
+            String::new(),
+            false,
+        );
+        assert_eq!(projected.created_at, 100);
+    }
+
+    #[test]
     fn conversation_sessions_read_old_history_without_active_execution_overlays() {
         let mut link = conversation();
         link.running = true;

@@ -287,10 +287,32 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let messages = if runtime_has_provider_transcript_reader(&link.runtime) {
-                let Some(thread_id) = link.thread_id.as_deref() else {
-                    continue;
-                };
-                self.thread_messages(thread_id).await
+                let thread_ids = crate::runtime_work::conversation_sessions::thread_ids(link)
+                    .map_err(|_| {
+                        AppIpcError::new(
+                            "invalid_session_state",
+                            "Conversation session history is invalid",
+                        )
+                    })?;
+                let mut matched = None;
+                for thread_id in thread_ids.iter().rev() {
+                    matched = first_message_search_result(
+                        link,
+                        &self.device_id,
+                        self.thread_messages(thread_id).await,
+                        &query,
+                    );
+                    if matched.is_some() {
+                        break;
+                    }
+                }
+                if let Some(item) = matched {
+                    items.push(item);
+                    if items.len() >= limit {
+                        break;
+                    }
+                }
+                continue;
             } else {
                 cached_runtime_transcript_messages(link)
             };

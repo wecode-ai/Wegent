@@ -232,6 +232,13 @@ export function createDesktopScenario({
       assert.equal(oldest.sessionThreadId, firstThread)
       assert.equal(oldest.threadId, current.threadId)
       assert.ok(JSON.stringify(oldest.messages).includes('第一段问题已回答'))
+      const taskSearch = await requestExecutor(
+        control,
+        'runtime.tasks.search',
+        { query: '第一段问题已回答' },
+        uiTimeoutMs
+      )
+      assert.ok(taskSearch.items.some(item => item.taskId === TASK))
       const search = await requestExecutor(
         control,
         'runtime.tasks.transcript.search',
