@@ -12,6 +12,135 @@ fn stand_in_owner(origin: &Value) -> Option<i64> {
     .flatten()
 }
 
+impl RuntimeWorkRpcHandler {
+    pub(super) fn stand_in_binding(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let operation = payload["operation"].as_str().unwrap_or("get");
+        LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(settings_error)?
+            .stand_in_binding(
+                operation,
+                payload["version"].as_i64().unwrap_or(-1),
+                payload["target"].clone(),
+            )
+            .map_err(settings_error)
+    }
+
+    pub(super) fn validate_stand_in_lifecycle(
+        &self,
+        request: &ExecutionRequest,
+        task_id: &str,
+    ) -> Result<(), AppIpcError> {
+        let user = request
+            .extra
+            .get("origin")
+            .and_then(stand_in_owner)
+            .or_else(|| {
+                self.local_task_link(task_id)
+                    .and_then(|link| stand_in_owner(&link.runtime_handle["origin"]))
+            });
+        let Some(user) = user else {
+            return Ok(());
+        };
+        let settings = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(settings_error)?
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        if settings["lifecycle"]["status"].is_null() {
+            Ok(())
+        } else {
+            Err(AppIpcError::new(
+                "stand_in_stopped",
+                "The entire stand-in is stopped; bind it again before starting work",
+            ))
+        }
+    }
+
+    pub(super) async fn personal_stand_in_lifecycle(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        self.personal_stand_in_lifecycle_with_timeout(payload, Duration::from_secs(10))
+            .await
+    }
+
+    async fn personal_stand_in_lifecycle_with_timeout(
+        &self,
+        payload: Value,
+        stop_timeout: Duration,
+    ) -> Result<Value, AppIpcError> {
+        let user = super::runtime_owner::runtime_user(&payload)?;
+        let operation = payload["operation"].as_str().unwrap_or_default();
+        if !matches!(operation, "start" | "stop") {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "Unknown lifecycle operation",
+            ));
+        }
+        let lifecycle = self.task_send_gate(&format!("stand-in-lifecycle:{user}"));
+        let _lifecycle = lifecycle.lock().await;
+        let processing = self.task_send_gate(&format!("stand-in-processing:{user}"));
+        let _processing = processing.lock().await;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let tasks = {
+            let _guard = self
+                .stand_in_lifecycle_gate
+                .lock()
+                .expect("stand-in lifecycle gate poisoned");
+            let settings = store
+                .transition_personal_stand_in(user, &self.device_id, operation)
+                .map_err(settings_error)?;
+            if operation == "start" || settings["lifecycle"]["status"] == "stopped" {
+                return Ok(settings);
+            }
+            let tasks = self
+                .store
+                .list_task_summaries(true)
+                .into_iter()
+                .filter(|link| stand_in_owner(&link.runtime_handle["origin"]) == Some(user))
+                .filter(|link| {
+                    self.is_busy_local_task(&link.local_task_id)
+                        || matches!(link.status.as_str(), "active" | "running" | "pending")
+                })
+                .map(|link| link.local_task_id)
+                .collect::<Vec<_>>();
+            let settings = store
+                .remember_stand_in_stop_tasks(user, &self.device_id, &tasks)
+                .map_err(settings_error)?;
+            settings["lifecycle"]["tasks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|task| task.as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        // A cancelled tool may need the processing gate to finish cleanup. The
+        // durable stopping state already rejects intake, edits and new turns.
+        drop(_processing);
+        // Cancellation uses the normal Runtime path, including queued turns and approvals.
+        let results = stream::iter(tasks.into_iter().map(|task| async move {
+            let result = self
+                .cancel_task_with_stop_policy(json!({"taskId":task}), stop_timeout, true)
+                .await;
+            (task, result)
+        }))
+        .buffer_unordered(8)
+        .collect::<Vec<_>>()
+        .await;
+        for (task, result) in results {
+            let result = result?;
+            if result["cleanupPending"] == true || self.is_busy_local_task(&task) {
+                return Err(AppIpcError::new(
+                    "stand_in_stop_incomplete",
+                    "Task cancellation is not complete; retry stopping before rebinding",
+                ));
+            }
+        }
+        store
+            .transition_personal_stand_in(user, &self.device_id, "stopped")
+            .map_err(settings_error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,134 +375,5 @@ mod tests {
             .unwrap();
         assert_eq!(result["lifecycle"]["status"], "stopped");
         assert!(!handler.is_active_local_task("worker"));
-    }
-}
-
-impl RuntimeWorkRpcHandler {
-    pub(super) fn stand_in_binding(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let operation = payload["operation"].as_str().unwrap_or("get");
-        LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(settings_error)?
-            .stand_in_binding(
-                operation,
-                payload["version"].as_i64().unwrap_or(-1),
-                payload["target"].clone(),
-            )
-            .map_err(settings_error)
-    }
-
-    pub(super) fn validate_stand_in_lifecycle(
-        &self,
-        request: &ExecutionRequest,
-        task_id: &str,
-    ) -> Result<(), AppIpcError> {
-        let user = request
-            .extra
-            .get("origin")
-            .and_then(stand_in_owner)
-            .or_else(|| {
-                self.local_task_link(task_id)
-                    .and_then(|link| stand_in_owner(&link.runtime_handle["origin"]))
-            });
-        let Some(user) = user else {
-            return Ok(());
-        };
-        let settings = LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(settings_error)?
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
-        if settings["lifecycle"]["status"].is_null() {
-            Ok(())
-        } else {
-            Err(AppIpcError::new(
-                "stand_in_stopped",
-                "The entire stand-in is stopped; bind it again before starting work",
-            ))
-        }
-    }
-
-    pub(super) async fn personal_stand_in_lifecycle(
-        &self,
-        payload: Value,
-    ) -> Result<Value, AppIpcError> {
-        self.personal_stand_in_lifecycle_with_timeout(payload, Duration::from_secs(10))
-            .await
-    }
-
-    async fn personal_stand_in_lifecycle_with_timeout(
-        &self,
-        payload: Value,
-        stop_timeout: Duration,
-    ) -> Result<Value, AppIpcError> {
-        let user = super::runtime_owner::runtime_user(&payload)?;
-        let operation = payload["operation"].as_str().unwrap_or_default();
-        if !matches!(operation, "start" | "stop") {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "Unknown lifecycle operation",
-            ));
-        }
-        let lifecycle = self.task_send_gate(&format!("stand-in-lifecycle:{user}"));
-        let _lifecycle = lifecycle.lock().await;
-        let processing = self.task_send_gate(&format!("stand-in-processing:{user}"));
-        let _processing = processing.lock().await;
-        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        let tasks = {
-            let _guard = self
-                .stand_in_lifecycle_gate
-                .lock()
-                .expect("stand-in lifecycle gate poisoned");
-            let settings = store
-                .transition_personal_stand_in(user, &self.device_id, operation)
-                .map_err(settings_error)?;
-            if operation == "start" || settings["lifecycle"]["status"] == "stopped" {
-                return Ok(settings);
-            }
-            let tasks = self
-                .store
-                .list_task_summaries(true)
-                .into_iter()
-                .filter(|link| stand_in_owner(&link.runtime_handle["origin"]) == Some(user))
-                .filter(|link| {
-                    self.is_busy_local_task(&link.local_task_id)
-                        || matches!(link.status.as_str(), "active" | "running" | "pending")
-                })
-                .map(|link| link.local_task_id)
-                .collect::<Vec<_>>();
-            let settings = store
-                .remember_stand_in_stop_tasks(user, &self.device_id, &tasks)
-                .map_err(settings_error)?;
-            settings["lifecycle"]["tasks"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|task| task.as_str().map(str::to_owned))
-                .collect::<Vec<_>>()
-        };
-        // A cancelled tool may need the processing gate to finish cleanup. The
-        // durable stopping state already rejects intake, edits and new turns.
-        drop(_processing);
-        // Cancellation uses the normal Runtime path, including queued turns and approvals.
-        let results = stream::iter(tasks.into_iter().map(|task| async move {
-            let result = self
-                .cancel_task_with_stop_policy(json!({"taskId":task}), stop_timeout, true)
-                .await;
-            (task, result)
-        }))
-        .buffer_unordered(8)
-        .collect::<Vec<_>>()
-        .await;
-        for (task, result) in results {
-            let result = result?;
-            if result["cleanupPending"] == true || self.is_busy_local_task(&task) {
-                return Err(AppIpcError::new(
-                    "stand_in_stop_incomplete",
-                    "Task cancellation is not complete; retry stopping before rebinding",
-                ));
-            }
-        }
-        store
-            .transition_personal_stand_in(user, &self.device_id, "stopped")
-            .map_err(settings_error)
     }
 }
