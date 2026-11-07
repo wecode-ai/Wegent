@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { startExternalBrowserFixture } from '../modules/external-browser-fixture.mjs'
+import { prepareExternalBrowserFixture } from '../modules/external-browser-fixture.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -274,12 +274,23 @@ async function waitForPositionOnlyBrowserFrameSync(control, before, timeoutMs) {
 }
 
 export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
+  let externalBrowser
   // Loading starts before the HTTP request arrives; retain an early release.
   let releaseHangingFixture
   const hangingFixtureReleased = new Promise(resolve => {
     releaseHangingFixture = resolve
   })
   return {
+    async prepareApp({ appEnvironment }) {
+      if (process.platform !== 'linux') return
+      externalBrowser = await prepareExternalBrowserFixture(resultDir, uiTimeoutMs)
+      Object.assign(appEnvironment, externalBrowser.appEnvironment)
+    },
+
+    async cleanup() {
+      await externalBrowser?.dispose()
+    },
+
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
       if (url.pathname === HANGING_FIXTURE_PATH) {
@@ -579,8 +590,9 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       await control.command('navigate', 'body', { value: '/' })
 
       // --- Real external browser file opening and error recovery ---
-      if (process.platform === 'darwin') {
-        const externalBrowser = await startExternalBrowserFixture(resultDir, uiTimeoutMs)
+      if (process.platform === 'linux') {
+        assert.ok(externalBrowser, 'The checkpoint must prepare its external browser')
+        await externalBrowser.start()
         let verificationError
         try {
           const localFilePath = join(resultDir, 'external-browser-fixture.html')
