@@ -14,6 +14,12 @@ on:
     types:
       - checks_requested
   workflow_dispatch:
+    inputs:
+      macos_oci_validation:
+        description: Compare native OCI reuse with complete macOS App OCI reuse.
+        type: choice
+        options: [default, native-only, complete-app]
+        default: default
   schedule:
     - cron: "0 4 * * *"
 
@@ -1235,8 +1241,9 @@ jobs:
       - name: Prepare shared macOS desktop E2E build
         uses: ./.github/actions/build-wework-macos-e2e
         with:
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
-          publish: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          save-cache: ${{ github.ref == 'refs/heads/main' && (inputs.macos_oci_validation || 'default') == 'default' }}
+          publish: ${{ (inputs.macos_oci_validation || 'default') == 'default' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+          oci-validation: ${{ inputs.macos_oci_validation || 'default' }}
           prepare-script: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')) && '.github/scripts/prepare-macos-inspector-e2e.sh' || '' }}
 
       - name: Run Wework desktop memory E2E
