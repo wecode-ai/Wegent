@@ -26,6 +26,9 @@ not the device-wide `runtime.tasks.list` for every event. Missing tasks return n
 failures propagate without retrying through a full list. Project-authorized sessions retain
 their existing project read path. Title, pin, and supervisor events still take precedence
 over stale snapshots returned while the request was pending.
+Point summaries retain existing `origin` and `changeRequests` presentation context so refreshes
+cannot remove stand-in notifications, activity records, or PR links. Execution profiles and
+transcript bodies remain excluded.
 
 Local project `todos.list` resolves historical runner bindings in a batch, rather than
 scanning execution records from every task row mapper. Explicit bindings are preserved;

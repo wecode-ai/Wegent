@@ -45,6 +45,8 @@ impl RuntimeWorkRpcHandler {
                         | "wegentTeam"
                         | "modelSelection"
                         | "model_selection"
+                        | "origin"
+                        | "changeRequests"
                         | "queuePosition"
                 )
             });
