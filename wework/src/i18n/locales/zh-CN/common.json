@@ -1635,6 +1635,7 @@
     "browser_forward": "前进",
     "browser_reload": "重新加载",
     "browser_open_external": "在外部浏览器中打开",
+    "browser_open_external_failed": "无法在外部浏览器中打开，请确认已设置默认浏览器后重试。",
     "browser_more_actions": "更多操作",
     "browser_find_in_page": "在页面中查找",
     "browser_find_placeholder": "在页面中查找",
