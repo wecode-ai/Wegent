@@ -18,6 +18,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from executor_manager.common.errors import ExecutorErrorCode
 from executor_manager.config.config import (
     EXECUTOR_DISPATCHER_MODE,
     OFFLINE_TASK_EVENING_HOURS,
@@ -30,6 +31,22 @@ from shared.logger import setup_logger
 from shared.models.openai_converter import get_metadata_field
 
 logger = setup_logger(__name__)
+
+# Submission failures that retrying the same payload cannot resolve. Error
+# messages are user-facing text and may change; retry policy depends only on
+# the stable codes produced by the executor layer.
+NON_RETRYABLE_ERROR_CODES = frozenset(
+    {
+        ExecutorErrorCode.USER_TASK_LIMIT,
+        ExecutorErrorCode.EXECUTOR_DELETED,
+        ExecutorErrorCode.EXECUTOR_CONFIG,
+    }
+)
+
+
+def is_non_retryable_error(error_code: Optional[str]) -> bool:
+    """Return True when the stable error code marks a terminal failure."""
+    return error_code in NON_RETRYABLE_ERROR_CODES
 
 
 class TaskQueueConsumer:
@@ -223,16 +240,23 @@ class TaskQueueConsumer:
                 if isinstance(task_result, dict)
                 else "Task processing returned unexpected result"
             )
-            self._handle_task_failure(task, error_msg)
+            error_code = (
+                task_result.get("error_code", "")
+                if isinstance(task_result, dict)
+                else ""
+            )
+            self._handle_task_failure(task, error_msg, error_code)
 
         except Exception as e:
             logger.error(
                 f"[TaskQueueConsumer] Exception processing task "
                 f"{task_id}/{subtask_id}: {e}"
             )
-            self._handle_task_failure(task, str(e))
+            self._handle_task_failure(task, str(e), getattr(e, "error_code", ""))
 
-    def _handle_task_failure(self, task: Dict[str, Any], error_msg: str) -> None:
+    def _handle_task_failure(
+        self, task: Dict[str, Any], error_msg: str, error_code: str = ""
+    ) -> None:
         """Handle a failed task - retry or mark as failed.
 
         Args:
@@ -241,6 +265,19 @@ class TaskQueueConsumer:
         """
         task_id = get_metadata_field(task, "task_id")
         subtask_id = get_metadata_field(task, "subtask_id")
+
+        if is_non_retryable_error(error_code):
+            logger.error(
+                f"[TaskQueueConsumer] Task {task_id}/{subtask_id} failed with "
+                f"non-retryable error: {error_msg}"
+            )
+            self._report_terminal_failure(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                error_message=error_msg,
+                error_code=error_code,
+            )
+            return
 
         # Try to requeue
         should_retry, retry_count = self.queue_service.requeue_task(task)
@@ -256,7 +293,22 @@ class TaskQueueConsumer:
             f"[TaskQueueConsumer] Task {task_id}/{subtask_id} failed after "
             f"{retry_count} retries: {error_msg}"
         )
+        self._report_terminal_failure(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error_message=f"Task failed after {retry_count} retries: {error_msg}",
+            error_code="task_queue_failure",
+        )
 
+    def _report_terminal_failure(
+        self,
+        *,
+        task_id: Any,
+        subtask_id: Any,
+        error_message: str,
+        error_code: str,
+    ) -> None:
+        """Send the terminal FAILED callback for a task that cannot run."""
         if not (task_id and subtask_id):
             # Nothing to report to the backend; do not keep the stale record.
             self.queue_service.clear_pending(task_id)
@@ -269,7 +321,6 @@ class TaskQueueConsumer:
 
         try:
             callback_client = get_callback_client()
-            error_message = f"Task failed after {retry_count} retries: {error_msg}"
 
             # Run async callback in sync context
             loop = asyncio.new_event_loop()
@@ -279,7 +330,7 @@ class TaskQueueConsumer:
                         task_id=task_id,
                         subtask_id=subtask_id,
                         error_message=error_message,
-                        error_code="task_queue_failure",
+                        error_code=error_code,
                     )
                 )
             finally:
