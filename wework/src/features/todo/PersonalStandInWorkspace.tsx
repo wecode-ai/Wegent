@@ -152,16 +152,16 @@ function AccountStandInWorkspace({
           </button>
         </div>
       )}
-      {!ownerAvailable ? (
-        <p role="alert" className="p-5 text-sm">
-          {t('standIn.instance.owner_unavailable')}
-        </p>
-      ) : !binding ? (
+      {!binding ? (
         !failure && (
           <p role="status" className="p-5 text-sm">
             {t('standIn.loading')}
           </p>
         )
+      ) : !ownerAvailable ? (
+        <p role="alert" className="p-5 text-sm">
+          {t('standIn.instance.owner_unavailable')}
+        </p>
       ) : binding.status === 'stopped' ? (
         <section className="space-y-4 p-5" data-testid="stand-in-instance-stopped">
           <h2 className="text-heading-sm font-medium">{t('standIn.instance.stopped')}</h2>

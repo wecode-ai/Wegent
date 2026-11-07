@@ -129,6 +129,45 @@ async function confirmStop() {
   await userEvent.click(screen.getByTestId('stand-in-instance-stop-confirm'))
 }
 
+it('waits for binding discovery before reporting a foreign owner and still blocks that owner', async () => {
+  const f = fixture()
+  let release!: (binding: StandInInstanceBinding) => void
+  f.binding.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        release = resolve
+      })
+  )
+  render(
+    <CloudConnectionContext.Provider
+      value={
+        {
+          isConnected: true,
+          apiBaseUrl: 'https://cloud.test/api',
+        } as CloudConnectionContextValue
+      }
+    >
+      <PersonalStandInWorkspace {...f.props} />
+    </CloudConnectionContext.Provider>
+  )
+  await waitFor(() => expect(f.binding).toHaveBeenCalledOnce())
+  try {
+    expect(screen.getByRole('status')).toHaveTextContent('加载')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  } finally {
+    await act(async () =>
+      release({
+        version: 1,
+        status: 'active',
+        target: { userId: 8, deviceId: 'mac', backendUrl: 'https://cloud.test/api' },
+      })
+    )
+  }
+  expect(await screen.findByRole('alert')).toHaveTextContent('另一个账号')
+  expect(screen.queryByTestId('retained-role-draft')).not.toBeInTheDocument()
+  expect(f.lifecycle).not.toHaveBeenCalled()
+})
+
 it('has no profile selector and cannot change the bound device via legacy navigation', async () => {
   const f = fixture()
   const view = render(f.workspace())
