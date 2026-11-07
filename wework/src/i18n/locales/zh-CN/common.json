@@ -5795,6 +5795,8 @@
       "invalid_assignment": "任务分配信息无效或已变更，请确认任务仍分配给你后刷新重试。",
       "stand_in_unavailable": "分身暂不可用，请检查分身是否已启用并关联此项目。",
       "stand_in_start_failed": "分身任务启动失败，请打开对应任务查看原因并重试。",
+      "stand_in_stopped": "整个分身已停止，请重新绑定后再执行任务。",
+      "stand_in_stop_incomplete": "任务尚未完全停止，暂不能换绑。请重试停止当前分身。",
       "role_removed": "该分身角色已被删除，请重新选择角色。",
       "cloud_unavailable": "无法连接云端，请检查网络和执行设备的云端连接。",
       "cloud_request_failed": "云端请求失败，请稍后重试。",
@@ -6048,6 +6050,16 @@
     },
     "local_profile": "本机 · 独立使用的分身",
     "account_local_profile": "本机 · 当前账号的分身",
+    "instance": {
+      "stop": "停止分身",
+      "retry_stop": "重试停止",
+      "stop_description": "将停止整个分身，取消其正在执行和排队中的任务。只有停止成功后，此实例才能绑定另一个本机或云端分身。",
+      "stopped": "分身已停止",
+      "stopping": "正在停止整个分身并取消任务，完成前不能换绑。",
+      "bind_help": "选择此 Wework 实例要绑定的分身。同一实例只能绑定一个分身。",
+      "stop_before_rebind": "此实例已绑定分身，请先停止当前分身，再绑定另一个。",
+      "owner_unavailable": "此实例绑定的分身属于另一个账号。请连接原账号，停止该分身后再换绑。"
+    },
     "migration": {
       "offer": "云设备已可用，可将此分身的配置和记忆迁到云端。",
       "local_available": "本机已有分身，配置和历史仍保留；你可以继续本地使用或迁移到云端。",

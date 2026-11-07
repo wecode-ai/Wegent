@@ -2027,6 +2027,16 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         stop_timeout: Duration,
     ) -> Result<Value, AppIpcError> {
+        self.cancel_task_with_stop_policy(payload, stop_timeout, false)
+            .await
+    }
+
+    pub(super) async fn cancel_task_with_stop_policy(
+        &self,
+        payload: Value,
+        stop_timeout: Duration,
+        require_stopped: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         self.invalidate_stand_in_owner_request(&local_task_id);
@@ -2037,7 +2047,11 @@ impl RuntimeWorkRpcHandler {
             .map_or(true, |link| link.runtime.eq_ignore_ascii_case("codex"));
         let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if self.remove_queued_turn(&local_task_id).await? {
+        let removed_queued = self.remove_queued_turn(&local_task_id).await?;
+        if removed_queued && require_stopped {
+            while self.remove_queued_turn(&local_task_id).await? {}
+        }
+        if removed_queued && (!require_stopped || !had_active_local_execution) {
             return Ok(match link {
                 Some(link) => task_action_success(&link),
                 None => json!({
@@ -2098,7 +2112,7 @@ impl RuntimeWorkRpcHandler {
             }
         };
         let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
-        if !local_stopped {
+        if !local_stopped && !require_stopped {
             self.force_settle_local_task_execution(
                 &local_task_id,
                 thread_id,

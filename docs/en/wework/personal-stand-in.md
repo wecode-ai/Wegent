@@ -10,6 +10,14 @@ Open **My stand-in**, marked **Beta**, in the Tasks sidebar to delegate work, as
 
 A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
 
+## Instance binding and stopping
+
+Each Wework instance binds one local or cloud stand-in at a time. Scenario roles belong to that stand-in, rather than being separate instance bindings. The page and settings have no direct execution-device switch. Reopening the page, device inventory changes, or changing accounts never replaces an existing binding.
+
+To rebind, select **Stop stand-in** in the header and confirm. This stops intake for the entire stand-in and cancels its primary and role conversations, running work, and queued delegated tasks. Other accounts' stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories, and history remain; rebinding the original stand-in restores its previous intake switches.
+
+An offline device, failed cancellation, or missing process-stop acknowledgement keeps the instance **Stopping**, with rebinding unavailable. Reconnect and use **Retry stopping**. Reopening the page does not unlock the binding. **Stop stand-in** differs from turning off **Receive new work**, which leaves existing work running.
+
 Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My stand-in** to open your personal task board.
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.

@@ -3,6 +3,7 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { StandInMigration } from './StandInMigration'
+import { StandInBindingContext } from './StandInBindingContext'
 import {
   useContext,
   useEffect,
@@ -11,6 +12,7 @@ import {
   useState,
   type ComponentProps,
   type Ref,
+  type ReactNode,
 } from 'react'
 import {
   Brain,
@@ -66,6 +68,7 @@ export function StandInOverviewPage({
   ref,
   onSelectLocation,
   initialSelectedRoleId,
+  headerActions,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -76,10 +79,12 @@ export function StandInOverviewPage({
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
   onSelectLocation?(deviceId: string, roleId?: string, openSettings?: boolean): void
   initialSelectedRoleId?: string
+  headerActions?: ReactNode
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const cloud = useContext(CloudConnectionContext)
+  const instanceBinding = useContext(StandInBindingContext)
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId)
   const { saved, setDraft, reload } = state
   const [roleId, setRoleId] = useState<string | undefined>(
@@ -417,8 +422,10 @@ export function StandInOverviewPage({
           >
             <HelpCircle aria-hidden="true" className="h-4 w-4" />
           </button>
+          {headerActions}
         </header>
-        {api &&
+        {!instanceBinding &&
+          api &&
           deviceId === state.currentDeviceId &&
           !state.loading &&
           cloud?.isConnected &&

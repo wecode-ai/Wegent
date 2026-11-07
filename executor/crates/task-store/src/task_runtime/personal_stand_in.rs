@@ -629,6 +629,14 @@ impl LocalTaskStore {
             }
         }
         let previous = read_personal(connection, user, device)?;
+        if !previous["lifecycle"]["status"].is_null() {
+            return Err(TaskRuntimeError::Invalid(
+                "Bind the stopped stand-in before editing its configuration".into(),
+            ));
+        }
+        if let Some(fields) = value.as_object_mut() {
+            fields.remove("lifecycle");
+        }
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
         }
