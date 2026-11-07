@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 
+export async function waitForLocalStandInTask(rpc, issue, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let latest
+  while (Date.now() < deadline) {
+    const bindings = await rpc('todos.bindings', { task_id: issue.id })
+    assert.ok(bindings.length <= 1, `Duplicate stand-in tasks for ${issue.id}`)
+    if (bindings[0]) {
+      latest = await rpc('runtime.tasks.get', { taskId: bindings[0].task_id })
+      assert.notEqual(latest.task?.status, 'failed', JSON.stringify(latest))
+      if (latest.task?.status === 'done') return bindings[0]
+    }
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  assert.fail(`Stand-in did not handle ${issue.status}: ${JSON.stringify(latest)}`)
+}
+
 export async function verifyLocalStandInStatuses(
   control,
   projectId,
@@ -17,21 +33,7 @@ export async function verifyLocalStandInStatuses(
       settings: { ...settings, enabled },
     })
   }
-  const waitForTask = async issue => {
-    const deadline = Date.now() + timeoutMs
-    let latest
-    while (Date.now() < deadline) {
-      const bindings = await rpc('todos.bindings', { task_id: issue.id })
-      assert.ok(bindings.length <= 1, `Duplicate stand-in tasks for ${issue.id}`)
-      if (bindings[0]) {
-        latest = await rpc('runtime.tasks.get', { taskId: bindings[0].task_id })
-        assert.notEqual(latest.task?.status, 'failed', JSON.stringify(latest))
-        if (latest.task?.status === 'done') return bindings[0]
-      }
-      await new Promise(resolve => setTimeout(resolve, 200))
-    }
-    assert.fail(`Stand-in did not handle ${issue.status}: ${JSON.stringify(latest)}`)
-  }
+  const waitForTask = issue => waitForLocalStandInTask(rpc, issue, timeoutMs)
 
   await setEnabled(false)
   for (const manual of [true, false]) {

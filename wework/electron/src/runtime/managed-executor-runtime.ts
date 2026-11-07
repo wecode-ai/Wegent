@@ -43,6 +43,8 @@ export class ManagedExecutorRuntime {
       args: options.args,
       env: {
         ...environment,
+        DEVICE_ID: `device-${options.deviceId}`,
+        WEGENT_RUNTIME_INSTANCE_ID: `runtime-${options.deviceId}`,
         DEVICE_NAME: options.deviceName,
         WEGENT_APP_IPC_DEVICE_ID: options.deviceId,
         WEGENT_APP_IPC_ENDPOINT: this.endpoint,
