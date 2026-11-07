@@ -1,7 +1,15 @@
 import './toolbar.css'
 import { ProjectBoardCardContext } from './projectBoardCardContext'
 import { registerBoardCursorPolicy } from './boardCursorPolicy'
-import { Plus, ChevronDown, ChevronRight, Search, Maximize2, Minimize2 } from 'lucide-react'
+import {
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  ListFilter,
+  Search,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react'
 import { Tooltip } from '../issue-detail/Tooltip'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
@@ -227,6 +235,10 @@ export function ProjectBoardBody<TItem>({
 }: ProjectBoardBodyProps<TItem>) {
   const isExecutionColumn = (column: ProjectBoardColumn) =>
     isExecutionBoardColumn(column, state.groupBy)
+  const selectedGroupColumn = columns.find(column => column.key === state.groupFilter)
+  const groupFilterLabel = state.groupFilter
+    ? (selectedGroupColumn?.label ?? state.groupFilter)
+    : `全部${groupFields.find(field => field.id === state.groupBy)?.name ?? '任务'}`
   const leafCount = (parentId?: string | null) =>
     new Set(
       parentRows?.rows
@@ -349,30 +361,37 @@ export function ProjectBoardBody<TItem>({
               </label>
             ) : null}
             {!customView && renderGroupPicker(state.groupBy, state.selectGroupBy)}
-            <label className="relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
-              <span data-testid="cloud-board-group-filter-label">
-                {state.groupFilter
-                  ? columns.find(column => column.key === state.groupFilter)?.label
-                  : `全部${groupFields.find(field => field.id === state.groupBy)?.name ?? '任务'}`}
-              </span>
-              <ChevronDown className={'ml-2 h-3 w-3'} />
-              <select
-                data-testid="cloud-board-group-filter"
-                value={state.groupFilter}
-                onChange={event => state.setGroupFilter(event.target.value)}
-                className="absolute inset-0 cursor-pointer opacity-0"
-                aria-label="分组值筛选"
-              >
-                <option value="">全部</option>
-                {columns.map(column => (
-                  <option key={column.key} value={column.key}>
-                    {column.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <Tooltip label={groupFilterLabel} side="bottom">
+              <label className="project-board-compact-action relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
+                <ListFilter className="project-board-action-icon h-4 w-4" aria-hidden="true" />
+                <span
+                  className="project-board-action-label"
+                  data-testid="cloud-board-group-filter-label"
+                >
+                  {groupFilterLabel}
+                </span>
+                <ChevronDown className="project-board-action-chevron ml-2 h-3 w-3" />
+                <select
+                  data-testid="cloud-board-group-filter"
+                  value={state.groupFilter}
+                  onChange={event => state.setGroupFilter(event.target.value)}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  aria-label="分组值筛选"
+                >
+                  <option value="">全部</option>
+                  {state.groupFilter && !selectedGroupColumn ? (
+                    <option value={state.groupFilter}>{groupFilterLabel}</option>
+                  ) : null}
+                  {columns.map(column => (
+                    <option key={column.key} value={column.key}>
+                      {column.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </Tooltip>
             {filterAction}
-            <label className="flex h-8 min-w-52 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted keyboard:focus-within:border-focus">
+            <label className="project-board-search flex h-8 min-w-52 flex-1 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted keyboard:focus-within:border-focus">
               <Search className="h-3.5 w-3.5" />
               <input
                 data-testid="cloud-board-search"
@@ -395,7 +414,7 @@ export function ProjectBoardBody<TItem>({
                     aria-label={state.focusExecutionColumns ? focusLabels.exit : focusLabels.enter}
                     onClick={state.toggleFocusExecutionColumns}
                     className={classNames(
-                      'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
+                      'project-board-compact-action inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
                       state.focusExecutionColumns
                         ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
                         : 'border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
@@ -406,7 +425,7 @@ export function ProjectBoardBody<TItem>({
                     ) : (
                       <Maximize2 className="h-3.5 w-3.5" />
                     )}
-                    {focusLabels.title}
+                    <span className="project-board-action-label">{focusLabels.title}</span>
                   </button>
                 </Tooltip>
               ) : null}
