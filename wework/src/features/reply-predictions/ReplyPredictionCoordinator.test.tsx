@@ -171,4 +171,24 @@ describe('window reply prediction coordinator', () => {
       })
     )
   })
+
+  it('shares chat results when the route address omits the workspace kind', async () => {
+    const { store, predict, fixture, start, finish } = setup()
+    store.syncRuntimeTask(address, {
+      taskId: address.taskId,
+      title: 'Chat',
+      runtime: 'codex',
+      workspacePath: address.workspacePath!,
+      workspaceKind: 'chat',
+    })
+    const view = render(fixture())
+    act(() => {
+      start()
+      finish()
+    })
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+    view.rerender(fixture({ composer: true }))
+    await waitFor(() => expect(screen.getByText('请继续验证')).toBeVisible())
+    expect(predict).toHaveBeenCalledTimes(1)
+  })
 })

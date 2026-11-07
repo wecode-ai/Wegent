@@ -83,11 +83,8 @@ export async function createDesktopScenario(options) {
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const task = debug.workbench?.currentRuntimeTask
         assert.ok(task?.taskId && task.deviceId)
-        const scope = JSON.stringify([
-          task.deviceId,
-          task.taskId,
-          task.workspaceKind === 'chat' || task.projectSession ? null : task.workspacePath,
-        ])
+        // New-chat tasks are chat-scoped even when their route omits workspaceKind.
+        const scope = JSON.stringify([task.deviceId, task.taskId, null])
         const cacheKey = `wework.replyPrediction.v1.${scope}`
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', INPUT)

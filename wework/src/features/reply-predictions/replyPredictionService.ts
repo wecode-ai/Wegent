@@ -26,25 +26,31 @@ export function runtimeReplyPredictionSource(
   address: RuntimeTaskAddress | null | undefined,
   lifecycle: RuntimeTaskLifecycleSnapshot | null | undefined
 ): ReplyPredictionSource | null {
+  if (!address) return null
+  const resolvedAddress = {
+    ...address,
+    workspacePath: address.workspacePath || lifecycle?.task?.workspacePath,
+    workspaceKind: address.workspaceKind ?? lifecycle?.task?.workspaceKind,
+  }
   const latestTurnId = lifecycle?.turn.latestId
-  const workspaceBacked = address?.workspaceKind !== 'chat' && !address?.projectSession
+  const workspaceBacked = resolvedAddress.workspaceKind !== 'chat' && !address.projectSession
   if (
     !address?.deviceId ||
     !address.taskId ||
     !latestTurnId ||
-    (workspaceBacked && !address.workspacePath)
+    (workspaceBacked && !resolvedAddress.workspacePath)
   )
     return null
   return {
     scope: JSON.stringify([
       address.deviceId,
       address.taskId,
-      workspaceBacked ? address.workspacePath : null,
+      workspaceBacked ? resolvedAddress.workspacePath : null,
     ]),
     revision: latestTurnId,
     latestTurnId,
     busy: Boolean(lifecycle?.derived.isBusy || lifecycle?.interactionStatus),
-    address,
+    address: resolvedAddress,
     modelSelection: lifecycle?.task?.modelSelection,
   }
 }

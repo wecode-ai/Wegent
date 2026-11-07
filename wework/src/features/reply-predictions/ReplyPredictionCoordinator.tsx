@@ -40,12 +40,7 @@ export function ReplyPredictionCoordinator({
         if (task.derived.isBusy || (prior && prior.turn.latestId !== task.turn.latestId)) {
           observedActivity.add(key)
         }
-        const address = {
-          ...task.address,
-          workspacePath: task.address.workspacePath || task.task?.workspacePath,
-          workspaceKind: task.address.workspaceKind ?? task.task?.workspaceKind,
-        }
-        const source = runtimeReplyPredictionSource(address, task)
+        const source = runtimeReplyPredictionSource(task.address, task)
         if (!source) continue
         const owner = owners.get(key)
         if (owner?.scope !== source.scope) {
