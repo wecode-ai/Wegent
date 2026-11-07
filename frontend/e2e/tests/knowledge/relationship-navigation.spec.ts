@@ -508,30 +508,29 @@ async function expectResultsClearOfFooter(results: Locator, footer: Locator) {
     .toBe(true)
 }
 
-for (const viewport of [
-  { width: 1280, height: 800 },
-  { width: 375, height: 812 },
-  { width: 320, height: 568 },
-  { width: 375, height: 480 },
-]) {
-  creationTest(
-    `keeps expanded grant results and actions reachable at ${viewport.width}x${viewport.height}`,
-    async ({ page, creation }) => {
-      const prefix = fixtureName('e2e-grant-layout')
-      const groupIds: number[] = []
-      for (let index = 0; index < 8; index++) {
-        const name = `${prefix}-${index}`
-        creation.groups.add(name)
-        const group = await creation.api.post<{ id: number }>('/api/groups', {
-          name,
-          display_name: name,
-        })
-        expect(group.status).toBe(201)
-        groupIds.push(group.data!.id)
-      }
-
+creationTest(
+  'keeps expanded grant results and actions reachable at every supported dialog size',
+  async ({ page, creation }) => {
+    const prefix = fixtureName('e2e-grant-layout')
+    const groupIds: number[] = []
+    for (let index = 0; index < 8; index++) {
+      const name = `${prefix}-${index}`
+      creation.groups.add(name)
+      const group = await creation.api.post<{ id: number }>('/api/groups', {
+        name,
+        display_name: name,
+      })
+      expect(group.status).toBe(201)
+      groupIds.push(group.data!.id)
+    }
+    await page.goto('/knowledge?type=document')
+    for (const viewport of [
+      { width: 1280, height: 800 },
+      { width: 375, height: 812 },
+      { width: 320, height: 568 },
+      { width: 375, height: 480 },
+    ]) {
       await page.setViewportSize(viewport)
-      await page.goto('/knowledge?type=document')
       await page.getByTestId('create-kb-button').click()
       const library = await createLibraryInDialog(page, creation)
       for (const entry of ['created', 'management']) {
@@ -581,9 +580,13 @@ for (const viewport of [
         await page.getByTestId('close-add-collaborator').click()
         await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
       }
+      await page.getByTestId('close-knowledge-access').click()
+      await expect(page.getByTestId('close-knowledge-access')).toBeHidden()
+      await expect(page.getByTestId('create-kb-button')).toBeEnabled()
+      await page.getByTestId('create-kb-button').click({ trial: true })
     }
-  )
-}
+  }
+)
 
 creationTest(
   'submits on the first click while inline search results stay expanded',

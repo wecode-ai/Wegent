@@ -51,6 +51,8 @@ mod text_generation_tests;
 
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
+#[path = "workspace_identity_tests.rs"]
+mod workspace_identity_tests;
 
 #[path = "mcp_elicitation_tests.rs"]
 mod mcp_elicitation_tests;

@@ -33,7 +33,11 @@ impl RuntimeWorkRpcHandler {
         );
         // Return only the identity/configuration needed by a client to continue.
         // Execution profiles and transcript caches remain on the owning Runtime.
-        if let Some(handle) = link.runtime_handle.as_object_mut() {
+        let thread_id = link.thread_id.clone();
+        let last_turn_id = crate::runtime_work::lifecycle::native_execution_state(&link)
+            .and_then(|state| state.latest_turn_id);
+        let mut task = crate::runtime_work::response::local_task_json(link);
+        if let Some(handle) = task["runtimeHandle"].as_object_mut() {
             handle.retain(|key, _| {
                 matches!(
                     key.as_str(),
@@ -44,10 +48,17 @@ impl RuntimeWorkRpcHandler {
                         | "queuePosition"
                 )
             });
+            // The serializer originally adds this authoritative identity after
+            // filtering the stored handle; preserve that response contract.
+            handle.insert("threadId".to_owned(), json!(thread_id));
+            // Preserve the current-epoch lifecycle projection, not a stored handle value.
+            if let Some(turn_id) = last_turn_id {
+                handle.insert("lastTurnId".to_owned(), json!(turn_id));
+            }
         }
         Ok(json!({
             "success": true,
-            "task": crate::runtime_work::response::local_task_json(link),
+            "task": task,
         }))
     }
 

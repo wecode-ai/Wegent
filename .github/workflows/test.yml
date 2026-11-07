@@ -757,6 +757,10 @@ jobs:
         if: matrix.shard == 1
         run: node --test wework/scripts/ci-test-sequencer.test.mjs
 
+      - name: Verify delegated work command and history contracts
+        if: matrix.shard == 1
+        run: node --test wework/scripts/dots-command-result.test.mjs wework/scripts/dots-history-navigation.test.mjs
+
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
