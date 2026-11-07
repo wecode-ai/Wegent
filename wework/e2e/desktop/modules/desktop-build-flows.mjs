@@ -956,11 +956,16 @@ export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnviro
   await control.command('navigate', 'body', { value: '/settings/connections' })
 
   const appDevice = await cloudEnvironment.waitForConnectedAppDevice()
-  assert.match(
+  const local = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(local.deviceId, 'The real Executor must expose its hardware/application identity')
+  assert.ok(local.runtimeInstanceId, 'The real Executor must expose its stable Runtime identity')
+  assert.equal(
     appDevice.device_id,
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-    'A fresh Wework installation must register its persisted UUID'
+    local.deviceId,
+    'Cloud registration must use the hardware/application identity of the real Executor'
   )
+  assert.equal(appDevice.app_device_id, local.deviceId)
+  assert.equal(appDevice.runtime_instance_id, local.runtimeInstanceId)
   assert.equal(appDevice.execution_target_id, `app-record-${appDevice.id}`)
   assert.ok(appDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
   assert.ok(appDevice.app_device_id, 'The app device did not expose its physical app identity')

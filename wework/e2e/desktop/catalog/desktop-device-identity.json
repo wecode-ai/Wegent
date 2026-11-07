@@ -4,7 +4,8 @@
   "scenarioOnly": true,
   "paths": [
     "wework/electron/src/runtime/desktop-device-id*",
-    "wework/electron/src/runtime/desktop-runtime*"
+    "wework/electron/src/runtime/desktop-runtime*",
+    "wework/electron/src/runtime/managed-executor-runtime*"
   ],
   "ci": {
     "core": {

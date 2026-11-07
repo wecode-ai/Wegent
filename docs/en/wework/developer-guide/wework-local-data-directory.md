@@ -33,6 +33,14 @@ different user Homes or data directories, and deletion of `desktop-device-id`.
 Different hardware or application identifiers produce different IDs. The raw
 hardware UUID is neither sent as the device ID nor written to identity files or logs.
 
+The managed Executor also uses this ID as its cloud registration `device_id`
+and `app_device_id`, and `runtime-<device_id>` as its `runtime_instance_id`.
+The host supplies these values over the existing environment interface,
+overriding legacy random configuration identities. Changing Executor Home
+therefore retains the same cloud device. Account permissions, session tokens
+and record-scoped routes remain controlled by the existing authentication and
+registration protocol; a hardware hash does not grant authority.
+
 The user-data directory's `desktop-device-id` only records the computed result;
 it is not an identity source, and old worktree records are not used to infer one.
 Legacy random IDs are replaced when the new rule first runs. Startup fails when

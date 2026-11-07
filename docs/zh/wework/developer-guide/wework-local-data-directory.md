@@ -30,6 +30,11 @@ Electron 主机使用机器硬件 UUID 与当前应用标识（默认 `io.wecode
 或数据目录、删除 `desktop-device-id` 文件都不会改变 ID；不同硬件或应用标识使用不同 ID。
 硬件 UUID 不会作为设备 ID 明文发送，也不会写入身份文件或日志。
 
+受管 Executor 同时使用该 ID 作为云端注册的 `device_id` 和 `app_device_id`，并使用
+`runtime-<device_id>` 作为 `runtime_instance_id`。这些值由主机传入，覆盖旧配置中的
+随机身份；更换 Executor Home 后，云端仍识别为同一设备。账号权限、会话令牌和记录级路由
+继续由原有认证与注册协议控制，不由硬件哈希授予权限。
+
 用户数据目录中的 `desktop-device-id` 仅记录计算结果，不再作为身份来源，也不从旧工作树
 推断身份。旧版随机 ID 会在首次使用新规则时被替换。无法读取有效硬件 UUID 时启动会报错，
 不会生成随机替代 ID。隔离验证仍可通过 `WEGENT_APP_IPC_DEVICE_ID` 显式指定 ID，且不覆盖
