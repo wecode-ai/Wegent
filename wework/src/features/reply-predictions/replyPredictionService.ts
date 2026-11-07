@@ -1,5 +1,6 @@
 import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RuntimeTaskLifecycleSnapshot } from '@/features/workbench/runtimeTaskLifecycle/types'
 import {
   readReplyPrediction,
   removeReplyPredictionCache,
@@ -19,6 +20,33 @@ export interface ReplyPredictionResult {
   text: string
   onAccept: () => void
   isCurrent: () => boolean
+}
+
+export function runtimeReplyPredictionSource(
+  address: RuntimeTaskAddress | null | undefined,
+  lifecycle: RuntimeTaskLifecycleSnapshot | null | undefined
+): ReplyPredictionSource | null {
+  const latestTurnId = lifecycle?.turn.latestId
+  const workspaceBacked = address?.workspaceKind !== 'chat' && !address?.projectSession
+  if (
+    !address?.deviceId ||
+    !address.taskId ||
+    !latestTurnId ||
+    (workspaceBacked && !address.workspacePath)
+  )
+    return null
+  return {
+    scope: JSON.stringify([
+      address.deviceId,
+      address.taskId,
+      workspaceBacked ? address.workspacePath : null,
+    ]),
+    revision: latestTurnId,
+    latestTurnId,
+    busy: Boolean(lifecycle?.derived.isBusy || lifecycle?.interactionStatus),
+    address,
+    modelSelection: lifecycle?.task?.modelSelection,
+  }
 }
 
 export function replyPredictionKey(source: ReplyPredictionSource) {
