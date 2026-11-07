@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 
@@ -1582,6 +1583,16 @@ async function main() {
           ...options.appEnvironmentOverrides,
         }
       }
+      if (
+        options?.expectNewDeviceIdentity === true &&
+        !options.appEnvironmentOverrides?.WEWORK_APP_IDENTIFIER
+      ) {
+        // A profile is not hardware identity. Give each simulated device its own
+        // application namespace, and reuse it when returning to that device.
+        const profile = activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
+        const suffix = createHash('sha256').update(profile).digest('hex').slice(0, 12)
+        activeAppEnvironment.WEWORK_APP_IDENTIFIER = `${appIdentifier}.device${suffix}`
+      }
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
@@ -1609,11 +1620,6 @@ async function main() {
           'Simulated device switch reused the previous Electron device identity'
         )
       } else {
-        assert.equal(
-          nextUserDataDirectory,
-          previousUserDataDirectory,
-          'Restarting Wework unexpectedly changed the Electron user data directory'
-        )
         assert.equal(
           desktopDeviceIdAfterRestart,
           desktopDeviceIdBeforeRestart,

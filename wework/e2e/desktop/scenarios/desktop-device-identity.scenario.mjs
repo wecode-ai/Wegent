@@ -20,6 +20,10 @@ export function createDesktopScenario({ resultDir }) {
       'Renderer and real executor must use the host identity'
     )
     evidence.push({ label, deviceId: persisted })
+    await writeFile(
+      join(resultDir, 'desktop-device-identity.json'),
+      JSON.stringify(evidence, null, 2)
+    )
     return persisted
   }
 
@@ -54,10 +58,6 @@ export function createDesktopScenario({ resultDir }) {
         expectNewDeviceIdentity: true,
       })
       assert.notEqual(await observe(control, brandedDirectory, 'different-application'), original)
-      await writeFile(
-        join(resultDir, 'desktop-device-identity.json'),
-        JSON.stringify(evidence, null, 2)
-      )
     },
   }
 }

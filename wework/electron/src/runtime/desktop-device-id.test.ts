@@ -29,7 +29,7 @@ describe('desktop device identity', () => {
 
   test('keeps identity across launches, profile deletion and different Homes', async () => {
     const first = await resolveDesktopDeviceId(options())
-    expect(first).toMatch(/^electron-[0-9a-f]{64}$/)
+    expect(first).toBe('electron-9f986291bb91eddf46ea6fb186fb742adf01d60331d6c1854fa846371a3dc78d')
     expect(await resolveDesktopDeviceId(options())).toBe(first)
     expect(await readFile(join(options().dataDirectory, 'desktop-device-id'), 'utf8')).toBe(
       `${first}\n`

@@ -124,6 +124,10 @@ vi.mock('./desktop-device-id.js', async importOriginal => {
   }
 })
 
+vi.mock('systeminformation', () => ({
+  system: vi.fn(async () => ({ uuid: '12345678-1234-5678-9abc-123456789abc' })),
+}))
+
 const created: FakeCoreDsh[] = []
 const createdOptions: DshRuntimeOptions[] = []
 const hostPipe = new HostPipeServer(new HostCapabilityRouter())
