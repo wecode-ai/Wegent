@@ -860,7 +860,8 @@ export function createElectronCapabilityRouter(
     return setE2EWindowSize(
       requiredWindow(window),
       requiredIntegerParam(params, 'width'),
-      requiredIntegerParam(params, 'height')
+      requiredIntegerParam(params, 'height'),
+      params.maximized === undefined ? false : requiredBooleanParam(params, 'maximized')
     )
   })
   // Windows restores precision-touchpad input only while the native window

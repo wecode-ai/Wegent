@@ -2733,6 +2733,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
         height?: number
+        maximized?: boolean
       }
       if (
         !Number.isFinite(nextSize.width) ||
@@ -2742,10 +2743,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         throw new Error('setMainWindowSize requires positive width and height')
       }
+      if (nextSize.maximized !== undefined && typeof nextSize.maximized !== 'boolean') {
+        throw new Error('setMainWindowSize maximized must be a boolean')
+      }
       return JSON.stringify(
         await invokeDesktopHost('e2e.setMainWindowSize', {
           width: Number(nextSize.width),
           height: Number(nextSize.height),
+          maximized: nextSize.maximized ?? false,
         })
       )
     }

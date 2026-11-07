@@ -40,6 +40,14 @@ function fixture(list = vi.fn().mockResolvedValue({ items: [shared] })) {
 }
 
 describe('optional Issue question enrichment', () => {
+  it('preserves answered transcript entries for archiving without a shared lookup', async () => {
+    const { services, list } = fixture()
+    const answered = { ...native(), answered: true }
+    const result = await createIssueQuestionEnricher(services, 7, () => [])([answered])
+    expect(result).toEqual([answered])
+    expect(result[0].answered).toBe(true)
+    expect(list).not.toHaveBeenCalled()
+  })
   it('does not address an unassigned cloud question to a missing authenticated user', async () => {
     const { services } = fixture(
       vi.fn().mockResolvedValue({

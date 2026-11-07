@@ -211,3 +211,28 @@ export async function verifyHumanInteractionIssueReply(fixture, answer, timeoutM
   }
   assert.fail(`Issue continuation never completed: ${JSON.stringify(messages)}`)
 }
+
+/** Prove exact durable acceptance before inspecting the independently loaded inbox. */
+export async function verifyHumanInteractionIssueAccepted(fixture, itemId, answer, timeoutMs) {
+  const request = await waitForIssueQuestion(
+    fixture,
+    item => item.item_id === itemId && item.status === 'resolved' && item.answer_message_id,
+    timeoutMs
+  )
+  const messages = await readProjectChatMessages(fixture, fixture.issueId, timeoutMs)
+  const reply = messages.find(message => message.messageId === request.answer_message_id)
+  assert.ok(reply, 'The accepted answer must name an existing persisted comment')
+  assert.equal(reply.sender.type, 'user')
+  assert.equal(reply.content, answer)
+  assert.equal(reply.rootMessageId, fixture.rootId)
+  assert.equal(reply.replyToMessageId, fixture.rootId)
+  return {
+    id: request.id,
+    status: request.status,
+    item_id: request.item_id,
+    runtime_task_id: request.runtime_task_id,
+    runtime_device_id: request.runtime_device_id,
+    recipient_user_id: request.recipient_user_id,
+    answer_message_id: request.answer_message_id,
+  }
+}

@@ -15,7 +15,7 @@ export function createIssueQuestionEnricher(
     const enriched = await Promise.all(
       questions.map(async question => {
         const project = question.project
-        if (!project || !canQuickReply(question.payload)) return question
+        if (!project || question.answered || !canQuickReply(question.payload)) return question
         const api =
           project.store === 'local'
             ? services?.localIssueHumanRequestsApi
