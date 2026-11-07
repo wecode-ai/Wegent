@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -58,7 +59,7 @@ export function createDesktopScenario({
         const tool = selectTool(body, 'request_user_input_async', {
           questions: [{ title: FIRST }],
         })
-        events = functionCall('consecutive-first', tool.name, tool.arguments)
+        events = selectedToolCall('consecutive-first', tool)
       } else if (!requestContainsToolOutput(body, 'consecutive-second')) {
         await secondReady
         const tool = selectTool(body, 'request_user_input_async', {
@@ -67,7 +68,7 @@ export function createDesktopScenario({
             { title: THIRD, options: ['Today', 'Tomorrow'] },
           ],
         })
-        events = functionCall('consecutive-second', tool.name, tool.arguments)
+        events = selectedToolCall('consecutive-second', tool)
       } else {
         const input = body.input ?? body.messages ?? []
         const answered = input.some(

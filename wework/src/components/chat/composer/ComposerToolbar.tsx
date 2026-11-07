@@ -118,7 +118,7 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
             <PopoutWorkspaceMenu {...props.projectWorkMenuContext} disabled={disabled} />
           ) : null
         }
-        renderFeatureMenus={compact => (
+        renderFeatureMenus={(compact, permissionSelector) => (
           <>
             {!voiceActive && <DshMenuActions disabled={disabled} location="composer.toolbar" />}
             {showExecutionTools && !voiceActive ? (
@@ -129,6 +129,7 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
                   projectPhrases={projectPhrases}
                   onSelect={onQuickPhraseSelect}
                 />
+                {permissionSelector}
                 {showPluginPicker && (
                   <PluginPickerMenu
                     disabled={disabled}

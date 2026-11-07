@@ -190,6 +190,17 @@ describe('runtime input identity', () => {
 })
 
 describe('async request user input', () => {
+  test.each(['pending', 'streaming', 'failed'] as const)(
+    'does not settle a question from an undelivered %s message',
+    status => {
+      const messages = [assistantMessage(ASYNC_PAYLOAD), { ...userMessage('Reading'), status }]
+      expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+      expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+      const delivered = [messages[0], { ...messages[1], status: 'done' as const }]
+      expect(resolveAsyncRequestUserInputReplies(delivered).size).toBe(1)
+      expect(resolveAsyncRequestUserInputAnswers(delivered)).not.toBe(delivered)
+    }
+  )
   test('treats only async delivery payloads as non-blocking', () => {
     expect(isAsyncRequestUserInputPayload(ASYNC_PAYLOAD)).toBe(true)
     expect(isAsyncRequestUserInputPayload({ kind: 'request_user_input' })).toBe(false)

@@ -550,7 +550,7 @@ fn normalize_context_passing(value: Option<&str>) -> &str {
 /// model without whitelist-only mode stays selectable; an active
 /// `allowedUsers` list admits only the listed user names.
 fn public_model_admitted(model_json: &Value, user_name: Option<&str>) -> bool {
-    crate::teams::public_model_access::allowed_for_user_name(
+    wegent_access::public_models::allowed_for_user_name(
         &OpaqueJson::from_serializable(model_json),
         user_name,
     )

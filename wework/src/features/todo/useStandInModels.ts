@@ -5,9 +5,7 @@ import {
   runnerModelKey,
   type RunnerModelCatalogEntry,
   type RunnerModelIdentity,
-  type WorkspaceProjectAgent,
   type WorkspaceStandInSettings,
-  type AgentModelPolicy,
 } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { UnifiedModel } from '@/types/api'
@@ -16,8 +14,7 @@ import { isSameModelSelection } from '@wegent/collaboration/controls/model-ui'
 /** Model references remain device-scoped; credentials are resolved by the Executor. */
 export function useStandInModels(
   services: WorkbenchServices | undefined,
-  draft: WorkspaceStandInSettings,
-  agent?: WorkspaceProjectAgent
+  draft: WorkspaceStandInSettings
 ) {
   const [catalog, setCatalog] = useState<{
     deviceId: string
@@ -26,9 +23,7 @@ export function useStandInModels(
     defaultIdentity: RunnerModelIdentity | null
     error: string | null
   } | null>(null)
-  const runtime = agent?.runtime === 'claude_code' ? 'claude_code' : 'codex'
-  const fixedPolicy = agent?.modelPolicy as AgentModelPolicy | undefined
-  const fixedModel = fixedPolicy?.mode === 'fixed' ? fixedPolicy.model : null
+  const runtime = draft.model?.runtime === 'claude_code' ? 'claude_code' : 'codex'
   useEffect(() => {
     if (!services?.standInApi || !draft.executionDeviceId) return
     let active = true
@@ -59,7 +54,7 @@ export function useStandInModels(
   }, [services, draft.executionDeviceId, runtime])
   const readyCatalog =
     catalog?.deviceId === draft.executionDeviceId && catalog.runtime === runtime ? catalog : null
-  const identity = fixedModel ?? draft.model ?? readyCatalog?.defaultIdentity
+  const identity = draft.model ?? readyCatalog?.defaultIdentity
   const selectedEntry = useMemo(
     () =>
       identity
@@ -94,9 +89,7 @@ export function useStandInModels(
     loading: Boolean(services?.standInApi && draft.executionDeviceId && !readyCatalog),
     models,
     selectedModel,
-    fixed: Boolean(fixedModel),
-    fixedIdentity: fixedModel,
-    defaultIdentity: fixedModel ? null : readyCatalog?.defaultIdentity,
+    defaultIdentity: readyCatalog?.defaultIdentity,
     error: readyCatalog?.error,
     unavailable: Boolean(identity && readyCatalog && !selectedEntry),
     resolve,

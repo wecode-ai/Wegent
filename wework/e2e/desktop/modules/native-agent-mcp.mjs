@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -77,10 +78,7 @@ export async function verifyNativeAgentMcp({
         )
         assert.ok(namespace, 'Retained MCP was not found by native tool search')
         const tool = selectMcpTool(body, namespace.name, 'probe_environment', {})
-        events = [
-          ...namespacedFunctionCall(`${id}-call`, tool.namespace, tool.name, {}),
-          responseCompleted(id),
-        ]
+        events = [...selectedToolCall(`${id}-call`, tool), responseCompleted(id)]
       } else {
         events = [
           ...mcpToolRequestEvents(body, {

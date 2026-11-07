@@ -145,11 +145,12 @@ async fn isolated_runtime_fixtures_keep_two_worker_slots_shared_only_with_their_
     assert!(clone.handle_runtime_rpc(request.clone()).await.is_ok());
     let second_slot = workers.try_acquire_owned().unwrap();
 
-    let error = clone.handle_runtime_rpc(request.clone()).await.unwrap_err();
-    assert_eq!(error.code, "runtime_read_busy");
+    let mut queued = Box::pin(clone.handle_runtime_rpc(request.clone()));
+    assert!(futures_util::poll!(queued.as_mut()).is_pending());
     assert!(second.handle_runtime_rpc(request).await.is_ok());
 
     drop((first_slot, second_slot));
+    assert!(queued.await.is_ok());
     let _ = fs::remove_dir_all(first_root);
     let _ = fs::remove_dir_all(second_root);
 }

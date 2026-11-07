@@ -113,8 +113,8 @@ async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) 
   render(<StandInOverviewPage {...props} />)
   try {
     await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
-    expect(await screen.findByTestId('stand-in-onboarding')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(await screen.findByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
     expect(screen.queryByTestId('stand-in-overview-role-default')).not.toBeInTheDocument()
     expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
     // Install the device-scoped subscription before publishing a reload event.

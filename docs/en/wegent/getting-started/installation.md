@@ -153,6 +153,45 @@ To test CI-published edge images, set the shared image tag:
 WEGENT_IMAGE_TAG=edge docker compose up -d
 ```
 
+#### Build the hybrid Backend from source
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml --profile rag up -d
+```
+
+The `backend` image runs the Rust gateway and Python in one container. Rust
+listens publicly on port `8000`, selects migrated APIs using
+`backend-rs/config/routes.toml`, and forwards other requests to the internal
+`127.0.0.1:8004` listener. The service name, client URLs and existing log mount
+stay unchanged. Rust is built inside the image; the host needs no Rust toolchain.
+
+The runtime reuses the hybrid launcher with a prebuilt gateway and no Python
+development reloader. Container shutdown forwards termination to both processes;
+when either exits, the launcher cleans up the other, and the existing Compose
+restart policy restores the service. Health checks reach Python's `/api/health`
+through Rust. `GRACEFUL_SHUTDOWN_TIMEOUT` still controls Python's drain timeout;
+allow enough time for active requests when using `docker compose stop -t`.
+
+Inject configuration through Compose's environment: real `.env` files and local
+Cargo `target` directories are excluded from the image build context.
+
+PRs changing backend image inputs also build the delivery
+`docker/backend/Dockerfile` once in the independent `Verify Backend Delivery Image`
+CI job. The same image is
+checked against real MySQL and Redis services for initialization, Rust routes,
+Python forwarding, restart, and process shutdown. Frontend-only changes do not
+select this check; scheduled runs, full manual runs, and `ci:all` do. Build layers
+read the published GHCR cache without writing it. Browser shards do not repeat
+the build, and the image is not published. Delivery verification and runtime
+artifact production have separate time budgets; CI requires both jobs to succeed
+when selected.
+
+CI uploads logs and the source revision/image ID as `backend-delivery-evidence`.
+This check covers Linux amd64; complete images for other architectures still
+require separate validation. Passing local script unit tests is not evidence
+that the delivery image works: use the actual CI build and container results
+for the corresponding commit.
+
 When using `install.sh`, you can also pass the edge shortcut directly:
 
 ```bash

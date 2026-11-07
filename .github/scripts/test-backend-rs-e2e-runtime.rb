@@ -7,23 +7,36 @@ require "open3"
 
 root = File.expand_path("../..", __dir__)
 workflows = File.join(root, ".github/workflows")
-producer = YAML.safe_load(File.read(File.join(workflows, "e2e-tests.yml")))
-  .fetch("jobs").fetch("build-backend-rs-e2e-runtime")
-[[false, false, false, false],
- [true, false, false, true],
- [false, true, false, true],
- [true, true, false, true],
- [false, true, true, false]].each do |platform, desktop, draft, expected|
-  values = {
-    "github.event_name" => "pull_request",
-    "github.event.pull_request.draft" => draft,
-    "needs.changes.outputs.platform_e2e" => platform.to_s,
-    "needs.changes.outputs.wework_desktop_e2e" => desktop.to_s
-  }
-  expression = producer.fetch("if")
-  values.each { |key, value| expression = expression.gsub(key, value.inspect) }
-  unless eval(expression) == expected
-    raise "Backend runtime producer eligibility differs for platform=#{platform}, desktop=#{desktop}, draft=#{draft}"
+jobs = YAML.safe_load(File.read(File.join(workflows, "e2e-tests.yml"))).fetch("jobs")
+producer = jobs.fetch("build-backend-rs-e2e-runtime")
+delivery_job = jobs.fetch("verify-backend-delivery-image")
+summary = jobs.fetch("platform-e2e-summary").fetch("steps").first.fetch("env")
+%w[pull_request merge_group schedule workflow_dispatch].each do |event|
+  [false, true].repeated_permutation(4) do |platform, desktop, delivery, draft|
+    values = {
+      "github.event_name" => event,
+      "github.event.pull_request.draft" => draft,
+      "needs.changes.outputs.platform_e2e" => platform.to_s,
+      "needs.changes.outputs.wework_desktop_e2e" => desktop.to_s,
+      "needs.changes.outputs.backend_delivery_image" => delivery.to_s
+    }
+    evaluate = lambda do |expression|
+      expression = expression.delete_prefix("${{ ").delete_suffix(" }}")
+      values.each { |key, value| expression = expression.gsub(key, value.inspect) }
+      eval(expression)
+    end
+    runtime_required = event != "pull_request" || (!draft && (platform || desktop))
+    delivery_required = delivery && (event != "pull_request" || !draft)
+    [
+      [producer.fetch("if"), runtime_required],
+      [summary.fetch("RUN_BACKEND_RUNTIME"), runtime_required],
+      [delivery_job.fetch("if"), delivery_required],
+      [summary.fetch("RUN_DELIVERY"), delivery_required]
+    ].each do |expression, expected|
+      unless evaluate.call(expression) == expected
+        raise "Backend job selection differs for event=#{event}, platform=#{platform}, desktop=#{desktop}, delivery=#{delivery}, draft=#{draft}: #{expression}"
+      end
+    end
   end
 end
 steps = producer.fetch("steps")
@@ -32,7 +45,7 @@ digest = steps.find { |candidate| candidate["id"] == "runtime" }
   .fetch("env").fetch("SOURCE_DIGEST")
 
 recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
-%W[backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
+%W[backend-rs/crates/** shared/rust/** backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
   raise "Backend Rust runtime digest omits #{input}" unless digest.include?("'#{input}'")
 end
 
@@ -73,6 +86,10 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
     .github/scripts/ci-prebuilt-images.mjs .github/scripts/resolve-ci-image.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock].each do |input|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp(File.join(root, input), File.join(directory, input))
+  end
+  %w[backend-rs/crates shared/rust].each do |input|
+    FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
+    FileUtils.cp_r(File.join(root, input), File.join(directory, input))
   end
   bin = File.join(directory, "bin")
   FileUtils.mkdir_p(bin)

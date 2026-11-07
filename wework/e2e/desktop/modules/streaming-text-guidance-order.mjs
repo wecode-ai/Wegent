@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -117,11 +118,7 @@ export function createStreamingGuidanceOrderChecks({ resultDir, uiTimeoutMs }) {
           questions: [{ title: QUESTION, options: [ANSWER, 'Use this computer'] }],
         })
         response.end(
-          createSse([
-            responseCreated(id),
-            ...functionCall(CALL, tool.name, tool.arguments),
-            responseCompleted(id),
-          ])
+          createSse([responseCreated(id), ...selectedToolCall(CALL, tool), responseCompleted(id)])
         )
         return true
       }

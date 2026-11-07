@@ -125,6 +125,22 @@ describe('WorkspacePanelActions', () => {
     })
   })
 
+  test('keeps the retained right panel unchanged while discussion owns the sidebar', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <WorkspacePanelActions {...baseProps} mode="right-panel-toggle" rightPanelDisabled />
+    )
+    const toggle = screen.getByTestId('toggle-right-workspace-panel-button')
+    expect(toggle).toBeDisabled()
+    await user.click(toggle)
+    expect(baseProps.onToggleRightPanel).not.toHaveBeenCalled()
+
+    rerender(<WorkspacePanelActions {...baseProps} mode="right-panel-toggle" />)
+    expect(toggle).toBeEnabled()
+    await user.click(toggle)
+    expect(baseProps.onToggleRightPanel).toHaveBeenCalledOnce()
+  })
+
   test('remembers and prioritizes the last successful titlebar IDE selection', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     const actions = (
