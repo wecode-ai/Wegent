@@ -508,27 +508,28 @@ async function expectResultsClearOfFooter(results: Locator, footer: Locator) {
     .toBe(true)
 }
 
-creationTest(
-  'keeps expanded grant results and actions reachable at every supported dialog size',
-  async ({ page, creation }) => {
-    const prefix = fixtureName('e2e-grant-layout')
-    const groupIds: number[] = []
-    for (let index = 0; index < 8; index++) {
-      const name = `${prefix}-${index}`
-      creation.groups.add(name)
-      const group = await creation.api.post<{ id: number }>('/api/groups', {
-        name,
-        display_name: name,
-      })
-      expect(group.status).toBe(201)
-      groupIds.push(group.data!.id)
-    }
-    for (const viewport of [
-      { width: 1280, height: 800 },
-      { width: 375, height: 812 },
-      { width: 320, height: 568 },
-      { width: 375, height: 480 },
-    ]) {
+for (const viewport of [
+  { width: 1280, height: 800 },
+  { width: 375, height: 812 },
+  { width: 320, height: 568 },
+  { width: 375, height: 480 },
+]) {
+  creationTest(
+    `keeps expanded grant results and actions reachable at ${viewport.width}x${viewport.height}`,
+    async ({ page, creation }) => {
+      const prefix = fixtureName('e2e-grant-layout')
+      const groupIds: number[] = []
+      for (let index = 0; index < 8; index++) {
+        const name = `${prefix}-${index}`
+        creation.groups.add(name)
+        const group = await creation.api.post<{ id: number }>('/api/groups', {
+          name,
+          display_name: name,
+        })
+        expect(group.status).toBe(201)
+        groupIds.push(group.data!.id)
+      }
+
       await page.setViewportSize(viewport)
       await page.goto('/knowledge?type=document')
       await page.getByTestId('create-kb-button').click()
@@ -581,8 +582,8 @@ creationTest(
         await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
       }
     }
-  }
-)
+  )
+}
 
 creationTest(
   'submits on the first click while inline search results stay expanded',
