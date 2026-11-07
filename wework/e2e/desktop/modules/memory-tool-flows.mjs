@@ -1,3 +1,4 @@
+import { readNativeMcpCallId, readNativeCommandCallId } from './native-tool-call-id.mjs'
 import {
   captureMemorySample,
   captureTotalMemorySample,
@@ -12,9 +13,6 @@ import {
   CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB,
   CONCURRENT_MEMORY_TASK_COUNT,
   DEFAULT_STEP_TIMEOUT_MS,
-  EARLIER_TOOL_BLOCK_ID,
-  GENERIC_MCP_TOOL_BLOCK_ID,
-  LATER_TOOL_BLOCK_ID,
   LOCAL_MARKDOWN_IMAGE_FILENAME,
   LOCAL_MARKDOWN_IMAGE_PROMPT,
   MEMORY_COMPLETION_TEXT,
@@ -31,7 +29,6 @@ import {
   MEMORY_SAMPLE_INTERVAL_MS,
   MEMORY_SAMPLE_WINDOW_SIZE,
   MODEL_REQUEST_TIMEOUT_MS,
-  NODE_REPL_TOOL_BLOCK_ID,
   TOOL_BLOCK_ORDER_COMPLETION_TEXT,
   TOOL_BLOCK_ORDER_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
@@ -141,7 +138,16 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
     DEFAULT_STEP_TIMEOUT_MS,
     'The Node REPL output did not return to the real model request'
   )
-  const nodeReplSelector = `[data-processing-block-id="${NODE_REPL_TOOL_BLOCK_ID}"]`
+  const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    .currentRuntimeTask
+  const nodeReplCallId = await readNativeMcpCallId(
+    control,
+    address,
+    'node_repl',
+    'js',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const nodeReplSelector = `[data-processing-block-id="${nodeReplCallId}"]`
   await control.command('waitFor', nodeReplSelector, {
     visible: true,
     stableMs: 500,
@@ -161,7 +167,14 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
     DEFAULT_STEP_TIMEOUT_MS,
     'The generic MCP output did not return to the real model request'
   )
-  const genericMcpSelector = `[data-processing-block-id="${GENERIC_MCP_TOOL_BLOCK_ID}"]`
+  const genericMcpCallId = await readNativeMcpCallId(
+    control,
+    address,
+    'github__issues',
+    'get_issue_details',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const genericMcpSelector = `[data-processing-block-id="${genericMcpCallId}"]`
   await control.command('waitFor', genericMcpSelector, {
     visible: true,
     stableMs: 500,
@@ -183,8 +196,20 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
   await ensureToggleExpanded(control, '[data-testid="final-processing-toggle"]')
   await ensureToggleExpanded(control, '[data-testid="processing-summary-toggle"]')
 
-  const earlierSelector = `[data-processing-block-id="${EARLIER_TOOL_BLOCK_ID}"]`
-  const laterSelector = `[data-processing-block-id="${LATER_TOOL_BLOCK_ID}"]`
+  const earlierCallId = await readNativeCommandCallId(
+    control,
+    address,
+    'earlier-created-tool',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const laterCallId = await readNativeCommandCallId(
+    control,
+    address,
+    'later-created-tool',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const earlierSelector = `[data-processing-block-id="${earlierCallId}"]`
+  const laterSelector = `[data-processing-block-id="${laterCallId}"]`
   await control.command('waitFor', earlierSelector, {
     visible: true,
     stableMs: 500,

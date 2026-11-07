@@ -15,6 +15,7 @@ async fn process_engine_maps_success_stdout_to_completed_outcome() {
     let engine = ProcessEngine::new(
         CommandSpec::new("sh").arg("-c").arg("printf done"),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
     );
 
     let outcome = engine.run(ExecutionRequest::default()).await;
@@ -32,6 +33,7 @@ async fn process_engine_writes_configured_stdin_to_child() {
     let engine = ProcessEngine::new(
         CommandSpec::new("cat").stdin("from stdin"),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
     );
 
     let outcome = engine.run(ExecutionRequest::default()).await;
@@ -52,6 +54,7 @@ async fn process_engine_removes_exported_bash_functions_from_child_environment()
             .env("BASH_FUNC_which%%", "() {")
             .env("WEGENT_ENV_PROBE", "present"),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
     );
 
     let outcome = engine.run(ExecutionRequest::default()).await;
@@ -72,6 +75,7 @@ async fn process_engine_maps_nonzero_exit_to_failed_outcome() {
             .arg("-c")
             .arg("printf problem >&2; exit 7"),
         TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
     );
 
     let outcome = engine.run(ExecutionRequest::default()).await;
@@ -86,7 +90,11 @@ async fn process_engine_maps_nonzero_exit_to_failed_outcome() {
 
 #[tokio::test]
 async fn process_engine_times_out_hung_commands() {
-    let engine = ProcessEngine::new(CommandSpec::new("sh").arg("-c").arg("sleep 5"), 1);
+    let engine = ProcessEngine::new(
+        CommandSpec::new("sh").arg("-c").arg("sleep 5"),
+        1,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+    );
 
     let outcome = engine.run(ExecutionRequest::default()).await;
 

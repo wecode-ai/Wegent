@@ -213,20 +213,28 @@ export async function verifyCollaborationLocalProjectImport(
       'click',
       inCollaborationSidebar(`[data-testid="collaboration-project-new-conversation-${projectId}"]`)
     )
-    await control.command(
-      'waitFor',
-      scoped('[data-testid="collaboration-issue-project-trigger"]'),
-      { text: projectName }
-    )
+    await control.command('waitFor', scoped('[data-testid="project-space-chat-sidebar"]'), {
+      text: projectName,
+    })
     assert.equal(
       Number(await control.command('getElementCount', scoped('.collaboration-loading'))),
       0,
-      'Opening the local Issue composer must not restart the global Collaboration loading state'
+      'Opening the local project conversation must not restart global Collaboration loading'
     )
     assert.equal(
       Number(await control.command('getElementCount', scoped('[role="alert"]'))),
       0,
-      'Opening the local Issue composer must not report a cloud member or Issue loading error'
+      'Opening the local project conversation must not report a cloud member or Issue loading error'
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-issue-project-trigger"]')
+        )
+      ),
+      0,
+      'The project conversation action must not open the Issue creation form'
     )
     await control.command('waitFor', cloudWorkspace)
     if (

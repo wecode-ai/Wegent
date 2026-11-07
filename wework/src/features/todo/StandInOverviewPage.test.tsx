@@ -113,8 +113,8 @@ async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) 
   render(<StandInOverviewPage {...props} />)
   try {
     await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
-    expect(await screen.findByTestId('stand-in-onboarding')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(await screen.findByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
     expect(screen.queryByTestId('stand-in-overview-role-default')).not.toBeInTheDocument()
     expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
     // Install the device-scoped subscription before publishing a reload event.
@@ -828,4 +828,14 @@ it('keeps first-use setup open when the existing settings save fails and allows 
   await user.click(screen.getByTestId('stand-in-onboarding-complete'))
   await screen.findByTestId('identity-conversation')
   expect(completeOnboarding).toHaveBeenCalledOnce()
+})
+
+it('keeps profile recovery and creation reachable when the selected device and onboarding are offline', async () => {
+  const { props } = fixture()
+  vi.mocked(props.services.standInApi!.personalGet).mockRejectedValue(new Error('Executor offline'))
+  vi.mocked(props.services.standInApi!.onboarding).mockRejectedValue(new Error('Executor offline'))
+  render(<StandInOverviewPage {...props} initialDeviceId="offline-cloud" />)
+  await screen.findByTestId('stand-in-overview-retry')
+  expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-create-role')).toBeEnabled()
 })

@@ -17,6 +17,12 @@ const completion: StartupSplashCompletion = {
   fillEnd: 1359,
   trackEnd: 1359,
   wordmarkVisible: false,
+  appearance: {
+    theme: 'dark',
+    colorScheme: 'dark',
+    background: 'rgb(5, 7, 13)',
+    footerBackground: 'rgb(5, 7, 13)',
+  },
   canvas: { x: 0, y: 0, width: 1440, height: 960 },
   viewport: { width: 1440, height: 960 },
 }

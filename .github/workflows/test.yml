@@ -211,10 +211,16 @@ jobs:
 
       - name: Check Rust backend formatting
         working-directory: backend-rs
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Record signal runtime for gateway tests
         run: /bin/kill --version
+
+      - name: Check shared Rust library formatting and tests
+        run: |
+          cargo fmt --manifest-path shared/rust/Cargo.toml --all --check
+          cargo test --manifest-path shared/rust/Cargo.toml --locked
+          cargo clippy --manifest-path shared/rust/Cargo.toml --all-targets --locked -- -D warnings
 
       - name: Run Rust backend tests
         working-directory: backend-rs
@@ -426,7 +432,7 @@ jobs:
 
       - name: Run executor Rust format check
         working-directory: ./executor
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Run executor Rust tests
         working-directory: ./executor

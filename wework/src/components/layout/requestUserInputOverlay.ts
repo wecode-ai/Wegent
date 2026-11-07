@@ -11,6 +11,18 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { isDeliveredRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
+
+type QuestionTarget = { payload: RequestUserInputPayload; questionId: string }
+type GroupedInput = RequestUserInputPayload & { questionTargets?: Record<string, QuestionTarget> }
+
+/** Preserve ownership when asynchronous requests share a form. */
+export function requestUserInputQuestionTarget(
+  payload: RequestUserInputPayload,
+  questionId: string
+): QuestionTarget {
+  return (payload as GroupedInput).questionTargets?.[questionId] ?? { payload, questionId }
+}
 
 export function pendingRequestUserInputPayload(
   messages: WorkbenchMessage[],
@@ -23,8 +35,16 @@ export function pendingRequestUserInputPayload(
   // Keep the first request's identity and question IDs stable as new requests
   // arrive, so React preserves the answers already being edited. Later calls
   // can reuse question IDs; scope those IDs to their owning request.
-  return {
+  const grouped: GroupedInput = {
     ...asyncPayloads[0],
+    questionTargets: Object.fromEntries(
+      asyncPayloads.flatMap((payload, index) =>
+        (payload.questions ?? []).map((question, questionIndex) => [
+          groupedQuestionId(payload, question, index, questionIndex),
+          { payload, questionId: question.id?.trim() || `question_${questionIndex + 1}` },
+        ])
+      )
+    ),
     questions: asyncPayloads.flatMap((payload, index) => {
       return (payload.questions ?? []).map((question, questionIndex) => ({
         ...question,
@@ -32,6 +52,7 @@ export function pendingRequestUserInputPayload(
       }))
     }),
   }
+  return grouped
 }
 
 function groupedQuestionId(
@@ -77,7 +98,7 @@ export function pendingRequestUserInputPayloads(
   const asyncPayloads: RequestUserInputPayload[] = []
   let planPayload: RequestUserInputPayload | null = null
   for (const message of [...messages].reverse()) {
-    if (message.role === 'user' && message.content.trim()) {
+    if (isDeliveredRequestUserInputReply(message)) {
       break
     }
 

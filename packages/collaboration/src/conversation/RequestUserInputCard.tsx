@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import {
   ChevronDown,
   CornerDownLeft,
@@ -27,7 +27,7 @@ import {
   useRequestUserInputDeadline,
 } from "./useRequestUserInputDeadline";
 
-interface RequestUserInputCardProps {
+export interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
   compact?: boolean;
   disabled?: boolean;
@@ -38,6 +38,8 @@ interface RequestUserInputCardProps {
     response: RequestUserInputResponse,
   ) => boolean | void | Promise<boolean | void>;
   onIgnore?: () => void;
+  onCollapse?: () => void;
+  additionalActions?: ReactNode;
   onOpenAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
 }
 
@@ -71,6 +73,8 @@ function RequestUserInputForm({
   disabled = false,
   onSubmit,
   onIgnore,
+  onCollapse,
+  additionalActions,
   error,
   draftAnswers,
   onDraftAnswersChange,
@@ -94,9 +98,10 @@ function RequestUserInputForm({
     initialAnswers(questions),
   );
   // Newly arriving questions receive their defaults without resetting drafts.
-  const selectedAnswers = draftAnswers ?? {
+  const selectedAnswers = {
     ...initialAnswers(questions),
     ...localAnswers,
+    ...draftAnswers,
   };
   const setSelectedAnswers = (
     update:
@@ -109,8 +114,10 @@ function RequestUserInputForm({
     onDraftAnswersChange?.(next);
   };
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
-    initialActiveQuestionId(questions),
+    initialActiveQuestionId(questions, draftAnswers),
   );
+  const selectedQuestionId =
+    customDraftQuestionId(questions, draftAnswers) ?? activeQuestionId;
   const [submitted, setSubmitted] = useState(false);
   const isDisabled = disabled || submitted;
 
@@ -155,14 +162,16 @@ function RequestUserInputForm({
       responseAnswers(
         questions,
         answersOverride ?? selectedAnswers,
-        activeQuestionIdOverride ?? activeQuestionId,
+        activeQuestionIdOverride ?? selectedQuestionId,
       ),
     );
   };
 
   const isMcpForm = payload.interactionKind === "mcp_form";
-  const canIgnore = isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore);
+  const canIgnore =
+    Boolean(onCollapse) || (isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore));
   const handleIgnore = () => {
+    if (onCollapse) return onCollapse();
     // Cancel this MCP request, not the containing task or its other questions.
     if (isMcpForm) void submitAnswers({});
     else onIgnore?.();
@@ -221,6 +230,7 @@ function RequestUserInputForm({
 
   const actionControls = (
     <>
+      {additionalActions}
       {(!compact || canIgnore) && (
         <button
           type="button"
@@ -229,7 +239,11 @@ function RequestUserInputForm({
           onClick={handleIgnore}
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
         >
-          {t("request_user_input.ignore")}
+          {t(
+            onCollapse
+              ? "request_user_input.collapse"
+              : "request_user_input.ignore",
+          )}
           <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
             ESC
           </kbd>
@@ -309,7 +323,7 @@ function RequestUserInputForm({
                     const isSelected =
                       selectedAnswers[question.id] === option.value &&
                       (!isImplementationPlanRequest ||
-                        activeQuestionId === question.id);
+                        selectedQuestionId === question.id);
                     return (
                       <button
                         key={`${question.id}-${option.label}-${index}`}
@@ -517,13 +531,31 @@ function initialAnswers(
 
 function initialActiveQuestionId(
   questions: ReturnType<typeof normalizeQuestions>,
+  draftAnswers?: Record<string, string>,
 ): string | null {
   return (
-    implementationPlanOptionQuestion(questions)?.id ?? questions[0]?.id ?? null
+    customDraftQuestionId(questions, draftAnswers) ??
+    implementationPlanOptionQuestion(questions)?.id ??
+    questions[0]?.id ??
+    null
   );
 }
 
 const CODEX_APPROVAL_QUESTION_ID = "__codex_approval";
+
+function customDraftQuestionId(
+  questions: ReturnType<typeof normalizeQuestions>,
+  draftAnswers?: Record<string, string>,
+): string | undefined {
+  return questions.find(
+    (question) =>
+      question.allowCustom &&
+      draftAnswers?.[question.id]?.trim() &&
+      !question.options.some(
+        (option) => option.value === draftAnswers[question.id],
+      ),
+  )?.id;
+}
 
 function localizeApprovalQuestions(
   payload: RequestUserInputPayload,

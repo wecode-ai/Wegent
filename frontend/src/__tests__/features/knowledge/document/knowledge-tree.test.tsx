@@ -200,7 +200,9 @@ describe('KnowledgeTree category filter', () => {
     expect(screen.getByTestId(`knowledge-tree-kb-${documentKb.id}`)).toBeInTheDocument()
     expect(screen.queryByTestId(`knowledge-tree-kb-${codeWiki.id}`)).not.toBeInTheDocument()
     const categoryControls = screen.getByTestId('knowledge-tree-category-controls')
-    expect(within(categoryControls).getByTestId('knowledge-category-filter')).toBeInTheDocument()
+    expect(
+      within(categoryControls).queryByTestId('knowledge-category-filter')
+    ).not.toBeInTheDocument()
     expect(
       within(categoryControls).getByTestId('show-advanced-knowledge-toggle-mobile')
     ).toBeInTheDocument()

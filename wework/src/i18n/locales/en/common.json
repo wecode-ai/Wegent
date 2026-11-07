@@ -731,6 +731,7 @@
     "use_existing_folder": "Use existing folder",
     "new_project_chat": "Message AI",
     "project_space_chat": {
+      "open": "Chat",
       "resize": "Resize AI messages",
       "conversation": "Conversations",
       "new_conversation": "New conversation",
@@ -5459,7 +5460,6 @@
       "leader_title": "{{group}} · {{leader}}"
     },
     "model_label": "Model",
-    "agent_label": "Agent",
     "device_label": "Device",
     "local_project": "Local project",
     "workspace_label": "Workspace",
@@ -5470,7 +5470,6 @@
     "prompt_placeholder": "For example: Start with a plan, then explain what changed and how it was verified. Ask me when unsure.",
     "current_device": "Current device",
     "device": "Where to work",
-    "select_device": "Select a device",
     "device_unavailable": "Selected device unavailable; select again",
     "offline": "Offline",
     "cancel": "Cancel",
@@ -5482,10 +5481,6 @@
     "enabled": "My Stand-in · Automatic handling enabled",
     "project_enabled": "Automatic handling enabled",
     "description": "Let your Stand-in take care of tasks while you’re busy. It handles new assignments so you can review the results when they’re ready.",
-    "agent": "Which agent to use",
-    "default_agent": "General assistant (default)",
-    "agent_unavailable": "Selected agent is unavailable",
-    "agent_load_failed": "Unable to load agents. Reopen settings to retry.",
     "inherit_environment": "Device default workspace",
     "new_worktree": "New worktree",
     "current_workspace": "Current directory",
@@ -5517,9 +5512,6 @@
       "role_name": "Stand-in name",
       "role_name_placeholder": "For example: Development, Review, Project lead",
       "role_name_required": "Enter a name for every stand-in.",
-      "execution_agent": "Agent used by stand-in",
-      "project_agent": "Referenced project agent",
-      "catalog_unavailable": "The personal agent list could not be loaded.",
       "requirements": "Instructions (optional)",
       "requirements_placeholder": "For example: clarify requirements first, then report the results.",
       "sources": "Connected work",
@@ -5557,8 +5549,6 @@
       "discard_description": "Unsaved changes will be lost if you discard them.",
       "discard": "Discard changes",
       "keep_editing": "Keep editing",
-      "project_agents": "Project agents",
-      "project_agent_scope": "Connected to {{project}}. This stand-in handles tasks only in that project.",
       "current_project": "Current project: {{project}}",
       "project_title": "Project stand-in",
       "project_description": "Your stand-in handles tasks assigned to you in this project.",
@@ -5746,7 +5736,6 @@
       "task_tags_label": "Task tags",
       "no_tag_limit": "Any tag",
       "model_options_changed": "Model options updated",
-      "agent_changed": "Execution assistant updated",
       "role_renamed": "Name: {{before}} → {{after}}",
       "review_pending_changes": "Review pending changes",
       "proposal_create_role": "Create role: {{name}}",
@@ -5846,7 +5835,7 @@
       "work_busy": "This work is being processed. Try again later.",
       "failed": "This operation could not be completed. Keep your changes and reload before trying again.",
       "device_offline": "The execution device is offline. Connect it and try again.",
-      "stand_in_project_connections": "This agent can only receive work from its own project. Remove other source connections or select a personal agent.",
+      "stand_in_project_connections": "The stand-in’s old agent binding is no longer valid. Reload the stand-in settings and try again.",
       "coordination_recovery_required": "The previous background execution is unconfirmed. Review its original task; it will not be replayed automatically.",
       "coordination_stopped": "The previous background execution failed or was cancelled. Review its task, fix the cause, then choose Check now to reassess unfinished events.",
       "coordinator_failed": "Background coordination failed. Check the handling history and model, then try again.",
@@ -6060,6 +6049,20 @@
       "allow_description": "After saving, the stand-in may reply within the connected scope “{{name}}” under your configured responsibilities. Email automation is limited to replies to the original sender; new recipients still require confirmation. Uncertain facts and commitments require your input. Turn this switch on at any time to revoke this permission.",
       "allow": "Allow replies in this scope",
       "confirm_once": "Run with confirmation this time"
+    },
+    "local_profile": "This device · Standalone stand-ins",
+    "account_local_profile": "This device · Current account's stand-ins",
+    "migration": {
+      "offer": "A cloud device is available. Move this stand-in’s settings and memories to the cloud.",
+      "local_available": "Your local stand-ins, settings and history are retained. Keep working locally or migrate to a cloud device.",
+      "view_local": "View local stand-ins",
+      "action": "Migrate to cloud",
+      "keep_local": "Keep using locally",
+      "title": "Migrate to “{{device}}”?",
+      "description": "Transfer this stand-in’s name, instructions, model settings, tags and its role and shared memories without replacing existing cloud stand-ins. Keep local profiles, memories and history; pause local intake only after success. The cloud copy starts paused. Reconfigure its directory, project/data-source connections, agent and schedules before enabling it. Active work and conversations stay on their original device.",
+      "changed": "Local settings changed; local intake has not been paused. Review both profiles before retrying.",
+      "conflict": "A migrated cloud copy has different settings. Review or remove that copy before retrying. Local settings were not overwritten.",
+      "same_device": "Choose a different cloud device."
     }
   },
   "workbench_error": {
@@ -6078,6 +6081,20 @@
     "close": "Close app",
     "send": "Send",
     "unsupported_display_mode": "The app has no supported display mode."
+  },
+  "question_discussion": {
+    "empty": "Edit the question, then send. Select discussion text to fill the original answer.",
+    "expand_reply": "Expand reply",
+    "open": "Talk it through",
+    "title": "Talk it through before deciding",
+    "close": "Close discussion",
+    "placeholder": "Ask a follow-up or request a recommendation",
+    "answer_for": "Return an answer to",
+    "checking": "Checking the original question…",
+    "unavailable": "The original question was handled or is no longer available. Your discussion is kept.",
+    "failed": "Could not check the original question. Please try again.",
+    "prompt": "I am unsure about the questions below. Explain the evidence and tradeoffs for each option, give your recommendation, and discuss it with me. Do not decide for me or execute the original task. I will review and submit my answers myself.",
+    "start_failed": "The discussion could not start. Please send the message again in the discussion."
   },
   "interactions": {
     "sources": {

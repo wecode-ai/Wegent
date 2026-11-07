@@ -90,6 +90,141 @@ const codeComment = {
 const continuation = 'Authorization is complete. Continue from the blocked operation.'
 let lifecycleStore: RuntimeTaskLifecycleStore
 
+test.each(
+  ['accepted', 'rejected', 'queued'].flatMap(outcome => [
+    { outcome, interrupt: false },
+    { outcome, interrupt: true },
+  ])
+)(
+  'retains an unanswered question until delivery ($outcome, interrupt=$interrupt)',
+  async ({ outcome, interrupt }) => {
+    const restoreAttachment = vi.fn()
+    Object.assign(mocks.context.projectChat as object, {
+      addExistingAttachmentForScope: restoreAttachment,
+    })
+    const interruptSend = vi.fn()
+    mocks.context.interruptAndSendRuntimePaneMessage = interruptSend
+    const sendMethod = interrupt ? interruptSend : mocks.send
+    const { result } = await renderSession()
+    if (interrupt) act(() => lifecycleStore.turnStarted(address, 'question-turn'))
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'question-turn',
+          status: 'done',
+          items: [
+            {
+              id: 'question-item',
+              type: 'block',
+              block: {
+                id: 'question-item',
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'done',
+                createdAt: 1,
+                renderPayload: {
+                  kind: 'request_user_input',
+                  delivery: 'async',
+                  itemId: 'question-item',
+                  questions: [{ id: 'audience', question: 'Who receives the report?' }],
+                },
+              },
+            },
+          ],
+        },
+      ])
+    })
+    let finish!: () => void
+    sendMethod.mockImplementationOnce(
+      (_request, options) =>
+        new Promise<boolean>(resolve => {
+          finish = () => {
+            if (outcome === 'queued') options.onQueued?.({ queuePosition: 1 })
+            resolve(outcome !== 'rejected')
+          }
+        })
+    )
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = result.current.send('Continue with project members only', {
+        interruptWhenBusy: interrupt,
+      })
+    })
+    await waitFor(() => expect(sendMethod).toHaveBeenCalledOnce())
+    expect(pendingRequestUserInputPayload(result.current.messages)?.itemId).toBe('question-item')
+    await act(async () => {
+      finish()
+      await sending
+    })
+    expect(pendingRequestUserInputPayload(result.current.messages) === null).toBe(
+      outcome === 'accepted'
+    )
+    expect(mocks.cancel).not.toHaveBeenCalled()
+    if (outcome === 'rejected') expect(restoreAttachment).toHaveBeenCalledWith(scopeKey, attachment)
+  }
+)
+
+test.each([false, true])(
+  'keeps normal optimistic sending after a question was dismissed (interrupt=%s)',
+  async interrupt => {
+    Object.assign(mocks.context.projectChat as object, {
+      addExistingAttachmentForScope: vi.fn(),
+    })
+    const interruptSend = vi.fn()
+    mocks.context.interruptAndSendRuntimePaneMessage = interruptSend
+    const sendMethod = interrupt ? interruptSend : mocks.send
+    const { result } = await renderSession()
+    const payload = {
+      kind: 'request_user_input' as const,
+      delivery: 'async' as const,
+      itemId: 'dismissed-question',
+      questions: [{ id: 'audience', question: 'Who receives the report?' }],
+    }
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'question-turn',
+          status: 'done',
+          items: [
+            {
+              id: payload.itemId,
+              type: 'block',
+              block: {
+                id: payload.itemId,
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'done',
+                createdAt: 1,
+                renderPayload: payload,
+              },
+            },
+          ],
+        },
+      ])
+    })
+    await act(async () => result.current.ignoreRequestUserInput(payload))
+    if (interrupt) act(() => lifecycleStore.turnStarted(address, 'follow-up-turn'))
+    let finish!: (accepted: boolean) => void
+    sendMethod.mockImplementationOnce(() => new Promise<boolean>(resolve => (finish = resolve)))
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = result.current.send('A new follow-up', { interruptWhenBusy: interrupt })
+    })
+    await waitFor(() => expect(sendMethod).toHaveBeenCalledOnce())
+    expect(getRuntimeConversationMessages(address)).toContainEqual(
+      expect.objectContaining({ role: 'user', content: 'A new follow-up' })
+    )
+    await act(async () => {
+      finish(false)
+      expect(await sending).toBe(false)
+    })
+    expect(getRuntimeConversationMessages(address)).not.toContainEqual(
+      expect.objectContaining({ role: 'user', content: 'A new follow-up' })
+    )
+    expect(result.current.answeredRequestUserInputIds.has('item:dismissed-question')).toBe(true)
+  }
+)
+
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.send.mockReset().mockResolvedValue(true)
@@ -352,8 +487,9 @@ describe('pane transcript reload ownership', () => {
   })
 })
 
-test('keeps progress updates on the existing frame subscription when the queue is empty', async () => {
+test('publishes buffered progress through the existing subscription when the queue is empty', async () => {
   const { result, unmount } = await renderSession()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   const frames = new Map<number, FrameRequestCallback>()
   let sequence = 0
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -389,12 +525,15 @@ test('keeps progress updates on the existing frame subscription when the queue i
         .at(-1)
         ?.blocks?.map(block => block.id)
     ).toEqual(ids)
-    act(flush)
+    act(() => vi.advanceTimersByTime(99))
+    expect(result.current.messages === before).toBe(true)
+    act(() => vi.advanceTimersByTime(1))
     expect(result.current.messages.at(-1)?.blocks?.map(block => block.id)).toEqual(ids)
     expect(result.current.queuedMessages).toEqual([])
   } finally {
     unmount()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   }
 })
 

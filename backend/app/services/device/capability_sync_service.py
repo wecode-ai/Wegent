@@ -154,6 +154,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         installed_mcp_ids: Optional[list[int]] = None,
         mcp_ids: Optional[list[str]] = None,
         mode: str = "merge",
+        device_id: str | None = None,
     ) -> dict[str, Any]:
         """Resolve user-selected capability IDs into an executor payload."""
         self._validate_mode(mode)
@@ -178,6 +179,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             user_id=user.id,
             installed_plugin_ids=installed_plugin_ids or [],
             strict=True,
+            device_id=device_id,
         )
         if plugins:
             payload["plugins"] = plugins
@@ -379,6 +381,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         payload = self.resolve_payload(
             db,
             user=user,
+            device_id=device_id,
             skill_ids=skill_ids,
             installed_skill_ids=installed_skill_ids,
             installed_plugin_ids=installed_plugin_ids,
@@ -484,6 +487,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         payload = self.resolve_payload(
             db,
             user=User(id=user_id),
+            device_id=device_id,
             skill_ids=[],
             installed_plugin_ids=[installed_plugin_id],
             mode="merge",
@@ -504,7 +508,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
     ) -> DeviceCapabilitySyncResult:
         """Push an already-built desired payload to one online device."""
-        snapshot = payload if payload.get("plugin_sync") else None
+        snapshot = payload if "plugins" in payload else None
         try:
             route = await runtime_route_resolver.resolve(
                 user_id=user_id,
@@ -540,7 +544,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             )
         dispatch_payload = {**payload, "device_id": route.runtime_device_id}
         started = time.monotonic()
-        if snapshot is not None:
+        if payload.get("plugin_sync"):
             from app.services.device.plugin_sync_protocol import (
                 register_plugin_snapshot_intent,
             )
@@ -637,7 +641,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
                 acknowledged=True,
                 scope=response.get("scope"),
                 plugin_sync=response.get("plugin_sync"),
-                desired_plugin_snapshot=payload if payload.get("plugin_sync") else None,
+                desired_plugin_snapshot=snapshot,
                 error=str(
                     response.get("error")
                     or self._raw_item_failure_message(response)
@@ -662,7 +666,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             acknowledged=True,
             scope=response.get("scope"),
             plugin_sync=response.get("plugin_sync"),
-            desired_plugin_snapshot=payload if payload.get("plugin_sync") else None,
+            desired_plugin_snapshot=snapshot,
             skills=response.get("skills", []),
             plugins=response.get("plugins", []),
             mcps=response.get("mcps", []),

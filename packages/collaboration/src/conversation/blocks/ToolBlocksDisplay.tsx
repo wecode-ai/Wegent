@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useConversationTranslation } from '../ConversationTranslation'
+import { useToolInteractionServices } from '../ToolInteractionServices'
 import {
   isRuntimeRateLimitWaitBlock,
   isRuntimeRetryWaitBlock,
@@ -17,6 +18,7 @@ import {
   RequestUserInputCard,
   RequestUserInputSummary,
   type RequestUserInputPayload,
+  type RequestUserInputCardProps,
 } from '../RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from '../AssistantPlanCard'
 import {
@@ -54,6 +56,9 @@ import {
 export const COLLAPSED_PROCESSING_HEIGHT = 44
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
+const renderDefaultUserInput = (props: RequestUserInputCardProps) => (
+  <RequestUserInputCard {...props} />
+)
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -104,6 +109,8 @@ export function ToolBlocksDisplay({
   onOpenSubagent,
 }: ToolBlocksDisplayProps) {
   const { t } = useConversationTranslation()
+  const renderUserInput =
+    useToolInteractionServices().renderRequestUserInput ?? renderDefaultUserInput
   const rateLimitWaiting = blocks.some(isRuntimeRateLimitWaitBlock)
   const retryWaiting = blocks.some(isRuntimeRetryWaitBlock)
   const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
@@ -313,17 +320,16 @@ export function ToolBlocksDisplay({
               return isSettledRequestUserInputBlock(item.block) ? (
                 <RequestUserInputSummary key={item.id} payload={item.block.renderPayload} />
               ) : (
-                <RequestUserInputCard
-                  key={item.id}
-                  payload={item.block.renderPayload}
-                  disabled={item.block.status === 'error'}
-                  onSubmit={onRequestUserInputSubmit}
-                  onIgnore={
-                    onRequestUserInputIgnore
+                <Fragment key={item.id}>
+                  {renderUserInput({
+                    payload: item.block.renderPayload,
+                    disabled: item.block.status === 'error',
+                    onSubmit: onRequestUserInputSubmit,
+                    onIgnore: onRequestUserInputIgnore
                       ? () => onRequestUserInputIgnore(item.block.renderPayload)
-                      : undefined
-                  }
-                />
+                      : undefined,
+                  })}
+                </Fragment>
               )
             }
 
@@ -374,6 +380,7 @@ export function ToolBlocksDisplay({
       fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
+      renderUserInput,
       effectiveDetailStateScopeKey,
       onOpenSubagent,
     ]
@@ -426,5 +433,5 @@ export function ToolBlocksDisplay({
       ) : null}
     </>
   )
-  return <div className="mb-3 min-w-0 w-full font-normal">{processingBody}</div>
+  return <div className="mb-3 min-w-0 w-full">{processingBody}</div>
 }

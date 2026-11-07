@@ -80,6 +80,15 @@ export function createDesktopScenario({
         join(root, core.sourceFingerprint)
       )
       appEnvironment.NODE_EXTRA_CA_CERTS = mail.certificate
+      // Exercise the real server's 24-hour APPEND parsing regardless of CI wall time.
+      for (const hour of ['00', '12']) {
+        await mail.append(
+          `Historical ${hour}:33 mail must stay out of stand-in work`,
+          'HISTORICAL_MAIL',
+          `<history-${hour}@example.com>`,
+          new Date(`2020-01-01T${hour}:33:30.000Z`)
+        )
+      }
       await mail.deliver(
         'Historical mail must stay out of stand-in work',
         'HISTORICAL_MAIL',
@@ -409,6 +418,7 @@ export function createDesktopScenario({
         `stand-in-add-${PROVIDER}-connection`,
       ])
         await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+      await control.command('waitFor', '[data-testid="stand-in-email-add"]', { visible: true })
       await captureScreenshot(control, '08-narrow-dark-mailbox-connections.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-email-add"]')
       await control.command('waitFor', '[data-testid="stand-in-email-form"]')

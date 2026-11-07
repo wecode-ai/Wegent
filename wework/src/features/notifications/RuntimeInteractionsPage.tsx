@@ -13,6 +13,7 @@ import {
 } from './runtimeInteractions'
 import { cn } from '@/lib/utils'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
+import { canDiscussQuestion, useQuestionDiscussion } from './questionDiscussion'
 
 export function RuntimeInteractionsPage({
   selectedId,
@@ -22,6 +23,7 @@ export function RuntimeInteractionsPage({
   active?: boolean
 }) {
   const interactions = useRuntimeInteractions()
+  const discussion = useQuestionDiscussion()
   const { t } = useTranslation('common')
   const [history, setHistory] = useState(false)
   const [originalNavigation, setOriginalNavigation] = useState<{ id: string; url: string } | null>(
@@ -96,6 +98,7 @@ export function RuntimeInteractionsPage({
     ? (rows.find(item => item.id === selected) ??
       interactions.history.find(item => item.id === selected))
     : rows[0]
+  const liveQuestion = row ? pending.find(item => item.id === row.id && !item.cached) : undefined
   return (
     <main
       data-testid="runtime-interactions-page"
@@ -264,6 +267,17 @@ export function RuntimeInteractionsPage({
                   {row.title}
                 </p>
               </div>
+              {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
+                <button
+                  type="button"
+                  data-testid="interaction-discuss"
+                  disabled={interactions.busy.has(liveQuestion.id)}
+                  onClick={() => discussion.open(liveQuestion.task.address, liveQuestion.payload)}
+                  className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7"
+                >
+                  {t('question_discussion.open')}
+                </button>
+              )}
               <button
                 type="button"
                 data-testid="interaction-open-original"

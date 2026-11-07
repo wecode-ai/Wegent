@@ -171,7 +171,7 @@ jobs:
         run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs .github/scripts/pnpm-install-report.test.mjs
 
       - name: Test E2E resource cleanup
-        run: node --test .github/scripts/test-e2e-resource-reuse.mjs
+        run: node --test .github/scripts/test-e2e-resource-reuse.mjs .github/scripts/backend-delivery-image.test.mjs
 
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
