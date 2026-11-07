@@ -169,13 +169,44 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         true,
         uiTimeoutMs
       )
+      const cleanupTimeoutMs = uiTimeoutMs + 20_000
+      const taskIds = chain.map(task => task.taskId)
+      await control.command('startRuntimeCleanupRecorder', 'body', {
+        value: JSON.stringify({ taskIds }),
+      })
       const deleted = await rpc('runtime.archived_conversations.delete_bulk', {
         items: chain.map(taskAddress),
       })
       assert.equal(deleted.accepted, true, JSON.stringify(deleted))
       assert.equal(deleted.acceptedCount, CHAIN_LENGTH)
 
-      const cleanupTimeoutMs = uiTimeoutMs + 20_000
+      const cleanup = JSON.parse(
+        await control.command('waitForRuntimeCleanupEvents', 'body', {
+          value: JSON.stringify({ taskIds, timeoutMs: cleanupTimeoutMs }),
+          timeoutMs: cleanupTimeoutMs,
+        })
+      )
+      for (const task of chain) {
+        const result = cleanup.cleanupByTaskId[task.taskId]
+        assert.ok(result, `Runtime cleanup did not report task ${task.taskId}`)
+        assert.deepEqual(
+          result.errors,
+          [],
+          `Runtime cleanup failed for ${task.taskId}: ${JSON.stringify(result)}`
+        )
+      }
+      for (const task of chain) {
+        await assert.rejects(
+          () =>
+            rpc('runtime.tasks.transcript', {
+              taskId: task.taskId,
+              threadId: task.threadId,
+            }),
+          /thread|rollout|not found|codex/i,
+          `Codex thread ${task.threadId} still exists after cleanup`
+        )
+      }
+
       await waitForArchivedTasks(
         rpc,
         chain.map(task => task.taskId),
