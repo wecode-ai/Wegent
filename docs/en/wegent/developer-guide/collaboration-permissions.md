@@ -135,6 +135,11 @@ Project grouping and Git properties do not define execution ownership. Managed
 worktrees, legacy tasks and standalone chats retain their original constraints.
 `workspace_identity_tests` uses real Git worktrees to protect get/list consistency
 and the original metadata allowlist.
+Historical Stand-in records recover their original current-workspace intent only
+when source is absent, original identity/project bindings are complete and
+consistent, and the execution directory exactly matches a recorded root. Reads
+neither consult current settings nor rewrite the index; explicit sources,
+conflicting bindings and incomplete records do not enter this recovery path.
 
 ### Read-only parent context for child Issue executions
 

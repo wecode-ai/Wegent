@@ -69,6 +69,148 @@ fn task(path: &Path, source: Option<&str>) -> RuntimeTaskLink {
     link
 }
 
+fn recorded_stand_in_task(path: &Path, origin_type: &str) -> RuntimeTaskLink {
+    let mut link = task(path, None);
+    link.runtime_project_key = Some("recorded-project".into());
+    link.runtime_workspace_roots = vec![path.to_string_lossy().into_owned(), "/other-root".into()];
+    let origin = json!({"type":origin_type,"userId":7,"deviceId":"original-device"});
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "workspace_source":null,"project_workspace_path":path,
+        "runtime_project_key":link.runtime_project_key,
+        "runtime_workspace_roots":link.runtime_workspace_roots,
+        "origin":origin,"user_id":7,"auth_token":"private-old-token"
+    }))
+    .unwrap();
+    link.runtime_handle["origin"] = origin;
+    store_runtime_execution_request(&mut link.runtime_handle, &request);
+    link.status = "done".into();
+    link.completed_at = Some(now_ms());
+    link
+}
+
+fn cold_task_views(link: RuntimeTaskLink, path: &Path) -> (Value, Value) {
+    let task_id = link.local_task_id.clone();
+    RuntimeWorkStore::new(path.to_path_buf()).upsert_task(link);
+    let before = fs::read(path).unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("device", "codex");
+    handler.store = RuntimeWorkStore::new(path.to_path_buf());
+    let summary = handler.store.get_task_summary(&task_id).unwrap();
+    let rows = crate::runtime_work::response::workspace_response(vec![summary], vec![]);
+    let read = handler.get_task(&json!({"taskId":task_id})).unwrap();
+    assert_eq!(
+        fs::read(path).unwrap(),
+        before,
+        "Reading historical intent must not migrate the index"
+    );
+    (read["task"].clone(), rows[0]["tasks"][0].clone())
+}
+
+#[test]
+fn recorded_stand_in_workspace_binding_survives_cold_get_and_list() {
+    let _lock = crate::test_env::lock();
+    let (root, _worktree, cwd) = linked_workspace();
+    let home = root.path().join("executor");
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
+    for origin in ["stand_in_identity", "stand_in_task"] {
+        for missing_source in [false, true] {
+            let mut link = recorded_stand_in_task(&cwd, origin);
+            if missing_source {
+                link.runtime_handle["executionRequest"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("workspace_source");
+            }
+            let (read, listed) = cold_task_views(
+                link,
+                &root.path().join(format!("{origin}-{missing_source}.json")),
+            );
+            for value in [&read, &listed] {
+                assert_eq!(value["workspacePath"], cwd.to_string_lossy().as_ref());
+                assert_eq!(value["workspaceKind"], "workspace");
+                assert!(value.get("worktreeId").is_none());
+                assert!(!serde_json::to_string(value)
+                    .unwrap()
+                    .contains("private-old-token"));
+            }
+            assert!(read["runtimeHandle"].get("executionRequest").is_none());
+        }
+    }
+}
+
+#[test]
+fn recorded_stand_in_workspace_binding_rejects_ambiguous_or_managed_intent() {
+    let _lock = crate::test_env::lock();
+    let (root, worktree, cwd) = linked_workspace();
+    let home = root.path().join("executor");
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
+    for case in [
+        "managed",
+        "unknown",
+        "invalid",
+        "no-key",
+        "key-conflict",
+        "root-conflict",
+        "cwd-conflict",
+        "origin-conflict",
+        "ordinary",
+        "deferred",
+        "no-roots",
+        "empty-root",
+        "unselected-cwd",
+        "no-origin",
+    ] {
+        let mut link = recorded_stand_in_task(&cwd, "stand_in_task");
+        let request = &mut link.runtime_handle["executionRequest"];
+        match case {
+            "managed" => request["workspace_source"] = json!("git_worktree"),
+            "unknown" => request["workspace_source"] = json!("unknown-mode"),
+            "invalid" => request["workspace_source"] = json!(false),
+            "no-key" => link.runtime_project_key = None,
+            "key-conflict" => request["runtime_project_key"] = json!("other-project"),
+            "root-conflict" => request["runtime_workspace_roots"] = json!(["/other-root"]),
+            "cwd-conflict" => request["project_workspace_path"] = json!("/other-root"),
+            "origin-conflict" => request["origin"]["userId"] = json!(8),
+            "ordinary" => {
+                request["origin"]["type"] = json!("ordinary");
+                link.runtime_handle["origin"]["type"] = json!("ordinary");
+            }
+            "deferred" => request["deferred_project_environment"] = json!({"repositories":[]}),
+            "no-roots" => {
+                request
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("runtime_workspace_roots");
+            }
+            "empty-root" => {
+                request["runtime_workspace_roots"] = json!([""]);
+                link.runtime_workspace_roots = vec![String::new()];
+            }
+            "unselected-cwd" => {
+                request["runtime_workspace_roots"] = json!(["/other-root"]);
+                link.runtime_workspace_roots = vec!["/other-root".into()];
+            }
+            "no-origin" => {
+                request.as_object_mut().unwrap().remove("origin");
+            }
+            _ => unreachable!(),
+        }
+        let (read, listed) = cold_task_views(link, &root.path().join(format!("{case}.json")));
+        assert_eq!(read["workspaceKind"], "worktree", "{case}");
+        assert_eq!(listed["workspaceKind"], "worktree", "{case}");
+        assert_eq!(
+            listed["workspacePath"],
+            worktree.to_string_lossy().as_ref(),
+            "{case}"
+        );
+    }
+    let mut empty = recorded_stand_in_task(&cwd, "stand_in_task");
+    empty.workspace_path.clear();
+    empty.runtime_workspace_roots = vec![String::new()];
+    empty.runtime_handle["executionRequest"]["project_workspace_path"] = json!("");
+    empty.runtime_handle["executionRequest"]["runtime_workspace_roots"] = json!([""]);
+    assert_eq!(empty.execution_workspace_path("/assigned"), "/assigned");
+}
+
 #[test]
 fn explicit_local_path_get_preserves_unlisted_primary_cwd_without_private_metadata() {
     let _lock = crate::test_env::lock();

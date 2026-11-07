@@ -153,6 +153,9 @@ Connector Broker 凭据及 Backend Task 身份仍不提供给外部工作 Shell�
 保留原目录，即使它位于 Git worktree 内，也不转换为受管 worktree 或提升到仓库根。
 项目分组和 Git 属性不构成执行归属。受管 worktree、历史任务和独立聊天保留原约束；
 `workspace_identity_tests` 用真实 Git worktree 验证 get/list 的一致性和原元数据白名单。
+旧主分身记录仅在来源字段缺失、原始身份与项目绑定完整一致、执行目录精确匹配已记录根目录时，
+从这些持久证据恢复原有当前工作区意图。读取不参考当前设置、不改写索引；来源明确、绑定冲突或
+证据不完整的历史记录不进入此恢复路径。
 
 ### 子 Issue 执行的父项只读上下文
 
