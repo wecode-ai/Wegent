@@ -120,17 +120,17 @@ New tasks appear immediately at the top of their project's task list. Tasks with
 
 <a id="ai-questions"></a>
 
-## Handle AI questions
+## Handle AI questions and project work
 
 <!-- ui-source: src/features/notifications/RuntimeInteractionsPage.tsx -->
 
-The top-level **Needs your input** tab collects structured questions from task conversations, projects, and your stand-in. Its left list groups questions under **Tasks, Projects, and Stand-in**, newest first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in.
+Open **top tab bar → + → Needs your input**, or choose **Needs your input** from the title-bar notification bell. The tab collects structured questions from task conversations, projects and your stand-in, plus ordinary Issues currently awaiting you in native local and cloud projects. Its left list groups entries under **Tasks, Projects, and Stand-in**, newest recorded time first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in, and an Issue with a question entry is not repeated as ordinary work.
 
 List entries and detail headers show a timestamp: the request time for pending questions and the recorded handling time for handled entries. Today's entries show hours and minutes; other dates show month and day, including the year for a different year. Hover over the timestamp for the complete date and time in your local timezone. Missing or invalid timestamps are omitted.
 
 When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
 
-To leave a question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally.
+To leave an ordinary conversation question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally. Persistent Issue handoffs and ordinary project work do not offer this button: local archiving cannot replace an answer or a transfer.
 
 Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
 
@@ -139,6 +139,16 @@ When you are unsure how to answer a business question, select **Talk it through*
 After discussing, select the text you want to use and choose **Fill answer** from the selection toolbar. For multiple questions, choose the target at the top of the sidebar first. Review and edit the selected text in the original answer before submitting. Filling a draft never sends an answer or approves an operation. Questions that were handled, cancelled, expired, or whose current state cannot be verified cannot receive a draft. Permission approvals and connector authorization retain their native confirmation flows.
 
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
+
+<a id="project-pending-work"></a>
+
+### Project work and waiting time
+
+Selecting ordinary project work opens its original Issue details on the right, even without a running task; it never creates a placeholder task. Unassigned work belongs to its creator. Questions match their effective recipient or responsible participant first. Confirmed running agents and stand-ins do not count as ordinary human work, but questions assigned to you remain visible while independent AI steps continue. Opening this page does not expand project permissions.
+
+For one project, open **Collaboration → select project → board**, then select the toolbar's **Needs my action** button and count; select it again to clear. This temporary filter resets when switching projects and does not change saved views. Use **Only issues needing my input** in board view settings for a persistent view; it evaluates the current viewer. Local work uses the local identity, while cloud work uses the signed-in account. Matching names or numeric IDs do not merge these identity domains.
+
+**With you for** measures elapsed calendar time since this handoff, not the record date or working time. Older work without reliable evidence shows **Handoff time not recorded**; an update timestamp never invents a wait. See [Issue human handoffs](./personal-stand-in.md#issue-human-handoffs) and [Waiting time and workflow analysis](./personal-stand-in.md#waiting-time-and-workflow-analysis) for transfer, acceptance, offline recovery and analysis limits. Ordinary work currently covers native projects; external-provider projects are not guaranteed to enumerate every Issue. Failed reads retain the last same-scope results and show a retry error, rather than reporting no pending work.
 
 ## Use IM notifications
 

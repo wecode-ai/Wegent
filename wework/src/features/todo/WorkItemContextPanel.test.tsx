@@ -17,6 +17,7 @@ vi.mock('./TodoEditor', () => ({
     headerActions,
     selectedTaskId,
     deviceNamesById,
+    currentUserId,
     onRead,
     onUpdated,
     onOpenTaskConversation,
@@ -29,6 +30,7 @@ vi.mock('./TodoEditor', () => ({
     headerActions?: React.ReactNode
     selectedTaskId?: string | null
     deviceNamesById?: Readonly<Record<string, string>>
+    currentUserId?: string | number
     onRead?: (item: CloudLoopItem) => void
     onUpdated: (item: CloudLoopItem) => void
     onOpenTaskConversation?: (task: {
@@ -46,6 +48,7 @@ vi.mock('./TodoEditor', () => ({
       data-selected-task={selectedTaskId}
       data-device-name={deviceNamesById?.['local-device']}
       data-item-count={allItems.length}
+      data-handling-user={currentUserId}
       data-item-unread={String(item.is_unread)}
       data-list-item-unread={String(
         allItems.find(candidate => candidate.id === item.id)?.is_unread
@@ -124,6 +127,29 @@ const item: CloudLoopItem = {
 }
 
 describe('WorkItemContextPanel', () => {
+  test.each(['local', 'backend'] as const)(
+    'preserves the %s handling domain through the embedded editor',
+    async store => {
+      const api = {
+        listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+      } as unknown as ProjectSpaceApi
+      render(
+        <WorkItemContextPanel
+          api={api}
+          services={{}}
+          project={{ ...project, project_store: store, current_user_id: 7 }}
+          item={item}
+          currentUserId={7}
+          onOpenTask={vi.fn()}
+        />
+      )
+      expect(screen.getByTestId('mock-todo-editor')).toHaveAttribute(
+        'data-handling-user',
+        store === 'local' ? '0' : '7'
+      )
+    }
+  )
+
   test('keeps read confirmations in the detail and item list', async () => {
     const unreadItem = { ...item, is_unread: true, content_revision: 1 }
     const api = {

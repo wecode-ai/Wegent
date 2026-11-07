@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { DEFAULT_MODEL_ID } from '../modules/shared.mjs'
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
 import {
@@ -15,6 +16,7 @@ import {
   assistantMessage,
   createSse,
   handleEmptyReplyPrediction,
+  mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
@@ -36,6 +38,7 @@ export const HUMAN_HANDOFF_USER_STORIES = [
   'project-quick-filter-matches-the-current-human',
   'project-work-appears-in-the-global-pending-tab',
   'native-question-is-persistent-and-targeted',
+  'reporting-ai-marks-blocking-without-changing-the-recipient-or-clock',
   'transfer-has-an-exact-handoff-time-and-audit-trail',
   'queued-answer-does-not-complete-the-handoff',
   'accepted-answer-resumes-the-original-thread-exactly-once',
@@ -57,6 +60,10 @@ export function createDesktopScenario({
   captureScreenshot,
 }) {
   let active = false
+  let executionContext
+  let blockingBefore
+  let blockingAfter
+  let listAttempt = 0
   const held = []
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const readQuestions = (control, project, issue) =>
@@ -91,6 +98,26 @@ export function createDesktopScenario({
       }))
     )
     await writeFile(join(resultDir, `${name}.metrics.json`), JSON.stringify(metrics, null, 2))
+  }
+  async function recordPendingRows(control) {
+    const rows = []
+    let selector = scoped('interaction-list-item')
+    while (JSON.parse(await control.command('getElementMetrics', selector)).length) {
+      const id = await control.command('getAttribute', selector, { value: 'data-interaction-id' })
+      assert.ok(id, 'Each pending row must expose its stable interaction identity')
+      rows.push({
+        id,
+        projectIssue: await control.command('getAttribute', selector, {
+          value: 'data-project-issue',
+        }),
+        text: await control.command('getText', selector),
+      })
+      selector += `:not([data-interaction-id=${JSON.stringify(id)}])`
+    }
+    await writeFile(
+      join(resultDir, 'issue-handoff-pending-rows.json'),
+      JSON.stringify(rows, null, 2)
+    )
   }
   async function verifyHeader(control, issueId, kind, name) {
     const header = scoped(`cloud-todo-card-header-${issueId}`)
@@ -135,6 +162,47 @@ export function createDesktopScenario({
       if (!text.includes(MARKER)) return false
       const id = `issue-human-handoff-${Date.now()}`
       if (!text.includes(ANSWER) && requestContainsToolOutput(body, CALL)) {
+        const listCall = `handoff-list-${listAttempt}`
+        if (!blockingBefore && requestContainsToolOutput(body, listCall)) {
+          const listed = JSON.parse(readMcpToolOutput(body, listCall))
+          assert.ok(!listed.error && !listed.isError, JSON.stringify(listed))
+          blockingBefore = listed.items.find(item => item.root_comment_id === executionContext.root)
+          if (!blockingBefore) listAttempt++
+        }
+        if (requestContainsToolOutput(body, 'handoff-mark-blocking')) {
+          blockingAfter = JSON.parse(readMcpToolOutput(body, 'handoff-mark-blocking'))
+          assert.equal(blockingAfter.blocks_progress, true)
+          assert.equal(blockingAfter.recipient_user_id, blockingBefore.recipient_user_id)
+          assert.equal(blockingAfter.waiting_since, blockingBefore.waiting_since)
+        }
+        if (!blockingAfter) {
+          const toolName = blockingBefore ? 'set_human_request_blocking' : 'list_human_requests'
+          const argumentsValue = {
+            space_id: executionContext.project,
+            item_id: executionContext.issue,
+            ...(blockingBefore
+              ? {
+                  request_id: blockingBefore.id,
+                  version: blockingBefore.version,
+                  runtime_device_id: blockingBefore.runtime_device_id,
+                  blocks_progress: true,
+                }
+              : {}),
+          }
+          const toolCallId = blockingBefore
+            ? 'handoff-mark-blocking'
+            : `handoff-list-${listAttempt}`
+          const selected = mcpToolRequestEvents(body, {
+            toolName,
+            argumentsValue,
+            directToolName: `mcp__wework_space__${toolName}`,
+            searchCallId: `${toolCallId}-search`,
+            toolCallId,
+          })
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(createSse([responseCreated(id), ...selected.events, responseCompleted(id)]))
+          return true
+        }
         assert.equal(held.length, 0, 'Independent model work must not be launched twice')
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         const progress = assistantMessage('独立检查仍在进行，依赖发布范围的步骤等待人工答复。')
@@ -197,6 +265,31 @@ export function createDesktopScenario({
           scoped(`cloud-todo-card-header-${ordinaryId}`),
           scoped(`issue-participation-${ordinaryId}`),
         ])
+        const boardSize = await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 480, height: 760 }),
+        })
+        try {
+          await until(
+            async () => JSON.parse(await control.command('getElementMetrics', filter))[0],
+            value => value?.width > 0 && value.viewportWidth <= 480,
+            'The personal project filter must remain visible in a narrow window'
+          )
+          const actor = scoped(`issue-participation-${ordinaryId}`)
+          await control.command('scrollIntoView', actor)
+          await until(
+            async () => JSON.parse(await control.command('getElementMetrics', actor))[0],
+            value => value?.top >= 0 && value.bottom <= value.viewportHeight,
+            'The narrow project screenshot must include the actor, not an offscreen card'
+          )
+          await recordSurface(control, 'issue-handoff-01b-narrow-project-filter', [
+            scoped('cloud-board-toolbar'),
+            filter,
+            scoped(`cloud-todo-card-header-${ordinaryId}`),
+            scoped(`issue-participation-${ordinaryId}`),
+          ])
+        } finally {
+          await control.command('setMainWindowSize', 'body', { value: boardSize })
+        }
         await control.command('clickWhenEnabled', filter)
         await control.command('waitFor', scoped(`cloud-todo-card-${foreign.id}`))
         await openPending(control)
@@ -264,6 +357,7 @@ export function createDesktopScenario({
             metadata: { mentions: [{ type: 'agent', id: agent.id, label: agent.name }] },
           },
         })
+        executionContext = { project: project.id, issue: issue.id, root: root.message_id }
         await rpc(control, 'executions.enqueue', {
           project_id: project.id,
           task_id: issue.id,
@@ -295,12 +389,18 @@ export function createDesktopScenario({
           'Independent model work must remain running',
           modelResponseTimeoutMs
         )
+        const flagged = (await readQuestions(control, project, issue)).items[0]
+        assert.equal(flagged.blocks_progress, true)
+        assert.equal(flagged.recipient_user_id, question.recipient_user_id)
+        assert.equal(flagged.waiting_since, question.waiting_since)
         await reloadMainWindow(control, 'Restore the persisted Issue question')
         await control.command('clickWhenEnabled', '[data-testid="wework-notifications-button"]')
         await control.command('waitFor', '[data-testid="wework-notifications-pending"]', {
           text: QUESTION,
         })
         await control.command('clickWhenEnabled', '[data-testid="wework-notifications-pending"]')
+        await control.command('waitFor', scoped('runtime-interactions-page'))
+        await recordPendingRows(control)
         const surface = `${ACTIVE} [data-testid="issue-human-request-${question.id}"]`
         await control.command('waitFor', surface, { text: QUESTION })
         assert.equal(
@@ -372,6 +472,8 @@ export function createDesktopScenario({
           scoped('runtime-interactions-page'),
           pendingQuestion,
           surface,
+          `${surface} ${testId(`issue-human-request-assignee-${question.id}`)}`,
+          `${surface} ${testId('request-user-input-submit-button')}`,
         ])
         const previousSize = await control.command('setMainWindowSize', 'body', {
           value: JSON.stringify({ width: 480, height: 760 }),

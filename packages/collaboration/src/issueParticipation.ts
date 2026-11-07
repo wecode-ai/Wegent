@@ -37,11 +37,13 @@ export interface IssueHumanRequest {
       | 'cancelled'
       | 'delivery_rejected'
       | 'delivery_uncertain'
+      | 'blocking_changed'
     at: string
     user_id?: number
     from_user_id?: number | null
     to_user_id?: number | null
     message_id?: string
+    blocks_progress?: boolean
   }[]
 }
 

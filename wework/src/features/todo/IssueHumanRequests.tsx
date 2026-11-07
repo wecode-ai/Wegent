@@ -13,6 +13,7 @@ import { issueHumanInteraction } from '@/features/notifications/issueHumanIntera
 import { replyToInteractionProject } from '@/features/notifications/interactionProjectReply'
 import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
 import { IssueWaitingTime } from '@/features/notifications/IssueWaitingTime'
+import { DesktopConversationTranslation } from '@/components/chat/DesktopConversationTranslation'
 
 export function IssueHumanRequests({
   services,
@@ -171,45 +172,47 @@ export function IssueHumanRequests({
                   </span>
                 )}
               </div>
-              <RequestUserInputCard
-                payload={interaction.payload}
-                draftAnswers={interactions ? draftAnswers : undefined}
-                onDraftAnswersChange={answers =>
-                  interactions?.setDraft(
-                    interaction.id,
-                    questionIds.length > 1
-                      ? JSON.stringify(answers)
-                      : (answers[questionIds[0] ?? request.id] ?? '')
-                  )
-                }
-                disabled={
-                  Boolean(error) ||
-                  busy === request.id ||
-                  request.status !== 'pending' ||
-                  request.can_reply === false ||
-                  String(request.recipient_user_id) !== String(userId)
-                }
-                onSubmit={async response => {
-                  setBusy(request.id)
-                  try {
-                    await replyToInteractionProject(
-                      interaction,
-                      requestUserInputResponseText(response),
-                      crypto.randomUUID(),
-                      services,
-                      t('interactions.failed')
+              <DesktopConversationTranslation>
+                <RequestUserInputCard
+                  payload={interaction.payload}
+                  draftAnswers={interactions ? draftAnswers : undefined}
+                  onDraftAnswersChange={answers =>
+                    interactions?.setDraft(
+                      interaction.id,
+                      questionIds.length > 1
+                        ? JSON.stringify(answers)
+                        : (answers[questionIds[0] ?? request.id] ?? '')
                     )
-                    await refresh()
-                    interactions?.setDraft(interaction.id, '')
-                    return true
-                  } catch (cause) {
-                    setError(cause instanceof Error ? cause.message : String(cause))
-                    return false
-                  } finally {
-                    setBusy(undefined)
                   }
-                }}
-              />
+                  disabled={
+                    Boolean(error) ||
+                    busy === request.id ||
+                    request.status !== 'pending' ||
+                    request.can_reply === false ||
+                    String(request.recipient_user_id) !== String(userId)
+                  }
+                  onSubmit={async response => {
+                    setBusy(request.id)
+                    try {
+                      await replyToInteractionProject(
+                        interaction,
+                        requestUserInputResponseText(response),
+                        crypto.randomUUID(),
+                        services,
+                        t('interactions.failed')
+                      )
+                      await refresh()
+                      interactions?.setDraft(interaction.id, '')
+                      return true
+                    } catch (cause) {
+                      setError(cause instanceof Error ? cause.message : String(cause))
+                      return false
+                    } finally {
+                      setBusy(undefined)
+                    }
+                  }}
+                />
+              </DesktopConversationTranslation>
             </div>
           )
         })}

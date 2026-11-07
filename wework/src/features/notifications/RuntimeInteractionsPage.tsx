@@ -344,9 +344,19 @@ export function RuntimeInteractionsPage({
             Object.entries(projectIssues.errors)
               .filter(([, error]) => error)
               .map(([store, error]) => (
-                <p key={store} role="alert" className="px-3 py-2 text-sm text-status-error">
-                  {error}
-                </p>
+                <details key={store} className="px-3 py-2 text-sm text-status-error">
+                  <summary
+                    data-testid={`project-work-error-${store}`}
+                    className="min-h-11 cursor-pointer md:min-h-8"
+                  >
+                    {t(
+                      store.endsWith('local')
+                        ? 'issueParticipation.local_load_failed'
+                        : 'issueParticipation.cloud_load_failed'
+                    )}
+                  </summary>
+                  <p className="mt-2 break-words whitespace-pre-wrap">{error}</p>
+                </details>
               ))}
         </div>
       </section>
@@ -382,10 +392,7 @@ export function RuntimeInteractionsPage({
                 <p className="mt-1 truncate text-sm text-text-secondary" title={row.title}>
                   {row.title}
                 </p>
-                <InteractionTime
-                  timestamp={'timestamp' in row ? row.timestamp : row.answeredAt}
-                  testId="interaction-detail-time"
-                />
+                <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
               </div>
               {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
                 <button

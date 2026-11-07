@@ -2,6 +2,21 @@ import type { IssueHumanRequest } from '@wegent/collaboration'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { interactionId } from './runtimeInteractions'
 
+/** The durable item identity survives native request IDs and device aliases. */
+export function issueQuestionIdentity(item: RuntimeInteraction): string | null {
+  const request = item.sharedRequest
+  const project = item.project
+  const questionId = request?.item_id ?? item.payload.itemId ?? item.payload.item_id
+  if (!project || !questionId) return null
+  return JSON.stringify([
+    project.store,
+    String(project.projectId),
+    project.issueId,
+    request?.runtime_task_id ?? item.task.address.taskId,
+    questionId,
+  ])
+}
+
 /** Shared Issue questions never require access to another member's private runtime. */
 export function issueHumanInteraction(
   request: IssueHumanRequest,

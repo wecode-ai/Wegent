@@ -6107,6 +6107,8 @@
     "start_failed": "讨论暂时未能开始，请在讨论输入框中重新发送。"
   },
   "issueParticipation": {
+    "local_load_failed": "本地项目待办刷新失败，可点击刷新重试，展开查看详情",
+    "cloud_load_failed": "云端项目待办刷新失败，可点击刷新重试，展开查看详情",
     "my_filter": "待我处理",
     "waiting_for": "等待{{name}}处理",
     "project_items": "项目待我处理",
@@ -6120,7 +6122,6 @@
     "delivery_uncertain": "正在核对回答是否送达，请勿重复发送",
     "blocking": "相关步骤等待回答，其他工作继续",
     "waiting": "等人处理",
-    "unassigned": "待分派",
     "assign": "分派给具体的人",
     "delivering": "回答已保存，等待 AI 接收"
   },

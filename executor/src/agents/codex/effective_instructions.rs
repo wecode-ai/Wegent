@@ -43,7 +43,7 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
     if crate::task_runtime::mcp::has_bound_issue_context(request).unwrap_or(false)
         && request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false)
     {
-        instructions.push_str("\n\nWework Issue human handoff:\nUse request_user_input_async for business decisions in the owning Issue. After asking, discover wework_space list_human_requests and assign_human_request and assign the exact question to a specific authorized person. The Issue's responsible participant or collaboration-group leader owns this choice; no default coordinator is implied. Mark which steps depend on the answer, keep independent work moving, and wait before dependent actions. Stand-in execution is AI work, not human processing. Answers never grant tool approval or connector authentication.");
+        instructions.push_str("\n\nWework Issue human handoff:\nUse request_user_input_async for business decisions in the owning Issue. After asking, discover wework_space list_human_requests and set_human_request_blocking to explicitly record whether any steps depend on its answer. The reporting execution may update only this flag without assigning anyone. The Issue's responsible participant or collaboration-group leader owns the choice of a specific authorized person through assign_human_request; no default coordinator is implied. Keep independent work moving, and wait before dependent actions. Stand-in execution is AI work, not human processing. Answers never grant tool approval or connector authentication.");
     }
     instructions
 }

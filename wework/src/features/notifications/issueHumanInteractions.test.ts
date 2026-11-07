@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { IssueHumanRequest } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { issueHumanInteraction } from './issueHumanInteractions'
+import { issueHumanInteraction, issueQuestionIdentity } from './issueHumanInteractions'
 import { canReplyToInteraction } from './runtimeInteractions'
 import { replyToInteractionProject } from './interactionProjectReply'
 
@@ -24,6 +24,23 @@ const request: IssueHumanRequest = {
 }
 
 describe('shared Issue handoff', () => {
+  it('matches durable questions despite a native request ID or local device alias', () => {
+    const canonical = issueHumanInteraction(request, 'backend')
+    const native = {
+      ...canonical,
+      sharedRequest: undefined,
+      id: 'native-request-id',
+      task: { ...canonical.task, address: { ...canonical.task.address, deviceId: 'local' } },
+      payload: { ...canonical.payload, requestId: 91 },
+    }
+    expect(issueQuestionIdentity(native)).toBe(issueQuestionIdentity(canonical))
+    expect(
+      issueQuestionIdentity({ ...native, payload: { ...native.payload, itemId: 'another' } })
+    ).not.toBe(issueQuestionIdentity(canonical))
+    expect(
+      issueQuestionIdentity({ ...native, project: { ...native.project!, store: 'local' } })
+    ).not.toBe(issueQuestionIdentity(canonical))
+  })
   it('preserves the structured native questions and suggested answers', () => {
     const questions = [
       { id: 'native-scope', question: 'Scope?', options: [{ label: 'Internal' }], is_other: true },

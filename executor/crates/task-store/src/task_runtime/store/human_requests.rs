@@ -130,6 +130,49 @@ impl LocalTaskStore {
         Ok(request)
     }
 
+    pub fn set_issue_human_request_blocking(
+        &self,
+        project: &str,
+        issue: &str,
+        request: &str,
+        version: i64,
+        device: &str,
+        task: &str,
+        blocks_progress: bool,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let row = get_item_from(&tx, issue, "task")?
+            .filter(|row| row.cloud_project_id.as_deref() == Some(project))
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        require_open(&row)?;
+        let mut metadata = row.metadata;
+        let target = metadata["human_requests"]
+            .as_array_mut()
+            .and_then(|all| all.iter_mut().find(|target| target["id"] == request))
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        if target["runtime_device_id"] != device || target["runtime_task_id"] != task {
+            return Err(TaskRuntimeError::Invalid(
+                "Question belongs to another execution".into(),
+            ));
+        }
+        if target["status"] != "pending" || target["version"].as_i64() != Some(version) {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        let at = now();
+        target["blocks_progress"] = json!(blocks_progress);
+        target["version"] = json!(version + 1);
+        target["updated_at"] = json!(at);
+        record_event(
+            target,
+            json!({"type":"blocking_changed","at":at,"blocks_progress":blocks_progress}),
+        );
+        let saved = target.clone();
+        save_metadata(&tx, issue, &metadata)?;
+        tx.commit()?;
+        Ok(saved)
+    }
+
     pub fn list_issue_human_requests(
         &self,
         project: &str,
@@ -425,6 +468,75 @@ mod tests {
             })
             .unwrap();
         (directory, store, project, issue, root)
+    }
+
+    #[test]
+    fn human_request_blocking_changes_preserve_the_handoff_and_reject_other_executions() {
+        let (_directory, store, project, issue, _) = fixture();
+        let question = store
+            .report_issue_human_request(
+                &project.id,
+                &issue.id,
+                "device",
+                "runtime",
+                "flag",
+                "Choose scope",
+                &[],
+            )
+            .unwrap();
+        let id = question["id"].as_str().unwrap();
+        for (device, task) in [("other", "runtime"), ("device", "other")] {
+            assert!(store
+                .set_issue_human_request_blocking(&project.id, &issue.id, id, 1, device, task, true)
+                .is_err());
+        }
+        let changed = store
+            .set_issue_human_request_blocking(
+                &project.id,
+                &issue.id,
+                id,
+                1,
+                "device",
+                "runtime",
+                true,
+            )
+            .unwrap();
+        assert_eq!(changed["blocks_progress"], true);
+        assert_eq!(changed["version"], 2);
+        for key in [
+            "waiting_since",
+            "recipient_user_id",
+            "responsible_user_id",
+            "status",
+            "root_comment_id",
+        ] {
+            assert_eq!(changed[key], question[key]);
+        }
+        assert_eq!(changed["events"][1]["type"], "blocking_changed");
+        assert!(store
+            .set_issue_human_request_blocking(
+                &project.id,
+                &issue.id,
+                id,
+                1,
+                "device",
+                "runtime",
+                false
+            )
+            .is_err());
+        let cleared = store
+            .set_issue_human_request_blocking(
+                &project.id,
+                &issue.id,
+                id,
+                2,
+                "device",
+                "runtime",
+                false,
+            )
+            .unwrap();
+        assert_eq!(cleared["blocks_progress"], false);
+        assert_eq!(cleared["waiting_since"], question["waiting_since"]);
     }
 
     #[test]

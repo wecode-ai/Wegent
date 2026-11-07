@@ -17,6 +17,8 @@ import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowF
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
+import { useIssueHumanInteractions } from './useIssueHumanInteractions'
+import { issueHumanInteraction, issueQuestionIdentity } from './issueHumanInteractions'
 import {
   interactionResponse,
   interactionId,
@@ -429,7 +431,12 @@ function RuntimeInteractionsState({
                     (shared.recipient_user_id === null && shared.responsible_user_id === user)
                   requests = requests.filter(request => request !== question)
                   if (addressed && ['pending', 'answering'].includes(shared.status))
-                    requests.push({ ...question, sharedRequest: shared, answered: false })
+                    requests.push({
+                      ...question,
+                      id: issueHumanInteraction(shared, project.store).id,
+                      sharedRequest: shared,
+                      answered: false,
+                    })
                 }
                 if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
                 successfulReads.current.set(item.key, {
@@ -530,9 +537,21 @@ function RuntimeInteractionsState({
       })
       .sort((a, b) => b.createdAt - a.createdAt)
     const shared = new Set(issueInteractions.items.map(item => item.id))
-    return [...runtime.filter(item => !shared.has(item.id)), ...issueInteractions.items].sort(
-      (a, b) => b.createdAt - a.createdAt
+    const sharedQuestions = new Set(
+      issueInteractions.items.map(issueQuestionIdentity).filter(Boolean)
     )
+    const sharedItems = issueInteractions.items.map(item => {
+      const identity = issueQuestionIdentity(item)
+      const native =
+        identity && runtime.find(candidate => issueQuestionIdentity(candidate) === identity)
+      return native ? { ...item, source: native.source, task: native.task } : item
+    })
+    return [
+      ...runtime.filter(
+        item => !shared.has(item.id) && !sharedQuestions.has(issueQuestionIdentity(item))
+      ),
+      ...sharedItems,
+    ].sort((a, b) => b.createdAt - a.createdAt)
   }, [
     acceptancePrefix,
     errors,
@@ -924,4 +943,3 @@ function RuntimeInteractionsState({
     <TransientNotice message={replyNotice} tone="success" onClear={() => setReplyNotice(null)} />
   )
 }
-import { useIssueHumanInteractions } from './useIssueHumanInteractions'

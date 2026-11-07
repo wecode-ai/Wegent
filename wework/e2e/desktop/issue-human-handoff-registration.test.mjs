@@ -18,6 +18,7 @@ test('the native Issue handoff scenario is discoverable and runs in core CI', ()
     'project-quick-filter-matches-the-current-human',
     'project-work-appears-in-the-global-pending-tab',
     'native-question-is-persistent-and-targeted',
+    'reporting-ai-marks-blocking-without-changing-the-recipient-or-clock',
     'transfer-has-an-exact-handoff-time-and-audit-trail',
     'queued-answer-does-not-complete-the-handoff',
     'accepted-answer-resumes-the-original-thread-exactly-once',

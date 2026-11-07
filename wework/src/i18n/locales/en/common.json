@@ -6112,6 +6112,8 @@
     "start_failed": "The discussion could not start. Please send the message again in the discussion."
   },
   "issueParticipation": {
+    "local_load_failed": "Local project work could not be refreshed. Use Refresh to retry; expand for details.",
+    "cloud_load_failed": "Cloud project work could not be refreshed. Use Refresh to retry; expand for details.",
     "my_filter": "Needs my input",
     "waiting_for": "Waiting for {{name}}",
     "project_items": "Project work needing you",
@@ -6125,7 +6127,6 @@
     "delivery_uncertain": "Checking answer delivery. Do not send it again.",
     "blocking": "Dependent steps wait; independent work continues",
     "waiting": "Needs human input",
-    "unassigned": "Awaiting assignment",
     "assign": "Assign to a person",
     "delivering": "Answer saved, awaiting AI acceptance"
   },

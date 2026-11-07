@@ -1253,6 +1253,29 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
+        "set_human_request_blocking" => {
+            let result = (|| {
+                let project = string_argument(&arguments, "space_id")?;
+                let issue = string_argument(&arguments, "item_id")?;
+                let request = string_argument(&arguments, "request_id")?;
+                let device = string_argument(&arguments, "runtime_device_id")?;
+                let task = human_request_runtime_task_id(grant)
+                    .map_err(super::TaskRuntimeError::Invalid)?;
+                let blocks = arguments["blocks_progress"].as_bool().ok_or_else(|| {
+                    super::TaskRuntimeError::Invalid("blocks_progress must be boolean".into())
+                })?;
+                runtime.stand_in_store().set_issue_human_request_blocking(
+                    project,
+                    issue,
+                    request,
+                    arguments["version"].as_i64().unwrap_or(0),
+                    device,
+                    task,
+                    blocks,
+                )
+            })();
+            result
+        }
         "assign_human_request" => {
             match (
                 string_argument(&arguments, "space_id"),
@@ -1851,6 +1874,13 @@ fn manager_runtime_task_id(grant: Option<&SpaceContextGrant>) -> Result<&str, St
         .ok_or_else(|| "Collaboration manager Runtime task identity is missing".to_owned())
 }
 
+fn human_request_runtime_task_id(grant: Option<&SpaceContextGrant>) -> Result<&str, String> {
+    grant
+        .map(|grant| grant.task_id.as_str())
+        .filter(|task_id| !task_id.trim().is_empty())
+        .ok_or_else(|| "Question reporting Runtime task identity is missing".to_owned())
+}
+
 fn normalize_issue_status_decision(
     arguments: &Value,
     grant: Option<&SpaceContextGrant>,
@@ -2228,6 +2258,7 @@ async fn call_backend_tool(
             .patch(format!("{base}/loop-items/{}", encode_segment(task_id()?)))
             .json(arguments.get("item").unwrap_or(arguments)),
         "list_human_requests" => client.get(format!("{base}/loop-items/{}/human-requests",encode_segment(task_id()?))),
+        "set_human_request_blocking" => client.put(format!("{base}/loop-items/{}/human-requests/{}",encode_segment(task_id()?),encode_segment(arguments["request_id"].as_str().ok_or("request_id is required")?))).json(&json!({"operation":"set_blocking","version":arguments["version"],"blocks_progress":arguments["blocks_progress"],"runtime_device_id":arguments["runtime_device_id"],"runtime_task_id":human_request_runtime_task_id(grant)?})),
         "assign_human_request" => client.put(format!("{base}/loop-items/{}/human-requests/{}",encode_segment(task_id()?),encode_segment(arguments["request_id"].as_str().ok_or("request_id is required")?))).json(&json!({"version":arguments["version"],"recipient_user_id":arguments["recipient_user_id"],"blocks_progress":arguments["blocks_progress"]})),
         "list_board_item_comments" => client
             .get(format!(
@@ -2920,6 +2951,7 @@ fn tools() -> Vec<Value> {
     vec![
         human_requests::list_tool(),
         human_requests::assign_tool(),
+        human_requests::blocking_tool(),
         tool(
             "submit_workflow_plan",
             "For a manager-bound Issue, first read get_board_item and get_assignment_candidates, then submit exactly one concurrent batch. Assign each item to a non-leader group agent or human member; the leader only coordinates and cannot execute an item. Use this tool instead of Codex subagents or doing member work yourself. For an agent with multiple models, choose one allowed model_id. Agent items start independent Executor runs; human items wait for delivery. End the manager turn after submitting. The Executor starts a fresh manager run after the batch finishes.",
@@ -3557,7 +3589,10 @@ fn grant_allows(grant: Option<&SpaceContextGrant>, category: BoardToolCategory) 
 }
 
 fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
-    if matches!(name, "list_human_requests" | "assign_human_request") {
+    if matches!(
+        name,
+        "list_human_requests" | "assign_human_request" | "set_human_request_blocking"
+    ) {
         return Some(BoardToolCategory::Execution);
     }
     match name {
@@ -3754,6 +3789,29 @@ mod tests {
             categories: role_categories(role).iter().copied().collect(),
             ..SpaceContextGrant::default()
         }
+    }
+
+    #[test]
+    fn human_request_blocking_uses_the_bound_execution_without_manager_authority() {
+        assert!(human_request_runtime_task_id(None).is_err());
+        assert!(human_request_runtime_task_id(Some(&SpaceContextGrant::default())).is_err());
+        let grant = SpaceContextGrant {
+            task_id: "original-execution".into(),
+            ..role_grant(SpaceContextRole::Executor)
+        };
+        assert_eq!(
+            human_request_runtime_task_id(Some(&grant)).unwrap(),
+            "original-execution"
+        );
+        assert!(manager_runtime_task_id(Some(&grant)).is_err());
+        assert_eq!(
+            board_tool_category("set_human_request_blocking"),
+            Some(BoardToolCategory::Execution)
+        );
+        let schema = human_requests::blocking_tool();
+        assert!(schema["inputSchema"]["properties"]
+            .get("recipient_user_id")
+            .is_none());
     }
 
     #[test]

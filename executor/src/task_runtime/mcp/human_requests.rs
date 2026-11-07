@@ -20,3 +20,14 @@ pub(super) fn assign_tool() -> Value {
         }, "required":["request_id","version","recipient_user_id","recipient_name"]
     }))
 }
+
+pub(super) fn blocking_tool() -> Value {
+    tool("set_human_request_blocking", "Explicitly mark whether steps in your original Issue execution depend on this question. Read list_human_requests for its ID, version and runtime_device_id. This never assigns a person or resets waiting time. Keep independent work moving; wait before dependent actions. Only the reporting execution may change this flag.", json!({
+        "type":"object", "properties":{
+            "space_id":{"type":"string"}, "item_id":{"type":"string"},
+            "request_id":{"type":"string"}, "version":{"type":"integer","minimum":1},
+            "runtime_device_id":{"type":"string","minLength":1},
+            "blocks_progress":{"type":"boolean"}
+        }, "required":["request_id","version","runtime_device_id","blocks_progress"]
+    }))
+}

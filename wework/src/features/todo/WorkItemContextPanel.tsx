@@ -104,7 +104,9 @@ export function WorkItemContextPanel({
           projectChatAgentApi={detailServices?.projectChatAgentApi}
           teamApi={detailServices?.teamApi}
           selfManagedExecution={project.project_store === 'local'}
-          currentUserId={project.current_user_id ?? currentUserId}
+          currentUserId={
+            project.project_store === 'local' ? 0 : (project.current_user_id ?? currentUserId)
+          }
           localProjects={localProjects}
           item={currentItem}
           project={project}
