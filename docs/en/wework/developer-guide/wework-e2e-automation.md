@@ -398,6 +398,9 @@ frequently spawning `ps`. The streaming-activity Redis CI step uses 100ms
 resource samples and server command arrival times without arguments or values.
 Its 200ms test timeout and assertions remain unchanged; successful samples do
 not prove that a historical timeout has been fixed.
+MONITOR readiness has a separate five-second bound. Capture continues until the
+test exits and the filtering pipe drains. The initial `OK` indicates readiness
+only; a successful test must also have captured actual commands.
 `[desktop-e2e-schedule]` logs list active checkpoints and actual concurrency on
 each start and completion, making overlap visible independently of the configured
 worker limit. Compare shard durations and these metrics after increasing

@@ -238,19 +238,12 @@ jobs:
           RUNNER_RESOURCE_LOG_PATH: ../.ci-artifacts/backend-rs-tests/streaming-activity-resources.jsonl
           RUNNER_PROCESS_DIAGNOSTICS: "1"
           RUNNER_RESOURCE_SAMPLE_INTERVAL_MS: "100"
+          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
         run: |
           set -o pipefail
-          # Record command arrival times, never Redis arguments or values.
-          timeout 15s docker exec '${{ job.services.redis.id }}' redis-cli MONITOR |
-            awk '{ print $1, $2, $3, $4; fflush() }' \
-            > ../.ci-artifacts/backend-rs-tests/streaming-activity-redis-arrivals.log &
-          monitor_pid=$!
-          trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
-          until [ -s ../.ci-artifacts/backend-rs-tests/streaming-activity-redis-arrivals.log ]; do
-            kill -0 "$monitor_pid"
-            sleep 0.1
-          done
-          node ../.github/scripts/run-with-resource-logging.mjs \
+          bash ../.github/scripts/run-with-redis-monitor.sh "$REDIS_CONTAINER_ID" \
+            ../.ci-artifacts/backend-rs-tests/streaming-activity-redis-arrivals.log \
+            node ../.github/scripts/run-with-resource-logging.mjs \
             cargo test --locked --lib streaming_activity_redis_tests -- --ignored --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/streaming-activity-redis.log
 

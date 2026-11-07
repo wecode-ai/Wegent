@@ -186,7 +186,7 @@ jobs:
         run: bash .github/scripts/test-wework-core-e2e-runtimes.sh
 
       - name: Test CI resource logging
-        run: node --test .github/scripts/run-with-resource-logging.test.mjs
+        run: node --test .github/scripts/run-with-resource-logging.test.mjs .github/scripts/redis-monitor.test.mjs
 
       - name: Test AI push gate
         run: scripts/hooks/test-ai-push-gate.sh
