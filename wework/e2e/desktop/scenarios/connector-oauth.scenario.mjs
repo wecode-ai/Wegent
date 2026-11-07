@@ -142,7 +142,9 @@ export function createDesktopScenario({
             'The authorized local MCP call must return the upstream success marker'
           )
           writeReply(response, `connector-oauth-tool-${replySequence}`, TOOL_COMPLETION)
-        } else {
+          return true
+        }
+        if (requestContainsToolOutput(body, `${TOOL_CALL_ID}-search`)) {
           const responseId = `connector-oauth-tool-${replySequence}`
           response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
           response.end(
@@ -158,8 +160,8 @@ export function createDesktopScenario({
               responseCompleted(responseId),
             ])
           )
+          return true
         }
-        return true
       }
       if (isResumeRequest(body)) {
         // Ordering evidence: by the time the blocked step resumes, the backend
