@@ -438,6 +438,25 @@ function syntheticChatGptAuth() {
   }
 }
 
+async function assertRuntimeComposerPlugin(control, workspacePath, pluginName) {
+  const catalog = await requestExecutor(
+    control,
+    'runtime.composer.catalog.read',
+    { scope: 'workspace', workspacePath, forceRefresh: true },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.equal(catalog.scope, 'workspace')
+  assert.equal(catalog.workspacePath, workspacePath)
+  const installed = [
+    ...catalog.store.plugins,
+    ...catalog.marketplaces.flatMap(marketplace => marketplace.plugins),
+  ]
+  assert.ok(
+    installed.some(plugin => plugin.name === pluginName && plugin.enabled !== false),
+    'The addressed composer catalog lost its enabled local plugin'
+  )
+}
+
 async function verifyComposerPluginNetworkIsolation({
   blockingNetworkProxy,
   codexHome,
@@ -485,6 +504,8 @@ async function verifyComposerPluginNetworkIsolation({
   )
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
 
+  let directoryRequest
+  let directorySettled = false
   try {
     // Restart to clear the renderer's in-memory plugin inventory. The installed
     // package remains in the isolated real Codex home, while every external
@@ -494,9 +515,21 @@ async function verifyComposerPluginNetworkIsolation({
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await openComposerPluginPicker(control)
-
-    const pluginName = 'composer-network-isolation-plugin'
+    // Addressed composer catalogs intentionally do not call app/list. Start the
+    // real discovery request explicitly before checking local UI independence.
+    directoryRequest = requestExecutor(
+      control,
+      'codex.app_server_request',
+      { method: 'app/list', params: { cursor: null, limit: 100, forceRefetch: true } },
+      45_000
+    ).then(
+      () => {
+        directorySettled = true
+      },
+      () => {
+        directorySettled = true
+      }
+    )
     const blockedRequest = await waitForBlockedChatGptRequest(
       blockingNetworkProxy,
       blockedRequestCount
@@ -507,6 +540,8 @@ async function verifyComposerPluginNetworkIsolation({
       'The held external request was not the ChatGPT app directory request'
     )
 
+    await openComposerPluginPicker(control)
+    const pluginName = 'composer-network-isolation-plugin'
     const itemTestId = `composer-plugin-picker-item-plugin:${pluginName}`
     try {
       await waitForSnapshot(
@@ -526,21 +561,8 @@ async function verifyComposerPluginNetworkIsolation({
         `${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}`
       )
     }
-    const inventoryDiagnostics = JSON.parse(
-      await control.command('getComposerPluginInventoryDiagnostics', 'body', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-    )
-    assert.ok(
-      inventoryDiagnostics.composerApps.some(app => app.id === `plugin:${pluginName}`),
-      `The rendered plugin was missing from composer memory; diagnostics=${JSON.stringify(inventoryDiagnostics)}`
-    )
-    assert.ok(
-      inventoryDiagnostics.sharedInventory.installedPlugins.some(
-        plugin => plugin.pluginKey === pluginName && plugin.enabled
-      ),
-      'The composer rendered an installed plugin absent from the shared inventory'
-    )
+    assert.equal(directorySettled, false, 'Local plugins must render while discovery is pending')
+    await assertRuntimeComposerPlugin(control, workspacePath, pluginName)
     await captureVerificationScreenshot(
       control,
       'plugins-00-composer-network-isolation.png',
@@ -594,21 +616,15 @@ async function verifyComposerPluginNetworkIsolation({
     )
     assert.ok(catalogError.length < 500, 'Catalog error exposed a raw response body')
     assert.doesNotMatch(catalogError, /<html|<svg|<style/i)
-    const settled = JSON.parse(
-      await control.command('getComposerPluginInventoryDiagnostics', 'body')
-    )
-    assert.ok(
-      settled.sharedInventory.installedPlugins.some(
-        plugin => plugin.pluginKey === pluginName && plugin.enabled
-      ),
-      'Remote retry timeout discarded local membership'
-    )
-    assert.ok(
-      settled.composerApps.some(app => app.id === 'plugin:' + pluginName),
-      'Remote retry timeout discarded the composer plugin'
-    )
+    await assertRuntimeComposerPlugin(control, workspacePath, pluginName)
+    await control.command('navigate', 'body', { value: '/' })
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+    await openComposerPluginPicker(control)
+    await control.command('waitFor', `[data-testid="${itemTestId}"]`)
+    await closeComposerPluginPicker(control)
   } finally {
     blockingNetworkProxy.release()
+    await directoryRequest
     await control.command('setLocalProxyUrl', 'body', { value: '' })
     await rm(join(codexHome, 'auth.json'), { force: true })
     await control.command('deleteLocalPluginPackage', 'body', {
