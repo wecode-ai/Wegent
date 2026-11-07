@@ -773,6 +773,9 @@ export function createDesktopScenario({
       await captureScreenshot(control, '07-accepted-response-clears-pending.png')
       await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: issueFixture ? 1 : 0 })
       await control.command('click', `${page} [data-testid="interactions-history"]`)
+      await control.command('waitFor', `${page} [data-testid="interactions-history-count"]`, {
+        visible: true,
+      })
       await control.command('waitFor', page, { text: QUESTION })
       const handledTime = await verifyInteractionTime(control, page)
       assert.ok(Date.parse(handledTime) >= Date.parse(questionTime))
