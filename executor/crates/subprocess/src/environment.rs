@@ -630,13 +630,11 @@ mod tests {
     #[cfg(unix)]
     fn login_shell_fixture(directory: &std::path::Path) -> PathBuf {
         let script_path = directory.join("shell");
+        let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = fixture_root.join("tests/fixtures/login-shell.sh");
         // A parallel fork can inherit a freshly written executable's writer (ETXTBSY).
-        std::os::unix::fs::symlink(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/login-shell.sh"),
-            &script_path,
-        )
-        .expect("login shell fixture should be linked");
+        std::os::unix::fs::symlink(fixture_path, &script_path)
+            .expect("login shell fixture should be linked");
         script_path
     }
 
