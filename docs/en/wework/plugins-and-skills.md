@@ -214,7 +214,7 @@ In **Applications → Mini Programs**, a row offers **View QR code** and copy-li
 
 ### Add a custom plugin marketplace
 
-Open **left sidebar → Plugins → Create → Add plugin marketplace**. Enter a GitHub shorthand, HTTPS/SSH Git URL or local directory as **Source**. Optionally set **Git ref** (otherwise the main branch) and **Sparse path**, then select **Add marketplace**. Leave optional fields empty unless you need a particular revision or subdirectory.
+Open **left sidebar → Plugins → Create → Add plugin marketplace**. Enter a GitHub shorthand, HTTPS/SSH Git URL or local directory as **Source**. Optionally set **Git reference** (otherwise the main branch) and **Sparse path** (currently also displayed as **稀疏路径**), then select **Add marketplace**. Leave optional fields empty unless you need a particular revision or subdirectory.
 
 Correct validation errors in the form; Cancel/Close adds nothing. Adding a source does not install every plugin in it. Still review contents, trust prompts and execution device before installation. Private repositories use that device's native authentication; do not paste access tokens into the source field.
 
