@@ -50,20 +50,30 @@ const measuredLoad = shard =>
 test('an unmeasured checkpoint stays put without pinning unrelated measured work', () => {
   const matrix = {
     include: [
+      {
+        id: 'core-3',
+        segments:
+          'dots-closed-loops,application-menu,cloud-context-resilience,background-terminals',
+      },
+      { id: 'core-1', segments: 'send-key-preference' },
+    ],
+  }
+  const balanced = balanceWindowsMatrix(matrix)
+  const retained = balanced.include.find(shard => shard.id === 'core-3').segments.split(',')
+  assert.ok(retained.includes('dots-closed-loops'))
+  assert.ok(!retained.includes('background-terminals'))
+  assert.deepEqual(segments(balanced).sort(), segments(matrix).sort())
+  assert.equal(balanced.include.length, matrix.include.length)
+})
+
+test('retains measured work when evacuation would increase the known peak', () => {
+  const matrix = {
+    include: [
       { id: 'core-3', segments: 'dots-closed-loops,application-menu' },
       { id: 'core-1', segments: 'background-terminals' },
     ],
   }
-  const balanced = balanceWindowsMatrix(matrix)
-  assert.deepEqual(
-    balanced.include.find(shard => shard.id === 'core-3'),
-    {
-      id: 'core-3',
-      segments: 'dots-closed-loops',
-    }
-  )
-  assert.deepEqual(segments(balanced).sort(), segments(matrix).sort())
-  assert.equal(balanced.include.length, matrix.include.length)
+  assert.deepEqual(balanceWindowsMatrix(matrix), matrix)
 })
 
 test('the measured fixture contains every real measured checkpoint exactly once', () => {
@@ -97,14 +107,14 @@ test('previously frozen Windows shards can use their successful checkpoint measu
     shard => shard.id === 'core-3'
   )
   if (productionShard.segments.split(',').some(segment => checkpointSeconds(segment) === null)) {
-    assert.deepEqual(
-      balancedProductionShard.segments.split(',').sort(),
-      productionShard.segments
-        .split(',')
+    const originalSegments = productionShard.segments.split(',')
+    const retained = balancedProductionShard.segments.split(',')
+    assert.ok(
+      originalSegments
         .filter(segment => checkpointSeconds(segment) === null)
-        .sort(),
-      'Unknown checkpoints must retain their runner without freezing measured siblings'
+        .every(segment => retained.includes(segment))
     )
+    assert.ok(retained.every(segment => originalSegments.includes(segment)))
   } else {
     assert.notDeepEqual(
       balancedProductionShard,
@@ -151,16 +161,9 @@ test('unmeasured checkpoints retain their original shard and partial selection n
     for (const segment of shard.segments.split(',')) {
       if (checkpointSeconds(segment) !== null) continue
       const result = balanced
-      assert.deepEqual(
-        result.include
-          .find(entry => entry.id === shard.id)
-          .segments.split(',')
-          .sort(),
-        shard.segments
-          .split(',')
-          .filter(segment => checkpointSeconds(segment) === null)
-          .sort()
-      )
+      const retained = result.include.find(entry => entry.id === shard.id).segments.split(',')
+      assert.ok(retained.includes(segment))
+      assert.ok(retained.every(value => shard.segments.split(',').includes(value)))
     }
     const partial = { include: [shard] }
     const result = balanceWindowsMatrix(partial)
@@ -183,6 +186,43 @@ test('unknown preparation members keep their shared preparation group on its ori
     'background-terminals': 80,
   })
   assert.deepEqual(balanced, matrix)
+})
+
+test('additional unmeasured checkpoints cannot raise known peaks or receive new siblings', () => {
+  const measured = JSON.parse(
+    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+  ).seconds
+  for (const missing of [
+    ['window-lifecycle'],
+    ['model-settings', 'browser-toolbar-actions'],
+    ['stand-in', 'application-menu', 'streaming-content'],
+  ]) {
+    const seconds = { ...measured }
+    for (const segment of missing) delete seconds[segment]
+    const balanced = balanceWindowsMatrix(completeMatrix, seconds)
+    const load = shard =>
+      shard.segments
+        .split(',')
+        .reduce((total, segment) => total + (checkpointSeconds(segment, seconds) ?? 0), 0)
+    const ordinary = matrix =>
+      matrix.include.filter(shard => !['core-9', 'core-10'].includes(shard.id))
+    assert.ok(
+      Math.max(...ordinary(balanced).map(load)) <= Math.max(...ordinary(completeMatrix).map(load))
+    )
+    assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
+    assert.equal(balanced.include.length, completeMatrix.include.length)
+    for (const shard of completeMatrix.include) {
+      const originalSegments = shard.segments.split(',')
+      if (originalSegments.every(segment => checkpointSeconds(segment, seconds) !== null)) continue
+      const retained = balanced.include.find(entry => entry.id === shard.id).segments.split(',')
+      assert.ok(retained.every(segment => originalSegments.includes(segment)))
+      for (const segment of originalSegments.filter(
+        segment => checkpointSeconds(segment, seconds) === null
+      )) {
+        assert.ok(retained.includes(segment))
+      }
+    }
+  }
 })
 
 test('duplicate selection is rejected rather than silently losing coverage', () => {

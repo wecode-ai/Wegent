@@ -41,6 +41,52 @@ export function checkpointSeconds(segment, seconds = measurements.seconds) {
   return checkpoints.reduce((total, checkpoint) => total + seconds[checkpoint], 0)
 }
 
+function assignTask(shard, task) {
+  shard.segments.push(...task.segments)
+  shard.seconds += task.seconds
+}
+
+function leastLoaded(shards) {
+  return shards.reduce((best, shard) => (shard.seconds < best.seconds ? shard : best))
+}
+
+function balanceMeasuredWork(shards, ordinary, unmeasured, checkpoints) {
+  const origins = new Map(checkpoints.map(checkpoint => [checkpoint.segment, checkpoint.origin]))
+  const durations = new Map(checkpoints.map(checkpoint => [checkpoint.segment, checkpoint.seconds]))
+  const retained = []
+  for (const task of preparationTasks(checkpoints)) {
+    const source = shards.find(
+      shard =>
+        unmeasured.has(shard.id) &&
+        task.segments.every(segment => origins.get(segment) === shard.id)
+    )
+    if (source) {
+      assignTask(source, task)
+      retained.push({ source, task })
+    } else {
+      assignTask(leastLoaded(ordinary), task)
+    }
+  }
+  const active = [...new Set([...ordinary, ...retained.map(entry => entry.source)])]
+  const knownLoad = shard =>
+    shard.segments.reduce((total, segment) => total + (durations.get(segment) ?? 0), 0)
+  retained.sort((a, b) => b.source.seconds - a.source.seconds || b.task.seconds - a.task.seconds)
+  for (const { source, task } of retained) {
+    const target = leastLoaded(ordinary)
+    const knownCost = task.segments.reduce((total, segment) => total + durations.get(segment), 0)
+    // Unknown costs are not estimated. Only move original measured work away,
+    // without raising either known checkpoint or preparation-inclusive peaks.
+    if (
+      target.seconds + task.seconds > Math.max(...active.map(shard => shard.seconds)) ||
+      knownLoad(target) + knownCost > Math.max(...active.map(knownLoad))
+    )
+      continue
+    source.segments = source.segments.filter(segment => !task.segments.includes(segment))
+    source.seconds -= task.seconds
+    assignTask(target, task)
+  }
+}
+
 export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
   // Preserve the two exclusive benchmark shards and the existing runner budget.
   const fixed = new Set(['core-9', 'core-10'])
@@ -60,7 +106,7 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
     segments: [],
     seconds: 0,
   }))
-  // Never add measured work to a shard whose remaining cost is unknown.
+  // Never add new measured work to a shard whose remaining cost is unknown.
   const ordinary = shards.filter(entry => !fixed.has(entry.id) && !unmeasured.has(entry.id))
   if (!ordinary.length) {
     // A partial selection with no measured destination retains its original work.
@@ -77,15 +123,11 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
         shards[index].segments.push(segment)
         shards[index].seconds += duration ?? 0
       } else {
-        pending.push({ segment, seconds: duration })
+        pending.push({ segment, seconds: duration, origin: entry.id })
       }
     }
   }
-  for (const task of preparationTasks(pending)) {
-    const target = ordinary.reduce((best, shard) => (shard.seconds < best.seconds ? shard : best))
-    target.segments.push(...task.segments)
-    target.seconds += task.seconds
-  }
+  balanceMeasuredWork(shards, ordinary, unmeasured, pending)
   return {
     include: shards
       .filter(shard => shard.segments.length)

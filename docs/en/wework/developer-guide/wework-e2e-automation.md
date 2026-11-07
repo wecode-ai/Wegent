@@ -216,7 +216,7 @@ matrix, bounded by assignable checkpoints; selections without the history checkp
 retain their original matrix. The two Core benchmarks keep dedicated runners.
 Cloud uses 8 shards.
 
-Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving measured work or pinning unrelated measured siblings. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
+Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
 
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
