@@ -7,17 +7,14 @@ export function startStartupMaintenance(name: string, task: () => unknown): void
     })
 }
 
-/** Bound each handoff phase without charging native preparation to the fade. */
-export async function finishStartupHandoffPhase<T>(
-  phase: string,
-  task: () => Promise<T>
-): Promise<T> {
+/** Animation may decorate startup, but cannot hold a ready window indefinitely. */
+export async function finishStartupAnimation<T>(task: () => Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       Promise.resolve().then(task),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`Startup ${phase} exceeded 1500ms`)), 1500)
+        timer = setTimeout(() => reject(new Error('Startup animation exceeded 1500ms')), 1500)
       }),
     ])
   } finally {

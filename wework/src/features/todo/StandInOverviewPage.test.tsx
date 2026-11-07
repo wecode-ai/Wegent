@@ -133,6 +133,22 @@ async function openRoles() {
   expect(selector).toBeVisible()
 }
 
+it('places instance lifecycle actions at the right end of the role header outside the scrolling tabs', async () => {
+  const { props } = fixture()
+  render(
+    <StandInOverviewPage
+      {...props}
+      headerActions={<button data-testid="instance-stop-fixture">停止分身</button>}
+    />
+  )
+  await openRoles()
+  const picker = screen.getByTestId('instance-stop-fixture')
+  const header = screen.getByTestId('stand-in-role-selector').closest('header')!
+  expect(header.lastElementChild).toBe(picker)
+  expect(screen.getByTestId('stand-in-role-selector')).not.toContainElement(picker)
+  expect(within(header).getByTestId('stand-in-primary-open')).toBeVisible()
+})
+
 it('reopens usage examples after onboarding without recreating a scheduled review', async () => {
   const { props } = fixture([])
   render(<StandInOverviewPage {...props} />)

@@ -76,50 +76,6 @@ async function fixture() {
 }
 
 describe('startup window handoff', () => {
-  test('a late completed frame cannot restart a timed-out handoff', async () => {
-    const { splash, options, release, target } = await fixture()
-    const failure = expect(splash.handoff(options)).rejects.toThrow(
-      'Startup completion frame exceeded 1500ms'
-    )
-    await vi.advanceTimersByTimeAsync(1500)
-    await failure
-    release(completion)
-    await vi.advanceTimersByTimeAsync(0)
-    expect(options.prepareMainWindow).not.toHaveBeenCalled()
-    expect(target.close).not.toHaveBeenCalled()
-    expect(splash.snapshot().state).toBe('visible')
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  test('native preparation does not consume the independent fade budget', async () => {
-    const { splash, options, release } = await fixture()
-    options.prepareMainWindow.mockImplementation(async () => {
-      await new Promise(resolve => setTimeout(resolve, 1200))
-      return { splash: bounds, main: bounds }
-    })
-    const pending = splash.handoff(options)
-    release(completion)
-    await vi.advanceTimersByTimeAsync(1800)
-    const snapshot = await pending
-    expect(snapshot.state).toBe('closed')
-    expect(snapshot.events.map(event => event.name)).toContain('fade-completed')
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  test('a hung native preparation still fails within its unchanged 1500ms budget', async () => {
-    const { splash, options, release, target } = await fixture()
-    options.prepareMainWindow.mockImplementation(() => new Promise(() => {}))
-    const failure = expect(splash.handoff(options)).rejects.toThrow(
-      'Startup window preparation exceeded 1500ms'
-    )
-    release(completion)
-    await vi.advanceTimersByTimeAsync(1500)
-    await failure
-    expect(splash.snapshot().state).toBe('visible')
-    expect(target.close).not.toHaveBeenCalled()
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
   test('keeps queued activation pending after failed startup until explicit shutdown cancellation', async () => {
     const ready = createStartupReadyHandler(async () => {
       throw new Error('Startup handoff failed')
@@ -176,6 +132,34 @@ describe('startup window handoff', () => {
     })
     snapshot.handoff!.completion.progressNow = 0
     expect(splash.snapshot().handoff?.completion.progressNow).toBe(100)
+  })
+
+  test('native preparation does not consume the completion or fade deadline', async () => {
+    const { splash, target, options, release } = await fixture()
+    options.prepareMainWindow.mockImplementationOnce(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1600))
+      return { splash: bounds, main: bounds }
+    })
+    const pending = splash.handoff(options)
+    release(completion)
+    await vi.advanceTimersByTimeAsync(1600)
+    expect(splash.snapshot().state).toBe('fading')
+    expect(target.close).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(STARTUP_SPLASH_FADE_MS)
+    expect((await pending).events.map(event => event.name)).toContain('fade-completed')
+    expect(target.close).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test('a hung completion still releases startup after the animation deadline', async () => {
+    const { splash, target, options } = await fixture()
+    const pending = expect(splash.handoff(options)).rejects.toThrow('1500ms')
+    await vi.advanceTimersByTimeAsync(1500)
+    await pending
+    expect(splash.snapshot().state).toBe('visible')
+    expect(options.prepareMainWindow).not.toHaveBeenCalled()
+    expect(target.close).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   test('honors reduced motion with a complete frame and no timed native fade', async () => {

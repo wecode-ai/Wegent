@@ -220,7 +220,12 @@ impl RuntimeTaskLink {
             .cloned()
             .or_else(|| local_link.as_ref().and_then(|link| link.git_info.clone()));
         let local_completed_at = local_link.as_ref().and_then(|link| link.completed_at);
-        let created_at = timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms);
+        let created_at = local_link
+            .as_ref()
+            .filter(|link| super::conversation_sessions::is_identity_conversation(link))
+            .map(|link| link.created_at)
+            .or_else(|| timestamp_ms_field(thread, "createdAt"))
+            .unwrap_or_else(now_ms);
         let recency_at = timestamp_ms_field(thread, "recencyAt")
             .or_else(|| timestamp_ms_field(thread, "recency_at"))
             .or_else(|| local_link.as_ref().map(|link| link.recency_at))
