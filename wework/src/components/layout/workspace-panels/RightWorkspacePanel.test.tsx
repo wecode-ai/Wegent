@@ -8,6 +8,12 @@ import { beforeAll, describe, expect, test, vi } from 'vitest'
 import { FileWorkspacePanel } from './FileWorkspacePanel'
 import { RightWorkspacePanel } from './RightWorkspacePanel'
 
+vi.mock('@/features/notifications/QuestionDiscussionScope', () => ({
+  QuestionDiscussionTabPanel: ({ active }: { active: boolean }) => (
+    <div data-testid="discussion-tab-content" data-active={String(active)} />
+  ),
+}))
+
 beforeAll(installPierreEditorTestPlatform)
 vi.mock('@/components/code/PierreCodeProvider', () => ({
   PierreCodeProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -183,6 +189,28 @@ function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePane
     />
   )
 }
+
+test('discussion shares the task tab bar with the browser and can be selected and closed', () => {
+  const onSelectTab = vi.fn()
+  const onCloseTab = vi.fn()
+  renderPanel({
+    openTabs: ['browser:1', 'discussion:question'],
+    activeView: 'browser:1',
+    onSelectTab,
+    onCloseTab,
+  })
+  const discussion = screen.getByTestId('right-workspace-discussion-tab-question')
+  expect(screen.getByTestId('right-workspace-tabbar')).toContainElement(discussion)
+  expect(screen.getByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(screen.getByTestId('discussion-tab-content')).toHaveAttribute('data-active', 'false')
+  fireEvent.click(discussion)
+  expect(onSelectTab).toHaveBeenCalledExactlyOnceWith('discussion:question')
+  fireEvent.click(screen.getByTestId('right-workspace-discussion-tab-question-close-button'))
+  expect(onCloseTab).toHaveBeenCalledExactlyOnceWith('discussion:question')
+})
 
 describe('MCP App workspace panels', () => {
   test.each([

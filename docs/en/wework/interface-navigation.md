@@ -43,6 +43,8 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 | Open terminal                                           | Bottom panel → + → Terminal                                  | Starts in the task working directory; expanding the panel alone does not create one                                                         |
 | Version / check for updates                             | Bottom-left account menu → About / Check for updates         | Separate actions. See [Settings and data](./settings.md)                                                                                    |
 
+Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
+
 ## Sidebar feature entries
 
 ### Jump to individual feature controls

@@ -115,6 +115,8 @@ Select a project name to expand or collapse its runtime tasks. Collapsed project
 
 New tasks appear immediately at the top of their project's task list. Tasks with a saved drag order continue to follow that manual order; after a new task receives its persisted order, it remains stable within the same project ordering.
 
+<a id="ai-questions"></a>
+
 ## Handle AI questions
 
 The top-level **Needs your input** tab collects structured questions from task conversations, projects, and your stand-in. Its left list groups questions under **Tasks, Projects, and Stand-in**, newest first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in.
@@ -125,7 +127,7 @@ To leave a question unhandled, hover over its left-list entry and click the cros
 
 Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
 
-When you are unsure how to answer a business question, select **Talk it through** on its question card or in the question details in **Needs your input**. Wework opens the right sidebar and prepares an editable question in its composer. Edit it and select Send to begin an independent discussion; opening alone never sends a message. The original question stays open. Closing and reopening keeps the discussion and unsent message.
+When you are unsure how to answer a business question, select **Talk it through** on its question card or in the question details in **Needs your input**. Wework opens a **Talk it through** tab in the original task's right sidebar, returning to that task when opened from Needs your input. Discussion sits alongside browser and file tabs instead of taking over the workbench's right side. Switching tasks shows only the destination task's sidebar; returning to the original task or switching sidebar tabs preserves the discussion and unsent message. Opening only prepares an editable question in the composer. Edit it and select Send to begin an independent discussion; opening alone never sends a message. The original question stays open.
 
 After discussing, select the text you want to use and choose **Fill answer** from the selection toolbar. For multiple questions, choose the target at the top of the sidebar first. Review and edit the selected text in the original answer before submitting. Filling a draft never sends an answer or approves an operation. Questions that were handled, cancelled, expired, or whose current state cannot be verified cannot receive a draft. Permission approvals and connector authorization retain their native confirmation flows.
 
