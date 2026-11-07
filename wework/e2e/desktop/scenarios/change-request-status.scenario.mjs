@@ -5,6 +5,7 @@ import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 
 const execFileAsync = promisify(execFile)
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -350,6 +351,16 @@ export async function createDesktopScenario({
         text: TASK_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      const { workbench } = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const summary = await requestExecutor(
+        control,
+        'runtime.tasks.get',
+        { address: workbench.currentRuntimeTask },
+        uiTimeoutMs
+      )
+      assert.equal(summary.success, true)
+      assert.equal(summary.task.gitInfo.currentBranch, 'feature/change-request-status')
+      assert.equal(summary.task.gitInfo.originUrl, 'https://github.com/wecode-ai/Wegent.git')
       await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
       if (
         Number(
