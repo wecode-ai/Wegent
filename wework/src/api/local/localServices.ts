@@ -2793,10 +2793,13 @@ export function createRuntimeWorkApiFromIpc(
         {
           success: boolean
           task?: unknown
+          code?: string
           error?: string
         },
         RuntimeTaskAddress
       >('runtime.tasks.get', address, options)
+      if (!response.success && ['task_not_found', 'task_archived'].includes(response.code ?? ''))
+        return null
       if (!response.success) throw new Error(response.error || 'Runtime task lookup failed')
       const task = normalizeRuntimeTaskSummary(response.task, address.workspacePath ?? '')
       if (!task) throw new Error('Runtime task lookup returned an invalid task')
