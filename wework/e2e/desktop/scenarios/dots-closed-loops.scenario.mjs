@@ -78,6 +78,35 @@ function nativeCall(body, id, name, args) {
   }).events
 }
 
+export async function revealDotsFollowupHistory(control) {
+  const previews = `${STORY_CHAT} [data-testid="message-turn-navigation-preview"]`
+  const request = REQUEST('REVENUE', 2)
+  await control.command('waitFor', previews, { text: request })
+  const index = await control.command('getAttribute', previews, {
+    text: request,
+    value: 'data-turn-index',
+  })
+  assert.match(index, /^\d+$/, 'Locate the original phase-two request in real turn navigation')
+  await control.command(
+    'clickWhenEnabled',
+    `${STORY_CHAT} [data-testid="message-turn-navigation-marker"][data-turn-index="${index}"]`
+  )
+  await control.command('scrollIntoViewAsUser', `${STORY_CHAT} [data-testid="message-user"]`, {
+    text: request,
+  })
+  // Native delivery is a separate activity turn, not the manual request turn.
+  const answers = `${STORY_CHAT} [data-testid="message-assistant"]`
+  const result = RESULT('REVENUE', 2)
+  await control.command('waitFor', answers, { text: result })
+  await control.command('scrollIntoViewAsUser', answers, { text: result })
+  const messageId = await control.command('getAttribute', answers, {
+    text: result,
+    value: 'data-message-id',
+  })
+  assert.ok(messageId, 'The original delivered plan must have a real message identity')
+  return `${answers}[data-message-id=${JSON.stringify(messageId)}]`
+}
+
 /** Script model decisions only; primary delegation, execution, input and receipts stay native. */
 export function createDesktopScenario(options) {
   const worktree = join(options.workspacePath, 'dots-linked-worktree')
@@ -392,6 +421,8 @@ export function createDesktopScenario(options) {
   }
   async function preview(control, relative, text) {
     await openStoryPrimary(control)
+    const messageScope =
+      relative === 'followup-plan.md' ? await revealDotsFollowupHistory(control) : STORY_CHAT
     const path = join(
       root,
       relative === 'cart.mjs'
@@ -403,7 +434,7 @@ export function createDesktopScenario(options) {
     const testId = relative === 'cart.mjs' ? 'assistant-markdown-link' : 'codex-reference-card'
     await control.command(
       'clickWhenEnabled',
-      `${STORY_CHAT} [data-testid="${testId}"][aria-label*=${JSON.stringify(basename(path))}]`
+      `${messageScope} [data-testid="${testId}"][aria-label*=${JSON.stringify(basename(path))}]`
     )
     const pathSelector = '[data-testid="workspace-file-path"]'
     await control.command('waitFor', pathSelector, { visible: true })
