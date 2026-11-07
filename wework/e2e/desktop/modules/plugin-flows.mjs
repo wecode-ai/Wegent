@@ -438,22 +438,19 @@ function syntheticChatGptAuth() {
   }
 }
 
-async function assertRuntimeComposerPlugin(control, workspacePath, pluginName) {
-  const catalog = await requestExecutor(
-    control,
-    'runtime.composer.catalog.read',
-    { scope: 'workspace', workspacePath, forceRefresh: true },
-    DEFAULT_STEP_TIMEOUT_MS
+async function assertPrimaryComposerPlugin(control, pluginName) {
+  const diagnostics = JSON.parse(
+    await control.command('getComposerPluginInventoryDiagnostics', 'body')
   )
-  assert.equal(catalog.scope, 'workspace')
-  assert.equal(catalog.workspacePath, workspacePath)
-  const installed = [
-    ...catalog.store.plugins,
-    ...catalog.marketplaces.flatMap(marketplace => marketplace.plugins),
-  ]
   assert.ok(
-    installed.some(plugin => plugin.name === pluginName && plugin.enabled !== false),
-    'The addressed composer catalog lost its enabled local plugin'
+    diagnostics.sharedInventory.installedPlugins.some(
+      plugin => plugin.pluginKey === pluginName && plugin.enabled
+    ),
+    `The primary composer lost local plugin membership: ${JSON.stringify(diagnostics)}`
+  )
+  assert.ok(
+    diagnostics.composerApps.some(app => app.id === `plugin:${pluginName}`),
+    `The primary composer lost its installed plugin: ${JSON.stringify(diagnostics)}`
   )
 }
 
@@ -515,8 +512,9 @@ async function verifyComposerPluginNetworkIsolation({
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    // Addressed composer catalogs intentionally do not call app/list. Start the
-    // real discovery request explicitly before checking local UI independence.
+    // Opening the local picker does not discover global apps. Hold a real
+    // discovery request explicitly before checking the primary composer's
+    // local inventory; addressed sidebar catalogs have a separate owner.
     directoryRequest = requestExecutor(
       control,
       'codex.app_server_request',
@@ -562,7 +560,7 @@ async function verifyComposerPluginNetworkIsolation({
       )
     }
     assert.equal(directorySettled, false, 'Local plugins must render while discovery is pending')
-    await assertRuntimeComposerPlugin(control, workspacePath, pluginName)
+    await assertPrimaryComposerPlugin(control, pluginName)
     await captureVerificationScreenshot(
       control,
       'plugins-00-composer-network-isolation.png',
@@ -616,7 +614,7 @@ async function verifyComposerPluginNetworkIsolation({
     )
     assert.ok(catalogError.length < 500, 'Catalog error exposed a raw response body')
     assert.doesNotMatch(catalogError, /<html|<svg|<style/i)
-    await assertRuntimeComposerPlugin(control, workspacePath, pluginName)
+    await assertPrimaryComposerPlugin(control, pluginName)
     await control.command('navigate', 'body', { value: '/' })
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
     await openComposerPluginPicker(control)
