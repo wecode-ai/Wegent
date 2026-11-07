@@ -1,9 +1,10 @@
-//! Native developer instructions own policy; turn context carries only its current revision.
+//! Native developer instructions own policy; turn context carries runtime facts and revision.
 use super::*;
 use sha2::{Digest, Sha256};
 
 const PREFIX: &str = "wework.host-policy.";
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
+const EXECUTION_KEY: &str = "wework.execution";
 
 pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> String {
     let mut instructions = if request.extra.get("enable_tools").and_then(Value::as_bool)
@@ -20,7 +21,11 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
         let mut contributions: Vec<_> = runtime_context(request)
             .into_iter()
             .flatten()
-            .filter(|(key, entry)| !key.starts_with(PREFIX) && is_runtime_policy(entry))
+            .filter(|(key, entry)| {
+                !key.starts_with(PREFIX)
+                    && key.as_str() != EXECUTION_KEY
+                    && is_runtime_policy(entry)
+            })
             .collect();
         contributions.sort_by_key(|(key, _)| *key);
         for (key, entry) in contributions {
@@ -57,7 +62,7 @@ fn is_runtime_policy(entry: &Value) -> bool {
 
 pub(super) fn without_reserved_context(value: Value) -> Value {
     let mut context = value.as_object().cloned().unwrap_or_default();
-    context.retain(|key, _| !key.starts_with(PREFIX));
+    context.retain(|key, _| !key.starts_with(PREFIX) && key != EXECUTION_KEY);
     Value::Object(context)
 }
 
@@ -68,8 +73,16 @@ pub(super) fn additional_context(
     let mut context = super::stand_in_plugin_cli::additional_context(request)
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
-    context.retain(|key, entry| !key.starts_with(PREFIX) && !is_runtime_policy(entry));
+    context.retain(|key, entry| {
+        !key.starts_with(PREFIX) && key != EXECUTION_KEY && !is_runtime_policy(entry)
+    });
     if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false) {
+        if let Some(value) = execution_context(request) {
+            context.insert(
+                EXECUTION_KEY.into(),
+                json!({"kind":"application","value":value}),
+            );
+        }
         let policy = text(request, launch_config);
         let revision = revision(&policy);
         let path = snapshot_path(launch_config, &revision);
@@ -83,6 +96,40 @@ pub(super) fn additional_context(
         );
     }
     Value::Object(context)
+}
+
+fn execution_context(request: &ExecutionRequest) -> Option<String> {
+    let mut facts = Vec::new();
+    if let Some(info) = request.extra.get("automation_info") {
+        if let (Some(automation), Some(run)) = (
+            nonempty_string(&info["automationId"]),
+            nonempty_string(&info["runId"]),
+        ) {
+            facts.push(format!(
+                "The scheduled execution has already started. Runtime facts: {}. Perform the business work in this run. Do not ask for a new trigger time or create a replacement schedule merely because the original request describes future execution.",
+                json!({"automationId":automation,"runId":run,"scheduledFor":info["scheduledFor"]})
+            ));
+        }
+    }
+    if let Some(source) = request
+        .extra
+        .get("standInDelegation")
+        .and_then(|info| nonempty_string(&info["sourceTaskId"]))
+    {
+        facts.push(format!(
+            "This is an already-created delegated worker for source task {}. Perform the delegated business work here; do not create this worker again. Report results in this task; the host returns them to the source task. You do not need task-creation tools or manual forwarding to complete this work.",
+            json!(source)
+        ));
+    }
+    if facts.is_empty() {
+        return None;
+    }
+    facts.push("This execution context does not grant access, tools, or authorization. Preserve native permissions, source boundaries, and confirmation requirements.".into());
+    Some(facts.join("\n\n"))
+}
+
+fn nonempty_string(value: &Value) -> Option<&str> {
+    value.as_str().filter(|value| !value.trim().is_empty())
 }
 
 fn revision(policy: &str) -> String {

@@ -1330,7 +1330,6 @@
         "tool": "Build an internal tool",
         "tool_prompt": "Build an internal tool "
       },
-      "review_add": "Add weekly review",
       "review": {
         "label": "Review code and suggest changes",
         "changes": "Review my changes",
@@ -5999,6 +5998,7 @@
     },
     "onboarding": {
       "title": "Get started with your stand-in",
+      "review_add": "Add weekly review",
       "description": "Start with one concrete task, then hand recurring work to your stand-in.",
       "loading": "Loading stand-in feature settings…",
       "start": "Get started",

@@ -1329,7 +1329,6 @@
         "tool": "构建内部工具",
         "tool_prompt": "构建一个内部工具 "
       },
-      "review_add": "添加每周复盘",
       "review": {
         "label": "审查代码并提出修改建议",
         "changes": "审查我的更改",
@@ -5994,6 +5993,7 @@
     },
     "onboarding": {
       "title": "开始使用我的分身",
+      "review_add": "添加每周复盘",
       "description": "从一件具体的事开始，逐步把重复工作交给分身。",
       "loading": "正在读取分身功能设置…",
       "start": "开始使用",

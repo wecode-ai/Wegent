@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { Readable } from 'node:stream'
+import { withExecutionContextAssertions } from '../e2e/desktop/modules/execution-context-assertions.mjs'
+import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
+
+const body = context => ({ input: [{ role: 'user', content: `WORK ${context}` }] })
+const request = value => Object.assign(Readable.from([JSON.stringify(value)]), { method: 'POST' })
+const url = new URL('http://localhost/responses')
+
+test('execution assertions inspect the same cached body as the existing model scenario', async () => {
+  const value = body('already started; native permissions')
+  const scenario = withExecutionContextAssertions(
+    {
+      async handleHttp(req) {
+        assert.deepEqual(await readRequestBody(req), value)
+        return true
+      },
+      async verify() {},
+    },
+    { marker: 'WORK', expected: ['already started'] }
+  )
+  assert.equal(await scenario.handleHttp(request(value), {}, url), true)
+  await scenario.verify({})
+})
+
+test('missing execution facts fail instead of accepting a successful worker response', async () => {
+  const scenario = withExecutionContextAssertions(
+    {
+      async handleHttp() {
+        return true
+      },
+    },
+    {
+      marker: 'WORK',
+      expected: ['already started'],
+    }
+  )
+  await assert.rejects(
+    scenario.handleHttp(request(body('native permissions')), {}, url),
+    /Missing execution fact/
+  )
+})
+
+test('primary requests cannot satisfy the scheduled-worker observation', async () => {
+  const scenario = withExecutionContextAssertions(
+    {
+      async handleHttp() {
+        return true
+      },
+      async verify() {},
+    },
+    { marker: 'WORK', workerContext: 'read window', expected: ['already started'] }
+  )
+  await scenario.handleHttp(request(body('create a future review')), {}, url)
+  await assert.rejects(scenario.verify({}), /real worker/)
+})
