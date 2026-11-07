@@ -9,7 +9,8 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/42048650293",
     "https://github.com/wecode-ai/Wegent/actions/runs/42255324858",
     "https://github.com/wecode-ai/Wegent/actions/runs/42264710526",
-    "https://github.com/wecode-ai/Wegent/actions/runs/42296468457"
+    "https://github.com/wecode-ai/Wegent/actions/runs/42296468457",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42392978141"
   ],
   "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
   "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
@@ -34,6 +35,7 @@
     "cloud-login-proxy": 32,
     "cloud-space-mention": 68,
     "codex-account-login": 30,
+    "codex-cloud-config-recovery": 99,
     "codex-invalid-launch-cwd": 22.5,
     "codex-native-catalog": 31.5,
     "codex-notification-isolation": 56.5,
@@ -80,6 +82,7 @@
     "core-dsh-plugin-management": 57,
     "core-task-flow": 356.5,
     "device-artifact-declaration": 65,
+    "devtools-performance": 36,
     "drawing-attachment": 25,
     "dsh-owner-capture": 48,
     "embedded-browser": 94,
@@ -99,6 +102,7 @@
     "human-interactions-hidden": 91.5,
     "human-interactions-issue": 70.5,
     "issue-notification-read": 77,
+    "issue-property-autosave": 63,
     "latest-conversation-history": 63,
     "local-artifact-declaration": 39.5,
     "local-file-preview": 35.5,
@@ -123,6 +127,7 @@
     "project-coordinator-publication": 44,
     "project-member-overrides": 102,
     "project-space-tool-discovery": 77,
+    "question-discussion": 93,
     "release-package-startup": 141.5,
     "remote-device-onboarding": 70,
     "renderer-crash-recovery": 26.5,
@@ -138,6 +143,7 @@
     "runtime-policy": 48,
     "runtime-task-queue": 84.5,
     "send-key-preference": 17.5,
+    "sidebar-task-identity": 29,
     "split-workbench": 140,
     "stand-in": 149,
     "stand-in-action-confirmation": 42,
@@ -159,6 +165,7 @@
     "stand-in-plugin-bridge": 54,
     "stand-in-processing": 65,
     "stand-in-profile-settings": 80.5,
+    "stand-in-sessions": 42,
     "stand-in-project-enable": 45.5,
     "stand-in-telemetry": 69.5,
     "stand-in-workspace": 68.5,
@@ -183,14 +190,16 @@
     "voice-input": 59,
     "window-background-policy": 32.5,
     "window-lifecycle": 219.5,
+    "wework-docs": 32,
+    "workbench-control": 127,
     "workbench-mode": 145,
     "workspace-attachments": 194,
     "workspace-tabs": 88
   },
   "refresh": {
-    "run": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293",
-    "checkpoints": 12,
-    "note": "The added checkpoints passed. Core shard 3 exceeded its step deadline during cleanup after every checkpoint had passed."
+    "run": "https://github.com/wecode-ai/Wegent/actions/runs/42392978141",
+    "checkpoints": 8,
+    "note": "Added only previously unmeasured successful Windows checkpoints. Failed dots-closed-loops remains unmeasured. Core shard 3 exceeded its step deadline before stand-in-git completed."
   },
   "preparationSources": {
     "dingtalk-protocol-fixture": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293/job/127328527189"

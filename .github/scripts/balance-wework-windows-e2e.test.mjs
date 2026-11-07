@@ -29,7 +29,7 @@ function classifiedCoreMatrix() {
 
 const completeMatrix = classifiedCoreMatrix()
 // Improvement requires measured inputs. The full production matrix below also
-// verifies the separate contract that unknown checkpoints freeze their shard.
+// verifies that unknown checkpoints keep their runner without pinning measured work.
 const original = {
   include: completeMatrix.include
     .map(shard => ({
@@ -46,6 +46,25 @@ const checkpoints = matrix =>
   matrix.include.flatMap(shard => expandDesktopCheckpoints(shard.segments.split(',')))
 const measuredLoad = shard =>
   shard.segments.split(',').reduce((total, segment) => total + (checkpointSeconds(segment) ?? 0), 0)
+
+test('an unmeasured checkpoint stays put without pinning unrelated measured work', () => {
+  const matrix = {
+    include: [
+      { id: 'core-3', segments: 'dots-closed-loops,application-menu' },
+      { id: 'core-1', segments: 'background-terminals' },
+    ],
+  }
+  const balanced = balanceWindowsMatrix(matrix)
+  assert.deepEqual(
+    balanced.include.find(shard => shard.id === 'core-3'),
+    {
+      id: 'core-3',
+      segments: 'dots-closed-loops',
+    }
+  )
+  assert.deepEqual(segments(balanced).sort(), segments(matrix).sort())
+  assert.equal(balanced.include.length, matrix.include.length)
+})
 
 test('the measured fixture contains every real measured checkpoint exactly once', () => {
   assert.deepEqual(
@@ -79,9 +98,12 @@ test('previously frozen Windows shards can use their successful checkpoint measu
   )
   if (productionShard.segments.split(',').some(segment => checkpointSeconds(segment) === null)) {
     assert.deepEqual(
-      balancedProductionShard,
-      productionShard,
-      'Other unmeasured checkpoints must still freeze the production shard'
+      balancedProductionShard.segments.split(',').sort(),
+      productionShard.segments
+        .split(',')
+        .filter(segment => checkpointSeconds(segment) === null)
+        .sort(),
+      'Unknown checkpoints must retain their runner without freezing measured siblings'
     )
   } else {
     assert.notDeepEqual(
@@ -119,23 +141,25 @@ test('unmeasured checkpoints retain their original shard and partial selection n
   assert.deepEqual(checkpoints(balanced).sort(), checkpoints(completeMatrix).sort())
   assert.equal(new Set(checkpoints(balanced)).size, checkpoints(completeMatrix).length)
   assert.equal(balanced.include.length, completeMatrix.include.length)
-  const movable = matrix =>
-    matrix.include.filter(
-      shard =>
-        !['core-9', 'core-10'].includes(shard.id) &&
-        shard.segments.split(',').every(segment => checkpointSeconds(segment) !== null)
-    )
+  const ordinary = matrix =>
+    matrix.include.filter(shard => !['core-9', 'core-10'].includes(shard.id))
   assert.ok(
-    Math.max(...movable(balanced).map(measuredLoad)) <=
-      Math.max(...movable(completeMatrix).map(measuredLoad))
+    Math.max(...ordinary(balanced).map(measuredLoad)) <=
+      Math.max(...ordinary(completeMatrix).map(measuredLoad))
   )
   for (const shard of completeMatrix.include) {
     for (const segment of shard.segments.split(',')) {
       if (checkpointSeconds(segment) !== null) continue
       const result = balanced
       assert.deepEqual(
-        result.include.find(entry => entry.id === shard.id),
-        shard
+        result.include
+          .find(entry => entry.id === shard.id)
+          .segments.split(',')
+          .sort(),
+        shard.segments
+          .split(',')
+          .filter(segment => checkpointSeconds(segment) === null)
+          .sort()
       )
     }
     const partial = { include: [shard] }
@@ -145,6 +169,20 @@ test('unmeasured checkpoints retain their original shard and partial selection n
   }
   assert.deepEqual(balanceWindowsMatrix({ include: [] }), { include: [] })
   assert.deepEqual(balanceWindowsMatrix(original, {}), original)
+})
+
+test('unknown preparation members keep their shared preparation group on its original runner', () => {
+  const matrix = {
+    include: [
+      { id: 'core-1', segments: 'local-harness,claude-runtime' },
+      { id: 'core-2', segments: 'background-terminals' },
+    ],
+  }
+  const balanced = balanceWindowsMatrix(matrix, {
+    'claude-runtime': 160,
+    'background-terminals': 80,
+  })
+  assert.deepEqual(balanced, matrix)
 })
 
 test('duplicate selection is rejected rather than silently losing coverage', () => {

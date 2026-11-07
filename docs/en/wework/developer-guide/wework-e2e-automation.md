@@ -215,6 +215,9 @@ Linux sets `CORE_RUNNER_SCALE=1.5` and redistributes a full selection across
 matrix, bounded by assignable checkpoints; selections without the history checkpoint
 retain their original matrix. The two Core benchmarks keep dedicated runners.
 Cloud uses 8 shards.
+
+Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving measured work or pinning unrelated measured siblings. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
+
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
 within a runner. The two Core benchmark shards and three Cloud account-auth and
