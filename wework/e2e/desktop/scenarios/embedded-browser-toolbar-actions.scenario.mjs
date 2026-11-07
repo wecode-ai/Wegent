@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
+import { startExternalBrowserFixture } from '../modules/external-browser-fixture.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -63,7 +62,6 @@ const BROWSER_OPEN_EXTERNAL_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-open-external-button"]'
 const BROWSER_ERROR_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-error"]'
-const executeFile = promisify(execFile)
 
 function fixtureHtml(title, heading) {
   return [
@@ -195,39 +193,6 @@ async function waitForButtonDisabled(control, selector, disabled, timeoutMs, mes
     timeoutMs,
     message
   )
-}
-
-async function waitForExternalBrowserUrl(expectedUrl, timeoutMs) {
-  const { stdout: browserBundleIdOutput } = await executeFile('/usr/bin/osascript', [
-    '-l',
-    'JavaScript',
-    '-e',
-    "ObjC.import('AppKit'); const url = $.NSURL.URLWithString('https://example.com'); const app = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url); ObjC.unwrap($.NSBundle.bundleWithURL(app).bundleIdentifier)",
-  ])
-  const browserBundleId = browserBundleIdOutput.trim()
-  const urlQuery =
-    browserBundleId === 'com.apple.Safari'
-      ? 'get URL of front document'
-      : browserBundleId === 'com.google.Chrome'
-        ? 'get URL of active tab of front window'
-        : null
-  assert.ok(urlQuery, `Unsupported default browser for URL inspection: ${browserBundleId}`)
-  const startedAt = Date.now()
-  let lastUrl = null
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const { stdout } = await executeFile('/usr/bin/osascript', [
-        '-e',
-        `tell application id "${browserBundleId}" to ${urlQuery}`,
-      ])
-      lastUrl = stdout.trim()
-      if (lastUrl === expectedUrl) return
-    } catch (error) {
-      lastUrl = String(error)
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(`${browserBundleId} did not open ${expectedUrl}; last URL=${lastUrl}`)
 }
 
 function assertFramesEqual(before, after) {
@@ -615,61 +580,80 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
 
       // --- Real external browser file opening and error recovery ---
       if (process.platform === 'darwin') {
-        const localFilePath = join(resultDir, 'external-browser-fixture.html')
-        const localDirectoryPath = join(resultDir, 'external-browser-directory')
-        await mkdir(localDirectoryPath, { recursive: true })
-        await writeFile(
-          localFilePath,
-          fixtureHtml('External Browser Fixture', 'External file loaded')
-        )
-        await writeFile(
-          join(localDirectoryPath, 'directory-entry.txt'),
-          'External directory loaded'
-        )
+        const externalBrowser = await startExternalBrowserFixture(resultDir, uiTimeoutMs)
+        try {
+          const localFilePath = join(resultDir, 'external-browser-fixture.html')
+          const localDirectoryPath = join(resultDir, 'external-browser-directory')
+          await mkdir(localDirectoryPath, { recursive: true })
+          await writeFile(
+            localFilePath,
+            fixtureHtml('External Browser Fixture', 'External file loaded')
+          )
+          await writeFile(
+            join(localDirectoryPath, 'directory-entry.txt'),
+            'External directory loaded'
+          )
 
-        const localFileUrl = pathToFileURL(localFilePath).href
-        await callBridge(bridgeIdentity, { action: 'open', url: localFileUrl, timeoutMs: 8_000 })
-        await callBridge(bridgeIdentity, {
-          action: 'waitFor',
-          options: { condition: { textVisible: 'External file loaded' } },
-          timeoutMs: 5_000,
-        })
-        await unlink(localFilePath)
-        await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
-        await control.command('waitFor', BROWSER_ERROR_SELECTOR, {
-          timeoutMs: uiTimeoutMs,
-        })
-        assert.match(
-          await control.command('getText', BROWSER_ERROR_SELECTOR),
-          /Unable to open in the external browser|无法在外部浏览器中打开/
-        )
+          const localFileUrl = pathToFileURL(localFilePath).href
+          await callBridge(bridgeIdentity, { action: 'open', url: localFileUrl, timeoutMs: 8_000 })
+          await callBridge(bridgeIdentity, {
+            action: 'waitFor',
+            options: { condition: { textVisible: 'External file loaded' } },
+            timeoutMs: 5_000,
+          })
+          await waitForValue(
+            control,
+            BROWSER_INPUT_SELECTOR,
+            localFileUrl,
+            uiTimeoutMs,
+            'The toolbar did not adopt the local file URL'
+          )
+          await unlink(localFilePath)
+          await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+          await control.command('waitFor', BROWSER_ERROR_SELECTOR, {
+            timeoutMs: uiTimeoutMs,
+          })
+          assert.match(
+            await control.command('getText', BROWSER_ERROR_SELECTOR),
+            /Unable to open in the external browser|无法在外部浏览器中打开/
+          )
 
-        await writeFile(
-          localFilePath,
-          fixtureHtml('External Browser Fixture', 'External file loaded')
-        )
-        await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
-        await waitForElementGone(
-          control,
-          BROWSER_ERROR_SELECTOR,
-          uiTimeoutMs,
-          'Retrying external browser open did not clear its error'
-        )
-        await waitForExternalBrowserUrl(localFileUrl, uiTimeoutMs)
+          await writeFile(
+            localFilePath,
+            fixtureHtml('External Browser Fixture', 'External file loaded')
+          )
+          await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+          await waitForElementGone(
+            control,
+            BROWSER_ERROR_SELECTOR,
+            uiTimeoutMs,
+            'Retrying external browser open did not clear its error'
+          )
+          await externalBrowser.waitForPage(localFileUrl, 'External file loaded')
 
-        const localDirectoryUrl = `${pathToFileURL(localDirectoryPath).href}/`
-        await callBridge(bridgeIdentity, {
-          action: 'open',
-          url: localDirectoryUrl,
-          timeoutMs: 8_000,
-        })
-        await callBridge(bridgeIdentity, {
-          action: 'waitFor',
-          options: { condition: { textVisible: 'directory-entry.txt' } },
-          timeoutMs: 5_000,
-        })
-        await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
-        await waitForExternalBrowserUrl(localDirectoryUrl, uiTimeoutMs)
+          const localDirectoryUrl = `${pathToFileURL(localDirectoryPath).href}/`
+          await callBridge(bridgeIdentity, {
+            action: 'open',
+            url: localDirectoryUrl,
+            timeoutMs: 8_000,
+          })
+          await callBridge(bridgeIdentity, {
+            action: 'waitFor',
+            options: { condition: { textVisible: 'directory-entry.txt' } },
+            timeoutMs: 5_000,
+          })
+          await waitForValue(
+            control,
+            BROWSER_INPUT_SELECTOR,
+            localDirectoryUrl,
+            uiTimeoutMs,
+            'The toolbar did not adopt the local directory URL'
+          )
+          await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+          await externalBrowser.waitForPage(localDirectoryUrl, 'directory-entry.txt')
+        } finally {
+          await externalBrowser.dispose()
+        }
       }
     },
   }
