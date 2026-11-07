@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -299,6 +300,51 @@ describe('desktop process lifecycle', () => {
       kill.mockRestore()
     }
   })
+
+  test.each([true, false])(
+    'requires a native exit after a macOS teardown signal is denied: exits=%s',
+    async exits => {
+      const { stopProcessGroup } = await loadProcessLifecycle()
+      const processId = process.pid
+      const child = Object.assign(new EventEmitter(), {
+        pid: processId,
+        exitCode: null as number | null,
+        signalCode: null,
+      })
+      const denied = Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      let signalDenied = false
+      vi.useFakeTimers()
+      const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid === -processId && signal === 'SIGKILL') {
+          signalDenied = true
+          if (exits) {
+            setTimeout(() => {
+              child.exitCode = 0
+              child.emit('exit', 0, null)
+            }, 1)
+          }
+          throw denied
+        }
+        if (pid === -processId && signal === 0) throw denied
+        if (pid === processId && signal === 0 && signalDenied)
+          throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+        return true
+      })
+      try {
+        const result = stopProcessGroup(child as unknown as ChildProcess).then(
+          () => undefined,
+          (error: unknown) => error
+        )
+        await vi.advanceTimersByTimeAsync(20_100)
+        expect(await result).toBe(exits ? undefined : denied)
+        expect(kill).toHaveBeenCalledWith(-processId, 'SIGKILL')
+        expect(child.listenerCount('exit')).toBe(0)
+      } finally {
+        kill.mockRestore()
+        vi.useRealTimers()
+      }
+    }
+  )
 
   test('stops descendants that inherit an owned process group', async () => {
     const { stopProcessGroup } = await loadProcessLifecycle()

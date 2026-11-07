@@ -350,7 +350,11 @@ export async function createDesktopScenario({
   const remoteWorkspacePath = join(resultDir, 'claude-remote-workspace')
   await rm(localClaudeAlias, { force: true })
   if (process.platform === 'win32') {
-    await writeFile(localClaudeAlias, `@echo off\r\ncall "${CLAUDE_BINARY}" %*\r\n`, 'utf8')
+    const packageRoot = resolve(dirname(CLAUDE_BINARY), '../@anthropic-ai/claude-code')
+    const metadata = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
+    const executable = resolve(packageRoot, metadata.bin.claude)
+    await access(executable, constants.X_OK)
+    await writeFile(localClaudeAlias, `@echo off\r\n"${executable}" %*\r\n`, 'utf8')
   } else {
     await symlink(CLAUDE_BINARY, localClaudeAlias)
   }
