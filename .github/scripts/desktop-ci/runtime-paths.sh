@@ -462,7 +462,7 @@ classify_path() {
         select_target "core:collaboration-delivery-editing"
       fi
       ;;
-    executor/src/server/codex_model_catalog*.rs)
+    executor/crates/model-proxy/src/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
@@ -484,7 +484,7 @@ classify_path() {
       backend/tests/api/test_deliveries_api.py)
       select_target "core:collaboration-issue-attachment-preview"
       ;;
-    backend-rs/* | backend-rs/** | \
+    shared/rust/* | backend-rs/* | backend-rs/** | \
       wework/e2e/desktop/modules/cloud-environment.mjs | \
       wework/e2e/desktop/modules/task-flow-main.mjs | \
       wework/e2e/desktop/support/mysql-helper.py)

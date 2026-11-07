@@ -142,7 +142,12 @@ exit 1
             .env("CALL_LOG", calls.display().to_string())
             .arg("--resume")
             .arg("keep-existing-session");
-        let engine = StreamProcessEngine::new(spec, 30);
+        let engine = StreamProcessEngine::new(
+            spec,
+            30,
+            std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+            env!("CARGO_PKG_VERSION"),
+        );
         let request = ExecutionRequest {
             task_id: task.to_owned(),
             subtask_id: "next".to_owned(),

@@ -45,7 +45,7 @@ digest = steps.find { |candidate| candidate["id"] == "runtime" }
   .fetch("env").fetch("SOURCE_DIGEST")
 
 recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
-%W[backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
+%W[backend-rs/crates/** shared/rust/** backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
   raise "Backend Rust runtime digest omits #{input}" unless digest.include?("'#{input}'")
 end
 
@@ -86,6 +86,10 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
     .github/scripts/ci-prebuilt-images.mjs .github/scripts/resolve-ci-image.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock].each do |input|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp(File.join(root, input), File.join(directory, input))
+  end
+  %w[backend-rs/crates shared/rust].each do |input|
+    FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
+    FileUtils.cp_r(File.join(root, input), File.join(directory, input))
   end
   bin = File.join(directory, "bin")
   FileUtils.mkdir_p(bin)
