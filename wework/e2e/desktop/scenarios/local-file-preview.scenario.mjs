@@ -174,6 +174,17 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'rgb(187, 154, 247)',
         'The Pierre editor did not use Tokyo Night syntax colors'
       )
+      for (const selector of [
+        '[data-testid="workspace-file-editor"]',
+        '[data-testid="workspace-file-preview-code-view"]',
+        '[data-code]',
+      ]) {
+        assert.equal(
+          await control.command('getComputedStyleValue', selector, { value: 'background-color' }),
+          'rgb(26, 27, 38)',
+          `The Pierre surface ${selector} reset the selected theme background`
+        )
+      }
       await captureScreenshot(control, 'appearance-tokyo-pierre-editor.png', 'body')
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),

@@ -564,7 +564,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   animation-name: suffix-roll-in-down;
 }
 
-[data-theme='dark'] {
+:root[data-theme='dark'] {
   color-scheme: dark;
   --color-bg-base: 24 24 24;
   --color-bg-surface: 33 33 33;
