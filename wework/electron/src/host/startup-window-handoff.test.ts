@@ -189,7 +189,7 @@ describe('preparing the native startup destination', () => {
   })
 
   test.each(['state-first', 'geometry-first'])(
-    'waits for both native maximization and exact geometry before capture: %s',
+    'accepts the OS maximized frame without requiring splash geometry: %s',
     async order => {
       const { prepare, main, splash, bounds, nativeEvents, setMainBounds, setMaximized } = fixture()
       splash.isMaximized = () => true
@@ -204,7 +204,6 @@ describe('preparing the native startup destination', () => {
         setMainBounds(bounds)
         nativeEvents.emit('resize')
       }
-      expect(main.webContents.capturePage).not.toHaveBeenCalled()
       setMainBounds(bounds)
       setMaximized(true)
       nativeEvents.emit(order === 'state-first' ? 'resize' : 'maximize')
@@ -388,17 +387,18 @@ describe('preparing the native startup destination', () => {
     expect(main.setBounds).toHaveBeenCalledExactlyOnceWith(target)
   })
 
-  test('rejects a refused maximize request within a bounded deadline and removes listeners', async () => {
+  test('presents the normal window when the OS refuses maximization', async () => {
     vi.useFakeTimers()
     try {
       const { prepare, main, splash, nativeEvents } = fixture()
       splash.isMaximized = () => true
       main.maximize.mockImplementationOnce(() => {})
-      const failure = expect(prepare()).rejects.toThrow('did not maximize to the splash bounds')
+      const preparing = prepare()
       await vi.runAllTimersAsync()
-      await failure
-      expect(main.hide).toHaveBeenCalledOnce()
-      expect(main.webContents.capturePage).not.toHaveBeenCalled()
+      await preparing
+      expect(main.hide).not.toHaveBeenCalled()
+      expect(main.isVisible()).toBe(true)
+      expect(main.webContents.capturePage).toHaveBeenCalledOnce()
       for (const event of ['maximize', 'resize', 'move', 'closed']) {
         expect(nativeEvents.listenerCount(event)).toBe(0)
       }
@@ -421,35 +421,39 @@ describe('preparing the native startup destination', () => {
     }
   })
 
-  test('preserves a synchronous maximize failure and removes its native listeners', async () => {
+  test('keeps the normal window available after a synchronous maximize failure', async () => {
     const { prepare, main, splash, nativeEvents } = fixture()
     splash.isMaximized = () => true
     const error = new Error('Native maximize failed')
     main.maximize.mockImplementationOnce(() => {
       throw error
     })
-    await expect(prepare()).rejects.toBe(error)
-    expect(main.hide).toHaveBeenCalledOnce()
+    await prepare()
+    expect(main.hide).not.toHaveBeenCalled()
+    expect(main.isVisible()).toBe(true)
     for (const event of ['maximize', 'resize', 'move', 'closed']) {
       expect(nativeEvents.listenerCount(event)).toBe(0)
     }
   })
 
-  test('hides a failed destination and restores its opacity before propagating failure', async () => {
+  test('keeps the destination visible when optional frame capture fails', async () => {
     const { prepare, main, calls } = fixture()
     main.webContents.capturePage.mockRejectedValueOnce(new Error('Renderer stopped'))
-    await expect(prepare()).rejects.toThrow('Renderer stopped')
-    expect(calls.slice(-2)).toEqual(['hide', 'opacity:1'])
+    await prepare()
+    expect(main.hide).not.toHaveBeenCalled()
+    expect(calls.at(-1)).toBe('opacity:1')
+    expect(main.isVisible()).toBe(true)
   })
 
-  test('refuses to expose a destination with no composited frame', async () => {
+  test('does not hide a loaded destination because frame capture is empty', async () => {
     const { prepare, main } = fixture()
     main.webContents.capturePage.mockResolvedValueOnce({
       isEmpty: () => true,
       getSize: () => ({ width: 0, height: 0 }),
     })
-    await expect(prepare()).rejects.toThrow('did not produce a frame')
-    expect(main.hide).toHaveBeenCalledOnce()
+    await prepare()
+    expect(main.hide).not.toHaveBeenCalled()
+    expect(main.isVisible()).toBe(true)
     expect(main.setOpacity).toHaveBeenLastCalledWith(1)
   })
 
@@ -513,26 +517,24 @@ describe('preparing the native startup destination', () => {
     expect(traces).toHaveLength(count)
   })
 
-  test('retains the original capture failure when diagnostic recording also fails', async () => {
+  test('presents the window when both optional capture and diagnostic recording fail', async () => {
     const { prepare, main, nativeEvents } = fixture()
     const captureError = new Error('Renderer stopped')
     main.webContents.capturePage.mockRejectedValueOnce(captureError)
     const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const phases: string[] = []
     try {
-      await expect(
-        prepare(true, event => {
-          phases.push(event.phase)
-          if (event.phase === 'capture-failed') throw new Error('Diagnostic sink stopped')
-        })
-      ).rejects.toBe(captureError)
+      await prepare(true, event => {
+        phases.push(event.phase)
+        if (event.phase === 'capture-failed') throw new Error('Diagnostic sink stopped')
+      })
       expect(phases).toContain('capture-failed')
       expect(phases).toContain('before-opacity-restore')
       expect(logError).toHaveBeenCalledWith(
         '[startup-window-handoff] Could not record native geometry',
         { phase: 'capture-failed', error: { name: 'Error', message: 'Diagnostic sink stopped' } }
       )
-      expect(main.hide).toHaveBeenCalledOnce()
+      expect(main.hide).not.toHaveBeenCalled()
       expect(main.setOpacity).toHaveBeenLastCalledWith(1)
       expect(nativeEvents.listenerCount('resize')).toBe(0)
       expect(nativeEvents.listenerCount('move')).toBe(0)

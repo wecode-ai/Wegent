@@ -4,6 +4,26 @@ sidebar_position: 10
 
 # Troubleshooting
 
+## Clicking the app icon does not open a window
+
+Clicking the Dock icon again should reveal the existing main or startup recovery window,
+including a hidden or minimized window. The main page can appear once its document loads;
+renderer health confirmation belongs to upgrade activation and does not gate window visibility.
+Failures in log retention, the tray, auxiliary window restoration, CLI installation, or local
+model synchronization must not prevent the desktop from opening.
+
+On macOS, when no upgrade or rollback transaction is in progress, ordinary startup runs the
+installed package that was opened. After a manual replacement, old release selections, recovery
+bridges, or staging directories must not redirect startup to an older application. Damaged upgrade
+history produces a warning and allows the installed package to start. Do not delete task data to
+work around a startup problem.
+
+If the application still cannot open, inspect `wework-main.log`, `runtime-launch.log`, and
+`dsh-core-runtime.log` in the desktop log directory. Distinguish runtime failures from background
+maintenance warnings. Data migration failures, missing runtime files, and storage permission errors
+still need repair; clearing user data must not hide them. Animation, screenshot, and window geometry
+errors affect presentation and must not prevent a loaded main window from appearing.
+
 ## Conversation export remains on packaging
 
 In the desktop log directory, inspect `dsh-core-runtime.log` for `[wework-conversation-export]` and the export task ID. Finalization logs report the start, completion, or failure of document sync, asset sync, packaging, and destination replacement, including stage duration and asset count. They omit file paths and contents. A stage with only a start event identifies the file operation to investigate; the packaging message alone does not establish that the export has failed.

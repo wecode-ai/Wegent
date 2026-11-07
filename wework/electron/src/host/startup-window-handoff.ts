@@ -256,7 +256,10 @@ export async function prepareStartupMainWindow(
           trace.record('after-relocation')
         }
         trace.record('before-maximize')
-        await maximizeStartupWindow(main, bounds)
+        await maximizeStartupWindow(main).catch(error => {
+          if (main.isDestroyed()) throw error
+          console.warn('[startup-window-handoff] could not maximize the main window', error)
+        })
         trace.record('after-maximize')
       } else {
         trace.record('before-set-bounds')
@@ -272,17 +275,11 @@ export async function prepareStartupMainWindow(
       trace.record('before-capture')
       const frame = await main.webContents.capturePage().catch(error => {
         trace.record('capture-failed', error)
-        throw error
+        console.warn('[startup-window-handoff] could not capture the main window', error)
+        return undefined
       })
       trace.record('after-capture', undefined, frame)
-      if (frame.isEmpty()) throw new Error('The startup destination did not produce a frame')
       return { splash: bounds, main: main.getBounds() }
-    } catch (error) {
-      if (!main.isDestroyed()) {
-        main.hide()
-        trace.record('destination-hidden', error)
-      }
-      throw error
     } finally {
       if (!main.isDestroyed()) {
         trace.record('before-opacity-restore')
