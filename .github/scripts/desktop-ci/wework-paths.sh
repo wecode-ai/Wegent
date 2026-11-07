@@ -111,6 +111,7 @@ classify_wework_path() {
       wework/src/desktop/systemProxy* | \
       wework/src/api/local/runtimeModelProxy* | \
       wework/src/api/local/codexProviderProxy* | \
+      wework/e2e/desktop/modules/codex-startup-history.mjs | \
       wework/e2e/desktop/scenarios/system-pac.scenario.mjs | \
       wework/e2e/desktop/scenarios/system-proxy.scenario.mjs)
       select_target "core:system-proxy"

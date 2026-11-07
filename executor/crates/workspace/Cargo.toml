@@ -1,0 +1,25 @@
+[package]
+name = "wegent-workspace"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Workspace file operations, native Git, and change tracking"
+
+[dependencies]
+dirs = "6"
+wegent-protocol = { path = "../../../shared/rust/protocol" }
+wegent-execution-contracts = { path = "../execution-contracts" }
+wegent-subprocess = { path = "../subprocess" }
+wegent-runtime-logging = { path = "../logging" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+flate2 = "1.0"
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tempfile = "3.23"
+tokio = { version = "1.48", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+url = "2"
+
+[dev-dependencies]
+libc = "0.2"
+tokio = { version = "1.48", features = ["test-util"] }

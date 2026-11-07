@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import type { UnifiedShell } from '@/apis/shells'
@@ -64,7 +64,7 @@ jest.mock('@/components/ui/select', () => ({
 }))
 
 describe('ExecutorModeSelector', () => {
-  it('renders simple, complex, and custom executor cards', () => {
+  it('shows two use cases and hides execution engines for everyday questions', () => {
     render(
       <ExecutorModeSelector
         value="simple"
@@ -79,28 +79,39 @@ describe('ExecutorModeSelector', () => {
 
     expect(screen.getByRole('radio', { name: /simple/i })).toBeChecked()
     expect(screen.getByRole('radio', { name: /complex/i })).not.toBeChecked()
-    expect(screen.getByRole('radio', { name: /custom/i })).not.toBeChecked()
+    expect(screen.getAllByRole('radio')).toHaveLength(2)
+    expect(screen.queryByRole('radio', { name: /custom/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Execution engine' })).not.toBeInTheDocument()
     expect(screen.getByText('Chat executor.')).toBeInTheDocument()
   })
 
-  it('renders only the work styles exposed by the simplified form', () => {
-    render(
-      <ExecutorModeSelector
-        value="simple"
-        onChange={jest.fn()}
-        shells={shells}
-        customShellName=""
-        onCustomShellChange={jest.fn()}
-        codingRuntime="codex"
-        onCodingRuntimeChange={jest.fn()}
-        visibleModes={['simple', 'complex']}
-      />
-    )
+  it.each(['complex', 'custom'] as const)(
+    'places custom beside Codex and Claude Code when the internal mode is %s',
+    value => {
+      render(
+        <ExecutorModeSelector
+          value={value}
+          onChange={jest.fn()}
+          shells={shells}
+          customShellName="team-shell"
+          onCustomShellChange={jest.fn()}
+          codingRuntime="codex"
+          onCodingRuntimeChange={jest.fn()}
+        />
+      )
 
-    expect(screen.getByTestId('simple-executor-simple-card')).toBeInTheDocument()
-    expect(screen.getByTestId('simple-executor-complex-card')).toBeInTheDocument()
-    expect(screen.queryByTestId('simple-executor-custom-card')).not.toBeInTheDocument()
-  })
+      const useCases = screen.getByRole('radiogroup', { name: 'Executor' })
+      const engines = screen.getByRole('radiogroup', { name: 'Execution engine' })
+      expect(within(useCases).getAllByRole('radio')).toHaveLength(2)
+      expect(within(useCases).getByRole('radio', { name: 'Complex' })).toBeChecked()
+      expect(within(useCases).queryByRole('radio', { name: 'Custom' })).not.toBeInTheDocument()
+      expect(within(engines).getAllByRole('radio')).toHaveLength(3)
+      expect(
+        within(engines).getByRole('radio', { name: value === 'custom' ? 'Custom' : 'Codex' })
+      ).toBeChecked()
+      expect(screen.queryByTestId('custom-shell-select') !== null).toBe(value === 'custom')
+    }
+  )
 
   it('shows custom shell select when custom executor is selected', () => {
     const onCustomShellChange = jest.fn()
@@ -150,6 +161,8 @@ describe('ExecutorModeSelector', () => {
       '使用你创建的运行环境，适合特殊需求。'
     )
     expect(enSettings.team.simple.executor.title).toBe('Use case')
+    expect(zhSettings.team.simple.executor.custom.title).toBe('自定义')
+    expect(enSettings.team.simple.executor.custom.title).toBe('Custom')
     expect(enSettings.team.simple.executor.custom.description).toBe(
       'Use a runtime you created for specialized needs.'
     )
@@ -200,12 +213,13 @@ describe('ExecutorModeSelector', () => {
   })
 
   it('shows a friendly coding category before choosing Codex or Claude Code', () => {
+    const onChange = jest.fn()
     const onCodingRuntimeChange = jest.fn()
 
     render(
       <ExecutorModeSelector
         value="complex"
-        onChange={jest.fn()}
+        onChange={onChange}
         shells={shells}
         customShellName=""
         onCustomShellChange={jest.fn()}
@@ -222,5 +236,37 @@ describe('ExecutorModeSelector', () => {
     fireEvent.click(screen.getByTestId('simple-coding-runtime-claude_code-card'))
 
     expect(onCodingRuntimeChange).toHaveBeenCalledWith('claude_code')
+    expect(onChange).not.toHaveBeenCalled()
   })
+
+  it.each(['codex', 'claude_code'] as const)(
+    'returns from custom to the selected %s engine without clearing the custom shell',
+    runtime => {
+      const onChange = jest.fn()
+      const onCodingRuntimeChange = jest.fn()
+      const onCustomShellChange = jest.fn()
+      render(
+        <ExecutorModeSelector
+          value="custom"
+          onChange={onChange}
+          shells={shells}
+          customShellName="team-shell"
+          onCustomShellChange={onCustomShellChange}
+          codingRuntime="claude_code"
+          onCodingRuntimeChange={onCodingRuntimeChange}
+        />
+      )
+
+      const engines = screen.getByRole('radiogroup', { name: 'Execution engine' })
+      fireEvent.click(
+        within(engines).getByRole('radio', {
+          name: runtime === 'codex' ? 'Codex' : 'Claude Code',
+        })
+      )
+
+      expect(onCodingRuntimeChange).toHaveBeenCalledWith(runtime)
+      expect(onChange).toHaveBeenCalledWith('complex')
+      expect(onCustomShellChange).not.toHaveBeenCalled()
+    }
+  )
 })

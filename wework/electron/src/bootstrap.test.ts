@@ -11,10 +11,22 @@ const startup = vi.hoisted(() => ({
   bridgeHandoff: vi.fn(),
   showErrorBox: vi.fn(),
   bridge: null as string | null,
+  macosRollback: null as string | null,
   legacyUserData: null as string | null,
   ready: vi.fn(),
   relaunch: vi.fn(),
   home: '',
+  main: vi.fn(),
+  historyError: null as Error | null,
+  enterInstalled: vi.fn(),
+  rollback: vi.fn(),
+  restoreData: vi.fn(),
+}))
+
+vi.mock('./runtime/release-snapshot.js', () => ({ restoreReleaseData: startup.restoreData }))
+
+vi.mock('./runtime/macos-release-installation.js', () => ({
+  enterInstalledMacosRelease: startup.enterInstalled,
 }))
 
 vi.mock('electron', () => ({
@@ -22,6 +34,7 @@ vi.mock('electron', () => ({
     isPackaged: true,
     getPath: () => startup.home,
     on: vi.fn(),
+    removeListener: vi.fn(),
     whenReady: startup.ready,
     relaunch: startup.relaunch,
     exit: vi.fn(),
@@ -43,30 +56,49 @@ vi.mock('node:fs/promises', () => ({
 }))
 
 vi.mock('./runtime/release-store.js', () => ({
-  optionalText: async (path: string) => (basename(path) === 'bridge' ? startup.bridge : null),
+  optionalText: async (path: string) =>
+    basename(path) === 'bridge'
+      ? startup.bridge
+      : basename(path) === 'macos-rollback'
+        ? startup.macosRollback
+        : null,
   ReleaseStore: class {
     constructor(root: string) {
       startup.roots.push(root)
     }
 
     async active() {
+      if (startup.historyError) throw startup.historyError
       return startup.activeRelease
     }
     async activation() {
       return startup.activation
+    }
+    async rollback() {
+      return startup.rollback()
     }
   },
 }))
 
 beforeEach(() => {
   vi.resetModules()
+  vi.doMock('./main.js', () => {
+    startup.main()
+    return {}
+  })
   startup.roots.length = 0
   startup.metadata = {}
   startup.activeRelease = { id: 'pending-target' }
-  startup.activation = null
+  startup.activation = { token: 'trial', to: 'pending-target', from: 'source' }
+  startup.historyError = null
+  startup.main.mockClear()
+  startup.enterInstalled.mockReset()
+  startup.rollback.mockReset()
+  startup.restoreData.mockReset()
   startup.bridgeHandoff.mockReset().mockImplementation(async () => startup.legacyUserData)
   startup.showErrorBox.mockClear()
   startup.bridge = null
+  startup.macosRollback = null
   startup.legacyUserData = null
   startup.ready.mockReset().mockImplementation(() => new Promise(() => {}))
   startup.relaunch.mockClear()
@@ -76,6 +108,13 @@ beforeEach(() => {
   vi.stubEnv('WEWORK_USER_DATA_DIR', '')
   vi.stubEnv('WEWORK_RELEASE_ROOT', '')
   vi.stubEnv('WEWORK_RELEASE_SUPERVISED', '')
+  vi.stubEnv('WEWORK_RELEASE_RECOVERY', '')
+  for (const name of [
+    'WEWORK_HARNESS_RUNTIME_ROOT',
+    'WEWORK_ACTIVE_RELEASE_ID',
+    'WEWORK_COMPONENT_DATA_DIRECTORY',
+  ])
+    vi.stubEnv(name, '')
 })
 
 afterEach(() => vi.unstubAllEnvs())
@@ -125,7 +164,7 @@ test('rejects a handoff to a different physical release store', async () => {
       'Wework',
       'Release root does not match the application data directory'
     )
-    expect(startup.roots).toEqual([])
+    expect(startup.roots).toEqual([join(startup.home, 'user-data/releases')])
   } finally {
     diagnostic.mockRestore()
   }
@@ -186,6 +225,168 @@ test('hands the selected legacy host its physical userData before native launch'
 })
 
 if (process.platform === 'darwin') {
+  test('an installed entry resumes a selected rollback before its physical bundle was restored', async () => {
+    startup.activation = null
+    startup.macosRollback = 'source'
+    startup.metadata.version = '2.0.0'
+    startup.activeRelease = {
+      id: 'source',
+      version: '1.0.0',
+      executable: process.execPath,
+      macosInstallation: { payloadExecutable: '/retained/source', bootstrapFromPayload: false },
+    }
+
+    await import('./bootstrap.js')
+
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(startup.ready).toHaveBeenCalledOnce()
+  })
+
+  test('a delayed native recovery handoff cannot enter the rejected installed host after rollback finalized', async () => {
+    startup.activation = null
+    startup.metadata.version = '2.0.0'
+    startup.activeRelease = {
+      id: 'source',
+      version: '1.0.0',
+      executable: process.execPath,
+      macosInstallation: { payloadExecutable: '/retained/source', bootstrapFromPayload: false },
+    }
+    vi.stubEnv('WEWORK_RELEASE_RECOVERY', 'previous-trial')
+
+    await import('./bootstrap.js')
+
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(startup.ready).toHaveBeenCalledOnce()
+    expect(process.env.WEWORK_RELEASE_RECOVERY).toBeUndefined()
+  })
+
+  test('an unsupervised versioned recovery payload is not an ordinary installed application', async () => {
+    startup.activation = null
+    startup.metadata.version = '2.0.0'
+    const original = Object.getOwnPropertyDescriptor(process, 'execPath')!
+    const payload = join(
+      startup.home,
+      '.wegent/workbench/wework/default/user-data/releases/slots/rejected/host/WeWork.app/Contents/MacOS/WeWork'
+    )
+    Object.defineProperty(process, 'execPath', { ...original, value: payload })
+    startup.activeRelease = { id: 'source', version: '1.0.0' }
+    try {
+      await import('./bootstrap.js')
+
+      expect(startup.main).not.toHaveBeenCalled()
+      expect(startup.ready).toHaveBeenCalledOnce()
+    } finally {
+      Object.defineProperty(process, 'execPath', original)
+    }
+  })
+
+  test.each([false, true])(
+    'bootstrap completes manual rollback before native launch (restore=%s)',
+    async restoreRequired => {
+      startup.metadata.version = '2.0.0'
+      startup.activeRelease = {
+        id: 'target',
+        version: '2.0.0',
+        executable: process.execPath,
+        macosInstallation: { payloadExecutable: '/retained/target' },
+      }
+      startup.activation = {
+        token: 'rollback',
+        from: 'source',
+        to: 'target',
+        snapshot: 'saved-data',
+        restoreRequired,
+        rollbackRequested: true,
+      }
+      startup.rollback.mockImplementation(async () => {
+        startup.activeRelease = {
+          ...startup.activeRelease,
+          id: 'source',
+          version: '1.0.0',
+          macosInstallation: { payloadExecutable: '/retained/source' },
+        }
+        startup.activation = null
+        return startup.activeRelease
+      })
+      startup.legacyUserData = join(startup.home, 'user-data')
+      startup.ready.mockResolvedValue(undefined)
+      const original = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+      Object.defineProperty(process, 'resourcesPath', {
+        value: join(startup.home, 'installed.app/Contents/Resources'),
+        configurable: true,
+      })
+      try {
+        await import('./bootstrap.js')
+
+        await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalledOnce())
+        expect(startup.rollback).toHaveBeenCalledOnce()
+        expect(startup.activeRelease.id).toBe('source')
+        expect(startup.restoreData).toHaveBeenCalledTimes(restoreRequired ? 1 : 0)
+        if (restoreRequired) {
+          expect(startup.restoreData.mock.calls[0]?.[2]).toBe('saved-data')
+          expect(startup.restoreData.mock.invocationCallOrder[0]).toBeLessThan(
+            startup.rollback.mock.invocationCallOrder[0]!
+          )
+        }
+        expect(startup.rollback.mock.invocationCallOrder[0]).toBeLessThan(
+          startup.relaunch.mock.invocationCallOrder[0]!
+        )
+        expect(startup.main).not.toHaveBeenCalled()
+        expect(startup.showErrorBox).not.toHaveBeenCalled()
+      } finally {
+        if (original) Object.defineProperty(process, 'resourcesPath', original)
+        else Reflect.deleteProperty(process, 'resourcesPath')
+      }
+    }
+  )
+
+  test('ordinary startup ignores an old selected version, missing bridge and foreign handoff root', async () => {
+    startup.activation = null
+    startup.metadata.version = '3.0.0'
+    startup.activeRelease = { id: 'old', version: '2.0.0' }
+    startup.bridge = '/missing/old/WeWork'
+    vi.stubEnv('WEWORK_RELEASE_ROOT', '/obsolete/releases')
+
+    await import('./bootstrap.js')
+
+    expect(startup.main).toHaveBeenCalledOnce()
+    expect(startup.relaunch).not.toHaveBeenCalled()
+    expect(startup.showErrorBox).not.toHaveBeenCalled()
+    expect(startup.enterInstalled).not.toHaveBeenCalled()
+  })
+
+  test('corrupt release history cannot block the installed app', async () => {
+    startup.activation = null
+    startup.historyError = new SyntaxError('Damaged release descriptor')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await import('./bootstrap.js')
+      expect(startup.main).toHaveBeenCalledOnce()
+      expect(startup.showErrorBox).not.toHaveBeenCalled()
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
+  test('ordinary startup keeps the current installed release component composition without relaunching', async () => {
+    startup.activation = null
+    startup.metadata.version = '3.0.0'
+    startup.activeRelease = {
+      id: 'current',
+      version: '3.0.0',
+      executable: process.execPath,
+      runtimeRoot: '/prepared/runtimes',
+      componentDataDirectory: '/prepared/components',
+      macosInstallation: { payloadExecutable: '/prepared/WeWork', bootstrapFromPayload: true },
+    }
+    await import('./bootstrap.js')
+    expect(startup.main).toHaveBeenCalledOnce()
+    expect(startup.enterInstalled).toHaveBeenCalledOnce()
+    expect(process.env.WEWORK_HARNESS_RUNTIME_ROOT).toBe('/prepared/runtimes')
+    expect(process.env.WEWORK_COMPONENT_DATA_DIRECTORY).toBe('/prepared/components')
+    expect(startup.relaunch).not.toHaveBeenCalled()
+  })
+
   test('macOS rollback uses the loaded bootstrap installer rather than the legacy bridge launcher', async () => {
     const resources = join(startup.home, 'installed.app/Contents/Resources')
     const original = Object.getOwnPropertyDescriptor(process, 'resourcesPath')

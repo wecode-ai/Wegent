@@ -71,7 +71,7 @@ fn frontmatter(text: &str) -> Result<(Value, String)> {
     let captures = pattern
         .captures(text)
         .context("SKILL.md must contain YAML frontmatter")?;
-    let documents = crate::new_user_resources::yaml::documents(&captures[1])?;
+    let documents = wegent_python_compat::yaml::documents(&captures[1])?;
     let metadata = documents
         .into_iter()
         .next()

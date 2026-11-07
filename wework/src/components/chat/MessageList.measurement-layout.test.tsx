@@ -95,6 +95,26 @@ function fixture() {
   }
 }
 
+test('exposes only existing numeric virtualizer state for on-demand failure diagnostics', () => {
+  const current = fixture()
+  current.props.scrollElementRef.current.dataset.testid = 'diagnostic-viewport'
+  const view = render(<MessageList {...current.props} />)
+  const list = view.container.querySelector<HTMLElement>('[data-conversation-message-list]')!
+  const engine = current.engine.current!
+
+  expect(list.dataset.conversationLayoutWidth).toBe('800')
+  expect(list.dataset.conversationMessageCount).toBe('20')
+  expect(list.dataset.conversationVisibleCount).toBe('20')
+  expect(list.dataset.conversationVirtualMessages).toBe('true')
+  expect(list.dataset.conversationViewportReady).toBe('true')
+  expect(list.dataset.conversationVirtualizerEnabled).toBe('true')
+  expect(list.dataset.conversationVirtualRowCount).toBe(String(engine.getVirtualItems().length))
+  expect(JSON.parse(list.dataset.conversationVirtualRange!)).toEqual(engine.range)
+  expect(JSON.parse(list.dataset.conversationScrollRect!)).toEqual(engine.scrollRect)
+  expect(list.dataset.conversationScrollConnected).toBe('false')
+  expect(list.dataset.conversationScrollElement).toBe('diagnostic-viewport')
+})
+
 test.each(['reopen', 'resize'] as const)(
   'rejects stale heights on column %s while the viewport width remains unchanged',
   action => {

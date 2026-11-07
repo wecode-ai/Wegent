@@ -4,6 +4,14 @@ sidebar_position: 13
 
 # Connect stand-ins to GitHub and GitLab
 
+<!-- ui-source: src/components/settings/GitHostingSettingsPage.tsx -->
+
+## Global Git hosting and task status
+
+Open **Settings → Coding → Git hosting**, confirm the execution device and provider, then use the page's detection or connection action. GitHub uses CLI authentication on that device, not merely a website login. **Show PR / MR status** controls status display in task lists; disabling it neither closes nor merges requests. Focus mode hides this page.
+
+For repository events, use **My Stand-in → role profile → connection sources → GitHub/GitLab**, not just the status switch. Distinguish missing CLI, sign-in, network and permission failures before choosing login or retry.
+
 Select GitHub or GitLab in a role's connection settings. GitHub.com, GitLab.com and HTTPS self-managed GitLab instances are supported. The connection provides events and the execution device's `gh` / `glab` capabilities. The stand-in's role instructions decide whether to analyze, review or modify code.
 
 ## Accounts and scopes

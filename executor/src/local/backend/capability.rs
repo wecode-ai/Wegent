@@ -85,6 +85,7 @@ pub(super) fn default_capability_sync_handler(
         config.auth_token.clone(),
         default_plugin_store(),
         HttpPackageProvider::new(config.backend_url.clone(), config.auth_token.clone()),
+        std::sync::Arc::new(crate::agents::CodexSkillConfigurationReloader),
     )
 }
 

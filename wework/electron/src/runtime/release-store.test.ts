@@ -89,6 +89,29 @@ test('macOS keeps an immutable bootstrap while exposing the installed executable
   expect(await optionalText(join(root, 'bridge'))).toBe(after.macosInstallation!.payloadExecutable)
 })
 
+test('macOS rollback keeps its physical restore intent after the activation journal closes', async () => {
+  const { store, root, after, retained } = await macosFixture()
+  await store.activate(after, 'snapshot')
+  await store.confirm(after.id)
+  await store.requestRollback()
+
+  await store.rollback()
+
+  expect(await store.activation()).toBeNull()
+  expect((await store.active())?.id).toBe(retained.id)
+  expect(await optionalText(join(root, 'macos-rollback'))).toBe(retained.id)
+})
+
+test('a healthy macOS activation clears a restore handoff left by an older source', async () => {
+  const { store, root, after, retained } = await macosFixture()
+  await atomicReleaseWrite(join(root, 'macos-rollback'), retained.id)
+  await store.activate(after, 'snapshot')
+
+  await store.confirm(after.id)
+
+  expect(await optionalText(join(root, 'macos-rollback'))).toBeNull()
+})
+
 test('macOS activation binds the stopped source profile and retains its owner', async () => {
   const { store, before, after, retained } = await macosFixture()
   const stopped = { ...before, profileRoot: join(store.slot(before.id), 'retained-profile') }

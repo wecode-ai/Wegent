@@ -39,7 +39,7 @@ export function processIsAliveFromLinuxStat(stat) {
   return !DEAD_LINUX_PROCESS_STATES.has(state)
 }
 
-async function waitForProcessExit(child, timeoutMs) {
+async function waitForProcessExit(child, timeoutMs, { requireExitEvent = false } = {}) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   let wake
   let timeout
@@ -49,7 +49,12 @@ async function waitForProcessExit(child, timeoutMs) {
   try {
     while (child.exitCode === null && child.signalCode === null) {
       // Windows PID probes can disappear before the native exit callback releases resources.
-      if (process.platform !== 'win32' && Number.isInteger(child.pid) && !processIsAlive(child.pid))
+      if (
+        !requireExitEvent &&
+        process.platform !== 'win32' &&
+        Number.isInteger(child.pid) &&
+        !processIsAlive(child.pid)
+      )
         return
       if (Date.now() - startedAt >= timeoutMs) {
         throw new Error(
@@ -148,6 +153,21 @@ export function processIsAlive(processId) {
     if (isAlive !== null) return isAlive
   }
   return true
+}
+
+export async function waitForOwnedProcessExit(
+  snapshot,
+  { timeoutMs = PROCESS_STOP_TIMEOUT_MS, isAlive = processIsAlive } = {}
+) {
+  const pids = ownedCrashTargets({ pid: snapshot.applicationPid }, snapshot)
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const survivors = pids.filter(isAlive)
+    if (survivors.length === 0) return
+    if (Date.now() >= deadline)
+      throw new Error(`Owned application processes survived shutdown: ${survivors.join(', ')}`)
+    await new Promise(accept => setTimeout(accept, PROCESS_GROUP_POLL_INTERVAL_MS))
+  }
 }
 
 export function processInstanceMatches(expected, actual) {
@@ -270,7 +290,17 @@ export async function stopProcessGroup(child) {
     try {
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
     } catch {
-      signalProcessGroup(processGroupId, 'SIGKILL')
+      try {
+        signalProcessGroup(processGroupId, 'SIGKILL')
+      } catch (error) {
+        if (error?.code !== 'EPERM') throw error
+        // macOS can reject a group signal while its leader's exit event is pending.
+        await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS, {
+          requireExitEvent: true,
+        }).catch(() => {
+          throw error
+        })
+      }
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
     }
   }

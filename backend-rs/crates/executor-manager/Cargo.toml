@@ -1,0 +1,18 @@
+[package]
+name = "wegent-executor-manager"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Executor manager transport and response projections"
+
+[dependencies]
+tracing = "0.1"
+anyhow = "1"
+brz-http = { version = "=0.0.14", features = ["json"] }
+brz-json = "=0.0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }

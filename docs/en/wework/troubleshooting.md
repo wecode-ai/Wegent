@@ -4,6 +4,44 @@ sidebar_position: 10
 
 # Troubleshooting
 
+## Diagnosing release-package upgrades and rollback
+
+During a release workflow diagnostic replay, `[desktop-e2e-startup]` in `app.log`
+records the real process, installed version, selected release and pending transaction.
+`[desktop-e2e-relaunch]` records the next executable. Compare these events with
+`release-state-result.json` and `activation-diagnostics.log` to distinguish a running
+package from the on-disk selection. Diagnostic replays do not produce publishable upgrade proof.
+Upgrade acceptance also starts the retained target after rollback has completed, both with
+and without a native recovery marker. Both delayed handoffs must return to the source version
+and preserve its existing task.
+
+Local verification must isolate both the workbench Home and the native macOS Home;
+never move personal application data to satisfy test prerequisites. The test preserves
+an explicitly configured `CFFIXED_USER_HOME` alongside its isolated `HOME`.
+
+## Clicking the app icon does not open a window
+
+Clicking the Dock icon again should reveal the existing main or startup recovery window,
+including a hidden or minimized window. The main page can appear once its document loads;
+renderer health confirmation belongs to upgrade activation and does not gate window visibility.
+Failures in log retention, the tray, auxiliary window restoration, CLI installation, or local
+model synchronization must not prevent the desktop from opening.
+
+On macOS, when no upgrade or rollback transaction is in progress, ordinary startup runs the
+installed package that was opened. After a manual replacement, old release selections, recovery
+bridges, or staging directories must not redirect startup to an older application. Damaged upgrade
+history produces a warning and allows the installed package to start. Do not delete task data to
+work around a startup problem.
+Native recovery handoffs and versioned recovery payloads are not ordinary startup. Even after
+another process finalized rollback and removed its journal, they must route the selected release
+instead of reopening the rejected target.
+
+If the application still cannot open, inspect `wework-main.log`, `runtime-launch.log`, and
+`dsh-core-runtime.log` in the desktop log directory. Distinguish runtime failures from background
+maintenance warnings. Data migration failures, missing runtime files, and storage permission errors
+still need repair; clearing user data must not hide them. Animation, screenshot, and window geometry
+errors affect presentation and must not prevent a loaded main window from appearing.
+
 ## Conversation export remains on packaging
 
 In the desktop log directory, inspect `dsh-core-runtime.log` for `[wework-conversation-export]` and the export task ID. Finalization logs report the start, completion, or failure of document sync, asset sync, packaging, and destination replacement, including stage duration and asset count. They omit file paths and contents. A stage with only a start event identifies the file operation to investigate; the packaging message alone does not establish that the export has failed.

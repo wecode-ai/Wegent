@@ -12,6 +12,7 @@ import {
   selectProjectRunnerModel,
   selectCollaborationIssueAgent,
   waitForTestIdByText,
+  reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -205,9 +206,7 @@ export function createDesktopScenario({
         }),
       })
       await ensureExperimentalFeaturesEnabled(control)
-      const readyCount = control.readyCount
-      await control.command('reloadApp', 'body')
-      await control.awaitReadyAfter(readyCount)
+      await reloadMainWindow(control, 'The worktree policy renderer did not reconnect')
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       const toggle = inCollaborationSidebar(

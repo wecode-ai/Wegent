@@ -28,6 +28,8 @@ Turn lifecycle is independent of unpersisted items. Native `turns/list` can synt
 
 Turns and items share the same position and neighboring-identity ordering rules. Cached turns outside the newest history page that have no native position remain before their observed next native turn; appending all of them to the conversation tail would displace current Goal output and select an old reply as active. A new live turn without an observed native successor remains at the tail. Page merges must not invent adjacency for old cached turns from the merged array.
 
+Answering an asynchronous question can preempt streamed text while Codex continues the same turn. The interrupted prefix may exist only as a live item without a persisted position. The executor must retain completed live-item identities as neighboring anchors when overlaying that prefix, placing it before the subsequent guidance input. Omitting completed bodies must not discard their ordering anchors or append the old prefix after newer progress. Existing native item order and positions remain authoritative. The `streaming-content` desktop checkpoint uses real Codex, an async question option click, and model stream preemption to cover live rendering, reload recovery, and completed history.
+
 User messages must use their containing turn's canonical identity instead of retaining an earlier request alias. When editing or retrying replaces a turn, the executor records supersession for both the request alias and native ID using the persisted native mapping, so optimistic caches, native history, and reloaded history remove the same old turn.
 
 ## Ownership and synchronization

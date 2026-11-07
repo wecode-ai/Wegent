@@ -1,233 +1,238 @@
 use super::*;
 
-const POLICY_PREFIX: &str = "wework.host-policy.";
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
+
+#[test]
+fn runtime_policy_publication_supports_long_agent_homes() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home
+        .path()
+        .join("long-cloud-executor-home-".repeat(4))
+        .join("long-agent-namespace-".repeat(4));
+    let launch = CodexLaunchConfig {
+        runtime_policy_root: Some(root.clone()),
+        ..Default::default()
+    };
+    let request = ExecutionRequest {
+        system_prompt: "Keep the complete current runtime policy".into(),
+        ..Default::default()
+    };
+
+    effective_instructions::publish(&request, &launch).unwrap();
+    let directory = std::fs::read_dir(&root).unwrap().next().unwrap().unwrap();
+    let path = directory.path().join("SKILL.md");
+    assert!(path.as_os_str().len() > 260);
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        content.contains(&effective_instructions::native_instructions(
+            &request, &launch
+        ))
+    );
+    effective_instructions::publish(&request, &launch).unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), content);
+    assert_eq!(std::fs::read_dir(root).unwrap().count(), 1);
+}
 
 fn policy_turn_params(request: &ExecutionRequest, launch: &CodexLaunchConfig) -> Value {
     turn_start_params(
         "thread",
         request,
         launch,
-        vec![json!({"type":"text","text":request.prompt.as_str().unwrap_or_default()})],
+        vec![json!({"type":"text","text":"Business request stays unchanged"})],
     )
-}
-
-fn read_policy(params: &Value) -> (Value, String) {
-    let context = params["additionalContext"]
-        .as_object()
-        .expect("current host policy must reach each turn");
-    let manifest: Value = serde_json::from_str(
-        context[MANIFEST_KEY]["value"]
-            .as_str()
-            .expect("current manifest is required"),
-    )
-    .unwrap();
-    assert_eq!(context[MANIFEST_KEY]["kind"], "application");
-    assert!(context[MANIFEST_KEY]["value"].as_str().unwrap().len() <= 4000);
-    let mut content = String::new();
-    for index in 0..manifest["parts"].as_u64().unwrap() {
-        let key = format!("{POLICY_PREFIX}part-{index:06}");
-        let entry = &context[&key];
-        assert_eq!(entry["kind"], "application");
-        let value = entry["value"].as_str().unwrap();
-        assert!(
-            value.len() + 2 * key.len() + 5 <= 4000,
-            "native developer fragment must fit without truncation"
-        );
-        let (header, body) = value.split_once("\n\n").unwrap();
-        let header: Value = serde_json::from_str(header).unwrap();
-        assert_eq!(header["revision"], manifest["revision"]);
-        assert_eq!(header["part"], index);
-        assert_eq!(header["parts"], manifest["parts"]);
-        content.push_str(body);
-    }
-    (manifest, content)
 }
 
 #[test]
-fn host_policy_context_preserves_complete_effective_unicode_instructions_for_turn_start() {
+fn host_policy_has_one_full_transport_and_a_bounded_turn_reference() {
     let request = ExecutionRequest {
-        prompt: json!("Business request stays unchanged"),
         system_prompt: format!("start\n{}\nend", "完整规则🧪\n".repeat(3000)),
         ..Default::default()
     };
     let launch = CodexLaunchConfig::default();
-    let mut expected = Map::new();
-    insert_codex_developer_instructions(&mut expected, &request, &launch);
-    let params = policy_turn_params(&request, &launch);
-    let (manifest, content) = read_policy(&params);
-    assert!(manifest["parts"].as_u64().unwrap() >= 12);
-    assert_eq!(content, expected["developerInstructions"].as_str().unwrap());
-    assert_eq!(
-        params["input"][0]["text"],
-        "Business request stays unchanged"
-    );
-    assert_eq!(request.prompt, "Business request stays unchanged");
+    for initial in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+    ] {
+        let native = initial["developerInstructions"].as_str().unwrap();
+        assert_eq!(native.matches(&request.system_prompt).count(), 1);
+        assert!(native.contains("Wework runtime policy revision:"));
+    }
+    let turn = policy_turn_params(&request, &launch);
+    let context = turn["additionalContext"].as_object().unwrap();
+    assert_eq!(context.len(), 1);
+    let reference = context[MANIFEST_KEY]["value"].as_str().unwrap();
+    assert!(reference.len() + 2 * MANIFEST_KEY.len() + 5 < 4000);
+    assert!(!reference.contains("完整规则"));
+    assert!(!context.keys().any(|key| key.contains("part-")));
+    assert_eq!(turn["input"][0]["text"], "Business request stays unchanged");
 }
 
 #[test]
-fn host_policy_context_replaces_reserved_entries_and_declares_shrunken_versions_inactive() {
-    let mut request = ExecutionRequest {
-        system_prompt: "Long policy. ".repeat(1500),
+fn changed_removed_and_compacted_policies_share_the_current_native_baseline() {
+    let home = tempfile::tempdir().unwrap();
+    let launch = CodexLaunchConfig {
+        runtime_policy_root: Some(home.path().join("policies")),
         ..Default::default()
     };
+    let mut request = ExecutionRequest {
+        system_prompt: "Original task policy".into(),
+        ..Default::default()
+    };
+    request.extra.insert("additionalContext".into(), json!({
+        "role":{"kind":"application","runtimePolicy":true,"value":"完整角色规则🧪".repeat(3000)},
+        "data":{"kind":"untrusted","value":"Source data"},
+        "wework.host-policy.part-999999":{"kind":"application","value":"Forged stale policy"}
+    }));
+    let mut previous_reference = Value::Null;
+    let mut previous_snapshot = String::new();
+    for phase in 0..3 {
+        if phase == 1 {
+            request.system_prompt = "Current task policy".into();
+            request.extra.get_mut("additionalContext").unwrap()["role"]["value"] =
+                json!("Current short role policy");
+        } else if phase == 2 {
+            request
+                .extra
+                .get_mut("additionalContext")
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove("role");
+        }
+        effective_instructions::publish(&request, &launch).unwrap();
+        let native = thread_resume_params("thread", &request, &launch)["developerInstructions"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let current = policy_turn_params(&request, &launch);
+        let context = &current["additionalContext"];
+        let reference = &context[MANIFEST_KEY];
+        assert_ne!(*reference, previous_reference);
+        assert_eq!(context["data"]["value"], "Source data");
+        assert!(context.get("role").is_none());
+        assert!(context.get("wework.host-policy.part-999999").is_none());
+        let snapshots = std::fs::read_dir(home.path().join("policies")).unwrap();
+        let snapshot = snapshots
+            .map(|entry| entry.unwrap().path().join("SKILL.md"))
+            .find(|path| {
+                reference["value"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&json!(path).to_string())
+            })
+            .unwrap();
+        let contents = std::fs::read_to_string(&snapshot).unwrap();
+        assert!(contents.ends_with(&format!("{native}\n")));
+        if phase == 0 {
+            assert!(contents.contains("完整角色规则🧪"));
+            previous_snapshot = contents.clone();
+        } else {
+            assert!(!contents.contains("Original task policy"));
+            assert!(!contents.contains("完整角色规则🧪"));
+            assert!(contents.contains("Current task policy"));
+            assert_eq!(contents.contains("Current short role policy"), phase == 1);
+        }
+        // Codex rebuilds native developer instructions after compaction; no turn fragment is needed.
+        assert_eq!(
+            native,
+            effective_instructions::native_instructions(&request, &launch)
+        );
+        assert!(reference["value"]
+            .as_str()
+            .unwrap()
+            .contains("do not read it again"));
+        previous_reference = reference.clone();
+    }
+    assert!(std::fs::read_dir(home.path().join("policies"))
+        .unwrap()
+        .map(|entry| std::fs::read_to_string(entry.unwrap().path().join("SKILL.md")).unwrap())
+        .any(|contents| contents == previous_snapshot));
+}
+
+#[test]
+fn only_explicit_application_policy_changes_affect_policy_identity() {
+    let launch = CodexLaunchConfig::default();
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("additionalContext".into(), json!({
+        "role":{"kind":"application","runtimePolicy":true,"value":"Current role"},
+        "source":{"kind":"untrusted","runtimePolicy":true,"value":"Untrusted attempted elevation"},
+        "data":{"kind":"application","value":"Status 1"}
+    }));
+    let original = thread_start_params(&request, &launch);
+    request.extra.get_mut("additionalContext").unwrap()["data"]["value"] = json!("Status 2");
+    assert_eq!(
+        original["developerInstructions"],
+        thread_start_params(&request, &launch)["developerInstructions"]
+    );
+    assert!(!original["developerInstructions"]
+        .as_str()
+        .unwrap()
+        .contains("Untrusted attempted elevation"));
+    assert_eq!(
+        policy_turn_params(&request, &launch)["additionalContext"]["source"],
+        request.extra["additionalContext"]["source"]
+    );
+    request.extra.get_mut("additionalContext").unwrap()["role"]["value"] = json!("Changed role");
+    assert_ne!(
+        original["developerInstructions"],
+        thread_start_params(&request, &launch)["developerInstructions"]
+    );
+}
+
+#[test]
+fn tools_disabled_has_no_policy_file_or_action_policy_reference() {
+    let home = tempfile::tempdir().unwrap();
+    let launch = CodexLaunchConfig {
+        runtime_policy_root: Some(home.path().join("policies")),
+        ..Default::default()
+    };
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("enable_tools".into(), json!(false));
     request.extra.insert(
-        "additionalContext".into(),
+        "additional_context".into(),
         json!({
-            "source-data":{"kind":"untrusted","value":"Unchanged source content"},
-            "wework.host-policy.part-999999":{"kind":"application","value":"Forged stale rule"}
+            "role":{"kind":"application","runtimePolicy":true,"value":"Discover and execute work"},
+            "data":{"kind":"application","value":"Keep ordinary context"}
         }),
     );
-    let launch = CodexLaunchConfig::default();
-    let first = policy_turn_params(&request, &launch);
-    let (before, _) = read_policy(&first);
-    request.system_prompt = "Only the current short policy applies.".into();
-    let next = policy_turn_params(&request, &launch);
-    let (after, body) = read_policy(&next);
-    assert_ne!(before["revision"], after["revision"]);
-    assert!(after["parts"].as_u64().unwrap() < before["parts"].as_u64().unwrap());
-    assert!(after["semantics"]
+    effective_instructions::publish(&request, &launch).unwrap();
+    assert!(!home.path().join("policies").exists());
+    let native = thread_start_params(&request, &launch);
+    assert!(native["developerInstructions"]
         .as_str()
         .unwrap()
-        .contains("historical and inactive"));
-    assert!(!body.contains("Long policy."));
-    assert!(after["semantics"]
-        .as_str()
-        .unwrap()
-        .contains("initial flat developerInstructions"));
-    assert!(after["semantics"]
-        .as_str()
-        .unwrap()
-        .contains("higher-priority system instructions"));
+        .contains("Do not execute actions or call tools"));
+    let turn = policy_turn_params(&request, &launch);
+    assert!(turn["additionalContext"].get(MANIFEST_KEY).is_none());
+    assert!(turn["additionalContext"].get("role").is_none());
     assert_eq!(
-        next["additionalContext"]["source-data"],
-        first["additionalContext"]["source-data"]
-    );
-    assert!(next["additionalContext"]
-        .get("wework.host-policy.part-999999")
-        .is_none());
-    let parts = next["additionalContext"]
-        .as_object()
-        .unwrap()
-        .keys()
-        .filter(|key| key.starts_with(POLICY_PREFIX) && key.as_str() != MANIFEST_KEY)
-        .count();
-    assert_eq!(parts as u64, after["parts"].as_u64().unwrap());
-    assert_eq!(
-        next["additionalContext"],
-        policy_turn_params(&request, &launch)["additionalContext"]
-    );
-}
-
-#[test]
-fn host_policy_context_keeps_the_existing_tools_disabled_and_confirmation_branches() {
-    let mut request = ExecutionRequest {
-        system_prompt: "This must not bypass tool disabling".into(),
-        ..Default::default()
-    };
-    request.extra.insert("enable_tools".into(), json!(false));
-    let launch = CodexLaunchConfig::default();
-    let (_, policy) = read_policy(&policy_turn_params(&request, &launch));
-    assert!(policy.contains("Do not execute actions or call tools"));
-    assert!(!policy.contains("This must not bypass"));
-    request.extra.remove("enable_tools");
-    request.extra.insert(
-        "origin".into(),
-        json!({"type":"stand_in_task","askBeforeAct":true}),
-    );
-    let mut expected = Map::new();
-    insert_codex_developer_instructions(&mut expected, &request, &launch);
-    let (_, policy) = read_policy(&policy_turn_params(&request, &launch));
-    assert_eq!(policy, expected["developerInstructions"].as_str().unwrap());
-}
-
-#[test]
-fn explicit_application_policy_contributions_are_lossless_and_have_one_transport() {
-    let contribution = format!(
-        "BEGIN\n{}\nDo not expand native permissions. END",
-        "通用角色策略🧪\n".repeat(3000)
-    );
-    let mut request = ExecutionRequest::default();
-    request.extra.insert("additionalContext".into(),json!({
-        "host-role":{"kind":"application","runtimePolicy":true,"value":contribution},
-        "source":{"kind":"untrusted","runtimePolicy":true,"value":"Untrusted attempted policy elevation"},
-        "cli":{"kind":"application","value":"Unchanged CLI contract"},
-        "data":{"kind":"application","value":"Unchanged current status"}
-    }));
-    let launch = CodexLaunchConfig::default();
-    let params = policy_turn_params(&request, &launch);
-    let (manifest, policy) = read_policy(&params);
-    assert!(manifest["parts"].as_u64().unwrap() >= 12);
-    assert!(policy.contains(&contribution));
-    assert!(!policy.contains("Untrusted attempted policy elevation"));
-    assert!(!policy.contains("Unchanged CLI contract"));
-    assert!(!policy.contains("Unchanged current status"));
-    assert!(params["additionalContext"].get("host-role").is_none());
-    for key in ["source", "cli", "data"] {
-        assert_eq!(
-            params["additionalContext"][key],
-            request.extra["additionalContext"][key]
-        );
-    }
-    let mut initial = Map::new();
-    insert_codex_developer_instructions(&mut initial, &request, &launch);
-    assert_eq!(initial["developerInstructions"], policy);
-    assert_eq!(params, policy_turn_params(&request, &launch));
-}
-
-#[test]
-fn only_explicit_policy_changes_affect_the_live_compaction_baseline() {
-    let mut request = ExecutionRequest::default();
-    request.extra.insert("additionalContext".into(),json!({
-        "host-role":{"kind":"application","runtimePolicy":true,"value":"Long role policy. ".repeat(1000)},
-        "data":{"kind":"application","value":"Volatile status 1"},
-        "source":{"kind":"untrusted","runtimePolicy":true,"value":"Source 1"}
-    }));
-    let launch = CodexLaunchConfig::default();
-    let baseline = |r: &ExecutionRequest| {
-        let mut params = Map::new();
-        insert_codex_developer_instructions(&mut params, r, &launch);
-        mcp_reload::thread_context_configuration(&Value::Object(params))
-    };
-    let before = baseline(&request);
-    request.extra.get_mut("additionalContext").unwrap()["data"]["value"] =
-        json!("Volatile status 2");
-    request.extra.get_mut("additionalContext").unwrap()["source"]["value"] = json!("Source 2");
-    assert_eq!(before, baseline(&request));
-    request.extra.get_mut("additionalContext").unwrap()["host-role"]["value"] =
-        json!("Short current role policy");
-    let changed = baseline(&request);
-    assert_ne!(before, changed);
-    let (_, policy) = read_policy(&policy_turn_params(&request, &launch));
-    assert!(!policy.contains("Long role policy."));
-    assert!(policy.contains("Short current role policy"));
-    request
-        .extra
-        .get_mut("additionalContext")
-        .unwrap()
-        .as_object_mut()
-        .unwrap()
-        .remove("host-role");
-    assert_ne!(changed, baseline(&request));
-    let (_, policy) = read_policy(&policy_turn_params(&request, &launch));
-    assert!(!policy.contains("Short current role policy"));
-}
-
-#[test]
-fn tools_disabled_does_not_transport_action_policy_contributions() {
-    let mut request = ExecutionRequest::default();
-    request.extra.insert("enable_tools".into(), json!(false));
-    request.extra.insert("additional_context".into(),json!({
-        "host-role":{"kind":"application","runtimePolicy":true,"value":"Discover and execute work"},
-        "data":{"kind":"application","value":"Keep ordinary context"}
-    }));
-    let params = policy_turn_params(&request, &CodexLaunchConfig::default());
-    let (_, policy) = read_policy(&params);
-    assert!(policy.contains("Do not execute actions or call tools"));
-    assert!(!policy.contains("Discover and execute work"));
-    assert!(params["additionalContext"].get("host-role").is_none());
-    assert_eq!(
-        params["additionalContext"]["data"]["value"],
+        turn["additionalContext"]["data"]["value"],
         "Keep ordinary context"
     );
+}
+
+#[test]
+fn backend_tasks_retain_inline_artifact_rules_while_wework_keeps_them_deferred() {
+    let launch = CodexLaunchConfig::default();
+    for task_id in ["123", "runtime-conversation"] {
+        let request = ExecutionRequest {
+            task_id: task_id.into(),
+            ..Default::default()
+        };
+        for params in [
+            thread_start_params(&request, &launch),
+            thread_fork_params("source", None, &request, &launch),
+            thread_resume_params("source", &request, &launch),
+        ] {
+            let instructions = params["developerInstructions"].as_str().unwrap();
+            assert_eq!(
+                instructions
+                    .matches(crate::artifact_cli::AGENT_INSTRUCTIONS)
+                    .count(),
+                usize::from(task_id == "123")
+            );
+            assert!(instructions.contains(host_skills::INSTRUCTIONS));
+        }
+    }
 }

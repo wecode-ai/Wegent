@@ -138,11 +138,11 @@ export function createDingTalkReplyStory(options) {
           result: { hasMore: false, nextCursor: '0', conversationMessagesList: [] },
         })
       )
+      const preparedBinary = process.env.WEWORK_E2E_DWS_REPLY_FIXTURE_BIN
       const binary = join(
         options.resultDir,
         process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
       )
-      const preparedBinary = process.env.WEWORK_E2E_SOURCE_STORY_DWS_BIN
       if (preparedBinary) {
         // The fixture resolves its protocol data next to its own executable.
         await copyFile(preparedBinary, binary)
@@ -267,10 +267,13 @@ export function createDingTalkReplyStory(options) {
         await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
           timeoutMs: options.modelResponseTimeoutMs,
         })
-        const proposalDeadline = Date.now() + 10_000
-        while (!model.proposalSubmitted && Date.now() < proposalDeadline) {
-          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-        }
+        // The UI can show the proposal before the model consumes its tool result.
+        await storyUntil(
+          () => model.proposalSubmitted,
+          submitted => submitted === true,
+          options.modelResponseTimeoutMs,
+          'The model must receive the persisted proposal before reviewing its grant'
+        )
         assert.equal(model.proposalSubmitted, true)
         assert.equal(
           (await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })).roles.find(

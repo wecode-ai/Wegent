@@ -6,7 +6,33 @@ sidebar_position: 8
 
 A Skill gives AI task-specific instructions and resources. A plugin can package Skills, commands, tools, and application entries.
 
-Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
+## Look up Wework documentation
+
+**Wework Docs** ships with the application and is installed by default, without a separate download or authorization. Ask questions such as “How do I configure a model in Wework?”, “How do projects differ from workspaces?”, or “How do I use the built-in browser?”. The agent can automatically use the `wework-docs` Skill, or you can select it explicitly in a conversation.
+
+The Skill includes the Chinese and English Wework documentation shipped with the build, supports offline reading, and cites its sources. Documentation describes product usage; actions available in a conversation still depend on its tools, device, and permissions. Latest release information and account availability require separate verification.
+
+You can also ask “Where are proxy settings?”, “How do I open a terminal?”, or “Why can't I find Worktrees?”. The Skill starts with [Interface navigation and feature locations](./interface-navigation.md) to give the starting region, click path and visibility conditions.
+
+## Use plugins
+
+<!-- ui-source: src/components/settings/PluginSettingsPage.tsx -->
+
+### Individual plugin operations
+
+| Goal                       | UI steps                                                                       | Conditions or limits                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Find and install           | Left sidebar → Plugins → search/filter source → details → Install              | Review trust confirmation for unofficial plugins; cancel leaves them uninstalled                                 |
+| Try a task                 | Details → example task / start conversation → review composer → send           | Filling the composer is not sending or authorizing                                                               |
+| Authorize an app           | Details → App authorizations → matching app → native login → return and verify | Authorization is app-, account- and execution-device-specific                                                    |
+| Enable, disable, uninstall | Plugin management list → plugin action                                         | Disable retains installation; uninstall is not deletion of created content                                       |
+| Import ZIP                 | Plugins → Create → Import plugin → choose ZIP → review → confirm               | Standard format and trust rules apply                                                                            |
+| Share, edit or delete      | Personal plugin details → Share or … menu                                      | Depends on ownership, publication state and version support; preserve implementation-status qualifications below |
+| Online Codex connectors    | Settings → Integrations → Plugins → Load online connectors                     | Codex runtime configuration; does not replace app login or plugin installation                                   |
+
+For inconsistent installation state, use management's refresh/repair entry and inspect errors. Repeated uninstall/reinstall does not resolve authorization, offline devices or permissions.
+
+Open **left sidebar → Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
 When installing an unofficial plugin from Enterprise, Personal, or an external marketplace, including public community submissions, the confirmation dialog warns that it may execute code, access local files, or send data to external services. Public visibility does not establish official provenance. Only continue if you trust its source. Focus starts on **Cancel**, and Escape closes the dialog. Trying an uninstalled unofficial plugin also requires confirmation before installation and placing the example in a new conversation. OpenAI official and Wework official plugins retain their existing installation flow. Personal ZIP imports show the same source warning in the preview dialog.
 
@@ -176,7 +202,11 @@ were created, so restarting Wework does not remove their plugin capabilities.
 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
 
-Use **Settings → Coding → Skills** to manage local Skills. Unified management places Codex and Claude Code Skills under `~/.agents/skills`; name collisions are preserved with source suffixes.
+### Inspect and toggle individual Skills
+
+Open **left sidebar → Plugins → plugin details → included capabilities** and select a Skill to read its instructions and invocation. When installed and manageable, toggle individual components on their capability rows or use Disable/Restore at the bottom of Skill details. Disabling a component differs from disabling its whole plugin.
+
+**Run Skill** requires an installed, enabled Skill and no pending start request. Review the resulting task flow before continuing; running it does not authorize external services. Global settings currently has no **Coding → Skills** page; do not follow the obsolete unified-directory migration UI instructions.
 
 ## Development and migration
 

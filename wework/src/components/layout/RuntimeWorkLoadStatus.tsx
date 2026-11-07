@@ -13,17 +13,13 @@ export function RuntimeWorkLoadStatus({
   onRetry?: () => Promise<void>
 }) {
   const { t } = useTranslation('common')
-  if (!load || load.phase === 'ready') return null
+  if (!load || load.phase === 'ready' || load.phase === 'refreshing') return null
   const failed = load.phase === 'error'
   const label = failed
     ? hasSnapshot
       ? t('workbench.runtime_work_refresh_failed')
       : t('workbench.runtime_work_load_failed')
-    : t(
-        load.phase === 'refreshing'
-          ? 'workbench.runtime_work_refreshing'
-          : 'workbench.runtime_work_loading'
-      )
+    : t('workbench.runtime_work_loading')
   return (
     <div
       data-testid="runtime-work-load-status"

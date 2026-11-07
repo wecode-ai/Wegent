@@ -25,11 +25,13 @@ function fixture() {
   const getIssue = vi.fn().mockResolvedValue(issue)
   const create = vi.fn().mockResolvedValue({ id: 'comment', body: '明确发布的结论' })
   const onClose = vi.fn()
+  const onPublished = vi.fn()
   const ref = createRef<StandInSettingsHandle>()
   const props = {
     api: { projects: { get: getProject }, issues: { list, get: getIssue }, comments: { create } },
     project,
     onClose,
+    onPublished,
     ref,
   } as unknown as ComponentProps<typeof ProjectCoordinatorPublication>
   return { props, project, issue, list, getProject, getIssue, create, onClose, ref }
@@ -44,6 +46,36 @@ async function enterPublication() {
 }
 
 describe('explicit project publication', () => {
+  it('refreshes its owning board only after the publication is committed', async () => {
+    const f = fixture()
+    const onPublished = vi.fn()
+    let finish!: () => void
+    f.create.mockReturnValue(
+      new Promise<void>(resolve => {
+        finish = resolve
+      })
+    )
+    render(<ProjectCoordinatorPublication {...f.props} onPublished={onPublished} />)
+    const user = await enterPublication()
+    await user.click(screen.getByTestId('project-coordinator-publication-submit'))
+    expect(f.create).toHaveBeenCalledOnce()
+    expect(onPublished).not.toHaveBeenCalled()
+    await act(async () => finish())
+    await screen.findByTestId('project-coordinator-published')
+    expect(onPublished).toHaveBeenCalledOnce()
+  })
+
+  it('does not refresh its owning board when publication is rejected', async () => {
+    const f = fixture()
+    const onPublished = vi.fn()
+    f.create.mockRejectedValue(new Error('permission_denied'))
+    render(<ProjectCoordinatorPublication {...f.props} onPublished={onPublished} />)
+    const user = await enterPublication()
+    await user.click(screen.getByTestId('project-coordinator-publication-submit'))
+    await screen.findByRole('alert')
+    expect(onPublished).not.toHaveBeenCalled()
+  })
+
   it('shares only entered text after an explicit publish and retains the normal Issue record', async () => {
     const f = fixture()
     render(<ProjectCoordinatorPublication {...f.props} />)

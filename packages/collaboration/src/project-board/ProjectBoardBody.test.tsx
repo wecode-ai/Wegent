@@ -8,6 +8,7 @@ import { act, Children, useState, type ReactElement, type ReactNode } from 'reac
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
+import { ProjectBoardGroupPicker } from './ProjectBoardGroupPicker'
 import { createProjectBoardSortLabels } from './projectBoardSorting'
 import { ProjectBoardCardContext } from './projectBoardCardContext'
 import { createCollaborationTranslator } from '../i18n'
@@ -102,6 +103,87 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe('ProjectBoardBody', () => {
+  it.each(['', 'removed-lane'])(
+    'keeps filter names and icons independent from collapsible text (%s)',
+    groupFilter => {
+      Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      const onChange = vi.fn()
+      const options = props()
+      options.state.groupFilter = groupFilter
+      try {
+        act(() =>
+          root.render(
+            <ProjectBoardBody
+              {...options}
+              renderGroupPicker={() => (
+                <ProjectBoardGroupPicker
+                  fields={[{ id: 'status', name: '状态' }]}
+                  value="status"
+                  onChange={onChange}
+                  testIdPrefix="cloud-board-group"
+                />
+              )}
+            />
+          )
+        )
+        const group = container.querySelector('[data-testid="cloud-board-group-by"]')!
+        expect(group.getAttribute('aria-label')).toBe('状态')
+        expect(group.querySelector('.project-board-action-icon')).not.toBeNull()
+        expect(group.querySelector('.project-board-action-label')?.textContent).toBe('状态')
+        const filter = container.querySelector<HTMLSelectElement>(
+          '[data-testid="cloud-board-group-filter"]'
+        )!
+        expect(filter.getAttribute('aria-label')).toBe('分组值筛选')
+        expect(filter.value).toBe(groupFilter)
+        expect(filter.closest('label')?.querySelector('.project-board-action-icon')).not.toBeNull()
+        expect(
+          filter.closest('label')?.querySelector('.project-board-action-label')?.textContent
+        ).toBe(groupFilter || '全部状态')
+        if (groupFilter) {
+          act(() => {
+            filter.value = ''
+            filter.dispatchEvent(new Event('change', { bubbles: true }))
+          })
+          expect(options.state.setGroupFilter).toHaveBeenCalledWith('')
+        }
+        act(() => {
+          filter.value = 'inbox'
+          filter.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(options.state.setGroupFilter).toHaveBeenCalledWith('inbox')
+      } finally {
+        act(() => root.unmount())
+      }
+    }
+  )
+
+  it('keeps fixed actions outside scrolling while sharing toolbar typography', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      act(() =>
+        root.render(
+          <ProjectBoardBody
+            {...props()}
+            toolbarAction={<button data-testid="fixed-action">Chat</button>}
+          />
+        )
+      )
+      const scrolling = container.querySelector('[data-testid="cloud-board-toolbar"]')!
+      const action = container.querySelector('[data-testid="fixed-action"]')!
+      expect(scrolling.contains(action)).toBe(false)
+      expect(action.closest('.project-board-toolbar')).toBe(
+        scrolling.closest('.project-board-toolbar')
+      )
+      expect(action.closest('.project-board-toolbar')).not.toBeNull()
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it('distinguishes parents from standalone issues instead of calling every row an Issue', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const container = document.createElement('div'),
@@ -324,11 +406,19 @@ it('keeps project filters beside group filtering and before search and view acti
   const container = document.createElement('div')
   const root = createRoot(container)
   try {
-    act(() => root.render(<ProjectBoardBody {...props()} filterAction={<select data-testid="milestone-filter" />} />))
+    act(() =>
+      root.render(
+        <ProjectBoardBody {...props()} filterAction={<select data-testid="milestone-filter" />} />
+      )
+    )
     const group = container.querySelector('[data-testid="cloud-board-group-filter"]')!
     const milestone = container.querySelector('[data-testid="milestone-filter"]')!
     const search = container.querySelector('[data-testid="cloud-board-search"]')!
     expect(group.compareDocumentPosition(milestone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(milestone.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  } finally { act(() => root.unmount()) }
+    expect(
+      milestone.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  } finally {
+    act(() => root.unmount())
+  }
 })

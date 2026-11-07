@@ -15,6 +15,7 @@ import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContext
 import { useTranslation } from '@/hooks/useTranslation'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import {
   interactionResponse,
@@ -45,6 +46,7 @@ import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktop
 import { replyToInteractionProject } from './interactionProjectReply'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -115,7 +117,7 @@ export function RuntimeInteractionsProvider({
         publish={publish}
         setDraft={setDraft}
       />
-      {children}
+      <QuestionDiscussionProvider accountKey={accountKey}>{children}</QuestionDiscussionProvider>
     </RuntimeInteractionsContext.Provider>
   )
 }
@@ -201,8 +203,9 @@ function RuntimeInteractionsState({
 
   const archive = useCallback(
     async (item: RuntimeInteraction, answeredAt = item.createdAt) => {
-      await navigator.locks.request(historyKey, () => {
-        const next = archiveInteraction(readInteractionHistory(historyKey), {
+      await navigator.locks.request(historyKey, async () => {
+        const current = readInteractionHistory(historyKey)
+        const next = archiveInteraction(current, {
           id: item.id,
           source: interactionSource(item),
           title: item.task.task.title,
@@ -212,7 +215,10 @@ function RuntimeInteractionsState({
           sourceMessageIds: item.sourceMessageIds,
           answeredAt,
         })
-        saveInteractionState(historyKey, next)
+        if (next !== current) saveInteractionState(historyKey, next)
+        // Renderer queues are independent; retain the lock through the host write
+        // so an older window's snapshot cannot overwrite a newer archive.
+        await flushDesktopLocalStoragePersistence()
         if (mounted.current) setHistory(next)
       })
     },

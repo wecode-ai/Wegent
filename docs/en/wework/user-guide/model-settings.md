@@ -4,6 +4,27 @@ sidebar_position: 19
 
 # Model settings
 
+<!-- ui-source: src/components/settings/ModelSettingsPage.tsx -->
+
+<a id="model-controls"></a>
+
+## Individual model controls
+
+Open **bottom-left account menu → Settings → Personal → Models**. The task composer model selector chooses a model; it is not the provider configuration form.
+
+| Feature                    | Steps and result                                                                                  | Limitations                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Local Codex subscription   | Toggle and restart when prompted; expand model or account management                              | Local Codex and Wegent cloud accounts are separate                                                               |
+| Add provider model         | Add model → provider → API key → fetch models → select and save                                   | Models in a group share provider URL and key; never enter secrets in chat                                        |
+| Custom endpoint            | Select Custom endpoint in the provider list; enter name, protocol, Base URL and key               | Protocol must match the API; a passing test does not authorize external plugins                                  |
+| Edit provider / add model  | Edit shared configuration or add a model inside its group                                         | Shared settings affect the group; a model test checks that model only                                            |
+| Edit model capabilities    | Expand provider → Edit model; set context, maximum output and capabilities                        | Maximum output must be positive and smaller than an explicitly configured context                                |
+| Vision sidecar             | Select an explicitly image-capable model in a text model's configuration                          | Images go to that vision model; descriptions go to the main model. Cloud references are configured in Wegent Web |
+| Test connection            | Test at the bottom of the add/edit dialog; expand errors for details                              | No save required; does not change stored settings. A blank key during editing uses the stored key                |
+| Codex Catalog              | Expand Codex models → model actions → Edit Catalog; save or restore defaults                      | Cannot add models here; an executor restart may be required                                                      |
+| Disable, cancel and delete | Use the model/provider action and review the affected scope                                       | Cancel does not save; deleting a provider removes its models, not conversations                                  |
+| Choose for a task          | Return to the composer, open the model selector and select a model and available reasoning effort | Options depend on capabilities; recover missing configuration in settings                                        |
+
 Manage task models in **Settings → Models**.
 
 - **Codex subscription**: Enable the local subscription to use your local Codex account and models. Use “View models” to adjust model capabilities and “Manage account” to sign in or manage your account. Changing the subscription switch requires restarting the app.

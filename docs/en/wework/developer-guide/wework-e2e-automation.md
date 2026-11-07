@@ -36,6 +36,8 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
+The `stand-in-email` checkpoint uses an isolated GreenMail IMAP/SMTP service and requires Java 11 or newer; CI uses Java 21. Ensure that `java` and `keytool` on `PATH` come from a supported JDK before running it.
+
 Run only the Codex cloud-config recovery regression:
 
 ```bash
@@ -376,12 +378,34 @@ covering process stops, process-group termination, crash-injection freeze/kill,
 and forced in-scenario application kills. Chromium's `Network service crashed`
 lines in `app.log` use runner-local time, so correlating both records attributes
 each crash to harness teardown or leaves it as an unexplained event that needs
-further investigation. When a checkpoint step fails, the runner also captures
-`failure-followup.json` three seconds after the failure with a repeated UI
-snapshot and workbench debug state, distinguishing a slow asynchronous update
-that settled after the timeout from a stuck state. Set
-`WEWORK_E2E_FAILURE_FOLLOWUP_MS` to adjust the observation delay or `0` to
-disable the capture.
+further investigation. When a checkpoint step fails, the runner also observes
+the failed wait condition itself through the renderer's condition-polling `waitFor`
+and captures `failure-followup.json` recording either the measured convergence
+time (`settled-after-failure`) or that the condition did not settle within the
+overall budget (`condition-unsettled-within-budget`), together with a UI snapshot
+and workbench debug state. The convergence time is measured from the actual
+step failure, while the budget bounds only the wall clock the follow-up itself
+adds (the pre-follow-up diagnostics capture does not consume it); the recorded
+`observationBudgetMs` and `observedForMs` show the observation window and how
+long the condition was actually observed within it. When the failed step ran in
+a detached window, observation and capture are routed to that window's control
+client. Set `WEWORK_E2E_FAILURE_FOLLOWUP_MS` to adjust the
+overall observation budget or `0` to disable the capture. The observation is a
+condition-checking wait in the sense of the fixed-wait policy below: it returns
+as soon as the failed condition settles and never sleeps a fixed duration. For
+a diagnostic run that needs Chromium's own record of why child processes exit
+(network service, zygote), set `WEWORK_E2E_CHROMIUM_VERBOSE` to a verbosity
+level (`1`–`9` or `true` for `1`); the switch is off by default because the log
+volume is significant. On Linux the verbose output is appended to `app.log`; on
+Windows the scenario's `--enable-logging=file` wins over the stderr switch, so
+verbose output lands in `electron.log`.
+Ordinary fixed E2E waits must not exceed five seconds. Exceptions such as negative
+observation across a complete polling interval, cancellation, or concurrent model
+responses may use up to ten seconds with an explanation; observing a five-second
+polling interval uses a 5.5-second window. UI, startup, and execution waits must
+check the actual condition and return as soon as it is satisfied; their operation
+timeouts are separate from fixed delays. Prefer the existing response release gate
+when a model request must remain pending instead of using a long delay.
 Drawer animation checks sample from before the action until movement is observed
 and the track animation completes, then stop explicitly within the shared step
 timeout. Command transport and rendering delays cannot exhaust a fixed 800ms

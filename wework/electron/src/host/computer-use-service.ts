@@ -33,6 +33,7 @@ export class ComputerUseService {
   private readonly operationControllers = new Set<AbortController>()
   private error: string | null = null
   private enabled = false
+  private initialized = false
   private operation = Promise.resolve()
   private nextOperationId = 0
 
@@ -68,11 +69,25 @@ export class ComputerUseService {
 
   setEnabled(enabled: boolean): Promise<ComputerUseStatus> {
     return this.serial(async () => {
-      this.enabled = enabled
-      if (enabled) await this.start()
-      else await this.stopInternal()
-      return this.snapshot()
+      this.initialized = true
+      return this.applyEnabled(enabled)
     })
+  }
+
+  /** Lazy startup must not overwrite an earlier user choice or restart its failed driver. */
+  restoreEnabled(enabled: boolean): Promise<ComputerUseStatus> {
+    return this.serial(async () => {
+      if (this.initialized) return this.snapshot()
+      this.initialized = true
+      return this.applyEnabled(enabled)
+    })
+  }
+
+  private async applyEnabled(enabled: boolean): Promise<ComputerUseStatus> {
+    this.enabled = enabled
+    if (enabled) await this.start()
+    else await this.stopInternal()
+    return this.snapshot()
   }
 
   async requestPermissions(): Promise<ComputerUseStatus> {

@@ -128,6 +128,35 @@ test('compaction renders only its native turn and remains active after an early 
   }
 })
 
+test.each(['accepted', 'queued'] as const)(
+  'reports an %s send before unrelated work-list refresh completes',
+  async status => {
+    const { address, store, send, refresh, messaging } = messagingFixture()
+    let finishRefresh!: () => void
+    refresh.mockImplementationOnce(() => new Promise<void>(resolve => (finishRefresh = resolve)))
+    send.mockResolvedValueOnce({ accepted: true, status })
+    const queued = vi.fn()
+    let delivered = false
+    const sending = messaging
+      .sendRuntimePaneMessage(
+        { address, message: 'Continue', modelId: 'test-model' },
+        { onQueued: queued }
+      )
+      .then(accepted => {
+        delivered = accepted
+      })
+    try {
+      await waitFor(() => expect(refresh).toHaveBeenCalledOnce())
+      await waitFor(() => expect(delivered).toBe(true))
+      expect(queued).toHaveBeenCalledTimes(status === 'queued' ? 1 : 0)
+    } finally {
+      finishRefresh()
+      await sending
+      store.remove(address)
+    }
+  }
+)
+
 describe('runtime pane cancellation', () => {
   test.each(['accepted', 'refresh-failed', 'rejected', 'transport-failed'] as const)(
     'returns the executor cancellation outcome when %s',

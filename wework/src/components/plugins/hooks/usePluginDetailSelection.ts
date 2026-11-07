@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
@@ -10,6 +18,7 @@ import {
   marketplaceItemOwnsLocalCreatedPackage,
 } from '../pluginOwnerLocalPackage'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
+import { isLocalMarketplaceItem, localMarketplaceDedupeKey } from '../marketplaceCatalogMerge'
 
 export function findMarketplaceItemForPluginReference(
   items: PluginMarketplaceItem[],
@@ -46,6 +55,7 @@ function pluginReferenceKey(reference: PluginReference | null | undefined): stri
 }
 
 export function usePluginDetailSelection({
+  scopeKey,
   pluginReference,
   pluginMarketplaceState,
   installedPlugins,
@@ -54,6 +64,7 @@ export function usePluginDetailSelection({
   setSelectedPluginId,
   setSelectedMarketplacePluginId,
 }: {
+  scopeKey: string
   pluginReference: PluginReference | null
   pluginMarketplaceState: PluginMarketplaceState
   installedPlugins: InstalledPluginItem[]
@@ -63,6 +74,12 @@ export function usePluginDetailSelection({
   setSelectedMarketplacePluginId: Dispatch<SetStateAction<string | number | null>>
 }) {
   const dismissedPluginReferenceKeyRef = useRef<string | null>(null)
+  const selectionKey = JSON.stringify([scopeKey, selectedMarketplacePluginId])
+  const [localSelection, setLocalSelection] = useState<{
+    key: string
+    identity?: string
+  }>({ key: selectionKey })
+  const localIdentity = localSelection.key === selectionKey ? localSelection.identity : undefined
   const selectedPlugin = useMemo(
     () =>
       selectedPluginId === null
@@ -70,14 +87,28 @@ export function usePluginDetailSelection({
         : (installedPlugins.find(plugin => plugin.id === selectedPluginId) ?? null),
     [installedPlugins, selectedPluginId]
   )
-  const selectedMarketplacePlugin = useMemo(
-    () =>
-      selectedMarketplacePluginId === null
-        ? null
-        : (pluginMarketplaceState.items.find(item => item.id === selectedMarketplacePluginId) ??
-          null),
-    [pluginMarketplaceState.items, selectedMarketplacePluginId]
-  )
+  const selectedMarketplacePlugin = useMemo(() => {
+    if (selectedMarketplacePluginId === null) return null
+    const direct = pluginMarketplaceState.items.find(
+      item => item.id === selectedMarketplacePluginId
+    )
+    if (direct) return direct
+    // Disk and native listings represent the same local resource with different
+    // row IDs. Reuse the catalog's scoped identity, never a cloud name match.
+    const matches = localIdentity
+      ? pluginMarketplaceState.items.filter(
+          item => isLocalMarketplaceItem(item) && localMarketplaceDedupeKey(item) === localIdentity
+        )
+      : []
+    return matches.length === 1 ? matches[0] : null
+  }, [localIdentity, pluginMarketplaceState.items, selectedMarketplacePluginId])
+  const selectedLocalIdentity =
+    selectedMarketplacePlugin && isLocalMarketplaceItem(selectedMarketplacePlugin)
+      ? localMarketplaceDedupeKey(selectedMarketplacePlugin)
+      : undefined
+  if (localSelection.key !== selectionKey || localSelection.identity !== selectedLocalIdentity) {
+    setLocalSelection({ key: selectionKey, identity: selectedLocalIdentity })
+  }
 
   useEffect(() => {
     const referenceKey = pluginReferenceKey(pluginReference)

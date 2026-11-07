@@ -4,11 +4,25 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
-Enable **Experimental features** in **Settings → General**, then open **My stand-in** in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The header displays the primary identity and existing roles for switching. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
+<!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
+
+## Individual role-profile operations
+
+1. Open **My Stand-in** from the left sidebar, select the main stand-in or a scenario role, then open its profile/settings.
+2. Edit responsibilities and preferences. Expand **More settings (device, model, workspace)** to choose execution device, available model and working directory. After changing devices, recheck model and source-account availability on that device.
+3. Install/authorize source apps, choose scope and handling mode, then save to enable changes. Calendar/scheduled delegation belongs to this role's connection page, not global cloud connection settings.
+4. Use the work list for execution items, **Needs your input** for human decisions and **Needs checking** for errors; these are distinct lists.
+5. To delete a scenario role, use its settings action and confirm the target. Deleting differs from pausing a source; adjust source reception if you want to keep the role but temporarily stop intake.
+
+When opening your stand-in, the page checks onboarding status and shows an inline loading message. Initial setup opens automatically only after the check confirms it is incomplete. Completed setup opens the stand-in directly. If the check fails, use the retry action in the error prompt.
+
+Open **My stand-in**, marked **Beta**, in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The header displays the primary identity and existing roles for switching. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
 
 A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
 
 Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My stand-in** to open your personal task board.
+
+The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.
 
 ## Manual and conversational configuration
 
@@ -78,7 +92,7 @@ Stand-ins save the recipient-owned device task binding and reception receipt bef
 
 ## Calendar arrangements and project leaders
 
-Record a matter and its trigger time in **Settings → Connections → Calendar**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+Record a matter and its trigger time in **My Stand-in → role profile → Connections → Calendar / scheduled delegation**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
 
 **Scheduled** in the Tasks sidebar remains independent and retains its goal, target task, model, and execution environment settings without requiring experimental features. Scheduled tasks and Calendar connections manage separate lists, editors, and run histories. The stand-in work list contains concrete work.
 
@@ -88,23 +102,12 @@ The project conversation uses the existing collaboration group leader. Its heade
 
 Roles can receive personal events or all subscribable repository events. The plugin provides capabilities; role instructions determine behavior. Cloud buffers repository Webhooks while the execution device is offline. External writes retain per-operation native approval. See [GitHub and GitLab connections](git-connections.md).
 
-## Choose features on first use
+## Set up your stand-in
 
-Opening My stand-in for the first time shows feature onboarding, including once
-for existing users after upgrading. Weekly work review is checked by default. It
-reviews your Wework tasks and conversations on this execution device over the
-preceding seven days, every Monday at 09:00 Beijing time. Adjust the time or
-uncheck the feature before selecting Get started. Maybe later creates nothing
-and leaves onboarding available on your next visit.
+On first use, connect the apps you use, then confirm Get started. The connection step reuses the project, DingTalk, email, and other connections from stand-in settings, including their authorization and scope controls. Connecting an app is optional: Continue is available with no apps selected.
 
-Reviews use the existing calendar and produce at most three suggestions with
-task evidence, referring to previous reports and your feedback. Reports stay in
-their work conversations and disclose incomplete history. They do not
-automatically change memories, settings or code, or send reports externally.
-Execution inherits the primary stand-in's device, model and calendar processing
-policy. Selecting a review does not re-enable a paused primary stand-in.
+Review the selected connections before choosing Get started. This saves the connections and enables the primary stand-in. Without connections, you can still chat; there are simply no app updates to analyze yet. Add connections later in settings. Closing the introduction does not save connection drafts, and unsaved changes require a discard confirmation. Account authorization still uses the existing sign-in flow.
 
-Edit, pause or delete Weekly work review under **Stand-in settings → Connections
-→ Calendar**. Deleted arrangements are not automatically restored; use the
-matching template to add one again. Choices are stored separately for each
-account and Executor, without combining history from other devices.
+Setup creates no scheduled work. The question-mark entry keeps examples for daily briefings, meeting preparation, project follow-up, DingTalk replies, and weekly reviews. Choosing an example only inserts an editable conversation draft; confirm sources and schedules after sending it.
+
+Request weekly reviews in chat or use the template under **Stand-in settings → Connections → Calendar**. The default is Monday at 09:00 Asia/Shanghai, reviewing the preceding seven days of work and conversations on this device. Edit, pause, or delete it at any time. Deleted arrangements are not restored automatically.

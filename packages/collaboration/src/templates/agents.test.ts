@@ -7,8 +7,14 @@ import {
   templateFromProject,
   validateTemplate,
 } from './document'
-import { materializeTemplateAgents, readTemplateAgents, templateAgentBindings } from './agents'
-import { PartialTemplateApplyError } from './apply'
+import {
+  materializeTemplateAgents,
+  readTemplateAgents,
+  templateAgentBindings,
+  templateRoutingResolver,
+} from './agents'
+import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { templateMessages } from './messages'
 import { applyProjectTemplate } from './projectConfiguration'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { TemplateRoutingResolver } from './types'
@@ -18,8 +24,31 @@ const routing: TemplateRoutingResolver = async runtime => ({
   executionPolicy: { mode: 'fixed', environment_id: 'destination-device' },
   modelPolicy: {
     mode: 'fixed',
-    model: { runtime, provider: 'openai', model_id: 'destination-default', source: 'native' },
+    model: {
+      runtime,
+      provider: 'openai',
+      model_id: 'destination-default',
+      source: 'native',
+    },
   },
+})
+
+it.each(['zh-CN', 'en'] as const)('explains ambiguous project environments in %s', async locale => {
+  const resolve = templateRoutingResolver(
+    {
+      renderDialog: () => null,
+      resolveTemplateAgentRouting: async () => {
+        throw new Error('template_environment_ambiguous')
+      },
+    },
+    'cloud',
+    'project',
+    locale
+  )
+  await expect(resolve('codex')).rejects.toBeInstanceOf(TemplateConfigurationError)
+  await expect(resolve('codex')).rejects.toThrow(
+    templateMessages[locale].destinationEnvironmentAmbiguous
+  )
 })
 
 function fixture() {
@@ -124,7 +153,10 @@ describe('self-contained template Agents', () => {
     }))
     const group = {
       ...result.drafts[0],
-      stages: result.drafts[0].stages.map(stage => ({ ...stage, assignee: stage.assignee })),
+      stages: result.drafts[0].stages.map(stage => ({
+        ...stage,
+        assignee: stage.assignee,
+      })),
       execution_requirements: { required_tags: [] },
     } as unknown as CollaborationGroup
     const saved = templateFromProject(
@@ -143,7 +175,10 @@ describe('self-contained template Agents', () => {
     )
     const imported = importTemplate(yaml)
     let secondId = 0
-    const create = vi.fn(async () => ({ id: `second-${++secondId}`, name: 'Created' }))
+    const create = vi.fn(async () => ({
+      id: `second-${++secondId}`,
+      name: 'Created',
+    }))
     const second = await materializeTemplateAgents(
       { agents: { ...api.agents, create } },
       'second-account',

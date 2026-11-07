@@ -197,6 +197,7 @@ export interface CollaborationAssignmentReceipt {
 }
 
 export interface CollaborationAssignment {
+  automation?: IssueHistoryAutomation | null;
   receipt_tracking?: boolean;
   human_read_at?: string | null;
   stand_in_received_at?: string | null;
@@ -351,7 +352,14 @@ export type BackendCollaborationIssue = CollaborationIssue & {
   can_edit: boolean;
 };
 
+export interface IssueHistoryAutomation {
+  rule_id: string;
+  rule_name: string;
+  run_id: string;
+}
+
 export interface SharedIssueAssignmentHistoryEntry {
+  automation?: IssueHistoryAutomation;
   by_user_id: number;
   to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
@@ -361,6 +369,7 @@ export interface SharedIssueAssignmentHistoryEntry {
 }
 
 export interface SharedIssueStatusHistoryEntry {
+  automation?: IssueHistoryAutomation;
   from_status: string;
   from_status_name?: string | null;
   to_status: string;
