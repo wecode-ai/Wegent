@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { downloadSkill, searchSkills } from '@/apis/skillMarketplace'
@@ -54,6 +54,38 @@ jest.mock('@/hooks/useTranslation', () => ({
 const mockedSearchSkills = searchSkills as jest.MockedFunction<typeof searchSkills>
 const mockedDownloadSkill = downloadSkill as jest.MockedFunction<typeof downloadSkill>
 const mockedUploadSkill = uploadSkill as jest.MockedFunction<typeof uploadSkill>
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(promiseResolve => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
+
+function searchResult(name: string) {
+  return {
+    total: 1,
+    page: 1,
+    pageSize: 20,
+    skills: [
+      {
+        skillKey: `weibo/${name}`,
+        originalSkillKey: name,
+        name,
+        description: '',
+        author: '',
+        visibility: 'public',
+        tags: [],
+        version: '1.0.0',
+        downloadCount: 0,
+        createdAt: '2026-11-05T00:00:00Z',
+        hasDownloadPermission: true,
+        permissionUrl: '',
+      },
+    ],
+  }
+}
 
 describe('SkillMarketplaceSearch', () => {
   beforeEach(() => {
@@ -168,5 +200,138 @@ describe('SkillMarketplaceSearch', () => {
 
     expect(await screen.findByTestId('skill-marketplace-previous-partner')).toBeInTheDocument()
     expect(screen.getByTestId('skill-marketplace-next-partner')).toBeInTheDocument()
+  })
+
+  it('runs the keyword supplied by a deep link on mount', async () => {
+    render(
+      <SkillMarketplaceSearch provider={{ key: 'weibo', name: 'SkillHub' }} initialKeyword="PDF" />
+    )
+
+    expect(screen.getByTestId('skill-marketplace-search-input-weibo')).toHaveValue('PDF')
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenCalledWith('weibo', {
+        keyword: 'PDF',
+        page: 1,
+        pageSize: 20,
+      })
+    )
+  })
+
+  it('re-runs the search when the URL keyword changes', async () => {
+    const { rerender } = render(
+      <SkillMarketplaceSearch provider={{ key: 'weibo', name: 'SkillHub' }} initialKeyword="PDF" />
+    )
+
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenCalledWith(
+        'weibo',
+        expect.objectContaining({ keyword: 'PDF' })
+      )
+    )
+
+    rerender(
+      <SkillMarketplaceSearch
+        provider={{ key: 'weibo', name: 'SkillHub' }}
+        initialKeyword="Excel"
+      />
+    )
+
+    expect(screen.getByTestId('skill-marketplace-search-input-weibo')).toHaveValue('Excel')
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenCalledWith(
+        'weibo',
+        expect.objectContaining({ keyword: 'Excel' })
+      )
+    )
+  })
+
+  it('reports submitted keywords so the page can keep the deep link shareable', async () => {
+    const user = userEvent.setup()
+    const onKeywordChange = jest.fn()
+    render(
+      <SkillMarketplaceSearch
+        provider={{ key: 'weibo', name: 'SkillHub' }}
+        initialKeyword="PDF"
+        onKeywordChange={onKeywordChange}
+      />
+    )
+
+    await waitFor(() => expect(mockedSearchSkills).toHaveBeenCalledTimes(1))
+
+    const input = screen.getByTestId('skill-marketplace-search-input-weibo')
+    await user.clear(input)
+    await user.type(input, 'Excel')
+    await user.click(screen.getByTestId('skill-marketplace-search-button-weibo'))
+
+    expect(onKeywordChange).toHaveBeenCalledWith('Excel')
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenLastCalledWith('weibo', {
+        keyword: 'Excel',
+        page: 1,
+        pageSize: 20,
+      })
+    )
+  })
+
+  it('ignores a stale search response that resolves after a newer one', async () => {
+    const first = deferred<ReturnType<typeof searchResult>>()
+    const second = deferred<ReturnType<typeof searchResult>>()
+    mockedSearchSkills.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    const { rerender } = render(
+      <SkillMarketplaceSearch provider={{ key: 'weibo', name: 'SkillHub' }} initialKeyword="PDF" />
+    )
+    await waitFor(() => expect(mockedSearchSkills).toHaveBeenCalledTimes(1))
+
+    rerender(
+      <SkillMarketplaceSearch
+        provider={{ key: 'weibo', name: 'SkillHub' }}
+        initialKeyword="Excel"
+      />
+    )
+    await waitFor(() => expect(mockedSearchSkills).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      second.resolve(searchResult('Excel Skill'))
+    })
+    expect(
+      await screen.findByTestId('skill-marketplace-card-weibo/Excel Skill')
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      first.resolve(searchResult('PDF Skill'))
+    })
+    await waitFor(() =>
+      expect(screen.queryByTestId('skill-marketplace-card-weibo/PDF Skill')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('skill-marketplace-card-weibo/Excel Skill')).toBeInTheDocument()
+  })
+
+  it('paginates with the last submitted keyword instead of the draft input', async () => {
+    const user = userEvent.setup()
+    mockedSearchSkills.mockResolvedValue({
+      total: 40,
+      page: 1,
+      pageSize: 20,
+      skills: [],
+    })
+
+    render(
+      <SkillMarketplaceSearch provider={{ key: 'weibo', name: 'SkillHub' }} initialKeyword="PDF" />
+    )
+
+    const nextButton = await screen.findByTestId('skill-marketplace-next-weibo')
+    const input = screen.getByTestId('skill-marketplace-search-input-weibo')
+    await user.clear(input)
+    await user.type(input, 'draft')
+    await user.click(nextButton)
+
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenLastCalledWith('weibo', {
+        keyword: 'PDF',
+        page: 2,
+        pageSize: 20,
+      })
+    )
   })
 })
