@@ -94,11 +94,16 @@ export async function createDesktopScenario({ resultDir }) {
       const appLog = await waitForStartupLogs(resultDir)
       const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
       const taskListReady = appLog.indexOf("source: 'task-list'", startupReady)
+      const presentationStarted = appLog.indexOf("step: 'startup-window-presentation'")
+      const mainShown = appLog.indexOf("step: 'main-window-show'")
       const splashClosed = appLog.indexOf("step: 'startup-splash-close'")
       assert.ok(taskListReady >= 0, 'The renderer did not log task-list readiness')
+      assert.ok(startupReady >= 0, 'The renderer did not report startup readiness')
+      // Window presentation is independent of task-list health. The loaded
+      // document must become visible even when the task list is still loading.
       assert.ok(
-        startupReady <= taskListReady && taskListReady < splashClosed,
-        'The startup stages were logged out of order'
+        presentationStarted >= 0 && presentationStarted < mainShown && mainShown < splashClosed,
+        'The loaded desktop was not presented before closing the startup splash'
       )
       const runtimeStartupEvents = parseStartupEvents(appLog)
       const corePrepareStarted = startupEventIndex(
