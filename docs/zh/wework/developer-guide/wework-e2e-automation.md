@@ -263,6 +263,11 @@ Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]
 记录包含 CPU 使用率、load average、
 内存、磁盘可用空间、Linux CPU/内存/I/O 压力及 cgroup CPU 限额、内存峰值和 OOM 计数；
 不可读取的内核指标会记录 `unavailable`。CPU 使用率是两次采样间的平均值，首次记录为 `null`。
+`RUNNER_RESOURCE_SAMPLE_INTERVAL_MS` 可指定至少 100ms 的采样周期，默认仍为 15 秒；
+周期记录中的 `schedulingDelayMs` 表示采样器自身的调度延迟，不代表被测进程的延迟。
+小于 1 秒的周期仅在开始和结束采集进程列表，避免高频启动 `ps`。
+流式活动 Redis CI 步骤使用 100ms 资源采样及不含参数和值的服务端命令到达时间，
+测试本身的 200ms 超时和断言保持不变；成功采样不能证明历史超时已修复。
 `[desktop-e2e-schedule]` 日志在 checkpoint 启停时记录活动列表和实际并发数，可用于确认
 测试是否真正重叠；不能只凭配置的并发上限推断并行效果。提高并发后需要对比同一分片的
 耗时和这些指标，确认没有把等待转成 CPU、内存或 I/O 争抢。

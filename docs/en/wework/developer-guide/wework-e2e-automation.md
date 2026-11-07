@@ -371,6 +371,14 @@ after tests finish. Records include CPU utilization, load average, memory, avail
 space, Linux CPU/memory/I/O pressure, and cgroup CPU limits, memory peaks, and OOM
 counters. Unreadable kernel metrics report `unavailable`. CPU utilization is the
 average between samples; its initial value is `null`.
+`RUNNER_RESOURCE_SAMPLE_INTERVAL_MS` selects a sampling interval of at least
+100ms; the default remains 15 seconds. Periodic `schedulingDelayMs` records the
+sampler's own scheduling delay, not the tested process's delay. Intervals below
+one second collect process lists only at startup and completion to avoid
+frequently spawning `ps`. The streaming-activity Redis CI step uses 100ms
+resource samples and server command arrival times without arguments or values.
+Its 200ms test timeout and assertions remain unchanged; successful samples do
+not prove that a historical timeout has been fixed.
 `[desktop-e2e-schedule]` logs list active checkpoints and actual concurrency on
 each start and completion, making overlap visible independently of the configured
 worker limit. Compare shard durations and these metrics after increasing

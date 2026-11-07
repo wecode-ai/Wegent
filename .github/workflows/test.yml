@@ -237,6 +237,7 @@ jobs:
           WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
           RUNNER_RESOURCE_LOG_PATH: ../.ci-artifacts/backend-rs-tests/streaming-activity-resources.jsonl
           RUNNER_PROCESS_DIAGNOSTICS: "1"
+          RUNNER_RESOURCE_SAMPLE_INTERVAL_MS: "100"
         run: |
           set -o pipefail
           # Record command arrival times, never Redis arguments or values.

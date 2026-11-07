@@ -221,6 +221,39 @@ function run(args, env = {}, preload) {
   }
 }
 
+test('supports high-frequency resource diagnostics without periodic process spawning', () => {
+  const result = run([process.execPath, '-e', 'setTimeout(() => process.exit(23), 450)'], {
+    RUNNER_RESOURCE_SAMPLE_INTERVAL_MS: '100',
+    RUNNER_PROCESS_DIAGNOSTICS: '1',
+  })
+  assert.equal(result.status, 23)
+  assert.equal(result.records[0].sampleIntervalMs, 100)
+  const intervals = result.records.filter(record => record.phase === 'interval')
+  assert.ok(intervals.length > 0)
+  for (const record of intervals) {
+    assert.equal(record.processes, undefined)
+    assert.ok(record.schedulingDelayMs >= 0)
+  }
+  assert.ok(result.records[0].processes)
+  assert.ok(result.records.at(-1).processes)
+})
+
+test('rejects invalid sampling intervals before starting the command', () => {
+  for (const interval of ['0', '99', '100.5', 'invalid']) {
+    const result = spawnSync(
+      process.execPath,
+      [script, process.execPath, '-e', 'process.exit(0)'],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, RUNNER_RESOURCE_SAMPLE_INTERVAL_MS: interval },
+      }
+    )
+    assert.ifError(result.error)
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /must be an integer of at least 100/)
+  }
+})
+
 test('records periodic resources and preserves command arguments and failure exit', () => {
   const result = run([
     process.execPath,
