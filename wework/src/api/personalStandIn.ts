@@ -72,6 +72,7 @@ export interface PersonalStandInSettings {
   version: number
   primary?: StandInIdentity
   roles: StandInRole[]
+  lifecycle?: { status: 'stopping' | 'stopped' }
 }
 
 export function standInPolicy(

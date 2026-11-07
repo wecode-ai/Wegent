@@ -3,13 +3,15 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { useContext, useEffect, useRef, useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
-import { QuestionDiscussionScope } from './QuestionDiscussionScope'
+import { QuestionDiscussionScope, QuestionDiscussionTabPanel } from './QuestionDiscussionScope'
 import {
   canDiscussQuestion,
   questionDiscussionDrafts,
   questionDiscussionKey,
   QuestionDiscussionStoreContext,
   useQuestionDiscussion,
+  useQuestionDiscussionWorkspacePanel,
+  type QuestionDiscussionTab,
   type QuestionDiscussionStore,
 } from './questionDiscussion'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
@@ -101,46 +103,85 @@ const originalMessage = (input = payload): WorkbenchMessage => ({
 const submit = vi.fn()
 const cancel = vi.fn()
 let latestStore: QuestionDiscussionStore
+function DiscussionTabs({
+  address = source,
+  active = true,
+}: {
+  address?: typeof source
+  active?: boolean
+}) {
+  const [tabs, setTabs] = useState<QuestionDiscussionTab[]>([])
+  const [selected, setSelected] = useState<QuestionDiscussionTab | null>(null)
+  const close = (tab: QuestionDiscussionTab) => {
+    const remaining = tabs.filter(value => value !== tab)
+    setTabs(remaining)
+    if (selected === tab) setSelected(remaining.at(-1) ?? null)
+  }
+  useQuestionDiscussionWorkspacePanel({
+    address,
+    active,
+    openTab: tab => {
+      setTabs(current => (current.includes(tab) ? current : [...current, tab]))
+      setSelected(tab)
+    },
+  })
+  return (
+    <>
+      <button data-testid="open-another-panel" onClick={() => setSelected(null)}>
+        Open another panel
+      </button>
+      {tabs.map(tab => (
+        <QuestionDiscussionTabPanel
+          key={tab}
+          tab={tab}
+          active={active && selected === tab}
+          onClose={() => close(tab)}
+        />
+      ))}
+    </>
+  )
+}
 function StoreProbe() {
   const store = useContext(QuestionDiscussionStoreContext)!
-  const discussion = useQuestionDiscussion()
   useEffect(() => {
     latestStore = store
   }, [store])
-  return (
-    <button data-testid="open-another-panel" onClick={() => discussion?.close()}>
-      Open another panel
-    </button>
-  )
+  return null
 }
 function setup(count = 1, input = payload) {
-  return render(
-    <QuestionDiscussionProvider>
-      {Array.from({ length: count }, (_, index) => (
-        <WorkbenchPaneContext.Provider
-          key={index}
-          value={
-            {
-              createTemporaryRuntimeTask: mock.create,
-              loadRuntimeTranscriptForPane: mock.load,
-            } as unknown as WorkbenchPaneContextValue
-          }
-        >
-          <QuestionDiscussionScope>
-            <StoreProbe />
-            <section data-testid={`entry-${index}`}>
-              <RequestUserInputCard
-                payload={input}
-                source={source}
-                onSubmit={submit}
-                onIgnore={cancel}
-              />
-            </section>
-          </QuestionDiscussionScope>
-        </WorkbenchPaneContext.Provider>
-      ))}
-    </QuestionDiscussionProvider>
-  )
+  function Entries() {
+    const [activeIndex, setActiveIndex] = useState(0)
+    return (
+      <QuestionDiscussionProvider>
+        {Array.from({ length: count }, (_, index) => (
+          <WorkbenchPaneContext.Provider
+            key={index}
+            value={
+              {
+                createTemporaryRuntimeTask: mock.create,
+                loadRuntimeTranscriptForPane: mock.load,
+                openRuntimeTask: async () => setActiveIndex(index),
+              } as unknown as WorkbenchPaneContextValue
+            }
+          >
+            <QuestionDiscussionScope>
+              <DiscussionTabs active={activeIndex === index} />
+              <StoreProbe />
+              <section data-testid={`entry-${index}`}>
+                <RequestUserInputCard
+                  payload={input}
+                  source={source}
+                  onSubmit={submit}
+                  onIgnore={cancel}
+                />
+              </section>
+            </QuestionDiscussionScope>
+          </WorkbenchPaneContext.Provider>
+        ))}
+      </QuestionDiscussionProvider>
+    )
+  }
+  return render(<Entries />)
 }
 const showSidebar = (index = 0) =>
   fireEvent.click(
@@ -210,8 +251,9 @@ test('closing and reopening preserves the edited prompt without sending or cance
   fireEvent.keyDown(dialog(), { key: 'Escape' })
   expect(screen.queryByRole('region')).not.toBeInTheDocument()
   showSidebar()
-  expect(within(dialog()).getByTestId('discussion-test-draft')).toBe(draft)
-  expect(draft).toHaveValue('先讨论敏感事项，不要直接发布。')
+  expect(within(dialog()).getByTestId('discussion-test-draft')).toHaveValue(
+    '先讨论敏感事项，不要直接发布。'
+  )
   expect(mock.create).not.toHaveBeenCalled()
   fireEvent.click(within(dialog()).getByTestId('discussion-test-send'))
   await waitFor(() =>
@@ -234,8 +276,7 @@ test('opening another panel preserves discussion input without restoring focus t
   expect(screen.queryByRole('region')).not.toBeInTheDocument()
   expect(navigate).toHaveFocus()
   showSidebar()
-  expect(within(dialog()).getByTestId('discussion-test-draft')).toBe(draft)
-  expect(draft).toHaveValue('继续讨论接收范围。')
+  expect(within(dialog()).getByTestId('discussion-test-draft')).toHaveValue('继续讨论接收范围。')
   expect(mock.create).not.toHaveBeenCalled()
 })
 
@@ -440,6 +481,42 @@ test('business discussion cannot replace native permission or connector authoriz
   }
 })
 
+test('an inbox entry opens the original task tab in another scope without owning a global sidebar', () => {
+  const navigate = vi.fn()
+  function InboxEntry() {
+    const discussion = useQuestionDiscussion()
+    return <button data-testid="inbox-discuss" onClick={() => discussion?.open(source, payload)} />
+  }
+  render(
+    <QuestionDiscussionProvider>
+      <WorkbenchPaneContext.Provider
+        value={
+          {
+            openRuntimeTask: navigate,
+            createTemporaryRuntimeTask: mock.create,
+            loadRuntimeTranscriptForPane: mock.load,
+          } as unknown as WorkbenchPaneContextValue
+        }
+      >
+        <QuestionDiscussionScope>
+          <InboxEntry />
+        </QuestionDiscussionScope>
+        <QuestionDiscussionScope>
+          <DiscussionTabs />
+          <StoreProbe />
+        </QuestionDiscussionScope>
+      </WorkbenchPaneContext.Provider>
+    </QuestionDiscussionProvider>
+  )
+  expect(screen.queryByTestId('question-discussion-sidebar')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('inbox-discuss'))
+  expect(navigate).toHaveBeenCalledExactlyOnceWith(source)
+  expect(screen.getAllByTestId('question-discussion-sidebar')).toHaveLength(1)
+  expect(dialog()).toHaveTextContent('谁可以查看报告？')
+  expect(latestStore.panelRequest).toBeNull()
+  expect(mock.create).not.toHaveBeenCalled()
+})
+
 test('does not refill an asynchronous question already answered on a newer history page', async () => {
   const asyncPayload = { ...payload, delivery: 'async' }
   mock.load
@@ -583,6 +660,7 @@ test('account switches isolate discussion drafts and late creation without remou
     }))
   )
   const oldStore = store
+  act(() => oldStore.requestPanel({ key, source }))
   let resolve!: (value: typeof side) => void
   let pending!: Promise<unknown>
   act(() => {
@@ -596,6 +674,7 @@ test('account switches isolate discussion drafts and late creation without remou
   })
   rendered.rerender(tree('account-b'))
   expect(store.sessions).toEqual({})
+  expect(store.panelRequest).toBeNull()
   const otherSide = { ...side, taskId: 'account-b-side' }
   await act(async () => {
     store.update(key, () => ({
@@ -630,43 +709,49 @@ test('account switches isolate discussion drafts and late creation without remou
   })
 })
 
-test('a late answer check cannot close a newer discussion', async () => {
-  let resolve!: (page: object) => void
-  mock.load.mockReturnValue(
-    new Promise(value => {
-      resolve = value
+test.each([true, false])(
+  'a late answer check cannot close a newer discussion (closed: %s)',
+  async closeBeforeSwitch => {
+    let resolve!: (page: object) => void
+    mock.load.mockReturnValue(
+      new Promise(value => {
+        resolve = value
+      })
+    )
+    const other = {
+      ...payload,
+      requestId: 99,
+      questions: [{ id: 'format', question: '输出什么格式？' }],
+    }
+    render(
+      <QuestionDiscussionProvider>
+        <WorkbenchPaneContext.Provider
+          value={
+            {
+              createTemporaryRuntimeTask: mock.create,
+              loadRuntimeTranscriptForPane: mock.load,
+              openRuntimeTask: vi.fn(),
+            } as unknown as WorkbenchPaneContextValue
+          }
+        >
+          <QuestionDiscussionScope>
+            <DiscussionTabs />
+            <RequestUserInputCard payload={payload} source={source} onSubmit={submit} />
+            <RequestUserInputCard payload={other} source={source} onSubmit={submit} />
+          </QuestionDiscussionScope>
+        </WorkbenchPaneContext.Provider>
+      </QuestionDiscussionProvider>
+    )
+    fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[0])
+    changeConclusion()
+    apply()
+    if (closeBeforeSwitch)
+      fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
+    fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[1])
+    await act(async () => {
+      resolve({ messages: [originalMessage()], turns: [] })
     })
-  )
-  const other = {
-    ...payload,
-    requestId: 99,
-    questions: [{ id: 'format', question: '输出什么格式？' }],
+    expect(dialog()).toHaveTextContent('输出什么格式？')
+    expect(submit).not.toHaveBeenCalled()
   }
-  render(
-    <QuestionDiscussionProvider>
-      <WorkbenchPaneContext.Provider
-        value={
-          {
-            createTemporaryRuntimeTask: mock.create,
-            loadRuntimeTranscriptForPane: mock.load,
-          } as unknown as WorkbenchPaneContextValue
-        }
-      >
-        <QuestionDiscussionScope>
-          <RequestUserInputCard payload={payload} source={source} onSubmit={submit} />
-          <RequestUserInputCard payload={other} source={source} onSubmit={submit} />
-        </QuestionDiscussionScope>
-      </WorkbenchPaneContext.Provider>
-    </QuestionDiscussionProvider>
-  )
-  fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[0])
-  changeConclusion()
-  apply()
-  fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
-  fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[1])
-  await act(async () => {
-    resolve({ messages: [originalMessage()], turns: [] })
-  })
-  expect(dialog()).toHaveTextContent('输出什么格式？')
-  expect(submit).not.toHaveBeenCalled()
-})
+)

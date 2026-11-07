@@ -19,6 +19,10 @@ interface ProcessLifecycle {
   stopProcessGroup: (child: ChildProcess) => Promise<void>
   crashOwnedProcessTree: (child: ChildProcess, snapshot: unknown) => Promise<void>
   windowsTaskkillArguments: (processId: number) => string[]
+  waitForOwnedProcessExit: (
+    snapshot: unknown,
+    options: { timeoutMs?: number; isAlive: (pid: number) => boolean }
+  ) => Promise<void>
 }
 
 interface LocalHarnessCli {
@@ -94,6 +98,28 @@ afterEach(() => {
 })
 
 describe('desktop process lifecycle', () => {
+  test('shutdown waits for owned writers even after the application exited', async () => {
+    const { waitForOwnedProcessExit } = await loadProcessLifecycle()
+    const snapshot = {
+      applicationPid: 101,
+      platform: process.platform,
+      capturedAt: Date.now(),
+      degraded: [],
+      processes: [
+        { pid: 101, parentPid: 1, startedAt: Date.now() - 1_000 },
+        { pid: 102, parentPid: 101, startedAt: Date.now() - 1_000 },
+      ],
+    }
+    let observations = 0
+    await waitForOwnedProcessExit(snapshot, {
+      isAlive: pid => pid === 102 && observations++ === 0,
+    })
+    expect(observations).toBe(2)
+    await expect(
+      waitForOwnedProcessExit(snapshot, { timeoutMs: 0, isAlive: pid => pid === 102 })
+    ).rejects.toThrow('Owned application processes survived shutdown: 102')
+  })
+
   test('distinguishes a surviving executor from a new process that reused its PID', async () => {
     const { processInstanceMatches } = await loadProcessLifecycle()
     const original = {

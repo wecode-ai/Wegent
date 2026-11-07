@@ -4,9 +4,36 @@ sidebar_position: 7
 
 # Devices and cloud work
 
+<!-- ui-source: src/components/settings/ConnectionsSettingsPage.tsx -->
+
+## Individual device-card operations
+
+Open **left sidebar → Cloud work**. **Connection settings** at the top right opens **Settings → Personal → Cloud connection**, not a project's execution-environment page.
+
+| Feature                       | Steps and result                                                                          | Conditions and limits                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Connect/disconnect Wegent     | Authorize and connect on the cloud connection page; disconnect with its connection action | Preserves local projects/conversations; model/device lists change with connectivity        |
+| Add device                    | Add device → type → wizard                                                                | Remote Docker commands contain credentials; run securely on the target machine             |
+| Status, resources and version | Inspect the card and expand details                                                       | Offline differs from a loading error; inspect errors first                                 |
+| Terminal / IDE / Desktop      | Choose the supported card operation                                                       | Runs on that device, not an arbitrary directory on this computer                           |
+| Connection information        | Device actions → connection information                                                   | Do not copy credentials into chat or public documentation                                  |
+| Upgrade / restart             | Choose the device action and review confirmation                                          | Temporarily goes offline; wait for progress and recovery rather than submitting repeatedly |
+| Delete device                 | Device actions → delete, verify target and confirm                                        | Neither a backup nor deletion of remote project directories                                |
+| New project                   | Cloud work → New project → device and directory                                           | Cloud sign-in does not automatically select cloud execution                                |
+
 Wework manages a local execution environment for local projects, conversations, Codex, and local models. Closing the window to the tray keeps local tasks running; quitting the application stops Wework-managed local processes.
 
 ## Connect to Wegent
+
+<!-- ui-source: src/pages/LoginPage.tsx -->
+<!-- ui-source: src/pages/OidcCallbackPage.tsx -->
+<!-- ui-source: src/pages/WeworkAuthorizePage.tsx -->
+
+### Login and authorization return
+
+Depending on deployment, the authorization flow may show password login or the organization's OIDC button. Administrator password setup appears only when the service requires initial administrator setup; ordinary users should not initialize an administrator account.
+
+Choose the offered login method and follow it. The app handles OIDC callbacks; do not manually enter code, state, tokens or callback addresses. Return to Wework after its authorization-success message. Opening the website or signing in alone does not prove the device connection completed. Restart from the original connection entry after an error, preserving its message without sharing credential-bearing links in chat.
 
 Select **Connect to cloud**, enter the Backend address supplied by your team, choose **Authorize and connect**, and approve Wework on the authorization page.
 

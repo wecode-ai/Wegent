@@ -51,6 +51,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "turnIdsBySubtask",
     "userMessagePresentations",
     "changeRequests",
+    "conversationSessions",
 ];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -453,6 +454,15 @@ impl RuntimeWorkStore {
         read: impl FnOnce(&RuntimeTaskLink) -> T,
     ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
+        self.read_loaded_task(local_task_id, read)
+    }
+
+    /// Read the live index after an explicit refresh outside another subsystem's lock.
+    pub(super) fn read_loaded_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.index.lock().ok()?.tasks.get(local_task_id).map(read)
     }
 
@@ -696,7 +706,7 @@ impl RuntimeWorkStore {
         self.update_index_signature();
     }
 
-    fn refresh_index_from_disk_if_changed(&self) {
+    pub(super) fn refresh_index_from_disk_if_changed(&self) {
         let Ok(_write_guard) = self.write_lock.lock() else {
             return;
         };

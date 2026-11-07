@@ -49,6 +49,7 @@ import { StandInComposer } from './StandInComposer'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { StandInCreationDevice } from './StandInCreationDevice'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
+import { StandInBindingContext } from './StandInBindingContext'
 
 type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
@@ -80,8 +81,9 @@ interface StandInSettingsPageProps {
 /** Resolve the creation device before opening an editor and preserve the unsaved-edit guard. */
 export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps) {
   const cloud = useContext(CloudConnectionContext)
+  const binding = useContext(StandInBindingContext)
   const cloudCreation =
-    cloud?.isConnected === true && props.initialProject?.project_store !== 'local'
+    !binding && cloud?.isConnected === true && props.initialProject?.project_store !== 'local'
   const [creation, setCreation] = useState(() => ({
     active: props.initialCreate ?? false,
     cloud: cloudCreation,

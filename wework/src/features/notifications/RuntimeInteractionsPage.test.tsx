@@ -51,7 +51,7 @@ it('opens discussion from pending-work details without answering or dismissing t
   }
   const value = interactionValue({ pending: [question] })
   render(
-    <QuestionDiscussionContext.Provider value={{ open, close: vi.fn() }}>
+    <QuestionDiscussionContext.Provider value={{ open }}>
       <RuntimeInteractionsContext.Provider value={value}>
         <RuntimeInteractionsPage selectedId="question" />
       </RuntimeInteractionsContext.Provider>

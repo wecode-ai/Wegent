@@ -75,6 +75,13 @@ inside its own surface can stay without a menu entry.
 - Use the local `@/hooks/useTranslation` wrapper for new Wework code.
 - Add new copy to the appropriate Wework namespace in both `src/i18n/locales/en/` and `src/i18n/locales/zh-CN/`; register a new namespace in `src/i18n/index.ts`.
 
+## User-facing navigation documentation
+
+- When adding, removing, renaming or moving a user-facing entry, update `docs/{zh,en}/wework/interface-navigation.md` and its owning usage guide in the same change. Record the visible starting region, click path, purpose and visibility conditions; do not substitute an internal route or test selector for user instructions.
+- Review all affected surfaces: top tabs, sidebar, account/native menus, composer, project/Issue menus, right workspace, bottom panel and settings. Registered settings/sidebar entries have automatic coverage; controls outside those registries, nested controls, dynamic plugin entries and permissions-dependent paths still require explicit review against actual code and existing verification evidence.
+- Each `*Page.tsx` under `wework/src` and `packages/collaboration/src` must have one owning topic in both languages, declared with `<!-- ui-source: src/... -->` or `<!-- ui-source: ../packages/collaboration/src/... -->` in that topic. Keep source ownership identical across languages. The contract checks literal JSX field labels and General's literal helper labels against visible documentation; metadata alone does not count. Update the topic's purpose, visible path, action steps, activation/save behavior and restrictions when changing a field. Page ownership and literal-label coverage do not prove dynamic menus, delegated forms or all behaviors are documented: review non-Page first-party operation groups too, including shared collaboration UI, Applications, notifications, delivery, drag/stash, memory and conditional project-lead controls. Do not exclude an entry merely because it is experimental or permission-dependent. Keep the navigation page as links to topic sections, not a second copy of the procedures, and remove obsolete paths instead of appending competing instructions.
+- Run `pnpm --filter wework test scripts/wework-navigation-docs.test.mjs scripts/bundled-wework-docs.test.mjs` for navigation documentation changes. The existing Lint workflow's settings-configuration job runs them even for docs-only PRs; keep the index linked from both language READMEs and the bundled skill. Update maintained docs, not generated or installed `references/` copies. Do not claim a running UI was verified from a static documentation check.
+
 ## Testing
 
 - Before modifying code, locate and understand the tests and E2E coverage for

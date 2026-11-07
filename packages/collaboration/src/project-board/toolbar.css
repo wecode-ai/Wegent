@@ -1,3 +1,11 @@
+.project-board-toolbar {
+  container: project-board-toolbar / inline-size;
+}
+
+.project-board-action-icon {
+  display: none;
+}
+
 .project-board-toolbar,
 .project-board-toolbar button,
 .project-board-toolbar input,
@@ -7,4 +15,34 @@
   font-size: var(--text-sm);
   font-weight: var(--font-weight-ui, 445);
   line-height: 1.5;
+}
+
+/* Use the board pane width, including when a conversation shares the window. */
+@container project-board-toolbar (max-width: 900px) {
+  .project-board-compact-action {
+    min-width: 32px;
+    justify-content: center;
+    gap: 0;
+    padding-inline: 8px;
+  }
+
+  .project-board-action-label,
+  .project-board-action-chevron {
+    display: none;
+  }
+
+  .project-board-action-icon {
+    display: block;
+  }
+
+  .project-board-search {
+    min-width: 128px;
+  }
+}
+
+@media (max-width: 767px) {
+  .project-board-compact-action {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
