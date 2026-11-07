@@ -581,6 +581,7 @@ export function WeworkSharedProject({
               userId={Number(userId)}
               devices={devices ?? []}
               onOpenTask={onOpenRuntimeTask}
+              onPublished={() => setRefreshProjectRequestKey(value => value + 1)}
               onOpenIssue={issueId => {
                 setTaskComposer(null)
                 setLocation(current => ({ ...current, projectView: 'board', issueId }))

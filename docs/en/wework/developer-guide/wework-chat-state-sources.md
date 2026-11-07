@@ -742,6 +742,9 @@ Runtime inventory membership is a presentation projection of the complete board
 snapshot and current bindings. Do not duplicate that filtering in the read path
 or make inventory identity a request dependency. Actual execution transitions,
 binding changes, and existing polling retain their refresh and persistence paths.
+An explicitly published coordinator comment must notify its owning project after
+the write succeeds. Shared boards must not rely on incidental private-conversation
+lifecycle changes. Rejected or pending writes must not send a success refresh.
 
 The desktop `runtime-task-queue` E2E updates a real Runtime Goal to advance its
 native revision, observes no extra `todos.list` from either local board surface,
