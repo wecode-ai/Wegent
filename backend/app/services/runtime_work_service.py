@@ -457,6 +457,7 @@ async def get_runtime_transcript(
     user_id: int,
     address: RuntimeTranscriptRequest | RuntimeTaskAddress,
     allow_app_device_task_reading: bool = False,
+    identity_only: bool = False,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read a session transcript, assembling device chunks for legacy HTTP callers."""
 
@@ -478,6 +479,7 @@ async def get_runtime_transcript(
             address=request,
             normalized_address=normalized_address,
             allow_app_device_task_reading=allow_app_device_task_reading,
+            identity_only=identity_only,
         )
 
     if address.transcript_protocol_version == 2:
@@ -522,9 +524,12 @@ async def _get_runtime_transcript_packet(
     address: RuntimeTranscriptRequest,
     normalized_address: RuntimeTaskAddress,
     allow_app_device_task_reading: bool = False,
+    identity_only: bool = False,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read one authorized packet without holding its permission transaction open."""
     payload = _runtime_transcript_payload(address, normalized_address)
+    if identity_only:
+        payload["identityOnly"] = True
     started_at = time.perf_counter()
     logger.info(
         "[RuntimeWork] Requesting runtime transcript: user_id=%s device_id=%s local_task_id=%s workspace_path=%s limit=%s before_cursor=%s include_full_content=%s",

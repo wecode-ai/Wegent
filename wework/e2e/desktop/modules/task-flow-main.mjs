@@ -4097,14 +4097,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
-        {
-          text: FILE_PREVIEW_RESTORE_MARKER,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        target: activeTaskWorkbenchSelector,
+        text: FILE_PREVIEW_RESTORE_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       assert.equal(
         await control.command(
           'getText',
@@ -4270,14 +4267,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The review tab was not active after switching back to the first task'
       )
       await control.command('click', '[data-testid="right-workspace-file-tab"]')
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
-        {
-          text: FILE_PREVIEW_RESTORE_MARKER,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        target: activeTaskWorkbenchSelector,
+        text: FILE_PREVIEW_RESTORE_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       assert.equal(
         await control.command(
           'getText',
