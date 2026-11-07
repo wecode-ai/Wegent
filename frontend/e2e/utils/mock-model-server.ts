@@ -861,7 +861,14 @@ const server = http.createServer((req, res) => {
       }
       writeJson(res, 200, { released: gate.release() })
     } else if (req.url === '/stream-rules' && req.method === 'GET') {
-      writeJson(res, 200, streamRules)
+      writeJson(
+        res,
+        200,
+        streamRules.map(rule => ({
+          ...rule,
+          pendingResponses: responseGates.get(rule.matchText)?.pendingResponses ?? 0,
+        }))
+      )
     } else if (req.url === '/stream-rules' && req.method === 'POST') {
       const streamRule = parseJsonBody<StreamRule>(body)
       if (

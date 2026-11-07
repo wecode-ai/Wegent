@@ -366,6 +366,10 @@ jobs:
       # Codex creates its own user/mount namespaces inside this disposable runner.
       options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
+      # Reuse the hosted runner's browsers without downloading or installing them.
+      volumes:
+        - /opt/google/chrome:/opt/google/chrome:ro
+        - /usr/local/share/chromedriver-linux64:/opt/wegent-e2e/chromedriver:ro
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -383,6 +387,12 @@ jobs:
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
+      - name: Verify the existing external browser runtime
+        if: contains(matrix.segments, 'browser-toolbar-actions')
+        run: |
+          /opt/google/chrome/chrome --version
+          /opt/wegent-e2e/chromedriver/chromedriver --version
 
       - name: Prepare real mailbox server runtime
         if: contains(matrix.segments, 'stand-in-email')

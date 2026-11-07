@@ -346,8 +346,19 @@ pub async fn user_groups<R: Redis>(
     user_id: i64,
 ) -> MysqlResult<Vec<String>> {
     let names = active_namespace_names(mysql).await?;
+    user_groups_for_names(mysql, resolvers, redis, user_id, &names).await
+}
+
+/// Apply one user's membership policy to a shared active-namespace snapshot.
+pub async fn user_groups_for_names<R: Redis>(
+    mysql: &MysqlService,
+    resolvers: &EntityResolvers<R>,
+    redis: Option<&R>,
+    user_id: i64,
+    names: &[String],
+) -> MysqlResult<Vec<String>> {
     let entries = iter_user_groups_with_roles(mysql, resolvers, redis, user_id).await?;
-    let mut groups: Vec<String> = effective_roles_in_groups(&entries, &names)
+    let mut groups: Vec<String> = effective_roles_in_groups(&entries, names)
         .into_iter()
         .map(|(name, _role)| name)
         .collect();
@@ -403,7 +414,7 @@ struct NamespaceIdRow {
 }
 
 /// `get_user_group_roles`'s group-name list: every active namespace name.
-async fn active_namespace_names(mysql: &MysqlService) -> MysqlResult<Vec<String>> {
+pub async fn active_namespace_names(mysql: &MysqlService) -> MysqlResult<Vec<String>> {
     let rows: Vec<NameRow> = mysql
         .fetch_all(
             "SELECT namespace.name AS namespace_name \nFROM namespace \n\

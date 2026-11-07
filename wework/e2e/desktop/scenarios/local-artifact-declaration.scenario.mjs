@@ -39,7 +39,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
     await control.command('waitFor', '[data-testid="workspace-file-path"]', {
       text: artifact.local_path,
     })
-    await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+    await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
       text: 'Generated without a Backend Task.',
     })
   }
@@ -133,7 +133,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       await control.command('waitFor', '[data-testid="workspace-file-path"]', {
         text: artifact.local_path,
       })
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'Generated without a Backend Task.',
       })
       await verifyPreview(control)
