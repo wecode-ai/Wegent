@@ -12,11 +12,11 @@ const FOLLOWUP_COMMAND_TIMEOUT_MS = 5_000
 
 // Renderer actions that wait on a condition through waitForDesktopControlElement
 // and therefore time out with the identical renderer message shape. Audited
-// against every waitForDesktopControlElement call site: 'waitFor', the three
-// click/choose variants whose wait predicate the renderer enforces beyond the
-// delivered options (automation.ts spreads them after the command), and
-// 'getValueWhenReady', which waits with exactly the delivered options. The
-// variants' side effects live in the on-match callback, not in the wait
+// against every waitForDesktopControlElement call site: 'waitFor', the
+// click/choose/select variants whose wait predicate the renderer enforces
+// beyond the delivered options (automation.ts spreads them after the command),
+// and 'getValueWhenReady', which waits with exactly the delivered options.
+// The variants' side effects live in the on-match callback, not in the wait
 // predicate, so re-observing them as a plain waitFor with the enforced
 // predicate reproduces the failed condition exactly without replaying the
 // side effect. endDrag's internal waitForSelector wait is deliberately not
@@ -28,6 +28,7 @@ const WAIT_LIKE_ACTIONS = new Set([
   'chooseWhenEnabled',
   'setExpanded',
   'getValueWhenReady',
+  'select',
 ])
 // Wait predicates the renderer enforces per action, overriding any delivered
 // option of the same name ({ ...command, enabled: true, … }).
@@ -35,6 +36,7 @@ const ENFORCED_WAIT_PREDICATES = {
   clickWhenEnabled: { enabled: true },
   chooseWhenEnabled: { enabled: true, visible: true },
   setExpanded: { enabled: true },
+  select: { enabled: true },
 }
 
 /**
