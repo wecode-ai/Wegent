@@ -109,14 +109,14 @@ test.describe('Shared Task Page', () => {
 
     await expect(page.getByRole('heading', { name: 'E2E shared report' })).toBeVisible()
     await expect(page.getByText('E2E Sharer')).toBeVisible()
-    await expect(page.getByText('Research answer with [cite: 1]')).toBeVisible()
+    await expect(page.getByText('Research answer with (参考来源: 1)')).toBeVisible()
     await expect(page.getByText('Citation source')).toBeVisible()
     await expect(page.getByText('Source reference')).toBeVisible()
     await expect(page.getByText('Research retrieval summary')).toBeVisible()
     expect(await page.getByText('private model transcript').count()).toBe(0)
   })
 
-  test('shows a script-error banner for a broken shared HTML artifact', async ({ page }) => {
+  test('renders a shared HTML artifact with error reporting enabled', async ({ page }) => {
     const html =
       '<!doctype html><html><head><title>Broken report</title></head><body><main>Report body</main><script>throw new Error("preview library is unavailable")</script></body></html>'
     await fulfillSharedTask(
@@ -140,10 +140,9 @@ test.describe('Shared Task Page', () => {
     await page.goto(`/shared/task?token=${BROKEN_HTML_TOKEN}`)
 
     await expect(page.getByRole('heading', { name: 'E2E broken HTML preview' })).toBeVisible()
-    await expect(page.getByTestId('artifact-preview-iframe')).toBeVisible()
-    await expect(page.getByTestId('artifact-preview-iframe')).toHaveAttribute(
-      'srcdoc',
-      expect.stringContaining('Report body')
-    )
+    const frame = page.getByTestId('artifact-preview-iframe')
+    await expect(frame).toBeVisible()
+    await expect(frame).toHaveAttribute('data-artifact-script-error-reporting', 'on')
+    await expect(frame.getByText('Report body')).toBeVisible()
   })
 })
