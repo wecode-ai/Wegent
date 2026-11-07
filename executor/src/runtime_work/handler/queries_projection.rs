@@ -23,6 +23,7 @@ pub(super) struct TranscriptProjectionInput {
     pub(super) include_full_content: bool,
     pub(super) conversation_context_only: bool,
     pub(super) bounded_native_page: bool,
+    pub(super) historical_session: bool,
 }
 
 impl RuntimeWorkRpcHandler {
@@ -36,8 +37,8 @@ impl RuntimeWorkRpcHandler {
             mut thread,
             local_task_id,
             thread_id,
-            local_link,
-            direct_thread_override,
+            mut local_link,
+            mut direct_thread_override,
             search_match_requested,
             full_item_content,
             limit,
@@ -51,17 +52,38 @@ impl RuntimeWorkRpcHandler {
             include_full_content,
             conversation_context_only,
             bounded_native_page,
+            mut historical_session,
         } = input;
         let handler = self;
+        if let Some(link) = local_link.as_ref().filter(|link| {
+            super::super::conversation_sessions::is_identity_conversation(link)
+                && handler
+                    .store
+                    .read_task(&local_task_id, |latest| {
+                        latest.thread_id.as_deref() != Some(thread_id.as_str())
+                    })
+                    .unwrap_or(false)
+        }) {
+            historical_session = true;
+            direct_thread_override = true;
+            local_link = Some(super::super::conversation_sessions::history_link(
+                link, &thread_id,
+            ));
+        }
         // Native history reads can overlap terminal events. Merge the latest
         // completed items and execution state rather than the pre-read snapshot.
-        let mut local_link = if bounded_native_page {
-            handler.store.get_task_summary(&local_task_id)
+        let mut local_link = if historical_session {
+            local_link
         } else {
-            handler.local_task_link(&local_task_id)
-        }
-        .or(local_link);
-        let local_execution_running = handler.is_active_local_task(&local_task_id);
+            let fresh = if bounded_native_page {
+                handler.store.get_task_summary(&local_task_id)
+            } else {
+                handler.local_task_link(&local_task_id)
+            };
+            fresh.or(local_link)
+        };
+        let local_execution_running =
+            !historical_session && handler.is_active_local_task(&local_task_id);
         if let Some(workspace_path) = local_link
             .as_ref()
             .map(|link| link.workspace_path.as_str())
@@ -89,7 +111,7 @@ impl RuntimeWorkRpcHandler {
             .collect::<Vec<_>>();
         let presentation_page_messages = local_link
             .as_ref()
-            .filter(|_| !direct_thread_override)
+            .filter(|_| !direct_thread_override || historical_session)
             .map(|_| super::super::transcript::transcript_page_identity(&thread));
         if !direct_thread_override && !search_match_requested {
             if before_cursor.is_none() && after_cursor.is_none() {
@@ -102,7 +124,12 @@ impl RuntimeWorkRpcHandler {
             )?;
             handler.repair_legacy_task_activity_time(&local_task_id, &thread);
         }
-        if bounded_native_page && !direct_thread_override {
+        if historical_session {
+            local_link = handler
+                .native_transcript_page_link(&local_task_id, &thread, cancellation)?
+                .map(|link| super::super::conversation_sessions::history_link(&link, &thread_id))
+                .or(local_link);
+        } else if bounded_native_page && !direct_thread_override {
             local_link = handler
                 .native_transcript_page_link(&local_task_id, &thread, cancellation)?
                 .or(local_link);
@@ -126,7 +153,10 @@ impl RuntimeWorkRpcHandler {
         )?;
         let mut native_turns = projection.turns;
         let mut messages = projection.messages;
-        if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
+        if let Some(link) = local_link
+            .as_ref()
+            .filter(|_| !direct_thread_override || historical_session)
+        {
             if thread.get("timeline").and_then(Value::as_bool) != Some(true) {
                 merge_latest_completed_transcript_messages(
                     &mut messages,

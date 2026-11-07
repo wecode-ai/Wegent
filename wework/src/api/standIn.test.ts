@@ -6,6 +6,25 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 
+it('keeps instance binding on its local owner while addressing lifecycle operations to the bound Executor', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValue({ userId: 7, executionDeviceId: 'cloud', version: 1, roles: [] })
+  const api = createStandInExecutorApi(request)
+  await api.binding('mac', 'bind', 3, { userId: 7, deviceId: 'cloud' })
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.binding',
+    { operation: 'bind', version: 3, target: { userId: 7, deviceId: 'cloud' } },
+    'mac'
+  )
+  await api.lifecycle(7, 'cloud', 'stop')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.personal.lifecycle',
+    { userId: 7, operation: 'stop' },
+    'cloud'
+  )
+})
+
 it('treats the cloud transport task_not_found as an empty first-conversation lookup', async () => {
   const request = vi
     .fn()

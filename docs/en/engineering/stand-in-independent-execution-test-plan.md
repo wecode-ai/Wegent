@@ -15,6 +15,23 @@ As a Wework user, I want a stand-in to be a special agent with its own responsib
 
 ## E2E cases
 
+### Single-instance binding, stopping and rebinding stories
+
+As a user, I want each Wework instance bound to one local or cloud stand-in. Rebinding or migration requires stopping the entire current stand-in and cancelling its running and queued tasks. Failed cancellation must not unlock rebinding. The primary identity and scenario roles share this lifecycle without affecting ordinary tasks or other accounts.
+
+| Story                         | Preconditions and actions                                                                             | Acceptance and coverage                                                                                                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First project entry           | An unbound instance has online cloud devices; open a project link to a local stand-in                 | The explicit link determines the first binding, but never replaces an existing one; component tests and `stand-in-cloud`                                                |
+| No direct switch              | A local or cloud stand-in is bound; inspect the header, role settings and onboarding                  | No device switch; role creation stays on the bound Executor; `stand-in-cloud-device`, `stand-in-workspace`                                                              |
+| Stop before rebind            | A real cloud Codex conversation waits on the model; confirm Stop in the header                        | The real model stream is cancelled, native state projects cancelled, and choices appear only after whole-profile stop; `stand-in-cloud-device`                          |
+| Fail closed and recover       | Disconnect the bound cloud device; stop, reload, reconnect and retry                                  | Persist stopping without silently choosing another device; rebind only after confirmed stop; `stand-in-cloud-device`                                                    |
+| Retain history                | Create local roles, a conversation and memory; stop, bind cloud, then bind the original local profile | No cross-device role copy; original history and memory remain; `stand-in-cloud-device`                                                                                  |
+| Preserve execution boundaries | Explicitly rebind before configuring models, workspaces, Git sources and project intake               | Retain existing permission, native-denial, reception-receipt and concurrent cross-device deduplication assertions; existing model, Git, workspace and cloud checkpoints |
+
+The existing `stand-in-cloud-device` checkpoint also covers migration after stopping: cancel confirmation and assert no target writes, then migrate the chosen role into an already stopped real cloud profile. Verify portable responsibilities and role memories reach the same imported identity, existing target settings remain, the source stays stopped, and the copy remains paused without source-device workspace or grants. Only then does the binding change. Component, utility and Runtime contracts cover failure and retry.
+
+Focused Rust contracts also cover all queued inputs plus the active turn of one task, real stop acknowledgement after timeout, cancellation cleanup without holding the processing gate, rejection of edits and restart during stopping, and stale binding versions. Once stopped, a target accepts only appended disabled portable imports, never overwritten settings, device grants or forged enablement. Component tests cover binding changes while confirmation is open, unsaved-edit decisions, and late reads from inactive pages. The shared helper maps to existing CI checkpoints without adding jobs or retries.
+
 Reuse the desktop checkpoint runner. Only model responses are synthetic; Electron, Executor, Codex, SQLite, projects and native confirmation paths are real.
 
 | Story                         | Preconditions and actions                                                                                         | Expected result and checkpoint                                                                                                                           |

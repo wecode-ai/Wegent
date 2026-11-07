@@ -97,6 +97,8 @@ const mocks = vi.hoisted(() => {
 
   const localServices = {
     standInApi: {
+      binding: vi.fn(),
+      lifecycle: vi.fn(),
       taskCommands: { get: vi.fn(), resolve: vi.fn() },
       projectCoordination: vi.fn(),
       projectProcessing: vi.fn(),
@@ -191,6 +193,8 @@ const mocks = vi.hoisted(() => {
   }
   const cloudServices = {
     standInApi: {
+      binding: vi.fn(),
+      lifecycle: vi.fn(),
       taskCommands: { get: vi.fn(), resolve: vi.fn() },
       projectCoordination: vi.fn(),
       projectProcessing: vi.fn(),
@@ -520,6 +524,8 @@ describe('stand-in save routing', () => {
         api.projectCoordination.mockClear()
         api.projectProcessing.mockClear()
         api.personalSave.mockClear()
+        api.binding.mockClear()
+        api.lifecycle.mockClear()
         api.save.mockClear()
         api.memories.mockClear()
         api.saveMemory.mockClear()
@@ -540,6 +546,12 @@ describe('stand-in save routing', () => {
       const other = selected === local ? cloud : local
       expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
       expect(other.personalSave).not.toHaveBeenCalled()
+      await services.standInApi!.binding(deviceId, 'beginStop', 3)
+      expect(selected.binding).toHaveBeenCalledExactlyOnceWith(deviceId, 'beginStop', 3, undefined)
+      expect(other.binding).not.toHaveBeenCalled()
+      await services.standInApi!.lifecycle(7, deviceId, 'stop')
+      expect(selected.lifecycle).toHaveBeenCalledExactlyOnceWith(7, deviceId, 'stop')
+      expect(other.lifecycle).not.toHaveBeenCalled()
       const projectSettings = {
         enabled: true,
         prompt: '',

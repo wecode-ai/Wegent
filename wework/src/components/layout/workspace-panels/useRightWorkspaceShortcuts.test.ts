@@ -1,6 +1,7 @@
 import { fireEvent, renderHook } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { useRightWorkspaceShortcuts } from './useRightWorkspaceShortcuts'
+import { getPlatform } from '@/lib/platform'
 
 vi.mock('@/lib/platform', () => ({ getPlatform: vi.fn(() => 'mac') }))
 
@@ -22,6 +23,25 @@ function renderShortcuts(overrides = {}) {
 }
 
 describe('right workspace shortcuts', () => {
+  test.each(['mac', 'win', 'linux'] as const)(
+    'opens the browser with the %s primary modifier',
+    platform => {
+      vi.mocked(getPlatform).mockReturnValue(platform)
+      const { options, unmount } = renderShortcuts()
+      try {
+        fireEvent.keyDown(window, {
+          key: 't',
+          code: 'KeyT',
+          metaKey: platform === 'mac',
+          ctrlKey: platform !== 'mac',
+        })
+        expect(options.onSelectBrowser).toHaveBeenCalledOnce()
+      } finally {
+        unmount()
+        vi.mocked(getPlatform).mockReturnValue('mac')
+      }
+    }
+  )
   const shortcuts = [
     { key: '®', code: 'KeyR', action: 'onSelectReview', capability: 'canOpenReview' },
     { key: 'ß', code: 'KeyS', action: 'onSelectChat', capability: 'allowTemporaryChat' },
