@@ -366,6 +366,10 @@ jobs:
       # Codex creates its own user/mount namespaces inside this disposable runner.
       options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
+      # Reuse the hosted runner's browsers without downloading or installing them.
+      volumes:
+        - /opt/google/chrome:/opt/google/chrome:ro
+        - /usr/local/share/chromedriver-linux64:/opt/wegent-e2e/chromedriver:ro
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -383,6 +387,12 @@ jobs:
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
+      - name: Verify the existing external browser runtime
+        if: contains(matrix.segments, 'browser-toolbar-actions')
+        run: |
+          /opt/google/chrome/chrome --version
+          /opt/wegent-e2e/chromedriver/chromedriver --version
 
       - name: Prepare real mailbox server runtime
         if: contains(matrix.segments, 'stand-in-email')
@@ -758,6 +768,8 @@ jobs:
       - name: Prepare DingTalk protocol fixture for the standard account
         if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli')
         shell: pwsh
+        env:
+          WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           $directory = Join-Path $env:GITHUB_WORKSPACE "wework/test-results/windows-e2e-tools/dingtalk"
           New-Item -ItemType Directory -Force -Path $directory | Out-Null
@@ -766,6 +778,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk protocol fixture" }
           "WEWORK_E2E_DWS_FIXTURE_BIN=$binary" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (($env:WEWORK_E2E_SEGMENTS -split ',') -contains 'stand-in-cli') {
+            $replyBinary = Join-Path $directory "source-story-dws.exe"
+            rustc wework/e2e/desktop/fixtures/source-story-dingtalk-cli.rs --edition 2021 -o $replyBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk reply protocol fixture" }
+            "WEWORK_E2E_DWS_REPLY_FIXTURE_BIN=$replyBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e

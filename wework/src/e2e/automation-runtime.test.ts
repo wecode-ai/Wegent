@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import * as desktopHost from '@/api/dsh/desktopHost'
+import * as nativeKey from './native-key-acknowledgement'
 import { getDesktopControlDiagnostics } from './desktop-control-diagnostics'
 import {
   fillDesktopControlElement,
@@ -813,6 +814,145 @@ describe('Electron desktop E2E automation', () => {
     await fillDesktopControlElement(editor, 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK')
 
     expect(updateApplicationState).toHaveBeenCalledWith('WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK')
+  })
+
+  test.each([
+    ['Macintosh', 'Meta+A'],
+    ['Windows', 'Control+A'],
+    ['Linux', 'Control+A'],
+  ])('fills a shadow-root editor through native selection on %s', async (platform, selectAll) => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(platform)
+    const host = document.createElement('div')
+    const editor = document.createElement('div')
+    editor.contentEditable = 'true'
+    Object.defineProperty(editor, 'isContentEditable', { value: true })
+    host.attachShadow({ mode: 'open' }).append(editor)
+    document.body.append(host)
+    const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(undefined as never)
+    vi.spyOn(nativeKey, 'sendNativeKeyAndWait').mockImplementation(
+      async (_target, _phase, send) => {
+        await send()
+      }
+    )
+    try {
+      await fillDesktopControlElement(editor, 'first\nsecond')
+      expect(
+        native.mock.calls.map(([method, params]) => [method, params?.key ?? params?.text])
+      ).toEqual([
+        ['e2e.focusMainWindow', undefined],
+        ['e2e.pressKey', selectAll],
+        ['e2e.insertText', 'first'],
+        ['e2e.pressKey', 'Enter'],
+        ['e2e.insertText', 'second'],
+      ])
+      native.mockClear()
+      await fillDesktopControlElement(editor, '')
+      expect(native.mock.calls.map(([method, params]) => [method, params?.key])).toEqual([
+        ['e2e.focusMainWindow', undefined],
+        ['e2e.pressKey', selectAll],
+        ['e2e.pressKey', 'Backspace'],
+      ])
+    } finally {
+      host.remove()
+    }
+  })
+
+  test('waits for a disabled select to accept changes before acknowledging selection', async () => {
+    const select = document.createElement('select')
+    select.dataset.testid = 'busy-role-select'
+    select.disabled = true
+    select.innerHTML =
+      '<option value="Developer">Member</option><option value="Maintainer">Admin</option>'
+    document.body.append(select)
+    const changed = vi.fn()
+    select.addEventListener('change', changed)
+    const results: Array<{ ok: boolean; value: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Response(null, { status: 410 })
+        return new Response(
+          JSON.stringify({
+            id: 'busy-role-choice',
+            action: 'select',
+            selector: '[data-testid="busy-role-select"]',
+            value: 'Maintainer',
+            timeoutMs: 1000,
+          })
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return new Response('{}')
+    })
+    const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() =>
+        expect(getDesktopControlDiagnostics()).toContainEqual(
+          expect.objectContaining({ commandId: 'busy-role-choice', phase: 'start-acknowledged' })
+        )
+      )
+      expect(select.value).toBe('Developer')
+      expect(changed).not.toHaveBeenCalled()
+      expect(results).toEqual([])
+      select.disabled = false
+      await client
+      expect(select.value).toBe('Maintainer')
+      expect(changed).toHaveBeenCalledOnce()
+      expect(results).toEqual([expect.objectContaining({ ok: true, value: 'Admin' })])
+    } finally {
+      select.disabled = false
+      await client
+      select.remove()
+    }
+  })
+
+  test('delivers native shortcuts to the focused editor inside a shadow root', async () => {
+    const host = document.createElement('div')
+    const editor = document.createElement('textarea')
+    editor.dataset.testid = 'shadow-native-editor'
+    editor.scrollIntoView = vi.fn()
+    host.attachShadow({ mode: 'open' }).append(editor)
+    document.body.append(host)
+    const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(undefined as never)
+    const delivery = vi
+      .spyOn(nativeKey, 'sendNativeKeyAndWait')
+      .mockImplementation(async (target, _phase, send) => {
+        expect(document.activeElement).toBe(host)
+        expect(host.shadowRoot?.activeElement).toBe(target)
+        await send()
+      })
+    let polls = 0
+    const results: Array<{ ok: boolean; value: string }> = []
+    vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Response(null, { status: 410 })
+        return new Response(
+          JSON.stringify({
+            id: 'shadow-shortcut',
+            action: 'nativePress',
+            selector: '[data-testid="shadow-native-editor"]',
+            key: 'Control+z',
+          })
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return new Response('{}')
+    })
+    try {
+      await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      expect(results).toEqual([
+        expect.objectContaining({ ok: true, value: 'shadow-native-editor' }),
+      ])
+      expect(delivery).toHaveBeenCalledWith(editor, 'press', expect.any(Function))
+      expect(native).toHaveBeenLastCalledWith('e2e.pressKey', {
+        windowLabel: 'main',
+        key: 'Control+z',
+        phase: 'press',
+        focus: false,
+      })
+    } finally {
+      host.remove()
+    }
   })
 
   test('seeds local model fixtures without configuring a cloud connection', async () => {

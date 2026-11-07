@@ -23,7 +23,7 @@ pub const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_use
      kinds.updated_at AS kinds_updated_at";
 
 /// One `kinds` row, decoded from [`KIND_COLUMNS`].
-#[derive(Debug, FromMysqlRow)]
+#[derive(Debug, Clone, FromMysqlRow)]
 pub struct KindRow {
     #[mysql(rename = "kinds_id")]
     pub id: i64,

@@ -5,9 +5,10 @@
 //! Controlled prepared-statement results, decoded by the real MySQL SDK.
 use super::mysql_pool_server::{handshake, packet, read_packet};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::{TcpListener, TcpStream};
 
+#[derive(Clone)]
 pub enum Value {
     I64(i64),
     I32(i32),
@@ -19,7 +20,7 @@ pub enum Value {
 }
 
 pub type Row = Vec<(&'static str, Value)>;
-type Rows = Arc<dyn Fn(&str) -> Row + Send + Sync>;
+type Rows = Arc<dyn Fn(&str) -> (Row, Vec<Row>) + Send + Sync>;
 const EOF: &[u8] = &[0xfe, 0, 0, 2, 0];
 
 fn string(bytes: &[u8], output: &mut Vec<u8>) {
@@ -65,28 +66,31 @@ async fn definitions(stream: &mut TcpStream, sequence: &mut u8, row: &Row) {
     *sequence += 1;
 }
 
-async fn result(stream: &mut TcpStream, row: Row) {
-    packet(stream, 1, &[row.len() as u8]).await;
+async fn result(stream: &mut TcpStream, columns: Row, rows: Vec<Row>) {
+    packet(stream, 1, &[columns.len() as u8]).await;
     let mut sequence = 2;
-    definitions(stream, &mut sequence, &row).await;
-    let bitmap_length = (row.len() + 2).div_ceil(8);
-    let mut bytes = vec![0; 1 + bitmap_length];
-    for (index, (_, value)) in row.iter().enumerate() {
-        match value {
-            Value::I64(value) => bytes.extend_from_slice(&value.to_le_bytes()),
-            Value::I32(value) => bytes.extend_from_slice(&value.to_le_bytes()),
-            Value::I8(value) => bytes.push(*value as u8),
-            Value::Text(value) => string(value.as_bytes(), &mut bytes),
-            Value::Bytes(value) => string(value, &mut bytes),
-            Value::DateTime => bytes.extend_from_slice(&[7, 0xea, 7, 10, 23, 0, 0, 0]),
-            Value::Null => bytes[1 + (index + 2) / 8] |= 1 << ((index + 2) % 8),
+    definitions(stream, &mut sequence, &columns).await;
+    for row in rows {
+        let bitmap_length = (row.len() + 2).div_ceil(8);
+        let mut bytes = vec![0; 1 + bitmap_length];
+        for (index, (_, value)) in row.iter().enumerate() {
+            match value {
+                Value::I64(value) => bytes.extend_from_slice(&value.to_le_bytes()),
+                Value::I32(value) => bytes.extend_from_slice(&value.to_le_bytes()),
+                Value::I8(value) => bytes.push(*value as u8),
+                Value::Text(value) => string(value.as_bytes(), &mut bytes),
+                Value::Bytes(value) => string(value, &mut bytes),
+                Value::DateTime => bytes.extend_from_slice(&[7, 0xea, 7, 10, 23, 0, 0, 0]),
+                Value::Null => bytes[1 + (index + 2) / 8] |= 1 << ((index + 2) % 8),
+            }
         }
+        packet(stream, sequence, &bytes).await;
+        sequence += 1;
     }
-    packet(stream, sequence, &bytes).await;
-    packet(stream, sequence + 1, EOF).await;
+    packet(stream, sequence, EOF).await;
 }
 
-async fn connection(mut stream: TcpStream, rows: Rows) {
+async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<String>>>) {
     stream.set_nodelay(true).unwrap();
     handshake(&mut stream).await;
     let mut statements = HashMap::new();
@@ -95,7 +99,7 @@ async fn connection(mut stream: TcpStream, rows: Rows) {
             0x01 => return,
             0x16 => {
                 let query = String::from_utf8(request[1..].to_vec()).unwrap();
-                let row = rows(&query);
+                let (row, _) = rows(&query);
                 let id = statements.len() as u32 + 1;
                 let parameters = query.bytes().filter(|byte| *byte == b'?').count();
                 let mut response = vec![0];
@@ -114,7 +118,10 @@ async fn connection(mut stream: TcpStream, rows: Rows) {
             }
             0x17 => {
                 let id = u32::from_le_bytes(request[1..5].try_into().unwrap());
-                result(&mut stream, rows(&statements[&id])).await;
+                let query = &statements[&id];
+                queries.lock().unwrap().push(query.clone());
+                let (columns, results) = rows(query);
+                result(&mut stream, columns, results).await;
             }
             0x19 => {}
             0x03 | 0x0e => packet(&mut stream, 1, &[0, 0, 0, 2, 0, 0, 0]).await,
@@ -126,19 +133,33 @@ async fn connection(mut stream: TcpStream, rows: Rows) {
 pub struct MysqlRows {
     pub mysql: brz_mysql::MysqlService,
     server: tokio::task::JoinHandle<()>,
+    queries: Arc<Mutex<Vec<String>>>,
 }
 
 impl MysqlRows {
     pub async fn start(rows: impl Fn(&str) -> Row + Send + Sync + 'static) -> Self {
+        Self::start_results(move |sql| {
+            let row = rows(sql);
+            (row.clone(), vec![row])
+        })
+        .await
+    }
+
+    /// Controlled empty or multi-row results, retaining a schema for empty sets.
+    pub async fn start_results(
+        rows: impl Fn(&str) -> (Row, Vec<Row>) + Send + Sync + 'static,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("mysql://test:test@{}/test", listener.local_addr().unwrap());
         let rows: Rows = Arc::new(rows);
+        let queries = Arc::new(Mutex::new(Vec::new()));
+        let captured = queries.clone();
         let server = tokio::spawn(async move {
             let mut connections = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
                     accepted = listener.accept() => {
-                        connections.spawn(connection(accepted.unwrap().0, rows.clone()));
+                        connections.spawn(connection(accepted.unwrap().0, rows.clone(), captured.clone()));
                     }
                     completed = connections.join_next(), if !connections.is_empty() => {
                         completed.unwrap().unwrap();
@@ -149,7 +170,12 @@ impl MysqlRows {
         Self {
             mysql: brz_mysql::MysqlService::connect_lazy(&url).unwrap(),
             server,
+            queries,
         }
+    }
+
+    pub fn queries(&self) -> Vec<String> {
+        self.queries.lock().unwrap().clone()
     }
 }
 

@@ -152,7 +152,7 @@ function isReplyPredictionRequest(body) {
 function isReplyPredictionVisionRequest(body) {
   const message = body.messages?.at(-1)
   return (
-    message?.role === 'user' && modelMessageText(message).endsWith(`\n\n${REPLY_PREDICTION_PROMPT}`)
+    message?.role === 'user' && modelMessageText(message).endsWith(`\n${REPLY_PREDICTION_PROMPT}`)
   )
 }
 
