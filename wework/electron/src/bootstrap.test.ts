@@ -18,7 +18,11 @@ const startup = vi.hoisted(() => ({
   main: vi.fn(),
   historyError: null as Error | null,
   enterInstalled: vi.fn(),
+  rollback: vi.fn(),
+  restoreData: vi.fn(),
 }))
+
+vi.mock('./runtime/release-snapshot.js', () => ({ restoreReleaseData: startup.restoreData }))
 
 vi.mock('./runtime/macos-release-installation.js', () => ({
   enterInstalledMacosRelease: startup.enterInstalled,
@@ -64,6 +68,9 @@ vi.mock('./runtime/release-store.js', () => ({
     async activation() {
       return startup.activation
     }
+    async rollback() {
+      return startup.rollback()
+    }
   },
 }))
 
@@ -80,6 +87,8 @@ beforeEach(() => {
   startup.historyError = null
   startup.main.mockClear()
   startup.enterInstalled.mockReset()
+  startup.rollback.mockReset()
+  startup.restoreData.mockReset()
   startup.bridgeHandoff.mockReset().mockImplementation(async () => startup.legacyUserData)
   startup.showErrorBox.mockClear()
   startup.bridge = null
@@ -208,6 +217,66 @@ test('hands the selected legacy host its physical userData before native launch'
 })
 
 if (process.platform === 'darwin') {
+  test.each([false, true])(
+    'bootstrap completes manual rollback before native launch (restore=%s)',
+    async restoreRequired => {
+      startup.metadata.version = '2.0.0'
+      startup.activeRelease = {
+        id: 'target',
+        version: '2.0.0',
+        executable: process.execPath,
+        macosInstallation: { payloadExecutable: '/retained/target' },
+      }
+      startup.activation = {
+        token: 'rollback',
+        from: 'source',
+        to: 'target',
+        snapshot: 'saved-data',
+        restoreRequired,
+        rollbackRequested: true,
+      }
+      startup.rollback.mockImplementation(async () => {
+        startup.activeRelease = {
+          ...startup.activeRelease,
+          id: 'source',
+          version: '1.0.0',
+          macosInstallation: { payloadExecutable: '/retained/source' },
+        }
+        startup.activation = null
+        return startup.activeRelease
+      })
+      startup.legacyUserData = join(startup.home, 'user-data')
+      startup.ready.mockResolvedValue(undefined)
+      const original = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+      Object.defineProperty(process, 'resourcesPath', {
+        value: join(startup.home, 'installed.app/Contents/Resources'),
+        configurable: true,
+      })
+      try {
+        await import('./bootstrap.js')
+
+        await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalledOnce())
+        expect(startup.rollback).toHaveBeenCalledOnce()
+        expect(startup.activeRelease.id).toBe('source')
+        expect(startup.restoreData).toHaveBeenCalledTimes(restoreRequired ? 1 : 0)
+        if (restoreRequired) {
+          expect(startup.restoreData.mock.calls[0]?.[2]).toBe('saved-data')
+          expect(startup.restoreData.mock.invocationCallOrder[0]).toBeLessThan(
+            startup.rollback.mock.invocationCallOrder[0]!
+          )
+        }
+        expect(startup.rollback.mock.invocationCallOrder[0]).toBeLessThan(
+          startup.relaunch.mock.invocationCallOrder[0]!
+        )
+        expect(startup.main).not.toHaveBeenCalled()
+        expect(startup.showErrorBox).not.toHaveBeenCalled()
+      } finally {
+        if (original) Object.defineProperty(process, 'resourcesPath', original)
+        else Reflect.deleteProperty(process, 'resourcesPath')
+      }
+    }
+  )
+
   test('ordinary startup ignores an old selected version, missing bridge and foreign handoff root', async () => {
     startup.activation = null
     startup.metadata.version = '3.0.0'

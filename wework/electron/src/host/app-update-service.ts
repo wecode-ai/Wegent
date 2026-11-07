@@ -26,7 +26,7 @@ import {
   retainReleaseProfile,
 } from '../runtime/release-profile.js'
 import type { ComponentPaths } from '../runtime/component-update-manager.js'
-import { restoreReleaseData, snapshotReleaseData } from '../runtime/release-snapshot.js'
+import { snapshotReleaseData } from '../runtime/release-snapshot.js'
 import { verifyReleaseSignature } from '../runtime/release-signature.js'
 import { extractPhysicalRelease, removePhysicalRelease } from '../runtime/physical-release-files.js'
 import { preparationStep } from '../runtime/release-preparation.js'
@@ -558,14 +558,8 @@ export class AppUpdateService {
           await atomicReleaseWrite(join(store.root, 'rollback-interrupted'), activation.token)
           process.exit(3)
         }
-        if (activation.restoreRequired)
-          await restoreReleaseData(
-            this.options.dataDirectory,
-            store.root,
-            activation.snapshot,
-            process.env.WEGENT_EXECUTOR_HOME?.trim() || this.options.dataDirectory
-          )
-        await store.rollback()
+        // Bootstrap resumes this journal before restoring data and selecting the
+        // retained host. Clearing it here would turn rollback into ordinary startup.
         this.options.restart()
       })()
         .catch(error => {

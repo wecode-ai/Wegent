@@ -701,6 +701,9 @@ export async function createDesktopScenario(options) {
           modelRequests > requestsBeforeRestartedTask,
           'The installed package did not continue the task after stale-history startup'
         )
+        console.log(
+          '[upgrade-e2e] Installed target restarted with stale history and continued its task'
+        )
       }
       if (
         verifiesUnstartedActivation ||

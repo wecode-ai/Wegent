@@ -339,19 +339,33 @@ test('preserves component startup errors without registering an unusable baselin
   expect(await store.active()).toBeNull()
 })
 
-test('compatible rollback selects the retained version without preparing its host', async () => {
-  const { service, store, shutdown, restart } = await fixture()
-  const current = (await store.active())!
-  const previous = { ...current, id: 'previous', version: '0.9.0' }
-  await store.save(previous)
-  await atomicReleaseWrite(join(store.root, 'active'), previous.id)
-  await store.activate(current, 'snapshot')
-  await store.confirm(current.id)
-  await expect(service.createRollbackAction(false)()).resolves.toBeUndefined()
-  expect((await store.active())?.id).toBe(previous.id)
-  expect(shutdown).toHaveBeenCalledOnce()
-  expect(restart).toHaveBeenCalledOnce()
-})
+test.each([false, true])(
+  'rollback retains its transaction until bootstrap (restore=%s)',
+  async restoreRequired => {
+    const { service, store, shutdown, restart } = await fixture()
+    const current = (await store.active())!
+    const previous = {
+      ...current,
+      id: 'previous',
+      version: '0.9.0',
+      readableDataSchemas: restoreRequired ? [2] : current.readableDataSchemas,
+    }
+    await store.save(previous)
+    await atomicReleaseWrite(join(store.root, 'active'), previous.id)
+    await store.activate(current, 'snapshot')
+    await store.confirm(current.id)
+    await expect(service.createRollbackAction(restoreRequired)()).resolves.toBeUndefined()
+    expect((await store.active())?.id).toBe(current.id)
+    expect(await store.activation()).toMatchObject({
+      from: previous.id,
+      to: current.id,
+      rollbackRequested: true,
+      restoreRequired,
+    })
+    expect(shutdown).toHaveBeenCalledOnce()
+    expect(restart).toHaveBeenCalledOnce()
+  }
+)
 test('rollback cannot restore incompatible data without an explicit boolean confirmation', async () => {
   const { service, store } = await fixture()
   const previous = {
