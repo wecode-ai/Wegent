@@ -147,6 +147,13 @@ describe('mock model controls', () => {
     })
   }
 
+  async function pendingResponses(matchText: string) {
+    const response = await fetch(`${url}/stream-rules`)
+    expect(response.status).toBe(200)
+    const rules = (await response.json()) as Array<{ matchText: string; pendingResponses: number }>
+    return rules.find(rule => rule.matchText === matchText)?.pendingResponses
+  }
+
   function modelRequest(matchText: string, path = '/v1/messages') {
     // The server's end handler enters the gate before this observer runs.
     const received = new Promise<ServerResponse>(resolve => {
@@ -183,8 +190,10 @@ describe('mock model controls', () => {
       const pending = modelRequest(matchText, path)
       await pending.received
       expect(pending.finished()).toBe(false)
+      expect(await pendingResponses(matchText)).toBe(1)
 
       expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 1 })
+      expect(await pendingResponses(matchText)).toBe(0)
       expect(await pending.result).toContain(`ANSWER_${matchText}`)
       expect(await modelRequest(matchText, path).result).toContain(`ANSWER_${matchText}`)
       expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 0 })
@@ -203,11 +212,13 @@ describe('mock model controls', () => {
     await hold(matchText)
     const pending = modelRequest(matchText)
     const response = await pending.received
+    expect(await pendingResponses(matchText)).toBe(1)
     const closed = once(response, 'close')
     const rejected = expect(pending.result).rejects.toMatchObject({ name: 'AbortError' })
     pending.controller.abort()
     await rejected
     await closed
+    expect(await pendingResponses(matchText)).toBe(0)
     expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 0 })
   })
 

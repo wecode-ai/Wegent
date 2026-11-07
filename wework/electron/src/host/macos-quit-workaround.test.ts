@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { requiresMacosQuitWorkaround } from './macos-quit-workaround.js'
+import { requiresMacosQuitWorkaround } from './macos-quit-workaround.mjs'
 
 describe('requiresMacosQuitWorkaround', () => {
   test('covers physical macOS 26 releases affected by the Electron native exit hang', () => {

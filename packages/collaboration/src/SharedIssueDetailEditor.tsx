@@ -90,6 +90,7 @@ import type {
   CollaborationStatus,
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
+import { stripLocalFileUrlsFromClipboardText } from "./issue-detail/clipboardText";
 import { TagEditor, type TagEditorHandle } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
@@ -111,23 +112,6 @@ function cn(...values: Array<string | false | null | undefined>): string {
 }
 
 export interface SharedEditorIssue extends CollaborationIssue {
-  assignment_history?: Array<{
-    by_user_id: number;
-    to_type: "user" | "agent" | "team" | "group" | null;
-    to_id: string | null;
-    to_name?: string | null;
-    action: "assign" | "reassign" | "unassign";
-    at: string;
-  }>;
-  status_history?: Array<{
-    from_status: string;
-    from_status_name?: string | null;
-    to_status: string;
-    to_status_name?: string | null;
-    trigger: string;
-    by_user_id: number | null;
-    at: string;
-  }>;
   automation?: { trigger?: string } | null;
   execution_error?: string | null;
   source_record_id?: string | null;
@@ -3294,7 +3278,23 @@ export function TodoEditor(props: TodoEditorProps) {
                         onPaste={(event) => {
                           if (!editable) return;
                           const files = Array.from(event.clipboardData.files);
-                          if (files.length > 0) pasteAttachments(files);
+                          if (files.length === 0) return;
+                          const pastedText =
+                            stripLocalFileUrlsFromClipboardText(
+                              event.clipboardData.getData("text/plain"),
+                            );
+                          event.preventDefault();
+                          if (pastedText) {
+                            const target = event.currentTarget;
+                            target.setRangeText(
+                              pastedText,
+                              target.selectionStart,
+                              target.selectionEnd,
+                              "end",
+                            );
+                            setDescription(target.value);
+                          }
+                          void pasteAttachments(files);
                         }}
                         className={cn(
                           "min-h-[240px] w-full resize-y rounded-lg border border-border bg-transparent p-3 text-sm text-text-primary outline-none focus:border-text-muted",

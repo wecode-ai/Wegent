@@ -1,3 +1,4 @@
+import { DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS } from '@/features/model-settings/localModelCatalog'
 import { findLocalModelProviderProfile } from '@/features/model-settings/localModelProviders'
 import type { ModelConfigurationSnapshot } from '@/features/model-settings/providerModelConfiguration'
 import { reloadProviderConfiguration } from '@/features/model-settings/providerModelConfiguration'
@@ -232,7 +233,7 @@ describe('Provider settings page', () => {
     await user.type(output, '16000')
     expect(
       (model.getByTestId('local-model-base-instructions-input') as HTMLTextAreaElement).value
-    ).toContain('# Working with the user')
+    ).toBe(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS)
     await user.selectOptions(model.getByTestId('local-model-default-reasoning-input'), 'high')
     await user.click(model.getByTestId(/^provider-model-image-generation-/))
     await user.selectOptions(model.getByTestId(/^provider-model-web-search-/), 'live')
@@ -279,7 +280,7 @@ describe('Provider settings page', () => {
       additional_speed_tiers: ['fast'],
       default_service_tier: 'priority',
     })
-    expect(saved.catalog_entry.base_instructions).toContain('# Rules for getting work done')
+    expect(saved.catalog_entry.base_instructions).toBe(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS)
   })
 
   test.each(['kimi-coding', 'minimax', 'minimax-global'])(

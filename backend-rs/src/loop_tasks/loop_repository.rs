@@ -76,6 +76,7 @@ pub struct ItemMetadata {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct AssignmentMetadata {
+    pub automation: Option<serde_json::Value>,
     pub event_type: Option<String>,
     pub action: Option<String>,
     pub assignment_event_id: Option<String>,

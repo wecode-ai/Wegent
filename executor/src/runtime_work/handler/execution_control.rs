@@ -181,6 +181,9 @@ impl RuntimeWorkRpcHandler {
 
     fn publish_settled_local_execution(&self, local_task_id: &str, status: &str, reason: &str) {
         if let Some(link) = self.store.get_task_summary(local_task_id) {
+            if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(&link) {
+                self.release_settled_native_capacity(local_task_id, &state);
+            }
             self.project_runtime_link_status_now(&link);
         }
         self.record_stand_in_completion_outbox(local_task_id, status);

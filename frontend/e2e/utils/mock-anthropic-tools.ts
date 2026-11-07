@@ -5,6 +5,7 @@ import { resolveToolName } from './model-tool-discovery'
 export interface ToolCallRule {
   toolName: string
   arguments: Record<string, unknown>
+  inspectToolNames?: string[]
 }
 
 export interface ToolResponse {

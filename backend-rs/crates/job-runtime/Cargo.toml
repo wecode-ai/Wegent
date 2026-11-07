@@ -1,0 +1,20 @@
+[package]
+name = "wegent-job-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Durable job submission, registration, worker lifecycle, and business leases"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+brz-schedule = "=0.0.1"
+brz-schedule-redis = "=0.0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+getrandom = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+wegent-backend-config = { path = "../config" }

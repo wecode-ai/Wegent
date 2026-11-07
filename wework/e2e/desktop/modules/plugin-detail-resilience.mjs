@@ -663,7 +663,14 @@ export async function verifyPluginDetailResilience({
     })
 
     await phase('old-detail-preserves-new-disabled-inventory', entry =>
-      verifyPluginDetailCacheRace({ control, item: broken, openDetail, backToList, entry })
+      verifyPluginDetailCacheRace({
+        control,
+        item: broken,
+        openDetail,
+        backToList,
+        refreshCatalog: () => refreshUiLogoCatalog('detail-cache-race', entry),
+        entry,
+      })
     )
 
     await phase('old-settings-response-preserves-new-component-state', entry =>

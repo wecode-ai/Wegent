@@ -541,11 +541,33 @@ function upsertRuntimeWorkspace(
 ): RuntimeDeviceWorkspace[] {
   const task = workspace.tasks[0]
   if (!task) return workspaces
+  const matchesDevice = (item: RuntimeDeviceWorkspace) => item.deviceId === workspace.deviceId
+  // Executor snapshots own task state and grouping, even if creation finishes later.
+  if (
+    workspaces.some(
+      item =>
+        matchesDevice(item) &&
+        item.tasks.some(
+          current =>
+            current.taskId === task.taskId && !shouldReplaceRuntimeTaskProjection(current, task)
+        )
+    )
+  ) {
+    return workspaces
+  }
+  // A task can move from its source directory to a prepared worktree during creation.
+  const remainingWorkspaces = workspaces.map(item =>
+    matchesDevice(item)
+      ? { ...item, tasks: item.tasks.filter(current => current.taskId !== task.taskId) }
+      : item
+  )
   const nextWorkspace = upsertRuntimeTask(workspace, task)
-  const existingIndex = workspaces.findIndex(item => runtimeWorkspaceMatches(item, workspace))
-  if (existingIndex < 0) return [nextWorkspace, ...workspaces]
+  const existingIndex = remainingWorkspaces.findIndex(item =>
+    runtimeWorkspaceMatches(item, workspace)
+  )
+  if (existingIndex < 0) return [nextWorkspace, ...remainingWorkspaces]
 
-  return workspaces.map((item, index) => {
+  return remainingWorkspaces.map((item, index) => {
     if (index !== existingIndex) return item
     return upsertRuntimeTask(
       {

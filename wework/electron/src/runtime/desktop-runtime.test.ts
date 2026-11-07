@@ -171,7 +171,70 @@ describe('DesktopRuntime lifecycle generation', () => {
     prepareState.resolveLaunch = null
   })
 
-  test('publishes device model interfaces before Core starts and removes disabled entries', async () => {
+  test.each(['pending', 'failed'])(
+    'opens Core while initial local model synchronization is %s',
+    async state => {
+      const executor = new FakeExecutor()
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const read =
+        state === 'pending'
+          ? vi.fn(() => new Promise(() => {}))
+          : vi.fn().mockRejectedValue(new Error('Model store unavailable'))
+      const runtime = createRuntime(
+        { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+        {
+          createExecutor: () => executor,
+          modelConfiguration: { read } as unknown as ModelConfigurationStore,
+        }
+      )
+      try {
+        await runtime.start()
+        expect(runtime.state().ready).toBe(true)
+        expect(created[0].startCalls).toBe(1)
+        if (state === 'failed') await vi.waitFor(() => expect(warning).toHaveBeenCalled())
+      } finally {
+        await runtime.stop()
+        warning.mockRestore()
+      }
+    }
+  )
+
+  test('a pending model read cannot stall or write into a restarted executor', async () => {
+    const oldRead = deferred<{ providers: unknown[] }>()
+    const configuration = {
+      read: vi
+        .fn()
+        .mockImplementationOnce(() => oldRead.promise)
+        .mockResolvedValue({ providers: [] }),
+      runtime: vi.fn().mockResolvedValue({ models: [] }),
+    }
+    const executors = [new FakeExecutor(), new FakeExecutor()]
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      {
+        createExecutor: () => executors[created.length],
+        modelConfiguration: configuration as unknown as ModelConfigurationStore,
+      }
+    )
+    try {
+      await runtime.start()
+      const queuedOldSync = runtime.syncLocalModels()
+      await runtime.stop()
+      await runtime.start()
+      await vi.waitFor(() =>
+        expect(executors[1].requests).toEqual(['runtime.runner.local_models.replace'])
+      )
+      oldRead.resolve({ providers: [] })
+      await queuedOldSync
+      expect(executors[0].requests).toEqual([])
+      expect(executors[1].requests).toEqual(['runtime.runner.local_models.replace'])
+      expect(configuration.runtime).toHaveBeenCalledOnce()
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  test('publishes device model interfaces during Core startup and removes disabled entries', async () => {
     const executor = new FakeExecutor()
     const request = vi.spyOn(executor, 'request')
     const configuration = {

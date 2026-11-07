@@ -75,6 +75,7 @@ import {
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
+import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscussionScope'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import {
   createLocalDevicePluginApi,
@@ -481,6 +482,8 @@ function OwnedWorkbenchProvider({
     inputs: draftInputByScope,
     setInput: writeDraftInputForScope,
     getRevision: getInputRevisionForScope,
+    goalDraftActiveByScope,
+    setGoalDraftActiveForScope,
   } = useWorkspaceTabDraftInput(workspaceTabId)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
@@ -2736,6 +2739,8 @@ function OwnedWorkbenchProvider({
     () => ({
       scopeKey: projectChatScopeKey,
       inputByScope: draftInputByScope,
+      goalDraftActiveByScope,
+      setGoalDraftActiveForScope,
       getInputRevisionForScope,
       models: conversationModels,
       skills: skillSelection.skills,
@@ -2814,6 +2819,8 @@ function OwnedWorkbenchProvider({
       requestTaskComposerCatalogs,
       draftInput,
       draftInputByScope,
+      goalDraftActiveByScope,
+      setGoalDraftActiveForScope,
       getInputRevisionForScope,
       composerError,
       composerErrorByScope,
@@ -3074,7 +3081,7 @@ function OwnedWorkbenchProvider({
                 services={resolvedServices}
               />
               <RunnerSelectionHost />
-              {children}
+              <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>
         </WorkspaceFileReaderProvider>

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -261,6 +261,52 @@ test('retains a running thin installation without copying or preparing its host'
   expect(await readFile(join(profile, 'package.json'), 'utf8')).toContain('running-profile')
 })
 
+test('registers the actual manually installed version and retains its live profile owner', async () => {
+  const { options, store } = await fixture()
+  const source = (await store.active())!
+  source.profileRoot = join(store.slot(source.id), 'profile')
+  await store.save(source)
+  await atomicReleaseWrite(join(store.root, 'previousHealthy'), source.id)
+  await mkdir(source.profileRoot, { recursive: true })
+  await writeFile(join(source.profileRoot, 'keep.json'), '{"task":"keep"}')
+  const profile = currentCoreProfile(options.dataDirectory)
+  await mkdir(join(profile, '..'), { recursive: true })
+  await symlink(source.profileRoot, profile, 'junction')
+  const service = new AppUpdateService({
+    ...options,
+    currentVersion: '1.1.0',
+    runningComponents: () => ({ executor: '/actual/executor' }) as ComponentPaths,
+  })
+  const register = () =>
+    (
+      service as unknown as {
+        registerInstalledRelease(): Promise<void>
+      }
+    ).registerInstalledRelease()
+  await register()
+  const installed = (await store.active())!
+  expect(installed).toMatchObject({
+    version: '1.1.0',
+    retainedRelease: source.id,
+    profileRoot: await realpath(source.profileRoot),
+  })
+  expect(installed.id).toMatch(/^installed-1\.1\.0-/)
+  expect(await service.previousRelease()).toBeNull()
+  await register()
+  expect((await store.active())?.id).toBe(installed.id)
+  await store.prune()
+  expect(await readFile(join(profile, 'keep.json'), 'utf8')).toBe('{"task":"keep"}')
+})
+
+test('does not offer a stale rollback belonging to a different installed version', async () => {
+  const { options, store } = await fixture()
+  const source = (await store.active())!
+  await store.save({ ...source, id: 'old', version: '0.9.0' })
+  await atomicReleaseWrite(join(store.root, 'previousHealthy'), 'old')
+  const service = new AppUpdateService({ ...options, currentVersion: '1.1.0' })
+  expect(await service.previousRelease()).toBeNull()
+})
+
 test('waits for running component readiness before inspecting the profile or downloading', async () => {
   const { options, store, fetch } = await fixture()
   await rm(join(store.root, 'active'))
@@ -293,19 +339,33 @@ test('preserves component startup errors without registering an unusable baselin
   expect(await store.active()).toBeNull()
 })
 
-test('compatible rollback selects the retained version without preparing its host', async () => {
-  const { service, store, shutdown, restart } = await fixture()
-  const current = (await store.active())!
-  const previous = { ...current, id: 'previous', version: '0.9.0' }
-  await store.save(previous)
-  await atomicReleaseWrite(join(store.root, 'active'), previous.id)
-  await store.activate(current, 'snapshot')
-  await store.confirm(current.id)
-  await expect(service.createRollbackAction(false)()).resolves.toBeUndefined()
-  expect((await store.active())?.id).toBe(previous.id)
-  expect(shutdown).toHaveBeenCalledOnce()
-  expect(restart).toHaveBeenCalledOnce()
-})
+test.each([false, true])(
+  'rollback retains its transaction until bootstrap (restore=%s)',
+  async restoreRequired => {
+    const { service, store, shutdown, restart } = await fixture()
+    const current = (await store.active())!
+    const previous = {
+      ...current,
+      id: 'previous',
+      version: '0.9.0',
+      readableDataSchemas: restoreRequired ? [2] : current.readableDataSchemas,
+    }
+    await store.save(previous)
+    await atomicReleaseWrite(join(store.root, 'active'), previous.id)
+    await store.activate(current, 'snapshot')
+    await store.confirm(current.id)
+    await expect(service.createRollbackAction(restoreRequired)()).resolves.toBeUndefined()
+    expect((await store.active())?.id).toBe(current.id)
+    expect(await store.activation()).toMatchObject({
+      from: previous.id,
+      to: current.id,
+      rollbackRequested: true,
+      restoreRequired,
+    })
+    expect(shutdown).toHaveBeenCalledOnce()
+    expect(restart).toHaveBeenCalledOnce()
+  }
+)
 test('rollback cannot restore incompatible data without an explicit boolean confirmation', async () => {
   const { service, store } = await fixture()
   const previous = {

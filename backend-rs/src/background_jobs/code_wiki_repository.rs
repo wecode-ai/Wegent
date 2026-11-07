@@ -69,7 +69,7 @@ pub(super) async fn resolve(app: &AppState, user: i64, source: &Value) -> Result
                 "REPOSITORY_ACCESS_DENIED: configured credential provider does not match repository"
             )
         }
-        token = crate::git_repositories::crypto::decrypt_git_token(
+        token = wegent_identity::repository_credentials::decrypt_git_token(
             account["git_token"].as_str().unwrap_or(""),
         )
         .map_err(|_| anyhow::anyhow!("Git credential decryption failed"))?;

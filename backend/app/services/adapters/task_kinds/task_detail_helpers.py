@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.schemas.kind import Bot, Shell
 from app.schemas.subtask_context import SubtaskContextBrief
 from app.schemas.task import SkillRef
+from app.services.adapters.shell_utils import get_shells_by_owners_batch
 from app.services.task_fork_history import ForkHistoryItem
 from app.services.task_skill_selection import parse_requested_skill_refs_from_labels
 from app.stores.tasks import task_access_store
@@ -119,11 +120,20 @@ def get_bots_for_subtasks(
         return bots
 
     model_cache: Dict[Tuple[int, str, str], Any] = {}
-    shell_type_cache: Dict[Tuple[int, str, str], str] = {}
-
     bot_objects = kindReader.get_by_ids(db, KindType.BOT, list(all_bot_ids))
-    for bot in bot_objects:
-        bot_crd = Bot.model_validate(bot.json)
+    parsed_bots = [(bot, Bot.model_validate(bot.json)) for bot in bot_objects]
+    shell_keys = {
+        (bot.user_id, bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
+        for bot, bot_crd in parsed_bots
+        if bot_crd.spec.shellRef
+    }
+    shells = get_shells_by_owners_batch(db, shell_keys)
+    shell_types = {
+        key: Shell.model_validate(shell.json).spec.shellType
+        for key, shell in shells.items()
+        if shell.json
+    }
+    for bot, bot_crd in parsed_bots:
 
         shell_type = ""
         agent_config: Dict[str, Any] = {}
@@ -148,21 +158,8 @@ def get_bots_for_subtasks(
 
         if bot_crd.spec.shellRef:
             shell_ref = bot_crd.spec.shellRef
-            shell_key = (bot.user_id, shell_ref.namespace, shell_ref.name)
-            if shell_key not in shell_type_cache:
-                shell = kindReader.get_by_name_and_namespace(
-                    db,
-                    bot.user_id,
-                    KindType.SHELL,
-                    shell_ref.namespace,
-                    shell_ref.name,
-                )
-                if shell and shell.json:
-                    shell_crd = Shell.model_validate(shell.json)
-                    shell_type_cache[shell_key] = shell_crd.spec.shellType
-                else:
-                    shell_type_cache[shell_key] = ""
-            shell_type = shell_type_cache[shell_key]
+            shell_key = (bot.user_id, shell_ref.name, shell_ref.namespace)
+            shell_type = shell_types.get(shell_key, "")
 
         bots[bot.id] = {
             "id": bot.id,
