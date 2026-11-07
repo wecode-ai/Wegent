@@ -5,6 +5,7 @@ import { createWriteStream } from 'node:fs'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { recordBrowserStartup } from './external-browser-diagnostics.mjs'
 
 const CHROME_BINARY = process.env.WEWORK_E2E_EXTERNAL_CHROME_BIN || '/opt/google/chrome/chrome'
 const CHROMEDRIVER_BINARY =
@@ -156,6 +157,7 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
     appEnvironment,
     dispose,
     async start() {
+      let stopDiagnostics
       try {
         await record('start-chromedriver')
         child = spawn(
@@ -178,6 +180,7 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
         child.stdout.pipe(output, { end: false })
         child.stderr.pipe(output, { end: false })
         child.once('close', () => output.end())
+        stopDiagnostics = recordBrowserStartup(child.pid, resultDir)
         baseUrl = `http://127.0.0.1:${await driverPort(child, timeoutMs)}`
         await record('create-browser-session')
         const session = await request('/session', {
@@ -194,6 +197,8 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
                   '--disable-dev-shm-usage',
                   '--no-first-run',
                   '--no-default-browser-check',
+                  '--enable-logging=stderr',
+                  '--v=1',
                 ],
               },
             },
@@ -205,6 +210,10 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
       } catch (error) {
         await record('setup-failed', error)
         throw error
+      } finally {
+        await stopDiagnostics?.().catch(error =>
+          console.error('External browser scheduling diagnostic write failed', error)
+        )
       }
     },
     async waitForPage(expectedUrl, expectedText) {
