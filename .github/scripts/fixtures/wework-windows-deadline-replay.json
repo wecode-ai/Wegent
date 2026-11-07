@@ -1,9 +1,15 @@
 {
-  "description": "Immutable successful checkpoint observations for replaying the Windows step-deadline regression. Unfinished checkpoints are not samples; replay retains current weights for them.",
+  "description": "Immutable historical workload for replaying the Windows step-deadline regression. Successful observations and earlier weights for unfinished checkpoints are separate. Later catalog additions have no prediction in this fixture.",
   "run": "https://github.com/wecode-ai/Wegent/actions/runs/42411289396",
   "head": "743c1adce1e08588c283b060ebed5f3ac9db663b",
   "runnerOverheadSeconds": 125,
   "runnerOverheadSource": "https://github.com/wecode-ai/Wegent/actions/runs/42405065052/job/128503038855",
+  "checkpointCount": 168,
+  "unobservedWeightsSource": "https://github.com/wecode-ai/Wegent/blob/58111f9538abeeb417263188c990f442ddada7d0/.github/ci/wework-windows-checkpoint-durations.json",
+  "unobservedSeconds": {
+    "external-content-import": 28,
+    "send-key-preference": 24.5
+  },
   "seconds": {
     "application-menu": 44,
     "archived-worktree-cleanup": 39,
@@ -171,5 +177,50 @@
     "workbench-mode": 176,
     "workspace-attachments": 186,
     "workspace-tabs": 130
+  },
+  "matrixSource": "https://github.com/wecode-ai/Wegent/tree/743c1adce1e08588c283b060ebed5f3ac9db663b/wework/e2e/desktop/catalog",
+  "matrix": {
+    "include": [
+      {
+        "id": "core-1",
+        "segments": "core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,follow-up-task-switch,native-lifecycle,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation"
+      },
+      {
+        "id": "core-2",
+        "segments": "project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,window-lifecycle,mcp-apps,project-space-tool-discovery,human-interactions"
+      },
+      {
+        "id": "core-3",
+        "segments": "stand-in,stand-in-identities,stand-in-sessions,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,dots-closed-loops,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,runtime-policy,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use,board-transcript-followup,human-interactions-browser,human-interactions-hidden,stand-in-git"
+      },
+      {
+        "id": "core-4",
+        "segments": "harness-app-lifecycle,harness-app-models,component-update,environment-panel-scroll,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy,permission-modes"
+      },
+      {
+        "id": "core-5",
+        "segments": "claude-runtime,device-artifact-declaration,local-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,devtools-performance,native-window-startup,idle-executor-requests,startup-network-change,git-commit-generation,model-overload-recovery,renderer-crash-recovery,model-routing,workbench-control,human-interactions-issue"
+      },
+      {
+        "id": "core-6",
+        "segments": "task-board-association,remote-device-onboarding,runtime-task-queue,sidebar-task-identity,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,collaboration-milestones,codex-native-catalog,wework-docs,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing,running-conversation-history"
+      },
+      {
+        "id": "core-7",
+        "segments": "harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,codex-cloud-config-recovery,offline-local-project-space,collaboration-issue-badges,issue-property-autosave,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity"
+      },
+      {
+        "id": "core-8",
+        "segments": "conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting,collaboration-board-backlog"
+      },
+      {
+        "id": "core-9",
+        "segments": "split-workbench"
+      },
+      {
+        "id": "core-10",
+        "segments": "collaboration-shared-core,runtime-input-answer-persistence,question-discussion,collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents,collaboration-template-app-device-routing,collaboration-parent-board"
+      }
+    ]
   }
 }

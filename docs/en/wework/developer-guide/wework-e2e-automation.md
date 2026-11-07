@@ -224,9 +224,12 @@ Ordinary-shard weights use medians of successful scheduler start/end durations,
 rounded up, from the three latest evidenced runs. Unobserved weights and exclusive
 benchmarks remain unchanged. Budget checks also include the largest measured
 successful runner overhead of 125 seconds for standard-user startup, orchestration
-gaps and cleanup. An immutable replay fixture contains only successful timings
-and source links, not raw logs. Old weights fail that replay; refreshed weights
-still require full CI verification.
+gaps and cleanup. An immutable fixture preserves the original ten-shard matrix and 168 checkpoints'
+successful timings, then-current weights for unfinished cases and source links,
+not raw logs. Every historical case requires a duration and exactly-once replay
+coverage. Later catalog additions explicitly have no historical prediction,
+rather than a zero cost in a complete budget. Old weights fail the historical
+replay; the complete current scenario set still requires real Windows CI.
 In run `42400229326`, Core 4 and 8 exhausted their step budgets while still
 executing checkpoints normally, whereas Core 3 finished after only its previously
 unmeasured Dots checkpoint. Recording successful `dots-closed-loops` (178 seconds)

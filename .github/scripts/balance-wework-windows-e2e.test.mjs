@@ -354,12 +354,9 @@ test('deadline replay rejects unknown durations and preserves known sums', () =>
   assert.equal(replayedShardSeconds(shard, { 'send-key-preference': 17 }, 125), 142)
 })
 
-test('replayed successful Windows observations fit the step deadline with runner overhead', () => {
+test('historical Windows workloads fit the step deadline with complete replay coverage', () => {
   const replay = JSON.parse(
     readFileSync(new URL('./fixtures/wework-windows-deadline-replay.json', import.meta.url))
-  )
-  const evidence = JSON.parse(
-    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
   )
   const workflow = readFileSync(new URL('../workflows/wework-e2e.yml', import.meta.url), 'utf8')
   const budget =
@@ -369,10 +366,23 @@ test('replayed successful Windows observations fit the step deadline with runner
       )?.[1]
     ) * 60
   assert.ok(budget > 0)
-  const observed = { ...evidence.seconds, ...replay.seconds }
-  for (const shard of balanceWindowsMatrix(completeMatrix).include) {
+  const observed = { ...replay.unobservedSeconds, ...replay.seconds }
+  assert.deepEqual(
+    replay.matrix.include.map(shard => shard.id),
+    Array.from({ length: 10 }, (_, index) => `core-${index + 1}`)
+  )
+  assert.equal(Object.keys(observed).length, replay.checkpointCount)
+  assert.ok(Object.keys(replay.unobservedSeconds).every(key => !Object.hasOwn(replay.seconds, key)))
+  for (const seconds of Object.values(observed)) assert.ok(Number.isFinite(seconds) && seconds > 0)
+  const covered = []
+  for (const shard of balanceWindowsMatrix(replay.matrix).include) {
     if (['core-9', 'core-10'].includes(shard.id)) continue
+    covered.push(...expandDesktopCheckpoints(shard.segments.split(',')))
     const seconds = replayedShardSeconds(shard, observed, replay.runnerOverheadSeconds)
-    assert.ok(seconds < budget, `${shard.id}: replay ${seconds}s exceeds ${budget}s`)
+    assert.ok(seconds < budget, `${shard.id}: historical replay ${seconds}s exceeds ${budget}s`)
   }
+  assert.deepEqual(covered.sort(), Object.keys(observed).sort())
+  const unobserved = checkpoints(completeMatrix).filter(key => !Object.hasOwn(observed, key))
+  if (unobserved.length)
+    console.log(`[windows-deadline-replay] no historical prediction for: ${unobserved.join(',')}`)
 })
