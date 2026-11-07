@@ -117,6 +117,7 @@ pub(super) fn remember_plugin_runtime_owner(manifest: &mut Value, key: &str, plu
             }
         }
     }
+    runtime_recovery::marketplace_sources::remember(manifest, key, plugin);
 }
 
 pub(super) fn owns_retained_plugin_runtime(manifest: &Value, key: &str, path: &Path) -> bool {
