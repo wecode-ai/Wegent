@@ -1284,11 +1284,7 @@ async function main() {
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
-        scenarioConfigToml:
-          shouldRunDesktopCheckpoint('rendering-extensions') ||
-          shouldRunDesktopCheckpoint('model-routing')
-            ? toolDetailsMcpConfigToml()
-            : '',
+        scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
@@ -1328,9 +1324,7 @@ async function main() {
         codexHome,
         desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${
-          shouldConfigureToolDetailsMcp() || shouldRunDesktopCheckpoint('model-routing')
-            ? toolDetailsMcpConfigToml()
-            : ''
+          shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }\n${
           DESKTOP_SEGMENT === 'permission-modes'
             ? mcpElicitationConfigToml(join(resultDir, 'mcp-elicitation-result.jsonl'))
