@@ -171,6 +171,36 @@ async fn task_lookup_reads_project_task_without_starting_provider_or_listing() {
 }
 
 #[tokio::test]
+async fn task_lookup_projects_current_workspace_git_info_without_provider_discovery() {
+    let (handler, root) = isolated_runtime_work_handler("api-task-lookup-git");
+    let workspace = root.join("workspace");
+    let git_dir = workspace.join(".git");
+    fs::create_dir_all(&git_dir).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature/first\n").unwrap();
+    fs::write(
+        git_dir.join("config"),
+        "[remote \"origin\"]\n\turl = https://github.com/example/project.git\n",
+    )
+    .unwrap();
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "git-task".into(),
+        workspace_path: workspace.display().to_string(),
+        ..RuntimeTaskLink::default()
+    });
+
+    let result = handler.get_task(&json!({"taskId":"git-task"})).unwrap();
+    assert_eq!(result["task"]["gitInfo"]["currentBranch"], "feature/first");
+    assert_eq!(
+        result["task"]["gitInfo"]["originUrl"],
+        "https://github.com/example/project.git"
+    );
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature/second\n").unwrap();
+    let result = handler.get_task(&json!({"taskId":"git-task"})).unwrap();
+    assert_eq!(result["task"]["gitInfo"]["currentBranch"], "feature/second");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn task_lookup_reports_missing_and_archived_without_device_offline_error() {
     let (handler, root) = isolated_runtime_work_handler("api-missing-task");
     handler.upsert_local_task(RuntimeTaskLink {

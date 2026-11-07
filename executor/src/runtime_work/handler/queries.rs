@@ -31,6 +31,10 @@ impl RuntimeWorkRpcHandler {
             self.is_active_local_task(&task_id),
             self.queued_local_task_position(&task_id),
         );
+        link.git_info = crate::runtime_work::response::git_info_for_workspace(
+            link.git_info.take(),
+            &link.workspace_path,
+        );
         // Return only the identity/configuration needed by a client to continue.
         // Execution profiles and transcript caches remain on the owning Runtime.
         let thread_id = link.thread_id.clone();

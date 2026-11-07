@@ -29,6 +29,8 @@ over stale snapshots returned while the request was pending.
 Point summaries retain existing `origin` and `changeRequests` presentation context so refreshes
 cannot remove stand-in notifications, activity records, or PR links. Execution profiles and
 transcript bodies remain excluded.
+Point and list queries share the workspace Git projection, retaining the current branch and remote
+so state refreshes cannot remove sidebar PR status.
 
 Local project `todos.list` resolves historical runner bindings in a batch, rather than
 scanning execution records from every task row mapper. Explicit bindings are preserved;
