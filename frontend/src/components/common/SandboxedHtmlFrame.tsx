@@ -27,17 +27,27 @@ const SCRIPT_ERROR_BRIDGE = `<script>
         {
           source: 'wegent-html-preview',
           type: 'script-error',
-          message: error && error.message
-            ? String(error.message)
-            : String(error || 'Unhandled promise rejection'),
+          message: String(error && error.message ? error.message : error),
           line: line ? Number(line) : undefined
         },
         '*'
       );
     } catch (e) {}
   }
-  window.addEventListener('error', function(event) { report(event, event.lineno); });
-  window.addEventListener('unhandledrejection', function(event) { report(event.reason); });
+  var lastMessage;
+  window.addEventListener('error', function(event) {
+    var message = event && event.message ? String(event.message) : String(event);
+    if (message === lastMessage) return;
+    lastMessage = message;
+    report(event, event.lineno);
+  });
+  window.addEventListener('unhandledrejection', function(event) {
+    var reason = event && event.reason ? event.reason : 'Unhandled promise rejection';
+    var message = reason && reason.message ? String(reason.message) : String(reason);
+    if (message === lastMessage) return;
+    lastMessage = message;
+    report(reason);
+  });
 })();
 </script>`
 

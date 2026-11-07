@@ -8,12 +8,12 @@ import { HtmlPreview } from '@/components/common/FilePreview/preview-renderers/H
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) =>
+    t: (key: string, params?: { line?: number }) =>
       ({
         'actions.loading': 'Loading',
         'actions.preview': 'Preview',
         'attachment.html.script_error': 'This page script failed',
-        'attachment.html.script_error_line': '(line 78)',
+        'attachment.html.script_error_line': `(line ${params?.line ?? ''})`,
         'attachment.html.view_source': 'View Source',
       })[key] ?? key,
   }),
@@ -27,7 +27,10 @@ describe('HtmlPreview', () => {
   const content =
     '<!doctype html><html><head><title>Report</title></head><body><div>content</div></body></html>'
 
-  it('shows a script error reported by the sandboxed frame', async () => {
+  it.each([
+    { locale: 'en', line: 78, expected: '(line 78)' },
+    { locale: 'zh-CN', line: 21, expected: '(line 21)' },
+  ])('shows a script error with the reported line ($locale)', async ({ line, expected }) => {
     render(<HtmlPreview content={content} filename="report.html" />)
 
     const frame = document.querySelector('iframe')
@@ -41,7 +44,7 @@ describe('HtmlPreview', () => {
           source: 'wegent-html-preview',
           type: 'script-error',
           message: 'LIB is not defined',
-          line: 78,
+          line,
         },
       })
     )
@@ -49,7 +52,7 @@ describe('HtmlPreview', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('html-preview-script-error')).toHaveTextContent(
-        'This page script failed (line 78): LIB is not defined'
+        `This page script failed ${expected}: LIB is not defined`
       )
     })
   })

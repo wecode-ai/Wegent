@@ -128,7 +128,7 @@ test.describe('Shared Task Page', () => {
           role: 'AI',
           prompt: '',
           result: {
-            value: '```html\n' + html + '\n```',
+            value: `<artifact title="broken-report.html">${html}</artifact>`,
           },
           status: 'COMPLETED',
           created_at: '2026-01-01T00:00:01Z',
@@ -142,8 +142,8 @@ test.describe('Shared Task Page', () => {
     await expect(page.getByRole('heading', { name: 'E2E broken HTML preview' })).toBeVisible()
     await expect(page.getByTestId('artifact-preview-iframe')).toBeVisible()
     await expect(page.getByTestId('artifact-preview-iframe')).toHaveAttribute(
-      'data-artifact-script-error-reporting',
-      'on'
+      'srcdoc',
+      expect.stringContaining('Report body')
     )
   })
 })
