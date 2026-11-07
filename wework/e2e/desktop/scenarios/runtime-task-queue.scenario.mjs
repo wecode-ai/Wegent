@@ -1,5 +1,6 @@
 import { createConcurrencyExecutionVerification } from '../modules/runtime-concurrency-execution.mjs'
 import { createGoalConcurrencyVerification } from '../modules/runtime-goal-concurrency.mjs'
+import { createBoardRefreshVerification } from '../modules/board-refresh-isolation.mjs'
 import { verifyIndependentConcurrencySettings } from '../modules/runtime-concurrency-settings.mjs'
 import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
@@ -220,9 +221,15 @@ async function assertRestoredFollowUps(control, prompts, timeoutMs) {
   }
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workspacePath,
+  resultDir,
+}) {
   const ownerConcurrency = createConcurrencyExecutionVerification({ workspacePath, uiTimeoutMs })
   const goalConcurrency = createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs })
+  const boardRefresh = createBoardRefreshVerification({ workspacePath, uiTimeoutMs, resultDir })
   let active = false
   const requests = []
   const cancelledRequests = []
@@ -246,6 +253,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       if (handleEmptyReplyPrediction(body, response)) return true
       if (await ownerConcurrency.handleBody(body, response)) return true
       if (await goalConcurrency.handleBody(body, response)) return true
+      if (await boardRefresh.handleBody(body, response)) return true
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS)
         .map(candidate => ({ candidate, index: requestText.lastIndexOf(candidate) }))
@@ -945,12 +953,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await waitForCompletedRuntimeTaskThread(control, fifth.taskId, uiTimeoutMs)
       await ownerConcurrency.verify(control)
       await goalConcurrency.verify(control)
+      await boardRefresh.verify(control)
       active = false
     },
 
     async cleanup() {
       ownerConcurrency.cleanup()
       goalConcurrency.cleanup()
+      boardRefresh.cleanup()
       active = false
       for (const release of releases.values()) release()
     },

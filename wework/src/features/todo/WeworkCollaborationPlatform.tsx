@@ -581,6 +581,7 @@ export function WeworkSharedProject({
               userId={Number(userId)}
               devices={devices ?? []}
               onOpenTask={onOpenRuntimeTask}
+              onPublished={() => setRefreshProjectRequestKey(value => value + 1)}
               onOpenIssue={issueId => {
                 setTaskComposer(null)
                 setLocation(current => ({ ...current, projectView: 'board', issueId }))
@@ -748,18 +749,9 @@ export function WeworkSharedProject({
     },
     [onCancelRuntimeTask, runtimeRunningByAddress, scopedApi]
   )
-  const runtimeTaskStatusSignature =
-    project.project_store === 'local'
-      ? ''
-      : projectRuntimeStatusSignature(runtimeTaskLifecycle, {
-          projectStore: project.project_store,
-          projectId: String(project.id),
-        })
-  const localRuntimeLifecycleVersion =
-    project.project_store === 'local' ? runtimeTaskLifecycle?.version : undefined
-  const previousLocalRuntimeRef = useRef({
-    projectId: project.project_store === 'local' ? String(project.id) : null,
-    version: localRuntimeLifecycleVersion,
+  const runtimeTaskStatusSignature = projectRuntimeStatusSignature(runtimeTaskLifecycle, {
+    projectStore: project.project_store,
+    projectId: String(project.id),
   })
 
   useEffect(() => {
@@ -773,31 +765,6 @@ export function WeworkSharedProject({
       for (const timeout of timeouts) window.clearTimeout(timeout)
     }
   }, [runtimeTaskStatusSignature])
-
-  useEffect(() => {
-    const projectId = project.project_store === 'local' ? String(project.id) : null
-    const previous = previousLocalRuntimeRef.current
-    previousLocalRuntimeRef.current = {
-      projectId,
-      version: localRuntimeLifecycleVersion,
-    }
-    if (
-      projectId === null ||
-      localRuntimeLifecycleVersion === undefined ||
-      previous.projectId !== projectId ||
-      previous.version === localRuntimeLifecycleVersion
-    ) {
-      return
-    }
-    const timeouts = PROJECT_STATUS_REFRESH_DELAYS_MS.map(delay =>
-      window.setTimeout(() => {
-        setRefreshProjectRequestKey(value => value + 1)
-      }, delay)
-    )
-    return () => {
-      for (const timeout of timeouts) window.clearTimeout(timeout)
-    }
-  }, [localRuntimeLifecycleVersion, project.id, project.project_store])
 
   useEffect(
     () =>
