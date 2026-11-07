@@ -4,6 +4,18 @@ sidebar_position: 10
 
 # Troubleshooting
 
+## Diagnosing release-package upgrades and rollback
+
+During a release workflow diagnostic replay, `[desktop-e2e-startup]` in `app.log`
+records the real process, installed version, selected release and pending transaction.
+`[desktop-e2e-relaunch]` records the next executable. Compare these events with
+`release-state-result.json` and `activation-diagnostics.log` to distinguish a running
+package from the on-disk selection. Diagnostic replays do not produce publishable upgrade proof.
+
+Local verification must isolate both the workbench Home and the native macOS Home;
+never move personal application data to satisfy test prerequisites. The test preserves
+an explicitly configured `CFFIXED_USER_HOME` alongside its isolated `HOME`.
+
 ## Clicking the app icon does not open a window
 
 Clicking the Dock icon again should reveal the existing main or startup recovery window,
