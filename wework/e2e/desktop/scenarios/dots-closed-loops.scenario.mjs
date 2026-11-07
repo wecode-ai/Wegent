@@ -40,6 +40,7 @@ import {
   REVENUE_ANSWER,
   REVENUE_QUESTION,
   assertLaunchUnchanged,
+  createDotsCheckedCommand,
   cartProgram,
   comparableDotsPath,
   followupProgram,
@@ -101,12 +102,7 @@ export function createDesktopScenario(options) {
     return shellCommandResponse(body, id, cmd, undefined, { yield_time_ms: 1000 })
   }
 
-  function checkedCommand(body, id, source, marker) {
-    if (!has(body, id)) return command(body, id, source)
-    const output = toolOutputText(body, id)
-    assert.ok(output?.includes(marker), `Native command ${id} failed: ${output}`)
-    return null
-  }
+  const checkedCommand = createDotsCheckedCommand(command)
 
   function primary(body) {
     if (story === 'CART' && phase === 1) {
@@ -160,7 +156,7 @@ export function createDesktopScenario(options) {
           'DOTS_LAUNCH_SOURCES_READ'
         )
         if (pending) return pending
-        const source = toolOutputText(body, `${key}-read`)
+        const source = checkedCommand.output(`${key}-read`)
         for (const fact of ['2026-11-20', 'Automatic scheduling deferred', 'Date not specified'])
           assert.ok(source.includes(fact), `Actual launch source must contain ${fact}`)
         pending = question(body, `${key}-question`, LAUNCH_QUESTION, LAUNCH_ANSWER, [

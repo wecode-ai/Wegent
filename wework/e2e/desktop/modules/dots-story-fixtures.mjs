@@ -2,6 +2,56 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { requestContainsToolOutput, toolOutputText } from './response-protocol.mjs'
+import { shellCommandPollResponse } from './shell-command-response.mjs'
+
+function commandStatus(output) {
+  return output?.match(
+    /^(?:Process exited with code (-?\d+)|Exit code: (-?\d+)|Process running with session ID (\d+))\r?$/m
+  )
+}
+
+export function createDotsCheckedCommand(command) {
+  const pending = new Map()
+  const checkedCommand = (body, id, source, marker) => {
+    const state = pending.get(id) ?? { callId: id, chunks: [], polls: 0 }
+    if (state.completed) return null
+    if (!requestContainsToolOutput(body, state.callId)) {
+      return state.sessionId
+        ? shellCommandPollResponse(body, state.callId, state.sessionId)
+        : command(body, id, source)
+    }
+    const output = toolOutputText(body, state.callId)
+    const status = commandStatus(output)
+    if (status?.[3]) {
+      state.chunks.push(output.replace(status[0], ''))
+      state.sessionId = Number(status[3])
+      state.callId = `${id}-poll-${++state.polls}`
+      pending.set(id, state)
+      return shellCommandPollResponse(body, state.callId, state.sessionId)
+    }
+    assertDotsCommandSucceeded(output, id, marker, state.chunks.join('\n'))
+    state.output = `${state.chunks.join('\n')}\n${output}`
+    state.completed = true
+    pending.set(id, state)
+    return null
+  }
+  checkedCommand.output = id => pending.get(id)?.output
+  return checkedCommand
+}
+
+export function assertDotsCommandSucceeded(output, id, marker, previousOutput = '') {
+  const status = commandStatus(output)
+  assert.equal(
+    status?.[1] ?? status?.[2],
+    '0',
+    `Native command ${id} did not exit successfully: ${output}`
+  )
+  assert.ok(
+    `${previousOutput}\n${output}`.split(/\r?\n/).includes(marker),
+    `Native command ${id} did not emit its result: ${output}`
+  )
+}
 
 export const ORDERS_V1 =
   'order_id,customer,amount_cents,status\nO1,Aster,10000,paid\nO2,Birch,20000,paid\nO3,Aster,5000,pending\n'
@@ -128,7 +178,7 @@ console.log(JSON.stringify(totals))
 export function revenueProgram(root, phase) {
   const setup = `${prelude}const dir=${JSON.stringify(join(root, 'revenue-fixture'))};`
   if (phase === 3)
-    return `${setup}const before=fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8');const result=cp.spawnSync(process.execPath,['analyze.mjs'],{cwd:dir,encoding:'utf8'});assert.equal(result.status,1,result.stdout+result.stderr);assert.match(result.stderr,/Invalid amount: not-a-number/);assert.equal(fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8'),before);console.log('DOTS_REVENUE_INVALID_AMOUNT: '+result.stderr);`
+    return `${setup}const before=fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8');const result=cp.spawnSync(process.execPath,['analyze.mjs'],{cwd:dir,encoding:'utf8'});assert.equal(result.status,1,result.stdout+result.stderr);assert.match(result.stderr,/Invalid amount: not-a-number/);assert.equal(fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8'),before);console.log(result.stderr);console.log('DOTS_REVENUE_INVALID_AMOUNT');`
   if (phase === 1)
     return `${setup}fs.writeFileSync(p.join(dir,'analyze.mjs'),${JSON.stringify(analysisScript)});const result=cp.spawnSync(process.execPath,['analyze.mjs'],{cwd:dir,encoding:'utf8'});assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(JSON.parse(result.stdout),{paid:30000,refunded:0,pending:5000,total:35000});${declare('revenue-report.md')}console.log('DOTS_REVENUE_V1_VERIFIED');`
   return `${setup}const result=cp.spawnSync(process.execPath,['analyze.mjs'],{cwd:dir,encoding:'utf8'});assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(JSON.parse(result.stdout),{paid:10000,refunded:20000,pending:35000,total:65000});${declare('revenue-report.md')}console.log('DOTS_REVENUE_V${phase}_VERIFIED');`
