@@ -68,3 +68,17 @@ describe('knowledgePermissionApi.listPermissions', () => {
     ])
   })
 })
+
+it('reads only the current user permission sources through the existing share endpoint', async () => {
+  const sources = {
+    has_access: true,
+    effective_role: 'Reporter',
+    is_creator: false,
+    sources: [{ source_type: 'group_membership', display_name: 'Engineering', role: 'Reporter' }],
+  }
+  jest.mocked(client.get).mockClear()
+  jest.mocked(client.get).mockResolvedValueOnce(sources)
+  await expect(knowledgePermissionApi.getMyPermissionSources(27)).resolves.toEqual(sources)
+  expect(client.get).toHaveBeenCalledTimes(1)
+  expect(client.get).toHaveBeenCalledWith('/share/KnowledgeBase/27/my-permission-sources')
+})

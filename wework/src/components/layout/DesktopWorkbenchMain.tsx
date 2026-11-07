@@ -1,3 +1,5 @@
+import { useQuestionDiscussion } from '@/features/notifications/questionDiscussion'
+import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import {
   getMcpAppPanel,
   isMcpAppPanelTab,
@@ -1742,6 +1744,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [rightPanelExpanded, setRightPanelExpanded] = useState(
     () => initialWorkspaceState?.rightPanelExpanded ?? false
   )
+  const questionDiscussion = useQuestionDiscussion()
+  const closeQuestionDiscussion = questionDiscussion?.close
+  const displayedRightPanelOpen = rightPanelOpen && !questionDiscussion?.isOpen
+  const displayedRightPanelExpanded = rightPanelExpanded && !questionDiscussion?.isOpen
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(() => {
     const restoredView = initialWorkspaceState?.rightPanelView ?? 'launcher'
     return normalizeRightWorkspacePanelView(
@@ -1904,7 +1910,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       })
     },
-    []
+    [setBrowserStates]
   )
   const allocateBrowserTab = useCallback((): RightWorkspaceBrowserTab => {
     browserTabSequence.current += 1
@@ -1954,7 +1960,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       !paneActive ||
       !paneVisible ||
       !workbenchVisible ||
-      !rightPanelOpen ||
+      !displayedRightPanelOpen ||
       !isRightWorkspaceBrowserTab(rightPanelView)
     ) {
       return
@@ -1967,7 +1973,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     browserStates,
     paneActive,
     paneVisible,
-    rightPanelOpen,
+    displayedRightPanelOpen,
     rightPanelView,
     syncActiveEmbeddedBrowserLabel,
     workbenchVisible,
@@ -2089,8 +2095,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
   }
-  const displayedRightPanelOpen = rightPanelOpen
-  const displayedRightPanelExpanded = rightPanelExpanded
   const compactRightPanelOpen =
     rightPanelView === 'subagents' || isRightWorkspaceExtensionTab(rightPanelView)
   const {
@@ -2206,7 +2210,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? 'launcher'
       : rightPanelView
   const temporaryChatExpanded =
-    temporaryChatAvailable && rightPanelExpanded && rightPanelView.startsWith('chat:')
+    temporaryChatAvailable && displayedRightPanelExpanded && rightPanelView.startsWith('chat:')
   const shouldRenderRightPanel = displayedRightPanelOpen || effectiveRightPanelTabs.length > 0
   const hasPersistentRightPanelResource =
     fileWorkspaceDirty ||
@@ -2844,6 +2848,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onError: target === 'right' ? setAdditionalHarnessError : setCentralHarnessError,
         })
         if (session && target === 'right') {
+          closeQuestionDiscussion?.()
           const tab = `harness:${session.sessionId}` as RightWorkspaceHarnessTab
           setRightPanelOpen(true)
           setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
@@ -2864,6 +2869,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       activeLocalHarnessSession,
       canPrepareHarnessWorktree,
+      closeQuestionDiscussion,
       centralHarnessCwd,
       centralHarnessStarting,
       currentProject,
@@ -2875,6 +2881,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       services,
       setAdditionalHarnessError,
       setCentralHarnessError,
+      setRightPanelOpen,
+      setRightPanelTabs,
+      setRightPanelView,
       t,
     ]
   )
@@ -3325,11 +3334,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      closeQuestionDiscussion?.()
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
     },
-    [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
+    [closeQuestionDiscussion, setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
   const backgroundTerminals = useMemo(
     () => conversationTerminals(paneMessages, currentRuntimeTask?.taskId ?? paneKey),
@@ -3422,7 +3432,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }))
       openRightPanelTab(internalId)
     },
-    [openRightPanelTab, t]
+    [openRightPanelTab, setRightPanelExtensionTabs, t]
   )
   const currentWorkItemGuideProject =
     boundCloudProject ??
@@ -3478,6 +3488,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       targetTab?: RightWorkspaceBrowserTab,
       overrides: Partial<RightWorkspaceBrowserState> = {}
     ) => {
+      closeQuestionDiscussion?.()
       const tab = targetTab ?? allocateBrowserTab()
       logBrowserOpenDiagnostic('openBrowserTab', {
         tab,
@@ -3532,9 +3543,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [
       allocateBrowserTab,
+      closeQuestionDiscussion,
       createBrowserTabState,
       defaultEmbeddedBrowserLabel,
       syncActiveEmbeddedBrowserLabel,
+      setBrowserStates,
+      setRightPanelOpen,
+      setRightPanelTabs,
+      setRightPanelView,
     ]
   )
   const closeSmartAppDevelopmentPreviewBrowser = useCallback(
@@ -3886,6 +3902,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      closeQuestionDiscussion?.()
       setRightPanelOpen(true)
       setRightPanelView(tab)
       if (isRightWorkspaceBrowserTab(tab)) {
@@ -3893,7 +3910,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (activeBrowserLabel) syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
       }
     },
-    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
+    [closeQuestionDiscussion, setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
   )
   const openTemporaryChatTab = useCallback(
     (initialInput?: string) => {
@@ -4200,7 +4217,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const extensionStateListenersRef = useRef(new Set<() => void>())
   useEffect(() => {
     for (const listener of [...extensionStateListenersRef.current]) listener()
-  }, [rightPanelExtensionTabs, rightPanelOpen, rightPanelView])
+  }, [rightPanelExtensionTabs, displayedRightPanelOpen, rightPanelView])
   useEffect(
     () =>
       attachRightWorkspaceSidebarController({
@@ -4235,7 +4252,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         snapshot: (): WeworkWorkspaceSidebarSnapshot => ({
           sessionId: rightWorkspaceExtensionScope.sessionId,
           state: {
-            panelOpen: rightPanelOpen,
+            panelOpen: displayedRightPanelOpen,
             tabs: Object.values(rightPanelExtensionTabsRef.current)
               .filter((state): state is RightWorkspaceExtensionTabState => Boolean(state))
               .map(state => state.tab),
@@ -4254,7 +4271,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       openRightWorkspaceExtensionTab,
       paneActive,
       paneVisible,
-      rightPanelOpen,
+      displayedRightPanelOpen,
       rightPanelView,
       rightWorkspaceExtensionScope,
       workbenchVisible,
@@ -4410,7 +4427,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setOpenFileRequest(null)
       openRightPanelTab('files')
     },
-    [setOpenFileRequest, openRightPanelTab]
+    [setOpenFileRequest, openRightPanelTab, setSelectedFileWorkspaceTargetKey]
   )
   const openFileTab = useCallback(
     (target: WorkspaceTarget, path: string) => {
@@ -4427,7 +4444,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setFileTabs(current => (current[tab] ? current : { ...current, [tab]: { target, path } }))
       openRightPanelTab(tab)
     },
-    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile]
+    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile, setFileTabs]
   )
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
@@ -4438,7 +4455,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         isDirectory: selection.isDirectory,
       })
     },
-    [fileWorkspaceTarget]
+    [fileWorkspaceTarget, setSelectedWorkspaceFile]
   )
   const selectBrowserView = useCallback(() => {
     openBrowserTab()
@@ -4747,7 +4764,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
   const fileChangesDiffPreviewDisabledSubtaskId =
-    rightPanelOpen &&
+    displayedRightPanelOpen &&
     rightPanelView === 'review' &&
     reviewState.reviewMode === 'previous-turn' &&
     reviewState.sourceSubtaskId &&
@@ -4756,6 +4773,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : null
 
   const toggleRightPanel = () => {
+    if (questionDiscussion?.isOpen) return
     setRightPanelOpen(open => {
       const nextOpen = !open
       if (nextOpen) {
@@ -4769,6 +4787,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     })
   }
   const toggleRightPanelExpanded = () => {
+    if (questionDiscussion?.isOpen) return
     setRightPanelExpanded(expanded => !expanded)
   }
   const toggleBottomPanel = () => {
@@ -4811,9 +4830,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () => void clearCurrentGoalAction(),
     [clearCurrentGoalAction]
   )
-  const closeBottomPanelContext = useCallback((key: string) => {
-    setBottomPanelOpenByKey(current => ({ ...current, [key]: false }))
-  }, [])
+  const closeBottomPanelContext = useCallback(
+    (key: string) => {
+      setBottomPanelOpenByKey(current => ({ ...current, [key]: false }))
+    },
+    [setBottomPanelOpenByKey]
+  )
   const handleTerminalTabsEmpty = () => {
     onPaneResourceRetained(paneKey, 'bottom-panel', false)
   }
@@ -4896,6 +4918,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           : undefined
       }
       rightPanelOpen={displayedRightPanelOpen}
+      rightPanelDisabled={questionDiscussion?.isOpen}
       rightPanelExpanded={displayedRightPanelExpanded}
       bottomPanelOpen={bottomPanelOpen}
       onToggleRightPanel={toggleRightPanel}
@@ -5514,43 +5537,54 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                       className="mb-2"
                                     />
                                   )}
-                                  {pendingRequestUserInput ? (
-                                    <RequestUserInputCard
-                                      key={
-                                        requestUserInputPayloadKey(pendingRequestUserInput) ??
-                                        'implementation-plan'
-                                      }
-                                      payload={pendingRequestUserInput}
-                                      messages={paneMessages}
-                                      onSubmit={response => {
-                                        const isImplementationPlanRequest =
-                                          isImplementationPlanRequestUserInput(
-                                            pendingRequestUserInput
-                                          )
-                                        const shouldImplementPlan =
-                                          isImplementationPlanRequest &&
-                                          isImplementationPlanConfirmationResponse(response)
-                                        return paneSession.sendRequestUserInputResponse(response, {
-                                          requestUserInputResponses:
-                                            pendingRequestUserInputResponses(
+                                  <RequestUserInputComposer
+                                    payload={pendingRequestUserInput}
+                                    source={currentRuntimeTask}
+                                    renderQuestion={onCollapse =>
+                                      pendingRequestUserInput ? (
+                                        <RequestUserInputCard
+                                          key={
+                                            requestUserInputPayloadKey(pendingRequestUserInput) ??
+                                            'implementation-plan'
+                                          }
+                                          payload={pendingRequestUserInput}
+                                          source={currentRuntimeTask}
+                                          messages={paneMessages}
+                                          onCollapse={onCollapse}
+                                          onSubmit={response => {
+                                            const isImplementationPlanRequest =
+                                              isImplementationPlanRequestUserInput(
+                                                pendingRequestUserInput
+                                              )
+                                            const shouldImplementPlan =
+                                              isImplementationPlanRequest &&
+                                              isImplementationPlanConfirmationResponse(response)
+                                            return paneSession.sendRequestUserInputResponse(
                                               response,
-                                              paneMessages,
-                                              paneSession.answeredRequestUserInputIds
-                                            ),
-                                          appendUserMessage: isImplementationPlanRequest,
-                                          forceDefaultCollaborationMode: shouldImplementPlan,
-                                        })
-                                      }}
-                                      onIgnore={() =>
-                                        paneSession.ignoreRequestUserInput(
-                                          pendingRequestUserInputPayloads(
-                                            paneMessages,
-                                            paneSession.answeredRequestUserInputIds
-                                          )
-                                        )
-                                      }
-                                    />
-                                  ) : (
+                                              {
+                                                requestUserInputResponses:
+                                                  pendingRequestUserInputResponses(
+                                                    response,
+                                                    paneMessages,
+                                                    paneSession.answeredRequestUserInputIds
+                                                  ),
+                                                appendUserMessage: isImplementationPlanRequest,
+                                                forceDefaultCollaborationMode: shouldImplementPlan,
+                                              }
+                                            )
+                                          }}
+                                          onIgnore={() =>
+                                            paneSession.ignoreRequestUserInput(
+                                              pendingRequestUserInputPayloads(
+                                                paneMessages,
+                                                paneSession.answeredRequestUserInputIds
+                                              )
+                                            )
+                                          }
+                                        />
+                                      ) : null
+                                    }
+                                  >
                                     <>
                                       {supervisor && (
                                         <SupervisorSuggestionCards
@@ -5657,7 +5691,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         workspaceFileApi={workspaceFileApi}
                                       />
                                     </>
-                                  )}
+                                  </RequestUserInputComposer>
                                 </>
                               ) : null}
                             </div>

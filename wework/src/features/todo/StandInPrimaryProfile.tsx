@@ -24,6 +24,7 @@ import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
+/** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
   settings,
   saving,
@@ -246,7 +247,6 @@ export function StandInPrimaryProfile({
           <StandInComposer
             draft={role}
             showPrompt={false}
-            controls={null}
             onChange={update => {
               setDraft(current => {
                 const next = typeof update === 'function' ? update({ ...role, ...current }) : update

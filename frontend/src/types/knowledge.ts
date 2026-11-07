@@ -784,7 +784,12 @@ export interface BatchPermissionAddRequest {
 
 export interface BatchPermissionAddResponse {
   succeeded: PermissionResponse[]
-  failed: { user_id: number; error: string }[]
+  failed: {
+    user_id: number
+    error: string
+    entity_type?: string | null
+    entity_id?: string | null
+  }[]
 }
 
 // Permission User Info types
@@ -835,6 +840,19 @@ export interface PendingRequestInfo {
   requested_at: string
 }
 
+export interface MyPermissionSourcesResponse {
+  has_access: boolean
+  effective_role: MemberRole | null
+  is_creator: boolean
+  sources: Array<{
+    source_type: string
+    display_name: string | null
+    role: MemberRole
+    entity_type?: string | null
+    entity_id?: string | null
+  }>
+}
+
 export interface MyPermissionResponse {
   has_access: boolean
   role: MemberRole | null
@@ -844,6 +862,8 @@ export interface MyPermissionResponse {
 
 // Permission Response (for CRUD operations)
 export interface PermissionResponse {
+  entity_type?: string | null
+  entity_id?: string | null
   id: number
   knowledge_base_id: number
   user_id: number
@@ -933,7 +953,7 @@ export type KnowledgeGroupType = 'personal' | 'personal-shared' | 'group' | 'org
 export interface KbGroupInfo {
   groupId: string
   groupName: string
-  groupType: KnowledgeGroupType
+  groupType: KnowledgeGroupType | 'unknown'
 }
 
 /** Knowledge base with group info for all-grouped response */

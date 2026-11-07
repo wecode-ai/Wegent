@@ -174,6 +174,8 @@ RUN dnf install -y gcc gcc-c++ cmake ca-certificates openssl-devel pkgconf-pkg-c
 ENV PATH=/root/.cargo/bin:${PATH}
 
 COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY executor/crates /app/executor/crates
+COPY shared/rust /app/shared/rust
 COPY executor/vendor /app/executor/vendor
 COPY executor/src /app/executor/src
 COPY sdk/plugin-auth /app/sdk/plugin-auth

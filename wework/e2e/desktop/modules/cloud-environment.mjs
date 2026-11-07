@@ -1,4 +1,4 @@
-import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
+import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
 
@@ -1649,12 +1649,7 @@ class RealCloudEnvironment {
   }
 
   async setCodexUpstreamProtocol(protocol) {
-    await writeCodexConfig(
-      this.remoteCodexHome,
-      this.modelServerUrl,
-      '',
-      codexUpstreamApiFormat(protocol)
-    )
+    await setMatrixUpstreamProtocol(this.remoteCodexHome, protocol)
     await this.restartCloudExecutor()
   }
 

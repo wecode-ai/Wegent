@@ -1,0 +1,16 @@
+[package]
+name = "wegent-python-compat"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Python value compatibility for Wegent"
+
+[dependencies]
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+anyhow = "1"
+yaml-rust2 = { version = "0.10.4", default-features = false }
+brz-json = "=0.0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }

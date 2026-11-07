@@ -40,17 +40,7 @@ pub(crate) fn boolean(name: &str, default: bool) -> Result<bool> {
     }
 }
 
-pub fn resource_directory() -> PathBuf {
-    let configured = PathBuf::from(
-        crate::config::env_or_dotenv("INIT_DATA_DIR").unwrap_or("/app/init_data".into()),
-    );
-    let local = PathBuf::from("init_data");
-    if !configured.exists() && configured.is_absolute() && local.exists() {
-        local
-    } else {
-        configured
-    }
-}
+pub use wegent_backend_config::resource_directory;
 
 #[derive(FromMysqlRow)]
 pub(super) struct Kind {
@@ -156,7 +146,7 @@ async fn directory(mysql: &MysqlService, directory: &Path, force: bool) -> Resul
     for path in yaml.into_iter().chain(yml) {
         let loaded = std::fs::read_to_string(&path)
             .map_err(anyhow::Error::from)
-            .and_then(|text| crate::new_user_resources::yaml::documents(&text));
+            .and_then(|text| wegent_python_compat::yaml::documents(&text));
         match loaded {
             Ok(documents) => resources.extend(documents.into_iter().filter(|v| {
                 v.is_object() && v.get("kind").is_some() && v.get("metadata").is_some()

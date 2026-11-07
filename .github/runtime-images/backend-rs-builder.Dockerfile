@@ -14,6 +14,8 @@ WORKDIR /workspace/backend-rs
 
 FROM toolchain AS dependencies
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
+COPY shared/rust /workspace/shared/rust
+COPY backend-rs/crates ./crates
 RUN mkdir -p src && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \
     && cargo build --release --locked --bin wegent-backend-rs

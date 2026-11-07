@@ -89,7 +89,6 @@ it('addresses project processing status and explicit checks to the chosen bindin
 function fixture() {
   const transport = {
     notifyAssignment: vi.fn<StandInExecutorApi['notifyAssignment']>(),
-    personalAgents: vi.fn<StandInExecutorApi['personalAgents']>(),
     personalGet: vi.fn<StandInExecutorApi['personalGet']>(),
     personalSave: vi.fn<StandInExecutorApi['personalSave']>(),
     readTask: vi.fn<StandInExecutorApi['readTask']>(),

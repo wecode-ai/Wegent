@@ -56,6 +56,12 @@ async function startImapProxy(port, targetPort) {
 
 // GreenMail is a real, isolated IMAP/SMTP service. No production mailboxes are used.
 export async function startRealMailServer(directory, runtimeRoot) {
+  const { stdout, stderr } = await run('java', ['-version'])
+  const version = `${stdout}\n${stderr}`.match(/version "(?:1\.)?(\d+)/)?.[1]
+  assert.ok(
+    Number(version) >= 11,
+    `GreenMail ${VERSION} requires Java 11 or newer on PATH; select a supported JDK before running the mail checkpoint. Detected: ${stdout.trim()} ${stderr.trim()}`
+  )
   await mkdir(directory, { recursive: true })
   const jar = join(directory, 'greenmail.jar')
   const response = await fetch(

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormHTMLAttributes, type ReactNode } 
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import styles from './ProjectChatComposer.module.css'
 
-export const PROJECT_CHAT_EDITOR_CLASS = `min-h-12 w-full resize-none bg-transparent px-0 pb-0 pt-1 text-chat font-normal text-text-primary outline-none placeholder:text-text-muted/55 ${styles.input}`
+export const PROJECT_CHAT_EDITOR_CLASS = `min-h-12 w-full resize-none bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55 ${styles.input}`
 export const PROJECT_CHAT_TOOLBAR_CLASS = styles.toolbar
 export const PROJECT_CHAT_SCROLL_CONTAINER_CLASS = styles.inputViewport
 export const DOCUMENT_EDITOR_CLASS =
@@ -48,7 +48,7 @@ export function ProjectChatComposerSurface({
       ? 'rounded-xl px-3 pb-2 pt-1'
       : presentation === 'document'
         ? 'rounded-2xl px-5 pb-3 pt-1'
-        : 'min-h-[76px] rounded-[20px] border px-3 pb-2 pt-2 font-normal shadow-sm keyboard:focus-within:border-focus/70',
+        : 'min-h-[76px] rounded-[20px] border px-3 pb-2 pt-2 shadow-sm keyboard:focus-within:border-focus/70',
     presentation === 'chat' && styles.form,
     presentation === 'chat' && collapseWhenIdle && styles.collapseWhenIdle,
     isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'

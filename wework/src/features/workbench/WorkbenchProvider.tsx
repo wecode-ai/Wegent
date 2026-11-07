@@ -75,6 +75,7 @@ import {
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
+import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscussionScope'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import {
   createLocalDevicePluginApi,
@@ -3078,7 +3079,7 @@ function OwnedWorkbenchProvider({
                 services={resolvedServices}
               />
               <RunnerSelectionHost />
-              {children}
+              <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>
         </WorkspaceFileReaderProvider>

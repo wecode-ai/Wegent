@@ -211,10 +211,16 @@ jobs:
 
       - name: Check Rust backend formatting
         working-directory: backend-rs
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Record signal runtime for gateway tests
         run: /bin/kill --version
+
+      - name: Check shared Rust library formatting and tests
+        run: |
+          cargo fmt --manifest-path shared/rust/Cargo.toml --all --check
+          cargo test --manifest-path shared/rust/Cargo.toml --locked
+          cargo clippy --manifest-path shared/rust/Cargo.toml --all-targets --locked -- -D warnings
 
       - name: Run Rust backend tests
         working-directory: backend-rs
@@ -436,7 +442,7 @@ jobs:
 
       - name: Run executor Rust format check
         working-directory: ./executor
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Run executor Rust tests
         working-directory: ./executor
@@ -525,6 +531,9 @@ jobs:
         run: |
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
           cargo test --all-features --lib agents::runtime_capabilities::json_file::tests
+          cargo test --all-features --lib effective_instructions_tests
+          cargo test -p wegent-executor --all-features --lib side_source
+          cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem atomic_file::tests
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             cargo test --all-features --lib services::turn_file_changes::git_capture::capture_tests
           fi

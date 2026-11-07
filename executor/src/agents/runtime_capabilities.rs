@@ -14,7 +14,6 @@ use reqwest::{
     header::{ETAG, IF_NONE_MATCH},
     StatusCode,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::{
@@ -40,25 +39,31 @@ use super::claude_code::has_task_skill_names;
 mod claude_mcp;
 mod codex;
 mod codex_mcp;
+#[cfg(test)]
 #[path = "runtime_capabilities/execution_snapshot.rs"]
 mod execution_snapshot;
-mod home_skills;
-mod json_file;
 mod skill_archive;
-pub use codex::prepare_codex_runtime;
-pub(crate) use codex::prepare_codex_runtime_locked;
-pub(super) use execution_snapshot::publish_agent_skills;
-use home_skills::HomeSkillsStage;
-pub(super) use json_file::write_json_file;
-pub(crate) mod mcp_environment;
 #[cfg(test)]
 use crate::services::workbench::archive_hash;
+pub use codex::prepare_codex_runtime;
+pub(crate) use codex::prepare_codex_runtime_locked;
 use skill_archive::{expected_hash, publish_archive};
+pub(super) use wegent_filesystem::json_file::write_json_file;
+pub(crate) use wegent_mcp_runtime::mcp_environment;
+use wegent_mcp_runtime::toml_encoding::{
+    toml_json_value, toml_key_path, toml_key_segment, toml_value,
+};
+use wegent_plugin_packages::skill_selection::{
+    copy_skill_directory, read_skill_manifest, record_installed_skill, HomeSkillsStage,
+};
+#[cfg(test)]
+use wegent_plugin_packages::skill_selection::{
+    skill_manifest_path, write_skill_manifest, InstalledSkillRecord,
+};
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 const DOWNLOAD_ATTEMPTS: usize = 3;
-const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
     if request
@@ -1296,33 +1301,6 @@ fn stage_local_skill(source: &Path, target: &Path) -> Result<(), String> {
     })
 }
 
-fn copy_skill_directory(source: &Path, target: &Path) -> Result<(), String> {
-    for entry in fs::read_dir(source)
-        .map_err(|error| format!("failed to read Skill source {}: {error}", source.display()))?
-    {
-        let entry = entry.map_err(|error| format!("failed to read Skill entry: {error}"))?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("failed to inspect Skill entry: {error}"))?;
-        if file_type.is_dir() {
-            fs::create_dir_all(&target_path)
-                .map_err(|error| format!("failed to create Skill directory: {error}"))?;
-            copy_skill_directory(&source_path, &target_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &target_path)
-                .map_err(|error| format!("failed to copy Skill file: {error}"))?;
-        } else {
-            return Err(format!(
-                "unsupported Skill entry type: {}",
-                source_path.display()
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SkillDeploymentReport {
     skill_count: usize,
@@ -1344,38 +1322,6 @@ struct DownloadedSkillRecord {
     namespace: String,
     content_hash: Option<String>,
     staging: tempfile::TempDir,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct InstalledSkillRecord {
-    skill_id: i64,
-    namespace: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    content_hash: Option<String>,
-}
-
-fn skill_manifest_path(skills_dir: &Path) -> PathBuf {
-    skills_dir.join(SKILL_MANIFEST_FILE)
-}
-
-fn read_skill_manifest(
-    skills_dir: &Path,
-) -> Result<BTreeMap<String, InstalledSkillRecord>, String> {
-    let path = skill_manifest_path(skills_dir);
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    serde_json::from_str(&content)
-        .map_err(|error| format!("failed to parse {}: {error}", path.display()))
-}
-
-fn write_skill_manifest(
-    skills_dir: &Path,
-    manifest: &BTreeMap<String, InstalledSkillRecord>,
-) -> Result<(), String> {
-    write_json_file(&skill_manifest_path(skills_dir), manifest)
 }
 
 #[cfg(test)]
@@ -1420,25 +1366,6 @@ fn installed_skill_hash(skills_dir: &Path, skill_name: &str) -> Option<String> {
             .get(skill_name)
             .and_then(|record| record.content_hash.clone())
     })
-}
-
-fn record_installed_skill(
-    skills_dir: &Path,
-    skill_name: &str,
-    skill_id: i64,
-    namespace: &str,
-    content_hash: Option<String>,
-) -> Result<(), String> {
-    let mut manifest = read_skill_manifest(skills_dir)?;
-    manifest.insert(
-        skill_name.to_owned(),
-        InstalledSkillRecord {
-            skill_id,
-            namespace: namespace.to_owned(),
-            content_hash,
-        },
-    );
-    write_skill_manifest(skills_dir, &manifest)
 }
 
 fn publish_downloaded_skill(
@@ -2574,47 +2501,6 @@ fn value_id_string(value: &Value) -> Option<String> {
     }
 }
 
-fn toml_key_path(segments: &[&str]) -> String {
-    segments
-        .iter()
-        .map(|segment| toml_key_segment(segment))
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-fn toml_key_segment(segment: &str) -> String {
-    if segment
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
-    {
-        segment.to_owned()
-    } else {
-        serde_json::to_string(segment).unwrap_or_else(|_| "\"invalid\"".to_owned())
-    }
-}
-
-fn toml_value(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned())
-}
-
-fn toml_json_value(value: &Value) -> String {
-    match value {
-        Value::Array(items) => format!(
-            "[{}]",
-            items
-                .iter()
-                .map(|item| match item {
-                    Value::String(value) => toml_value(value),
-                    _ => item.to_string(),
-                })
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-        Value::String(value) => toml_value(value),
-        _ => value.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     mod codex;
@@ -2622,7 +2508,6 @@ mod tests {
     mod workbench_control;
 
     use super::*;
-    use std::io::{Cursor, Write};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -3588,16 +3473,7 @@ mod tests {
         skill_zip_entries(&[(&entry, "# Skill")])
     }
 
-    pub(super) fn skill_zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
-        let cursor = Cursor::new(Vec::new());
-        let mut writer = zip::ZipWriter::new(cursor);
-        let options = zip::write::FileOptions::default();
-        for (path, content) in entries {
-            writer.start_file(*path, options).unwrap();
-            writer.write_all(content.as_bytes()).unwrap();
-        }
-        writer.finish().unwrap().into_inner()
-    }
+    pub(super) use wegent_executor_test_support::zip_entries as skill_zip_entries;
 
     #[test]
     fn shared_skill_stage_remaps_mismatched_root_to_requested_skill() {

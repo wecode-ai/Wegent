@@ -35,6 +35,7 @@ import { handleConnectorOAuthRequest } from './mock-connector-oauth-provider'
 import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
 import {
   deferredToolSearchCall,
+  codeModeToolCall,
   modelToolDefinitions,
   modelToolMatches,
   resolveToolName,
@@ -195,10 +196,15 @@ function resolveScenarioToolCalls(
   request: ModelRequest | null,
   toolCalls: ToolCallRule[]
 ): ToolCallRule[] {
-  return toolCalls.map(toolCall => ({
-    ...toolCall,
-    arguments: resolveScenarioValue(toolCall.arguments, request) as Record<string, unknown>,
-  }))
+  return toolCalls.map(toolCall => {
+    const args = resolveScenarioValue(toolCall.arguments, request) as Record<string, unknown>
+    return (
+      codeModeToolCall(request, toolCall.toolName, args, toolCall.inspectToolNames) ?? {
+        ...toolCall,
+        arguments: args,
+      }
+    )
+  })
 }
 
 function resolveResponsesTool(
@@ -485,16 +491,20 @@ function writeResponsesToolCalls(
 ): void {
   const responseId = `resp_${Date.now()}`
   const output = toolCalls.map((toolCall, index) => {
-    const codeTool = modelToolDefinitions(request).find(
-      tool => tool.namespace === 'functions' && tool.name === 'exec'
+    const codeTool = modelToolDefinitions(request).find(tool =>
+      ['exec', 'functions__exec'].includes(tool.name)
     )
-    if (toolCall.toolName === 'exec_command' && codeTool) {
+    if (
+      codeTool &&
+      toolCall.toolName === codeTool.name &&
+      typeof toolCall.arguments.input === 'string'
+    ) {
       return {
         type: 'custom_tool_call',
         call_id: `call_${Date.now()}_${index}`,
         namespace: codeTool.namespace,
         name: codeTool.name,
-        input: `text(await tools.exec_command(${JSON.stringify(toolCall.arguments)}))`,
+        input: toolCall.arguments.input,
       }
     }
     const tool = resolveResponsesTool(request, toolCall.toolName)
@@ -856,7 +866,14 @@ const server = http.createServer((req, res) => {
       }
       writeJson(res, 200, { released: gate.release() })
     } else if (req.url === '/stream-rules' && req.method === 'GET') {
-      writeJson(res, 200, streamRules)
+      writeJson(
+        res,
+        200,
+        streamRules.map(rule => ({
+          ...rule,
+          pendingResponses: responseGates.get(rule.matchText)?.pendingResponses ?? 0,
+        }))
+      )
     } else if (req.url === '/stream-rules' && req.method === 'POST') {
       const streamRule = parseJsonBody<StreamRule>(body)
       if (

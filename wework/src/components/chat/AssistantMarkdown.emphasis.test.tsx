@@ -3,7 +3,7 @@ import { expect, test } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
 test.each(['default', 'process', 'user'] as const)(
-  'uses regular body text and medium emphasis in %s messages',
+  'inherits UI body weight and keeps medium emphasis in %s messages',
   variant => {
     const { container } = render(
       <AssistantMarkdown
@@ -21,7 +21,7 @@ test.each(['default', 'process', 'user'] as const)(
       />
     )
 
-    expect(container.firstElementChild).toHaveClass('font-normal')
+    expect(container.firstElementChild).not.toHaveClass('font-normal')
     const headings = screen.getAllByRole('heading')
     expect(headings).toHaveLength(6)
     headings.forEach(heading => expect(heading).toHaveClass('font-medium'))

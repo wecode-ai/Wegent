@@ -3,7 +3,11 @@ export function currentTurnHasToolOutput(body, callId) {
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = input[index]
     if (item?.role === 'user') return false
-    if (item?.type === 'function_call_output' && item.call_id === callId) return true
+    if (
+      ['function_call_output', 'custom_tool_call_output'].includes(item?.type) &&
+      item.call_id === callId
+    )
+      return true
   }
   return false
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-const TIMING_HEADER = /^Wall time: \d+(?:\.\d+)? seconds\nOutput:(?:\n|$)/
+import { modelToolOutputText } from './model-tool-output.mjs'
 
 export function readMcpToolOutput(request, callId) {
   const output = request.input.find(
@@ -14,14 +14,7 @@ export function readMcpToolOutput(request, callId) {
     typeof output === 'string' || Array.isArray(output),
     `Codex MCP output must contain text or content blocks: ${JSON.stringify(output)}`
   )
-  const text =
-    typeof output === 'string'
-      ? output.replace(TIMING_HEADER, '')
-      : output
-          .filter(block => block.type === 'input_text')
-          .map(block => block.text.replace(TIMING_HEADER, ''))
-          .filter(Boolean)
-          .join('\n')
+  const text = modelToolOutputText(output)
   assert.ok(text, `Real MCP call ${callId} returned no result text`)
   return text
 }

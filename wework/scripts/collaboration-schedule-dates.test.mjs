@@ -74,7 +74,6 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
       async command(action, selector, options = {}) {
         calls.push({ action, selector, options })
         if (action === 'getElementCount') {
-          if (selector.endsWith('[data-testid="collaboration-project-view-select"]')) return '0'
           const day = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)?.[1]
           assert.ok(day, `Unexpected calendar day selector: ${selector}`)
           return visibleDates.has(day) ? '1' : '0'
@@ -86,6 +85,17 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
           return 'ascending'
         }
         if (action === 'getValue') return 'status'
+        if (action === 'chooseWhenEnabled') {
+          assert.ok(['calendar', 'gantt', 'table'].includes(options.value))
+          assert.deepEqual(
+            selector.split(',').map(part => part.trim()),
+            [
+              '[data-testid="collaboration-project-view-select"]',
+              `[data-testid="collaboration-tab-${options.value}"]`,
+            ]
+          )
+          return
+        }
         if (action === 'getComputedStyleValue') return 'ew-resize'
         if (action === 'getText') return '开始时间 结束时间'
         if (action === 'drag') {

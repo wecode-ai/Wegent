@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { createDesktopScenario as createConsecutiveQuestions } from './consecutive-questions.scenario.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
@@ -335,7 +336,7 @@ function createPersistenceScenario({ resultDir, uiTimeoutMs, modelResponseTimeou
     )
     if (namespaceAdvertised || currentTurnHasToolSearchResult(body, TOOL_NAMESPACE)) {
       const tool = selectMcpTool(body, TOOL_NAMESPACE, TOOL_NAME, {})
-      events = namespacedFunctionCall(TOOL_CALL_ID, tool.namespace, tool.name, tool.arguments)
+      events = selectedToolCall(TOOL_CALL_ID, tool)
     } else {
       events = toolSearchResponseEvents(SEARCH_CALL_ID, selectToolSearch(body, TOOL_NAME))
     }

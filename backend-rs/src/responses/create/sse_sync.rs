@@ -475,12 +475,16 @@ pub(super) fn stream_request(
     let request = client
         .post(url)?
         .header("content-type", "application/json")
-        .header("accept", dispatch::OPENAI_ACCEPT)
+        .header("accept", super::openai_client::OPENAI_ACCEPT)
         .header("X-Request-ID", request_id)
         .json(body);
     // The Source client identity (`AsyncOpenAI`) on the streaming path; the
     // executor-manager dispatch applies the same shared set.
-    super::package_runtime::authorize(dispatch::apply_openai_client_headers(request), url).build()
+    super::package_runtime::authorize(
+        super::openai_client::apply_openai_client_headers(request),
+        url,
+    )
+    .build()
 }
 
 /// `_drain_terminal_stream`: finish the HTTP response framing after a

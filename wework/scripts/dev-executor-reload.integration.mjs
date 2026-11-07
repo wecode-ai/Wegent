@@ -60,7 +60,7 @@ async function waitForProcessExit(pid) {
   assert.fail(`Executor process ${pid} did not exit`)
 }
 
-async function run() {
+async function run(withSharedLibraries = false) {
   const directory = await mkdtemp(join(tmpdir(), 'wework-executor-reload-'))
   const executorDirectory = join(directory, 'executor')
   const sourceDirectory = join(executorDirectory, 'src')
@@ -78,6 +78,18 @@ async function run() {
     await writeFile(join(executorDirectory, 'Cargo.toml'), '[package]\nname = "fake"\n')
     await writeFile(join(executorDirectory, 'Cargo.lock'), '')
     await writeFile(sourcePath, 'fn main() {}\n')
+    if (withSharedLibraries) {
+      await mkdir(join(directory, 'shared', 'assets'), { recursive: true })
+      await writeFile(join(directory, 'shared', 'assets', 'instructions.md'), 'Original guidance\n')
+      await writeFile(join(directory, 'shared', 'schema.json'), '{"version": 1}\n')
+      for (const name of ['protocol', 'crypto']) {
+        const library = join(directory, 'shared', 'rust', name)
+        await mkdir(join(library, 'src'), { recursive: true })
+        await writeFile(join(library, 'src', 'lib.rs'), 'pub fn original() {}\n')
+        await writeFile(join(library, 'Cargo.toml'), '[package]\nname = "shared"\n')
+      }
+      await writeFile(join(directory, 'shared', 'rust', 'Cargo.toml'), '[workspace]\n')
+    }
     await writeFile(
       executorTemplate,
       `#!/usr/bin/env node
@@ -93,8 +105,20 @@ setInterval(() => {}, 1_000)
     await writeFile(
       cargo,
       `#!/usr/bin/env node
-import { appendFileSync, chmodSync, copyFileSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, chmodSync, copyFileSync, mkdirSync, existsSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+if (process.argv[2] === 'metadata') {
+  const manifest = process.argv[process.argv.indexOf('--manifest-path') + 1]
+  const root = dirname(manifest)
+  const dependencies = root === process.env.WEGENT_EXECUTOR_SOURCE_DIR
+    ? ['protocol', 'crypto'].map(name => ({path: join(root, '..', 'shared', 'rust', name)})).filter(dep => existsSync(join(dep.path, 'Cargo.toml')))
+    : []
+  const metadata = existsSync(join(root, '..', 'shared', 'assets'))
+    ? {wegent: {'source-inputs': ['../shared/assets', '../shared/schema.json']}}
+    : {}
+  console.log(JSON.stringify({workspace_root: root, packages: [{manifest_path: manifest, dependencies, metadata}]}))
+  process.exit(0)
+}
 appendFileSync(process.env.TEST_BUILD_LOG, 'build\\n')
 const output = join(process.env.CARGO_TARGET_DIR, 'debug', 'wegent-executor')
 mkdirSync(join(process.env.CARGO_TARGET_DIR, 'debug'), { recursive: true })
@@ -132,10 +156,37 @@ chmodSync(output, 0o755)
     assert.notEqual(secondReady[1], firstReady[1])
     assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
 
+    let expectedBuilds = 2
+    if (withSharedLibraries) {
+      for (const name of ['protocol', 'crypto']) {
+        const ready = waitForOutput(watcher.stdout, /ready (\d+)\n/)
+        await writeFile(
+          join(directory, 'shared', 'rust', name, 'src', 'lib.rs'),
+          'pub fn changed() {}\n'
+        )
+        await ready
+        expectedBuilds += 1
+        assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
+      }
+      const assetReady = waitForOutput(watcher.stdout, /ready (\d+)\n/)
+      await writeFile(join(directory, 'shared', 'assets', 'instructions.md'), 'Updated guidance\n')
+      await assetReady
+      expectedBuilds += 1
+      assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
+      const schemaReady = waitForOutput(watcher.stdout, /ready (\d+)\n/)
+      await writeFile(join(directory, 'shared', 'schema.json'), '{"version": 2}\n')
+      await schemaReady
+      expectedBuilds += 1
+      assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
+      await writeFile(join(directory, 'shared', 'unrelated.md'), 'Not a build input\n')
+      // Cargo output under the shared workspace must not create a rebuild loop.
+      await mkdir(join(directory, 'shared', 'rust', 'target'), { recursive: true })
+      await writeFile(join(directory, 'shared', 'rust', 'target', 'output'), 'build output')
+    }
     const now = new Date()
     await utimes(sourcePath, now, now)
     await delay(700)
-    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
+    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
 
     watcher.stdin.write('ping\n')
     await waitForOutput(watcher.stdout, /echo:ping\n/)
@@ -144,7 +195,7 @@ chmodSync(output, 0o755)
     watcher.stdin.write('crash\n')
     const thirdReady = await thirdReadyOutput
     assert.notEqual(thirdReady[1], secondReady[1])
-    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
+    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
 
     await stopProcess(watcher)
     await waitForProcessExit(Number(thirdReady[1]))
@@ -156,4 +207,5 @@ chmodSync(output, 0o755)
 }
 
 await run()
+await run(true)
 process.stdout.write('dev executor reload integration test passed\n')

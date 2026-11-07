@@ -29,10 +29,10 @@ use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, Mysql};
 
 use crate::attachments::context_store::{AttachmentMetadata, SubtaskContextRow};
-use crate::attachments::minio_client::MinioConfig;
 use crate::attachments::storage;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use wegent_storage::minio_client::MinioConfig;
 
 /// `PUBLIC_TEAM_ICON_ASSET_TYPE` (`resource_library.py:37`).
 const PUBLIC_TEAM_ICON_ASSET_TYPE: &str = "public_team_icon";

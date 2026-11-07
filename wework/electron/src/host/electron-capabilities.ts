@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import { openInExternalBrowser } from './external-browser.js'
 import type { ModelConfigurationStore } from './model-configuration-store.js'
 import {
   acknowledgeNotificationReply,
@@ -507,6 +508,9 @@ export function createElectronCapabilityRouter(
       visible: booleanParam(params, 'visible') ?? true,
       navigateExisting: booleanParam(params, 'navigateExisting') ?? true,
     })
+  )
+  router.register('browser.openExternal', params =>
+    openInExternalBrowser(stringParam(params, 'url'))
   )
   registerBrowserAnnotationCapabilities(router, desktopServices.browserAnnotations)
   router.register('browser.setBounds', params =>

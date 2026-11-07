@@ -1458,7 +1458,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     ...desktopWindowFrameOptions(),
     ...startupLayout.bounds,
     title: windowTitle,
-    backgroundColor: '#05070d',
+    backgroundColor: startupTheme === 'dark' ? '#05070d' : '#fafafa',
     show: false,
     webPreferences: {
       backgroundThrottling: false,

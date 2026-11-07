@@ -85,6 +85,10 @@ async fn temporary_chat_restores_history_and_continues_after_capability_reload()
     request["task_id"] = json!("side-chat");
     request["subtask_id"] = json!("side-turn-1");
     request["ephemeral"] = json!(true);
+    super::runtime_side_source_contract::write_source_rollout(
+        &root.path().join("parent.jsonl"),
+        "parent",
+    );
     let created = handler.handle_runtime_rpc(json!({
         "method": "runtime.tasks.create",
         "payload": {

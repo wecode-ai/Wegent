@@ -1,9 +1,10 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
 import { createComposerLayoutChecks } from '../modules/streaming-text-composer-layout.mjs'
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
 import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
-import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { handleEmptyReplyPrediction, selectTool } from '../modules/response-protocol.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createMarkdownLinkChecks,
@@ -397,7 +398,7 @@ export function createDesktopScenario({
               ...commentary.start.slice(1),
               ...textDeltaEvents(commentary.itemId, SUBAGENT_CHILD_COMMENTARY),
               ...commentary.finish.slice(0, -1),
-              ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
+              ...selectedToolCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool),
               responseCompleted(responseId),
             ])
           )
@@ -463,9 +464,10 @@ export function createDesktopScenario({
         response.end(
           sse([
             responseCreated(responseId),
-            ...namespacedFunctionCall(SUBAGENT_WAIT_CALL_ID, 'collaboration', 'wait_agent', {
-              timeout_ms: 60_000,
-            }),
+            ...selectedToolCall(
+              SUBAGENT_WAIT_CALL_ID,
+              selectTool(body, 'wait_agent', { timeout_ms: 60_000 })
+            ),
             responseCompleted(responseId),
           ])
         )
@@ -508,30 +510,19 @@ export function createDesktopScenario({
       }
       if (requestContainsSubagentPrompt(body)) {
         assert.equal(subagentStage, 'initial', `Unexpected subagent stage: ${subagentStage}`)
-        const collaborationTools = (body.tools ?? []).find(
-          tool => tool?.type === 'namespace' && tool.name === 'collaboration'
-        )?.tools
-        const collaborationToolNames = new Set(
-          (collaborationTools ?? []).map(tool => tool?.name).filter(Boolean)
-        )
-        assert.ok(
-          collaborationToolNames.has('spawn_agent'),
-          'The native collaboration.spawn_agent tool was not available'
-        )
-        assert.ok(
-          collaborationToolNames.has('wait_agent'),
-          'The native collaboration.wait_agent tool was not available'
-        )
         subagentStage = 'awaiting-spawn-output'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([
             responseCreated(responseId),
-            ...namespacedFunctionCall(SUBAGENT_CALL_ID, 'collaboration', 'spawn_agent', {
-              task_name: 'streaming_panel',
-              message: SUBAGENT_CHILD_PROMPT,
-              agent_type: 'explorer',
-            }),
+            ...selectedToolCall(
+              SUBAGENT_CALL_ID,
+              selectTool(body, 'spawn_agent', {
+                task_name: 'streaming_panel',
+                message: SUBAGENT_CHILD_PROMPT,
+                agent_type: 'explorer',
+              })
+            ),
             responseCompleted(responseId),
           ])
         )
@@ -678,7 +669,7 @@ export function createDesktopScenario({
           response.end(
             sse([
               responseCreated(responseId),
-              ...functionCall('wework-running-timer', tool.name, tool.arguments),
+              ...selectedToolCall('wework-running-timer', tool),
               responseCompleted(responseId),
             ])
           )
@@ -740,7 +731,7 @@ export function createDesktopScenario({
               responseCreated(responseId),
               ...reasoningEvents('wework-reasoning-summary', REASONING_SUMMARY),
               assistantMessage(TOOL_PREAMBLE),
-              ...functionCall('wework-tool-text-offset', tool.name, tool.arguments),
+              ...selectedToolCall('wework-tool-text-offset', tool),
               responseCompleted(responseId),
             ])
           )
@@ -761,7 +752,7 @@ export function createDesktopScenario({
           response.end(
             sse([
               responseCreated(responseId),
-              ...functionCall(TOOL_DETAIL_PERSISTENCE_CALL_ID, tool.name, tool.arguments),
+              ...selectedToolCall(TOOL_DETAIL_PERSISTENCE_CALL_ID, tool),
               responseCompleted(responseId),
             ])
           )
@@ -818,14 +809,7 @@ export function createDesktopScenario({
         )
         const tool = selectImageGenerationTool(body)
         generatedImageStage = 'awaiting-image-api'
-        const toolCallEvents = tool.namespace
-          ? namespacedFunctionCall(
-              GENERATED_IMAGE_CALL_ID,
-              tool.namespace,
-              tool.name,
-              tool.arguments
-            )
-          : functionCall(GENERATED_IMAGE_CALL_ID, tool.name, tool.arguments)
+        const toolCallEvents = selectedToolCall(GENERATED_IMAGE_CALL_ID, tool)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([responseCreated(responseId), ...toolCallEvents, responseCompleted(responseId)])
