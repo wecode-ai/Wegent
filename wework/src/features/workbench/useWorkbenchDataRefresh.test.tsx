@@ -157,6 +157,76 @@ describe('useWorkbenchDataRefresh', () => {
     expect(hook.result.current.state.devices).toEqual(initialDevices)
   })
 
+  test('completes initial cloud inventory after a work event supersedes bootstrap work', async () => {
+    const pendingDevices = deferred<DeviceInfo[]>()
+    const remoteDevice = {
+      ...devices[0],
+      device_id: 'remote-device',
+      device_type: 'remote' as const,
+    }
+    const cloudApi = {
+      listTeams: vi.fn().mockResolvedValue([]),
+      listDevices: vi.fn().mockResolvedValue([remoteDevice]),
+      listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+    }
+    const hook = setup(undefined, vi.fn().mockReturnValue(pendingDevices.promise), {
+      cloudBackgroundApi: cloudApi,
+    } as WorkbenchServices)
+    await waitFor(() => expect(hook.result.current.state.runtimeWork?.totalTasks).toBe(1))
+    await act(async () => hook.result.current.refreshWorkLists({ refreshDevices: false }))
+    await act(async () => pendingDevices.resolve(devices))
+
+    await waitFor(() => expect(cloudApi.listDevices).toHaveBeenCalledOnce())
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('available'))
+    expect(cloudApi.listTeams).toHaveBeenCalledOnce()
+    expect(hook.listDevices).toHaveBeenCalledOnce()
+    expect(
+      hook.result.current.state.devices.some(device => device.device_id === 'remote-device')
+    ).toBe(true)
+  })
+
+  test('preserves pending cloud inventory and follows it with the latest work-only refresh', async () => {
+    const pendingDevices = deferred<DeviceInfo[]>()
+    const pendingTeams = deferred<never[]>()
+    const pendingWork = deferred<RuntimeWorkListResponse>()
+    const remoteDevice = {
+      ...devices[0],
+      device_id: 'remote-device',
+      device_type: 'remote' as const,
+    }
+    const cloudApi = {
+      listTeams: vi.fn().mockReturnValue(pendingTeams.promise),
+      listDevices: vi.fn().mockReturnValue(pendingDevices.promise),
+      listRuntimeWork: vi
+        .fn()
+        .mockReturnValueOnce(pendingWork.promise)
+        .mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+    }
+    const hook = setup(undefined, undefined, { cloudBackgroundApi: cloudApi } as WorkbenchServices)
+    await waitFor(() => expect(cloudApi.listDevices).toHaveBeenCalledOnce())
+    const signal = cloudApi.listDevices.mock.calls[0]?.[0]?.signal as AbortSignal
+
+    await act(async () => hook.result.current.refreshWorkLists({ refreshDevices: false }))
+    await act(async () => hook.result.current.refreshWorkLists({ refreshDevices: false }))
+    const inventoryAborted = signal.aborted
+    const workCallsBeforeInventory = cloudApi.listRuntimeWork.mock.calls.length
+    await act(async () => {
+      pendingDevices.resolve([remoteDevice])
+      pendingTeams.resolve([])
+      pendingWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    })
+
+    expect(inventoryAborted).toBe(false)
+    expect(workCallsBeforeInventory).toBe(1)
+    await waitFor(() => expect(cloudApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('available'))
+    expect(cloudApi.listDevices).toHaveBeenCalledOnce()
+    expect(cloudApi.listTeams).toHaveBeenCalledOnce()
+    expect(
+      hook.result.current.state.devices.some(device => device.device_id === 'remote-device')
+    ).toBe(true)
+  })
+
   test('publishes initial tasks without waiting for device discovery', async () => {
     const pendingDevices = deferred<DeviceInfo[]>()
     const hook = setup(undefined, vi.fn().mockReturnValue(pendingDevices.promise))

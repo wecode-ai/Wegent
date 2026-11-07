@@ -9,7 +9,6 @@ import type { ExecutorClient } from '@/api/executorAccess'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import type {
   DeviceInfo,
-  ProjectWithTasks,
   RuntimeSupervisorState,
   RuntimeTaskAddress,
   RuntimeTaskPinRequest,
@@ -59,6 +58,9 @@ import {
 } from './remoteRuntimeWorkCache'
 
 import {
+  type CloudBackgroundRequest,
+  type CloudBackgroundRefreshOptions,
+  queueWorkRefreshAfterInventory,
   createCloudRuntimeStateWithCache,
   localDeviceSnapshot,
   mergeRuntimeTaskAddresses,
@@ -112,7 +114,7 @@ export function useWorkbenchDataRefresh({
     setCloudRuntimeState(next)
   }, [])
   const cloudBackgroundApiRef = useRef(services.cloudBackgroundApi)
-  const cloudBackgroundRequestControllerRef = useRef<AbortController | null>(null)
+  const cloudBackgroundRequestRef = useRef<CloudBackgroundRequest | null>(null)
   const workListRefreshRevisionRef = useRef(0)
   const deviceListRevisionRef = useRef(0)
   const runtimeLoadGenerationRef = useRef(0)
@@ -149,7 +151,7 @@ export function useWorkbenchDataRefresh({
     scopeRef.current = scope
     const previousScope = previousScopeRef.current
     previousScopeRef.current = scope
-    if (previousScope !== scope) cloudBackgroundRequestControllerRef.current?.abort()
+    if (previousScope !== scope) cloudBackgroundRequestRef.current?.controller.abort()
     // Transport replacement invalidates requests, not the same owner's navigation.
     if (
       previousScope.userId !== scope.userId ||
@@ -188,7 +190,7 @@ export function useWorkbenchDataRefresh({
   ])
   useEffect(
     () => () => {
-      cloudBackgroundRequestControllerRef.current?.abort()
+      cloudBackgroundRequestRef.current?.controller.abort()
     },
     []
   )
@@ -296,20 +298,15 @@ export function useWorkbenchDataRefresh({
   )
 
   const refreshCloudBackgroundData = useCallback(
-    async (
+    async function refreshCloudBackgroundData(
       baseDevices: DeviceInfo[],
       baseRuntimeWork: RuntimeWorkListResponse,
-      options?: {
-        projects: ProjectWithTasks[]
-        standaloneDeviceId: string | null
-        standaloneWorkspacePath?: string | null
-        trigger?: 'bootstrap' | 'manual-refresh' | 'device-event'
-        refreshDevices?: boolean
-        isCancelled?: () => boolean
-      }
-    ) => {
+      options: CloudBackgroundRefreshOptions
+    ): Promise<void> {
       if (scopeRef.current !== scope) return
       const backgroundApi = services.cloudBackgroundApi
+      const previousRequest = cloudBackgroundRequestRef.current
+      if (queueWorkRefreshAfterInventory(previousRequest, options.refreshDevices !== false)) return
       const supervisorRequestRevision = supervisorSnapshotsRef.current.capture()
       const activeChecks: CloudWorkCheckKey[] = []
       if (options?.refreshDevices !== false && backgroundApi?.listTeams) activeChecks.push('teams')
@@ -319,17 +316,22 @@ export function useWorkbenchDataRefresh({
 
       if (activeChecks.length === 0) return
       const inFlightRevision = cloudRuntimeStateRef.current.inFlightRevision
-      cloudBackgroundRequestControllerRef.current?.abort()
+      previousRequest?.controller.abort()
       if (inFlightRevision != null) {
         updateCloudRuntimeState(
           abandonCloudRuntimeSync(cloudRuntimeStateRef.current, inFlightRevision)
         )
       }
       const controller = new AbortController()
-      cloudBackgroundRequestControllerRef.current = controller
+      const request = {
+        controller,
+        refreshDevices: options?.refreshDevices !== false,
+        workRefreshQueued: false,
+      }
+      cloudBackgroundRequestRef.current = request
       const isCurrentRefresh = () =>
         scopeRef.current === scope &&
-        cloudBackgroundRequestControllerRef.current === controller &&
+        cloudBackgroundRequestRef.current === request &&
         !controller.signal.aborted
 
       try {
@@ -498,9 +500,16 @@ export function useWorkbenchDataRefresh({
           ),
         })
       } finally {
-        if (cloudBackgroundRequestControllerRef.current === controller) {
-          cloudBackgroundRequestControllerRef.current = null
+        if (cloudBackgroundRequestRef.current === request) {
+          cloudBackgroundRequestRef.current = null
           controller.abort()
+          if (request.workRefreshQueued && !options?.isCancelled?.()) {
+            await refreshCloudBackgroundData(
+              devicesRef.current,
+              localRuntimeWorkRef.current ?? baseRuntimeWork,
+              { ...options, refreshDevices: false, trigger: 'manual-refresh' }
+            )
+          }
         }
       }
     },
@@ -588,7 +597,6 @@ export function useWorkbenchDataRefresh({
       })
       return runtimeWork
     })
-    const bootstrapRevision = workListRefreshRevisionRef.current
     const devicesRequest = timedWorkbenchBootstrapRequest(
       'devices',
       executorClient.commands.listDevices()
@@ -629,8 +637,7 @@ export function useWorkbenchDataRefresh({
     // Local results are already published independently; only cloud composition needs both.
     void Promise.all([devicesRequest, runtimeRequest])
       .then(([devices, runtimeWork]) => {
-        if (!isCurrent() || !devices || bootstrapRevision !== workListRefreshRevisionRef.current)
-          return
+        if (!isCurrent() || !devices || deviceRevision !== deviceListRevisionRef.current) return
         return refreshCloudBackgroundData(
           devices,
           runtimeWork ?? localRuntimeWorkRef.current ?? EMPTY_RUNTIME_WORK,
@@ -739,8 +746,8 @@ export function useWorkbenchDataRefresh({
             workspacePath: normalizeRuntimeWorkspacePath(workspace.workspacePath),
           }
         : undefined
-      cloudBackgroundRequestControllerRef.current?.abort()
-      cloudBackgroundRequestControllerRef.current = null
+      cloudBackgroundRequestRef.current?.controller.abort()
+      cloudBackgroundRequestRef.current = null
       workListRefreshRevisionRef.current += 1
       if (localRuntimeWorkRef.current) {
         localRuntimeWorkRef.current = removeRuntimeProject(
@@ -940,7 +947,7 @@ export function useWorkbenchDataRefresh({
     (update: RuntimeProjectUpdate) => {
       if (cachedRemoteRuntimeWorkRef.current.ownershipKey !== cacheScope) return
       workListRefreshRevisionRef.current += 1
-      cloudBackgroundRequestControllerRef.current?.abort()
+      cloudBackgroundRequestRef.current?.controller.abort()
       const projectUpdate = (work: RuntimeWorkListResponse) =>
         updateRuntimeWorkProject(work, update, devicesRef.current)
       if (localRuntimeWorkRef.current)

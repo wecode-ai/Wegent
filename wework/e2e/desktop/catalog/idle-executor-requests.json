@@ -8,6 +8,7 @@
     "wework/src/desktop/localExecutor*",
     "wework/src/telemetry/StandInTelemetryAgent*",
     "wework/src/features/workbench/useWorkbenchDataRefresh*",
+    "wework/src/features/workbench/workbenchDataRefreshHelpers*",
     "wework/src/features/workbench/WorkbenchProvider.tsx"
   ],
   "ci": {
