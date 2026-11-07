@@ -15,41 +15,46 @@ export interface SandboxedHtmlFrameProps {
   testId?: string
   onLoad?: () => void
   onError?: () => void
-  /** A frame-internal error reported through the postMessage bridge. */
-  onScriptError?: (message: string, line?: number) => void
+  /** Inject the bridge that reports frame script errors to the parent page. */
+  reportScriptErrors?: boolean
 }
 
 const SCRIPT_ERROR_BRIDGE = `<script>
 (function(){
-  function report(error){
+  function report(error, line){
     try {
       parent.postMessage(
         {
           source: 'wegent-html-preview',
           type: 'script-error',
-          message: error && error.message ? String(error.message) : String(error),
-          line: event.lineno ? Number(event.lineno) : undefined
+          message: error && error.message
+            ? String(error.message)
+            : String(error || 'Unhandled promise rejection'),
+          line: line ? Number(line) : undefined
         },
         '*'
       );
     } catch (e) {}
   }
-  window.addEventListener('error', function(event) { report(event); });
+  window.addEventListener('error', function(event) { report(event, event.lineno); });
   window.addEventListener('unhandledrejection', function(event) { report(event.reason); });
 })();
 </script>`
 
 function prependErrorBridge(content: string): string {
-  if (/<head[^>]*>/i.test(content)) {
+  if (/<head(\s[^>]*)?>/i.test(content)) {
     return content.replace(
-      /<head([^>]*)>/i,
-      (_match, attributes: string) => `<head${attributes}>${SCRIPT_ERROR_BRIDGE}`
+      /<head(\s[^>]*)?>/i,
+      (_match, attributes: string | undefined) => `<head${attributes ?? ''}>${SCRIPT_ERROR_BRIDGE}`
     )
   }
-  return content.replace(
-    /<html([^>]*)>/i,
-    (_match, attributes: string) => `<html${attributes}><head>${SCRIPT_ERROR_BRIDGE}</head>`
-  )
+  if (/<html[^>]*>/i.test(content)) {
+    return content.replace(
+      /<html([^>]*)>/i,
+      (_match, attributes: string) => `<html${attributes}><head>${SCRIPT_ERROR_BRIDGE}</head>`
+    )
+  }
+  return SCRIPT_ERROR_BRIDGE + content
 }
 
 export const SandboxedHtmlFrame = forwardRef<HTMLIFrameElement, SandboxedHtmlFrameProps>(
@@ -63,11 +68,11 @@ export const SandboxedHtmlFrame = forwardRef<HTMLIFrameElement, SandboxedHtmlFra
       testId,
       onLoad,
       onError,
-      onScriptError,
+      reportScriptErrors,
     },
     ref
   ) {
-    const srcDoc = onScriptError ? prependErrorBridge(content) : content
+    const srcDoc = reportScriptErrors ? prependErrorBridge(content) : content
 
     return (
       <iframe
@@ -80,6 +85,7 @@ export const SandboxedHtmlFrame = forwardRef<HTMLIFrameElement, SandboxedHtmlFra
         data-testid={testId}
         onLoad={onLoad}
         onError={onError}
+        data-artifact-script-error-reporting={reportScriptErrors ? 'on' : undefined}
       />
     )
   }

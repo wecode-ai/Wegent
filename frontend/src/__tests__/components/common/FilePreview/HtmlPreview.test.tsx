@@ -13,9 +13,14 @@ jest.mock('@/hooks/useTranslation', () => ({
         'actions.loading': 'Loading',
         'actions.preview': 'Preview',
         'attachment.html.script_error': 'This page script failed',
+        'attachment.html.script_error_line': '(line 78)',
         'attachment.html.view_source': 'View Source',
       })[key] ?? key,
   }),
+}))
+
+jest.mock('@/components/common/FilePreview/preview-renderers/TextPreview', () => ({
+  TextPreview: () => <div data-testid="html-source-preview" />,
 }))
 
 describe('HtmlPreview', () => {
@@ -47,6 +52,31 @@ describe('HtmlPreview', () => {
         'This page script failed (line 78): LIB is not defined'
       )
     })
+  })
+
+  it('shows a source-mode button for script errors', async () => {
+    render(<HtmlPreview content={content} filename="report.html" />)
+
+    const frame = document.querySelector('iframe')
+    fireEvent(
+      window,
+      new MessageEvent('message', {
+        source: frame?.contentWindow,
+        data: {
+          source: 'wegent-html-preview',
+          type: 'script-error',
+          message: 'boom',
+        },
+      })
+    )
+    fireEvent.load(frame as HTMLIFrameElement)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('html-preview-script-error-view-source')).toBeVisible()
+    })
+    fireEvent.click(screen.getByTestId('html-preview-script-error-view-source'))
+
+    expect(screen.getByTestId('html-source-preview')).toBeVisible()
   })
 
   it('ignores bridge messages from another window', async () => {

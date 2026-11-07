@@ -546,11 +546,19 @@ fn redact_final_answer_only(value: Value) -> Value {
     }
 }
 
-/// The read-only share page renders `value` and `blocks`; every other result
-/// field is executor context for continuing the task. `messages_chain` in
-/// particular is the model-facing transcript and routinely exceeds a megabyte.
+/// Keep only result fields consumed by the read-only share page. Citation
+/// fields stay public; executor context such as `messages_chain` stays private
+/// because the model-facing transcript routinely exceeds a megabyte.
 fn public_result(value: Value) -> Value {
-    const PUBLIC_FIELDS: [&str; 4] = ["value", "blocks", "stop_reason", "termination_reason"];
+    const PUBLIC_FIELDS: [&str; 7] = [
+        "value",
+        "blocks",
+        "stop_reason",
+        "termination_reason",
+        "annotations",
+        "sources",
+        "retrieval_summary",
+    ];
     match value {
         Value::Object(fields) => Value::Object(
             fields
@@ -879,6 +887,9 @@ mod tests {
             "blocks": [{"type": "text", "content": "answer"}],
             "stop_reason": "end_turn",
             "termination_reason": "normal_completion",
+            "annotations": [{"id": 1}],
+            "sources": [{"url": "https://example.invalid"}],
+            "retrieval_summary": "research summary",
             "messages_chain": [{"role": "assistant"}],
             "reasoning_content": "internal reasoning",
             "context_metrics": {"used_input_tokens": 1},
@@ -890,6 +901,31 @@ mod tests {
                 "blocks": [{"type": "text", "content": "answer"}],
                 "stop_reason": "end_turn",
                 "termination_reason": "normal_completion",
+                "annotations": [{"id": 1}],
+                "sources": [{"url": "https://example.invalid"}],
+                "retrieval_summary": "research summary",
+            })
+        );
+    }
+
+    /// Final-answer-only redaction removes citation fields by design; the
+    /// normal public projection must preserve them for the share renderer.
+    #[test]
+    fn normal_public_results_preserve_citation_fields() {
+        let value = serde_json::json!({
+            "value": "research answer",
+            "annotations": [{"title": "source"}],
+            "sources": [{"url": "https://example.invalid"}],
+            "retrieval_summary": "summary",
+            "messages_chain": [{"role": "assistant"}],
+        });
+        assert_eq!(
+            public_result(value),
+            serde_json::json!({
+                "value": "research answer",
+                "annotations": [{"title": "source"}],
+                "sources": [{"url": "https://example.invalid"}],
+                "retrieval_summary": "summary",
             })
         );
     }

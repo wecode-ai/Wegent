@@ -149,6 +149,7 @@ function ArtifactPreview({ title, html }: { title: string; html: string }) {
         content={html}
         className="block h-[520px] max-h-[70vh] min-h-[320px] w-full border-0 bg-white"
         testId="artifact-preview-iframe"
+        reportScriptErrors
       />
     </div>
   )

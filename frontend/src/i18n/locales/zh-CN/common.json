@@ -1805,7 +1805,8 @@
       "source_mode": "源码",
       "load_failed": "预览加载失败",
       "view_source": "查看源码",
-      "script_error": "页面脚本报错"
+      "script_error": "页面脚本报错",
+      "script_error_line": "（第 {{line}} 行）"
     }
   },
   "editor": {

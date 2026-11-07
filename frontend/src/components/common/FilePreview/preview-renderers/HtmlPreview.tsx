@@ -92,10 +92,14 @@ export function HtmlPreview({
               >
                 <span>
                   {t('attachment.html.script_error')}
-                  {scriptError.line ? ` (line ${scriptError.line})` : ''}: {scriptError.message}
+                  {scriptError.line
+                    ? ` ${t('attachment.html.script_error_line', { line: scriptError.line })}`
+                    : ''}
+                  : {scriptError.message}
                 </span>
                 <button
                   type="button"
+                  data-testid="html-preview-script-error-view-source"
                   onClick={() => setIsSourceMode(true)}
                   className="shrink-0 underline"
                 >
@@ -126,7 +130,7 @@ export function HtmlPreview({
               sandbox="allow-scripts allow-popups allow-forms"
               onLoad={handleIframeLoad}
               onError={handleIframeError}
-              onScriptError={(message, line) => setScriptError({ message, line })}
+              reportScriptErrors
               style={{ display: isLoading || hasError ? 'none' : 'block' }}
             />
           </>
