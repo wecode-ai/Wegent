@@ -6,7 +6,7 @@ import { installDshUiTestContributions } from '@/test/setup.dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CloudTodoBoardCard } from './CloudTodoBoardCard'
+import { CloudTodoBoardCard, CloudTodoCardContent } from './CloudTodoBoardCard'
 
 const changeRequestMonitorMocks = vi.hoisted(() => ({
   useTaskChangeRequest: vi.fn(),
@@ -70,6 +70,35 @@ const item = {
 } as CloudLoopItem
 
 describe('CloudTodoBoardCard', () => {
+  it('projects the running stand-in identity next to the title without a status text row', () => {
+    render(
+      <CloudTodoCardContent
+        item={{ ...item, created_by_user_id: 1, created_by_user_name: '创建人' }}
+        goalBinding={{
+          id: 1,
+          device_id: 'device',
+          task_id: 'task',
+          task_title: 'Work',
+          running: true,
+          runtimeTask: {
+            taskId: 'task',
+            title: 'Work',
+            workspacePath: '',
+            runtime: 'codex',
+            runtimeHandle: { origin: { initiatedBy: 'stand_in', roleName: '研发分身' } },
+          },
+        }}
+        display={{ showAssignee: true, showDate: false, showTags: false, showPriority: false }}
+      />
+    )
+    const actor = screen.getByTestId('issue-participation-WEG-85')
+    expect(actor).toHaveTextContent('研发分身')
+    expect(actor).toHaveAttribute('data-processing-kind', 'stand_in')
+    expect(screen.getByTestId('cloud-todo-card-header-WEG-85')).toContainElement(actor)
+    expect(screen.getByTestId('cloud-todo-card-header-actors-WEG-85')).toHaveClass('ml-auto')
+    expect(actor.parentElement).not.toHaveTextContent(item.title)
+    expect(screen.queryByText('AI 处理中')).not.toBeInTheDocument()
+  })
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
     vi.useRealTimers()

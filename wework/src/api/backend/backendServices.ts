@@ -1,4 +1,5 @@
 import { createStandInExecutorApi } from '@/api/standIn'
+import { createIssueHumanRequestsApi } from '@/api/issueHumanRequests'
 import {
   createRemoteProjectDevicePluginApi,
   type ProjectDevicePluginApi,
@@ -182,6 +183,7 @@ export function createBackendWorkbenchServices(
 
   return {
     agentResourceApi,
+    issueHumanRequestsApi: createIssueHumanRequestsApi(client),
     teamApi,
     modelApi,
     skillApi: createSkillApi(client),

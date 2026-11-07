@@ -6106,6 +6106,25 @@
     "prompt": "我对下面的问题还拿不准。请先解释各选项的依据和取舍，给出你的建议，并与我讨论；不要替我做决定或执行原任务。讨论清楚后，我会自己确认并提交答案。",
     "start_failed": "讨论暂时未能开始，请在讨论输入框中重新发送。"
   },
+  "issueParticipation": {
+    "local_load_failed": "本地项目待办刷新失败，可点击刷新重试，展开查看详情",
+    "cloud_load_failed": "云端项目待办刷新失败，可点击刷新重试，展开查看详情",
+    "my_filter": "待我处理",
+    "waiting_for": "等待{{name}}处理",
+    "project_items": "项目待我处理",
+    "waiting_duration": "在你这里 {{duration}}",
+    "wait_unknown": "交接时间未记录",
+    "since": "交接于 {{time}}",
+    "days": "{{count}}天{{hours}}小时",
+    "hours": "{{count}}小时{{minutes}}分钟",
+    "minutes": "{{count}}分钟",
+    "delivery_rejected": "AI 未接收回答，请修复执行问题后重试",
+    "delivery_uncertain": "正在核对回答是否送达，请勿重复发送",
+    "blocking": "相关步骤等待回答，其他工作继续",
+    "waiting": "等人处理",
+    "assign": "分派给具体的人",
+    "delivering": "回答已保存，等待 AI 接收"
+  },
   "interactions": {
     "sources": {
       "task": "任务",
@@ -6121,7 +6140,6 @@
     "send": "发送",
     "skip": "暂不处理",
     "dismiss": "关闭提醒",
-    "handle_in_context": "打开原会话处理",
     "add_detail": "补充说明",
     "pending": "待处理",
     "history": "已处理",

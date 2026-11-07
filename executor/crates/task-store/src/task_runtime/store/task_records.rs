@@ -30,13 +30,13 @@ impl LocalTaskStore {
             &mut items,
         )?;
         let executions = latest_executions_for_project(&connection, project_id)?;
-        for item in &mut items {
-            if let Some((id, status)) = executions.get(&item.id) {
-                item.execution_id = Some(*id);
-                item.execution_state = Some(status.clone());
-            }
-        }
-        Ok(items)
+        Ok(items
+            .into_iter()
+            .map(|item| {
+                let projection = executions.get(&item.id).cloned();
+                attach_execution(item, projection)
+            })
+            .collect())
     }
 
     pub fn get_task(&self, project_id: &str, task_id: &str) -> Result<LoopItem, TaskRuntimeError> {

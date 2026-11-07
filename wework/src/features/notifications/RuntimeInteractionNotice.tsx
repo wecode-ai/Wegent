@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Bot, X } from 'lucide-react'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { RuntimeInteractionReply } from './RuntimeInteractionReply'
+import { canReplyToInteraction } from './runtimeInteractions'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 
@@ -49,7 +50,7 @@ function InteractionNotice() {
           <X className="h-4 w-4" />
         </button>
       </div>
-      {expanded ? (
+      {expanded || !canReplyToInteraction(item) ? (
         <div className="mt-3">
           <RuntimeInteractionReply item={item} />
         </div>
