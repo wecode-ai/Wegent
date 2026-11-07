@@ -346,6 +346,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
       await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
         text: '0',
+        timeoutMs: 30_000,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command(

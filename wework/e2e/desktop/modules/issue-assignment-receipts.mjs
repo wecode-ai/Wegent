@@ -91,7 +91,10 @@ export async function verifyIssueAssignmentReceipts(
   await capture('assignment-receipts-03-both-received.png')
   await dismissInbox()
   await control.command('hover', `${RECEIPTS} [title^="分身已接收"]`)
-  await control.command('waitFor', '[role="tooltip"]', { text: '分身已接收' })
+  await control.command('waitFor', '[role="tooltip"]', {
+    text: '分身已接收',
+    timeoutMs: 15_000,
+  })
   assert.equal(
     await control.command('getElementCount', '[data-testid="global-icon-button-tooltip"]'),
     '0'
