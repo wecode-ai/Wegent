@@ -21,6 +21,23 @@ const baseOptions = {
 }
 
 describe('createBackendWorkbenchServices', () => {
+  test('reads task snapshots from the addressed owner runtime without listing other tasks', async () => {
+    composerMocks.request.mockResolvedValue({
+      success: true,
+      task: { taskId: 'task-1', runtime: 'codex', workspacePath: '/owner', running: true },
+    })
+    const services = createBackendWorkbenchServices(baseOptions)
+    const address = { deviceId: 'owner-device', taskId: 'task-1', workspacePath: '/owner' }
+    await expect(services.runtimeWorkApi!.getRuntimeTask!(address)).resolves.toMatchObject({
+      taskId: 'task-1',
+      running: true,
+    })
+    expect(composerMocks.request).toHaveBeenCalledExactlyOnceWith(
+      'runtime.tasks.get',
+      address,
+      'owner-device'
+    )
+  })
   test('reads project save confirmation directly from the addressed owner runtime', async () => {
     composerMocks.request.mockResolvedValue({ workspaces: [] })
     const services = createBackendWorkbenchServices(baseOptions)

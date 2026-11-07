@@ -153,16 +153,21 @@ pub(crate) fn get_item_from(
 }
 
 pub(super) fn map_loop_item(connection: &Connection, row: &Row<'_>) -> rusqlite::Result<LoopItem> {
+    let mut item = map_loop_item_fields(row)?;
+    item.metadata = crate::task_runtime::runner_history::metadata(
+        connection,
+        &item.id,
+        &item.resource_type,
+        item.metadata,
+    )?;
+    Ok(item)
+}
+
+pub(super) fn map_loop_item_fields(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
     let metadata = row
         .get::<_, Option<String>>(16)?
         .and_then(|value| serde_json::from_str::<Value>(&value).ok())
         .unwrap_or_else(|| json!({}));
-    let metadata = crate::task_runtime::runner_history::metadata(
-        connection,
-        &row.get::<_, String>(0)?,
-        &row.get::<_, String>(1)?,
-        metadata,
-    )?;
     Ok(LoopItem {
         id: row.get(0)?,
         resource_type: row.get(1)?,
