@@ -51,6 +51,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "turnIdsBySubtask",
     "userMessagePresentations",
     "changeRequests",
+    "conversationSessions",
 ];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 

@@ -396,7 +396,11 @@ impl RuntimeWorkRpcHandler {
         .await
     }
 
-    pub(super) async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
+    pub(super) async fn read_thread_transcript(
+        &self,
+        payload: Value,
+        historical_link: Option<RuntimeTaskLink>,
+    ) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -450,8 +454,12 @@ impl RuntimeWorkRpcHandler {
                 .as_deref()
                 .or(after_cursor.as_deref())
                 .is_some_and(super::transcript_search::is_cached_search_cursor);
-        let (local_link, bounded_native_page) =
-            self.transcript_read_link(&local_task_id, bounded_native);
+        let historical_session = historical_link.is_some();
+        let (local_link, bounded_native_page) = if let Some(link) = historical_link {
+            (Some(link), false)
+        } else {
+            self.transcript_read_link(&local_task_id, bounded_native)
+        };
         let codex_client = match local_link.as_ref() {
             Some(link) => self
                 .codex_app_server
@@ -461,10 +469,11 @@ impl RuntimeWorkRpcHandler {
         .map_err(|error| AppIpcError::new("codex_error", error))?;
         let linked_session_id = local_link.as_ref().and_then(runtime_session_id_from_link);
         let requested_session_id = runtime_session_id_from_payload(&payload);
-        let direct_thread_override = requested_session_id
-            .as_deref()
-            .zip(linked_session_id.as_deref())
-            .is_some_and(|(requested, linked)| requested != linked);
+        let direct_thread_override = historical_session
+            || requested_session_id
+                .as_deref()
+                .zip(linked_session_id.as_deref())
+                .is_some_and(|(requested, linked)| requested != linked);
         let session_id = requested_session_id.or(linked_session_id);
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
@@ -768,7 +777,7 @@ impl RuntimeWorkRpcHandler {
                     .filter(|value| *value > 0)
                     .unwrap_or(CODEX_TRANSCRIPT_PAGE_SIZE)
                     .min(CODEX_TRANSCRIPT_PAGE_SIZE),
-                direction: if after_cursor.is_some() {
+                direction: if after_cursor.is_some() || payload["sessionReadAscending"] == true {
                     CodexTranscriptDirection::Ascending
                 } else {
                     CodexTranscriptDirection::Descending
@@ -880,6 +889,7 @@ impl RuntimeWorkRpcHandler {
             include_full_content,
             conversation_context_only,
             bounded_native_page,
+            historical_session,
         };
         super::super::transcript_work::run(move |cancellation| {
             handler.project_transcript_response(input, cancellation)

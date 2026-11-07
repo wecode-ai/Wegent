@@ -187,6 +187,22 @@ impl RuntimeWorkRpcHandler {
         let event_mapper = route.event_mapper.clone();
         let route_active = route.active;
         let route_nested = route.nested;
+        let closed_session = self
+            .store
+            .read_task(&local_task_id, |link| {
+                super::super::conversation_sessions::is_closed_thread(link, &thread_id)
+                    || (route_nested
+                        && super::super::conversation_sessions::is_identity_conversation(link)
+                        && link.thread_id.as_ref().is_some_and(|current| {
+                            routing.routes.get(current).map_or(true, |current| {
+                                !Arc::ptr_eq(&current.event_mapper, &event_mapper)
+                            })
+                        }))
+            })
+            .unwrap_or(false);
+        if closed_session {
+            return;
+        }
         if route_nested && codex_stream_debug_enabled() {
             let notification = codex_notification(&message);
             log_executor_event(
@@ -360,12 +376,9 @@ impl RuntimeWorkRpcHandler {
         if thread_id.trim().is_empty() {
             return;
         }
-        self.store.update_task(&local_task_id, |link| {
-            if link.thread_id.as_deref() != Some(thread_id) {
-                link.thread_id = Some(thread_id.to_owned());
-            }
-            clear_runtime_handle_messages(&mut link.runtime_handle);
-        });
+        if !self.bind_runtime_thread(&local_task_id, thread_id) {
+            return;
+        }
         let pending_id = pending_thread_event_route_id(&local_task_id);
         let mut routing = self
             .thread_event_routing
@@ -455,15 +468,48 @@ impl RuntimeWorkRpcHandler {
         if thread_id.trim().is_empty() {
             return;
         }
-        self.store.update_task(local_task_id, |link| {
-            if link.thread_id.as_deref() != Some(thread_id) {
+        self.bind_runtime_thread(local_task_id, thread_id);
+    }
+
+    fn bind_runtime_thread(&self, local_task_id: &str, thread_id: &str) -> bool {
+        let mut accepted = true;
+        let durable_switch = self
+            .store
+            .read_task(local_task_id, |link| {
+                super::super::conversation_sessions::is_identity_conversation(link)
+                    && link.thread_id.as_deref() != Some(thread_id)
+            })
+            .unwrap_or(false);
+        let update = |link: &mut RuntimeTaskLink| {
+            let changed = link.thread_id.as_deref() != Some(thread_id);
+            accepted = super::super::conversation_sessions::bind_thread(link, thread_id, now_ms());
+            if !accepted {
+                return;
+            }
+            if changed {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
                 clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
-            link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
-            link.updated_at = now_ms();
-        });
+            if changed {
+                link.updated_at = now_ms();
+            }
+        };
+        if durable_switch {
+            if let Err(error) = self.store.try_update_task(local_task_id, update) {
+                log_executor_event(
+                    "conversation session binding failed",
+                    &[
+                        ("local_task_id", local_task_id.into()),
+                        ("error", error.to_string()),
+                    ],
+                );
+                return false;
+            }
+        } else {
+            self.store.update_task(local_task_id, update);
+        }
+        accepted
     }
 
     pub(super) fn register_thread_event_route_for_link(

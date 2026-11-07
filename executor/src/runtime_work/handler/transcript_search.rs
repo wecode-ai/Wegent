@@ -21,6 +21,21 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn search_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
         let task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        if let Some(link) = self
+            .local_task_link(&task_id)
+            .filter(super::super::conversation_sessions::is_identity_conversation)
+        {
+            return self.search_conversation_sessions(payload, &link).await;
+        }
+        self.search_thread_transcript(payload).await
+    }
+
+    pub(super) async fn search_thread_transcript(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let query = string_field(&payload, "query").unwrap_or_default();
         let limit = integer_field(&payload, "limit")
             .and_then(|value| usize::try_from(value).ok())
@@ -30,7 +45,14 @@ impl RuntimeWorkRpcHandler {
         if query.trim().is_empty() {
             return Ok(transcript_search_response(Vec::new(), 0, false));
         }
-        let link = self.local_task_link(&task_id);
+        let link = self.local_task_link(&task_id).map(|link| {
+            runtime_session_id_from_payload(&payload)
+                .filter(|thread| {
+                    super::super::conversation_sessions::is_closed_thread(&link, thread)
+                })
+                .map(|thread| super::super::conversation_sessions::history_link(&link, &thread))
+                .unwrap_or(link)
+        });
         let linked_session_id = link.as_ref().and_then(runtime_session_id_from_link);
         let requested_session_id = runtime_session_id_from_payload(&payload);
         let direct_thread_override = requested_session_id
