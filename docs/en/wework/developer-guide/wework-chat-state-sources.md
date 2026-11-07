@@ -729,6 +729,25 @@ The desktop workbench caches up to 20 regular panes so messages, composer drafts
 
 The message area stores each task's reading position by `conversationKey`. During a task switch, restoration realigns the saved message anchor throughout the layout stabilization window; programmatic `scroll` events in that window must not overwrite the snapshot. An explicit wheel or touch gesture must cancel restoration immediately. Changes to this path must cover the real desktop flow “scroll to the middle of a long response → switch to another task → switch back” and retain screenshots from before the switch, after the switch, and after restoration.
 
+## Board Refresh Boundaries
+
+My Tasks and local project boards refresh persisted data from relevant execution
+status signatures, never from the global `RuntimeTaskLifecycleStore` version,
+snapshot identity, or a rebuilt task collection. Native execution revisions,
+Goal usage, and timestamps are not Issue status transitions. Unrelated tasks
+must not reload the current project. Local projects reuse the existing
+project-scoped status signature used by cloud projects.
+
+Runtime inventory membership is a presentation projection of the complete board
+snapshot and current bindings. Do not duplicate that filtering in the read path
+or make inventory identity a request dependency. Actual execution transitions,
+binding changes, and existing polling retain their refresh and persistence paths.
+
+The desktop `runtime-task-queue` E2E updates a real Runtime Goal to advance its
+native revision, observes no extra `todos.list` from either local board surface,
+and verifies that real completion still refreshes and persists `in_review`.
+Only model responses are mocked; Runtime events and database state remain real.
+
 ## Project Task Status Synchronization
 
 After a Wework runtime task is bound to a project-space task, the frontend keeps exactly one status synchronization path:
