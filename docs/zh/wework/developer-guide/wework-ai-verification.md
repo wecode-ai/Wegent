@@ -6,6 +6,20 @@ sidebar_position: 39
 
 Wework 支持启动隔离的开发验证会话，让 AI 在真实 Electron 应用中完成 UI 操作和断言。该机制复用桌面端 E2E 的 WebView 控制通道，不会操作外部 Chrome，也不会连接开发者日常使用的 Wework 窗口。
 
+## 空闲 Executor 请求回归
+
+`idle-executor-requests` 使用无任务、断开云端的隔离真实 Electron 和 Executor，复用共享 runner 的首次遥测拒绝流程，然后重新加载主窗口并观测请求。启动后的工作树能力发现、遥测配置和共享 SSE 订阅必须各一次；前台与关闭到后台各观察 6.5 秒，跨过 5 秒轮询周期，要求继续发现待处理交互并保留 Runtime 身份检查，禁止全量任务目录轮询和重复启动配置。异步插件等已知启动请求允许完成，不以固定延时推断启动完成。
+
+同一同步批次的身份描述读取只在尚未发出时共享；操作后的身份校验仍读取新的描述。已确认的本地 Runtime 遥测策略不随空闲轮询重写，Runtime、账户、API 或策略变化时重新同步，失败后重试。工作列表变更仅刷新任务数据，设备发现仍由设备事件和显式刷新负责。工作事件不会取消进行中的完整云端同步，而是合并为同步完成后的一次最新任务读取；bootstrap 的设备与团队同步也不会因任务读取版本变化而丢失。
+
+恢复最近项目必须等待本地工作列表结束初始加载；先到达的云端合成列表不能消耗这次恢复机会。设备或云端目录可独立发布，不能将其到达误判为本地项目已经就绪。
+
+```bash
+pnpm --filter wework e2e:desktop --segment idle-executor-requests
+```
+
+检查点注册在现有 Core CI 分片，独立运行不依赖前序场景。本地 macOS arm64 验证含启动与清理耗时约 52 秒，共享构建另计。结果目录的 `idle-executor-requests.json` 只保存方法名、时间、状态和必要布尔标志，不保存请求参数、头或查询字符串；日志和截图不得提交。
+
 ## 插件周期恢复 E2E
 
 `plugin-periodic-reconcile` checkpoint 使用真实 Electron、Executor、Socket.IO、数据库和插件包存储，丢弃一次真实插件变更通知后，验证定时对账恢复状态、持久化 ACK、设备身份以及未受影响插件的内容。测试实例设置 `LOCAL_PLUGIN_RECONCILE_INTERVAL=90`、`LOCAL_PLUGIN_RECONCILE_JITTER=18`（单位为秒），并用已有的 `LOCAL_HEARTBEAT_INTERVAL=1` 保留至少 10 次心跳的活性断言。90 秒基础周期为注册后的插件准备流程保留时间，避免准备阶段消耗首个对账周期。

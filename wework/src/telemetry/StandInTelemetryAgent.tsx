@@ -1,7 +1,7 @@
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import { telemetryExecutionTarget } from './executionTarget'
 import type { ExecutionTarget } from './events'
-import { useContext, useEffect } from 'react'
+import { useContext, useEffect, useRef } from 'react'
 import { useNotificationTaskSource } from '@/features/notifications/NotificationTaskSourceContext'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
@@ -29,6 +29,12 @@ export function StandInTelemetryAgent() {
   const userId = cloud?.user?.id ?? source?.userId
   const accountKey = JSON.stringify([cloud?.apiBaseUrl ?? 'local', userId])
   const api = source?.services?.standInApi
+  const localRuntimeConfiguration = useRef<{
+    api: typeof api
+    key: string
+    target: string | null
+    promise: Promise<unknown>
+  } | null>(null)
   const identity = source?.services?.getLocalRuntimeSidebarIdentity
   const devices = JSON.stringify(
     (source?.devices ?? [])
@@ -64,7 +70,46 @@ export function StandInTelemetryAgent() {
           const delivery = createStandInDelivery(`${accountKey}:${deviceId}`)
           if (!policy) delivery.clear()
           try {
-            await api.configureTelemetry(userId, deviceId, policy, standInCollectionSince())
+            const enabledSince = standInCollectionSince()
+            const localTarget =
+              deviceId === local.deviceId && local.runtimeInstanceId
+                ? JSON.stringify([accountKey, deviceId, local.runtimeInstanceId])
+                : null
+            const localRuntime = localTarget
+              ? JSON.stringify([localTarget, policy, enabledSince])
+              : null
+            const previousConfiguration = localRuntimeConfiguration.current
+            // Consent is durable. Reapply it for a new local Runtime, not every
+            // delivery poll; remote devices have no freshly verified instance here.
+            if (
+              !localRuntime ||
+              previousConfiguration?.api !== api ||
+              previousConfiguration.key !== localRuntime
+            ) {
+              // A late old policy must not overwrite an acknowledged refusal.
+              const previousWrite =
+                localTarget && previousConfiguration?.target === localTarget
+                  ? previousConfiguration.promise.catch(() => undefined)
+                  : Promise.resolve()
+              const configuration = {
+                api,
+                key: localRuntime ?? '',
+                target: localTarget,
+                promise: previousWrite.then(() =>
+                  api.configureTelemetry(userId, deviceId, policy, enabledSince)
+                ),
+              }
+              if (localRuntime) localRuntimeConfiguration.current = configuration
+              try {
+                await configuration.promise
+              } catch (error) {
+                if (localRuntimeConfiguration.current === configuration)
+                  localRuntimeConfiguration.current = null
+                throw error
+              }
+            } else {
+              await previousConfiguration.promise
+            }
             if (!active || !policy) continue
             await delivery.collect(api, userId, deviceId, () => active, location)
             if (!active) return
