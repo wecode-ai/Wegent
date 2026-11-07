@@ -48,9 +48,12 @@ export function useStandInInstance(
         setStoppedProfile(profile)
       }
       if (value.status === 'unbound') {
-        const owned = await api.personalGet(userId, identity.deviceId)
-        const local =
-          userId === LOCAL_USER.id ? owned : await api.personalGet(LOCAL_USER.id, identity.deviceId)
+        const [owned, local] = await Promise.all([
+          api.personalGet(userId, identity.deviceId),
+          userId === LOCAL_USER.id
+            ? Promise.resolve(undefined)
+            : api.personalGet(LOCAL_USER.id, identity.deviceId),
+        ])
         if (!current) return
         const configured = (settings: typeof owned) =>
           Boolean(
@@ -66,7 +69,7 @@ export function useStandInInstance(
             settings.primary?.prompt ||
             settings.primary?.preferences
           )
-        const localOwner = !initialDeviceId && !configured(owned) && configured(local)
+        const localOwner = !initialDeviceId && !configured(owned) && !!local && configured(local)
         const available = connected ? availableStandInDevices(devices) : []
         const preferred = available.find(device => device.is_default) ?? available[0]
         const target = {

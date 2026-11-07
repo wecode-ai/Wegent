@@ -66,6 +66,7 @@ export function StandInOverviewPage({
   onSelectLocation,
   initialSelectedRoleId,
   headerActions,
+  localDeviceId,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -77,10 +78,16 @@ export function StandInOverviewPage({
   onSelectLocation?(deviceId: string, roleId?: string, openSettings?: boolean): void
   initialSelectedRoleId?: string
   headerActions?: ReactNode
+  localDeviceId?: string
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId)
+  const state = usePersonalStandIn(
+    props.services,
+    props.userId,
+    props.initialDeviceId,
+    localDeviceId
+  )
   const { saved, setDraft, reload } = state
   const [roleId, setRoleId] = useState<string | undefined>(
     props.initialProfileId === '@primary'
@@ -169,7 +176,7 @@ export function StandInOverviewPage({
     deviceId ?? '',
     active && !!deviceId
   )
-  const inbox = useStandInInbox(api, props.userId, deviceId)
+  const inbox = useStandInInbox(api, props.userId, deviceId, active)
   useEffect(
     () =>
       subscribePersonalStandIn(value => {
@@ -181,28 +188,28 @@ export function StandInOverviewPage({
     [props.userId, deviceId, setDraft, reload]
   )
   useEffect(() => {
-    if (!api || !deviceId) return
-    let active = true
+    if (!active || !api || !deviceId) return
+    let current = true
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
       try {
         const next = await api.proposal(props.userId, deviceId, roleId)
-        if (active) {
+        if (current) {
           setProposal(next)
           setProposalError(null)
         }
       } catch (cause) {
-        if (active) setProposalError(getStandInErrorMessage(cause))
+        if (current) setProposalError(getStandInErrorMessage(cause))
       } finally {
-        if (active) timer = setTimeout(poll, 3000)
+        if (current) timer = setTimeout(poll, 3000)
       }
     }
     void poll()
     return () => {
-      active = false
+      current = false
       clearTimeout(timer)
     }
-  }, [api, deviceId, props.userId, roleId])
+  }, [active, api, deviceId, props.userId, roleId])
   const roles = state.draft?.roles ?? []
   const role = roles.find(value => value.id === roleId)
   useStandInOpened(

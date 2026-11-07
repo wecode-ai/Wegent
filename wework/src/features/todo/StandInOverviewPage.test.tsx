@@ -133,6 +133,40 @@ async function openRoles() {
   expect(selector).toBeVisible()
 }
 
+it('returns immediately while settings refresh in the background and pauses hidden polling', async () => {
+  const { props } = fixture()
+  const view = render(<StandInOverviewPage {...props} initialDeviceId="device" />)
+  await openRoles()
+  const api = props.services.standInApi!
+  expect(api.personalGet).toHaveBeenCalledOnce()
+  const conversation = screen.getByTestId('identity-conversation')
+  view.rerender(<StandInOverviewPage {...props} initialDeviceId="device" active={false} />)
+  vi.mocked(api.inbox).mockClear()
+  vi.mocked(api.proposal).mockClear()
+  vi.useFakeTimers()
+  try {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000)
+    })
+    expect(api.inbox).not.toHaveBeenCalled()
+    expect(api.proposal).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
+  view.rerender(<StandInOverviewPage {...props} initialDeviceId="device" active />)
+  vi.mocked(api.personalGet).mockImplementationOnce(() => new Promise(() => {}))
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in' },
+      })
+    )
+  })
+  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+})
+
 it('places instance lifecycle actions at the right end of the role header outside the scrolling tabs', async () => {
   const { props } = fixture()
   render(
