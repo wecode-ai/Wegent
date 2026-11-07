@@ -277,6 +277,8 @@ export class ReleaseStore {
     await this.updateRollbackHistory(history =>
       history.filter(record => record.version !== healthy.version)
     )
+    // Full target health supersedes a handoff left by an older source launcher.
+    if (healthy.macosInstallation) await rm(join(this.root, 'macos-rollback'), { force: true })
     await atomicReleaseWrite(
       join(this.root, 'bridge'),
       healthy.macosInstallation?.payloadExecutable ?? healthy.executable
@@ -360,6 +362,9 @@ export class ReleaseStore {
         activation.snapshot
       )
     }
+    // Selection can finish before the native installer restores physical Contents.
+    if (previous.macosInstallation)
+      await atomicReleaseWrite(join(this.root, 'macos-rollback'), previous.id)
     await atomicReleaseWrite(join(this.root, 'active'), previous.id)
     await atomicReleaseWrite(
       join(this.root, 'bridge'),

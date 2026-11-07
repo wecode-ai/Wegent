@@ -1,4 +1,7 @@
-import { copyDshBrowserAuthentication } from '../runtime/dsh-browser-auth.js'
+import {
+  copyDshBrowserAuthentication,
+  dshBrowserRequestHeaders,
+} from '../runtime/dsh-browser-auth.js'
 import {
   app,
   BrowserWindow,
@@ -20,7 +23,7 @@ import {
   type BrowserHistorySearch,
 } from './browser-history-store.js'
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
-import { prepareLocalFileNavigation } from './local-file-preview.js'
+import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import { withDebuggerSession } from './debugger-session.js'
 import {
   BrowserDeviceMetricsController,
@@ -217,6 +220,36 @@ export class EmbeddedBrowserManager {
     contents.on('will-redirect', handleNavigation)
   }
 
+  private interceptLocalFileNavigation(entry: BrowserEntry): void {
+    const handleNavigation = (
+      event: Electron.Event,
+      url: string,
+      _isInPlace?: boolean,
+      isMainFrame?: boolean
+    ) => {
+      // Directory previews are generated local HTML pages; only their file links need re-routing.
+      // Remote pages must never turn a redirect into a host-driven local file load.
+      const currentUrl = entry.contents.getURL()
+      if (isMainFrame === false || !url.startsWith('file:') || !currentUrl.startsWith('file:')) {
+        return
+      }
+      if (url === entry.previewDisplayUrl || isGeneratedLocalFilePreview(url)) {
+        return
+      }
+      event.preventDefault()
+      void this.navigate(entry.label, url).catch(error => {
+        this.recordNavigationFailure(
+          entry,
+          -2,
+          error instanceof Error ? error.message : String(error),
+          url
+        )
+      })
+    }
+    entry.contents.on('will-navigate', handleNavigation)
+    entry.contents.on('will-redirect', handleNavigation)
+  }
+
   setRequestHeaderRule(rule: BrowserRequestHeaderRule): void {
     validateRequestHeaderRule(rule)
     this.requestHeaderRules.set(rule.id, structuredClone(rule))
@@ -336,7 +369,7 @@ export class EmbeddedBrowserManager {
         next = { ...next, ...rule.headers }
       }
     }
-    return next
+    return dshBrowserRequestHeaders(rawUrl, next)
   }
 
   private requiredBackgroundPage(id: string) {
@@ -470,6 +503,7 @@ export class EmbeddedBrowserManager {
       return { action: 'deny' }
     })
     this.interceptWeworkNavigation(contents)
+    this.interceptLocalFileNavigation(entry)
     const emitPageState = () => this.emitPageState(entry)
     contents.on('did-start-loading', emitPageState)
     contents.on('did-stop-loading', emitPageState)

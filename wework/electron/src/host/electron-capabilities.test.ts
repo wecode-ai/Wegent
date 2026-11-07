@@ -483,6 +483,19 @@ function createIsolatedClipboardRouter(
   return { router, targetWindow, notificationNavigation }
 }
 
+describe('external browser capability', () => {
+  test('routes explicit browser opens through the host and keeps unsafe protocols rejected', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'browser.openExternal', {
+      url: 'https://example.com/',
+    })
+    expect(electronMocks.shellOpenExternal).toHaveBeenCalledWith('https://example.com/')
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'browser.openExternal', { url: 'javascript:alert(1)' })
+    ).rejects.toThrow()
+  })
+})
+
 describe('Process explorer capabilities', () => {
   test('stays read-only', () => {
     expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')

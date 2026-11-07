@@ -1,0 +1,37 @@
+[package]
+name = "wegent-remote-workspace"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Remote workspace authorization, status, file transport, and projections"
+
+[dependencies]
+wegent-identity = { path = "../identity" }
+wegent-http-compat = { path = "../http-compat" }
+wegent-python-compat = { path = "../python-compat" }
+wegent-resource-store = { path = "../resource-store" }
+wegent-directory = { path = "../directory" }
+wegent-access = { path = "../access" }
+wegent-task-store = { path = "../task-store" }
+wegent-capabilities = { path = "../capabilities" }
+wegent-executor-manager = { path = "../executor-manager" }
+wegent-media = { path = "../media" }
+anyhow = "1"
+async-trait = "0.1"
+brz-http = { version = "=0.0.14", features = ["json"] }
+brz-http-server = { version = "=0.0.33", features = ["macros"] }
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
+brz-json = "=0.0.11"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+jsonwebtoken = { version = "9.3", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+base64 = "0.23.1"
+wegent-backend-test-support = { path = "../test-support" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }

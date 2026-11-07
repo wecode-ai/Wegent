@@ -28,7 +28,7 @@ import {
   retainReleaseProfile,
 } from '../runtime/release-profile.js'
 import type { ComponentPaths } from '../runtime/component-update-manager.js'
-import { restoreReleaseData, snapshotReleaseData } from '../runtime/release-snapshot.js'
+import { snapshotReleaseData } from '../runtime/release-snapshot.js'
 import { verifyReleaseSignature } from '../runtime/release-signature.js'
 import { extractPhysicalRelease, removePhysicalRelease } from '../runtime/physical-release-files.js'
 import { preparationStep } from '../runtime/release-preparation.js'
@@ -389,10 +389,14 @@ export class AppUpdateService {
   private async registerInstalledRelease(): Promise<void> {
     const store = this.options.store
     const current = await store.active()
-    if (current && !current.id.startsWith('installed-')) return
+    const runningRelease = current?.version === this.options.currentVersion
+    if (runningRelease && !current.id.startsWith('installed-')) return
     const components = await this.options.runningComponents?.()
     if (!components) throw new Error('The running release component composition is unavailable')
-    const id = current?.id ?? `installed-${this.options.currentVersion}-${randomUUID()}`
+    const id = runningRelease
+      ? current.id
+      : `installed-${this.options.currentVersion}-${randomUUID()}`
+    const retainedRelease = runningRelease ? current.retainedRelease : current?.id
     const release: DesktopRelease = {
       schemaVersion: 1,
       id,
@@ -404,10 +408,14 @@ export class AppUpdateService {
       profileRoot: await realpath(currentCoreProfile(this.options.dataDirectory)),
       dataSchema: this.options.dataSchema,
       readableDataSchemas: this.options.readableDataSchemas,
+      ...(retainedRelease ? { retainedRelease } : {}),
     }
     await store.save(release)
     await atomicReleaseWrite(join(store.slot(id), 'prepared.json'), JSON.stringify({ components }))
     await atomicReleaseWrite(join(store.root, 'bridge'), this.options.executable)
+    if (current && !runningRelease) {
+      await rm(join(store.root, 'previousHealthy'), { force: true })
+    }
     await atomicReleaseWrite(join(store.root, 'active'), id)
   }
 
@@ -543,7 +551,7 @@ export class AppUpdateService {
   async previousRelease(): Promise<{ version: string; restoreRequired: boolean } | null> {
     const previousId = await optionalText(join(this.options.store.root, 'previousHealthy'))
     const current = await this.options.store.active()
-    if (!previousId || !current) return null
+    if (!previousId || !current || current.version !== this.options.currentVersion) return null
     const previous = await this.options.store.read(previousId)
     return {
       version: previous.version,
@@ -573,14 +581,8 @@ export class AppUpdateService {
           await atomicReleaseWrite(join(store.root, 'rollback-interrupted'), activation.token)
           process.exit(3)
         }
-        if (activation.restoreRequired)
-          await restoreReleaseData(
-            this.options.dataDirectory,
-            store.root,
-            activation.snapshot,
-            process.env.WEGENT_EXECUTOR_HOME?.trim() || this.options.dataDirectory
-          )
-        await store.rollback()
+        // Bootstrap resumes this journal before restoring data and selecting the
+        // retained host. Clearing it here would turn rollback into ordinary startup.
         this.options.restart()
       })()
         .catch(error => {

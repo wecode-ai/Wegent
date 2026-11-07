@@ -84,7 +84,7 @@ export function RecentSection({
   const clearButton =
     items.length > 0 ? (
       <button
-        className="p-1 rounded hover:bg-muted text-text-muted hover:text-text-primary transition-colors"
+        className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 flex items-center justify-center rounded hover:bg-muted text-text-muted hover:text-text-primary transition-colors"
         onClick={onClear}
         title={t('document.sidebar.clearRecent', '清除最近访问')}
         data-testid="clear-recent-button"
@@ -108,7 +108,7 @@ export function RecentSection({
           {t('document.sidebar.noRecent', '暂无最近访问')}
         </div>
       ) : (
-        <div className="space-y-0.5">
+        <div>
           {itemsWithTime.map(({ kb, timeText }) => (
             <KbItem
               key={kb.id}

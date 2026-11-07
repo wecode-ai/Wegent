@@ -10,6 +10,9 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import client, { ApiError } from '@/apis/client'
+import { useTranslation } from '@/hooks/useTranslation'
+import { collectNavigationKnowledge, type NavigationKnowledgeBase } from '../navigation'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
@@ -56,9 +59,9 @@ export type { KbGroupInfo } from '@/types/knowledge'
 
 export interface VisibleKnowledgeBases {
   all: KnowledgeBase[]
-  allWithGroupInfo: KnowledgeBaseWithGroupInfo[]
-  personalCreatedByMe: KnowledgeBaseWithGroupInfo[]
-  personalSharedWithMe: KnowledgeBaseWithGroupInfo[]
+  allWithGroupInfo: NavigationKnowledgeBase[]
+  personalCreatedByMe: NavigationKnowledgeBase[]
+  personalSharedWithMe: NavigationKnowledgeBase[]
 }
 
 export interface UseKnowledgeSidebarReturn {
@@ -77,13 +80,14 @@ export interface UseKnowledgeSidebarReturn {
   // Groups
   groups: KnowledgeGroup[]
   isGroupsLoading: boolean
-  hasLoadError: boolean
 
   // Selection
   selectedKbId: number | null
   selectedGroupId: string | null
   selectedSourceViewId: string | null
   selectedKb: KnowledgeBase | null
+  detailRequest: { kbId: number; status: 'loading' | 'ready' | 'error' } | null
+  retrySelectedKb: () => void
   selectKb: (kb: KnowledgeBase) => void
   syncKnowledgeBase: (kb: KnowledgeBase) => void
   syncConvertedKnowledgeBase: (kb: KnowledgeBase) => void
@@ -91,6 +95,7 @@ export interface UseKnowledgeSidebarReturn {
   selectGroups: () => void
   selectSourceView: (sourceViewId: string) => void
   clearSelection: () => void
+  removeInaccessibleKnowledgeBase: (kbId: number) => void
 
   // View mode
   viewMode: ViewMode
@@ -99,9 +104,8 @@ export interface UseKnowledgeSidebarReturn {
   setFilterGroupId: (groupId: string | null) => void
 
   // Raw KBs for navigation and ID lookups
-  organizationKnowledgeBases: KnowledgeBase[]
   allKnowledgeBases: KnowledgeBase[]
-  allKnowledgeBasesWithGroupInfo: KnowledgeBaseWithGroupInfo[]
+  allKnowledgeBasesWithGroupInfo: NavigationKnowledgeBase[]
   // Filtered KBs for display
   visibleKnowledgeBases: VisibleKnowledgeBases
 
@@ -119,6 +123,10 @@ export interface UseKnowledgeSidebarReturn {
     organization_count: number
   }
 
+  scopeKey: string
+  loadError: string | null
+  listRevision: number
+  hasLoaded: boolean
   // Refresh
   refreshAll: () => Promise<void>
 }
@@ -126,9 +134,9 @@ export interface UseKnowledgeSidebarReturn {
 /**
  * Load recent access from localStorage
  */
-function loadRecentAccess(): RecentAccessItem[] {
+function loadRecentAccess(key: string): RecentAccessItem[] {
   try {
-    const saved = localStorage.getItem(RECENT_STORAGE_KEY)
+    const saved = localStorage.getItem(key)
     return saved ? JSON.parse(saved) : []
   } catch {
     return []
@@ -138,9 +146,9 @@ function loadRecentAccess(): RecentAccessItem[] {
 /**
  * Save recent access to localStorage
  */
-function saveRecentAccess(items: RecentAccessItem[]) {
+function saveRecentAccess(key: string, items: RecentAccessItem[]) {
   try {
-    localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(items))
+    localStorage.setItem(key, JSON.stringify(items))
   } catch {
     // Ignore storage errors
   }
@@ -190,20 +198,32 @@ export function useKnowledgeSidebar({
   showAdvancedKnowledge?: boolean
 } = {}): UseKnowledgeSidebarReturn {
   const { user } = useUser()
+  const { t } = useTranslation('knowledge')
+  const scope = JSON.stringify([user?.id, client.getCacheScope()])
+  const recentKey = `${RECENT_STORAGE_KEY}:${scope}`
+  const scopeRef = useRef(scope)
+  scopeRef.current = scope
+  const [stateScope, setStateScope] = useState(scope)
+  const requestRef = useRef(0)
+  const latestSelectedKbIdRef = useRef<number | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [listRevision, setListRevision] = useState(0)
+  const [hasLoaded, setHasLoaded] = useState(false)
 
   // Data state - using the new all-grouped API response
   const [allGroupedData, setAllGroupedData] = useState<AllGroupedKnowledgeResponse | null>(null)
 
   // Loading state
   const [isLoading, setIsLoading] = useState(true)
-  const [hasLoadError, setHasLoadError] = useState(false)
   const [isFavoritesLoading, setIsFavoritesLoading] = useState(false)
 
   // Favorites state (will be loaded from API when backend is ready)
   const [favorites, setFavorites] = useState<KnowledgeBase[]>([])
 
   // Recent access state
-  const [recentAccessItems, setRecentAccessItems] = useState<RecentAccessItem[]>(loadRecentAccess)
+  const [recentAccessItems, setRecentAccessItems] = useState<RecentAccessItem[]>(() =>
+    loadRecentAccess(recentKey)
+  )
 
   // Selection state
   const [selectedKbId, setSelectedKbId] = useState<number | null>(null)
@@ -211,84 +231,90 @@ export function useKnowledgeSidebar({
   const [selectedSourceViewId, setSelectedSourceViewId] = useState<string | null>(null)
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
 
+  const [detailRequest, setDetailRequest] = useState<{
+    kbId: number
+    status: 'loading' | 'ready' | 'error'
+  } | null>(null)
+  const detailVersion = useRef(0)
+
   // View mode state
   const [viewMode, setViewMode] = useState<ViewMode>('all')
   const [filterGroupId, setFilterGroupId] = useState<string | null>(null)
 
-  // Load initial data using the optimized all-grouped API
-  const loadInitialData = useCallback(async () => {
+  if (stateScope !== scope) {
+    latestSelectedKbIdRef.current = null
+    setDetailRequest(null)
+    detailVersion.current++
+    setStateScope(scope)
+    setAllGroupedData(null)
+    setSelectedKbId(null)
+    setSelectedKb(null)
+    setSelectedGroupId(null)
+    setSelectedSourceViewId(null)
+    setViewMode('all')
+    setFilterGroupId(null)
+    setFavorites([])
+    setRecentAccessItems(loadRecentAccess(recentKey))
     setIsLoading(true)
-    setHasLoadError(false)
+    setHasLoaded(false)
+    setListRevision(0)
+    setLoadError(null)
+  }
+
+  const loadInitialData = useCallback(async () => {
+    if (scopeRef.current !== scope) return
+    const request = ++requestRef.current
+    const current = () => scopeRef.current === scope && requestRef.current === request
+    setIsLoading(true)
+    setLoadError(null)
     try {
       const response = await knowledgeBaseApi.getAllGrouped()
+      if (!current()) return
       setAllGroupedData(response)
+      setHasLoaded(true)
+      setListRevision(value => value + 1)
+      const ids = new Set(collectNavigationKnowledge(response).map(kb => kb.id))
+      if (latestSelectedKbIdRef.current !== null && !ids.has(latestSelectedKbIdRef.current))
+        latestSelectedKbIdRef.current = null
+      setSelectedKb(prev => (prev && ids.has(prev.id) ? prev : null))
+      setSelectedKbId(prev => (prev !== null && ids.has(prev) ? prev : null))
     } catch (error) {
-      setHasLoadError(true)
-      console.error('Failed to load knowledge sidebar data:', error)
+      if (current()) setLoadError(error instanceof Error ? error.message : String(error))
     } finally {
-      setIsLoading(false)
+      if (current()) setIsLoading(false)
     }
-  }, [])
+  }, [scope])
 
   useEffect(() => {
-    if (user) {
-      loadInitialData()
+    if (user) void loadInitialData()
+    else setIsLoading(false)
+    return () => {
+      requestRef.current++
     }
-  }, [user, loadInitialData])
+  }, [user?.id, loadInitialData])
 
-  // Build all knowledge bases with group info list
-  const allKnowledgeBasesWithGroupInfo = useMemo((): KnowledgeBaseWithGroupInfo[] => {
-    if (!allGroupedData) return []
-
-    const all: KnowledgeBaseWithGroupInfo[] = [
-      ...allGroupedData.personal.created_by_me,
-      ...allGroupedData.personal.shared_with_me,
-      ...allGroupedData.groups.flatMap(g => g.knowledge_bases),
-      ...allGroupedData.organization.knowledge_bases,
-    ]
-
-    // Remove duplicates by (id, group_id) so the same KB can appear in different groups
-    const seen = new Set<string>()
-    const deduped = all.filter(kb => {
-      const key = `${kb.id}-${kb.group_id}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-
-    // Sort by updated_at DESC globally (most recent first)
-    return deduped.sort((a, b) => {
-      const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0
-      const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0
-      return bTime - aTime
-    })
-  }, [allGroupedData])
-
-  const organizationKnowledgeBases = useMemo(
-    () => (allGroupedData?.organization.knowledge_bases || []).map(toKnowledgeBase),
+  const allKnowledgeBasesWithGroupInfo = useMemo(
+    () => (allGroupedData ? collectNavigationKnowledge(allGroupedData) : []),
     [allGroupedData]
   )
-
-  // Build all knowledge bases list for search (without group info)
-  const allKnowledgeBases = useMemo((): KnowledgeBase[] => {
-    // Dedupe by id for search/recent items
-    const seen = new Set<number>()
-    return allKnowledgeBasesWithGroupInfo
-      .filter(kb => {
-        if (seen.has(kb.id)) return false
-        seen.add(kb.id)
-        return true
-      })
-      .map(toKnowledgeBase)
-  }, [allKnowledgeBasesWithGroupInfo])
-
-  const personalCreatedByMeRaw = useMemo((): KnowledgeBaseWithGroupInfo[] => {
-    return allGroupedData?.personal.created_by_me || []
-  }, [allGroupedData])
-
-  const personalSharedWithMeRaw = useMemo((): KnowledgeBaseWithGroupInfo[] => {
-    return allGroupedData?.personal.shared_with_me || []
-  }, [allGroupedData])
+  const allKnowledgeBases = useMemo(
+    () => allKnowledgeBasesWithGroupInfo.map(toKnowledgeBase),
+    [allKnowledgeBasesWithGroupInfo]
+  )
+  const personalCreatedByMeRaw = useMemo(
+    () =>
+      allKnowledgeBasesWithGroupInfo.filter(
+        kb => kb.user_id === user?.id && kb.namespace_level !== 'organization'
+      ),
+    [allKnowledgeBasesWithGroupInfo, user?.id]
+  )
+  const personalSharedWithMeRaw = useMemo(
+    () =>
+      allKnowledgeBasesWithGroupInfo.filter(
+        kb => kb.user_id !== user?.id && kb.namespace_level !== 'organization'
+      ),
+    [allKnowledgeBasesWithGroupInfo, user?.id]
+  )
 
   const visibleKnowledgeBases = useMemo<VisibleKnowledgeBases>(
     () => ({
@@ -315,94 +341,45 @@ export function useKnowledgeSidebar({
     ]
   )
 
-  // Build a map from KB ID to group info for quick lookup
-  const kbGroupInfoMap = useMemo((): Map<number, KbGroupInfo> => {
-    const map = new Map<number, KbGroupInfo>()
-    allKnowledgeBasesWithGroupInfo.forEach(kb => {
-      map.set(kb.id, {
-        groupId: kb.group_id,
-        groupName: kb.group_name,
-        groupType: kb.group_type,
-      })
-    })
-    return map
-  }, [allKnowledgeBasesWithGroupInfo])
-
-  // Get group info for a KB (accepts both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   const getKbGroupInfo = useCallback(
     (kb: KbDataItem): KbGroupInfo => {
-      // If kb has source_group (entity-authorized shared KB), show the source group
-      if ('source_group' in kb && kb.source_group) {
-        return {
-          groupId: 'shared',
-          groupName: kb.source_group,
-          groupType: 'personal-shared',
-        }
-      }
-
-      // If kb already has group info (KnowledgeBaseWithGroupInfo), use it directly
-      if ('group_id' in kb && 'group_name' in kb && 'group_type' in kb) {
-        return {
-          groupId: kb.group_id,
-          groupName: kb.group_name,
-          groupType: kb.group_type,
-        }
-      }
-
-      // Otherwise, look up from the map
-      const info = kbGroupInfoMap.get(kb.id)
-      if (info) return info
-
-      // Fallback: determine group info from namespace
-      if (kb.namespace === 'default') {
-        return {
-          groupId: 'default',
-          groupName: '个人',
-          groupType: 'personal',
-        }
-      }
+      const row = allKnowledgeBasesWithGroupInfo.find(item => item.id === kb.id)
       return {
         groupId: kb.namespace,
-        groupName: kb.namespace,
-        groupType: 'group',
+        groupName:
+          row?.namespace_display_name ||
+          t(
+            kb.namespace === 'default'
+              ? 'document.navigation.personalSpace'
+              : 'document.navigation.unknownSpace'
+          ),
+        groupType:
+          row?.namespace_level === 'organization'
+            ? 'organization'
+            : row?.namespace_level === 'personal'
+              ? 'personal'
+              : row?.namespace_level === 'group'
+                ? 'group'
+                : 'unknown',
       }
     },
-    [kbGroupInfoMap]
+    [allKnowledgeBasesWithGroupInfo, t]
   )
 
   const visibleCounts = useMemo(() => {
-    const totalKbIds = new Set<number>()
-    const personalKbIds = new Set<number>()
-    const groupKbIds = new Set<number>()
-    const organizationKbIds = new Set<number>()
-    const groupIds = new Map<string, Set<number>>(
-      allGroupedData?.groups.map(group => [group.group_name, new Set<number>()]) ?? []
-    )
-
-    visibleKnowledgeBases.allWithGroupInfo.forEach(kb => {
-      totalKbIds.add(kb.id)
-
-      if (kb.group_type === 'personal' || kb.group_type === 'personal-shared') {
-        personalKbIds.add(kb.id)
-      } else if (kb.group_type === 'group') {
-        groupKbIds.add(kb.id)
-        const ids = groupIds.get(kb.group_id) ?? new Set<number>()
-        ids.add(kb.id)
-        groupIds.set(kb.group_id, ids)
-      } else if (kb.group_type === 'organization') {
-        organizationKbIds.add(kb.id)
-      }
-    })
-
+    const rows = visibleKnowledgeBases.allWithGroupInfo
     return {
       groupCounts: new Map(
-        Array.from(groupIds, ([groupName, ids]) => [groupName, ids.size] as const)
+        allGroupedData?.groups.map(group => [
+          group.group_name,
+          rows.filter(kb => kb.team_ids?.includes(group.group_name)).length,
+        ]) ?? []
       ),
       summary: {
-        total_count: totalKbIds.size,
-        personal_count: personalKbIds.size,
-        group_count: groupKbIds.size,
-        organization_count: organizationKbIds.size,
+        total_count: rows.length,
+        personal_count: visibleKnowledgeBases.personalCreatedByMe.length,
+        group_count: rows.filter(kb => kb.team_ids?.length).length,
+        organization_count: rows.filter(kb => kb.namespace_level === 'organization').length,
       },
     }
   }, [allGroupedData, visibleKnowledgeBases])
@@ -418,18 +395,37 @@ export function useKnowledgeSidebar({
       id: 'personal',
       type: 'personal',
       name: 'personal',
-      displayName: '个人',
+      displayName: t('document.navigation.personalSpace'),
       kbCount: visibleCounts.summary.personal_count,
     })
 
-    // Team groups
-    allGroupedData.groups.forEach(group => {
+    result.push({
+      id: 'shared',
+      type: 'personal',
+      name: 'shared',
+      displayName: t('document.navigation.shared'),
+      kbCount: visibleKnowledgeBases.personalSharedWithMe.length,
+    })
+
+    const companyNamespaces = new Set([
+      allGroupedData.organization.namespace,
+      ...allKnowledgeBasesWithGroupInfo
+        .filter(kb => kb.namespace_level === 'organization')
+        .map(kb => kb.namespace),
+    ])
+    const teamNames = new Map(
+      allGroupedData.groups
+        .filter(group => !companyNamespaces.has(group.group_name))
+        .map(group => [group.group_name, group.group_display_name || group.group_name])
+    )
+    teamNames.forEach((displayName, name) => {
       result.push({
-        id: `group-${group.group_name}`,
+        id: 'group-' + name,
         type: 'group',
-        name: group.group_name,
-        displayName: group.group_display_name || group.group_name,
-        kbCount: visibleCounts.groupCounts.get(group.group_name) ?? 0,
+        name,
+        displayName,
+        kbCount: visibleKnowledgeBases.allWithGroupInfo.filter(kb => kb.team_ids?.includes(name))
+          .length,
       })
     })
 
@@ -438,12 +434,12 @@ export function useKnowledgeSidebar({
       id: 'organization',
       type: 'organization',
       name: allGroupedData.organization.namespace || 'organization',
-      displayName: allGroupedData.organization.display_name || '公司',
+      displayName: allGroupedData.organization.display_name || t('document.navigation.company'),
       kbCount: visibleCounts.summary.organization_count,
     })
 
     return result
-  }, [allGroupedData, visibleCounts])
+  }, [allGroupedData, allKnowledgeBasesWithGroupInfo, visibleCounts, visibleKnowledgeBases, t])
 
   // Convert recent access items to KnowledgeBase objects
   const recentItems = useMemo(() => {
@@ -497,34 +493,42 @@ export function useKnowledgeSidebar({
   }, [])
 
   // Recent access management
-  const addRecentAccess = useCallback((kb: KnowledgeBase) => {
-    setRecentAccessItems(prev => {
-      const filtered = prev.filter(item => item.kbId !== kb.id)
-      const newItem: RecentAccessItem = {
-        kbId: kb.id,
-        kbName: kb.name,
-        kbType: documentViewOf(kb.kb_type) ?? 'notebook',
-        namespace: kb.namespace,
-        accessedAt: Date.now(),
-      }
-      const updated = [newItem, ...filtered].slice(0, MAX_RECENT_ITEMS)
-      saveRecentAccess(updated)
-      return updated
-    })
-  }, [])
+  const addRecentAccess = useCallback(
+    (kb: KnowledgeBase) => {
+      setRecentAccessItems(prev => {
+        const filtered = prev.filter(item => item.kbId !== kb.id)
+        const newItem: RecentAccessItem = {
+          kbId: kb.id,
+          kbName: kb.name,
+          kbType: documentViewOf(kb.kb_type) ?? 'notebook',
+          namespace: kb.namespace,
+          accessedAt: Date.now(),
+        }
+        const updated = [newItem, ...filtered].slice(0, MAX_RECENT_ITEMS)
+        saveRecentAccess(recentKey, updated)
+        return updated
+      })
+    },
+    [recentKey]
+  )
 
   const clearRecentAccess = useCallback(() => {
     setRecentAccessItems([])
-    saveRecentAccess([])
-  }, [])
-
-  // Ref to track the latest intended KB selection, used to discard stale async responses
-  const latestSelectedKbIdRef = useRef<number | null>(null)
+    saveRecentAccess(recentKey, [])
+  }, [recentKey])
 
   // Selection management
   const selectKb = useCallback(
     (kb: KnowledgeBase) => {
       // Record the intended selection before starting any async work
+      if (
+        latestSelectedKbIdRef.current === kb.id &&
+        detailRequest?.kbId === kb.id &&
+        detailRequest.status === 'ready'
+      )
+        return
+      const version = ++detailVersion.current
+      setDetailRequest({ kbId: kb.id, status: 'loading' })
       latestSelectedKbIdRef.current = kb.id
       setSelectedKbId(kb.id)
       setSelectedGroupId(null)
@@ -535,69 +539,94 @@ export function useKnowledgeSidebar({
       // Set selectedKb immediately with available data to avoid flashing the empty state,
       // then fetch full KB data for fields omitted from grouped lists.
       setSelectedKb(kb)
+      const selectedScope = scope
       getKnowledgeBase(kb.id)
         .then(fullKb => {
+          if (
+            scopeRef.current !== selectedScope ||
+            latestSelectedKbIdRef.current !== kb.id ||
+            detailVersion.current !== version
+          )
+            return
+          setDetailRequest({ kbId: kb.id, status: 'ready' })
           setSelectedKb(prev => {
-            if (latestSelectedKbIdRef.current !== kb.id) return prev
+            if (scopeRef.current !== selectedScope || latestSelectedKbIdRef.current !== kb.id)
+              return prev
             return fullKb
           })
         })
         .catch(error => {
+          if (
+            scopeRef.current !== selectedScope ||
+            latestSelectedKbIdRef.current !== kb.id ||
+            detailVersion.current !== version
+          )
+            return
+          setDetailRequest({ kbId: kb.id, status: 'error' })
+          if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+            latestSelectedKbIdRef.current = null
+            setSelectedKb(null)
+            setSelectedKbId(null)
+          }
           console.error('Failed to fetch full knowledge base data:', error)
         })
     },
-    [addRecentAccess]
+    [addRecentAccess, scope, detailRequest]
   )
 
-  const syncConvertedKnowledgeBase = useCallback((updatedKb: KnowledgeBase) => {
-    setAllGroupedData(prev => {
-      if (!prev) return prev
+  const syncConvertedKnowledgeBase = useCallback(
+    (updatedKb: KnowledgeBase) => {
+      if (scopeRef.current !== scope) return
+      setAllGroupedData(prev => {
+        if (!prev) return prev
 
-      const updateList = (items: KnowledgeBaseWithGroupInfo[]) =>
-        items.map(item => (item.id === updatedKb.id ? mergeKnowledgeBase(item, updatedKb) : item))
+        const updateList = (items: KnowledgeBaseWithGroupInfo[]) =>
+          items.map(item => (item.id === updatedKb.id ? mergeKnowledgeBase(item, updatedKb) : item))
 
-      return {
-        ...prev,
-        personal: {
-          created_by_me: updateList(prev.personal.created_by_me),
-          shared_with_me: updateList(prev.personal.shared_with_me),
-        },
-        groups: prev.groups.map(group => ({
-          ...group,
-          knowledge_bases: updateList(group.knowledge_bases),
-        })),
-        organization: {
-          ...prev.organization,
-          knowledge_bases: updateList(prev.organization.knowledge_bases),
-        },
-      }
-    })
+        return {
+          ...prev,
+          personal: {
+            created_by_me: updateList(prev.personal.created_by_me),
+            shared_with_me: updateList(prev.personal.shared_with_me),
+          },
+          groups: prev.groups.map(group => ({
+            ...group,
+            knowledge_bases: updateList(group.knowledge_bases),
+          })),
+          organization: {
+            ...prev.organization,
+            knowledge_bases: updateList(prev.organization.knowledge_bases),
+          },
+        }
+      })
 
-    setSelectedKb(prev => {
-      if (!prev || prev.id !== updatedKb.id) return prev
-      return {
-        ...prev,
-        ...updatedKb,
-      }
-    })
+      setSelectedKb(prev => {
+        if (!prev || prev.id !== updatedKb.id) return prev
+        return {
+          ...prev,
+          ...updatedKb,
+        }
+      })
 
-    setFavorites(prev => prev.map(kb => (kb.id === updatedKb.id ? { ...kb, ...updatedKb } : kb)))
+      setFavorites(prev => prev.map(kb => (kb.id === updatedKb.id ? { ...kb, ...updatedKb } : kb)))
 
-    setRecentAccessItems(prev => {
-      const next = prev.map(item =>
-        item.kbId === updatedKb.id
-          ? {
-              ...item,
-              kbName: updatedKb.name,
-              kbType: documentViewOf(updatedKb.kb_type) ?? 'notebook',
-              namespace: updatedKb.namespace,
-            }
-          : item
-      )
-      saveRecentAccess(next)
-      return next
-    })
-  }, [])
+      setRecentAccessItems(prev => {
+        const next = prev.map(item =>
+          item.kbId === updatedKb.id
+            ? {
+                ...item,
+                kbName: updatedKb.name,
+                kbType: documentViewOf(updatedKb.kb_type) ?? 'notebook',
+                namespace: updatedKb.namespace,
+              }
+            : item
+        )
+        saveRecentAccess(recentKey, next)
+        return next
+      })
+    },
+    [recentKey, scope]
+  )
 
   const syncKnowledgeBase = useCallback(
     (updatedKb: KnowledgeBase) => {
@@ -607,15 +636,17 @@ export function useKnowledgeSidebar({
   )
 
   const selectGroup = useCallback((groupId: string) => {
+    latestSelectedKbIdRef.current = null
     setSelectedGroupId(groupId)
     setSelectedKbId(null)
     setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('group')
-    setFilterGroupId(groupId)
+    setFilterGroupId(groupId.startsWith('group-') ? groupId : null)
   }, [])
 
   const selectAll = useCallback(() => {
+    latestSelectedKbIdRef.current = null
     setSelectedGroupId(null)
     setSelectedKbId(null)
     setSelectedSourceViewId(null)
@@ -625,6 +656,7 @@ export function useKnowledgeSidebar({
   }, [])
 
   const selectGroups = useCallback(() => {
+    latestSelectedKbIdRef.current = null
     setSelectedGroupId(null)
     setSelectedKbId(null)
     setSelectedSourceViewId(null)
@@ -634,6 +666,7 @@ export function useKnowledgeSidebar({
   }, [])
 
   const selectSourceView = useCallback((sourceViewId: string) => {
+    latestSelectedKbIdRef.current = null
     setSelectedGroupId(null)
     setSelectedKbId(null)
     setSelectedSourceViewId(sourceViewId)
@@ -643,6 +676,7 @@ export function useKnowledgeSidebar({
   }, [])
 
   const clearSelection = useCallback(() => {
+    latestSelectedKbIdRef.current = null
     setSelectedKbId(null)
     setSelectedKb(null)
     setSelectedGroupId(null)
@@ -650,6 +684,44 @@ export function useKnowledgeSidebar({
     setViewMode('all')
     setFilterGroupId(null)
   }, [])
+
+  const removeInaccessibleKnowledgeBase = useCallback(
+    (kbId: number) => {
+      if (scopeRef.current !== scope) return
+      requestRef.current++
+      setIsLoading(false)
+      if (latestSelectedKbIdRef.current === kbId) latestSelectedKbIdRef.current = null
+      setSelectedKb(prev => (prev?.id === kbId ? null : prev))
+      setSelectedKbId(prev => (prev === kbId ? null : prev))
+      const retain = (items: KnowledgeBaseWithGroupInfo[]) => items.filter(item => item.id !== kbId)
+      setAllGroupedData(prev =>
+        prev
+          ? {
+              ...prev,
+              personal: {
+                created_by_me: retain(prev.personal.created_by_me),
+                shared_with_me: retain(prev.personal.shared_with_me),
+              },
+              groups: prev.groups.map(group => ({
+                ...group,
+                knowledge_bases: retain(group.knowledge_bases),
+              })),
+              organization: {
+                ...prev.organization,
+                knowledge_bases: retain(prev.organization.knowledge_bases),
+              },
+            }
+          : prev
+      )
+      setFavorites(prev => prev.filter(item => item.id !== kbId))
+      setRecentAccessItems(prev => {
+        const next = prev.filter(item => item.kbId !== kbId)
+        saveRecentAccess(recentKey, next)
+        return next
+      })
+    },
+    [scope, recentKey]
+  )
 
   // Refresh all data
   const refreshAll = useCallback(async () => {
@@ -672,13 +744,17 @@ export function useKnowledgeSidebar({
     // Groups
     groups,
     isGroupsLoading: isLoading,
-    hasLoadError,
 
     // Selection
     selectedKbId,
     selectedGroupId,
     selectedSourceViewId,
     selectedKb,
+    detailRequest,
+    retrySelectedKb: () => {
+      const kb = allKnowledgeBases.find(item => item.id === detailRequest?.kbId)
+      if (kb) selectKb(kb)
+    },
     selectKb,
     syncKnowledgeBase,
     syncConvertedKnowledgeBase,
@@ -686,6 +762,7 @@ export function useKnowledgeSidebar({
     selectGroups,
     selectSourceView,
     clearSelection,
+    removeInaccessibleKnowledgeBase,
 
     // View mode
     viewMode,
@@ -695,7 +772,6 @@ export function useKnowledgeSidebar({
 
     // Raw KBs for navigation and ID lookups
     allKnowledgeBases,
-    organizationKnowledgeBases,
     allKnowledgeBasesWithGroupInfo,
     visibleKnowledgeBases,
 
@@ -706,8 +782,12 @@ export function useKnowledgeSidebar({
     currentUser: user,
 
     // Summary from backend
-    summary: visibleCounts.summary,
+    summary: hasLoaded ? visibleCounts.summary : undefined,
 
+    scopeKey: scope,
+    loadError,
+    hasLoaded,
+    listRevision,
     // Refresh
     refreshAll,
   }

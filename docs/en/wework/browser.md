@@ -36,4 +36,49 @@ AI uses structured `inspect` results to understand the page. `screenshot` still 
 
 The right panel shows the Agent browser-control state while AI operates the page. You can pause AI control and resume it after review. Confirm the target and impact before account, publishing, payment, deletion, or other high-risk actions.
 
-Use **Settings → Browser** to choose a download folder or clear browser data. Clearing data signs you out of websites.
+### Individual browsing-history operations
+
+<!-- ui-source: src/components/settings/BrowserHistoryPage.tsx -->
+
+<a id="browser-history-controls"></a>
+
+Open **browser toolbar … → History**, or **Settings → Integrations → Browser → Browsing history → Manage**.
+
+| Action                  | Steps and result                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Search                  | Enter keywords in the top search field; no results differs from a loading failure                                  |
+| Browse by date          | Collapse/expand a date group and select a record to open it                                                        |
+| Remove multiple records | Select record checkboxes and remove the selection; does not clear webpage cookies or conversation history          |
+| More records            | Continue loading history. Retry an initial failure on the page, or a pagination failure at its pagination controls |
+
+## Browser controls
+
+### Toolbar and More menu
+
+| Feature               | UI steps and result                                                      | Limits                                                                           |
+| --------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Open externally       | Browser toolbar → open externally                                        | Uses the system browser without transferring embedded-browser login state        |
+| Find in page          | Toolbar … → Find → enter text and move between matches                   | Searches this webpage, not task history                                          |
+| Device emulation      | … → device toolbar → preset or width/height; rotate, zoom, close to exit | Emulates a viewport, not a real phone or execution-device change                 |
+| History               | … → history                                                              | Opens browsing history management                                                |
+| Clear cookies / cache | … → corresponding data action                                            | Cookies affect sign-in; cache/storage cleanup affects site data. Save work first |
+| Browser settings      | … → browser settings                                                     | Opens the settings controls below                                                |
+| Downloads             | Toolbar → downloads → record → reveal, pause, resume or delete           | Available actions depend on download state; check the record before deleting     |
+
+<!-- ui-source: src/components/settings/BrowserSettingsPage.tsx -->
+
+<a id="browser-controls"></a>
+
+Open **bottom-left account menu → Settings → Integrations → Browser**.
+
+| Feature                              | Steps                                                                   | Result and limitations                                                                                                           |
+| ------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Full control                         | Read the risk description before toggling                               | Allows AI to submit forms and modify or delete webpage data without per-action confirmation; enable only if you accept this risk |
+| Web URL and link target              | Choose built-in or system browser                                       | Controls ordinary web links, not the execution device                                                                            |
+| Local URL target                     | Choose the destination for local links separately                       | Independent of HTTP/HTTPS link preferences                                                                                       |
+| Browsing history                     | Open Manage, then open or delete entries in the history page            | Not task conversation history; clearing browser data is not required to inspect it                                               |
+| Browsing data                        | Choose Clear and confirm or cancel after reading the dialog             | Signs you out of websites; save unsent webpage content first                                                                     |
+| Downloads → Location                 | Choose Change and a directory; restore the default beside a custom path | Affects future downloads, not previously downloaded files                                                                        |
+| Ask where to save before downloading | Enable before downloading                                               | Choose the destination for each download; otherwise use the configured directory                                                 |
+
+Back, forward and reload in the browser toolbar affect this task's page. Submit an address-bar edit to navigate. For element-specific feedback, enable annotation, select the element, enter feedback, then review it in the composer before sending. Close overlapping dialogs to reveal the browser again.

@@ -45,6 +45,7 @@ export const PluginMarketplaceRevealButton = memo(function PluginMarketplaceReve
               contrastPad={logo.contrastPad}
               distribution={marketplacePluginDistribution(item)}
               logoUrl={logo.url}
+              loading="lazy"
               name={item.displayName || item.name}
               useInitial={logo.source === 'fallback'}
             />

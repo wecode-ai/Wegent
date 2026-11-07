@@ -7,8 +7,8 @@ import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TagEditor } from '@wegent/collaboration'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
-import { findStandInProject } from './standInProjects'
 
+/** Edit project intake scope, exclusions and handling policies for an independent stand-in. */
 export function StandInConnections({
   role,
   projects,
@@ -67,32 +67,22 @@ export function StandInConnections({
         <legend className="mb-2 text-sm font-medium">
           {t('standIn.workspace.connection_scope')}
         </legend>
-        {!role.agentProject && (
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              className="mt-1 accent-text-primary"
-              data-testid="stand-in-all-projects"
-              checked={source.allProjects}
-              disabled={disabled || Boolean(role.agentProject)}
-              onChange={event => setSource({ allProjects: event.target.checked })}
-            />
-            <span>
-              {t('standIn.personal.all_projects')}
-              <span className="mt-1 block text-xs text-text-muted">
-                {t('standIn.personal.all_projects_help')}
-              </span>
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            className="mt-1 accent-text-primary"
+            data-testid="stand-in-all-projects"
+            checked={source.allProjects}
+            disabled={disabled}
+            onChange={event => setSource({ allProjects: event.target.checked })}
+          />
+          <span>
+            {t('standIn.personal.all_projects')}
+            <span className="mt-1 block text-xs text-text-muted">
+              {t('standIn.personal.all_projects_help')}
             </span>
-          </label>
-        )}
-        {role.agentProject && (
-          <p className="text-xs text-text-muted">
-            {t('standIn.personal.project_agent_scope', {
-              project:
-                findStandInProject(projects, role.agentProject)?.name ?? role.agentProject.id,
-            })}
-          </p>
-        )}
+          </span>
+        </label>
         <div
           className="max-h-64 overflow-y-auto divide-y divide-border/50"
           data-testid="stand-in-source-projects"
@@ -104,13 +94,6 @@ export function StandInConnections({
                 allowLocalProjects ||
                 project.project_store !== 'local' ||
                 source.projects.some(row => row.store === 'local' && row.id === project.id)
-            )
-            .filter(
-              project =>
-                !role.agentProject ||
-                (project.id === role.agentProject.id &&
-                  (project.project_store === 'local' ? 'local' : 'cloud') ===
-                    role.agentProject.store)
             )
             .map(project => (
               <div

@@ -10,7 +10,7 @@ const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
 const USER = 9001
 
 export function createDesktopScenario(options) {
-  const { uiTimeoutMs } = options
+  const { uiTimeoutMs, workbenchReadyTimeoutMs } = options
   const fixture = createStandInDingTalkFixture(options)
   return {
     prepareApp: fixture.prepareApp,
@@ -22,6 +22,10 @@ export function createDesktopScenario(options) {
         uiTimeoutMs
       )
       try {
+        // Startup model reconciliation can start and restart the shared Codex server.
+        await control.command('ensureLocalModelCatalogReady', 'body', {
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
         const catalog = await requestExecutor(
           control,
           'runtime.connections.catalog',

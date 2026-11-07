@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 
 async function readWindowState(control) {
   return JSON.parse(await control.command('getNativeWindowState', 'body'))
@@ -46,6 +47,7 @@ async function waitForDocumentVisibility(control, expected, message, timeoutMs) 
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
     async verify(control) {
+      await waitForClosedStartupSplash(control)
       const policy = await readBackgroundPolicy(control)
       const isWindows = policy.platform === 'win32'
       assert.equal(

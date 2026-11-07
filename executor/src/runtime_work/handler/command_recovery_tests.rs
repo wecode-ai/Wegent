@@ -76,7 +76,7 @@ async fn synthetic_interruption_never_becomes_a_durable_cancel_receipt() {
 }
 
 #[tokio::test]
-async fn saturated_history_keeps_accepted_command_unconfirmed_without_replaying_it() {
+async fn queued_history_keeps_command_unconfirmed_when_processing_admission_closes() {
     let (mut handler, root) = isolated_runtime_work_handler("command-history-busy");
     handler.command_journal.lock().unwrap().clear();
     install_native_history(
@@ -98,16 +98,26 @@ async fn saturated_history_keeps_accepted_command_unconfirmed_without_replaying_
         .insert(key.clone(), command);
     let workers = handler.transcript_test_workers.as_ref().unwrap().clone();
     let permits = workers.clone().acquire_many_owned(2).await.unwrap();
-    let error = handler
-        .clone()
-        .command_receipt(json!({"taskId":"task-1","commandId":"command","userId":7}))
-        .await
-        .unwrap_err();
+    let receipt_handler = handler.clone();
+    let mut receipt = Box::pin(
+        receipt_handler
+            .command_receipt(json!({"taskId":"task-1","commandId":"command","userId":7})),
+    );
+    let mut duplicate = Box::pin(handler.existing_payload_command(&payload));
+    assert!(futures_util::poll!(receipt.as_mut()).is_pending());
+    assert!(futures_util::poll!(duplicate.as_mut()).is_pending());
+    assert_eq!(
+        handler.command_journal.lock().unwrap()[&key].state,
+        CommandState::RecoveryRequired
+    );
+    // Normal saturation queues verification. Closing this fixture's admission
+    // exercises unavailable history without waiting on permits owned by the test.
+    workers.close();
+    // Drive both futures while they share the Codex client's lock queue.
+    let (receipt, duplicate) = tokio::join!(receipt, duplicate);
+    let error = receipt.unwrap_err();
     assert_eq!(error.code, "command_recovery_unavailable");
-    let error = handler
-        .existing_payload_command(&payload)
-        .await
-        .unwrap_err();
+    let error = duplicate.unwrap_err();
     assert_eq!(error.code, "command_recovery_unavailable");
     assert_eq!(
         handler.command_journal.lock().unwrap()[&key].state,

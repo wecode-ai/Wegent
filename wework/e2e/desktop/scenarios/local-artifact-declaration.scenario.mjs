@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
@@ -38,7 +39,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
     await control.command('waitFor', '[data-testid="workspace-file-path"]', {
       text: artifact.local_path,
     })
-    await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+    await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
       text: 'Generated without a Backend Task.',
     })
   }
@@ -68,12 +69,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
             body,
             `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 10000 })}))`
           )
-          const event = customToolCall('local-artifact-generate', tool.name, tool.input)
-          event.item.namespace = 'functions'
+          const event = selectedToolCall('local-artifact-generate', { codeMode: tool }).at(-1)
           events = [event]
         } else {
           const tool = selectShellToolCommand(body, command, workspacePath, { yieldTimeMs: 10000 })
-          events = functionCall('local-artifact-generate', tool.name, tool.arguments)
+          events = selectedToolCall('local-artifact-generate', tool)
         }
       } else {
         const outputs = body.input.filter(item =>
@@ -133,7 +133,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       await control.command('waitFor', '[data-testid="workspace-file-path"]', {
         text: artifact.local_path,
       })
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'Generated without a Backend Task.',
       })
       await verifyPreview(control)

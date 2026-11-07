@@ -343,7 +343,7 @@ impl RuntimeWorkRpcHandler {
                 visible_links.push(link);
                 continue;
             }
-            let workspace_kind = infer_workspace_kind(&link.workspace_path);
+            let workspace_kind = link.workspace_kind();
             if workspace_kind == "chat" {
                 kept_chat += 1;
                 log_runtime_project_filter_item(
@@ -580,7 +580,7 @@ fn runtime_task_sidebar_project_key(
     {
         return format!("local:{workspace_path}");
     }
-    if infer_workspace_kind(&link.workspace_path) == "chat" {
+    if link.workspace_kind() == "chat" {
         return "chats".to_owned();
     }
     format!("local:{}", workspace_group_path(&link.workspace_path))

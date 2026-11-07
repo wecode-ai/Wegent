@@ -1,0 +1,223 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! External entity bindings augment the built-in user, role and namespace rules.
+use async_trait::async_trait;
+use brz_mysql::MysqlResult;
+use brz_redis::Redis;
+use std::{collections::BTreeMap, sync::Arc};
+
+mod group_roles;
+mod namespace;
+
+pub use group_roles::{
+    GroupRoleEntry, accessible_namespace_ids, active_namespace_names, effective_roles_in_groups,
+    iter_user_groups_with_roles, list_resources_by_entity_match, organization_names, user_groups,
+    user_groups_for_names,
+};
+pub use wegent_backend_persistence::entity_query::EntityQuery;
+
+/// The operation requesting an entity match. Providers may refresh identities
+/// for downloads while using cached membership for document reads.
+#[derive(Clone, Copy, Default)]
+pub enum ResolutionPurpose {
+    #[default]
+    ResourceAccess,
+    SkillDownload,
+    CachedResourceAccess,
+}
+
+#[async_trait]
+pub trait EntityResolver<R: Redis>: Send + Sync {
+    async fn match_bindings(
+        &self,
+        registry: &EntityResolvers<R>,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_ids: &[String],
+        purpose: ResolutionPurpose,
+    ) -> MysqlResult<Vec<String>>;
+
+    /// `match_entity_bindings(db, ...)`: the same resolution on a caller-owned
+    /// query handle, so a resolver that reads the database joins the caller's
+    /// transaction. Implementations without a database read keep the default.
+    async fn match_bindings_on(
+        &self,
+        registry: &EntityResolvers<R>,
+        query: &mut dyn EntityQuery,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_ids: &[String],
+        purpose: ResolutionPurpose,
+    ) -> MysqlResult<Vec<String>> {
+        let _ = query;
+        self.match_bindings(registry, redis, user_id, entity_ids, purpose)
+            .await
+    }
+
+    /// `IExternalEntityResolver.get_resource_ids_by_entity`: the ids of
+    /// `resource_type` the user can reach through this entity type's bindings.
+    /// The source declares this abstract and every resolver implements it.
+    ///
+    /// `mysql` is supplied by the caller because not every resolver owns a
+    /// connection (the ERP resolver holds only a provider); `registry` is passed
+    /// for resolvers that delegate to the other entity types.
+    async fn get_resource_ids_by_entity(
+        &self,
+        registry: &EntityResolvers<R>,
+        mysql: &brz_mysql::MysqlService,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_type: &str,
+        resource_type: &str,
+    ) -> MysqlResult<Vec<i64>>;
+}
+
+/// A registry scoped to one application. Unknown entity types grant no roles.
+pub struct EntityResolvers<R: Redis = brz_redis::RedisService> {
+    resolvers: BTreeMap<String, Arc<dyn EntityResolver<R>>>,
+    active: Vec<(String, i64, Vec<String>)>,
+}
+
+/// Share the registered resolvers with an independently owned registry, the
+/// same clone `match_bindings` performs per resolution step. Applications
+/// clone the registry at startup so a long-lived dependency state resolves
+/// entity bindings through the application's registrations.
+impl<R: Redis> Clone for EntityResolvers<R> {
+    fn clone(&self) -> Self {
+        Self {
+            resolvers: self.resolvers.clone(),
+            active: self.active.clone(),
+        }
+    }
+}
+
+impl<R: Redis> EntityResolvers<R> {
+    /// Public defaults include namespace membership backed by the shared database.
+    pub fn public(mysql: brz_mysql::MysqlService) -> Self {
+        let mut registry = Self {
+            resolvers: BTreeMap::new(),
+            active: Vec::new(),
+        };
+        registry.register("namespace", namespace::NamespaceResolver(mysql));
+        registry
+    }
+    pub fn register(
+        &mut self,
+        entity_type: impl Into<String>,
+        resolver: impl EntityResolver<R> + 'static,
+    ) {
+        self.resolvers
+            .insert(entity_type.into(), Arc::new(resolver));
+    }
+    pub fn contains(&self, entity_type: &str) -> bool {
+        self.resolvers.contains_key(entity_type)
+    }
+    /// Every registered entity type, including the built-in `namespace`
+    /// resolver. `get_all_entity_types` iterates the whole registry
+    /// (`app/services/group_member_helper.py:580`), so a caller reproducing
+    /// that loop must not use [`Self::external_types`].
+    pub fn types(&self) -> impl Iterator<Item = &str> {
+        self.resolvers.keys().map(String::as_str)
+    }
+    pub fn external_types(&self) -> impl Iterator<Item = &str> {
+        self.resolvers
+            .keys()
+            .map(String::as_str)
+            .filter(|name| *name != "namespace")
+    }
+    pub async fn match_bindings_on(
+        &self,
+        query: &mut dyn EntityQuery,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_type: &str,
+        entity_ids: &[String],
+        purpose: ResolutionPurpose,
+    ) -> MysqlResult<Vec<String>> {
+        if entity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(nested) = self.begin(entity_type, user_id, entity_ids) else {
+            return Ok(Vec::new());
+        };
+        match self.resolvers.get(entity_type) {
+            Some(resolver) => {
+                resolver
+                    .match_bindings_on(&nested, query, redis, user_id, entity_ids, purpose)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// The nested resolver set for one lookup, or `None` when the same lookup
+    /// is already in flight or the chain is too deep.
+    fn begin(&self, entity_type: &str, user_id: i64, entity_ids: &[String]) -> Option<Self> {
+        let mut canonical_ids = entity_ids.to_vec();
+        canonical_ids.sort();
+        canonical_ids.dedup();
+        let key = (entity_type.to_string(), user_id, canonical_ids);
+        if self.active.contains(&key) || self.active.len() >= 50 {
+            return None;
+        }
+        let mut nested = Self {
+            resolvers: self.resolvers.clone(),
+            active: self.active.clone(),
+        };
+        nested.active.push(key);
+        Some(nested)
+    }
+
+    pub async fn match_bindings(
+        &self,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_type: &str,
+        entity_ids: &[String],
+        purpose: ResolutionPurpose,
+    ) -> MysqlResult<Vec<String>> {
+        if entity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(nested) = self.begin(entity_type, user_id, entity_ids) else {
+            return Ok(Vec::new());
+        };
+        match self.resolvers.get(entity_type) {
+            Some(resolver) => {
+                resolver
+                    .match_bindings(&nested, redis, user_id, entity_ids, purpose)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// `IExternalEntityResolver.get_resource_ids_by_entity` for one entity
+    /// type; an unregistered type grants nothing.
+    pub async fn resource_ids_by_entity(
+        &self,
+        mysql: &brz_mysql::MysqlService,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_type: &str,
+        resource_type: &str,
+    ) -> MysqlResult<Vec<i64>> {
+        match self.resolvers.get(entity_type) {
+            Some(resolver) => {
+                resolver
+                    .get_resource_ids_by_entity(
+                        self,
+                        mysql,
+                        redis,
+                        user_id,
+                        entity_type,
+                        resource_type,
+                    )
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+}

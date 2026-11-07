@@ -172,11 +172,14 @@ export function createDailyBriefStory(options) {
         })
         for (const fixture of fixtures) {
           const { age, ...details } = fixture
+          const internalDate = new Date(now - age)
+          // Exercise IMAP's 24-hour noon boundary regardless of the CI clock.
+          if (details.status === 'pending') internalDate.setUTCHours(12, 33, 30, 0)
           await mail.append(
             `${MARKER} ${details.status}`,
             JSON.stringify(details),
             `<daily-${details.status}@example.com>`,
-            new Date(now - age)
+            internalDate
           )
         }
         await control.command('setMainWindowSize', 'body', {

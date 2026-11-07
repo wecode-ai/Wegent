@@ -55,10 +55,18 @@ export function upgradeTransportScript(origin, pauseArgument, inspectorPort = nu
     // Electron caches its initial arguments for relaunch. Remove only the pause
     // switch introduced by this driver, including from an explicit handoff.
     const relaunch = app.relaunch.bind(app)
-    app.relaunch = options => relaunch({
-      ...options,
-      args: forwarded(options?.args ?? launchArguments)
-    })
+    app.relaunch = options => {
+      if (${Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {
+        console.log('[desktop-e2e-relaunch]', JSON.stringify({
+          pid: process.pid, version: app.getVersion(), executable: process.execPath,
+          nextExecutable: options?.execPath
+        }))
+      }
+      return relaunch({
+        ...options,
+        args: forwarded(options?.args ?? launchArguments)
+      })
+    }
     if (${Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {
       // Startup failures can occur before product logging is initialized. Keep
       // the native error dialog and retain its exact message in CI diagnostics.
@@ -67,8 +75,21 @@ export function upgradeTransportScript(origin, pauseArgument, inspectorPort = nu
         console.error('[desktop-e2e-startup-error]', JSON.stringify({title, content}))
         return showErrorBox(title, content)
       }
+      const fs = process.getBuiltinModule('fs')
+      const path = process.getBuiltinModule('path')
+      const root = process.env.WEWORK_RELEASE_ROOT || path.join(
+        process.env.HOME, '.wegent/workbench/wework/default/user-data/releases'
+      )
+      const read = name => {
+        try { return fs.readFileSync(path.join(root, name), 'utf8').trim() }
+        catch (error) { return {error: error.code} }
+      }
       const report = () => console.log('[desktop-e2e-startup]', JSON.stringify({
-        pid: process.pid, ready: app.isReady(), userData: app.getPath('userData')
+        pid: process.pid, ready: app.isReady(), userData: app.getPath('userData'),
+        version: app.getVersion(), executable: process.execPath,
+        selected: read('active'), pending: read('activation.json'),
+        bridge: read('bridge'), activePid: read('active-pid'),
+        physicalRollback: read('macos-rollback')
       }))
       report()
       const timer = setInterval(report, 5000)

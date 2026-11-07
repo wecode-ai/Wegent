@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
 import { electronMocks, FakeWebContents } from '../../test-fixtures/embedded-browser.js'
@@ -121,6 +122,123 @@ describe('EmbeddedBrowserManager navigation', () => {
         })
       ).resolves.toMatchObject({ url: 'about:blank', navigationError: null })
       expect(contents.loadURL).toHaveBeenCalledWith('about:blank')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('routes file links from a directory preview back through the preview loader', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const root = join(directory, 'root')
+    const nested = join(root, 'nested')
+    await mkdir(nested, { recursive: true })
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+      contents.emit('did-navigate', {}, url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+
+    try {
+      const rootUrl = pathToFileURL(root).href
+      await manager.open({
+        label: 'workspace-browser',
+        url: rootUrl,
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      const firstPreviewUrl = contents.getURL()
+      expect(firstPreviewUrl).not.toBe(rootUrl)
+      expect(manager.state('workspace-browser')).toMatchObject({
+        url: rootUrl,
+        navigationError: null,
+      })
+
+      const nestedUrl = `${pathToFileURL(nested).href}/`
+      const event = { preventDefault: vi.fn() }
+      contents.emit('will-navigate', event, nestedUrl)
+
+      await vi.waitFor(() => {
+        expect(contents.loadURL).toHaveBeenCalledTimes(2)
+        expect(manager.state('workspace-browser')).toMatchObject({
+          url: nestedUrl,
+          navigationError: null,
+        })
+      })
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(contents.getURL()).not.toBe(nestedUrl)
+
+      const parentUrl = `${pathToFileURL(root).href}/`
+      const parentEvent = { preventDefault: vi.fn() }
+      contents.emit('will-navigate', parentEvent, parentUrl)
+      await vi.waitFor(() => {
+        expect(contents.loadURL).toHaveBeenCalledTimes(3)
+        expect(manager.state('workspace-browser')).toMatchObject({
+          url: parentUrl,
+          navigationError: null,
+        })
+      })
+      expect(parentEvent.preventDefault).toHaveBeenCalledOnce()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('leaves generated directory preview navigation to the host', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const root = join(directory, 'root')
+    await mkdir(root, { recursive: true })
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+      contents.emit('did-navigate', {}, url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+
+    try {
+      await manager.open({
+        label: 'workspace-browser',
+        url: pathToFileURL(root).href,
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      const event = { preventDefault: vi.fn() }
+      contents.emit('will-navigate', event, contents.getURL())
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(contents.loadURL).toHaveBeenCalledOnce()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('does not route a remote page redirect to a local file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+      contents.emit('did-navigate', {}, url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+
+    try {
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'https://remote.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      const event = { preventDefault: vi.fn() }
+      contents.emit('will-redirect', event, 'file:///tmp/private.txt', false, true)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(contents.loadURL).toHaveBeenCalledOnce()
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

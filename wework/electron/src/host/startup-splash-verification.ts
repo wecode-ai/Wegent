@@ -65,6 +65,15 @@ export async function inspectStartupSplash(
     const activity = document.getElementById('splash-activity')
     const style = activity ? getComputedStyle(activity) : null
     const progress = document.getElementById('splash-progress')
+    const region = element => {
+      if (!element) return null
+      const bounds = element.getBoundingClientRect()
+      return {
+        id: element.id,
+        appRegion: getComputedStyle(element).getPropertyValue('-webkit-app-region'),
+        bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      }
+    }
     return {
       progress: structuredClone(currentUpdate),
       title: text('splash-title'),
@@ -83,6 +92,13 @@ export async function inspectStartupSplash(
       toastHidden: hidden('startup-toast'),
       progressClassName: progress?.className,
       progressNow: progress?.getAttribute('aria-valuenow'),
+      dragRegions: {
+        stage: region(document.getElementById('startup-window-drag-region')),
+        status: region(document.getElementById('startup-status')),
+        controls: Array.from(document.querySelectorAll('button, a'))
+          .filter(element => element.checkVisibility())
+          .map(region),
+      },
     }
   })()`)
 }

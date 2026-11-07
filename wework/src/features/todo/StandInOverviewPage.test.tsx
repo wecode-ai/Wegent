@@ -113,8 +113,8 @@ async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) 
   render(<StandInOverviewPage {...props} />)
   try {
     await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
-    expect(await screen.findByTestId('stand-in-onboarding')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(await screen.findByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
     expect(screen.queryByTestId('stand-in-overview-role-default')).not.toBeInTheDocument()
     expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
     // Install the device-scoped subscription before publishing a reload event.
@@ -132,6 +132,22 @@ async function openRoles() {
   await waitFor(() => expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled())
   expect(selector).toBeVisible()
 }
+
+it('places instance lifecycle actions at the right end of the role header outside the scrolling tabs', async () => {
+  const { props } = fixture()
+  render(
+    <StandInOverviewPage
+      {...props}
+      headerActions={<button data-testid="instance-stop-fixture">停止分身</button>}
+    />
+  )
+  await openRoles()
+  const picker = screen.getByTestId('instance-stop-fixture')
+  const header = screen.getByTestId('stand-in-role-selector').closest('header')!
+  expect(header.lastElementChild).toBe(picker)
+  expect(screen.getByTestId('stand-in-role-selector')).not.toContainElement(picker)
+  expect(within(header).getByTestId('stand-in-primary-open')).toBeVisible()
+})
 
 it('reopens usage examples after onboarding without recreating a scheduled review', async () => {
   const { props } = fixture([])
@@ -776,4 +792,66 @@ it('keeps saved settings accessible while explicit navigation refreshes configur
   await user.click(screen.getByTestId('stand-in-settings-open'))
   expect(screen.getByTestId('stand-in-profile-panel')).toBeVisible()
   await act(async () => finish(settings))
+})
+
+it('saves the primary identity through the existing settings flow before finishing first-use setup', async () => {
+  const { props, personalSave } = fixture([])
+  const api = props.services.standInApi!
+  vi.mocked(api.onboarding).mockImplementation(
+    async () =>
+      ({ state: { version: 1, completed: false } }) as Awaited<ReturnType<typeof api.onboarding>>
+  )
+  const completeOnboarding = vi.fn(async () => ({ state: { version: 1, completed: true } }))
+  Object.assign(api, { completeOnboarding })
+  render(<StandInOverviewPage {...props} />)
+  const user = userEvent.setup()
+  await user.click(await screen.findByTestId('stand-in-onboarding-continue'))
+  expect(personalSave).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+  await screen.findByTestId('identity-conversation')
+  expect(personalSave).toHaveBeenCalledWith(
+    7,
+    expect.objectContaining({
+      executionDeviceId: 'device',
+      primary: expect.objectContaining({ enabled: true }),
+      roles: [],
+    }),
+    'device'
+  )
+  expect(completeOnboarding).toHaveBeenCalledWith(7, 'device', false, '09:00', expect.any(String))
+  expect(personalSave.mock.invocationCallOrder[0]).toBeLessThan(
+    completeOnboarding.mock.invocationCallOrder[0]
+  )
+})
+
+it('keeps first-use setup open when the existing settings save fails and allows retry', async () => {
+  const { props, personalSave } = fixture([])
+  const api = props.services.standInApi!
+  vi.mocked(api.onboarding).mockImplementation(
+    async () =>
+      ({ state: { version: 1, completed: false } }) as Awaited<ReturnType<typeof api.onboarding>>
+  )
+  const completeOnboarding = vi.fn(async () => ({ state: { version: 1, completed: true } }))
+  Object.assign(api, { completeOnboarding })
+  personalSave.mockRejectedValueOnce(new Error('Settings save unavailable'))
+  render(<StandInOverviewPage {...props} />)
+  const user = userEvent.setup()
+  await user.click(await screen.findByTestId('stand-in-onboarding-continue'))
+  await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+  expect(await screen.findByTestId('stand-in-onboarding-settings-retry')).toBeVisible()
+  expect(completeOnboarding).not.toHaveBeenCalled()
+  expect(screen.getByTestId('stand-in-onboarding-summary')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+  await screen.findByTestId('identity-conversation')
+  expect(completeOnboarding).toHaveBeenCalledOnce()
+})
+
+it('keeps profile recovery and creation reachable when the selected device and onboarding are offline', async () => {
+  const { props } = fixture()
+  vi.mocked(props.services.standInApi!.personalGet).mockRejectedValue(new Error('Executor offline'))
+  vi.mocked(props.services.standInApi!.onboarding).mockRejectedValue(new Error('Executor offline'))
+  render(<StandInOverviewPage {...props} initialDeviceId="offline-cloud" />)
+  await screen.findByTestId('stand-in-overview-retry')
+  expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-create-role')).toBeEnabled()
 })
