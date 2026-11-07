@@ -4,6 +4,16 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
+<!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
+
+## Individual role-profile operations
+
+1. Open **My Stand-in** from the left sidebar, select the main stand-in or a scenario role, then open its profile/settings.
+2. Edit responsibilities and preferences. Expand **More settings (device, model, workspace)** to choose execution device, available model and working directory. After changing devices, recheck model and source-account availability on that device.
+3. Install/authorize source apps, choose scope and handling mode, then save to enable changes. Calendar/scheduled delegation belongs to this role's connection page, not global cloud connection settings.
+4. Use the work list for execution items, **Needs your input** for human decisions and **Needs checking** for errors; these are distinct lists.
+5. To delete a scenario role, use its settings action and confirm the target. Deleting differs from pausing a source; adjust source reception if you want to keep the role but temporarily stop intake.
+
 When opening your stand-in, the page checks onboarding status and shows an inline loading message. Initial setup opens automatically only after the check confirms it is incomplete. Completed setup opens the stand-in directly. If the check fails, use the retry action in the error prompt.
 
 Open **My stand-in**, marked **Beta**, in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The header displays the primary identity and existing roles for switching. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
@@ -90,7 +100,7 @@ Stand-ins save the recipient-owned device task binding and reception receipt bef
 
 ## Calendar arrangements and project leaders
 
-Record a matter and its trigger time in **Settings → Connections → Calendar**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+Record a matter and its trigger time in **My Stand-in → role profile → Connections → Calendar / scheduled delegation**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
 
 **Scheduled** in the Tasks sidebar remains independent and retains its goal, target task, model, and execution environment settings without requiring experimental features. Scheduled tasks and Calendar connections manage separate lists, editors, and run histories. The stand-in work list contains concrete work.
 

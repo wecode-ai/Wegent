@@ -731,7 +731,7 @@
     "use_existing_folder": "Use existing folder",
     "new_project_chat": "Message AI",
     "project_space_chat": {
-      "open": "Chat",
+      "open": "Ask AI",
       "resize": "Resize AI messages",
       "conversation": "Conversations",
       "new_conversation": "New conversation",
