@@ -411,7 +411,7 @@ export interface StandardCloudBoardControllerOptions<
   T extends StandardCloudBoardItem,
 > extends ProjectBoardStateOptions {
   view?: SavedBoardView | null;
-  currentUserId?: string | number;
+  currentUserId?: import("../issueParticipation").IssueParticipationViewer;
   tagFilter?: readonly string[];
   createColumns(groupBy: ProjectBoardGroupBy): ProjectBoardColumn[];
   currentParentId?: string | null;

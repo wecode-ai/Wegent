@@ -745,12 +745,30 @@ export function createElectronCapabilityRouter(
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()
-    await focusE2EWindow(target, () => {
-      app.focus({ steal: true })
-      target.focus()
-      const primaryContents = e2eHost.captureTarget('main')
-      if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
-    })
+    try {
+      await focusE2EWindow(target, () => {
+        app.focus({ steal: true })
+        target.focus()
+        const primaryContents = e2eHost.captureTarget('main')
+        if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+      })
+    } catch (error) {
+      const destroyed = target.isDestroyed()
+      console.error('[desktop-e2e-window-focus-failed]', {
+        windowLabel: 'main',
+        pid: process.pid,
+        executable: app.getPath('exe'),
+        appPath: app.getAppPath(),
+        windowId: destroyed ? null : target.id,
+        destroyed,
+        visible: !destroyed && target.isVisible(),
+        minimized: !destroyed && target.isMinimized(),
+        focusable: !destroyed && target.isFocusable(),
+        focused: !destroyed && target.isFocused(),
+        appHidden: process.platform === 'darwin' ? app.isHidden() : null,
+      })
+      throw error
+    }
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')

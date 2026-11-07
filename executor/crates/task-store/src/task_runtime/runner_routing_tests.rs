@@ -81,8 +81,10 @@ fn human_request_reply_keeps_current_identity_and_claim_is_atomic() {
     store.mark_runtime_running(task).unwrap();
     let question = store
         .report_issue_human_request(
-            &project.id,
-            &issue.id,
+            crate::task_runtime::IssueHumanRequestScope {
+                project_id: &project.id,
+                issue_id: &issue.id,
+            },
             device,
             task,
             "scope",
@@ -92,7 +94,17 @@ fn human_request_reply_keeps_current_identity_and_claim_is_atomic() {
         .unwrap();
     let id = question["id"].as_str().unwrap();
     store
-        .assign_issue_human_request(&project.id, &issue.id, id, 1, 0, "Local", None)
+        .assign_issue_human_request(
+            crate::task_runtime::IssueHumanRequestScope {
+                project_id: &project.id,
+                issue_id: &issue.id,
+            },
+            id,
+            1,
+            0,
+            "Local",
+            None,
+        )
         .unwrap();
     store
         .complete_execution(original.id, Some("Independent work finished"))
@@ -173,7 +185,7 @@ fn human_request_reply_keeps_current_identity_and_claim_is_atomic() {
             .unwrap()[0]["status"],
         "resolved"
     );
-    assert!(store.issue_human_request_inbox(0).unwrap().is_empty());
+    assert!(store.issue_human_request_inbox(&[0]).unwrap().is_empty());
     let resolved = store
         .list_issue_human_requests(&project.id, &issue.id)
         .unwrap()

@@ -125,7 +125,7 @@ describe('task-page Issue activity', () => {
     expect(renderActivity.mock.calls.at(-1)?.[0].client).toBe(local.projectChatClient)
     expect(renderActivity.mock.calls.at(-1)?.[0]).toMatchObject({
       client: local.projectChatClient,
-      currentUserId: 0,
+      currentUserId: 'account-user',
     })
     expect(cloud.projectChatAgentApi?.list).not.toHaveBeenCalled()
   })

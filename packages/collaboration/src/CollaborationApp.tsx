@@ -100,7 +100,7 @@ export interface CollaborationIssueDetailRenderContext {
 
 interface CollaborationAppProps {
   /** Handling identity is independent of the project's permission identity. */
-  participationUserId?: string | number;
+  participationUserId?: import("./issueParticipation").IssueParticipationViewer;
   parentGroupingEnabled?: boolean;
   api: SharedWorkspaceApi;
   host: CollaborationHostAdapter;

@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { issueNeedsUser } from '@wegent/collaboration'
 import type { CloudMyWorkItem } from '@/api/deliveries'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
+import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
 
 export interface PendingProjectIssue {
   item: CloudMyWorkItem
   store: 'local' | 'backend'
-  userId: number
+  userId: number | readonly number[]
 }
 
 /** This page owns its reads; project failures do not erase another store's results. */
@@ -17,7 +18,11 @@ export function usePendingProjectIssues(active: boolean) {
     source?.services?.projectSpaceApis?.cloud ??
     (source?.services?.issueHumanRequestsApi ? source.services.deliveryApi : undefined)
   const userId = source?.userId
-  const scope = useMemo(() => ({ local, cloud, userId }), [local, cloud, userId])
+  const localViewer = source?.services?.localParticipationIdentity?.viewerUserIds ?? 0
+  const scope = useMemo(
+    () => ({ local, cloud, userId, localViewer }),
+    [local, cloud, userId, localViewer]
+  )
   const epoch = useRef(0)
   const sequences = useRef(new Map<string, number>())
   const [loading, setLoading] = useState<{ scope: typeof scope; local: boolean; backend: boolean }>(
@@ -33,7 +38,7 @@ export function usePendingProjectIssues(active: boolean) {
       const generation = epoch.current
       await Promise.resolve()
       const reads = [
-        ['local', local, 0],
+        ['local', local, localViewer],
         ['backend', cloud, userId],
       ] as const
       await Promise.all(
@@ -96,7 +101,7 @@ export function usePendingProjectIssues(active: boolean) {
         })
       )
     },
-    [scope, local, cloud, userId]
+    [scope, local, cloud, userId, localViewer]
   )
   useEffect(() => {
     if (!active || (!local && !cloud)) return
@@ -161,11 +166,11 @@ export function usePendingProjectIssues(active: boolean) {
             const running = source?.items.some(task => {
               const origin = task.task.runtimeHandle?.origin as Record<string, unknown> | undefined
               return (
-                task.task.running &&
+                isRuntimeTaskExecutionRunning(task.task) &&
                 origin &&
                 String(origin.cloudProjectId) === String(row.item.cloud_project_id) &&
                 origin.loopItemId === row.item.id &&
-                (origin.projectStore ?? 'backend') === row.store
+                (origin.projectStore === 'local' ? 'local' : 'backend') === row.store
               )
             })
             return issueNeedsUser(

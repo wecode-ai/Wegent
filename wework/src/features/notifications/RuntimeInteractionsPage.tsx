@@ -62,6 +62,10 @@ export function RuntimeInteractionsPage({
 }) {
   const interactions = useRuntimeInteractions()
   const projectIssues = usePendingProjectIssues(active)
+  const refreshInteractions = interactions?.refresh
+  useEffect(() => {
+    if (active) void refreshInteractions?.()
+  }, [active, refreshInteractions])
   const refreshProjectIssues = projectIssues.refresh
   const handoffRevision =
     interactions?.pending

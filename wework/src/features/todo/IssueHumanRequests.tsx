@@ -32,6 +32,11 @@ export function IssueHumanRequests({
 }) {
   const { t } = useTranslation('common')
   const interactions = useRuntimeInteractions()
+  const localAuthor = services.localParticipationIdentity?.currentUser ?? {
+    id: 0,
+    user_name: 'local',
+  }
+  const handlingUserId = store === 'local' ? localAuthor.id : userId
   const api =
     store === 'local' ? services.localIssueHumanRequestsApi : services.issueHumanRequestsApi
   const [requests, setRequests] = useState<IssueHumanRequest[]>([])
@@ -39,8 +44,14 @@ export function IssueHumanRequests({
   const [busy, setBusy] = useState<string>()
   const sequence = useRef(0)
   const candidates =
-    store === 'local' && !members.some(member => member.user_id === 0)
-      ? [{ user_id: 0, user_name: 'local' }, ...members]
+    store === 'local'
+      ? [
+          { user_id: localAuthor.id, user_name: localAuthor.user_name },
+          ...members.filter(
+            member =>
+              Number(member.user_id) !== Number(localAuthor.id) && Number(member.user_id) !== 0
+          ),
+        ]
       : members
   const refresh = useCallback(async () => {
     if (!api) return
@@ -189,7 +200,7 @@ export function IssueHumanRequests({
                     busy === request.id ||
                     request.status !== 'pending' ||
                     request.can_reply === false ||
-                    String(request.recipient_user_id) !== String(userId)
+                    String(request.recipient_user_id) !== String(handlingUserId)
                   }
                   onSubmit={async response => {
                     setBusy(request.id)

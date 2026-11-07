@@ -1253,29 +1253,28 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "set_human_request_blocking" => {
-            let result = (|| {
-                let project = string_argument(&arguments, "space_id")?;
-                let issue = string_argument(&arguments, "item_id")?;
-                let request = string_argument(&arguments, "request_id")?;
-                let device = string_argument(&arguments, "runtime_device_id")?;
-                let task = human_request_runtime_task_id(grant)
-                    .map_err(super::TaskRuntimeError::Invalid)?;
-                let blocks = arguments["blocks_progress"].as_bool().ok_or_else(|| {
-                    super::TaskRuntimeError::Invalid("blocks_progress must be boolean".into())
-                })?;
-                runtime.stand_in_store().set_issue_human_request_blocking(
-                    project,
-                    issue,
-                    request,
-                    arguments["version"].as_i64().unwrap_or(0),
-                    device,
-                    task,
-                    blocks,
-                )
-            })();
-            result
-        }
+        "set_human_request_blocking" => (|| {
+            let project = string_argument(&arguments, "space_id")?;
+            let issue = string_argument(&arguments, "item_id")?;
+            let request = string_argument(&arguments, "request_id")?;
+            let device = string_argument(&arguments, "runtime_device_id")?;
+            let task =
+                human_request_runtime_task_id(grant).map_err(super::TaskRuntimeError::Invalid)?;
+            let blocks = arguments["blocks_progress"].as_bool().ok_or_else(|| {
+                super::TaskRuntimeError::Invalid("blocks_progress must be boolean".into())
+            })?;
+            runtime.stand_in_store().set_issue_human_request_blocking(
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: project,
+                    issue_id: issue,
+                },
+                request,
+                arguments["version"].as_i64().unwrap_or(0),
+                device,
+                task,
+                blocks,
+            )
+        })(),
         "assign_human_request" => {
             match (
                 string_argument(&arguments, "space_id"),
@@ -1285,8 +1284,10 @@ async fn call_tool_with_runtime_context(
             ) {
                 (Ok(project), Ok(issue), Ok(request), Ok(name)) => {
                     runtime.stand_in_store().assign_issue_human_request(
-                        project,
-                        issue,
+                        crate::task_runtime::IssueHumanRequestScope {
+                            project_id: project,
+                            issue_id: issue,
+                        },
                         request,
                         arguments["version"].as_i64().unwrap_or(0),
                         arguments["recipient_user_id"].as_i64().unwrap_or(0),

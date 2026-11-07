@@ -194,6 +194,25 @@ function WorkspaceTabButton({
         role="tab"
         aria-selected={active}
         data-testid={`workspace-tab-select-${tab.id}`}
+        data-pending-question-count={pendingTab ? interactions?.pending.length : undefined}
+        data-project-pending-count={
+          pendingTab
+            ? interactions?.projectItemsSupported
+              ? (interactions.pendingProjectCount ?? undefined)
+              : 0
+            : undefined
+        }
+        data-project-count-state={
+          pendingTab
+            ? !interactions
+              ? 'loading'
+              : !interactions.projectItemsSupported
+                ? 'unsupported'
+                : interactions.pendingProjectCount == null
+                  ? 'unknown'
+                  : 'known'
+            : undefined
+        }
         data-tab-kind={tab.kind}
         data-unavailable={unavailable || undefined}
         onClick={() => {

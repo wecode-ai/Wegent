@@ -105,6 +105,28 @@ export function createDesktopScenario({
   }
   async function recordPendingRows(control, expectedQuestions = 1, phase = 'pending') {
     const rows = []
+    const expectedProjects = phase === 'pending' ? 1 : 2
+    await until(
+      async () => ({
+        questions: Number(
+          await control.command(
+            'getElementCount',
+            `${scoped('interaction-list-item')}:not([data-project-issue="true"])`
+          )
+        ),
+        projects: Number(
+          await control.command(
+            'getElementCount',
+            `${scoped('interaction-list-item')}[data-project-issue="true"]`
+          )
+        ),
+      }),
+      value => value.questions === expectedQuestions && value.projects === expectedProjects,
+      'Question and project sources must both finish refreshing their exact expected pending rows'
+    )
+    const rowCount = Number(
+      await control.command('getElementCount', scoped('interaction-list-item'))
+    )
     let selector = scoped('interaction-list-item')
     while (JSON.parse(await control.command('getElementMetrics', selector)).length) {
       const id = await control.command('getAttribute', selector, { value: 'data-interaction-id' })
@@ -127,6 +149,21 @@ export function createDesktopScenario({
       rows.filter(row => row.text.includes(QUESTION)).length,
       expectedQuestions,
       'Native and canonical sources must share one question and remove it after acceptance'
+    )
+    assert.equal(
+      rows.length,
+      rowCount,
+      'Each rendered pending row must have a distinct stable identity'
+    )
+    assert.equal(
+      new Set(rows.map(row => row.id)).size,
+      rows.length,
+      'Pending rows must have unique identities'
+    )
+    assert.equal(
+      rows.filter(row => row.projectIssue === 'true').length,
+      expectedProjects,
+      'Only the original creator-owned Issue is pending before acceptance; the completed AI turn then returns its Issue to its human owner'
     )
   }
   async function verifyHeader(control, issueId, kind, name) {
@@ -235,6 +272,15 @@ export function createDesktopScenario({
     async verify(control) {
       active = true
       try {
+        const profileResponse = await fetch(
+          `http://127.0.0.1:${process.env.WEWORK_E2E_MODEL_SERVER_PORT}/api/users/me`
+        )
+        assert.ok(profileResponse.ok)
+        const profile = await profileResponse.json()
+        const viewerId = Number(profile.id)
+        const viewerName = profile.user_name
+        assert.ok(Number.isInteger(viewerId) && viewerId > 0)
+        const otherId = viewerId === 7 ? 8 : 7
         await ensureExperimentalFeaturesEnabled(control)
         await control.command(
           'clickWhenEnabled',
@@ -257,7 +303,7 @@ export function createDesktopScenario({
         )
         const foreign = await rpc(control, 'todos.create', {
           project_id: project.id,
-          todo: { title: `其他人负责-${process.pid}`, assignee_user_id: 7 },
+          todo: { title: `其他人负责-${process.pid}`, assignee_user_id: otherId },
         })
         await reloadMainWindow(control, 'Restore native Issue ownership fixtures')
         await verifyHeader(control, ordinaryId, 'human', 'local')
@@ -438,34 +484,36 @@ export function createDesktopScenario({
           'pending',
           'Reading the notification or original Issue must not complete its question'
         )
+        await recordSurface(control, 'issue-handoff-02b-awaiting-explicit-assignment', [surface])
         await control.command(
           'select',
           `${surface} [data-testid="issue-human-request-assignee-${question.id}"]`,
-          { value: '0' }
+          { value: String(viewerId) }
         )
         const assigned = await until(
           () =>
             rpc(control, 'todos.humanRequests.list', { project_id: project.id, task_id: issue.id }),
-          result => result.items[0].recipient_user_id === 0,
+          result => result.items[0].recipient_user_id === viewerId,
           'Assignment must persist before answering'
         )
         const first = assigned.items[0]
+        await recordSurface(control, 'issue-handoff-02c-assigned-to-current-profile', [surface])
         const transferred = await rpc(control, 'todos.humanRequests.assign', {
           project_id: project.id,
           task_id: issue.id,
           request_id: question.id,
           version: first.version,
-          recipient_user_id: 7,
+          recipient_user_id: otherId,
           recipient_name: 'Other recipient',
         })
         assert.equal(transferred.waiting_since, transferred.updated_at)
         assert.ok(
-          !(await rpc(control, 'todos.humanRequests.inbox', { user_id: 0 })).items.some(
+          !(await rpc(control, 'todos.humanRequests.inbox', { user_id: viewerId })).items.some(
             item => item.id === question.id
           )
         )
         assert.ok(
-          (await rpc(control, 'todos.humanRequests.inbox', { user_id: 7 })).items.some(
+          (await rpc(control, 'todos.humanRequests.inbox', { user_id: otherId })).items.some(
             item => item.id === question.id
           )
         )
@@ -476,8 +524,8 @@ export function createDesktopScenario({
           task_id: issue.id,
           request_id: question.id,
           version: transferred.version,
-          recipient_user_id: 0,
-          recipient_name: 'local',
+          recipient_user_id: viewerId,
+          recipient_name: viewerName,
         })
         assert.equal(returned.waiting_since, returned.updated_at)
         assert.deepEqual(
@@ -486,8 +534,8 @@ export function createDesktopScenario({
             .slice(-2)
             .map(event => [event.from_user_id, event.to_user_id]),
           [
-            [0, 7],
-            [7, 0],
+            [viewerId, otherId],
+            [otherId, viewerId],
           ]
         )
         await openPending(control)
@@ -588,7 +636,18 @@ export function createDesktopScenario({
           comment => comment.sender_type === 'user' && comment.content.includes(ANSWER)
         )
         assert.equal(answers.length, 1)
+        assert.equal(
+          answers[0].sender_id,
+          String(viewerId),
+          'The answer must use the actual profile, not impersonate native owner 0'
+        )
         assert.equal(answers[0].thread_root_message_id, root.message_id)
+        await until(
+          () => rpc(control, 'runtime.tasks.get', { taskId: question.runtime_task_id }),
+          value => value.task?.status === 'done',
+          'The accepted answer must finish its original Runtime turn before checking human-owned ordinary Issues',
+          modelResponseTimeoutMs
+        )
         await openPending(control)
         await until(
           () => control.command('getText', scoped('interaction-list-item')),
@@ -597,7 +656,7 @@ export function createDesktopScenario({
         )
         await recordPendingRows(control, 0, 'accepted')
         await reloadMainWindow(control, 'Answered questions remain resolved after reload')
-        const inbox = await rpc(control, 'todos.humanRequests.inbox', { user_id: 0 })
+        const inbox = await rpc(control, 'todos.humanRequests.inbox', { user_ids: [0, viewerId] })
         assert.ok(!inbox.items.some(request => request.id === question.id))
         await openPending(control)
         await until(

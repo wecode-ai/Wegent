@@ -59,7 +59,11 @@ export interface IssueParticipationSource {
   processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null
   created_at?: string | null
   human_waiting_since?: string | null
-  assignment_history?: readonly { to_type: string | null; to_id: string | null; at: string }[]
+  assignment_history?: readonly {
+    to_type: string | null
+    to_id: string | null
+    at: string
+  }[]
 }
 
 export function pendingIssueHumanRequests(item: IssueParticipationSource): IssueHumanRequest[] {
@@ -109,7 +113,7 @@ export function issueHumanAssignees(
               ? ownerName
               : id === item.created_by_user_id
                 ? item.created_by_user_name
-                : null),
+                : null)
         }
       })
     : [{ id: ownerId, name: ownerName }]
@@ -118,10 +122,20 @@ export function issueHumanAssignees(
   )
 }
 
-export function issueNeedsUser(item: IssueParticipationSource, userId: string | number): boolean {
+export type IssueParticipationViewer = string | number | readonly (string | number)[]
+
+function matchesViewer(id: unknown, viewer: IssueParticipationViewer): boolean {
+  const ids = typeof viewer === 'object' ? viewer : [viewer]
+  return ids.some(value => String(value) === String(id))
+}
+
+export function issueNeedsUser(
+  item: IssueParticipationSource,
+  userId: IssueParticipationViewer
+): boolean {
   return (
     issueParticipation(item) === 'human' &&
-    issueHumanAssignees(item).some(person => String(person.id) === String(userId))
+    issueHumanAssignees(item).some(person => matchesViewer(person.id, userId))
   )
 }
 
@@ -130,19 +144,19 @@ export function issueWaitingSince(
   item: IssueParticipationSource & {
     ai_state?: { status?: string | null; completed_at?: string | null } | null
   },
-  userId: string | number
+  userId: IssueParticipationViewer
 ): string | null {
   if (!issueNeedsUser(item, userId)) return null
   const requests = pendingIssueHumanRequests(item)
   if (requests.length) {
-    const mine = requests.filter(
-      request =>
-        String(
-          request.recipient_user_id ??
-            request.responsible_user_id ??
-            item.assignee_user_id ??
-            item.created_by_user_id
-        ) === String(userId)
+    const mine = requests.filter(request =>
+      matchesViewer(
+        request.recipient_user_id ??
+          request.responsible_user_id ??
+          item.assignee_user_id ??
+          item.created_by_user_id,
+        userId
+      )
     )
     const times = mine
       .map(
@@ -152,9 +166,17 @@ export function issueWaitingSince(
       .filter((value): value is string => Boolean(value) && Number.isFinite(Date.parse(value!)))
     return times.sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null
   }
-  const assignment = [...(item.assignment_history ?? [])]
-    .reverse()
-    .find(event => event.to_type === 'user' && event.to_id === String(userId))?.at
+  const currentPersonId = item.assignee_user_id ?? item.created_by_user_id
+  const latestAssignment = item.assignment_history?.at(-1)
+  const assignment =
+    latestAssignment &&
+    ((latestAssignment.to_type === 'user' &&
+      String(latestAssignment.to_id) === String(currentPersonId)) ||
+      (item.assignee_user_id == null &&
+        latestAssignment.to_type == null &&
+        latestAssignment.to_id == null))
+      ? latestAssignment.at
+      : undefined
   const rawCompletion = item.ai_state?.completed_at
   // Legacy execution timestamps are naive UTC, not the viewer's local time.
   const completed =
@@ -176,7 +198,8 @@ export function issueWaitingSince(
   if (candidates.length) return candidates.sort((a, b) => Date.parse(b) - Date.parse(a))[0]
   return !item.execution_state &&
     !item.ai_state &&
-    String(item.created_by_user_id) === String(userId)
+    matchesViewer(item.created_by_user_id, userId) &&
+    (item.assignee_user_id == null || item.assignee_user_id === item.created_by_user_id)
     ? (item.created_at ?? null)
     : null
 }

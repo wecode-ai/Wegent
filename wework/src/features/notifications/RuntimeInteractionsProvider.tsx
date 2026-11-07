@@ -143,6 +143,8 @@ function RuntimeInteractionsState({
   const cached = useMemo(() => readPendingInteractionCache(cacheKey), [cacheKey])
   const issueInteractions = useIssueHumanInteractions(source?.services, cached)
   const { refresh: refreshIssueInteractions, errors: issueErrors } = issueInteractions
+  const issueDiscoveryRef = useRef(issueInteractions)
+  issueDiscoveryRef.current = issueInteractions
   const [loaded, setLoaded] = useState<Record<string, RuntimeInteraction[]>>(() => {
     const groups: Record<string, RuntimeInteraction[]> = {}
     for (const item of cached) (groups[item.task.key] ??= []).push(item)
@@ -270,7 +272,12 @@ function RuntimeInteractionsState({
     async (force = true) => {
       const current = sourceRef.current
       const api = current?.services?.runtimeWorkApi
-      if (!api || fetching.current) return
+      if (fetching.current) return
+      if (!api) {
+        if (force) await issueDiscoveryRef.current.refresh()
+        else await issueDiscoveryRef.current.discover()
+        return
+      }
       if (successfulReadApi.current !== api) {
         successfulReads.current.clear()
         successfulReadApi.current = api
@@ -294,6 +301,8 @@ function RuntimeInteractionsState({
       try {
         const discovered = await readInteractionTaskInventory(current)
         if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
+        if (force) await issueDiscoveryRef.current.refresh()
+        else await issueDiscoveryRef.current.discover(discovered.localIssueQuestionsPending)
         const retained = inventoryRef.current.filter(
           item => !discovered.refreshedDevices.has(item.address.deviceId)
         )
@@ -909,9 +918,7 @@ function RuntimeInteractionsState({
       loading,
       respond,
       dismiss,
-      refresh: async () => {
-        await Promise.all([refresh(), refreshIssueInteractions()])
-      },
+      refresh,
       open,
       notice,
       dismissNotice,
@@ -926,7 +933,6 @@ function RuntimeInteractionsState({
       history,
       errors,
       issueErrors,
-      refreshIssueInteractions,
       busy,
       loading,
       respond,

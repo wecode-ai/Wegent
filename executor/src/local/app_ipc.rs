@@ -2418,11 +2418,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             )
         }
         "todos.humanRequests.inbox" => {
-            let user = params["user_id"]
-                .as_i64()
-                .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?;
+            let default = if params.get("user_ids").is_some() {
+                Vec::new()
+            } else {
+                vec![params["user_id"]
+                    .as_i64()
+                    .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?]
+            };
+            let users = human_request_viewer_ids(&params, "user_ids", &default)?;
             serialize_task_value(
-                json!({"items":runtime.stand_in_store().issue_human_request_inbox(user).map_err(task_runtime_error)?}),
+                json!({"items":runtime.stand_in_store().issue_human_request_inbox(&users).map_err(task_runtime_error)?}),
             )
         }
         "todos.humanRequests.list" => {
@@ -2441,8 +2446,10 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 runtime
                     .stand_in_store()
                     .assign_issue_human_request(
-                        project,
-                        issue,
+                        crate::task_runtime::IssueHumanRequestScope {
+                            project_id: project,
+                            issue_id: issue,
+                        },
                         question,
                         params["version"].as_i64().unwrap_or(0),
                         params["recipient_user_id"].as_i64().unwrap_or(0),
@@ -2984,6 +2991,40 @@ fn task_input<T: serde::de::DeserializeOwned>(
             .unwrap_or_else(|| params.clone()),
     )
     .map_err(|error| AppIpcError::new("bad_request", error.to_string()))
+}
+
+pub(crate) fn human_request_viewer_ids(
+    params: &Value,
+    key: &str,
+    default: &[i64],
+) -> Result<Vec<i64>, AppIpcError> {
+    let mut users = match params.get(key) {
+        None => default.to_vec(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", format!("{key} must be an integer array"))
+            })?
+            .iter()
+            .map(|value| {
+                value.as_i64().filter(|user| *user >= 0).ok_or_else(|| {
+                    AppIpcError::new(
+                        "bad_request",
+                        format!("{key} must contain non-negative integers"),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    if users.iter().any(|user| *user < 0) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Question viewer IDs must be non-negative",
+        ));
+    }
+    users.sort_unstable();
+    users.dedup();
+    Ok(users)
 }
 
 fn required_task_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, AppIpcError> {

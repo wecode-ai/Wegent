@@ -442,10 +442,33 @@ describe('WorkspaceTabStrip', () => {
       expect(screen.getAllByRole('tab')).toHaveLength(1)
     }
     rendered.rerender(tree(2, 3))
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-pending-question-count',
+      '2'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-pending-count',
+      '3'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-count-state',
+      'known'
+    )
     expect(
       screen.getByTestId('workspace-tab-pending-count-pending-interactions')
     ).toHaveTextContent('5')
     rendered.rerender(tree(2, null))
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-pending-question-count',
+      '2'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-count-state',
+      'unknown'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).not.toHaveAttribute(
+      'data-project-pending-count'
+    )
     expect(screen.queryByTestId('workspace-tab-pending-count-pending-interactions')).toBeNull()
     expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveTextContent(
       language === 'zh-CN' ? '待你处理' : 'Needs your input'

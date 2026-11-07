@@ -19,6 +19,7 @@ mod assignment_receipts;
 mod code_projects;
 pub mod execution_workspace;
 mod human_requests;
+pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
 mod ordering;

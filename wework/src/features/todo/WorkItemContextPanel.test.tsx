@@ -128,7 +128,7 @@ const item: CloudLoopItem = {
 
 describe('WorkItemContextPanel', () => {
   test.each(['local', 'backend'] as const)(
-    'preserves the %s handling domain through the embedded editor',
+    'preserves %s project authorization through the embedded editor',
     async store => {
       const api = {
         listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
@@ -143,9 +143,40 @@ describe('WorkItemContextPanel', () => {
           onOpenTask={vi.fn()}
         />
       )
+      expect(screen.getByTestId('mock-todo-editor')).toHaveAttribute('data-handling-user', '7')
+    }
+  )
+
+  test.each([
+    { store: 'local', projectUser: 0, author: 7, expected: 7 },
+    { store: 'local', projectUser: 7, author: 0, expected: 0 },
+    { store: 'backend', projectUser: 9, author: 7, expected: 9 },
+  ] as const)(
+    'uses only the owning realm authority ($store/$author)',
+    async ({ store, projectUser, author, expected }) => {
+      render(
+        <WorkItemContextPanel
+          api={
+            {
+              listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+            } as unknown as ProjectSpaceApi
+          }
+          services={{
+            localParticipationIdentity: {
+              nativeOwnerUserId: 0,
+              currentUser: { id: author, user_name: 'Current participant' },
+              viewerUserIds: [0, author],
+            },
+          }}
+          project={{ ...project, project_store: store, current_user_id: projectUser }}
+          item={item}
+          currentUserId={999}
+          onOpenTask={vi.fn()}
+        />
+      )
       expect(screen.getByTestId('mock-todo-editor')).toHaveAttribute(
         'data-handling-user',
-        store === 'local' ? '0' : '7'
+        String(expected)
       )
     }
   )

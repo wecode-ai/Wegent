@@ -104,7 +104,7 @@ async function renderProject(projectStore: 'local' | 'backend') {
 
 describe('Issue archive execution ownership', () => {
   it.each(['local', 'backend'] as const)(
-    'keeps %s handling identity separate from cloud login in board and detail',
+    'separates %s participation identity from existing detail authorization',
     async store => {
       await renderProject(store)
       const handlingUserId = store === 'local' ? 0 : 7
@@ -122,7 +122,7 @@ describe('Issue archive execution ownership', () => {
       } as never) as {
         props: { children(close: () => void): { props: ComponentProps<typeof TodoEditor> } }
       }
-      expect(detail.props.children(vi.fn()).props.currentUserId).toBe(handlingUserId)
+      expect(detail.props.children(vi.fn()).props.currentUserId).toBe(7)
     }
   )
 

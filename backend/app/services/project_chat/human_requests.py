@@ -159,7 +159,14 @@ def record_delivery_failure(
     ):
         return
     target["delivery_error"] = "rejected" if rejected else "uncertain"
-    target["events"] = [*target.get("events", []), {"type":"delivery_rejected" if rejected else "delivery_uncertain", "at":datetime.now(UTC).isoformat(), "message_id":message_id}]
+    target["events"] = [
+        *target.get("events", []),
+        {
+            "type": "delivery_rejected" if rejected else "delivery_uncertain",
+            "at": datetime.now(UTC).isoformat(),
+            "message_id": message_id,
+        },
+    ]
     if rejected:
         target.update(status="pending", answer_message_id=None)
     target.update(

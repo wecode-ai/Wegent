@@ -65,7 +65,7 @@ export function matchesBoardView(
     human_requests?: readonly IssueHumanRequest[]
   },
   view?: Pick<SavedBoardView, 'filter'> | null,
-  userId?: string | number
+  userId?: import('../issueParticipation').IssueParticipationViewer
 ) {
   if (view?.filter?.needs_my_input && (userId == null || !issueNeedsUser(item, userId)))
     return false
@@ -94,7 +94,7 @@ export function savedBoardColumns(
         ? (statusColumns.find(status => status.groupValue === column.value)?.dotClass ??
           'bg-zinc-400')
         : 'bg-zinc-400',
-    status: column.type === 'status' ? column.value : '',
+    status: column.type === 'status' ? column.value : ''
   }))
   const matchedColumns = columns.filter(column => column.type !== 'unmatched')
   return columns.map(column =>
@@ -102,7 +102,7 @@ export function savedBoardColumns(
       ? {
           ...column,
           unmatchedColumns: matchedColumns,
-          unmatchedFilter: view.filter,
+          unmatchedFilter: view.filter
         }
       : column
   )
@@ -115,9 +115,9 @@ export function createSavedBoardView(statuses: readonly CollaborationStatus[]): 
     columns: statuses.map(status => ({
       id: crypto.randomUUID(),
       type: 'status',
-      value: status.id,
+      value: status.id
     })),
-    filter: { tags: [], match: 'all' },
+    filter: { tags: [], match: 'all' }
   }
 }
 
@@ -152,13 +152,13 @@ export function unmatchedCreateDefaults(
     columns: view.columns
       .filter(column => column.type !== 'unmatched')
       .map(column => [column.type, column.value]),
-    filter: { tags: filterTags, match: view.filter?.match ?? 'all' },
+    filter: { tags: filterTags, match: view.filter?.match ?? 'all' }
   })
   return {
     status,
     tags,
     parent,
-    draftScope: `board-view:${view.id}:unmatched:${parent?.id ?? 'root'}:${draftRules}`,
+    draftScope: `board-view:${view.id}:unmatched:${parent?.id ?? 'root'}:${draftRules}`
   }
 }
 
@@ -205,7 +205,7 @@ export function boardDropHint(
   if (removing)
     return t('todo.board_drop_move_tag', undefined, {
       source: source.label,
-      tag: target.label,
+      tag: target.label
     })
   return item.tags.includes(target.groupValue)
     ? t('todo.board_drop_has_tag')

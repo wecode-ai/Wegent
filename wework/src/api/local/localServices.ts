@@ -509,6 +509,7 @@ interface CloudModelGateway {
 }
 
 interface RuntimeWorkIpcOptions {
+  localIssueUserIds?: readonly number[]
   getLocalRuntimeSidebarIdentity?: WorkbenchServices['getLocalRuntimeSidebarIdentity']
   resolveDeviceId?: (data?: Record<string, unknown>) => Promise<string>
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
@@ -2452,7 +2453,14 @@ function adaptRuntimeWorkListResponse(
     projects.push(projectWork)
   }
 
-  return { projects, chats, totalTasks }
+  return {
+    projects,
+    chats,
+    totalTasks,
+    ...(typeof record.localIssueQuestionsPending === 'boolean'
+      ? { localIssueQuestionsPending: record.localIssueQuestionsPending }
+      : {}),
+  }
 }
 
 export function createRuntimeWorkApiFromIpc(
@@ -2817,6 +2825,9 @@ export function createRuntimeWorkApiFromIpc(
           {
             ...(requestOptions?.preferCached ? { preferCached: true } : {}),
             ...(requestOptions?.pendingOnly ? { pendingOnly: true } : {}),
+            ...(requestOptions?.pendingOnly && options.localIssueUserIds
+              ? { localIssueUserIds: options.localIssueUserIds }
+              : {}),
           },
           localDeviceId
         )
@@ -3765,6 +3776,15 @@ function summarizeLocalModelOptions(
 }
 
 export function createLocalAppServices(deps: LocalAppServicesDeps = {}): WorkbenchServices {
+  const currentLocalParticipant = deps.user ?? LOCAL_USER
+  const localParticipationIdentity = {
+    nativeOwnerUserId: 0 as const,
+    currentUser: Object.freeze({
+      id: currentLocalParticipant.id,
+      user_name: currentLocalParticipant.user_name,
+    }),
+    viewerUserIds: Object.freeze([...new Set([LOCAL_USER.id, currentLocalParticipant.id])]),
+  }
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
     async listPlugins() {
       // Agent configuration must remain local-only. Both app/list and
@@ -4034,6 +4054,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       user: deps.user,
       materializeRuntimeTask: deps.materializeRuntimeTask,
       getLocalRuntimeSidebarIdentity,
+      localIssueUserIds: localParticipationIdentity.viewerUserIds,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
   const automationApi = createAutomationApiFromIpc(
@@ -4428,7 +4449,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const externalIssueApi = createExternalIssueApi(request)
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
-    currentUser: LOCAL_USER,
+    currentUser: localParticipationIdentity.currentUser,
     async prepareExecution({ projectId, taskId, agentId, text, runnerSelection }) {
       const [projects, task, agents] = await Promise.all([
         deliveryApi.listCloudProjects(),
@@ -4680,7 +4701,11 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
 
   return {
     teamApi,
-    localIssueHumanRequestsApi: createLocalIssueHumanRequestsApi(request, LOCAL_USER.id),
+    localParticipationIdentity,
+    localIssueHumanRequestsApi: createLocalIssueHumanRequestsApi(
+      request,
+      localParticipationIdentity
+    ),
     modelApi,
     skillApi: {
       listSkills: async () => [],

@@ -109,7 +109,7 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
-  participationUserId?: string | number;
+  participationUserId?: import("../issueParticipation").IssueParticipationViewer;
   parentGroupingEnabled?: boolean;
   emptyState?: ReactNode;
   filterAction?: ReactNode;

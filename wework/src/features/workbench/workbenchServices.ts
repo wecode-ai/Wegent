@@ -156,7 +156,15 @@ export interface LocalDecisionRouterApi {
   unregister(token: string): Promise<void>
 }
 
+/** Local participation discovery, not cloud authorization or a global user alias. */
+export interface LocalParticipationIdentity {
+  readonly nativeOwnerUserId: 0
+  readonly currentUser: Readonly<Pick<User, 'id' | 'user_name'>>
+  readonly viewerUserIds: readonly number[]
+}
+
 export interface WorkbenchServices {
+  localParticipationIdentity?: LocalParticipationIdentity
   issueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
   localIssueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
   standInApi?: import('@/api/standIn').StandInExecutorApi
@@ -361,6 +369,9 @@ export function createDefaultWorkbenchServices(
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
   return {
     ...cloudServices,
+    localParticipationIdentity: localServices.localParticipationIdentity,
+    localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
+    localProjectChatClient: localServices.localProjectChatClient,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     externalIssueApi: localServices.externalIssueApi,

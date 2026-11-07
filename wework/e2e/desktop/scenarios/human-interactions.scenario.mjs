@@ -386,6 +386,22 @@ export function createDesktopScenario({
         `${page} [data-testid="interaction-source-group-${issueFixture ? 'project' : 'task'}"]`,
         { text: QUESTION }
       )
+      if (issueFixture) {
+        await control.command(
+          'waitFor',
+          '[data-testid="workspace-tab-select-pending-interactions"][data-project-count-state="known"]'
+        )
+      } else if (
+        (await control.command(
+          'getAttribute',
+          '[data-testid="workspace-tab-select-pending-interactions"]',
+          { value: 'data-project-count-state' }
+        )) === 'unknown'
+      ) {
+        await control.command('waitFor', `${page} [data-testid^="project-work-error-"]`, {
+          visible: true,
+        })
+      }
       await verifyPendingInteractionsTab(control, 1, { openFromMenu: true })
       const questionTime = await verifyInteractionTime(control, page)
       await control.command('waitFor', page, { text: CONTEXT })

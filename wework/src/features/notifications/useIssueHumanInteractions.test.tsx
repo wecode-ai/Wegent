@@ -30,6 +30,9 @@ it('does not block local questions on a failed cloud inbox', async () => {
     issueHumanRequestsApi: { inbox: vi.fn().mockRejectedValue(new Error('Cloud disconnected')) },
   } as unknown as WorkbenchServices
   const { result } = renderHook(() => useIssueHumanInteractions(services, []))
+  await act(async () => {
+    await result.current.discover(true)
+  })
   await waitFor(() => expect(result.current.items).toHaveLength(1))
   expect(result.current.items[0].project?.store).toBe('local')
   await waitFor(() => expect(result.current.errors['issue:backend']).toBe('Cloud disconnected'))
@@ -39,6 +42,9 @@ it('disables previously loaded answers on a failed refresh and restores them onl
   const inbox = vi.fn().mockResolvedValue({ items: [question] })
   const services = { localIssueHumanRequestsApi: { inbox } } as unknown as WorkbenchServices
   const { result } = renderHook(() => useIssueHumanInteractions(services, []))
+  await act(async () => {
+    await result.current.discover(true)
+  })
   await waitFor(() => expect(result.current.items).toHaveLength(1))
   expect(canReplyToInteraction(result.current.items[0])).toBe(true)
   inbox.mockRejectedValueOnce(new Error('Offline'))
@@ -82,6 +88,9 @@ it('ignores late results from an old account service', async () => {
     ({ services }) => useIssueHumanInteractions(services, []),
     { initialProps: { services: old } }
   )
+  act(() => {
+    void result.current.discover(true)
+  })
   await waitFor(() => expect(oldResponse).toBeTypeOf('function'))
   rerender({ services: next })
   await act(async () => {
@@ -105,4 +114,31 @@ it('removes a previous account question even if the new account inbox is offline
   rerender({ services: next })
   await waitFor(() => expect(result.current.errors['issue:backend']).toBe('Offline'))
   expect(result.current.items).toEqual([])
+})
+
+it('keeps an empty local workbench quiet and uses the existing discovery hint for durable questions', async () => {
+  const inbox = vi.fn().mockResolvedValue({ items: [question] })
+  const services = { localIssueHumanRequestsApi: { inbox } } as unknown as WorkbenchServices
+  const { result } = renderHook(() => useIssueHumanInteractions(services, []))
+  await act(async () => {
+    await result.current.discover(false)
+  })
+  expect(inbox).not.toHaveBeenCalled()
+  await act(async () => {
+    await result.current.discover(true)
+  })
+  expect(result.current.items).toHaveLength(1)
+  inbox.mockResolvedValue({ items: [] })
+  await act(async () => {
+    await result.current.discover(false)
+  })
+  expect(result.current.items).toEqual([])
+  await act(async () => {
+    await result.current.discover(false)
+  })
+  expect(inbox).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    await result.current.refresh()
+  })
+  expect(inbox).toHaveBeenCalledTimes(3)
 })

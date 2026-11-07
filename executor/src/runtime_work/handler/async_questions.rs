@@ -110,7 +110,7 @@ impl RuntimeWorkRpcHandler {
                 let result: Result<(),String> = async {
                     if report["project_store"] == "local" {
                         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).map_err(|error| error.to_string())?;
-                        store.report_issue_human_request(report["project_id"].as_str().unwrap_or_default(),report["issue_id"].as_str().unwrap_or_default(),&handler.device_id,&task,&item,report["question"].as_str().unwrap_or_default(),report["questions"].as_array().map(Vec::as_slice).unwrap_or_default()).map_err(|error| error.to_string())?;
+                        store.report_issue_human_request(crate::task_runtime::IssueHumanRequestScope { project_id: report["project_id"].as_str().unwrap_or_default(), issue_id: report["issue_id"].as_str().unwrap_or_default() },&handler.device_id,&task,&item,report["question"].as_str().unwrap_or_default(),report["questions"].as_array().map(Vec::as_slice).unwrap_or_default()).map_err(|error| error.to_string())?;
                     } else {
                         let connection = handler.backend_connection_snapshot().map_err(|error| error.message)?.ok_or("Backend connection is unavailable")?;
                         let mut url = url::Url::parse(&format!("{}/api/v1/loop-items/", connection.backend_url.trim_end_matches('/'))).map_err(|error| error.to_string())?;

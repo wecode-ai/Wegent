@@ -1137,7 +1137,11 @@ export function WeworkSharedProject({
       />
       <div className="min-w-0 flex-1">
         <CollaborationApp
-          participationUserId={taskOwnerUserId}
+          participationUserId={
+            project.project_store === 'local'
+              ? (services.localParticipationIdentity?.viewerUserIds ?? taskOwnerUserId)
+              : taskOwnerUserId
+          }
           isIssueRunning={isIssueRunning}
           parentGroupingEnabled
           api={scopedApi}
@@ -1207,11 +1211,7 @@ export function WeworkSharedProject({
                   projectChatAgentApi={detailServices?.projectChatAgentApi}
                   projectChatClient={detailServices?.projectChatClient}
                   selfManagedExecution={project.project_store === 'local'}
-                  currentUserId={
-                    project.project_store === 'local'
-                      ? taskOwnerUserId
-                      : (editorProject.current_user_id ?? userId)
-                  }
+                  currentUserId={editorProject.current_user_id ?? userId}
                   currentAssignment={
                     assignments
                       .filter(assignment => assignment.status === 'active')

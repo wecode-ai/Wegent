@@ -5,7 +5,7 @@ import {
   issueNeedsUser,
   issueParticipation,
   standInProcessingActor,
-  type IssueHumanRequest,
+  type IssueHumanRequest
 } from './issueParticipation'
 
 const request: IssueHumanRequest = {
@@ -23,7 +23,7 @@ const request: IssueHumanRequest = {
   status: 'pending',
   version: 1,
   created_at: '2026-11-07T00:00:00Z',
-  updated_at: '2026-11-07T00:00:00Z',
+  updated_at: '2026-11-07T00:00:00Z'
 }
 
 describe('Issue participation', () => {
@@ -31,7 +31,7 @@ describe('Issue participation', () => {
     const current = {
       ...request,
       waiting_since: '2026-11-08T02:00:00Z',
-      updated_at: '2026-11-08T04:00:00Z',
+      updated_at: '2026-11-08T04:00:00Z'
     }
     expect(issueWaitingSince({ human_requests: [current] }, 7)).toBe(current.waiting_since)
     expect(
@@ -46,7 +46,7 @@ describe('Issue participation', () => {
         {
           ...owned,
           execution_state: 'succeeded',
-          ai_state: { completed_at: '2026-11-08T03:00:00Z' },
+          ai_state: { completed_at: '2026-11-08T03:00:00Z' }
         },
         7
       )
@@ -59,12 +59,12 @@ describe('Issue participation', () => {
       recipient_name: null,
       responsible_user_id: 8,
       responsible_user_name: 'Leader',
-      waiting_since: '2026-11-08T02:00:00Z',
+      waiting_since: '2026-11-08T02:00:00Z'
     }
     const item = {
       created_by_user_id: 7,
       created_by_user_name: 'Creator',
-      human_requests: [current],
+      human_requests: [current]
     }
     expect(issueHumanAssignees(item)).toEqual([{ id: 8, name: 'Leader' }])
     expect(issueNeedsUser(item, 7)).toBe(false)
@@ -77,7 +77,7 @@ describe('Issue participation', () => {
         {
           created_by_user_id: 7,
           execution_state: 'succeeded',
-          assignment_history: [{ to_type: 'user', to_id: '7', at: '2026-11-01T00:00:00Z' }],
+          assignment_history: [{ to_type: 'user', to_id: '7', at: '2026-11-01T00:00:00Z' }]
         },
         7
       )
@@ -89,7 +89,7 @@ describe('Issue participation', () => {
         {
           created_by_user_id: 7,
           execution_state: 'succeeded',
-          ai_state: { completed_at: '2026-11-08T03:00:00' },
+          ai_state: { completed_at: '2026-11-08T03:00:00' }
         },
         7
       )
@@ -105,7 +105,7 @@ describe('Issue participation', () => {
       'waiting_runtime',
       'succeeded',
       'failed',
-      'cancelled',
+      'cancelled'
     ]) {
       expect(issueParticipation({ status: 'in_progress', execution_state })).toBe('human')
     }
@@ -114,7 +114,10 @@ describe('Issue participation', () => {
     expect(issueParticipation({ execution_state: 'running' })).toBe('ai')
     expect(issueParticipation({ ai_state: { status: 'running' } })).toBe('ai')
     expect(
-      issueParticipation({ execution_state: 'succeeded', ai_state: { status: 'running' } })
+      issueParticipation({
+        execution_state: 'succeeded',
+        ai_state: { status: 'running' }
+      })
     ).toBe('human')
   })
   it('prioritizes unresolved input even while independent work can continue', () => {
@@ -122,20 +125,70 @@ describe('Issue participation', () => {
     expect(issueNeedsUser({ human_requests: [request] }, '7')).toBe(true)
     expect(issueNeedsUser({ human_requests: [request] }, 8)).toBe(false)
   })
+  it('matches only explicitly scoped viewer principals without merging their identities', () => {
+    const viewer = [0, 7] as const
+    expect(issueNeedsUser({ created_by_user_id: 0 }, viewer)).toBe(true)
+    expect(issueNeedsUser({ assignee_user_id: 7 }, viewer)).toBe(true)
+    expect(issueNeedsUser({ assignee_user_id: 8 }, viewer)).toBe(false)
+    expect(issueNeedsUser({ assignee_user_id: 0 }, 7)).toBe(false)
+    expect(
+      issueWaitingSince(
+        {
+          human_requests: [
+            {
+              ...request,
+              recipient_user_id: 7,
+              waiting_since: '2026-11-08T00:00:00Z'
+            }
+          ]
+        },
+        viewer
+      )
+    ).toBe('2026-11-08T00:00:00Z')
+  })
+  it('times the current person handoff for a multi-principal viewer, never a different principal history', () => {
+    const viewer = [0, 9001] as const
+    const created = '2026-11-01T00:00:00Z'
+    const assigned = '2026-11-08T00:00:00Z'
+    const returned = '2026-11-08T02:00:00Z'
+    const item = { created_by_user_id: 0, created_at: created }
+    expect(issueWaitingSince(item, viewer)).toBe(created)
+    expect(issueWaitingSince({ ...item, assignee_user_id: 9001 }, viewer)).toBeNull()
+    const history = [{ to_type: 'user', to_id: '9001', at: assigned }]
+    expect(
+      issueWaitingSince({ ...item, assignee_user_id: 9001, assignment_history: history }, viewer)
+    ).toBe(assigned)
+    expect(
+      issueWaitingSince(
+        { ...item, assignment_history: [...history, { to_type: null, to_id: null, at: returned }] },
+        viewer
+      )
+    ).toBe(returned)
+    expect(
+      issueWaitingSince(
+        {
+          ...item,
+          assignee_user_id: 9001,
+          assignment_history: [...history, { to_type: 'user', to_id: '0', at: returned }]
+        },
+        viewer
+      )
+    ).toBeNull()
+  })
   it('keeps accepted but not delivered answers pending and closes only the exact request', () => {
     expect(
       issueParticipation({
-        human_requests: [{ ...request, status: 'answering' }],
+        human_requests: [{ ...request, status: 'answering' }]
       })
     ).toBe('human')
     expect(
       issueParticipation({
-        human_requests: [{ ...request, status: 'resolved' }, request],
+        human_requests: [{ ...request, status: 'resolved' }, request]
       })
     ).toBe('human')
     expect(
       issueParticipation({
-        human_requests: [{ ...request, status: 'resolved' }],
+        human_requests: [{ ...request, status: 'resolved' }]
       })
     ).toBe('human')
   })
@@ -143,20 +196,29 @@ describe('Issue participation', () => {
     const item = { created_by_user_id: 0, created_by_user_name: '李四' }
     expect(issueHumanAssignees(item)).toEqual([{ id: 0, name: '李四' }])
     expect(issueNeedsUser(item, 0)).toBe(true)
-    expect(issueHumanAssignees({ ...item, assignee_user_id: 7, assignee_name: '张三' })).toEqual([
-      { id: 7, name: '张三' },
-    ])
     expect(
       issueHumanAssignees({
         ...item,
-        human_requests: [{ ...request, recipient_user_id: null, recipient_name: null }],
+        assignee_user_id: 7,
+        assignee_name: '张三'
+      })
+    ).toEqual([{ id: 7, name: '张三' }])
+    expect(
+      issueHumanAssignees({
+        ...item,
+        human_requests: [{ ...request, recipient_user_id: null, recipient_name: null }]
       })
     ).toEqual([{ id: 0, name: '李四' }])
     expect(issueNeedsUser({ ...item, execution_state: 'running' }, 0)).toBe(false)
   })
   it('identifies a running stand-in from its runtime origin, not human ownership', () => {
-    const handle = { origin: { initiatedBy: 'stand_in', roleName: '研发分身' } }
-    expect(standInProcessingActor(handle, true)).toEqual({ kind: 'stand_in', name: '研发分身' })
+    const handle = {
+      origin: { initiatedBy: 'stand_in', roleName: '研发分身' }
+    }
+    expect(standInProcessingActor(handle, true)).toEqual({
+      kind: 'stand_in',
+      name: '研发分身'
+    })
     expect(standInProcessingActor(handle, false)).toBeUndefined()
     expect(standInProcessingActor({ origin: { roleName: 'Not a stand-in' } }, true)).toBeUndefined()
   })
@@ -169,7 +231,7 @@ describe('Issue participation', () => {
         assignee_user_id: 0,
         assignee_name: null,
         created_by_user_id: 0,
-        created_by_user_name: 'local',
+        created_by_user_name: 'local'
       })
     ).toEqual([{ id: 0, name: 'local' }])
     expect(
@@ -177,7 +239,7 @@ describe('Issue participation', () => {
         assignee_user_id: 7,
         assignee_name: null,
         created_by_user_id: 0,
-        created_by_user_name: 'local',
+        created_by_user_name: 'local'
       })
     ).toEqual([{ id: 7, name: '' }])
   })

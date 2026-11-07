@@ -2,11 +2,45 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+pub struct IssueHumanRequestScope<'a> {
+    pub project_id: &'a str,
+    pub issue_id: &'a str,
+}
+
 impl LocalTaskStore {
-    pub fn issue_human_request_inbox(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
+    pub fn has_pending_issue_human_requests(
+        &self,
+        users: &[i64],
+    ) -> Result<bool, TaskRuntimeError> {
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT DISTINCT issue.metadata FROM loop_items target JOIN loop_items issue ON issue.id=target.parent_id WHERE target.resource_type='human_request_index' AND target.assignee_user_id=?1 AND issue.resource_type='task' AND issue.deleted_at IS NULL AND issue.status NOT IN ('completed','cancelled','archived')")?;
-        let rows = statement.query_map([user], |row| row.get::<_, String>(0))?;
+        pending_issue_human_requests_on(&connection, users)
+    }
+
+    pub fn pending_issue_human_requests_at(
+        path: &Path,
+        users: &[i64],
+    ) -> Result<bool, TaskRuntimeError> {
+        if !path
+            .try_exists()
+            .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?
+        {
+            return Ok(false);
+        }
+        let connection =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        pending_issue_human_requests_on(&connection, users)
+    }
+
+    pub fn issue_human_request_inbox(&self, users: &[i64]) -> Result<Vec<Value>, TaskRuntimeError> {
+        if users.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(&format!(
+            "SELECT DISTINCT issue.metadata {}",
+            human_request_index_scope(users)?
+        ))?;
+        let rows = statement.query_map(params_from_iter(users), |row| row.get::<_, String>(0))?;
         let mut requests = Vec::new();
         for row in rows {
             let metadata: Value = serde_json::from_str(&row?)
@@ -17,9 +51,13 @@ impl LocalTaskStore {
                     .into_iter()
                     .flatten()
                     .filter(|request| {
-                        (request["recipient_user_id"].as_i64() == Some(user)
+                        (request["recipient_user_id"]
+                            .as_i64()
+                            .is_some_and(|user| users.contains(&user))
                             || (request["recipient_user_id"].is_null()
-                                && request["responsible_user_id"].as_i64() == Some(user)))
+                                && request["responsible_user_id"]
+                                    .as_i64()
+                                    .is_some_and(|user| users.contains(&user))))
                             && matches!(request["status"].as_str(), Some("pending" | "answering"))
                     })
                     .cloned(),
@@ -46,14 +84,17 @@ impl LocalTaskStore {
 
     pub fn report_issue_human_request(
         &self,
-        project: &str,
-        issue: &str,
+        scope: IssueHumanRequestScope<'_>,
         device: &str,
         task: &str,
         item: &str,
         question: &str,
         questions: &[Value],
     ) -> Result<Value, TaskRuntimeError> {
+        let IssueHumanRequestScope {
+            project_id: project,
+            issue_id: issue,
+        } = scope;
         if [device, task, item, question]
             .iter()
             .any(|value| value.trim().is_empty())
@@ -132,14 +173,17 @@ impl LocalTaskStore {
 
     pub fn set_issue_human_request_blocking(
         &self,
-        project: &str,
-        issue: &str,
+        scope: IssueHumanRequestScope<'_>,
         request: &str,
         version: i64,
         device: &str,
         task: &str,
         blocks_progress: bool,
     ) -> Result<Value, TaskRuntimeError> {
+        let IssueHumanRequestScope {
+            project_id: project,
+            issue_id: issue,
+        } = scope;
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let row = get_item_from(&tx, issue, "task")?
@@ -187,14 +231,17 @@ impl LocalTaskStore {
 
     pub fn assign_issue_human_request(
         &self,
-        project: &str,
-        issue: &str,
+        scope: IssueHumanRequestScope<'_>,
         request: &str,
         version: i64,
         recipient: i64,
         name: &str,
         blocks_progress: Option<bool>,
     ) -> Result<Value, TaskRuntimeError> {
+        let IssueHumanRequestScope {
+            project_id: project,
+            issue_id: issue,
+        } = scope;
         if recipient < 0 || name.trim().is_empty() {
             return Err(TaskRuntimeError::Invalid("Assign a specific person".into()));
         }
@@ -387,6 +434,33 @@ fn update_execution_reply(
     Ok(())
 }
 
+fn human_request_index_scope(users: &[i64]) -> Result<String, TaskRuntimeError> {
+    if users.iter().any(|user| *user < 0) {
+        return Err(TaskRuntimeError::Invalid(
+            "Question viewer IDs must be non-negative".into(),
+        ));
+    }
+    let placeholders = vec!["?"; users.len()].join(",");
+    Ok(format!("FROM loop_items target JOIN loop_items issue ON issue.id=target.parent_id WHERE target.resource_type='human_request_index' AND target.assignee_user_id IN ({placeholders}) AND issue.resource_type='task' AND issue.deleted_at IS NULL AND issue.status NOT IN ('completed','cancelled','archived')"))
+}
+
+fn pending_issue_human_requests_on(
+    connection: &Connection,
+    users: &[i64],
+) -> Result<bool, TaskRuntimeError> {
+    if users.is_empty() {
+        return Ok(false);
+    }
+    Ok(connection.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 {})",
+            human_request_index_scope(users)?
+        ),
+        params_from_iter(users),
+        |row| row.get(0),
+    )?)
+}
+
 fn save_metadata(
     connection: &Connection,
     issue: &str,
@@ -471,12 +545,112 @@ mod tests {
     }
 
     #[test]
+    fn human_request_pending_hint_read_only_path_never_initializes_storage() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.sqlite");
+        assert!(!LocalTaskStore::pending_issue_human_requests_at(&path, &[0]).unwrap());
+        assert!(!path.exists());
+        let connection = Connection::open(&path).unwrap();
+        connection.pragma_update(None, "user_version", 17).unwrap();
+        drop(connection);
+        assert!(LocalTaskStore::pending_issue_human_requests_at(&path, &[0]).is_err());
+        let connection =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            17
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn human_request_pending_hint_uses_only_active_recipient_indexes() {
+        let (_directory, store, project, issue, _) = fixture();
+        assert!(!store.has_pending_issue_human_requests(&[0]).unwrap());
+        let request = store
+            .report_issue_human_request(
+                IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
+                "device",
+                "runtime",
+                "hint",
+                "Choose",
+                &[],
+            )
+            .unwrap();
+        assert!(store.has_pending_issue_human_requests(&[0]).unwrap());
+        assert!(LocalTaskStore::pending_issue_human_requests_at(store.path(), &[0]).unwrap());
+        assert!(!store.has_pending_issue_human_requests(&[7]).unwrap());
+        store
+            .assign_issue_human_request(
+                IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
+                request["id"].as_str().unwrap(),
+                1,
+                7,
+                "Other",
+                None,
+            )
+            .unwrap();
+        assert!(!store.has_pending_issue_human_requests(&[0]).unwrap());
+        assert!(store.has_pending_issue_human_requests(&[7]).unwrap());
+        assert!(store.has_pending_issue_human_requests(&[0, 7]).unwrap());
+        assert!(LocalTaskStore::pending_issue_human_requests_at(store.path(), &[0, 7]).unwrap());
+        assert_eq!(
+            store.issue_human_request_inbox(&[0, 7, 7]).unwrap().len(),
+            1
+        );
+        assert!(store.issue_human_request_inbox(&[0]).unwrap().is_empty());
+        assert!(!store.has_pending_issue_human_requests(&[]).unwrap());
+        assert!(store.issue_human_request_inbox(&[]).unwrap().is_empty());
+        assert!(store.has_pending_issue_human_requests(&[-1]).is_err());
+        let connection = store.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE loop_items SET metadata='{}' WHERE id=?1",
+                [&issue.id],
+            )
+            .unwrap();
+        drop(connection);
+        assert!(
+            store.has_pending_issue_human_requests(&[7]).unwrap(),
+            "Hint must use its durable index without reading question metadata"
+        );
+        let connection = store.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE loop_items SET status='completed' WHERE id=?1",
+                [&issue.id],
+            )
+            .unwrap();
+        drop(connection);
+        assert!(!store.has_pending_issue_human_requests(&[7]).unwrap());
+    }
+
+    #[test]
     fn human_request_blocking_changes_preserve_the_handoff_and_reject_other_executions() {
         let (_directory, store, project, issue, _) = fixture();
         let question = store
             .report_issue_human_request(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
                 "device",
                 "runtime",
                 "flag",
@@ -487,13 +661,25 @@ mod tests {
         let id = question["id"].as_str().unwrap();
         for (device, task) in [("other", "runtime"), ("device", "other")] {
             assert!(store
-                .set_issue_human_request_blocking(&project.id, &issue.id, id, 1, device, task, true)
+                .set_issue_human_request_blocking(
+                    crate::task_runtime::IssueHumanRequestScope {
+                        project_id: &project.id,
+                        issue_id: &issue.id
+                    },
+                    id,
+                    1,
+                    device,
+                    task,
+                    true
+                )
                 .is_err());
         }
         let changed = store
             .set_issue_human_request_blocking(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
                 id,
                 1,
                 "device",
@@ -515,8 +701,10 @@ mod tests {
         assert_eq!(changed["events"][1]["type"], "blocking_changed");
         assert!(store
             .set_issue_human_request_blocking(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id
+                },
                 id,
                 1,
                 "device",
@@ -526,8 +714,10 @@ mod tests {
             .is_err());
         let cleared = store
             .set_issue_human_request_blocking(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
                 id,
                 2,
                 "device",
@@ -544,8 +734,10 @@ mod tests {
         let (directory, store, project, issue, root) = fixture();
         let first = store
             .report_issue_human_request(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
                 "device",
                 "runtime",
                 "question",
@@ -556,8 +748,10 @@ mod tests {
         assert_eq!(first["root_comment_id"], root.message_id);
         let assigned = store
             .assign_issue_human_request(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
                 first["id"].as_str().unwrap(),
                 1,
                 0,
@@ -569,8 +763,10 @@ mod tests {
         assert_eq!(
             store
                 .report_issue_human_request(
-                    &project.id,
-                    &issue.id,
+                    crate::task_runtime::IssueHumanRequestScope {
+                        project_id: &project.id,
+                        issue_id: &issue.id
+                    },
                     "device",
                     "runtime",
                     "question",
@@ -582,8 +778,10 @@ mod tests {
         );
         assert!(store
             .assign_issue_human_request(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id
+                },
                 first["id"].as_str().unwrap(),
                 1,
                 7,
@@ -593,8 +791,11 @@ mod tests {
             .is_err());
         drop(store);
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-        assert_eq!(store.issue_human_request_inbox(0).unwrap(), vec![assigned]);
-        assert!(store.issue_human_request_inbox(7).unwrap().is_empty());
+        assert_eq!(
+            store.issue_human_request_inbox(&[0]).unwrap(),
+            vec![assigned]
+        );
+        assert!(store.issue_human_request_inbox(&[7]).unwrap().is_empty());
     }
 
     #[test]
@@ -602,8 +803,10 @@ mod tests {
         let (_directory, store, project, issue, _) = fixture();
         assert!(store
             .report_issue_human_request(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id
+                },
                 "other-device",
                 "runtime",
                 "question",
@@ -613,8 +816,10 @@ mod tests {
             .is_err());
         assert!(store
             .report_issue_human_request(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id
+                },
                 "device",
                 "other-runtime",
                 "question",
@@ -625,8 +830,10 @@ mod tests {
         for id in ["first", "second"] {
             store
                 .report_issue_human_request(
-                    &project.id,
-                    &issue.id,
+                    crate::task_runtime::IssueHumanRequestScope {
+                        project_id: &project.id,
+                        issue_id: &issue.id,
+                    },
                     "device",
                     "runtime",
                     id,
@@ -649,8 +856,10 @@ mod tests {
         let (_directory, store, project, issue, root) = fixture();
         let question = store
             .report_issue_human_request(
-                &project.id,
-                &issue.id,
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
                 "device",
                 "runtime",
                 "question",
@@ -660,7 +869,17 @@ mod tests {
             .unwrap();
         let id = question["id"].as_str().unwrap();
         store
-            .assign_issue_human_request(&project.id, &issue.id, id, 1, 0, "Local", None)
+            .assign_issue_human_request(
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: &project.id,
+                    issue_id: &issue.id,
+                },
+                id,
+                1,
+                0,
+                "Local",
+                None,
+            )
             .unwrap();
         let create = |body: &str| {
             store
@@ -685,7 +904,7 @@ mod tests {
             .accept_issue_human_reply(&project.id, &issue.id, id, 0, &answer.message_id)
             .unwrap();
         assert_eq!(saved["status"], "answering");
-        assert_eq!(store.issue_human_request_inbox(0).unwrap().len(), 1);
+        assert_eq!(store.issue_human_request_inbox(&[0]).unwrap().len(), 1);
         assert!(store
             .accept_issue_human_reply(
                 &project.id,

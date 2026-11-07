@@ -90,7 +90,7 @@ export function NotificationIssueEntity({
       project={result.project}
       item={result.item}
       currentTask={address}
-      currentUserId={store === 'local' ? 0 : state.user?.id}
+      currentUserId={state.user?.id}
       localProjects={state.projects}
       deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
       focusedCommentId={commentId}

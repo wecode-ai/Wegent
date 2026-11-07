@@ -53,7 +53,7 @@ it('loads exact records from their owning store and passes them unchanged to the
     expect.objectContaining({
       project,
       item,
-      currentUserId: 0,
+      currentUserId: 1,
       focusedCommentId: 'root',
       readFirst: true,
     })
