@@ -340,6 +340,20 @@ test('timing evidence contains positive successful samples with source run links
   assert.match(evidence.runnerOverheadSource, /\/actions\/runs\/\d+\/job\/\d+$/)
 })
 
+function replayedShardSeconds(shard, seconds, overheadSeconds) {
+  return shard.segments.split(',').reduce((total, segment) => {
+    const duration = checkpointSeconds(segment, seconds)
+    assert.notEqual(duration, null, `${shard.id}: missing duration for ${segment}`)
+    return total + duration
+  }, overheadSeconds)
+}
+
+test('deadline replay rejects unknown durations and preserves known sums', () => {
+  const shard = { id: 'fixture', segments: 'send-key-preference' }
+  assert.throws(() => replayedShardSeconds(shard, {}, 125), /missing duration/)
+  assert.equal(replayedShardSeconds(shard, { 'send-key-preference': 17 }, 125), 142)
+})
+
 test('replayed successful Windows observations fit the step deadline with runner overhead', () => {
   const replay = JSON.parse(
     readFileSync(new URL('./fixtures/wework-windows-deadline-replay.json', import.meta.url))
@@ -358,12 +372,7 @@ test('replayed successful Windows observations fit the step deadline with runner
   const observed = { ...evidence.seconds, ...replay.seconds }
   for (const shard of balanceWindowsMatrix(completeMatrix).include) {
     if (['core-9', 'core-10'].includes(shard.id)) continue
-    const seconds = shard.segments
-      .split(',')
-      .reduce(
-        (total, segment) => total + checkpointSeconds(segment, observed),
-        replay.runnerOverheadSeconds
-      )
+    const seconds = replayedShardSeconds(shard, observed, replay.runnerOverheadSeconds)
     assert.ok(seconds < budget, `${shard.id}: replay ${seconds}s exceeds ${budget}s`)
   }
 })

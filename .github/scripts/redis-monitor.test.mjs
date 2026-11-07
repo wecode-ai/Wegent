@@ -27,12 +27,24 @@ function capture(monitor, command) {
 const readyMonitor = `
 printf 'OK\\n'
 while [[ ! -f "$FIXTURE_ROOT/send" ]]; do sleep 0.01; done
+# Model a delayed write after the request; a fixed post-request sleep is not readiness.
+sleep 0.2
 printf '123.456 [0 127.0.0.1:1234] "DEL" "private-key" "private-value"\\n'
+touch "$FIXTURE_ROOT/sent"
 exec sleep 30
 `
 
+const requestCapturedWrite = `
+touch "$FIXTURE_ROOT/send"
+deadline=$((SECONDS + 5))
+until [[ -f "$FIXTURE_ROOT/sent" ]]; do
+  if (( SECONDS >= deadline )); then exit 1; fi
+  sleep 0.01
+done
+`
+
 test('captures commands throughout the test and removes arguments before writing', () => {
-  const result = capture(readyMonitor, 'sleep 0.2; touch "$FIXTURE_ROOT/send"; sleep 0.1')
+  const result = capture(readyMonitor, requestCapturedWrite)
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.log, /123\.456 \[0 127\.0\.0\.1:1234\] "DEL"/)
   assert.ok(!result.log.includes('private'))
@@ -63,7 +75,7 @@ test('bounds readiness independently of the test lifetime', () => {
 })
 
 test('preserves the test command failure without retries', () => {
-  const result = capture(readyMonitor, 'touch "$FIXTURE_ROOT/send"; sleep 0.1; exit 23')
+  const result = capture(readyMonitor, `${requestCapturedWrite}\nexit 23`)
   assert.equal(result.status, 23, result.stderr)
   assert.match(result.log, /"DEL"/)
   assert.ok(!result.log.includes('private'))
