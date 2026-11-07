@@ -3,7 +3,7 @@
   "scenario": "./scenarios/idle-executor-requests.scenario.mjs",
   "scenarioOnly": true,
   "paths": [
-    "wework/e2e/desktop/idle-executor-requests*",
+    "wework/src/e2e/idle-executor-requests*",
     "wework/e2e/desktop/modules/idle-executor-requests*",
     "wework/src/desktop/localExecutor*",
     "wework/src/telemetry/StandInTelemetryAgent*",

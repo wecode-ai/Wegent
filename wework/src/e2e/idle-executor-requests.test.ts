@@ -1,17 +1,19 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
-import test from 'node:test'
-import { loadDesktopCheckpointCatalog } from './checkpoint-catalog.mjs'
-import { expandDesktopCheckpoints } from './checkpoints.mjs'
+import { test } from 'vitest'
+import { loadDesktopCheckpointCatalog } from '../../e2e/desktop/checkpoint-catalog.mjs'
+import { expandDesktopCheckpoints } from '../../e2e/desktop/checkpoints.mjs'
 import {
   assertIdleExecutorTraffic,
   summarizeExecutorTraffic,
-} from './modules/idle-executor-requests.mjs'
+} from '../../e2e/desktop/modules/idle-executor-requests.mjs'
 
 const windows = [
   { name: 'foreground', start: 1000, end: 7500 },
   { name: 'background', start: 8000, end: 14500 },
 ]
-const row = (method, at = 500, extra = {}) => ({
+const row = (method: string, at = 500, extra: Record<string, unknown> = {}) => ({
   method,
   at,
   status: 200,
@@ -31,7 +33,12 @@ const fixture = () => [
 ]
 
 test('real traffic summary excludes pre-navigation requests and never retains secrets', () => {
-  const request = (requestId, timestamp, path, extra = {}) => ({
+  const request = (
+    requestId: string,
+    timestamp: number,
+    path: string,
+    extra: Record<string, unknown> = {}
+  ) => ({
     method: 'Network.requestWillBeSent',
     timestamp,
     params: {
@@ -79,7 +86,7 @@ test('malformed RPCs and unclassified routes fail without printing request conte
     ['/rpc', 'private-invalid-json', /not valid JSON/],
     ['/rpc', '{}', /method is missing/],
     ['/unknown?token=private', undefined, /Unexpected Executor route/],
-  ]) {
+  ] as const) {
     assert.throws(
       () =>
         summarizeExecutorTraffic([
@@ -93,7 +100,8 @@ test('malformed RPCs and unclassified routes fail without printing request conte
             },
           },
         ]),
-      error => expected.test(error.message) && !error.message.includes('private')
+      error =>
+        error instanceof Error && expected.test(error.message) && !error.message.includes('private')
     )
   }
 })
@@ -148,7 +156,8 @@ test('idle checkpoint is standalone and selected by the existing CI shard and so
 })
 
 test('idle fixture reuses the common first-run consent flow', async () => {
-  const { createDesktopScenario } = await import('./scenarios/idle-executor-requests.scenario.mjs')
+  const { createDesktopScenario } =
+    await import('../../e2e/desktop/scenarios/idle-executor-requests.scenario.mjs')
   const scenario = createDesktopScenario({ resultDir: '/unused', uiTimeoutMs: 10_000 })
   assert.equal(scenario.prepareApp, undefined)
   assert.equal(scenario.appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL, '')
