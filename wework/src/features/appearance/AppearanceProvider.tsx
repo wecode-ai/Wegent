@@ -72,7 +72,9 @@ export function AppearanceProvider({
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== null && event.key !== APPEARANCE_STORAGE_KEY) return
+      // Auxiliary-window bootstrap clears and restores origin storage. Its
+      // transient clear is not a request to reset the selected appearance.
+      if (event.key !== APPEARANCE_STORAGE_KEY) return
       const appearance = readStoredAppearance()
       setState({
         appearance,

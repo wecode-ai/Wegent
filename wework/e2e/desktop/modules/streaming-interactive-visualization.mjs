@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fetchLocalRuntimeJson } from './runtime-request.mjs'
 import { createVisualizationFixtureWriteCommand } from './visualization-fixture-command.mjs'
 import { selectWorkbenchTheme } from './appearance-theme.mjs'
+import { withTimeout, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   COMPOSER_SELECTOR,
@@ -52,6 +53,28 @@ const HTML = `<section>
   }
   calculate()
 </script>`
+
+async function detachVisualizationTab(control, uiTimeoutMs) {
+  const main = { command: (...args) => control.commandForWindow('main', ...args) }
+  const selectedTab = '[data-testid="workspace-tab-strip"] [role="tab"][aria-selected="true"]'
+  const tabId = await main.command('getAttribute', selectedTab, { value: 'data-testid' })
+  assert.ok(tabId?.startsWith('workspace-tab-select-'))
+  const tab = `[data-testid="${tabId}"]`
+  await main.command('contextMenu', tab)
+  const readyCount = control.readyCount
+  await main.command('click', '[data-testid="workspace-tab-open-new-window"]')
+  const ready = await withTimeout(
+    control.awaitReadyAfter(readyCount),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The visualization workspace window did not connect'
+  )
+  assert.ok(ready.windowLabel.startsWith('workspace-'))
+  const detached = { command: (...args) => control.commandForWindow(ready.windowLabel, ...args) }
+  await detached.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
+  await waitForVisualizationBlob(detached, FRAME, uiTimeoutMs)
+  control.activateWindow('main')
+  return { main, detached, tab }
+}
 
 export function createInteractiveVisualizationChecks({
   workspacePath,
@@ -170,45 +193,54 @@ export function createInteractiveVisualizationChecks({
       await control.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
       await waitForVisualizationBlob(control, FRAME, uiTimeoutMs)
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
-      await waitForInterest(control, '105.48')
-      assert.equal(await frameAction(control, 'text', '#isolation'), 'isolated')
-      await frameAction(control, 'fill', '#principal', '200000')
-      await waitForInterest(control, '210.96')
-      await frameAction(control, 'fill', '#rate', '6.5')
-      await waitForInterest(control, '249.32')
+      // Settings hides the conversation and may unmount virtualized messages.
+      // Keep the calculator visible in its real workspace window while changing
+      // themes through the main window, so this measures a live palette update.
+      const { main, detached, tab } = await detachVisualizationTab(control, uiTimeoutMs)
+      await waitForInterest(detached, '105.48')
+      assert.equal(await frameAction(detached, 'text', '#isolation'), 'isolated')
+      await frameAction(detached, 'fill', '#principal', '200000')
+      await waitForInterest(detached, '210.96')
+      await frameAction(detached, 'fill', '#rate', '6.5')
+      await waitForInterest(detached, '249.32')
 
-      const originalSource = await control.command('getAttribute', FRAME, { value: 'src' })
+      const originalSource = await detached.command('getAttribute', FRAME, { value: 'src' })
       for (const themeId of ['tokyo-night', 'matrix']) {
-        await selectWorkbenchTheme(control, { themeId, timeoutMs: uiTimeoutMs })
-        await control.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
+        await selectWorkbenchTheme(main, { themeId, timeoutMs: uiTimeoutMs })
+        await detached.command('waitFor', `html[data-appearance-theme="${themeId}"]`)
+        await detached.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
         assert.equal(
-          await control.command('getAttribute', FRAME, { value: 'src' }),
+          await detached.command('getAttribute', FRAME, { value: 'src' }),
           originalSource,
           'A named theme change reloaded the interactive visualization'
         )
-        await waitForInterest(control, '249.32')
-        assert.equal(await frameAction(control, 'value', '#principal'), '200000')
-        assert.equal(await frameAction(control, 'value', '#rate'), '6.5')
+        await waitForInterest(detached, '249.32')
+        assert.equal(await frameAction(detached, 'value', '#principal'), '200000')
+        assert.equal(await frameAction(detached, 'value', '#rate'), '6.5')
         const expected = themeId === 'tokyo-night' ? 'rgb(26 27 38)' : 'rgb(4 8 5)'
         const deadline = Date.now() + uiTimeoutMs
         let background
         do {
-          const style = await frameAction(control, 'attribute', 'html', 'style')
+          const style = await frameAction(detached, 'attribute', 'html', 'style')
           background = style?.match(/--background:\s*([^;]+)/)?.[1]?.trim()
           if (background === expected) break
           await new Promise(resolve => setTimeout(resolve, 50))
         } while (Date.now() < deadline)
         assert.equal(background, expected, 'The live iframe did not receive the selected palette')
         await captureScreenshot(
-          control,
+          detached,
           `appearance-${themeId}-interactive-visualization.png`,
           'body'
         )
       }
-      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
+      await selectWorkbenchTheme(main, { timeoutMs: uiTimeoutMs })
+      await detached.command('contextMenu', tab)
+      await detached.command('click', '[data-testid="workspace-tab-return-to-main"]')
+      control.activateWindow('main')
+      await main.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
 
       const readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
+      await main.command('reloadMainWindow', 'body')
       await control.awaitReadyAfter(readyCount)
       await control.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
       await waitForVisualizationBlob(control, FRAME, uiTimeoutMs)

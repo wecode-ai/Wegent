@@ -227,6 +227,38 @@ describe('AppearanceProvider', () => {
     expect(document.documentElement.dataset.appearanceTheme).toBe('codex')
   })
 
+  test.each([true, false])(
+    'retains the named theme during another window’s storage bootstrap (persist=%s)',
+    async persist => {
+      writeStoredAppearance(mergeAppearance({ mode: 'dark', darkThemeId: 'tokyo-night' }))
+      render(
+        <AppearanceProvider persist={persist}>
+          <Harness />
+        </AppearanceProvider>
+      )
+      await waitFor(() => {
+        expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+      })
+      const stored = localStorage.getItem('wework.appearance')!
+      updateAppPreferencesMock.mockClear()
+
+      act(() => {
+        localStorage.clear()
+        window.dispatchEvent(new StorageEvent('storage', { key: null }))
+      })
+      expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+      expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
+      expect(updateAppPreferencesMock).not.toHaveBeenCalled()
+
+      act(() => {
+        localStorage.setItem('wework.appearance', stored)
+        window.dispatchEvent(new StorageEvent('storage', { key: 'wework.appearance' }))
+      })
+      expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+      expect(screen.getByTestId('dark-theme')).toHaveTextContent('tokyo-night')
+    }
+  )
+
   test('honors native preference changes while retaining selected light and dark themes', () => {
     writeStoredAppearance(
       mergeAppearance({
