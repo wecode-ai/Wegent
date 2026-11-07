@@ -2,6 +2,15 @@ use super::*;
 
 const TASK: &str = "stand-in-chat-7-primary";
 
+#[test]
+fn conversation_sessions_history_has_a_heap_bound_async_boundary() {
+    let (_root, handler) = fixture();
+    assert_eq!(
+        std::mem::size_of_val(&handler.read_transcript(json!({"taskId":TASK}))),
+        2 * std::mem::size_of::<usize>(),
+    );
+}
+
 fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler) {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");

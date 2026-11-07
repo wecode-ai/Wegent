@@ -103,7 +103,15 @@ impl RuntimeWorkRpcHandler {
         Ok(true)
     }
 
-    pub(super) async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
+    pub(super) fn read_transcript(
+        &self,
+        payload: Value,
+    ) -> futures_util::future::BoxFuture<'_, Result<Value, AppIpcError>> {
+        // Keep native reader futures out of every caller's authorization/transport frame.
+        Box::pin(self.read_conversation_transcript(payload))
+    }
+
+    async fn read_conversation_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
         let task = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let Some(link) = self
