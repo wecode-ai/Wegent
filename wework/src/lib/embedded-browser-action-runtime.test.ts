@@ -271,4 +271,27 @@ describe('embedded browser action runtime', () => {
     expect(result.target.viewportRect).toEqual({ x: 160, y: 160, width: 100, height: 30 })
     expect(clicked).toBe(1)
   })
+
+  test('does not scroll a coordinate target between preview and dispatch', () => {
+    document.body.innerHTML = `
+      <button id="coordinate-target" type="button">坐标按钮</button>
+    `
+    const button = document.getElementById('coordinate-target') as HTMLButtonElement
+    mockRect(button, { x: 20, y: 20, width: 100, height: 40 })
+    let scrolled = false
+    let clicked = 0
+    button.scrollIntoView = () => {
+      scrolled = true
+    }
+    button.addEventListener('click', () => {
+      clicked += 1
+    })
+
+    const result = runAction({ action: 'click', x: 70, y: 40 })
+
+    expect(result.ok, JSON.stringify(result.error)).toBe(true)
+    expect(result.target.coordinateTarget).toBe(true)
+    expect(scrolled).toBe(false)
+    expect(clicked).toBe(1)
+  })
 })

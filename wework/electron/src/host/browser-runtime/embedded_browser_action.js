@@ -10,7 +10,9 @@
     if (!target.ok) return failure(action, target, startedAt, warnings)
 
     const before = observePage(target.element)
-    target.element.scrollIntoView?.({ block: 'center', inline: 'center' })
+    if (!target.summary?.coordinateTarget) {
+      target.element.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' })
+    }
 
     const preflight = inspectPreflight(target.element, action)
     warnings.push(...preflight.warnings)
@@ -170,7 +172,8 @@
           frameId: resolved.frameId,
           role: resolved.role,
           name: resolved.name,
-          rect: resolved.rect,
+          rect: resolved.viewportRect || resolved.rect,
+          localRect: resolved.rect,
           viewportRect: resolved.viewportRect,
         },
       }
@@ -228,7 +231,7 @@
       return {
         ok: true,
         element,
-        summary: { x, y },
+        summary: { x, y, coordinateTarget: true },
       }
     }
 
@@ -301,6 +304,7 @@
     if (!record.element || !record.element.isConnected) {
       return { ok: false, errorCode: 'stale_ref', message: 'Inspect target is detached.' }
     }
+    const viewportRect = viewportRectFor(record.element)
     return {
       ok: true,
       element: record.element,
@@ -310,8 +314,9 @@
       frameId: record.frameId,
       role: record.role,
       name: accessibleName(record.element),
-      rect: rectFor(record.element),
-      viewportRect: viewportRectFor(record.element),
+      rect: viewportRect,
+      localRect: rectFor(record.element),
+      viewportRect,
     }
   }
 
@@ -413,6 +418,7 @@
       const mouseInit = { bubbles: true, cancelable: true, composed: true, clientX, clientY }
       const view = element.ownerDocument.defaultView || window
       const PointerEventCtor = view.PointerEvent
+      const MouseEventCtor = view.MouseEvent || MouseEvent
       if (typeof PointerEventCtor === 'function') {
         for (const type of ['pointerover', 'pointerenter']) {
           element.dispatchEvent(
@@ -427,7 +433,7 @@
           )
         }
       }
-      element.dispatchEvent(new MouseEvent('mouseover', mouseInit))
+      element.dispatchEvent(new MouseEventCtor('mouseover', mouseInit))
       if (typeof PointerEventCtor === 'function') {
         element.dispatchEvent(
           new PointerEventCtor('pointermove', {
@@ -439,7 +445,7 @@
           })
         )
       }
-      element.dispatchEvent(new MouseEvent('mousemove', mouseInit))
+      element.dispatchEvent(new MouseEventCtor('mousemove', mouseInit))
       if (typeof PointerEventCtor === 'function') {
         element.dispatchEvent(
           new PointerEventCtor('pointerdown', {
@@ -452,7 +458,7 @@
           })
         )
       }
-      element.dispatchEvent(new MouseEvent('mousedown', { ...mouseInit, buttons: 1 }))
+      element.dispatchEvent(new MouseEventCtor('mousedown', { ...mouseInit, buttons: 1 }))
       if (typeof PointerEventCtor === 'function') {
         element.dispatchEvent(
           new PointerEventCtor('pointerup', {
@@ -465,7 +471,7 @@
           })
         )
       }
-      element.dispatchEvent(new MouseEvent('mouseup', mouseInit))
+      element.dispatchEvent(new MouseEventCtor('mouseup', mouseInit))
       element.click()
       return {
         ok: true,
@@ -1037,11 +1043,15 @@
 
   function requestDiagnostics() {
     const browserAgent = window.__WEWORK_BROWSER_AGENT__ || {}
+    const latestRegistry = Array.isArray(browserAgent.inspectRegistries)
+      ? browserAgent.inspectRegistries[0]
+      : null
+    const index = input.index ?? undefined
     return {
       request: {
         action,
         selector: input.selector || undefined,
-        index: input.index ?? undefined,
+        index,
         ref: input.ref || undefined,
         inspectId: input.inspectId || undefined,
         x: input.x ?? undefined,
@@ -1051,6 +1061,10 @@
       availableInspectIds: Array.isArray(browserAgent.inspectRegistries)
         ? browserAgent.inspectRegistries.map(registry => registry.inspectId)
         : [],
+      latestIndexRef:
+        index === undefined ? null : (latestRegistry?.indexToRef?.[String(index)] ?? null),
+      latestIndexNode:
+        index === undefined ? null : (latestRegistry?.indexNodes?.[String(index)] ?? null),
     }
   }
 
