@@ -1,7 +1,4 @@
-export function requiresMacosQuitWorkaround(
-  platform: NodeJS.Platform,
-  kernelRelease: string
-): boolean {
+export function requiresMacosQuitWorkaround(platform, kernelRelease) {
   if (platform !== 'darwin') return false
   const [majorText, minorText] = kernelRelease.split('.')
   const major = Number(majorText)

@@ -4,6 +4,8 @@ sidebar_position: 5
 
 # Coding workbench
 
+<a id="workspace-controls"></a>
+
 ## Application menu
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
@@ -24,7 +26,9 @@ Process attribution and collection have the following limits:
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
 
-When experimental features are enabled, the first main window shows three default tabs: Task, Workspaces, and Agent. When experimental features are off, the Workspaces tab is hidden. Every tab is an independent work instance. Two Task tabs retain separate conversations and unsent drafts, two Workspace tabs retain separate projects and routes, and two Agent tabs retain separate page state. Switching tabs does not synchronize content from another tab.
+The first main window restores **Settings → General → Fixed tabs** and activates its chosen startup item. Use top-bar **+** to add Tasks, Collaboration, Agent or other available tabs. Each tab independently retains conversations, drafts, projects and routes; switching does not synchronize another tab's content.
+
+Drag top tabs to reorder them. Right-click for **Pin/Unpin tab**, **Close other tabs** or a separate window. Manage fixed items and startup in General settings. Check unsent work and task state before closing other tabs; closing a page is not cancellation of a persistent goal.
 
 Task and Workspace tabs retain their mounted interface while they are in the background instead of recreating it whenever the user returns. Unsent drafts, the selected project, board routes, and panel state therefore restore immediately, and background tabs do not restart the workbench runtime. The first Task workbench centrally prewarms the Codex app catalog needed by composers; mounting a composer or switching tabs does not request the catalog again. A Workspace board loads task-composer model and skill catalogs on demand only when the user creates a runtime task from an issue, avoiding the complete Task-workbench startup cost during ordinary board browsing.
 
@@ -157,6 +161,22 @@ When no task is running, the Wework Popout Window uses a compact composer with a
 
 ## Files and terminals
 
+### File tree, path menu and IDE
+
+1. Open **Files** in the right workspace. Search names/paths in the tree toolbar, refresh the directory or retry a failed load.
+2. Select a file and right-click its path/path-toolbar region for supported actions.
+
+| Action                         | Result and conditions                                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Open with                      | Choose an available local application for the file/directory; requires a local target and application |
+| Open in GitHub/GitLab/Git host | Opens the repository location when repository/file mapping is available                               |
+| Save as                        | Save a local file elsewhere; not a directory action or Git commit                                     |
+| Copy path                      | Copies the file/directory path; check private-directory details before sharing                        |
+| Copy contents                  | Copies supported text; unavailable for binary or unreadable remote content                            |
+| Reveal location                | Locate the local file or directory in the system file manager                                         |
+
+The titlebar's **Open workspace location** and neighboring IDE dropdown open the working directory and select an available IDE, with a remembered preference. This differs from the device-oriented IDE entry under bottom-panel +; verify device and directory first.
+
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
 Selecting a writable text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
@@ -209,11 +229,17 @@ After restoring a conversation, you can answer an existing MCP form or another r
 
 ## Use selected response text
 
+Hover a message for its copy action. A user message shows an edit/pencil action only when editing is supported; change it in the editor and follow its submit/cancel controls. Not every historical or assistant message is editable. Quoting selected text differs from changing the original message.
+
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
 
 Process text shown above tool calls while a task is running is also selectable response content. Selecting it opens the same action menu and can add the text directly to the current task composer.
 
 ## Review and undo changes
+
+### Individual review-toolbar controls
+
+Open **Review** from an assistant reply's changes. Choose unified/split layout, toggle the file tree and word wrap. **Expand/collapse all hunks** changes presentation only. **Copy git apply command** copies a patch-application command without running it; inspect target repository and patch before executing it.
 
 Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the complete diff in the right workspace. Normal review mode keeps every file diff rendered. Selecting a file in the tree, or opening a specific changed file from an assistant message, scrolls the content to that file instead of hiding the other files. The original execution device must be online.
 
