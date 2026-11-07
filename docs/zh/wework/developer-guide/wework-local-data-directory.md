@@ -23,6 +23,18 @@ Wework 的本地运行时数据统一存放在用户主目录下的 `~/.wework`�
 `WEGENT_EXECUTOR_HOME` 环境变量可以覆盖默认 Executor Home。显式设置该变量时，
 适用于隔离会话、测试和自定义部署。
 
+## 桌面 Executor 身份
+
+Electron 主机使用机器硬件 UUID 与当前应用标识（默认 `io.wecode.wework`）的 SHA-256
+哈希生成 `electron-<hash>` 设备 ID。同一机器运行同一应用时，重启、重装、更换用户 Home
+或数据目录、删除 `desktop-device-id` 文件都不会改变 ID；不同硬件或应用标识使用不同 ID。
+硬件 UUID 不会作为设备 ID 明文发送，也不会写入身份文件或日志。
+
+用户数据目录中的 `desktop-device-id` 仅记录计算结果，不再作为身份来源，也不从旧工作树
+推断身份。旧版随机 ID 会在首次使用新规则时被替换。无法读取有效硬件 UUID 时启动会报错，
+不会生成随机替代 ID。隔离验证仍可通过 `WEGENT_APP_IPC_DEVICE_ID` 显式指定 ID，且不覆盖
+正常的身份文件；仅切换数据目录不再代表切换机器。
+
 ## Home 迁移中的目录扫描
 
 迁移旧 Codex Home 到工作台目录时，相对符号链接扫描使用目录枚举提供的类型信息，
