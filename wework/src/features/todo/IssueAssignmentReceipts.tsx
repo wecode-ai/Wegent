@@ -61,12 +61,9 @@ export function IssueAssignmentReceipts({
 }) {
   const containerRef = useRef<HTMLSpanElement>(null)
   const [state, setState] = useState<IssueAssignmentReceiptState | null>(null)
+  // Revalidate revisions without unmounting the current recipient's hovered icons.
   const scopedState =
-    state?.issueId === issueId &&
-    state.version === version &&
-    state.assigneeUserId === assigneeUserId
-      ? state
-      : null
+    state?.issueId === issueId && state.assigneeUserId === assigneeUserId ? state : null
 
   useEffect(() => {
     if (scopedState) onStateChange?.(scopedState)

@@ -1,6 +1,6 @@
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import '@/i18n'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
 
@@ -33,6 +33,48 @@ function setup(user = 8, rows = [receipt], assignee: number | null = 7) {
 afterEach(() => vi.useRealTimers())
 
 describe('Issue reception receipts', () => {
+  it('preserves a hovered receipt while an unrelated issue revision is refreshed', async () => {
+    vi.useFakeTimers()
+    const rows = [{ ...receipt, stand_in_received_at: '2026-11-07T16:54:00Z' }]
+    const api = {
+      getLoopItem: vi.fn().mockResolvedValue({ id: 'issue' }),
+      getIssueAssignmentReceipts: vi.fn().mockResolvedValue(rows),
+      acknowledgeIssueAssignment: vi.fn(),
+    }
+    const view = (version: number, assigneeUserId = 7) => (
+      <IssueAssignmentReceipts
+        api={api as never}
+        issueId="issue"
+        version={version}
+        currentUserId={8}
+        assigneeUserId={assigneeUserId}
+      />
+    )
+    const { rerender } = render(view(1))
+    await act(async () => {})
+    const icon = screen.getByTitle(/^分身已接收/)
+    fireEvent.pointerOver(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(600))
+
+    let resolveRefresh!: (rows: IssueAssignmentReceipt[]) => void
+    api.getIssueAssignmentReceipts.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveRefresh = resolve
+      })
+    )
+    rerender(view(2))
+    expect(screen.getByTitle(/^分身已接收/)).toBe(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(100))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    await act(async () => resolveRefresh(rows))
+    expect(screen.getByTitle(/^分身已接收/)).toBe(icon)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+
+    rerender(view(3, 9))
+    expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it('does not acknowledge when detail loading fails and recovers on the next poll', async () => {
     vi.useFakeTimers()
     const { api } = setup(7)
