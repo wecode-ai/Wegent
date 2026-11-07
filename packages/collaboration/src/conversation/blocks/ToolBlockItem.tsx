@@ -219,9 +219,12 @@ export function ToolBlockItem({
   )
 
   return (
-    <div className="min-w-0 overflow-x-clip text-sm" data-processing-block-id={block.id}>
+    <div
+      className="min-w-0 overflow-x-clip text-sm"
+      data-processing-block-id={block.id}
+    >
       <div
-        className={`flex w-full max-w-full items-center gap-1.5 text-text-secondary ${compact ? 'min-h-8' : ''}`}
+        className={`flex w-full max-w-full items-center gap-1.5 text-text-muted ${compact ? 'min-h-8' : ''}`}
       >
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button

@@ -45,6 +45,12 @@ CONTEXT_METRICS_KEY_PREFIX = "chat:context_metrics:"
 CALLBACK_CHANNEL_PREFIX = "callback:channel:"
 # Unified TTL for all streaming-related data (1 hour)
 STREAMING_TTL = 3600
+# Compare raw JSON so Lua never rounds large subtask IDs through cjson numbers.
+TOUCH_TASK_STREAMING_ACTIVITY_SCRIPT = """
+if (redis.call('GET', KEYS[1]) or '') ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
+"""
 # Internal field stored in Redis block metadata. It is stripped before returning
 # blocks to callers so API consumers still see the existing block shape.
 BLOCK_CONTENT_KEY_FIELD = "_content_key"
@@ -713,31 +719,45 @@ class SessionManager:
             )
             return False
 
-    async def touch_task_streaming_activity(self, task_id: int) -> bool:
-        """
-        Refresh task-level streaming last activity timestamp.
+    async def touch_task_streaming_activity(
+        self, task_id: int, subtask_id: int, *, started_at: datetime
+    ) -> bool:
+        """Refresh owned activity, restoring missing state at the observer's start.
 
-        Args:
-            task_id: Task ID
-
-        Returns:
-            bool: True if updated successfully, False otherwise
+        ``started_at`` is this emitter's observation start, not necessarily the
+        executor's original start (callbacks may construct an emitter per event).
+        A concurrent START must win over this activity update.
         """
         try:
             key = self._get_task_streaming_key(task_id)
-            status = await self._cache.get(key)
-            if not status:
-                return False
-
-            if not isinstance(status, dict):
-                logger.warning(
-                    "[SessionManager] Invalid task streaming status format for task_id=%s",
-                    task_id,
+            async with self._cache._client_context() as client:
+                snapshot = await client.get(key)
+                if snapshot is None:
+                    status = {
+                        "subtask_id": subtask_id,
+                        "user_id": 0,
+                        "username": "",
+                        "started_at": started_at.isoformat(),
+                    }
+                else:
+                    status = json.loads(snapshot)
+                    if (
+                        not isinstance(status, dict)
+                        or type(status.get("subtask_id")) is not int
+                        or status["subtask_id"] != subtask_id
+                    ):
+                        return False
+                status["last_activity_at"] = datetime.now(timezone.utc).isoformat()
+                return bool(
+                    await client.eval(
+                        TOUCH_TASK_STREAMING_ACTIVITY_SCRIPT,
+                        1,
+                        key,
+                        snapshot if snapshot is not None else "",
+                        json.dumps(status),
+                        STREAMING_TTL,
+                    )
                 )
-                return False
-
-            status["last_activity_at"] = datetime.now(timezone.utc).isoformat()
-            return await self._cache.set(key, status, expire=STREAMING_TTL)
         except Exception as e:
             logger.error(
                 f"Error touching task streaming activity for task {task_id}: {e}",

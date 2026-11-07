@@ -46,3 +46,35 @@ test('search writes update the virtual offset before a native scroll event or re
   unmount()
   expect(() => scrollToContentPosition(scroller, 50, 'auto')).not.toThrow()
 })
+
+test('engine instant writes publish their actual offset before native scroll delivery', () => {
+  const scroller = document.createElement('div')
+  const list = document.createElement('div')
+  scroller.append(list)
+  Object.defineProperties(scroller, {
+    clientHeight: { value: 300 },
+    offsetHeight: { value: 300 },
+    offsetWidth: { value: 800 },
+    scrollHeight: { value: 2000 },
+  })
+  scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    scroller.scrollTop = Number(top)
+  })
+  const { result, unmount } = renderHook(() =>
+    useConversationVirtualizer({
+      enabled: true,
+      count: 20,
+      estimateSize: () => 100,
+      scrollElementRef: { current: scroller },
+      listRef: { current: list },
+      initialDistanceFromBottomPx: 0,
+      anchorTo: 'start',
+    })
+  )
+
+  act(() => result.current.virtualizer.scrollToOffset(100, { behavior: 'auto' }))
+
+  expect(scroller.scrollTop).toBe(100)
+  expect(result.current.virtualizer.scrollOffset).toBe(100)
+  unmount()
+})

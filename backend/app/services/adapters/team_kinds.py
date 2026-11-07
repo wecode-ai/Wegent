@@ -49,7 +49,11 @@ from app.schemas.team import BotInfo, TeamCreate, TeamUpdate
 from app.schemas.user import UserInDB
 from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.public_model import is_public_model_allowed_for_user_id
-from app.services.adapters.shell_utils import get_shell_type
+from app.services.adapters.shell_utils import (
+    get_shell_by_name,
+    get_shell_type,
+    get_shells_by_owners_batch,
+)
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
@@ -1087,52 +1091,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     )
                 )
 
-        # Batch fetch all user shells (user_id > 0)
-        shells_cache = {}  # (user_id, name, namespace) -> Kind
-        user_shell_refs = [
-            (uid, name, ns) for uid, name, ns in all_shell_refs if uid > 0
-        ]
-        if user_shell_refs:
-            shell_conditions = []
-            for uid, name, ns in user_shell_refs:
-                shell_conditions.append(
-                    and_(Kind.user_id == uid, Kind.name == name, Kind.namespace == ns)
-                )
-            shells_query = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell", Kind.is_active == True, or_(*shell_conditions)
-                )
-                .all()
-            )
-            for shell in shells_query:
-                shells_cache[(shell.user_id, shell.name, shell.namespace)] = shell
-
-        # Batch fetch public shells (user_id = 0) for shells not found in user shells
-        # Public shells are identified by name only (they are in 'default' namespace)
-        # We need to check all shell refs, not just those with uid > 0
-        public_shell_names = set()
-        for uid, name, ns in all_shell_refs:
-            # Always add to public_shell_names if not found in user shells cache
-            if (uid, name, ns) not in shells_cache:
-                public_shell_names.add(name)
-
-        public_shells_cache = (
-            {}
-        )  # name -> Kind (public shells are looked up by name only)
-        if public_shell_names:
-            public_shells_query = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.user_id == 0,  # Public shells have user_id = 0
-                    Kind.is_active == True,
-                    Kind.name.in_(public_shell_names),
-                )
-                .all()
-            )
-            for shell in public_shells_query:
-                public_shells_cache[shell.name] = shell
+        # Keep the requested owner and namespace as the key for referenced Shells.
+        shells_cache = get_shells_by_owners_batch(db, all_shell_refs)
 
         # Batch fetch all user models (user_id > 0)
         models_cache = {}  # (user_id, name, namespace) -> Kind
@@ -1185,7 +1145,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots_cache,
             "group_bots": group_bots_cache,  # Add group bots cache for group resources
             "shells": shells_cache,
-            "public_shells": public_shells_cache,
             "models": models_cache,
             "public_models": public_models_cache,
         }
@@ -1810,41 +1769,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Calculate is_mix_team: true if there are multiple different shell types
         is_mix_team = len(shell_types) > 1
 
-        # Get agent_type from the first bot's shell
-        agent_type = None
-        if bots:
-            first_bot_id = bots[0]["bot_id"]
-            # Get first bot using kindReader
-            first_bot = kindReader.get_by_id(db, KindType.BOT, first_bot_id)
-
-            if first_bot:
-                bot_crd = Bot.model_validate(first_bot.json)
-                shell_type = None
-
-                # Get shell using kindReader (handles public fallback automatically)
-                shell_user_id = first_bot.user_id if is_group_resource else user_id
-                shell = kindReader.get_by_name_and_namespace(
-                    db,
-                    shell_user_id,
-                    KindType.SHELL,
-                    bot_crd.spec.shellRef.namespace,
-                    bot_crd.spec.shellRef.name,
-                )
-
-                if shell and shell.json:
-                    shell_crd = Shell.model_validate(shell.json)
-                    shell_type = shell_crd.spec.shellType
-
-                if shell_type:
-                    # Map shellType to agent type
-                    if shell_type == "Agno":
-                        agent_type = "agno"
-                    elif shell_type == "ClaudeCode":
-                        agent_type = "claude"
-                    elif shell_type == "Dify":
-                        agent_type = "dify"
-                    else:
-                        agent_type = shell_type.lower() if shell_type else None
+        shell_type = bots[0]["bot"]["shell_type"] if bots else ""
+        agent_type = self._agent_type_from_shell(shell_type)
 
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}
@@ -1925,7 +1851,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 - bots: Dict[(user_id, name, namespace), Kind] for personal bots
                 - group_bots: Dict[(name, namespace), Kind] for group bots
                 - shells: Dict[(user_id, name, namespace), Kind]
-                - public_shells: Dict[name, Kind]
                 - models: Dict[(user_id, name, namespace), Kind]
                 - public_models: Dict[name, Kind]
         """
@@ -1943,9 +1868,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "group_bots", {}
         )  # (name, namespace) -> Kind for group bots
         shells_cache = cache.get("shells", {})
-        public_shells_cache = cache.get(
-            "public_shells", {}
-        )  # name -> Kind (not (name, namespace))
         models_cache = cache.get("models", {})
         public_models_cache = cache.get("public_models", {})
 
@@ -1968,7 +1890,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     bot,
                     lookup_user_id,
                     shells_cache,
-                    public_shells_cache,  # This is now name -> Kind
                     models_cache,
                     public_models_cache,
                 )
@@ -1989,74 +1910,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Calculate is_mix_team: true if there are multiple different shell types
         is_mix_team = len(shell_types) > 1
 
-        # Get agent_type from the first bot's shell
-        agent_type = None
-        if bots:
-            first_bot_id = bots[0]["bot_id"]
-            # Find first bot in cache (check both caches for group resources)
-            first_bot = None
-            if is_group_resource:
-                for key, bot in group_bots_cache.items():
-                    if bot.id == first_bot_id:
-                        first_bot = bot
-                        break
-            else:
-                for key, bot in bots_cache.items():
-                    if bot.id == first_bot_id:
-                        first_bot = bot
-                        break
-
-            if first_bot:
-                bot_crd = Bot.model_validate(first_bot.json)
-                shell_type = None
-                shell_ref_name = bot_crd.spec.shellRef.name
-                shell_ref_namespace = bot_crd.spec.shellRef.namespace
-
-                # First check user's custom shells in cache
-                # For group resources, use bot's user_id
-                shell_lookup_user_id = (
-                    first_bot.user_id if is_group_resource else user_id
-                )
-                shell = shells_cache.get(
-                    (shell_lookup_user_id, shell_ref_name, shell_ref_namespace)
-                )
-
-                if shell:
-                    shell_crd = Shell.model_validate(shell.json)
-                    shell_type = shell_crd.spec.shellType
-                    logger.debug(
-                        f"[_convert_to_team_dict_with_cache] Found user shell: {shell_ref_name}, shell_type={shell_type}"
-                    )
-                else:
-                    # If not found, check public shells in cache (by name only)
-                    public_shell = public_shells_cache.get(shell_ref_name)
-                    if public_shell and public_shell.json:
-                        shell_crd = Shell.model_validate(public_shell.json)
-                        shell_type = shell_crd.spec.shellType
-                        logger.debug(
-                            f"[_convert_to_team_dict_with_cache] Found public shell: {shell_ref_name}, shell_type={shell_type}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[_convert_to_team_dict_with_cache] Shell not found in cache: user_id={shell_lookup_user_id}, name={shell_ref_name}, namespace={shell_ref_namespace}. "
-                            f"public_shells_cache keys: {list(public_shells_cache.keys())}"
-                        )
-
-                if shell_type:
-                    # Map shellType to agent type
-                    if shell_type == "Agno":
-                        agent_type = "agno"
-                    elif shell_type == "ClaudeCode":
-                        agent_type = "claude"
-                    elif shell_type == "Dify":
-                        agent_type = "dify"
-                    elif shell_type == "Chat":
-                        agent_type = "chat"
-                    else:
-                        agent_type = shell_type.lower() if shell_type else None
-                    logger.debug(
-                        f"[_convert_to_team_dict_with_cache] Mapped shell_type={shell_type} to agent_type={agent_type}"
-                    )
+        shell_type = bots[0]["bot"]["shell_type"] if bots else ""
+        agent_type = self._agent_type_from_shell(shell_type)
 
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}
@@ -2122,12 +1977,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "publication_status": publication_status,
         }
 
+    @staticmethod
+    def _agent_type_from_shell(shell_type: str) -> Optional[str]:
+        """Derive the agent label from the already-resolved Bot summary."""
+        return "claude" if shell_type == "ClaudeCode" else shell_type.lower() or None
+
     def _get_bot_summary_with_cache(
         self,
         bot: Kind,
         user_id: int,
         shells_cache: Dict,
-        public_shells_cache: Dict,
         models_cache: Dict,
         public_models_cache: Dict,
     ) -> Dict[str, Any]:
@@ -2147,9 +2006,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         shell = shells_cache.get(
             (user_id, bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
         )
-        if not shell:
-            # Try public shells (by name only)
-            shell = public_shells_cache.get(bot_crd.spec.shellRef.name)
 
         shell_type = ""
         if shell and shell.json:
@@ -2215,13 +2071,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             bot_crd.spec.modelRef.namespace if bot_crd.spec.modelRef else None
         )
 
-        # Get shell to extract shell_type (kindReader handles public fallback automatically)
-        shell = kindReader.get_by_name_and_namespace(
+        shell = get_shell_by_name(
             db,
-            user_id,
-            KindType.SHELL,
-            bot_crd.spec.shellRef.namespace,
             bot_crd.spec.shellRef.name,
+            user_id,
+            bot_crd.spec.shellRef.namespace,
         )
 
         shell_type = ""

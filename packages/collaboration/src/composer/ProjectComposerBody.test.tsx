@@ -110,19 +110,47 @@ describe('shared PC composer body', () => {
   async function enter() {
     await act(async () =>
       input.current!.element!.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     )
   }
   async function drop(target: 'surface' | 'editor' = 'surface') {
     const event = new Event('drop', { bubbles: true, cancelable: true })
     Object.defineProperty(event, 'dataTransfer', {
-      value: { types: ['Files'], files: [new File(['data'], 'context.txt')], getData: () => '' },
+      value: {
+        types: ['Files'],
+        files: [new File(['data'], 'context.txt')],
+        getData: () => '',
+      },
     })
     const element =
       target === 'surface' ? button('project-chat-composer-form') : input.current!.element!
     await act(async () => element.dispatchEvent(event))
   }
+  it('owns one chat surface with context before the editor and the home work bar outside it', async () => {
+    await mount({
+      workBar: <div data-testid="home-work-bar">Project</div>,
+      contextHeader: <div data-testid="thread-context">Task context</div>,
+      collapseWhenIdle: true,
+    })
+
+    const surface = button('project-chat-composer-form')
+    expect(surface.classList.contains('rounded-[20px]')).toBe(true)
+    expect(surface.classList.contains('px-3')).toBe(true)
+    expect(surface.classList.contains('font-normal')).toBe(false)
+    expect(surface.contains(button('thread-context'))).toBe(true)
+    expect(surface.contains(button('home-work-bar'))).toBe(false)
+    expect(surface.dataset.shortCollapse).toBeUndefined()
+    expect(input.current!.element!.classList.contains('text-chat')).toBe(true)
+    expect(input.current!.element!.classList.contains('font-normal')).toBe(false)
+    await setValue('Follow up with context')
+    await click('send')
+    expect(submit).toHaveBeenCalledWith('Follow up with context', undefined)
+  })
 
   it('clears scroll fading after sending a Markdown draft', async () => {
     let notifyResize = () => {}
@@ -310,7 +338,11 @@ describe('shared PC composer body', () => {
     }
     const file = new File(['data'], 'context.txt')
     const select = vi.fn()
-    await mount({ transferServices: services, onFileSelect: select, buffered: true })
+    await mount({
+      transferServices: services,
+      onFileSelect: select,
+      buffered: true,
+    })
     await drop()
     await setValue('Typed during drop')
     await act(async () =>

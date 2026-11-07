@@ -38,6 +38,27 @@ describe('ToolBlockItem', () => {
     vi.restoreAllMocks()
   })
 
+  test('uses muted text with inherited UI weight for the completed tool summary', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'tool-duration',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'bash',
+          status: 'done',
+          createdAt: 1770000000000,
+          completedAt: 1770000003333,
+        }}
+      />
+    )
+
+    const duration = screen.getByTestId('tool-block-duration')
+    expect(duration).toHaveTextContent('3.3s')
+    expect(duration.parentElement).toHaveClass('text-text-muted')
+    expect(duration.parentElement!.parentElement).not.toHaveClass('font-normal')
+  })
+
   test('hides the shell launcher from expanded command details', async () => {
     const user = userEvent.setup()
 

@@ -34,4 +34,24 @@ describe('workspaceLaunchRequest', () => {
     expect(consumeWorkbenchWorkspaceLaunch('device-1', '/workspace/other')).toBeNull()
     expect(consumeWorkbenchWorkspaceLaunch('device-1', '/workspace/plugin')).not.toBeNull()
   })
+
+  test('keeps a file action bound to its task as well as device and workspace', () => {
+    const options = {
+      taskId: 'owner-task',
+      openFile: { path: 'cart-fixture/cart-review.md', options: { lineStart: 4, lineEnd: 9 } },
+    }
+    queueWorkbenchWorkspaceLaunch('device-1', '/workspace/fixture', options)
+    expect(consumeWorkbenchWorkspaceLaunch('device-1', '/workspace/fixture')).toBeNull()
+    expect(consumeWorkbenchWorkspaceLaunch('device-1', '/workspace/fixture', 'other')).toBeNull()
+    expect(
+      consumeWorkbenchWorkspaceLaunch('device-2', '/workspace/fixture', 'owner-task')
+    ).toBeNull()
+    expect(consumeWorkbenchWorkspaceLaunch('device-1', '/other', 'owner-task')).toBeNull()
+    expect(consumeWorkbenchWorkspaceLaunch('device-1', '/workspace/fixture', 'owner-task')).toEqual(
+      options
+    )
+    expect(
+      consumeWorkbenchWorkspaceLaunch('device-1', '/workspace/fixture', 'owner-task')
+    ).toBeNull()
+  })
 })

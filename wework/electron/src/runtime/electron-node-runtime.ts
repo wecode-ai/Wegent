@@ -70,7 +70,12 @@ export async function prepareElectronNodeRuntime(
     options.helperExecPath,
     options.platform
   )
-  const nodePath = options.platform === 'win32' ? options.helperExecPath : launcherPath
+  // Gatekeeper can reject a generated shell script when a notarized host spawns
+  // it. Launch the signed Helper directly; retain the shim for PATH consumers.
+  const nodePath =
+    options.platform === 'darwin' || options.platform === 'win32'
+      ? options.helperExecPath
+      : launcherPath
 
   return {
     environment: {

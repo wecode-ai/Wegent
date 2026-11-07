@@ -54,11 +54,11 @@ import {
 import {
   buildDesktopApp,
   buildExecutor,
-  codexUpstreamApiFormat,
   mcpElicitationConfigToml,
   prepareHarnessRuntimeRoots,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
+  setMatrixUpstreamProtocol,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyDisabledRemoteSessionCapabilities,
@@ -146,7 +146,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
-import { captureFailureFollowup } from './failure-followup.mjs'
+import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -296,6 +296,7 @@ import {
   verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
+import { verifyRuntimeWorkSilentRefresh } from './runtime-work-silent-refresh.mjs'
 
 import {
   verifyAttachmentComposerClearsOnSubmit,
@@ -1219,6 +1220,7 @@ async function main() {
   const control = new DesktopE2EServer(workspacePath, workspacePath, null, {
     enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
   })
+  control.matrixEvidenceDirectory = resultDir
   const modelSwitchVerification = []
   let app
   const applicationProcessHistory = []
@@ -1282,8 +1284,7 @@ async function main() {
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
-        scenarioConfigToml:
-          SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
+        scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
@@ -1846,12 +1847,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           control,
           cloudEnvironment,
           setCodexUpstreamProtocol: protocol =>
-            writeCodexConfig(
-              join(executorHome, 'codex'),
-              control.url,
-              '',
-              codexUpstreamApiFormat(protocol)
-            ),
+            setMatrixUpstreamProtocol(join(executorHome, 'codex'), protocol),
           workspacePath,
         })
       }
@@ -3485,6 +3481,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The request-user-input task did not expose its runtime task ID'
       )
       const requestInputTaskRowTestId = `runtime-local-task-row-${requestInputTaskId}`
+      await verifyRuntimeWorkSilentRefresh(
+        control,
+        requestInputDebugSnapshot.workbench.currentRuntimeTask
+      )
       await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -4097,14 +4097,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
-        {
-          text: FILE_PREVIEW_RESTORE_MARKER,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        target: activeTaskWorkbenchSelector,
+        text: FILE_PREVIEW_RESTORE_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       assert.equal(
         await control.command(
           'getText',
@@ -4270,14 +4267,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The review tab was not active after switching back to the first task'
       )
       await control.command('click', '[data-testid="right-workspace-file-tab"]')
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
-        {
-          text: FILE_PREVIEW_RESTORE_MARKER,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        target: activeTaskWorkbenchSelector,
+        text: FILE_PREVIEW_RESTORE_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       assert.equal(
         await control.command(
           'getText',
@@ -4671,6 +4665,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    // Anchor the follow-up measurement to the failure itself; the diagnostic
+    // captures below can consume several seconds of wall-clock time.
+    const failedAt = Date.now()
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),
@@ -4778,9 +4775,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       'utf8'
     )
     try {
-      // Record whether the observed state settled after the step timeout so
-      // slow asynchronous updates are distinguishable from stuck states.
-      await captureFailureFollowup(control, resultDir)
+      // Observe the failed condition itself: record the measured convergence
+      // time or that no change happened within the budget, so slow
+      // asynchronous updates are distinguishable from stuck states (#4293).
+      // failedAt anchors the measurement to the actual step failure, before
+      // the diagnostic captures above have consumed wall-clock time.
+      await captureFailureFollowup(control, resultDir, {
+        condition: failedWaitCondition(error, control.commandHistory),
+        failedAt,
+      })
     } catch {
       // The follow-up is best-effort evidence; never mask the original failure.
     }

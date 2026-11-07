@@ -36,6 +36,10 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
   let rejectedPredictions = 0
   let shellIdentityVerified = false
   let identity
+  let releasePredictionFailure
+  const predictionFailure = new Promise(resolve => {
+    releasePredictionFailure = resolve
+  })
 
   async function assertRedactedTask(control) {
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
@@ -127,6 +131,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       }
       if (prediction && normalRequests === 2) {
         rejectedPredictions += 1
+        await predictionFailure
         response.writeHead(401, { 'Content-Type': 'application/json' })
         response.end(
           JSON.stringify({
@@ -211,10 +216,15 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       )
       assert.equal(predicted.suggestion, '继续第 1 轮方案')
       await send(control, 2)
-      await control.command('waitFor', ERROR, {
-        text: '回复建议生成失败',
+      await control.command('waitFor', PENDING, {
         timeoutMs: modelResponseTimeoutMs,
       })
+      releasePredictionFailure()
+      await control.command('waitFor', PENDING, {
+        visible: false,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      assert.equal(Number(await control.command('getElementCount', ERROR)), 0)
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
       assert.ok(rejectedPredictions > 0, 'The failure case never reached the model')

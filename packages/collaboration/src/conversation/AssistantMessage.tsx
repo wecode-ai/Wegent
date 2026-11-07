@@ -417,7 +417,7 @@ export function AssistantMessage({
           !isCancelled &&
           !usesFinalProcessingShell ? (
             <div
-              className="mb-3 w-full border-b border-border pb-2 text-sm text-text-muted"
+              className="mb-3 w-full pb-2 text-sm text-text-muted"
               data-testid="live-processing-timeline"
             >
               {processingDurationLabel}
@@ -425,7 +425,7 @@ export function AssistantMessage({
           ) : null}
           {usesFinalProcessingShell ? (
             <div
-              className="mb-3 min-w-0 w-full border-b border-border pb-2"
+              className="mb-3 min-w-0 w-full pb-2"
               data-testid="final-processing-timeline"
             >
               <button

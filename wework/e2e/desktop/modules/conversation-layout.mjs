@@ -1,3 +1,4 @@
+import { readNativeToolCallId } from './native-tool-call-id.mjs'
 import { readFile, readdir } from 'node:fs/promises'
 import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
 import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
@@ -310,12 +311,12 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await verifyShortConversationTopAlignment(control, 'The four-message conversation after restart')
   await waitForComposerFocus(
     control,
     DEFAULT_STEP_TIMEOUT_MS,
     'Opening an existing conversation after app startup did not focus the composer'
   )
+  await verifyShortConversationTopAlignment(control, 'The four-message conversation after restart')
   await verifyConversationShortcuts(control, composerSelector, FRESH_CHAT_PROMPT)
   await control.command(
     'hover',
@@ -841,7 +842,16 @@ async function waitForProcessingBlock(
 }
 
 async function verifyViewImageProcessingBlock(control) {
-  const viewImageBlockSelector = '[data-processing-block-id="wework-e2e-view-image"]'
+  const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    .currentRuntimeTask
+  const callId = await readNativeToolCallId(
+    control,
+    address,
+    block => block.toolName === 'view_image',
+    'view_image',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const viewImageBlockSelector = `[data-processing-block-id="${callId}"]`
   await waitForProcessingBlock(control, viewImageBlockSelector, 'The view_image processing block')
   const generatedImageGalleryCount = Number(
     await control.command('getElementCount', '[data-testid="generated-image-gallery"]')
@@ -854,7 +864,7 @@ async function verifyViewImageProcessingBlock(control) {
   await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
   await control.command(
     'waitFor',
-    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="false"]',
+    viewImageBlockSelector + ' [data-tool-detail-toggle][aria-expanded="false"]',
     { visible: true, stableMs: 300, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
@@ -863,17 +873,14 @@ async function verifyViewImageProcessingBlock(control) {
     '03-view-image-collapsed.png',
     '[data-testid="processing-live-preview"]'
   )
-  await control.command(
-    'click',
-    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle]'
-  )
+  await control.command('click', viewImageBlockSelector + ' [data-tool-detail-toggle]')
   await control.command('waitFor', '[data-testid="image-view-preview"]', {
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command(
     'waitFor',
-    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="true"]',
+    viewImageBlockSelector + ' [data-tool-detail-toggle][aria-expanded="true"]',
     { stableMs: 500, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')

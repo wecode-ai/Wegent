@@ -205,6 +205,68 @@ async function waitForSidebarPointerSensorCleanup() {
 await preloadDefaultDshUiTestModules()
 
 describe('DesktopSidebar', () => {
+  test('keeps worktree details in hover content and allows partially expanded tasks to collapse', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    renderSidebar({
+      onOpenRuntimeTask,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 26,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/workspace/Wegent',
+                tasks: Array.from({ length: 26 }, (_, index) => ({
+                  taskId: `worktree-${index}`,
+                  workspacePath: `/workspace/worktrees/${index}/Wegent`,
+                  workspaceKind: 'worktree' as const,
+                  worktreeId: String(index),
+                  title: `Task ${index}`,
+                  runtime: 'codex',
+                  updatedAt: '2026-06-20T06:00:00Z',
+                })),
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 26,
+      },
+    })
+    expect(screen.getByTestId('desktop-sidebar')).not.toHaveClass('font-normal')
+    expect(screen.getByText('Wework')).toHaveClass('font-medium')
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
+    const row = screen.getAllByTestId(/^runtime-local-task-row-/)[0]
+    const taskId = row.dataset.testid!.replace('runtime-local-task-row-', '')
+    expect(row).toHaveAccessibleName(`Task ${taskId.replace('worktree-', '')} · Git worktree`)
+    expect(
+      screen.queryByTestId(`runtime-local-task-worktree-icon-${taskId}`)
+    ).not.toBeInTheDocument()
+    await userEvent.hover(row)
+    await waitFor(() =>
+      expect(screen.getByTestId(`runtime-local-task-worktree-icon-${taskId}`)).toBeInTheDocument()
+    )
+    await userEvent.click(row)
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      workspacePath: `/workspace/worktrees/${taskId.replace('worktree-', '')}/Wegent`,
+      taskId,
+    })
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
+  })
+
   test.each(['loading', 'error'] as const)(
     'does not present a %s task list as empty',
     async phase => {
@@ -1028,16 +1090,18 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
   })
 
-  test('gates My stand-in behind the experimental features preference', async () => {
+  test('shows My stand-in with a Beta badge regardless of the experimental preference', async () => {
     const onOpenStandIn = vi.fn()
     experimentalFeatures.enabled = false
     const view = renderSidebar({ onOpenStandIn })
-    expect(screen.queryByTestId('personal-stand-in-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('personal-stand-in-button')).toBeVisible()
+    expect(screen.getByTestId('personal-stand-in-beta')).toHaveTextContent('Beta')
+    await userEvent.click(screen.getByTestId('personal-stand-in-button'))
     view.unmount()
     experimentalFeatures.enabled = true
     renderSidebar({ onOpenStandIn })
     await userEvent.click(screen.getByTestId('personal-stand-in-button'))
-    expect(onOpenStandIn).toHaveBeenCalledTimes(1)
+    expect(onOpenStandIn).toHaveBeenCalledTimes(2)
   })
 
   test('opens independent schedules from the sidebar when experimental features are disabled', async () => {

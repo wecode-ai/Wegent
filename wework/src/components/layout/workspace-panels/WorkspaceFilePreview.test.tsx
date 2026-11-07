@@ -3,12 +3,16 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import { useImperativeHandle, useRef, type ReactNode } from 'react'
+import type { CodeViewItem } from '@pierre/diffs'
 
 const fileViewerMocks = vi.hoisted(() => ({
   render: vi.fn(),
 }))
 const codeViewMocks = vi.hoisted(() => ({
   render: vi.fn(),
+  updateItem: vi.fn(),
+  addItems: vi.fn(),
 }))
 const appearanceMocks = vi.hoisted(() => ({
   resolvedMode: 'light' as 'dark' | 'light',
@@ -23,12 +27,35 @@ vi.mock('@/components/chat/AssistantMarkdown', () => ({
   ),
 }))
 
-vi.mock('@pierre/diffs/react', () => ({
+vi.mock('@/components/code/PierreCodeProvider', () => ({
+  PierreCodeProvider: ({ children }: { children: ReactNode }) => children,
+}))
+
+vi.mock('@pierre/diffs/react', async importOriginal => ({
+  ...(await importOriginal<typeof import('@pierre/diffs/react')>()),
   CodeView: (props: {
+    ref?: React.Ref<unknown>
+    initialItems: CodeViewItem<undefined>[]
     options: Record<string, unknown>
     selectedLines?: unknown
     style?: Record<string, string>
   }) => {
+    const item = useRef(props.initialItems[0])
+    useImperativeHandle(props.ref, () => ({
+      getItem: (id: string) => (item.current?.id === id ? item.current : undefined),
+      removeItem: () => {
+        item.current = undefined as unknown as CodeViewItem<undefined>
+      },
+      addItems: (items: CodeViewItem<undefined>[]) => {
+        item.current = items[0]
+        codeViewMocks.addItems(items)
+      },
+      updateItem: (next: CodeViewItem<undefined>) => {
+        item.current = next
+        codeViewMocks.updateItem(next)
+      },
+      scrollTo: vi.fn(),
+    }))
     codeViewMocks.render(props)
     return <div data-testid="code-view" />
   },
@@ -97,6 +124,33 @@ test.each(['csv', 'tsv'])('keeps %s attachments in the read-only table viewer', 
     )
   )
   expect(codeViewMocks.render).not.toHaveBeenCalled()
+})
+
+test('retries a failed text attachment read and displays the complete read-only file', async () => {
+  const content = '完整文本\n'.repeat(30000)
+  const loadFile = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Attachment is temporarily unavailable'))
+    .mockResolvedValueOnce(new Blob([content], { type: 'text/plain' }))
+  render(
+    <WorkspaceAttachmentPreview
+      source={{ filename: 'clipboard.txt', contentType: 'text/plain', loadFile }}
+    />
+  )
+  expect(await screen.findByText('Attachment is temporarily unavailable')).toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('workspace-file-preview-retry-button'))
+  await waitFor(() =>
+    expect(codeViewMocks.render).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialItems: [
+          expect.objectContaining({ file: expect.objectContaining({ contents: content }) }),
+        ],
+      })
+    )
+  )
+  expect(loadFile).toHaveBeenCalledTimes(2)
+  expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
+  expect(screen.getByTestId('composer-attachment-preview-download')).toBeEnabled()
 })
 
 test('copies the complete file after selecting all lines with the keyboard shortcut', () => {

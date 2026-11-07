@@ -169,6 +169,99 @@ describe('createRuntimeChatStream', () => {
     expect(calls.at(-1)).toBe('done')
   })
 
+  test('retains a queued status transition before a snapshot that omits status', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onBlockUpdated = vi.fn()
+    const stream = createRuntimeChatStream({ subscribe, request })
+    stream.subscribe({ onBlockUpdated })
+    await Promise.resolve()
+    for (const updates of [
+      { content: 'a' },
+      { content: 'ab', status: 'streaming' },
+      { content: 'abc' },
+    ]) {
+      listener({
+        event: 'response.block.updated',
+        payload: {
+          taskId: 'task',
+          subtaskId: 'turn',
+          data: { blockId: 'block', updates },
+        },
+      })
+    }
+    listener({
+      event: 'response.completed',
+      payload: {
+        taskId: 'task',
+        subtaskId: 'turn',
+        data: { value: 'complete' },
+      },
+    })
+    expect(onBlockUpdated.mock.calls.map(([value]) => [value.content, value.status])).toEqual([
+      ['a', undefined],
+      ['ab', 'streaming'],
+      ['abc', undefined],
+    ])
+  })
+
+  test('isolates a failing subscriber so queued data and completion still reach other handlers', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const onChatChunk = vi.fn()
+      const failedDone = vi.fn()
+      const healthyDone = vi.fn()
+      const stream = createRuntimeChatStream({ subscribe, request })
+      stream.subscribe({
+        onChatChunk: () => {
+          throw new Error('private payload marker')
+        },
+        onChatDone: failedDone,
+      })
+      stream.subscribe({ onChatChunk, onChatDone: healthyDone })
+      await Promise.resolve()
+      expect(() => {
+        for (const [offset, delta] of ['a', 'b', 'c'].entries()) {
+          listener({
+            event: 'response.output_text.delta',
+            payload: {
+              taskId: 'task',
+              subtaskId: 'turn',
+              data: { delta, offset },
+            },
+          })
+        }
+        listener({
+          event: 'response.completed',
+          payload: {
+            taskId: 'task',
+            subtaskId: 'turn',
+            data: { value: 'complete' },
+          },
+        })
+      }).not.toThrow()
+      expect(onChatChunk.mock.calls.map(([value]) => value.content)).toEqual(['a', 'bc'])
+      expect(failedDone).toHaveBeenCalledOnce()
+      expect(healthyDone).toHaveBeenCalledOnce()
+      expect(error).toHaveBeenCalledWith('[Wework] Runtime chat stream handler failed', {
+        event: 'response.output_text.delta',
+        subscriptionId: expect.any(Number),
+        errorName: 'Error',
+      })
+      expect(JSON.stringify(error.mock.calls)).not.toContain('private payload marker')
+    } finally {
+      error.mockRestore()
+    }
+  })
+
   test('coalesces cumulative block content snapshots before terminal events', async () => {
     let listener!: (event: LocalExecutorEvent) => void
     subscribe.mockImplementation(async handler => {

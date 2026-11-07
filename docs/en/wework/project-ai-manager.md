@@ -4,28 +4,19 @@ sidebar_position: 9
 
 # Project AI manager
 
-A project space enables one project AI by default. It inspects the project board, creates Issues, assigns owners, tracks progress, and proposes adjustments. Issue assignees own execution, status progress, and delivery. The manager cannot delete Issues or change project settings or membership.
+“Project AI manager” is terminology from an older guide, not evidence of a current bottom-of-board Project AI control or a Collaboration members → Project manager page. Current project settings has no separate manager page; do not assume each project automatically enables a manager.
 
-Click **Project AI** at the bottom of the board to expand the task composer. Interacting with any composer control pins the panel open until its close button is clicked. Messages use the task conversation renderer; linked Issues open their details, and the upper right button opens the full task. New projects enable project AI automatically when an eligible Agent is available. Local spaces prefer the current device Agent; cloud spaces require a project Agent backed by a Wegent Team. Configure the manager Agent, instructions, and on/off switch under **Project settings → Collaboration members → Project manager**, the last member tab. Local spaces continue to work offline.
+## Current UI equivalents
 
-## Triggers and conversation
+1. Open **top + → Collaboration → project → Project settings**.
+2. Configure available agents under **AI team → Agents**, people under **AI team → Members**, and collaboration organization under **AI team → Collaboration teams**.
+3. For event-triggered work, open the project's available **Automatic processing** page, choose trigger, executor and prompt, then save. Availability depends on project capabilities and management permission.
+4. For conversation, use **Ask AI** at the right of the board or create/open a linked task from an Issue, rather than looking for the old bottom manager composer. In a narrow pane it may be an icon; hover to see its label.
 
-Configure multiple manager triggers under **Project settings → Automatic processing**: Issue creation, tag addition, status changes, and Cron schedules. Members can start a conversation from the board entry. Owners and Maintainers can request Issue changes. Other members can query and discuss; the server rejects writes from their conversations.
+See [Projects and workspaces](./projects.md), [Board automation](./workbench.md) and [Task controls](./tasks.md#task-controls).
 
-Ordinary automation rules and manager triggers appear together under Automatic processing. Saving overlapping event triggers returns a conflict, and runtime selection starts only one rule for an event. Issues created by the manager do not trigger the manager again.
+The current experimental [project lead conversation](./personal-stand-in.md#project-lead-controls) uses an existing team's lead for private discussion, project memory and explicit publication to an Issue. It is distinct from the retired separate manager page; removing that page does not mean all lead functionality is absent.
 
-For ordinary automation rules, choose **Status reached** and select one of the project's default or custom statuses. It runs only when an Issue actually changes into the selected status: saving the same status does not trigger it, while leaving and re-entering can trigger it again. Automatic status advances caused by a rule do not immediately trigger that same originating rule, preventing a self-triggering loop.
+## Boundaries
 
-Automation rules also accept a **Prompt** describing the work AI should perform when triggered. The prompt is sent with the Issue context to the Agent or collaboration group for any trigger type. Leaving it blank uses the target's responsibilities and Issue content. Editing or toggling a rule preserves its saved prompt.
-
-Automatic execution moves Issues only into statuses configured on the board. If a target column such as In progress or In review is absent, the Issue keeps its current status.
-
-Manual conversations and event triggers both create ordinary task executions. Cloud runs are scheduled in the background while Wework is closed; local projects run on the local executor. Manager runs are serialized per project and show distinct waiting, running, completed, and failed states.
-
-## Issue boundaries
-
-The manager can read, search, create, comment on, edit, and assign Issues in its project. It creates an Issue without an assignee and assigns it separately. Ordinary changes to unassigned Issues can run immediately.
-
-Changing an existing assignee requires approval from an Owner or Maintainer. Changing the scope of an active Issue or the status of a robot owned Issue creates a pending action. The human assignee confirms scope changes to their own Issue; an Owner or Maintainer confirms changes to robot owned Issues. Human assignees advance status through their own work actions, while the manager can leave a reminder. Approval checks the current Issue version, so stale proposals cannot apply.
-
-Each run has its own history with executed and pending actions, linked Issues, status, and time. A read only query can complete without creating a false assignment or delivery.
+Configuring an agent or automation does not expand member permissions or replace tool confirmation. Inspect the actual assignee and execution history before judging results. Saved rules, queued work and pending human decisions do not prove completion. Legacy manager fields or leftover descriptive strings do not establish a current user-facing capability.

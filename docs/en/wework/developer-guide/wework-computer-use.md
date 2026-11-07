@@ -114,13 +114,13 @@ Linux do not show the macOS permission flow, but Driver capability and runtime
 errors remain visible.
 
 The master switch is stored in Wework desktop preferences. While configuring
-the Desktop Runtime, Electron only creates `ComputerUseService`; it does not
-read the enablement preference or load the Driver. Once the main surface is
-actionable, the Renderer closes the startup window through
-`renderer.startupReady`. Electron then schedules one background preference
-restore without waiting for native Driver initialization. CUA native module
-loading and macOS permission checks therefore do not block Executor, Core DSH,
-or the first actionable workbench.
+the Desktop Runtime, Electron creates a `ComputerUseService` instance. Once
+the current surface and its required data are usable, the Renderer starts
+the window handoff through `renderer.startupReady`. After the splash presents
+100%, fades out, and closes, and the main window receives focus, Electron
+schedules one background preference restore to read the enablement preference
+and initialize the Driver. CUA native module loading and macOS permission
+checks run in this background flow.
 
 The background restore reads the latest preference before it starts. It skips
 Driver startup when the feature has been disabled or the application is

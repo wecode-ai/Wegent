@@ -43,11 +43,11 @@ use brz_mysql::{FromMysqlRow, Mysql};
 use serde_json::json;
 
 use crate::attachments::context_store::SubtaskContextRow;
-use crate::attachments::minio_client::MinioConfig;
 use crate::attachments::storage;
 use crate::http_compat::FastApiError;
 use crate::knowledge_documents_content::access::{knowledge_base_access, knowledge_base_record};
 use crate::state::AppState;
+use wegent_storage::minio_client::MinioConfig;
 
 use self::rate_limit::DownloadRateLimits;
 use self::token::verify_document_download_token;

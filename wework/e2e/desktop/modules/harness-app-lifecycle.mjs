@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto'
 import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { verifySmartAppMarketplaceIdentity } from './smart-app-marketplace-identity.mjs'
+import { prepareSmartAppCookieRegression } from './smart-app-cookie-lifecycle.mjs'
 import {
   verifyRunningSmartAppInstallRejected,
   verifyStoppedSmartAppInstallAllowed,
@@ -482,6 +483,11 @@ export async function verifyHarnessLifecycle(
     timeoutMs: uiTimeoutMs,
   })
   await captureScreenshot(control, 'harness-apps-09-running.png', 'body')
+  const cookieRegression = await prepareSmartAppCookieRegression(
+    control,
+    resultDir,
+    INSTALLATION_ID
+  )
   await control.command('click', `[data-testid="workspace-tab-close-${appTabId}"]`)
   await waitForElementCount(
     control,
@@ -494,6 +500,7 @@ export async function verifyHarnessLifecycle(
     enabled: true,
     timeoutMs: 30_000,
   })
+  await cookieRegression.assertStopped()
   await control.command('clickWhenEnabled', managedAppStart, {
     timeoutMs: 30_000,
   })
@@ -501,6 +508,7 @@ export async function verifyHarnessLifecycle(
     timeoutMs: 30_000,
   })
   await captureScreenshot(control, 'harness-apps-09a-reopened.png', 'body')
+  await cookieRegression.assertReopened()
   assert.deepEqual(
     await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
     legacyRuntimeCache,

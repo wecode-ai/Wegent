@@ -815,11 +815,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
             if let Some(source) = &mut side_source {
-                self.wait_for_running_side_source_turn(&source.thread_id)
-                    .await;
-                if source.thread_path.is_none() {
-                    source.thread_path = self.thread_path_for_id(&source.thread_id).await;
-                }
+                self.prepare_side_source(source).await?;
             }
             let turn = SpawnTurnRequest {
                 task_kind: None,

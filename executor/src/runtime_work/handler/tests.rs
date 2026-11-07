@@ -51,6 +51,8 @@ mod text_generation_tests;
 
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
+#[path = "workspace_identity_tests.rs"]
+mod workspace_identity_tests;
 
 #[path = "mcp_elicitation_tests.rs"]
 mod mcp_elicitation_tests;
@@ -1221,6 +1223,9 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
     handler.turn_queue_path = Arc::new(runtime_work_dir.join("turn-queue.json"));
+    handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
+    handler.automation_store =
+        crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
     handler
         .turn_scheduler
         .lock()

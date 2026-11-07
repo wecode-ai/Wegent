@@ -128,6 +128,87 @@ fn executor_source_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
 }
 
+#[derive(serde::Deserialize)]
+struct SourceMetadata {
+    workspace_root: PathBuf,
+    packages: Vec<SourcePackage>,
+}
+
+#[derive(serde::Deserialize)]
+struct SourcePackage {
+    manifest_path: PathBuf,
+    dependencies: Vec<SourceDependency>,
+}
+
+#[derive(serde::Deserialize)]
+struct SourceDependency {
+    path: Option<PathBuf>,
+}
+
+fn rust_source_inputs(manifest: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+    use std::collections::BTreeSet;
+    let mut pending = vec![manifest.to_path_buf()];
+    let mut visited = BTreeSet::new();
+    let mut directories = BTreeSet::new();
+    let mut files = BTreeSet::new();
+    while let Some(manifest) = pending.pop() {
+        if visited.contains(&manifest) {
+            continue;
+        }
+        let output = Command::new("cargo")
+            .args([
+                "metadata",
+                "--no-deps",
+                "--format-version",
+                "1",
+                "--manifest-path",
+            ])
+            .arg(&manifest)
+            .output()
+            .map_err(|error| format!("failed to query Cargo source dependencies: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Cargo source discovery failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let metadata: SourceMetadata = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("invalid Cargo source metadata: {error}"))?;
+        for name in ["Cargo.toml", "Cargo.lock"] {
+            let file = metadata.workspace_root.join(name);
+            if file.exists() {
+                files.insert(file);
+            }
+        }
+        for package in metadata.packages {
+            visited.insert(package.manifest_path.clone());
+            let root = package
+                .manifest_path
+                .parent()
+                .ok_or("Cargo package has no source directory")?;
+            let source = root.join("src");
+            if source.exists() {
+                directories.insert(source);
+            }
+            let build = root.join("build.rs");
+            if build.exists() {
+                files.insert(build);
+            }
+            files.insert(package.manifest_path);
+            pending.extend(
+                package
+                    .dependencies
+                    .into_iter()
+                    .filter_map(|dependency| dependency.path.map(|path| path.join("Cargo.toml"))),
+            );
+        }
+    }
+    Ok((
+        directories.into_iter().collect(),
+        files.into_iter().collect(),
+    ))
+}
+
 fn watch_executor_sources(
     manifest_dir: &Path,
     tx: mpsc::Sender<DevEvent>,
@@ -144,21 +225,13 @@ fn watch_executor_sources(
     )
     .map_err(|error| error.to_string())?;
 
-    watch_path(
-        &mut watcher,
-        &manifest_dir.join("src"),
-        RecursiveMode::Recursive,
-    )?;
-    watch_path(
-        &mut watcher,
-        &manifest_dir.join("Cargo.toml"),
-        RecursiveMode::NonRecursive,
-    )?;
-    watch_path(
-        &mut watcher,
-        &manifest_dir.join("Cargo.lock"),
-        RecursiveMode::NonRecursive,
-    )?;
+    let (directories, files) = rust_source_inputs(&manifest_dir.join("Cargo.toml"))?;
+    for path in directories {
+        watch_path(&mut watcher, &path, RecursiveMode::Recursive)?;
+    }
+    for path in files {
+        watch_path(&mut watcher, &path, RecursiveMode::NonRecursive)?;
+    }
     Ok(watcher)
 }
 
@@ -329,6 +402,45 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn source_watcher_observes_transitive_path_dependencies() {
+        for relative in [
+            "adapter/src/lib.rs",
+            "storage/src/lib.rs",
+            "storage/Cargo.toml",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let executor = root.path().join("executor");
+            std::fs::create_dir_all(executor.join("src")).unwrap();
+            std::fs::write(executor.join("src/lib.rs"), "").unwrap();
+            std::fs::write(executor.join("Cargo.toml"), "[package]\nname='watcher-test'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nadapter={path='../shared/rust/adapter'}\n").unwrap();
+            let shared = root.path().join("shared/rust");
+            for name in ["adapter", "storage"] {
+                std::fs::create_dir_all(shared.join(name).join("src")).unwrap();
+                let dependency = if name == "adapter" {
+                    "[dependencies]\nstorage={path='../storage'}\n"
+                } else {
+                    ""
+                };
+                std::fs::write(
+                    shared.join(name).join("Cargo.toml"),
+                    format!(
+                        "[package]\nname='{name}'\nversion='0.1.0'\nedition='2021'\n{dependency}"
+                    ),
+                )
+                .unwrap();
+                std::fs::write(shared.join(name).join("src/lib.rs"), "original").unwrap();
+            }
+            let (tx, rx) = mpsc::channel();
+            let _watcher = watch_executor_sources(&executor, tx).unwrap();
+            std::fs::write(shared.join(relative), "changed").unwrap();
+            assert!(matches!(
+                rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+                DevEvent::FileChanged
+            ));
+        }
+    }
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

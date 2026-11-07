@@ -25,6 +25,7 @@ fn assignment(mut issue: store::Node, context: &Value) -> groups::GroupAssignmen
         waiting_runtime: false,
     };
     groups::GroupAssignment {
+        automation: Value::Null,
         issue,
         group,
         key: "assignment-key".into(),

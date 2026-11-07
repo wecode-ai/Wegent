@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
+import { createDevtoolsClient, writeDiagnosticFile } from '../../../scripts/ai-verify-devtools.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
@@ -80,7 +82,46 @@ async function diagnoseSwitchingFailure(control, timeoutMs, stage) {
   }
 }
 
-export function createConversationSwitchingChecks({ uiTimeoutMs }) {
+async function startSwitchingCpuProfile(directory, timeoutMs) {
+  let client
+  let target
+  try {
+    client = await createDevtoolsClient(directory, timeoutMs)
+    const targets = await client({ action: 'targets' })
+    target = targets.find(
+      entry =>
+        entry.type === 'window' &&
+        !entry.url.startsWith('devtools:') &&
+        !entry.url.includes('startup-splash')
+    )?.id
+    assert.ok(target, 'The main renderer is unavailable for CPU sampling')
+    await client({ action: 'command', target, method: 'Profiler.enable' })
+    await client({ action: 'command', target, method: 'Profiler.start' })
+  } catch {
+    if (target) await client({ action: 'detach', target }).catch(() => {})
+    console.info('[conversation-switching] CPU profile unavailable', { phase: 'start' })
+    return async () => {}
+  }
+  const startedAt = Date.now()
+  let stopping
+  return () =>
+    (stopping ??= (async () => {
+      try {
+        const { profile } = await client({ action: 'command', target, method: 'Profiler.stop' })
+        await writeDiagnosticFile(join(directory, 'conversation-switching-initial.cpuprofile'), {
+          ...profile,
+          startedAtUnixMs: startedAt,
+          finishedAtUnixMs: Date.now(),
+        })
+      } catch {
+        console.info('[conversation-switching] CPU profile unavailable', { phase: 'stop' })
+      } finally {
+        await client({ action: 'detach', target }).catch(() => {})
+      }
+    })())
+}
+
+export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
   const longResponseTimeoutMs = Math.max(uiTimeoutMs, LONG_RESPONSE_TIMEOUT_MS)
   let releaseTail
   let releaseDone
@@ -148,16 +189,19 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
 
     async verify(control) {
       let stage = 'initial-prefix'
+      let stopCpuProfile
       try {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('startRuntimeStreamDiagnostics', 'body')
+        stopCpuProfile = await startSwitchingCpuProfile(resultDir, uiTimeoutMs)
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-        // The prefix follows 520 progress items in this deliberately long response.
+        // This final-answer prefix follows all 520 model progress messages.
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
           text: PREFIX,
           timeoutMs: longResponseTimeoutMs,
         })
+        await stopCpuProfile()
         stage = 'native-history'
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench?.currentRuntimeTask
@@ -268,6 +312,8 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
         // This cursor prepends items inside the same assistant row, not new message rows.
         const anchorId = coldPage.runtimeDisplayItems[0].id
         const anchorSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-runtime-item-id="${anchorId}"], ${ACTIVE_WORKBENCH_SELECTOR} [data-processing-block-id="${anchorId}"]`
+        // A user scroll needs a visible renderer after the cold reload.
+        await control.command('focusMainWindow', 'body')
         await control.command('scrollIntoViewAsUser', anchorSelector, { value: 'start' })
         await waitForWorkbenchDebugState(
           control,
@@ -315,11 +361,13 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           'Automatic pagination duplicated an item in the running turn'
         )
       } catch (error) {
+        await stopCpuProfile?.()
         await diagnoseSwitchingFailure(control, uiTimeoutMs, stage)
         throw error
       } finally {
         releaseTail?.()
         releaseDone?.()
+        await stopCpuProfile?.()
         try {
           const timing = await control.command('stopRuntimeStreamDiagnostics', 'body')
           console.info('[conversation-switching] renderer stream timing', JSON.parse(timing))

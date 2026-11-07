@@ -8,6 +8,58 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+test('saves actual follow position without remeasuring geometry after a scroll write', () => {
+  const viewport = document.createElement('div')
+  document.body.append(viewport)
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 200 },
+    scrollHeight: { value: 1200, configurable: true },
+  })
+  viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    viewport.scrollTop = Number(top)
+  })
+  const conversationKey = 'follow-save-without-layout'
+  const current = renderHook(() =>
+    useConversationScrollController({
+      conversationKey,
+      externalScrollRef: { current: viewport },
+      messages: [
+        {
+          id: 'latest',
+          role: 'assistant',
+          content: 'Latest answer',
+          status: 'done',
+          createdAt: '2026-10-28T00:00:00.000Z',
+        },
+      ],
+    })
+  )
+  let wroteOffset = false
+  const measureAfterWrite = vi.fn()
+  Object.defineProperty(viewport, 'scrollHeight', {
+    get: () => {
+      if (wroteOffset) measureAfterWrite()
+      return 1400
+    },
+    configurable: true,
+  })
+  viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    viewport.scrollTop = Number(top)
+    wroteOffset = true
+  })
+
+  act(() => current.result.current.handleContentLayoutChange())
+
+  expect(wroteOffset).toBe(true)
+  expect(measureAfterWrite).not.toHaveBeenCalled()
+  expect(getConversationScrollSnapshot(conversationKey)).toEqual({
+    pinnedToBottom: true,
+    distanceFromBottomPx: 0,
+  })
+  expect(current.result.current.showScrollButton).toBe(false)
+  current.unmount()
+})
+
 test.each(['follow', 'read'] as const)(
   'keeps the original %s snapshot while suspended search navigation uses the viewport',
   mode => {

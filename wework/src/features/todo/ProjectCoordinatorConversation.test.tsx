@@ -44,6 +44,7 @@ function fixture(groups: unknown[] = []) {
     devices: [],
     onOpenGroupSettings,
     onOpenIssue: vi.fn(),
+    onPublished: vi.fn(),
   } as unknown as ComponentProps<typeof ProjectCoordinatorConversation>
   return { props, listCollaborationGroups, projectConversation, onOpenGroupSettings }
 }

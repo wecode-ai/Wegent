@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod task_workspace;
 mod workspaces;
 pub(crate) use workspaces::workspace_response;
 
@@ -15,8 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    infer_workspace_kind, infer_worktree_id, now_ms, string_field, timestamp_ms_field,
-    workspace_group_path, workspace_label,
+    now_ms, string_field, timestamp_ms_field, workspace_group_path, workspace_label,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -654,6 +654,8 @@ pub(crate) fn search_result_item(
 }
 
 pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
+    let workspace_kind = link.workspace_kind();
+    let worktree_id = link.worktree_id();
     if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(&link) {
         crate::runtime_work::lifecycle::project_native_execution(&mut link, &state);
     }
@@ -677,9 +679,9 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
     task.insert("runtime".to_owned(), Value::String(link.runtime));
     task.insert(
         "workspaceKind".to_owned(),
-        Value::String(infer_workspace_kind(&link.workspace_path).to_owned()),
+        Value::String(workspace_kind.to_owned()),
     );
-    if let Some(worktree_id) = infer_worktree_id(&link.workspace_path) {
+    if let Some(worktree_id) = worktree_id {
         task.insert("worktreeId".to_owned(), Value::String(worktree_id));
     }
     if let Some(state) = native_state.as_ref() {
@@ -773,7 +775,7 @@ fn archived_conversation_item(link: &RuntimeTaskLink, device_id: &str) -> Value 
         "projectKey": project_key,
         "projectName": project_name,
         "workspacePath": link.workspace_path,
-        "workspaceKind": infer_workspace_kind(&link.workspace_path),
+        "workspaceKind": link.workspace_kind(),
         "runtimeHandle": archived_cleanup_runtime_handle(link),
         "deviceId": device_id,
         "deviceName": device_id,

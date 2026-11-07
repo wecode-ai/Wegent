@@ -30,6 +30,8 @@ pnpm --filter wework e2e
 pnpm --filter wework e2e:desktop
 ```
 
+邮件检查点 `stand-in-email` 使用隔离的 GreenMail IMAP/SMTP 服务，需要 Java 11 或更高版本；CI 使用 Java 21。运行前确认 `PATH` 中的 `java` 和 `keytool` 来自符合要求的 JDK。
+
 仅运行 Codex cloud-config 故障恢复回归：
 
 ```bash
@@ -265,10 +267,26 @@ Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]
 记录落盘，带 ISO 时间戳，覆盖进程停止、进程组终止、崩溃注入的冻结/杀死以及场景内
 强制退出应用。Chromium 在 `app.log` 中的 `Network service crashed` 行使用
 runner 本地时间，把两类记录对齐后，可以把每次崩溃归因为运行器清理，或标记为仍需
-调查的未解释事件。checkpoint 步骤失败时，运行器还会在失败三秒后采集
-`failure-followup.json`，包含重复的 UI 快照和工作台调试状态，用于区分超时后
-自行收敛的慢速异步更新和卡死状态。可通过 `WEWORK_E2E_FAILURE_FOLLOWUP_MS`
-调整观察延迟，设为 `0` 关闭采集。
+调查的未解释事件。checkpoint 步骤失败时，运行器会通过渲染器的条件轮询
+`waitFor` 直接观察失败的那个等待条件，并采集 `failure-followup.json`：记录
+条件收敛的实际耗时（`settled-after-failure`），或整体预算内条件未收敛
+（`condition-unsettled-within-budget`），同时附带 UI 快照和工作台调试状态。
+收敛耗时从真实的步骤失败时刻起算，而预算只约束跟进自身增加的墙钟时间
+（此前的诊断采集不会消耗它）；记录中的 `observationBudgetMs` 与
+`observedForMs` 标明观察窗口及条件在窗口内实际被观察的时长。若失败步骤
+运行在独立窗口中，观察与证据采集会路由到该窗口的控制客户端。可通过
+`WEWORK_E2E_FAILURE_FOLLOWUP_MS` 调整整体观察预算，设为
+`0` 关闭采集。该观察属于下文固定等待政策中的条件检查等待：条件收敛即返回，
+不会睡眠固定时长。
+若诊断运行需要 Chromium 自身记录子进程（network service、zygote）的退出原因，
+可将 `WEWORK_E2E_CHROMIUM_VERBOSE` 设为详细级别（`1`–`9`，`true` 等同 `1`）；
+该开关默认关闭，因为日志量可观。Linux 上详细输出追加进 `app.log`；Windows 上
+场景自带的 `--enable-logging=file` 覆盖 stderr 开关，详细输出落在
+`electron.log`。
+E2E 的普通固定等待不得超过 5 秒。完整轮询周期的负向观察、取消或并发模型响应等
+特殊场景可保留最多 10 秒，并说明用途；5 秒轮询周期的观察窗口为 5.5 秒。
+等待 UI、启动或执行状态应持续检查实际条件，条件满足后立即返回，其操作超时不受
+固定等待上限影响。需要保持模型请求未完成时优先使用已有的响应释放闸门，避免长延迟。
 抽屉动画逐帧检查从操作前持续采样，观察到位移且轨道动画结束后主动停止；采样上限沿用
 共享单步超时。这样命令传输和渲染延迟不会耗尽固定的 800ms 采样窗口；位移、连续性、
 中间帧和减弱动态效果的断言仍完整执行。

@@ -135,6 +135,8 @@ executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex
 
 ### 前端生命周期投影
 
+侧栏任务列表同样以 `deviceId + taskId` 标识唯一条目。创建期间从项目根目录切换到托管 worktree 时，临时条目必须迁移，不能在两个工作区各留一条。如果执行器列表先于创建响应返回，后到的临时投影必须保留执行器已经确认的分组和状态。`e2e:desktop --segment sidebar-task-identity` 通过延迟真实创建响应覆盖这一时序，并验证发送完成和后续刷新后均只有一条侧栏记录。
+
 Wework 对同一个 `deviceId + taskId` 只维护一份共享的 runtime task lifecycle 状态。可见 pane 拥有 stream 事件的写权限；为了保留布局和快速切换而挂载的隐藏 Provider 可以继续订阅和读取，但不能写入 `turnStarted`、`turnSettled`、goal 状态或 executor snapshot。侧栏、composer 和任务执行遮罩都从同一个不可变 store snapshot 读取，不能再从 Provider 私有 state 或缓存 work list 生成第二份运行状态。
 
 来自 `runtime.tasks.list`、任务创建响应、stream 事件和本地缓存的 task summary 在进入 store 前都经过同一投影规则：
@@ -235,6 +237,8 @@ flowchart LR
 ```
 
 图片进入附件区时直接使用浏览器对象 URL 显示预览，直到附件发送、删除或输入框重置时释放。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 预览，Codex 收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
+
+在 Electron app 中，发送前后的文本附件点击后均在应用内的只读附件预览面板中打开，读取完整原始文件，不受工作区或全局外部应用打开偏好影响；读取失败时可在面板中重试。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 the desktop local-file URL converter 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 

@@ -322,9 +322,15 @@ async fn list_user_teams(
     };
 
     // Batch preload related users, bots, shells, and models.
-    let preloaded = preload_related(&state.mysql, user_id, &teams)
-        .await
-        .map_err(|error| HttpError::internal(error.to_string()))?;
+    let preloaded = preload_related(
+        &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+        user_id,
+        &teams,
+    )
+    .await
+    .map_err(|error| HttpError::internal(error.to_string()))?;
 
     // Convert to response items.
     let default_config = DefaultTeamsConfig::from_env().parsed();
@@ -443,9 +449,15 @@ async fn resolve_default_team(
     let Some(team) = teams.first() else {
         return Ok(None);
     };
-    let preloaded = preload_related(&state.mysql, user_id, &teams)
-        .await
-        .map_err(|error| HttpError::internal(error.to_string()))?;
+    let preloaded = preload_related(
+        &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+        user_id,
+        &teams,
+    )
+    .await
+    .map_err(|error| HttpError::internal(error.to_string()))?;
     Ok(Some(team_item(team, &preloaded, default_config, user_id)))
 }
 
