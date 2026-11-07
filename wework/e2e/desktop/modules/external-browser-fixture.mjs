@@ -14,20 +14,67 @@ async function defaultBrowser(bundleId, timeoutMs) {
     ObjC.import('AppKit')
     ObjC.import('CoreServices')
     if (argv.length) {
-      const status = $.LSSetDefaultHandlerForURLScheme('https', argv[0])
-      if (status !== 0) throw new Error('Setting HTTPS handler failed: ' + status)
+      // macOS confirms a default-browser change through the HTTP scheme.
+      // Setting HTTPS directly fails with permErr even for the current browser.
+      const status = $.LSSetDefaultHandlerForURLScheme($('http'), $(argv[0]))
+      if (status !== 0) throw new Error('Requesting default browser failed: ' + status)
     }
-    const url = $.NSURL.URLWithString('https://example.com')
-    const app = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url)
-    return ObjC.unwrap($.NSBundle.bundleWithURL(app).bundleIdentifier)
+    const handlers = {}
+    for (const scheme of ['http', 'https']) {
+      const url = $.NSURL.URLWithString(scheme + '://example.com')
+      const app = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url)
+      handlers[scheme] = ObjC.unwrap($.NSBundle.bundleWithURL(app).bundleIdentifier)
+    }
+    return JSON.stringify(handlers)
   }`
-  const { stdout } = await executeFile(
-    '/usr/bin/osascript',
-    ['-l', 'JavaScript', '-e', script, ...(bundleId ? [bundleId] : [])],
-    { timeout: timeoutMs }
-  )
-  if (bundleId) assert.equal(stdout.trim(), bundleId, 'The HTTPS default browser did not change')
-  return stdout.trim()
+  const query = async target => {
+    const { stdout } = await executeFile(
+      '/usr/bin/osascript',
+      ['-l', 'JavaScript', '-e', script, ...(target ? [target] : [])],
+      { timeout: timeoutMs }
+    )
+    return JSON.parse(stdout)
+  }
+  const current = await query()
+  if (!bundleId) {
+    assert.equal(current.http, current.https, 'The fixture requires one default web browser')
+    return current.https
+  }
+  const matches = handlers => handlers.http === bundleId && handlers.https === bundleId
+  if (matches(current)) return bundleId
+  await query(bundleId)
+  const deadline = Date.now() + timeoutMs
+  const applicationName = bundleId === CHROME_BUNDLE_ID ? 'Google Chrome' : 'Safari'
+  let dialog = ''
+  while (Date.now() < deadline) {
+    if (matches(await query())) return bundleId
+    const { stdout } = await executeFile(
+      '/usr/bin/osascript',
+      [
+        '-l',
+        'JavaScript',
+        '-e',
+        `function run(argv) {
+          const process = Application('System Events').processes.byName('CoreServicesUIAgent')
+          if (!process.exists()) return 'No confirmation process'
+          const names = []
+          for (const window of process.windows()) {
+            for (const button of window.buttons()) {
+              const name = button.name()
+              names.push(name)
+              if (name.startsWith('Use ') && name.includes(argv[0])) button.click()
+            }
+          }
+          return JSON.stringify(names)
+        }`,
+        applicationName,
+      ],
+      { timeout: Math.max(1, deadline - Date.now()) }
+    )
+    dialog = stdout.trim()
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Default browser confirmation failed: ' + bundleId + '; dialog=' + dialog)
 }
 
 function driverPort(child, timeoutMs) {
@@ -78,6 +125,15 @@ export async function startExternalBrowserFixture(resultDir, timeoutMs) {
   })
   let baseUrl
   let sessionId
+  let browserChangeRequested = false
+  const preparation = []
+  async function record(stage, error) {
+    preparation.push({ stage, ...(error ? { error: error.stack ?? String(error) } : {}) })
+    await writeFile(
+      join(resultDir, 'external-browser-preparation.json'),
+      JSON.stringify(preparation, null, 2)
+    )
+  }
   async function request(path, body, budgetMs = timeoutMs) {
     const response = await fetch(baseUrl + path, {
       method: body === undefined ? 'GET' : 'POST',
@@ -91,7 +147,7 @@ export async function startExternalBrowserFixture(resultDir, timeoutMs) {
   }
   async function dispose() {
     try {
-      await defaultBrowser(originalBrowser, timeoutMs)
+      if (browserChangeRequested) await defaultBrowser(originalBrowser, timeoutMs)
     } finally {
       try {
         if (sessionId) {
@@ -120,7 +176,9 @@ export async function startExternalBrowserFixture(resultDir, timeoutMs) {
     }
   }
   try {
+    await record('start-chromedriver')
     baseUrl = `http://127.0.0.1:${await driverPort(child, timeoutMs)}`
+    await record('create-browser-session')
     const session = await request('/session', {
       capabilities: {
         alwaysMatch: {
@@ -134,7 +192,10 @@ export async function startExternalBrowserFixture(resultDir, timeoutMs) {
     })
     sessionId = session.sessionId
     assert.ok(sessionId, 'ChromeDriver did not create a real browser session')
+    await record('configure-default-browser')
+    browserChangeRequested = true
     await defaultBrowser(CHROME_BUNDLE_ID, timeoutMs)
+    await record('ready')
     const evidence = []
     return {
       dispose,
@@ -178,7 +239,14 @@ export async function startExternalBrowserFixture(resultDir, timeoutMs) {
       },
     }
   } catch (error) {
-    await dispose()
+    await record('setup-failed', error)
+    try {
+      await dispose()
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'External browser setup and cleanup failed', {
+        cause: error,
+      })
+    }
     throw error
   }
 }

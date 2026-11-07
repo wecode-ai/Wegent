@@ -581,6 +581,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       // --- Real external browser file opening and error recovery ---
       if (process.platform === 'darwin') {
         const externalBrowser = await startExternalBrowserFixture(resultDir, uiTimeoutMs)
+        let verificationError
         try {
           const localFilePath = join(resultDir, 'external-browser-fixture.html')
           const localDirectoryPath = join(resultDir, 'external-browser-directory')
@@ -651,8 +652,22 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           )
           await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
           await externalBrowser.waitForPage(localDirectoryUrl, 'directory-entry.txt')
+        } catch (error) {
+          verificationError = error
+          throw error
         } finally {
-          await externalBrowser.dispose()
+          try {
+            await externalBrowser.dispose()
+          } catch (cleanupError) {
+            if (verificationError) {
+              throw new AggregateError(
+                [verificationError, cleanupError],
+                'External browser verification and cleanup failed',
+                { cause: verificationError }
+              )
+            }
+            throw cleanupError
+          }
         }
       }
     },
