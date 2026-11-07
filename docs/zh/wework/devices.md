@@ -27,6 +27,16 @@ Wework 启动后会管理本机执行环境。本地项目、会话、Codex 和�
 
 ## 连接 Wegent
 
+<!-- ui-source: src/pages/LoginPage.tsx -->
+<!-- ui-source: src/pages/OidcCallbackPage.tsx -->
+<!-- ui-source: src/pages/WeworkAuthorizePage.tsx -->
+
+### 登录页和授权回跳
+
+按部署配置，授权过程可能显示账号/密码登录或组织的 OIDC 登录按钮；只有服务端确需首次管理员初始化时才显示设置管理员密码表单。使用自己的已授权账号，不要把普通用户当成管理员初始化。
+
+选择对应登录方式后按页面引导继续；OIDC 回调由应用处理，不需要手填 code、state、Token 或回调地址。看到 **授权成功，请返回 Wework 应用继续** 后回到客户端；仅打开网站或登录成功还不代表设备连接已完成。失败时从原连接入口重新发起，保留准确错误，不在聊天中粘贴含凭据的链接。
+
 1. 点击侧边栏中的 **连接云端**。
 2. 输入团队提供的 Wegent Backend 地址。
 3. 点击 **授权并连接**。

@@ -69,6 +69,19 @@ sidebar_position: 2
 | 左侧栏 → 应用     | 打开应用页面                                                               | `/sites`       |
 | 左侧栏 → 云端工作 | 查看设备与云端项目；未连接时先连接云端，见[设备与云端工作](./devices.md)   | `/cloud-work`  |
 
+### 空间与辅助功能定位
+
+| 功能关键词                                           | 具体操作说明                                                    |
+| ---------------------------------------------------- | --------------------------------------------------------------- |
+| 空间成员、全局智能体/小组/设备、Runner、模板、里程碑 | [协作空间及资源操作](./projects.md#workspace-resource-controls) |
+| 分身记忆、作用域、编辑和遗忘                         | [记忆操作](./personal-stand-in.md#stand-in-memory-controls)     |
+| 实验性负责人对话、接管、停止、发布到 Issue           | [负责人对话](./personal-stand-in.md#project-lead-controls)      |
+| 站点 PV/UV、访问日期、查看统计                       | [站点访问数据](./plugins-and-skills.md#site-analytics-controls) |
+| 系统拖拽、新对话/追问、快捷短语暂存区                | [拖拽与暂存](./settings.md#system-drag-controls)                |
+| 历史搜索、多选删除、日期折叠、重试                   | [浏览历史操作](./browser.md#browser-history-controls)           |
+| 通知铃铛、全部已读、通知渠道、IM 接收目标            | [通知中心](./workbench.md#notification-controls)                |
+| 进程资源占用、筛选、启动详情与置顶                   | [进程查看器](./troubleshooting.md#process-explorer-controls)    |
+
 ## 设置入口速查
 
 先点击 **左下角账户菜单 → 设置**，再按表中的分组和页面名称选择。macOS 默认快捷键为 `Command+,`。设置的“插件”页用于 Codex 插件运行配置，与侧栏的插件市场不同；“Runtime”也不是 Node.js 执行文件设置。

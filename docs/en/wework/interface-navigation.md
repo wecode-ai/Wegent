@@ -69,6 +69,19 @@ Internal routes below support version maintenance and automated checks; they are
 | Left sidebar → Applications | Open the applications page                                                                                 | `/sites`       |
 | Left sidebar → Cloud work   | View devices and cloud projects; connect first if disconnected. See [Devices and cloud work](./devices.md) | `/cloud-work`  |
 
+### Space and auxiliary feature links
+
+| Search terms                                                              | Detailed steps                                                             |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Space members, global agents/teams/devices, Runner, templates, milestones | [Space and resource operations](./projects.md#workspace-resource-controls) |
+| Stand-in memory, scope, edit and forget                                   | [Memory controls](./personal-stand-in.md#stand-in-memory-controls)         |
+| Experimental lead conversation, takeover, stop, publish to Issue          | [Project lead controls](./personal-stand-in.md#project-lead-controls)      |
+| Site PV/UV, visit dates and analytics                                     | [Site visit data](./plugins-and-skills.md#site-analytics-controls)         |
+| System drag, new chat/follow-up and quick-phrase stash                    | [Drag and stash](./settings.md#system-drag-controls)                       |
+| History search, multi-delete, date groups and retry                       | [Browsing history](./browser.md#browser-history-controls)                  |
+| Bell, mark all read, notification channels and IM target                  | [Notification center](./workbench.md#notification-controls)                |
+| Process resource usage, filtering, launch details and pinning             | [Process Explorer](./troubleshooting.md#process-explorer-controls)         |
+
 ## Settings quick reference
 
 Open **bottom-left account menu → Settings**, then select the group and page below. The macOS default shortcut is `Command+,`. The Plugins settings page configures Codex plugin runtime behavior, unlike the sidebar plugin marketplace; Runtime is not the Node.js executable setting.
