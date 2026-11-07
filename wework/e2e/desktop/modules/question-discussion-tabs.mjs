@@ -14,10 +14,12 @@ export async function verifyQuestionDiscussionTabs({
   draft,
   captureScreenshot,
 }) {
-  const tab =
-    '[data-testid="titlebar-right-panel"] [role="tab"][data-testid^="right-workspace-discussion-tab-"]'
-  const browser =
-    '[data-testid="titlebar-right-panel"] [role="tab"][data-testid^="right-workspace-browser-tab-"]'
+  const tabContainer =
+    process.platform === 'win32'
+      ? ACTIVE_WORKBENCH_SELECTOR
+      : '[data-testid="titlebar-right-panel"]'
+  const tab = `${tabContainer} [role="tab"][data-testid^="right-workspace-discussion-tab-"]`
+  const browser = `${tabContainer} [role="tab"][data-testid^="right-workspace-browser-tab-"]`
   await control.command('waitFor', `${tab}[aria-selected="true"]`, { visible: true })
   await control.command('waitFor', browser, { visible: true })
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')

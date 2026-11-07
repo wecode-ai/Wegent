@@ -176,7 +176,7 @@ export function createDesktopScenario({
       const editedPrompt = `${QUESTION} 请先讨论项目成员方案。`
       await control.command('fill', sideComposer, { value: editedPrompt })
       await control.command('press', 'body', {
-        key: process.platform === 'win32' ? 'Control+t' : 'Meta+t',
+        key: process.platform === 'darwin' ? 'Meta+t' : 'Control+t',
       })
       await control.command('waitFor', DIALOG, { visible: false })
       await control.command('waitFor', '[data-testid="workspace-browser-url-input"]', {
