@@ -15,6 +15,7 @@ export async function assertDelayedRecoveryHandoffs(options) {
   const token = (await readFile(join(root, 'healthy'), 'utf8')).trim()
   for (const nativeRecovery of [true, false]) {
     await assert.rejects(readFile(join(root, 'activation.json')), { code: 'ENOENT' })
+    await assert.rejects(readFile(join(root, 'macos-rollback')), { code: 'ENOENT' })
     await quitInstalledHost(root, control)
     const environment = { ...options.environment, WEWORK_RELEASE_ROOT: root }
     delete environment.WEWORK_RELEASE_SUPERVISED

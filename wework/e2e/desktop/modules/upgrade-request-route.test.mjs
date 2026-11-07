@@ -11,7 +11,11 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { routeUpgradeRequests, upgradeTransportScript } from './upgrade-request-route.mjs'
-import { verifyUpgradeStartup } from './upgrade-startup-probe.mjs'
+import {
+  PROBE_EXPECTED_EXIT,
+  PROBE_QUIT_SCRIPT,
+  verifyUpgradeStartup,
+} from './upgrade-startup-probe.mjs'
 
 const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
 
@@ -172,14 +176,14 @@ test('routes the default update URL through the real Electron network stack', as
       join(root, 'app/main.cjs'),
       `
       const {app,net} = require('electron')
+      ${PROBE_QUIT_SCRIPT}
       if ([...process.argv, ...process.execArgv].some(argument => argument.startsWith('--inspect-brk=')) ||
           app.commandLine.hasSwitch('inspect-brk'))
         throw new Error('The driver pause switch must not reach application handoff code')
       app.setPath('userData', ${JSON.stringify(join(root, 'user-data'))})
       app.whenReady().then(async () => {
         const response = await net.fetch('https://github.com/wecode-ai/Wegent/releases/download/wework-updater/components-beta-macos-arm64.json')
-        console.log('TRANSPORT_RESULT=' + await response.text())
-        app.quit()
+        process.stdout.write('TRANSPORT_RESULT=' + await response.text() + '\\n', () => app.quit())
       }).catch(error => {console.error(error);app.exit(1)})
     `
     )
@@ -197,7 +201,7 @@ test('routes the default update URL through the real Electron network stack', as
     })
     const exited = once(child, 'exit', { signal: AbortSignal.timeout(20_000) })
     await routeUpgradeRequests(child, `http://127.0.0.1:${server.address().port}`)
-    assert.deepEqual(await exited, [0, null], errors)
+    assert.deepEqual(await exited, PROBE_EXPECTED_EXIT, errors)
     assert.ok(output.includes('TRANSPORT_RESULT=real loopback transport'), output)
     assert.deepEqual(requests, ['/components-beta-macos-arm64.json'])
   } catch (error) {

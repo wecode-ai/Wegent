@@ -848,7 +848,22 @@ export async function createDesktopScenario(options) {
         if (shutdownSnapshot)
           await writeFile(
             join(resultDir, 'shutdown-processes-result.json'),
-            JSON.stringify(shutdownSnapshot, null, 2)
+            JSON.stringify(
+              shutdownSnapshot,
+              [
+                'capturedAt',
+                'platform',
+                'applicationPid',
+                'degraded',
+                'code',
+                'processes',
+                'pid',
+                'parentPid',
+                'startedAt',
+                'kind',
+              ],
+              2
+            )
           )
         if (control) await control.command('quitApp', 'body').catch(() => undefined)
         if (shutdownSnapshot) await waitForOwnedProcessExit(shutdownSnapshot)
@@ -870,7 +885,9 @@ export async function createDesktopScenario(options) {
           const state = {}
           for (const name of [
             'active',
+            'active-pid',
             'bridge',
+            'macos-rollback',
             'trial',
             'attempted',
             'healthy',

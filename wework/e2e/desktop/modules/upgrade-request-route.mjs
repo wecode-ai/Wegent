@@ -68,7 +68,8 @@ export function upgradeTransportScript(origin, pauseArgument) {
         pid: process.pid, ready: app.isReady(), userData: app.getPath('userData'),
         version: app.getVersion(), executable: process.execPath,
         selected: read('active'), pending: read('activation.json'),
-        bridge: read('bridge'), activePid: read('active-pid')
+        bridge: read('bridge'), activePid: read('active-pid'),
+        physicalRollback: read('macos-rollback')
       }))
       report()
       const timer = setInterval(report, 5000)

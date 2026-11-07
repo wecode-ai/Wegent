@@ -60,9 +60,17 @@ async function routeRelease(): Promise<boolean> {
   const recoveryToken = process.env.WEWORK_RELEASE_RECOVERY
   delete process.env.WEWORK_RELEASE_SUPERVISED
   delete process.env.WEWORK_RELEASE_RECOVERY
+  const physicalRollback =
+    process.platform === 'darwin' ? await optionalText(join(root, 'macos-rollback')) : null
   const slotPath = relative(join(root, 'slots'), process.execPath)
   const versionedPayload = slotPath !== '..' && !slotPath.startsWith('../') && !isAbsolute(slotPath)
-  if (process.platform === 'darwin' && !supervisedId && !recoveryToken && !versionedPayload) {
+  if (
+    process.platform === 'darwin' &&
+    !supervisedId &&
+    !recoveryToken &&
+    !versionedPayload &&
+    !physicalRollback
+  ) {
     // Only the installed package owns ordinary startup. A delayed recovery or
     // versioned bridge must still route the selected release after its journal
     // has been finalized; it must never open data in the rejected host.

@@ -11,6 +11,7 @@ const startup = vi.hoisted(() => ({
   bridgeHandoff: vi.fn(),
   showErrorBox: vi.fn(),
   bridge: null as string | null,
+  macosRollback: null as string | null,
   legacyUserData: null as string | null,
   ready: vi.fn(),
   relaunch: vi.fn(),
@@ -55,7 +56,12 @@ vi.mock('node:fs/promises', () => ({
 }))
 
 vi.mock('./runtime/release-store.js', () => ({
-  optionalText: async (path: string) => (basename(path) === 'bridge' ? startup.bridge : null),
+  optionalText: async (path: string) =>
+    basename(path) === 'bridge'
+      ? startup.bridge
+      : basename(path) === 'macos-rollback'
+        ? startup.macosRollback
+        : null,
   ReleaseStore: class {
     constructor(root: string) {
       startup.roots.push(root)
@@ -92,6 +98,7 @@ beforeEach(() => {
   startup.bridgeHandoff.mockReset().mockImplementation(async () => startup.legacyUserData)
   startup.showErrorBox.mockClear()
   startup.bridge = null
+  startup.macosRollback = null
   startup.legacyUserData = null
   startup.ready.mockReset().mockImplementation(() => new Promise(() => {}))
   startup.relaunch.mockClear()
@@ -218,6 +225,23 @@ test('hands the selected legacy host its physical userData before native launch'
 })
 
 if (process.platform === 'darwin') {
+  test('an installed entry resumes a selected rollback before its physical bundle was restored', async () => {
+    startup.activation = null
+    startup.macosRollback = 'source'
+    startup.metadata.version = '2.0.0'
+    startup.activeRelease = {
+      id: 'source',
+      version: '1.0.0',
+      executable: process.execPath,
+      macosInstallation: { payloadExecutable: '/retained/source', bootstrapFromPayload: false },
+    }
+
+    await import('./bootstrap.js')
+
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(startup.ready).toHaveBeenCalledOnce()
+  })
+
   test('a delayed native recovery handoff cannot enter the rejected installed host after rollback finalized', async () => {
     startup.activation = null
     startup.metadata.version = '2.0.0'
