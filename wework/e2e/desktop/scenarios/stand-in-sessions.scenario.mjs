@@ -30,10 +30,11 @@ export function createDesktopScenario({
   restartDesktopApp,
 }) {
   let cleanContextObserved = false
+  let followupObserved = false
   let questionCalls = 0
   let resultDelivered = false
 
-  async function settled(control) {
+  async function settled(control, expected = () => true) {
     const deadline = Date.now() + modelResponseTimeoutMs
     let task
     while (Date.now() < deadline) {
@@ -45,7 +46,7 @@ export function createDesktopScenario({
       )
       task = result.task
       assert.notEqual(task?.status, 'failed', JSON.stringify(task))
-      if (task?.status === 'done' && task.running !== true) {
+      if (task?.status === 'done' && task.running !== true && expected(task)) {
         const running = await requestExecutor(
           control,
           'runtime.tasks.running_count',
@@ -75,6 +76,7 @@ export function createDesktopScenario({
       } else if (input.includes(CHILD)) {
         events = [assistantMessage('独立工作已完成。')]
       } else if (input.includes(FOLLOWUP)) {
+        followupObserved = true
         events = [assistantMessage('后续消息仍在第二段执行会话中。')]
       } else if (input.includes(SECOND)) {
         assert.ok(
@@ -196,18 +198,23 @@ export function createDesktopScenario({
       })
       await settled(control)
       assert.equal(questionCalls, 1)
-      const firstPage = await requestExecutor(
+      const initialSearch = await requestExecutor(
         control,
-        'runtime.tasks.transcript',
-        { taskId: TASK, limit: 1 },
+        'runtime.tasks.transcript.search',
+        { taskId: TASK, query: '第一段问题已回答' },
         uiTimeoutMs
       )
+      const retainedCursor = initialSearch.matches[0]?.cursor
+      assert.ok(retainedCursor, 'The first session must issue a reusable history cursor')
       await send(SECOND, {
         startNewSession: true,
         expectedThreadId: firstThread,
         clientUserMessageId: 'session-second',
       })
-      const current = await settled(control)
+      const current = await settled(
+        control,
+        task => task.threadId !== firstThread && cleanContextObserved
+      )
       assert.notEqual(current.threadId, firstThread)
       assert.equal(cleanContextObserved, true)
       await assert.rejects(
@@ -260,17 +267,16 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.ok(JSON.stringify(matched.messages).includes('第一段问题已回答'))
-      if (firstPage.beforeCursor) {
-        const retained = await requestExecutor(
-          control,
-          'runtime.tasks.transcript',
-          { taskId: TASK, beforeCursor: firstPage.beforeCursor },
-          uiTimeoutMs
-        )
-        assert.equal(retained.sessionThreadId, firstThread)
-      }
+      const retained = await requestExecutor(
+        control,
+        'runtime.tasks.transcript',
+        { taskId: TASK, beforeCursor: retainedCursor },
+        uiTimeoutMs
+      )
+      assert.equal(retained.sessionThreadId, firstThread)
+      assert.ok(JSON.stringify(retained.messages).includes('第一段问题已回答'))
       await send(FOLLOWUP, { clientUserMessageId: 'session-followup' })
-      assert.equal((await settled(control)).threadId, current.threadId)
+      assert.equal((await settled(control, () => followupObserved)).threadId, current.threadId)
       const origin = {
         type: 'stand_in_task',
         initiatedBy: 'stand_in',

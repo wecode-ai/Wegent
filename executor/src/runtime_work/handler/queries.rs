@@ -287,13 +287,20 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let messages = if runtime_has_provider_transcript_reader(&link.runtime) {
-                let thread_ids = crate::runtime_work::conversation_sessions::thread_ids(link)
-                    .map_err(|_| {
-                        AppIpcError::new(
-                            "invalid_session_state",
-                            "Conversation session history is invalid",
-                        )
-                    })?;
+                let thread_ids = match crate::runtime_work::conversation_sessions::thread_ids(link)
+                {
+                    Ok(ids) => ids,
+                    Err(error) => {
+                        log_executor_event(
+                            "task search skipped invalid conversation sessions",
+                            &[
+                                ("local_task_id", link.local_task_id.clone()),
+                                ("error", error.to_string()),
+                            ],
+                        );
+                        continue;
+                    }
+                };
                 let mut matched = None;
                 for thread_id in thread_ids.iter().rev() {
                     matched = first_message_search_result(

@@ -295,6 +295,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or(250)
             .min(250);
         let mut matches = Vec::new();
+        let mut total = 0_u64;
         let mut capped = false;
         for thread in ids.iter().rev() {
             if matches.len() == limit {
@@ -305,6 +306,7 @@ impl RuntimeWorkRpcHandler {
             request["threadId"] = json!(thread);
             request["limit"] = json!(limit - matches.len());
             let result = self.search_thread_transcript(request).await?;
+            total += result["totalMatches"].as_u64().unwrap_or(0);
             capped |= result["isCapped"] == true;
             for mut entry in result["matches"].as_array().cloned().unwrap_or_default() {
                 if let Some(native) = entry["cursor"].as_str() {
@@ -319,6 +321,6 @@ impl RuntimeWorkRpcHandler {
                 matches.push(entry);
             }
         }
-        Ok(json!({"success":true,"totalMatches":matches.len(),"isCapped":capped,"matches":matches}))
+        Ok(json!({"success":true,"totalMatches":total,"isCapped":capped,"matches":matches}))
     }
 }

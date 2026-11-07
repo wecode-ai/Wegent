@@ -131,6 +131,7 @@ impl RuntimeWorkRpcHandler {
         }
 
         let child_thread_ids = codex_spawned_child_thread_ids(&message);
+        self.store.refresh_index_from_disk_if_changed();
         let mut routing = self
             .thread_event_routing
             .lock()
@@ -189,7 +190,7 @@ impl RuntimeWorkRpcHandler {
         let route_nested = route.nested;
         let closed_session = self
             .store
-            .read_task(&local_task_id, |link| {
+            .read_loaded_task(&local_task_id, |link| {
                 super::super::conversation_sessions::is_closed_thread(link, &thread_id)
                     || (route_nested
                         && super::super::conversation_sessions::is_identity_conversation(link)

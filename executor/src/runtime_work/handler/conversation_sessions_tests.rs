@@ -25,6 +25,34 @@ fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler) {
     (root, handler)
 }
 
+#[tokio::test]
+async fn conversation_sessions_invalid_link_does_not_break_other_task_search() {
+    let (_root, handler) = fixture();
+    handler.store.update_task(TASK, |link| {
+        link.runtime_handle[sessions::SESSIONS_KEY] = json!({"invalid":true});
+    });
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "unrelated".into(),
+        title: "searchable unrelated conversation".into(),
+        runtime: "custom".into(),
+        ..Default::default()
+    });
+    let result = handler
+        .search_tasks(json!({"query":"searchable"}))
+        .await
+        .unwrap();
+    assert_eq!(result["items"].as_array().unwrap().len(), 1);
+    assert_eq!(result["items"][0]["taskId"], "unrelated");
+    assert_eq!(
+        handler
+            .read_transcript(json!({"taskId":TASK}))
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_session_state"
+    );
+}
+
 #[test]
 fn session_start_requires_idle_identity_and_the_exact_current_thread() {
     let (_root, handler) = fixture();
@@ -78,6 +106,22 @@ fn session_start_requires_idle_identity_and_the_exact_current_thread() {
     assert!(handler
         .validate_session_start(Some(&link), &json!({"startNewSession":"true"}))
         .is_err());
+}
+
+#[tokio::test]
+async fn conversation_sessions_preserve_reader_totals_for_pending_cached_history() {
+    let (_root, handler) = fixture();
+    handler.store.update_task(TASK, |link| {
+        link.runtime_handle["messages"] = json!([{"id":"answer","turnId":"turn-1","role":"assistant","content":"needle needle needle","status":"done"}]);
+        link.runtime_handle["userMessagePresentations"] = json!([{"id":"pending","content":"request"}]);
+    });
+    let result = handler
+        .search_transcript(json!({"taskId":TASK,"query":"needle","limit":1}))
+        .await
+        .unwrap();
+    assert_eq!(result["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(result["totalMatches"], 3);
+    assert_eq!(result["isCapped"], true);
 }
 
 #[test]
