@@ -15,6 +15,8 @@ sidebar_position: 9
 
 See [Projects and workspaces](./projects.md), [Board automation](./workbench.md) and [Task controls](./tasks.md#task-controls).
 
+The current experimental [project lead conversation](./personal-stand-in.md#project-lead-controls) uses an existing team's lead for private discussion, project memory and explicit publication to an Issue. It is distinct from the retired separate manager page; removing that page does not mean all lead functionality is absent.
+
 ## Boundaries
 
 Configuring an agent or automation does not expand member permissions or replace tool confirmation. Inspect the actual assignee and execution history before judging results. Saved rules, queued work and pending human decisions do not prove completion. Legacy manager fields or leftover descriptive strings do not establish a current user-facing capability.

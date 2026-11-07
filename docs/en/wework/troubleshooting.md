@@ -4,6 +4,25 @@ sidebar_position: 10
 
 # Troubleshooting
 
+<!-- ui-source: src/components/common/WorkbenchErrorPage.tsx -->
+<!-- ui-source: src/pages/ProcessExplorerPage.tsx -->
+
+## Inspect process resource usage
+
+<a id="process-explorer-controls"></a>
+
+Open the read-only window with the native desktop menu **Help → Developer tools → Process Explorer**.
+
+| Action                | Steps and limits                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Filter and groups     | Search by name, PID or launch details; expand/collapse owner groups to locate windows, executors or plugin processes                  |
+| Resources and refresh | Inspect CPU, memory and uptime. Sampling is periodic; Refresh reads again. Totals sum listed Wework processes, not the whole computer |
+| Details and copy      | Select a process to inspect/copy launch details; check private directories/arguments before sharing                                   |
+| Columns and pinning   | Drag header edges to resize, double-click to reset; toggle always-on-top                                                              |
+| Errors/degradation    | Inspect unavailable-information reasons and refresh; partial data does not imply the app stopped                                      |
+
+This window does not terminate processes. Inspection differs from pausing tasks, quitting the app or clearing user data.
+
 ## Clicking the app icon does not open a window
 
 Clicking the Dock icon again should reveal the existing main or startup recovery window,

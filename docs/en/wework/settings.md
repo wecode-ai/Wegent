@@ -65,6 +65,16 @@ Open **bottom-left account menu → Settings → Personal → General**. The pag
 
 Saving a UI preference, changing scheduler limits and replacing an executable have different activation rules. Follow restart prompts for Node.js and coding tools; saved preferences do not imply that existing processes have already changed.
 
+### System drag panel and stash
+
+<a id="system-drag-controls"></a>
+
+1. Enable **Settings → Personal → General → Popout Window → System drag panel**.
+2. Start dragging selected text inside Wework or a file location supporting workspace-path transfer. Drop onto the desired zone when the panel appears; arbitrary external-application drags are not guaranteed to open it.
+3. **Create new chat** fills a new draft; **Follow up** appends to the current conversation and appears only when one exists. Review the composer and send explicitly: neither action auto-submits.
+4. **Stash temporarily** stores text and attachment paths as a quick-phrase stash item. In the composer's quick-phrase menu, open **Stash**, hover to preview, select to insert, delete one item or clear the stash. Clearing items does not delete source files; moving/deleting a source can invalidate its attachment path.
+5. Close the panel or press Esc to abandon the drag. Inspect failed-add feedback rather than treating a dismissed panel as a sent message.
+
 ## Record performance data
 
 Enable **Record performance data** under **Settings → General → Runtime** to retain resource
@@ -146,6 +156,10 @@ executable or restoring the built-in runtime so new DSH, Skill, MCP, and task pr
 updated environment.
 
 ## View app information
+
+### Post-upgrade notice and release notes
+
+If a version-notice card appears in the sidebar after an upgrade, open its version/new-features action to read **Wework release notes** and links. Close the dialog, press Esc or click its outside overlay to return. Dismissing the card neither uninstalls/rolls back the update nor performs an update check.
 
 ### Account-menu quota details
 

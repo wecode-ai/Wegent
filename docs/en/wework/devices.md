@@ -25,6 +25,16 @@ Wework manages a local execution environment for local projects, conversations, 
 
 ## Connect to Wegent
 
+<!-- ui-source: src/pages/LoginPage.tsx -->
+<!-- ui-source: src/pages/OidcCallbackPage.tsx -->
+<!-- ui-source: src/pages/WeworkAuthorizePage.tsx -->
+
+### Login and authorization return
+
+Depending on deployment, the authorization flow may show password login or the organization's OIDC button. Administrator password setup appears only when the service requires initial administrator setup; ordinary users should not initialize an administrator account.
+
+Choose the offered login method and follow it. The app handles OIDC callbacks; do not manually enter code, state, tokens or callback addresses. Return to Wework after its authorization-success message. Opening the website or signing in alone does not prove the device connection completed. Restart from the original connection entry after an error, preserving its message without sharing credential-bearing links in chat.
+
 Select **Connect to cloud**, enter the Backend address supplied by your team, choose **Authorize and connect**, and approve Wework on the authorization page.
 
 The workbench then includes server models, cloud devices, and remote devices. Disconnecting does not remove local projects or conversations.

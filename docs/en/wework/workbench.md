@@ -6,6 +6,9 @@ sidebar_position: 5
 
 <a id="workspace-controls"></a>
 
+<!-- ui-source: src/pages/WorkbenchPage.tsx -->
+<!-- ui-source: src/pages/PopoutWorkbenchPage.tsx -->
+
 ## Application menu
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
@@ -117,6 +120,8 @@ New tasks appear immediately at the top of their project's task list. Tasks with
 
 ## Handle AI questions
 
+<!-- ui-source: src/features/notifications/RuntimeInteractionsPage.tsx -->
+
 The top-level **Needs your input** tab collects structured questions from task conversations, projects, and your stand-in. Its left list groups questions under **Tasks, Projects, and Stand-in**, newest first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in.
 
 When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
@@ -133,11 +138,21 @@ Answering or cancelling a question in its original task or project view automati
 
 ## Use IM notifications
 
-IM notifications are generally available and do not require **Experimental features**. Use the message-bubble entry in the sidebar account area to configure away-from-computer reminders. After opening a runtime task, select **Continue in private chat** in the title bar to bind that task to an available IM private chat.
+<a id="notification-controls"></a>
 
-The away-reminder panel shows the current delivery conversation. When cloud connectivity is available, **Change conversation** and the primary enable or disable action remain fully visible in the same action row, so either setting can be adjusted directly.
+Open **titlebar bell → Notification center**, not the obsolete account-area away-reminder bubble.
 
-After binding succeeds, Wework's switch confirmation uses the current task title instead of an internal `runtime-xxx` task identifier. Later task replies continue to be delivered to the selected private chat.
+| Action        | Steps and limits                                                                                                                                                                        |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browse        | Select task, stand-in, collaboration or general sources and open the original task/project; reading is not handling or approval                                                         |
+| Mark all read | Mark the aggregated notification set read; does not complete tasks or submit outstanding answers                                                                                        |
+| Refresh/more  | Refresh and load further records when available; inspect errors and retry without repeating business actions                                                                            |
+| Channels      | Center → Settings → configure in-app, system and IM per source. Task/stand-in IM requires the runtime API, not all their channels. Collaboration/general preferences require cloud APIs |
+| IM target     | Select the receiving conversation in settings and connect its account when prompted; selecting a channel is not app authorization                                                       |
+
+System notification permission also applies. The center differs from **Needs your input**, which retains business questions and their handling state.
+
+**Continue in private chat** in a runtime task's titlebar binds it to an available IM conversation after target review. Successful switch notices show the task title, and subsequent replies follow that binding. Channel preferences and per-task private-chat binding are separate.
 
 ## Split tasks by dragging
 
@@ -196,6 +211,10 @@ When diagnosing a terminal that does not repaint after a task switch, frontend l
 To diagnose `[Terminal connection failed]`, correlate `Local terminal start`, `Local terminal connection`, ` Electron local terminal attach`, and `Local terminal close` logs by session identifier. The logs include the host process, child process, task, workspace path, connection stage, and close reason so output-listener, exit-listener, native-attach, missing-session, and intentional-close cases can be distinguished. They never include terminal input, output, executed commands, or environment-variable contents.
 
 ## Expand the right workspace
+
+### Create a temporary chat directly
+
+Open **right workspace → new-tab menu → Temporary chat** to ask a separate question in the side panel. This appears when the workbench supports temporary chats and does not require selecting reply text first. It has its own composer, including while expanded. Review drafts before closing/switching panels; a side conversation is not automatically an instruction modifying the main task.
 
 With the right workspace open, select **Expand panel** in its title bar to let files, previews, or change reviews fill the main workspace. The task composer is hidden while a non-chat workspace is expanded; an expanded temporary chat keeps only its own composer. The expanded state is saved per conversation.
 

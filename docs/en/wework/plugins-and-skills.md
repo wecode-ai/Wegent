@@ -208,6 +208,36 @@ Open **left sidebar → Plugins → plugin details → included capabilities** a
 
 **Run Skill** requires an installed, enabled Skill and no pending start request. Review the resulting task flow before continuing; running it does not authorize external services. Global settings currently has no **Coding → Skills** page; do not follow the obsolete unified-directory migration UI instructions.
 
+### Mini-program experience links and QR codes
+
+In **Applications → Mini Programs**, a row offers **View QR code** and copy-link actions only when experience access is supported and an experience URL exists. Open the code for scanning or copy the URL and inspect success feedback before sharing. Missing URLs/capabilities show an empty value; do not look in site-publishing menus for this code. Close a failed QR dialog and inspect the link; confirm audience and the mini-program's access restrictions before sharing.
+
+### Add a custom plugin marketplace
+
+Open **left sidebar → Plugins → Create → Add plugin marketplace**. Enter a GitHub shorthand, HTTPS/SSH Git URL or local directory as **Source**. Optionally set **Git ref** (otherwise the main branch) and **Sparse path**, then select **Add marketplace**. Leave optional fields empty unless you need a particular revision or subdirectory.
+
+Correct validation errors in the form; Cancel/Close adds nothing. Adding a source does not install every plugin in it. Still review contents, trust prompts and execution device before installation. Private repositories use that device's native authentication; do not paste access tokens into the source field.
+
+### Edit site information
+
+Open **Applications → Sites → row … → Edit site**, change the title/custom domain prefix and select **Save**; Cancel discards changes. Prefixes are lowercased and the field accepts lowercase letters, digits and hyphens. Resolve conflicts or save errors shown in the dialog rather than clicking repeatedly. Availability depends on edit capability, not collaborator-management or access-management rights.
+
+### Copy a shared plugin into personal plugins
+
+When viewing a plugin as a sharing recipient, **… → Copy to my plugins** is available only if copying is allowed. Success imports a personal copy and opens its details; this is not copying a name or link to the clipboard. The action is disabled while preparing the copy, and failures appear on the plugin page. If it is absent, check recipient status and copy permission: access to use a plugin does not imply permission to copy it.
+
+### Query site visit data
+
+<a id="site-analytics-controls"></a>
+
+Open **left sidebar → Applications → Sites → site-row … → View visit data**. The entry appears only when the site's capabilities allow it.
+
+1. Choose start/end dates and select **Query**, or choose **Last 7 days** / **Last 31 days**.
+2. Dates use Beijing time (UTC+8), include both endpoints, span at most 31 days and cannot be reversed or in the future.
+3. Inspect **Page views (PV)**, **Unique visitors in range (UV)**, daily trends and the daily table. Range UV is independently deduplicated, not a sum of daily UV.
+4. If today is included, note the incomplete-data warning. No visits differs from a failed query. Contact an administrator when reporting is unconfigured; follow retry guidance for rate limits, timeouts or loading errors.
+5. Close to return to the list. Querying statistics neither publishes the site nor changes access permissions, and does not imply visitor-identity details are available.
+
 ## Development and migration
 
 If you need to build plugins, migrate open-source plugins into the Wework marketplace, or understand how the cloud catalog relates to local Codex installs, read the [Plugin Marketplace Developer Guide](./developer-guide/wework-plugin-marketplace-dev.md).
