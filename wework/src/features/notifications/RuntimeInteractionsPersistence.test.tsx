@@ -47,6 +47,7 @@ it('does not rewrite history when a transcript repeatedly reports the same answe
   const write = vi.spyOn(Storage.prototype, 'setItem')
   view({ ...interactionQuestion, interactionStatus: 'answered' })
   await waitFor(() => expect(context!.loading).toBe(false))
+  expect(harness.flushStorage).toHaveBeenCalledTimes(2)
   expect(localStorage.getItem('wework.interactions:test:1:history')).toBe(history)
   expect(write.mock.calls.filter(([key]) => key === 'wework.interactions:test:1:history')).toEqual(
     []

@@ -18,6 +18,8 @@ async fn fork_requires_complete_persisted_source_metadata() {
         .await
         .unwrap();
     assert!(!rollout_metadata_ready(&path, "source").await.unwrap());
+    tokio::fs::write(&path, b"{\"label\":\"\xe4").await.unwrap();
+    assert!(!rollout_metadata_ready(&path, "source").await.unwrap());
     tokio::fs::write(&path, metadata("source")).await.unwrap();
     assert!(rollout_metadata_ready(&path, "source").await.unwrap());
 }

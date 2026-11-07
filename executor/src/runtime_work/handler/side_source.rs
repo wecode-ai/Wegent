@@ -74,16 +74,16 @@ async fn rollout_metadata_ready(path: &Path, thread_id: &str) -> Result<bool, Ap
         Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(failure) => return Err(error(failure.to_string())),
     };
-    let mut line = String::new();
+    let mut line = Vec::new();
     BufReader::new(file)
-        .read_line(&mut line)
+        .read_until(b'\n', &mut line)
         .await
         .map_err(|failure| error(failure.to_string()))?;
-    if !line.ends_with('\n') {
+    if !line.ends_with(b"\n") {
         return Ok(false);
     }
     let metadata: Value =
-        serde_json::from_str(&line).map_err(|failure| error(failure.to_string()))?;
+        serde_json::from_slice(&line).map_err(|failure| error(failure.to_string()))?;
     if metadata["type"] != "session_meta" || metadata["payload"]["id"] != thread_id {
         return Err(error(
             "session metadata does not match the source thread".to_owned(),
