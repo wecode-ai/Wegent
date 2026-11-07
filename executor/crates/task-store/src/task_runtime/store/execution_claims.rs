@@ -370,6 +370,7 @@ impl LocalTaskStore {
         )?;
         connection.execute("UPDATE loop_item_comments SET status='streaming', updated_at=?1 WHERE deleted_at IS NULL AND json_extract(metadata,'$.execution_id')=?2", params![timestamp, execution_id])?;
         let execution = execution_row(&connection, execution_id)?;
+        human_requests::settle_execution_reply(&connection, &execution)?;
         let dispatch_role = execution
             .execution_payload
             .as_ref()

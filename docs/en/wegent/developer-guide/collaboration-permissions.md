@@ -59,6 +59,10 @@ Space owners and administrators always administer child projects. For other user
 
 ## Protected contracts
 
+An exact assigned business answer continues the trusted persisted execution's original authority; it does not grant the respondent new private Agent use. The recipient independently retains current Developer, Issue, original-thread and Runtime-binding checks. Admission and queue consumption revalidate the original assigner's current resource grants while attributing the answer to its actual author. A binding without original-authority evidence is rejected rather than inferring authority from its Runtime owner or respondent. Ordinary comments and new executions are unchanged. `test_human_reply_execution_authority.py` covers cross-person private Agent continuation, ordinary-use denial, revocation, wrong recipient/thread/Runtime, queued identity and missing-source denial. No private Runtime or credential access is granted; CP01–CP20 remain unchanged.
+
+Issue human handoffs preserve the existing membership and native-approval boundaries. Reporting a question requires current Developer access and a caller-owned Runtime attached to the same Issue activity. Routing requires Developer access plus the responsible participant, recorded reporter, group leader or Maintainer authority; the recipient independently needs current Issue access and comment capability. The Issue row serializes versioned transfer and exact-message reply claims. An assigned person can answer in the shared original thread without receiving the source owner's private Runtime or credentials. Read receipts do not settle questions, and queued replies are not delivery acceptance. Local SQLite and cloud metadata retain the same request identity and handling states. No CP invariant changes.
+
 | ID | Invariant |
 | --- | --- |
 | CP01 | A project has exactly one active parent space; containment is separate from membership. |

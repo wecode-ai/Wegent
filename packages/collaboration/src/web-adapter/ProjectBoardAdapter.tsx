@@ -22,7 +22,9 @@ import { runnerEnvironmentError } from "../execution-environment/runnerEnvironme
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { findRuntimeTask } from "@wegent/chat-core/runtime-task-lookup";
+import { issueNeedsUser } from "../issueParticipation";
 
 import {
   IssueBoardCard,
@@ -107,11 +109,16 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  participationUserId?: string | number;
   parentGroupingEnabled?: boolean;
   emptyState?: ReactNode;
   filterAction?: ReactNode;
   toolbarAction?: ReactNode;
   runtime?: SharedWorkspaceRuntimeApi;
+  isIssueRunning?(
+    issue: CollaborationIssue,
+    bindings: WorkspaceTaskBinding[],
+  ): boolean;
   previewDisabled?: boolean;
   onMarkRead?(issue: CollaborationIssue): void;
   translate: CollaborationTranslate;
@@ -165,11 +172,13 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  participationUserId,
   parentGroupingEnabled = false,
   emptyState,
   filterAction,
   toolbarAction,
   runtime,
+  isIssueRunning,
   previewDisabled = false,
   translate,
   agents,
@@ -195,6 +204,7 @@ export function ProjectBoardAdapter({
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const handlingUserId = participationUserId ?? project.current_user_id;
   const milestonesById = useMemo(
     () => new Map(milestones.map((milestone) => [milestone.id, milestone])),
     [milestones],
@@ -239,9 +249,43 @@ export function ProjectBoardAdapter({
       project.access_role === "Owner" ||
       project.access_role === "Maintainer");
   const runtimeWork = useBrowserBoardRuntimeWork(
-    renderIssueCard ? undefined : runtime,
+    isIssueRunning && renderIssueCard ? undefined : runtime,
     taskBindings,
   );
+  const filterScope = `${project.project_store}:${project.id}:${handlingUserId ?? "anonymous"}`;
+  const [personalFilter, setPersonalFilter] = useState({
+    scope: filterScope,
+    enabled: false,
+  });
+  if (personalFilter.scope !== filterScope) {
+    setPersonalFilter({ scope: filterScope, enabled: false });
+  }
+  const needsMyInput =
+    personalFilter.scope === filterScope && personalFilter.enabled;
+  const myIssues = useMemo(
+    () =>
+      issues.filter((issue) => {
+        if (handlingUserId == null) return false;
+        const bindings = taskBindings.filter(
+          (binding) => binding.issueId === issue.id,
+        );
+        const running = isIssueRunning
+          ? isIssueRunning(issue, bindings)
+          : bindings.some(
+              (binding) =>
+                findRuntimeTask(runtimeWork?.work ?? null, {
+                  deviceId: binding.deviceId,
+                  taskId: binding.taskId,
+                })?.running,
+            );
+        return issueNeedsUser(
+          running ? { ...issue, execution_state: "running" } : issue,
+          handlingUserId,
+        );
+      }),
+    [issues, handlingUserId, taskBindings, isIssueRunning, runtimeWork?.work],
+  );
+  const visibleIssues = needsMyInput ? myIssues : issues;
   const availableTags = useMemo(
     () => collectProjectTags(project, issues),
     [project, issues],
@@ -312,6 +356,7 @@ export function ProjectBoardAdapter({
     translate,
   });
   const controller = useStandardCloudBoardController({
+    currentUserId: handlingUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: translate(
       "todo.tag_limit_exceeded",
@@ -327,7 +372,7 @@ export function ProjectBoardAdapter({
     defaultGroupBy: project.board_config?.group_by ?? "status",
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
-    items: issues,
+    items: visibleIssues,
     hierarchyItems: allIssues,
     onCurrentParentIdChange,
     supportsOrder,
@@ -435,6 +480,23 @@ export function ProjectBoardAdapter({
         }
         filterAction={
           <>
+            {handlingUserId != null && (
+              <button
+                type="button"
+                data-testid="project-needs-my-input-filter"
+                aria-pressed={needsMyInput}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${needsMyInput ? "border-text-primary/30 bg-muted text-text-primary" : "border-border bg-background text-text-secondary"}`}
+                onClick={() =>
+                  setPersonalFilter({
+                    scope: filterScope,
+                    enabled: !needsMyInput,
+                  })
+                }
+              >
+                {translate("todo.home_my_todos")}
+                <span>{myIssues.length}</span>
+              </button>
+            )}
             {tagFilter.control}
             {filterAction}
           </>

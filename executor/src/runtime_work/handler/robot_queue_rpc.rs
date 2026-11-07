@@ -52,6 +52,14 @@ impl RuntimeWorkRpcHandler {
                 ticks = ticks.wrapping_add(1);
                 if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
                     handler.heartbeat_local_issue_executions();
+                    for link in handler.local_task_links(false) {
+                        if link.runtime_handle["issueHumanRequestOutbox"]
+                            .as_object()
+                            .is_some_and(|outbox| !outbox.is_empty())
+                        {
+                            handler.sync_issue_human_requests(&link.local_task_id);
+                        }
+                    }
                 }
                 handler.reconcile_local_project_coordination().await;
                 handler.drain_local_issue_queue().await;

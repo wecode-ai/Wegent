@@ -173,6 +173,7 @@ impl LocalTaskStore {
             return execution_row(&connection, execution_id).map(Some);
         }
         update_agent_comment(&transaction, execution_id, "failed", &error, &timestamp)?;
+        human_requests::reject_unstarted_execution_reply(&transaction, &current)?;
         transaction.commit()?;
         drop(connection);
         self.resume_manager_for_finished_round(execution_id)?;
@@ -329,6 +330,24 @@ impl LocalTaskStore {
                 payload = json!({});
             }
             payload["trigger_message_id"] = json!(trigger);
+            if let Some(request_id) = payload["human_request_id"].as_str() {
+                let user = trigger_record.sender_id.parse::<i64>().map_err(|_| {
+                    TaskRuntimeError::Invalid("A human reply requires a valid sender".into())
+                })?;
+                let question = human_requests::claim_reply_on(
+                    &connection,
+                    project_id,
+                    task_id,
+                    request_id,
+                    user,
+                    trigger,
+                )?;
+                if payload["continueTaskId"] != question["runtime_task_id"] {
+                    return Err(TaskRuntimeError::Invalid(
+                        "Question execution binding changed".into(),
+                    ));
+                }
+            }
         }
         let execution_id = create_local_execution(
             &connection,

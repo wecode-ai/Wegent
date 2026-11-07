@@ -56,6 +56,7 @@ export function interactionSource(
 }
 
 export interface RuntimeInteraction {
+  sharedRequest?: import('@wegent/collaboration').IssueHumanRequest
   source?: InteractionSource
   id: string
   requestKey: string
@@ -116,6 +117,14 @@ export function interactionAllowsNativeReply(payload: RequestUserInputPayload): 
 }
 
 export function canReplyToInteraction(item: RuntimeInteraction): boolean {
+  if (item.sharedRequest)
+    return (
+      !item.cached &&
+      canQuickReply(item.payload) &&
+      item.sharedRequest.can_reply !== false &&
+      item.sharedRequest.status === 'pending' &&
+      item.sharedRequest.recipient_user_id !== null
+    )
   if (item.task.workspace.available === false) return false
   if (!canQuickReply(item.payload)) return false
   if (item.project)

@@ -18,6 +18,7 @@ use uuid::Uuid;
 mod assignment_receipts;
 mod code_projects;
 pub mod execution_workspace;
+mod human_requests;
 mod issue_badges;
 pub mod milestones;
 mod ordering;

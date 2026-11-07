@@ -7,6 +7,7 @@ import type { ProjectBoardColumn } from './ProjectBoardBody'
 import type { ProjectBoardSort } from './projectBoardSorting'
 import type { CollaborationTranslate } from '../i18n'
 import { hasTooManyTags } from '../tagging'
+import { issueNeedsUser, type IssueHumanRequest } from '../issueParticipation'
 
 export interface SavedBoardColumn {
   id: string
@@ -19,7 +20,12 @@ export interface SavedBoardView {
   id: string
   name: string
   columns: SavedBoardColumn[]
-  filter?: { tags?: string[]; match?: 'any' | 'all'; [key: string]: unknown }
+  filter?: {
+    tags?: string[]
+    match?: 'any' | 'all'
+    needs_my_input?: boolean
+    [key: string]: unknown
+  }
   sorts?: Record<string, ProjectBoardSort>
   [key: string]: unknown
 }
@@ -53,9 +59,16 @@ export function defaultBoardViewId(config?: ProjectBoardViews | null): string {
 }
 
 export function matchesBoardView(
-  item: { tags: string[] },
-  view?: Pick<SavedBoardView, 'filter'> | null
+  item: {
+    tags: string[]
+    status?: string
+    human_requests?: readonly IssueHumanRequest[]
+  },
+  view?: Pick<SavedBoardView, 'filter'> | null,
+  userId?: string | number
 ) {
+  if (view?.filter?.needs_my_input && (userId == null || !issueNeedsUser(item, userId)))
+    return false
   const tags = view?.filter?.tags ?? []
   if (!tags.length) return true
   return view?.filter?.match === 'any'
@@ -86,7 +99,11 @@ export function savedBoardColumns(
   const matchedColumns = columns.filter(column => column.type !== 'unmatched')
   return columns.map(column =>
     column.type === 'unmatched'
-      ? { ...column, unmatchedColumns: matchedColumns, unmatchedFilter: view.filter }
+      ? {
+          ...column,
+          unmatchedColumns: matchedColumns,
+          unmatchedFilter: view.filter,
+        }
       : column
   )
 }

@@ -40,6 +40,11 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the original conversation. The shared pending inbox links to that authorization context. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input_async when available, otherwise request_user_input, with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
     }
+    if crate::task_runtime::mcp::has_bound_issue_context(request).unwrap_or(false)
+        && request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false)
+    {
+        instructions.push_str("\n\nWework Issue human handoff:\nUse request_user_input_async for business decisions in the owning Issue. After asking, discover wework_space list_human_requests and assign_human_request and assign the exact question to a specific authorized person. The Issue's responsible participant or collaboration-group leader owns this choice; no default coordinator is implied. Mark which steps depend on the answer, keep independent work moving, and wait before dependent actions. Stand-in execution is AI work, not human processing. Answers never grant tool approval or connector authentication.");
+    }
     instructions
 }
 

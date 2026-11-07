@@ -6097,6 +6097,24 @@
     "prompt": "I am unsure about the questions below. Explain the evidence and tradeoffs for each option, give your recommendation, and discuss it with me. Do not decide for me or execute the original task. I will review and submit my answers myself.",
     "start_failed": "The discussion could not start. Please send the message again in the discussion."
   },
+  "issueParticipation": {
+    "my_filter": "Needs my input",
+    "waiting_for": "Waiting for {{name}}",
+    "project_items": "Project work needing you",
+    "waiting_duration": "With you for {{duration}}",
+    "wait_unknown": "Handoff time not recorded",
+    "since": "Handed over at {{time}}",
+    "days": "{{count}}d {{hours}}h",
+    "hours": "{{count}}h {{minutes}}m",
+    "minutes": "{{count}}m",
+    "delivery_rejected": "AI did not accept the answer. Fix the execution issue, then retry.",
+    "delivery_uncertain": "Checking answer delivery. Do not send it again.",
+    "blocking": "Dependent steps wait; independent work continues",
+    "waiting": "Needs human input",
+    "unassigned": "Awaiting assignment",
+    "assign": "Assign to a person",
+    "delivering": "Answer saved, awaiting AI acceptance"
+  },
   "interactions": {
     "sources": {
       "task": "Tasks",

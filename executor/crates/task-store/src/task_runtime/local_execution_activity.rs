@@ -447,6 +447,7 @@ pub(super) fn comment_execution_payload(
     agent_id: &str,
     mut payload: Value,
 ) -> Result<Value, TaskRuntimeError> {
+    let human_request_id = payload.get("human_request_id").cloned();
     if trigger.reply_to_message_id.is_none() {
         return Ok(payload);
     }
@@ -509,5 +510,12 @@ pub(super) fn comment_execution_payload(
     payload["runtimeAction"] = json!("send");
     payload["queueIfBusy"] = json!(true);
     payload["clientUserMessageId"] = json!(trigger.message_id);
+    payload
+        .as_object_mut()
+        .expect("Execution payload is an object")
+        .remove("human_request_id");
+    if let Some(request_id) = human_request_id {
+        payload["human_request_id"] = request_id;
+    }
     Ok(payload)
 }

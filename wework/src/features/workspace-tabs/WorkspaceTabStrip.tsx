@@ -141,17 +141,20 @@ function WorkspaceTabButton({
   const { t } = useTranslation('common')
   const { selectTab, closeTab } = useWorkspaceTabs()
   const interactions = useRuntimeInteractions()
+  const pendingTab = tab.contentRoute.split('?', 1)[0] === INTERACTIONS_PATH
   const pendingCount =
-    interactions && tab.contentRoute.split('?', 1)[0] === INTERACTIONS_PATH
-      ? interactions.pending.length
+    interactions &&
+    pendingTab &&
+    (!interactions.projectItemsSupported || interactions.pendingProjectCount != null)
+      ? interactions.pending.length + (interactions.pendingProjectCount ?? 0)
       : null
-  const label = pendingCount === null ? tab.title : t('interactions.title', '待你处理')
+  const label = pendingTab ? t('interactions.title', '待你处理') : tab.title
   const title =
     pendingCount !== null
       ? t('interactions.tab_title_with_count', '待你处理（{{count}}）', {
           count: pendingCount,
         })
-      : tab.title
+      : label
   const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title })
   const unavailable = tab.kind === 'agent' && !agentAvailable
   const tabTitle = unavailable ? t('workbench.app_wegent_requires_cloud', '连接云端后可用') : title

@@ -50,8 +50,30 @@ it('loads exact records from their owning store and passes them unchanged to the
   expect(host.local.getLoopItem).toHaveBeenCalledExactlyOnceWith('ISSUE-1')
   expect(host.cloud.getLoopItem).not.toHaveBeenCalled()
   expect(host.render).toHaveBeenLastCalledWith(
-    expect.objectContaining({ project, item, focusedCommentId: 'root', readFirst: true })
+    expect.objectContaining({
+      project,
+      item,
+      currentUserId: 0,
+      focusedCommentId: 'root',
+      readFirst: true,
+    })
   )
+})
+it('retains the authenticated cloud identity when opening a backend Issue', async () => {
+  host.cloud.listCloudProjects.mockResolvedValue({
+    items: [{ ...project, project_store: 'backend' }],
+  })
+  host.cloud.getLoopItem.mockResolvedValue(item)
+  render(
+    <NotificationIssueEntity
+      {...props}
+      store="backend"
+      url="wework://boards/cloud/project/issues/ISSUE-1"
+    />
+  )
+  await screen.findByTestId('real-issue')
+  expect(host.render).toHaveBeenLastCalledWith(expect.objectContaining({ currentUserId: 1 }))
+  expect(host.local.getLoopItem).not.toHaveBeenCalled()
 })
 it('rejects an Issue returned from a different project', async () => {
   host.local.getLoopItem.mockResolvedValue({ ...item, cloud_project_id: 'other-project' })

@@ -14,7 +14,7 @@ interface WorkItemContextPanelProps {
   services: Pick<WorkbenchServices, 'projectSpaceDetailServices' | 'runtimeWorkApi'>
   project: CloudProject
   item: CloudLoopItem
-  currentTask: RuntimeTaskAddress
+  currentTask?: RuntimeTaskAddress
   currentUserId?: string | number
   localProjects?: ProjectWithTasks[]
   deviceNamesById?: Readonly<Record<string, string>>
@@ -97,7 +97,7 @@ export function WorkItemContextPanel({
               </button>
             )
           }
-          selectedTaskId={currentTask.taskId}
+          selectedTaskId={currentTask?.taskId}
           deviceNamesById={deviceNamesById}
           api={api}
           projectChatClient={detailServices?.projectChatClient}

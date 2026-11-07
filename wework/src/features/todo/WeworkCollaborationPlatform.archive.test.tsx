@@ -7,6 +7,7 @@ import type {
 import { createElement, type ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WeworkSharedProject } from './WeworkCollaborationPlatform'
+import type { TodoEditor } from './TodoEditor'
 
 const app = vi.hoisted(() => ({
   props: null as ComponentProps<typeof CollaborationApp> | null,
@@ -33,7 +34,12 @@ async function renderProject(projectStore: 'local' | 'backend') {
     { deviceId: 'device-1', taskId: 'completed-task' },
   ])
   const cancelRuntimeTask = vi.fn().mockResolvedValue(undefined)
-  const project = { id: 'project-1', name: 'Project', project_store: projectStore }
+  const project = {
+    id: 'project-1',
+    name: 'Project',
+    project_store: projectStore,
+    current_user_id: 7,
+  }
   await act(async () => {
     render(
       createElement(WeworkSharedProject, {
@@ -88,7 +94,7 @@ async function renderProject(projectStore: 'local' | 'backend') {
         },
         services: {} as never,
         setLocation: vi.fn(),
-        userId: 1,
+        userId: 7,
         workspace: { id: 'workspace-1', name: 'Workspace' } as never,
       })
     )
@@ -97,6 +103,40 @@ async function renderProject(projectStore: 'local' | 'backend') {
 }
 
 describe('Issue archive execution ownership', () => {
+  it.each(['local', 'backend'] as const)(
+    'keeps %s handling identity separate from cloud login in board and detail',
+    async store => {
+      await renderProject(store)
+      const handlingUserId = store === 'local' ? 0 : 7
+      expect(app.props!.participationUserId).toBe(handlingUserId)
+      expect(app.props!.initialProject!.current_user_id).toBe(7)
+      const detail = app.props!.renderIssueDetail!({
+        api: {} as SharedWorkspaceApi,
+        issue,
+        allIssues: [issue],
+        assignments: [],
+        taskBindings: [],
+        onRead: vi.fn(),
+        onChange: vi.fn(),
+        onClose: vi.fn(),
+      } as never) as {
+        props: { children(close: () => void): { props: ComponentProps<typeof TodoEditor> } }
+      }
+      expect(detail.props.children(vi.fn()).props.currentUserId).toBe(handlingUserId)
+    }
+  )
+
+  it('shares the already loaded live running state with the project quick filter', async () => {
+    const { listBindings } = await renderProject('local')
+    const running = app.props!.isIssueRunning!
+    expect(running(issue, [{ deviceId: 'device-1', taskId: 'running-task' }] as never)).toBe(true)
+    expect(running(issue, [{ deviceId: 'device-1', taskId: 'completed-task' }] as never)).toBe(
+      false
+    )
+    expect(running(issue, [])).toBe(false)
+    expect(listBindings).not.toHaveBeenCalled()
+  })
+
   it('leaves cloud cancellation to the Backend archive transaction', async () => {
     const { cancelRuntimeTask, listBindings } = await renderProject('backend')
 

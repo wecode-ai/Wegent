@@ -13,6 +13,9 @@ export interface InteractionHistory {
 }
 
 export interface RuntimeInteractionsValue {
+  projectItemsSupported?: boolean
+  pendingProjectCount?: number | null
+  reportProjectPendingCount?: (count: number | null) => void
   pending: RuntimeInteraction[]
   history: InteractionHistory[]
   errors: Record<string, string>

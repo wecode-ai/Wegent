@@ -10,6 +10,15 @@ import { interactionTask } from './runtimeInteractions.fixtures'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { openWeworkScheme } from './schemeEvents'
 import { QuestionDiscussionContext } from './questionDiscussion'
+import type { PendingProjectIssue } from './usePendingProjectIssues'
+
+const projectWork = vi.hoisted(() => ({
+  items: [] as PendingProjectIssue[],
+  errors: {} as Record<string, string>,
+  loading: false,
+  refresh: vi.fn(),
+}))
+vi.mock('./usePendingProjectIssues', () => ({ usePendingProjectIssues: () => projectWork }))
 
 vi.mock('./schemeEvents', () => ({ openWeworkScheme: vi.fn() }))
 
@@ -21,6 +30,9 @@ const viewport = vi.hoisted(() => ({ twoPanes: true }))
 vi.mock('@/hooks/useIsDesktop', () => ({ useIsDesktop: () => viewport.twoPanes }))
 beforeEach(() => {
   viewport.twoPanes = true
+  projectWork.items = []
+  projectWork.errors = {}
+  projectWork.loading = false
 })
 
 const approval: RuntimeInteraction = {
@@ -98,6 +110,43 @@ function view(
   )
   return value.registerView
 }
+
+it('opens ordinary project work in the original Issue and reports the project count', () => {
+  projectWork.items = [
+    {
+      item: {
+        id: 'ISSUE-1',
+        cloud_project_id: '12',
+        project_name: 'Project',
+        title: 'Please decide',
+        status: 'pending',
+        created_by_user_id: 0,
+        created_at: '2026-11-08T00:00:00Z',
+        updated_at: '2026-11-08T00:00:00Z',
+      } as PendingProjectIssue['item'],
+      store: 'local',
+      userId: 0,
+    },
+  ]
+  const reportProjectPendingCount = vi.fn()
+  view(undefined, {}, { pending: [], reportProjectPendingCount })
+  expect(screen.getByTestId('interaction-list-item')).toHaveAttribute('data-project-issue', 'true')
+  expect(screen.getByTestId('test-original-entity')).toHaveTextContent(
+    'wework://boards/local/12/issues/ISSUE-1'
+  )
+  expect(reportProjectPendingCount).toHaveBeenLastCalledWith(1)
+})
+
+it.each(['loading', 'error'] as const)(
+  'does not publish a false zero while project work is %s',
+  state => {
+    projectWork.loading = state === 'loading'
+    projectWork.errors = state === 'error' ? { backend: 'Offline' } : {}
+    const reportProjectPendingCount = vi.fn()
+    view(undefined, {}, { pending: [], reportProjectPendingCount })
+    expect(reportProjectPendingCount).toHaveBeenLastCalledWith(null)
+  }
+)
 
 vi.mock('./NotificationEntitySurface', () => ({
   NotificationEntitySurface: ({

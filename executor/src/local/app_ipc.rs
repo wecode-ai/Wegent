@@ -2417,6 +2417,41 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.humanRequests.inbox" => {
+            let user = params["user_id"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?;
+            serialize_task_value(
+                json!({"items":runtime.stand_in_store().issue_human_request_inbox(user).map_err(task_runtime_error)?}),
+            )
+        }
+        "todos.humanRequests.list" => {
+            let project = required_task_string(&params, "project_id")?;
+            let issue = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                json!({"items":runtime.stand_in_store().list_issue_human_requests(project,issue).map_err(task_runtime_error)?}),
+            )
+        }
+        "todos.humanRequests.assign" => {
+            let project = required_task_string(&params, "project_id")?;
+            let issue = required_task_string(&params, "task_id")?;
+            let question = required_task_string(&params, "request_id")?;
+            let name = required_task_string(&params, "recipient_name")?;
+            serialize_task_value(
+                runtime
+                    .stand_in_store()
+                    .assign_issue_human_request(
+                        project,
+                        issue,
+                        question,
+                        params["version"].as_i64().unwrap_or(0),
+                        params["recipient_user_id"].as_i64().unwrap_or(0),
+                        name,
+                        params["blocks_progress"].as_bool(),
+                    )
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.comment.create" => {
             let create = task_input::<LocalCommentCreate>(&params, "comment")?;
             serialize_task_value(runtime.create_comment(create).map_err(task_runtime_error)?)

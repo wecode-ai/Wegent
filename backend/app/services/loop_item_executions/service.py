@@ -286,6 +286,34 @@ def execution_display_state(execution: LoopItemExecution) -> str:
     return "waiting_runtime"
 
 
+def execution_human_waiting_since(execution: LoopItemExecution | None) -> str | None:
+    """A finished attempt returns work to people; execution timestamps are UTC."""
+    if execution is None or execution_display_state(execution) not in {
+        "succeeded",
+        "failed",
+        "cancelled",
+    }:
+        return None
+    completed_at = _optional_datetime(execution.completed_at)
+    if not isinstance(completed_at, datetime):
+        return None
+    if completed_at.tzinfo is None:
+        completed_at = completed_at.replace(tzinfo=timezone.utc)
+    return completed_at.astimezone(timezone.utc).isoformat()
+
+
+def execution_processing_actor(
+    execution: LoopItemExecution | None, ai_state: object
+) -> dict[str, str] | None:
+    """Only an observed running execution identifies the current AI actor."""
+    if execution is None or execution_display_state(execution) != "running":
+        return None
+    name = ai_state.get("agent_name") if isinstance(ai_state, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return {"kind": "agent", "name": name.strip()}
+
+
 def execution_ai_state(
     db: Session,
     execution: LoopItemExecution,
@@ -3449,7 +3477,12 @@ class LoopItemExecutionService:
         # Any accepted observation identifies the current turn, even when the
         # created event lost a concurrent lease update or arrived out of order.
         self._bind_activity_runtime_turn(db, row, payload)
-        db.commit()
+        from app.services.project_chat.human_requests import settle_execution_reply
+
+        settle_execution_reply(db, row)
+        from app.services.project_chat.service import project_chat_service
+
+        project_chat_service._commit(db)
         db.refresh(row)
         return row
 

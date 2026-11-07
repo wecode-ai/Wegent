@@ -7,6 +7,8 @@ import {
   type RuntimeInteraction,
 } from './runtimeInteractions'
 import { parseWeworkScheme } from './scheme'
+import { issueHumanInteraction } from './issueHumanInteractions'
+import type { IssueHumanRequest } from '@wegent/collaboration'
 
 function read(key: string): unknown {
   try {
@@ -24,7 +26,7 @@ function record(value: unknown): value is Record<string, unknown> {
 export function readPendingInteractionCache(key: string): RuntimeInteraction[] {
   const rows = read(key)
   if (!Array.isArray(rows)) return []
-  return rows.flatMap(row => {
+  return rows.flatMap<RuntimeInteraction>(row => {
     if (
       !record(row) ||
       !record(row.address) ||
@@ -42,6 +44,40 @@ export function readPendingInteractionCache(key: string): RuntimeInteraction[] {
     )
       return []
     const address = { deviceId: row.address.deviceId, taskId: row.address.taskId }
+    if (
+      record(row.sharedRequest) &&
+      ['local', 'backend'].includes(String(row.projectStore)) &&
+      [
+        'id',
+        'project_id',
+        'issue_id',
+        'root_comment_id',
+        'runtime_device_id',
+        'runtime_task_id',
+        'item_id',
+        'question',
+        'created_at',
+        'updated_at',
+      ].every(
+        key =>
+          typeof row.sharedRequest === 'object' &&
+          row.sharedRequest !== null &&
+          typeof (row.sharedRequest as Record<string, unknown>)[key] === 'string'
+      ) &&
+      ['pending', 'answering', 'resolved', 'cancelled'].includes(String(row.sharedRequest.status))
+    ) {
+      const item = issueHumanInteraction(
+        row.sharedRequest as unknown as IssueHumanRequest,
+        row.projectStore as 'local' | 'backend'
+      )
+      return [
+        {
+          ...item,
+          cached: true,
+          task: { ...item.task, workspace: { ...item.task.workspace, available: false } },
+        },
+      ]
+    }
     const task = {
       key: `${address.deviceId}\0${address.taskId}`,
       address,
@@ -92,6 +128,8 @@ export function pendingInteractionCache(items: RuntimeInteraction[]) {
     createdAt: item.createdAt,
     originalUrl: interactionOriginalScheme(item),
     sourceMessageIds: item.sourceMessageIds,
+    sharedRequest: item.sharedRequest,
+    projectStore: item.project?.store,
   }))
 }
 

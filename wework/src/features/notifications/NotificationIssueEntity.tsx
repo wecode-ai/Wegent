@@ -23,7 +23,7 @@ export function NotificationIssueEntity({
   store: 'local' | 'backend'
   commentId?: string
   url: string
-  address: RuntimeTaskAddress
+  address?: RuntimeTaskAddress
   active: boolean
 }) {
   const { state, services } = useWorkbench()
@@ -90,7 +90,7 @@ export function NotificationIssueEntity({
       project={result.project}
       item={result.item}
       currentTask={address}
-      currentUserId={state.user?.id}
+      currentUserId={store === 'local' ? 0 : state.user?.id}
       localProjects={state.projects}
       deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
       focusedCommentId={commentId}

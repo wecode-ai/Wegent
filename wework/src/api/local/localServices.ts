@@ -4680,6 +4680,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
 
   return {
     teamApi,
+    localIssueHumanRequestsApi: createLocalIssueHumanRequestsApi(request, LOCAL_USER.id),
     modelApi,
     skillApi: {
       listSkills: async () => [],
@@ -4829,3 +4830,4 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
   } as unknown as WorkbenchServices
 }
+import { createLocalIssueHumanRequestsApi } from '@/api/issueHumanRequests'

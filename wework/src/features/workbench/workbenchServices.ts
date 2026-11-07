@@ -157,6 +157,8 @@ export interface LocalDecisionRouterApi {
 }
 
 export interface WorkbenchServices {
+  issueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
+  localIssueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
   standInApi?: import('@/api/standIn').StandInExecutorApi
   /** Read the current healthy local IPC identity, independently of the device catalog. */
   getLocalRuntimeSidebarIdentity?: () => Promise<LocalRuntimeSidebarIdentity | null>

@@ -1641,6 +1641,7 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
     composerCatalogApi: {
       async readCatalog(address, forceRefresh) {
         const runtime = await runtimeApiForDevice(address.deviceId)

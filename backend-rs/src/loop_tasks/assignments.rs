@@ -108,6 +108,14 @@ pub(super) async fn require_issue_read(
     item_id: &str,
     current_user: &FlexibleUser,
 ) -> Result<(), FastApiError> {
+    require_issue_read_for_user(state, item_id, current_user.id).await
+}
+
+pub(crate) async fn require_issue_read_for_user(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<(), FastApiError> {
     let repository = LoopItemRepository::new(&state.mysql);
 
     // `is_external_item(db, item_id)`.
@@ -116,7 +124,7 @@ pub(super) async fn require_issue_read(
         .await
         .map_err(internal)?;
     if external.is_some() {
-        ensure_shadow(state, item_id, current_user.id).await?;
+        ensure_shadow(state, item_id, user_id).await?;
     }
 
     // `project_for_issue(db, issue_id=item_id, user_id=current_user.id)`.
@@ -129,12 +137,12 @@ pub(super) async fn require_issue_read(
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     // `issue_assignment_service.list`.
-    let access = require_cloud_project_role(state, &project.id, current_user.id).await?;
+    let access = require_cloud_project_role(state, &project.id, user_id).await?;
     // `_require_issue_project` re-reads the item through the session's identity
     // map, so it issues no statement.
     if is_external_provider(&access.project) {
-        provider_get(state, item_id, current_user.id).await?;
-    } else if !can_view_item(state, &access, &item, current_user.id).await? {
+        provider_get(state, item_id, user_id).await?;
+    } else if !can_view_item(state, &access, &item, user_id).await? {
         return Err(FastApiError::detail(
             StatusCode::NOT_FOUND,
             "Issue not found",
