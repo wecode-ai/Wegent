@@ -101,6 +101,7 @@ beforeEach(() => {
   vi.stubEnv('WEWORK_USER_DATA_DIR', '')
   vi.stubEnv('WEWORK_RELEASE_ROOT', '')
   vi.stubEnv('WEWORK_RELEASE_SUPERVISED', '')
+  vi.stubEnv('WEWORK_RELEASE_RECOVERY', '')
   for (const name of [
     'WEWORK_HARNESS_RUNTIME_ROOT',
     'WEWORK_ACTIVE_RELEASE_ID',
@@ -217,6 +218,44 @@ test('hands the selected legacy host its physical userData before native launch'
 })
 
 if (process.platform === 'darwin') {
+  test('a delayed native recovery handoff cannot enter the rejected installed host after rollback finalized', async () => {
+    startup.activation = null
+    startup.metadata.version = '2.0.0'
+    startup.activeRelease = {
+      id: 'source',
+      version: '1.0.0',
+      executable: process.execPath,
+      macosInstallation: { payloadExecutable: '/retained/source', bootstrapFromPayload: false },
+    }
+    vi.stubEnv('WEWORK_RELEASE_RECOVERY', 'previous-trial')
+
+    await import('./bootstrap.js')
+
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(startup.ready).toHaveBeenCalledOnce()
+    expect(process.env.WEWORK_RELEASE_RECOVERY).toBeUndefined()
+  })
+
+  test('an unsupervised versioned recovery payload is not an ordinary installed application', async () => {
+    startup.activation = null
+    startup.metadata.version = '2.0.0'
+    const original = Object.getOwnPropertyDescriptor(process, 'execPath')!
+    const payload = join(
+      startup.home,
+      '.wegent/workbench/wework/default/user-data/releases/slots/rejected/host/WeWork.app/Contents/MacOS/WeWork'
+    )
+    Object.defineProperty(process, 'execPath', { ...original, value: payload })
+    startup.activeRelease = { id: 'source', version: '1.0.0' }
+    try {
+      await import('./bootstrap.js')
+
+      expect(startup.main).not.toHaveBeenCalled()
+      expect(startup.ready).toHaveBeenCalledOnce()
+    } finally {
+      Object.defineProperty(process, 'execPath', original)
+    }
+  })
+
   test.each([false, true])(
     'bootstrap completes manual rollback before native launch (restore=%s)',
     async restoreRequired => {

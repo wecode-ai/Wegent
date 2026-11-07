@@ -1,7 +1,7 @@
 import { app, dialog } from 'electron'
 import { existsSync } from 'node:fs'
 import { readFile, realpath } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { resolveWorkbenchPaths } from './runtime/workbench-environment.js'
 import { optionalText, ReleaseStore } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
@@ -57,10 +57,15 @@ async function routeRelease(): Promise<boolean> {
   const root = join(dataDirectory, 'releases')
   const store = new ReleaseStore(root)
   const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
+  const recoveryToken = process.env.WEWORK_RELEASE_RECOVERY
   delete process.env.WEWORK_RELEASE_SUPERVISED
-  if (process.platform === 'darwin' && !supervisedId) {
-    // The installed package owns ordinary startup. Release history only routes
-    // an in-flight update or rollback; it must not relaunch an older package.
+  delete process.env.WEWORK_RELEASE_RECOVERY
+  const slotPath = relative(join(root, 'slots'), process.execPath)
+  const versionedPayload = slotPath !== '..' && !slotPath.startsWith('../') && !isAbsolute(slotPath)
+  if (process.platform === 'darwin' && !supervisedId && !recoveryToken && !versionedPayload) {
+    // Only the installed package owns ordinary startup. A delayed recovery or
+    // versioned bridge must still route the selected release after its journal
+    // has been finalized; it must never open data in the rejected host.
     try {
       if (!(await store.activation())) {
         await bindInstalledReleaseComponents(store)

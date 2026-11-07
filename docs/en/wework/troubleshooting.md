@@ -11,6 +11,9 @@ records the real process, installed version, selected release and pending transa
 `[desktop-e2e-relaunch]` records the next executable. Compare these events with
 `release-state-result.json` and `activation-diagnostics.log` to distinguish a running
 package from the on-disk selection. Diagnostic replays do not produce publishable upgrade proof.
+Upgrade acceptance also starts the retained target after rollback has completed, both with
+and without a native recovery marker. Both delayed handoffs must return to the source version
+and preserve its existing task.
 
 Local verification must isolate both the workbench Home and the native macOS Home;
 never move personal application data to satisfy test prerequisites. The test preserves
@@ -29,6 +32,9 @@ installed package that was opened. After a manual replacement, old release selec
 bridges, or staging directories must not redirect startup to an older application. Damaged upgrade
 history produces a warning and allows the installed package to start. Do not delete task data to
 work around a startup problem.
+Native recovery handoffs and versioned recovery payloads are not ordinary startup. Even after
+another process finalized rollback and removed its journal, they must route the selected release
+instead of reopening the rejected target.
 
 If the application still cannot open, inspect `wework-main.log`, `runtime-launch.log`, and
 `dsh-core-runtime.log` in the desktop log directory. Distinguish runtime failures from background
