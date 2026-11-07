@@ -7364,6 +7364,42 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
   })
 
+  test('waits for local work readiness before consuming project restoration after a cloud refresh', async () => {
+    writeLastProjectId(JSON.stringify(['', 1]), 7)
+    const initialWork = deferred<RuntimeWorkListResponse>()
+    const latestWork = deferred<RuntimeWorkListResponse>()
+    const listRuntimeWork = vi
+      .fn()
+      .mockReturnValueOnce(initialWork.promise)
+      .mockReturnValue(latestWork.promise)
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
+    const cloudWork = vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+      cloudBackgroundApi: { listRuntimeWork: cloudWork },
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
+    })
+    renderWorkbench(<ProjectSendProbe />, services)
+    await waitFor(() => expect(onChanged).toBeDefined())
+    act(() => onChanged?.({ taskId: 'runtime-a', deviceId: 'device-1' }))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
+    await act(async () => initialWork.resolve(createRuntimeWork()))
+    await waitFor(() => expect(cloudWork).toHaveBeenCalledOnce())
+    act(() => onChanged?.({ taskId: 'runtime-a', deviceId: 'device-1' }))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
+    expect(screen.getByTestId('current-project-name')).not.toHaveTextContent('Wegent')
+    await act(async () => latestWork.resolve(createRuntimeWork()))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    )
+  })
+
   test('starts a new task in the project of the last opened task', async () => {
     renderWorkbench(<ProjectSendProbe />)
 

@@ -152,10 +152,10 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/workbench/workbenchContextTypes.ts"
 
-assert_desktop_case "workbench provider changes select send shortcut coverage" \
+assert_desktop_case "workbench provider changes select send shortcut and idle request coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow,goal-state-sync,native-lifecycle"},{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"},{"id":"core-7","name":"Core / shard 7","segments":"send-key-preference"},{"id":"core-8","name":"Core / shard 8","segments":"workspace-attachments"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow,goal-state-sync,native-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"idle-executor-requests"},{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"},{"id":"core-7","name":"Core / shard 7","segments":"send-key-preference"},{"id":"core-8","name":"Core / shard 8","segments":"workspace-attachments"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-worktree-create,cloud-worktree-tools"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel"}]}
 wework_desktop_other_e2e=false
