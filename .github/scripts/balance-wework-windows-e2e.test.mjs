@@ -58,7 +58,12 @@ test('an unmeasured checkpoint stays put without pinning unrelated measured work
       { id: 'core-1', segments: 'send-key-preference' },
     ],
   }
-  const balanced = balanceWindowsMatrix(matrix)
+  const balanced = balanceWindowsMatrix(matrix, {
+    'application-menu': 40,
+    'cloud-context-resilience': 46,
+    'background-terminals': 83,
+    'send-key-preference': 17,
+  })
   const retained = balanced.include.find(shard => shard.id === 'core-3').segments.split(',')
   assert.ok(retained.includes('dots-closed-loops'))
   assert.ok(!retained.includes('background-terminals'))
@@ -73,7 +78,10 @@ test('retains measured work when evacuation would increase the known peak', () =
       { id: 'core-1', segments: 'background-terminals' },
     ],
   }
-  assert.deepEqual(balanceWindowsMatrix(matrix), matrix)
+  assert.deepEqual(
+    balanceWindowsMatrix(matrix, { 'application-menu': 40, 'background-terminals': 83 }),
+    matrix
+  )
 })
 
 test('the measured fixture contains every real measured checkpoint exactly once', () => {
