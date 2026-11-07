@@ -6,6 +6,42 @@ use super::*;
 
 const BINDING_KEY: &str = "stand-in-instance-binding";
 
+/// A stopped target accepts only portable, disabled imports without changing its saved grants.
+pub(super) fn preserve_stopped_import(
+    previous: &Value,
+    value: &mut Value,
+) -> Result<(), TaskRuntimeError> {
+    if previous["lifecycle"]["status"].is_null() {
+        value.as_object_mut().unwrap().remove("lifecycle");
+        return Ok(());
+    }
+    let old = previous["roles"].as_array().unwrap();
+    let roles = value["roles"].as_array().unwrap();
+    let unchanged = old.iter().all(|role| roles.iter().any(|next| next == role));
+    let portable = roles
+        .iter()
+        .filter(|role| !old.iter().any(|before| before["id"] == role["id"]))
+        .all(|role| {
+            role["enabled"] == false
+                && role["migrationSource"]
+                    .as_str()
+                    .is_some_and(|source| !source.is_empty())
+                && role["connections"].is_null()
+                && role["workspace"].is_null()
+                && role["collaboration"]["enabled"] == false
+                && role["collaboration"]["allProjects"] == false
+        });
+    if previous["lifecycle"]["status"] != "stopped"
+        || value["primary"] != previous["primary"]
+        || !unchanged
+        || !portable
+    {
+        return Err(TaskRuntimeError::Invalid("A stopped stand-in accepts only disabled portable imports without changing existing configuration".into()));
+    }
+    value["lifecycle"] = previous["lifecycle"].clone();
+    Ok(())
+}
+
 impl LocalTaskStore {
     pub fn remember_stand_in_stop_tasks(
         &self,
@@ -232,5 +268,46 @@ mod tests {
         assert_eq!(resumed["roles"], expected_roles);
         assert_eq!(resumed["primary"]["enabled"], true);
         assert!(resumed["lifecycle"].is_null());
+    }
+
+    #[test]
+    fn stopped_targets_only_append_disabled_portable_imports_and_never_restore_their_enablement() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        store
+            .transition_personal_stand_in(7, "mac", "stop")
+            .unwrap();
+        let stopped = store
+            .transition_personal_stand_in(7, "mac", "stopped")
+            .unwrap();
+        let mut imported = stopped["roles"][0].clone();
+        imported["id"] = json!("migrated-test");
+        imported["name"] = json!("Imported responsibilities");
+        imported["migrationSource"] = json!("source-device:primary");
+        imported["collaboration"]["allProjects"] = json!(false);
+        let mut draft = stopped.clone();
+        draft["roles"].as_array_mut().unwrap().push(imported);
+        draft["lifecycle"]["enabledRoles"] = json!(["migrated-test"]);
+        let saved = store
+            .save_personal_stand_in(7, "mac", draft.clone())
+            .unwrap();
+        assert_eq!(saved["lifecycle"], stopped["lifecycle"]);
+        let mut edit = saved.clone();
+        edit["primary"]["prompt"] = json!("Overwrite existing responsibilities");
+        assert!(store.save_personal_stand_in(7, "mac", edit).is_err());
+        let mut enable = saved.clone();
+        enable["roles"][1]["enabled"] = json!(true);
+        assert!(store.save_personal_stand_in(7, "mac", enable).is_err());
+        let mut granted = saved.clone();
+        let mut next = draft["roles"][1].clone();
+        next["id"] = json!("migrated-with-workspace");
+        next["workspace"] = json!({"projectKey":"source-private-directory"});
+        granted["roles"].as_array_mut().unwrap().push(next);
+        assert!(store.save_personal_stand_in(7, "mac", granted).is_err());
+        let resumed = store
+            .transition_personal_stand_in(7, "mac", "start")
+            .unwrap();
+        assert_eq!(resumed["roles"][1]["enabled"], false);
+        assert_eq!(resumed["roles"][1]["name"], "Imported responsibilities");
     }
 }

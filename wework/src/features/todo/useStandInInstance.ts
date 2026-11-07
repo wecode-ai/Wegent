@@ -5,6 +5,8 @@ import type { DeviceInfo } from '@/types/api'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { availableStandInDevices } from './standInDevices'
+import { migrateStandIn, StandInMigrationError } from './migrateStandIn'
+import type { PersonalStandInSettings } from '@/api/personalStandIn'
 
 /** An instance has one durable binding; failed cancellation never unlocks rebinding. */
 export function useStandInInstance(
@@ -17,6 +19,7 @@ export function useStandInInstance(
   initialDeviceId?: string
 ) {
   const [binding, setBinding] = useState<StandInInstanceBinding>()
+  const [stoppedProfile, setStoppedProfile] = useState<PersonalStandInSettings>()
   const [localDeviceId, setLocalDeviceId] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -32,6 +35,18 @@ export function useStandInInstance(
       if (current) setLocalDeviceId(identity.deviceId)
       let value = await api.binding(identity.deviceId)
       if (!current) return
+      if (
+        value.status === 'stopped' &&
+        value.target &&
+        (value.target.userId === LOCAL_USER.id ||
+          (value.target.userId === userId && (value.target.backendUrl ?? '') === backendUrl))
+      ) {
+        // Binding choices do not depend on reading an already stopped device.
+        setBinding(value)
+        const profile = await api.personalGet(value.target.userId, value.target.deviceId)
+        if (!current) return
+        setStoppedProfile(profile)
+      }
       if (value.status === 'unbound') {
         const owned = await api.personalGet(userId, identity.deviceId)
         const local =
@@ -88,15 +103,16 @@ export function useStandInInstance(
     }
   }, [api, services, userId, devices, connected, active, attempt, backendUrl, initialDeviceId])
 
-  const run = async (action: () => Promise<void>) => {
+  const run = async <T>(action: () => Promise<T>, propagate = false): Promise<T | undefined> => {
     if (operation.current) return
     operation.current = true
     setBusy(true)
     setError(null)
     try {
-      await action()
+      return await action()
     } catch (cause) {
       setError(getStandInErrorMessage(cause, 'save_settings_failed'))
+      if (propagate) throw cause
     } finally {
       operation.current = false
       setBusy(false)
@@ -115,6 +131,7 @@ export function useStandInInstance(
         })
       }
       setBinding(await api.binding(localDeviceId, 'completeStop', stopping.version))
+      setStoppedProfile(stopped)
     })
   const bind = (target: StandInBindingTarget) =>
     run(async () => {
@@ -126,13 +143,35 @@ export function useStandInInstance(
         setBinding(next)
       }
     })
+  const migrate = (target: StandInBindingTarget, roleId: string | undefined, primaryName: string) =>
+    run(async () => {
+      if (!api || !binding?.target || binding.status !== 'stopped' || !localDeviceId)
+        throw new StandInMigrationError('not_stopped')
+      const role = await migrateStandIn(api, {
+        sourceUser: binding.target.userId,
+        sourceDevice: binding.target.deviceId,
+        roleId,
+        targetUser: target.userId,
+        targetDevice: target.deviceId,
+        primaryName,
+      })
+      const next = await api.binding(localDeviceId, 'bind', binding.version, target)
+      try {
+        await api.lifecycle(target.userId, target.deviceId, 'start')
+        return role
+      } finally {
+        setBinding(next)
+      }
+    }, true)
   return {
     binding,
+    stoppedProfile,
     localDeviceId,
     busy,
     error,
     stop,
     bind,
+    migrate,
     reload: () => setAttempt(value => value + 1),
   }
 }

@@ -16,6 +16,8 @@ import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnect
 import { availableStandInDevices } from './standInDevices'
 import { StandInBindingContext } from './StandInBindingContext'
 import { useStandInInstance } from './useStandInInstance'
+import { StandInMigration } from './StandInMigration'
+import { navigateTo } from '@/lib/navigation'
 
 type PersonalStandInWorkspaceProps = {
   services: WorkbenchServices
@@ -68,9 +70,6 @@ function AccountStandInWorkspace({
     (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? ''))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
-  useEffect(() => {
-    if (!active) setConfirmStop(null)
-  }, [active])
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [projects, setProjects] = useState<CollaborationProject[]>([])
@@ -205,6 +204,25 @@ function AccountStandInWorkspace({
               </button>
             ))}
           </div>
+          {cloud?.isConnected && target && instance.stoppedProfile && (
+            <StandInMigration
+              devices={devices}
+              sourceDevice={target.deviceId}
+              roles={instance.stoppedProfile.roles}
+              busy={busy}
+              onMigrate={async (deviceId, roleId) => {
+                const role = await instance.migrate(
+                  { userId: Number(user.id), deviceId, backendUrl: cloud.apiBaseUrl ?? '' },
+                  roleId,
+                  t('standIn.title')
+                )
+                if (!role) throw new Error(t('standIn.migration.not_stopped'))
+                navigateTo(
+                  `/stand-in?${new URLSearchParams({ deviceId, profileId: role.id, settingsRequest: crypto.randomUUID() })}`
+                )
+              }}
+            />
+          )}
         </section>
       ) : binding.status === 'stopping' ? (
         <section className="flex items-center gap-2 p-5" data-testid="stand-in-instance-stopping">

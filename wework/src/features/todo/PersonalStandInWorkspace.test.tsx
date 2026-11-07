@@ -12,6 +12,8 @@ import {
 import '@/i18n'
 import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import * as migration from './migrateStandIn'
+import { newStandInRole } from '@/api/personalStandIn'
 
 const guard = vi.hoisted(() => vi.fn((action: () => void) => action()))
 afterEach(() => {
@@ -244,6 +246,63 @@ it('requires an explicit stopped acknowledgement before unlocking binding choice
   expect(await screen.findByRole('alert')).toHaveTextContent('任务尚未完全停止')
   expect(screen.getByTestId('stand-in-instance-stopping')).toBeVisible()
   expect(f.binding.mock.calls.some(call => call[1] === 'completeStop')).toBe(false)
+})
+
+it('binds the prepared migration target only after portable transfer succeeds', async () => {
+  const f = fixture({ version: 3, status: 'stopped', target: { userId: 7, deviceId: 'mac' } })
+  const transfer = vi
+    .spyOn(migration, 'migrateStandIn')
+    .mockResolvedValueOnce(newStandInRole('cloud-one', 'imported'))
+  const location = window.location.href
+  try {
+    render(f.workspace())
+    await userEvent.click(await screen.findByTestId('stand-in-migrate-open'))
+    await userEvent.click(screen.getByTestId('stand-in-migrate-confirm'))
+    expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute(
+      'data-device',
+      'cloud-one'
+    )
+    expect(transfer).toHaveBeenCalledOnce()
+    expect(f.binding).toHaveBeenCalledWith('mac', 'bind', 3, {
+      userId: 7,
+      deviceId: 'cloud-one',
+      backendUrl: '',
+    })
+    expect(f.lifecycle).toHaveBeenCalledExactlyOnceWith(7, 'cloud-one', 'start')
+  } finally {
+    transfer.mockRestore()
+    window.history.replaceState({}, '', location)
+  }
+})
+
+it('failed migration preparation keeps the source stopped and never binds or starts the target', async () => {
+  const f = fixture({ version: 3, status: 'stopped', target: { userId: 7, deviceId: 'mac' } })
+  const transfer = vi
+    .spyOn(migration, 'migrateStandIn')
+    .mockRejectedValueOnce(new Error('Executor offline'))
+  try {
+    render(f.workspace())
+    await userEvent.click(await screen.findByTestId('stand-in-migrate-open'))
+    await userEvent.click(screen.getByTestId('stand-in-migrate-confirm'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('stand-in-migrate-confirm')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('stand-in-instance-stopped')).toBeVisible()
+    expect(f.binding.mock.calls.every(call => !call[1])).toBe(true)
+    expect(f.lifecycle).not.toHaveBeenCalled()
+  } finally {
+    transfer.mockRestore()
+  }
+})
+
+it('keeps rebinding available when an already stopped source cannot load migration metadata', async () => {
+  const f = fixture({ version: 3, status: 'stopped', target: { userId: 7, deviceId: 'cloud-one' } })
+  f.personalGet.mockRejectedValueOnce(new Error('Executor offline'))
+  render(f.workspace())
+  expect(await screen.findByTestId('stand-in-instance-stopped')).toBeVisible()
+  await screen.findByRole('alert')
+  expect(screen.getByTestId('stand-in-instance-bind-7-mac')).toBeEnabled()
+  expect(screen.queryByTestId('stand-in-migration')).not.toBeInTheDocument()
 })
 
 it('uses the existing unsaved-edit decision before stopping', async () => {

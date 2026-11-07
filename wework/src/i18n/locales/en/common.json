@@ -6066,14 +6066,16 @@
       "owner_unavailable": "This instance is bound to another account's stand-in. Connect that account and stop its stand-in before rebinding."
     },
     "migration": {
-      "offer": "A cloud device is available. Move this stand-in’s settings and memories to the cloud.",
+      "offer": "The old stand-in has stopped. Migrate the selected profile's responsibilities and memories to another device and bind the new stand-in.",
+      "profile": "Profile to migrate",
+      "not_stopped": "Stop the entire old stand-in and confirm all tasks are cancelled before migrating.",
       "local_available": "Your local stand-ins, settings and history are retained. Keep working locally or migrate to a cloud device.",
       "view_local": "View local stand-ins",
-      "action": "Migrate to cloud",
-      "keep_local": "Keep using locally",
+      "action": "Migrate and bind",
+      "keep_local": "Not now",
       "title": "Migrate to “{{device}}”?",
-      "description": "Transfer this stand-in’s name, instructions, model settings, tags and its role and shared memories without replacing existing cloud stand-ins. Keep local profiles, memories and history; pause local intake only after success. The cloud copy starts paused. Reconfigure its directory, project/data-source connections, agent and schedules before enabling it. Active work and conversations stay on their original device.",
-      "changed": "Local settings changed; local intake has not been paused. Review both profiles before retrying.",
+      "description": "The entire old stand-in must already be stopped with its tasks cancelled. Transfer the selected primary profile or role's name, responsibilities, model settings, tags and visible memories without replacing target settings. On success, bind this instance to the target; the imported role stays paused until its device directory, project/source grants and arrangements are configured. Retain old profiles, memories and conversation history. Failure never starts the target or resumes the source.",
+      "changed": "The old profile changed. Review both profiles before retrying; the source is never resumed automatically.",
       "conflict": "A migrated cloud copy has different settings. Review or remove that copy before retrying. Local settings were not overwritten.",
       "same_device": "Choose a different cloud device."
     }

@@ -17,7 +17,7 @@ As a Wework user, I want a stand-in to be a special agent with its own responsib
 
 ### Single-instance binding, stopping and rebinding stories
 
-As a user, I want each Wework instance bound to one local or cloud stand-in. Rebinding requires stopping the entire current stand-in and cancelling its running and queued tasks. Failed cancellation must not unlock rebinding. The primary identity and scenario roles share this lifecycle without affecting ordinary tasks or other accounts.
+As a user, I want each Wework instance bound to one local or cloud stand-in. Rebinding or migration requires stopping the entire current stand-in and cancelling its running and queued tasks. Failed cancellation must not unlock rebinding. The primary identity and scenario roles share this lifecycle without affecting ordinary tasks or other accounts.
 
 | Story                         | Preconditions and actions                                                                             | Acceptance and coverage                                                                                                                                                 |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -28,7 +28,9 @@ As a user, I want each Wework instance bound to one local or cloud stand-in. Reb
 | Retain history                | Create local roles, a conversation and memory; stop, bind cloud, then bind the original local profile | No cross-device role copy; original history and memory remain; `stand-in-cloud-device`                                                                                  |
 | Preserve execution boundaries | Explicitly rebind before configuring models, workspaces, Git sources and project intake               | Retain existing permission, native-denial, reception-receipt and concurrent cross-device deduplication assertions; existing model, Git, workspace and cloud checkpoints |
 
-Focused Rust contracts also cover all queued inputs plus the active turn of one task, real stop acknowledgement after timeout, cancellation cleanup without holding the processing gate, rejection of edits and restart during stopping, and stale binding versions. Component tests cover binding changes while confirmation is open, unsaved-edit decisions, and late reads from inactive pages. The shared helper maps to existing CI checkpoints without adding jobs or retries.
+The existing `stand-in-cloud-device` checkpoint also covers migration after stopping: cancel confirmation and assert no target writes, then migrate the chosen role into an already stopped real cloud profile. Verify portable responsibilities and role memories reach the same imported identity, existing target settings remain, the source stays stopped, and the copy remains paused without source-device workspace or grants. Only then does the binding change. Component, utility and Runtime contracts cover failure and retry.
+
+Focused Rust contracts also cover all queued inputs plus the active turn of one task, real stop acknowledgement after timeout, cancellation cleanup without holding the processing gate, rejection of edits and restart during stopping, and stale binding versions. Once stopped, a target accepts only appended disabled portable imports, never overwritten settings, device grants or forged enablement. Component tests cover binding changes while confirmation is open, unsaved-edit decisions, and late reads from inactive pages. The shared helper maps to existing CI checkpoints without adding jobs or retries.
 
 Reuse the desktop checkpoint runner. Only model responses are synthetic; Electron, Executor, Codex, SQLite, projects and native confirmation paths are real.
 

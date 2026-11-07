@@ -9,7 +9,7 @@ sidebar_position: 12
 ## Individual role-profile operations
 
 1. Open **My Stand-in** from the left sidebar, select the main stand-in or a scenario role, then open its profile/settings.
-2. Edit responsibilities and preferences. Expand **More settings (device, model, workspace)** to choose execution device, available model and working directory. After changing devices, recheck model and source-account availability on that device.
+2. Edit responsibilities and preferences. Expand **More settings (device, model, workspace)** to view the bound device and choose an available model and working directory. To use another device, follow “Instance binding and stopping” below before checking its model and source accounts.
 3. Install/authorize source apps, choose scope and handling mode, then save to enable changes. Calendar/scheduled delegation belongs to this role's connection page, not global cloud connection settings.
 4. Use the work list for execution items, **Needs your input** for human decisions and **Needs checking** for errors; these are distinct lists.
 5. To delete a scenario role, use its settings action and confirm the target. Deleting differs from pausing a source; adjust source reception if you want to keep the role but temporarily stop intake.
@@ -20,6 +20,8 @@ Open **My stand-in**, marked **Beta**, in the Tasks sidebar to delegate work, as
 
 A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
 
+<a id="instance-binding-and-stopping"></a>
+
 ## Instance binding and stopping
 
 Each Wework instance binds one local or cloud stand-in at a time. Scenario roles belong to that stand-in, rather than being separate instance bindings. The page and settings have no direct execution-device switch. Reopening the page, device inventory changes, or changing accounts never replaces an existing binding.
@@ -27,6 +29,10 @@ Each Wework instance binds one local or cloud stand-in at a time. Scenario roles
 To rebind, select **Stop stand-in** in the header and confirm. This stops intake for the entire stand-in and cancels its primary and role conversations, running work, and queued delegated tasks. Other accounts' stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories, and history remain; rebinding the original stand-in restores its previous intake switches.
 
 An offline device, failed cancellation, or missing process-stop acknowledgement keeps the instance **Stopping**, with rebinding unavailable. Reconnect and use **Retry stopping**. Reopening the page does not unlock the binding. **Stop stand-in** differs from turning off **Receive new work**, which leaves existing work running.
+
+After stopping, you may migrate instead: choose **Profile to migrate** (the primary identity or a scenario role), choose the target device, select **Migrate and bind**, and confirm. Retain old profiles, memories and conversation history while appending portable responsibilities, model settings, tags and visible memories without overwriting target settings. The imported role stays paused until its device directory, project/source grants and arrangements are configured. Only successful copying changes this instance's binding; copying failures support retry while the source stays stopped. If target startup acknowledgement fails after rebinding, retain the target binding for stopping and recovery without automatically restarting the source. A stopped target permits only these disabled, grant-free imports; migration cannot edit existing settings or restore enablement.
+
+For an unbound instance, a project entry pointing to a specific device establishes that first binding. Such links never replace an existing binding.
 
 Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My stand-in** to open your personal task board.
 

@@ -7,6 +7,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   bindStoppedStandIn,
+  finishStandInOnboarding,
   readStandInBinding,
   stopBoundStandIn,
 } from '../modules/stand-in-instance-flows.mjs'
@@ -161,6 +162,11 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-complete'))
       await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
       await stop(control)
+      if (firstUse.target.deviceId !== CLOUD_DEVICE_ID) {
+        await bind(control, USER, CLOUD_DEVICE_ID)
+        await finishStandInOnboarding(control)
+        await stop(control)
+      }
       await bind(control, 0, localDevice)
       await control.command('navigate', 'body', { value: '/settings/connections' })
       await control.command('clickWhenEnabled', testId('settings-cloud-disconnect-button'))
@@ -193,7 +199,54 @@ export function createDesktopScenario({
       const retained = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
       assert.ok(retained.roles.some(role => role.name === 'Local role with cloud available'))
       await stop(control)
-      await bind(control, USER, CLOUD_DEVICE_ID)
+      const beforeMigration = readProfile(remoteHome)
+      await control.command('waitFor', testId('stand-in-migration'))
+      await control.command('select', testId('stand-in-migration-role'), { value: localRole.id })
+      await control.command('select', testId('stand-in-migration-device'), {
+        value: CLOUD_DEVICE_ID,
+      })
+      await control.command('clickWhenEnabled', testId('stand-in-migrate-open'))
+      await control.command('clickWhenEnabled', testId('stand-in-migrate-cancel'))
+      assert.deepEqual(
+        readProfile(remoteHome),
+        beforeMigration,
+        'Cancelling migration must never write target settings'
+      )
+      await control.command('clickWhenEnabled', testId('stand-in-migrate-open'))
+      await control.command('clickWhenEnabled', testId('stand-in-migrate-confirm'))
+      await control.command('waitFor', testId('stand-in-role-name'))
+      assert.equal(await control.command('getValue', testId('stand-in-role-name')), LOCAL_NAME)
+      assert.equal((await binding(control)).target.deviceId, CLOUD_DEVICE_ID)
+      const migrated = readProfile(remoteHome).roles.find(row => row.name === LOCAL_NAME)
+      assert.ok(
+        migrated,
+        'Successful migration must retain portable responsibilities on the target'
+      )
+      assert.equal(migrated.enabled, false, 'Migration must not enable unconfigured device grants')
+      assert.equal(migrated.workspace, undefined)
+      assert.equal(migrated.connections, undefined)
+      const database = new DatabaseSync(join(remoteHome, 'data/tasks.sqlite'), { readOnly: true })
+      try {
+        const memories = database
+          .prepare(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_memory' AND json_extract(metadata,'$.userId')=?"
+          )
+          .all(USER)
+          .map(row => JSON.parse(row.metadata))
+        assert.ok(
+          memories.some(row => row.content === memory.content && row.scope.roleId === migrated.id),
+          'Role memory must migrate to the same imported identity'
+        )
+      } finally {
+        database.close()
+      }
+      assert.equal(
+        (await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })).lifecycle.status,
+        'stopped',
+        'The old whole stand-in must remain stopped after migration'
+      )
+      await control.command('clickWhenEnabled', testId('stand-in-close'))
+      await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
       await createRole(control, CLOUD_NAME)
       const role = readProfile(remoteHome).roles.find(row => row.name === CLOUD_NAME)
       assert.ok(role, 'The bound real cloud Executor must persist the role')
