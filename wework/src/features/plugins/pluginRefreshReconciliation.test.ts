@@ -39,7 +39,42 @@ function operations() {
 }
 
 describe('plugin refresh reconciliation', () => {
-  test('reports the pending native phase without changing request order or adding authority checks', async () => {
+  test('reports stages only as real operations advance', async () => {
+    const ops = operations()
+    const stages: string[] = []
+    let release!: () => void
+    ops.sync.mockImplementation(async () => {
+      expect(stages).toEqual(['reading', 'syncing'])
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return {
+        reconciled: true,
+        sync: { success: true, failed: 0, errors: [], plugins: [] },
+      } as unknown as PluginDeviceSyncResponse
+    })
+    const result = reconcilePluginRefresh({ ...ops, onProgress: stage => stages.push(stage) })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    expect(stages).toEqual(['reading', 'syncing'])
+    release()
+    await result
+    expect(stages).toEqual(['reading', 'syncing', 'verifying'])
+  })
+
+  test('stops progress and mutations if the account changes during the inventory read', async () => {
+    const ops = operations()
+    const onProgress = vi.fn()
+    ops.readStore.mockImplementation(async () => {
+      ops.isCurrent.mockReturnValue(false)
+      return [plugin(12)]
+    })
+    await reconcilePluginRefresh({ ...ops, onProgress })
+    expect(onProgress).toHaveBeenCalledExactlyOnceWith('reading')
+    expect(ops.sync).not.toHaveBeenCalled()
+    expect(ops.invalidate).not.toHaveBeenCalled()
+  })
+
+  test('reports the pending native phase without changing request order', async () => {
     vi.mocked(logPluginRefreshPhase).mockClear()
     const ops = operations()
     let finish!: (result: PluginDeviceSyncResponse) => void
@@ -49,13 +84,13 @@ describe('plugin refresh reconciliation', () => {
     await vi.waitFor(() => expect(ops.sync).toHaveBeenCalledOnce())
     expect(logPluginRefreshPhase).toHaveBeenLastCalledWith('reconcile-sync-start', { request: 4 })
     expect(ops.readCloud).not.toHaveBeenCalled()
-    expect(ops.isCurrent).toHaveBeenCalledOnce()
+    expect(ops.isCurrent).toHaveBeenCalledTimes(2)
     finish(response)
     await pending
     expect(ops.readStore).toHaveBeenCalledTimes(2)
     expect(ops.sync).toHaveBeenCalledOnce()
     expect(ops.readCloud).toHaveBeenCalledOnce()
-    expect(ops.isCurrent).toHaveBeenCalledTimes(3)
+    expect(ops.isCurrent).toHaveBeenCalledTimes(4)
     expect(logPluginRefreshPhase).toHaveBeenLastCalledWith('reconcile-readback-end', {
       request: 4,
       elapsedMs: expect.any(Number),

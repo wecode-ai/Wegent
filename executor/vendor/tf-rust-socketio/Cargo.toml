@@ -123,3 +123,5 @@ features = [
 level = "warn"
 priority = 0
 check-cfg = ["cfg(tarpaulin)"]
+
+[workspace]

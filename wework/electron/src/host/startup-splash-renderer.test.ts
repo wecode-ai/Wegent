@@ -50,7 +50,7 @@ class FakeResizeObserver {
 
 async function createRendererFixture(
   now: () => number = Date.now,
-  options: { reducedMotion?: boolean; language?: string } = {}
+  options: { reducedMotion?: boolean; language?: string; theme?: 'light' | 'dark' } = {}
 ) {
   const electronRoot =
     basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
@@ -65,6 +65,8 @@ async function createRendererFixture(
   }
   element('#startup-brand-canvas').clientWidth = 1440
   element('#startup-brand-canvas').clientHeight = 960
+  const theme = options.theme ?? 'dark'
+  element('documentElement').dataset.theme = theme
   const brandAnimation = {
     setPaused: vi.fn(),
     complete: vi.fn(async () => undefined),
@@ -92,6 +94,10 @@ async function createRendererFixture(
     innerWidth: 1440,
     innerHeight: 960,
     createStartupBrandAnimation,
+    getComputedStyle: () => ({
+      colorScheme: theme,
+      backgroundColor: theme === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)',
+    }),
     location: { search: '' },
     addEventListener: (event: string, listener: (event: unknown) => void) => {
       listeners.set(event, listener)
@@ -269,24 +275,26 @@ describe('startup splash renderer', () => {
     expect(html).toContain('id="startup-toast"')
     expect(styles).toContain('.startup-brand')
     expect(styles).toContain('.startup-status')
-    expect(styles).toContain('.is-breathing')
-    expect(styles).toContain('3.2s')
-    expect(styles).toContain('@keyframes startup-brand-breathe')
-    expect(styles).toContain('.startup-brand.is-paused canvas')
+    expect(styles).toContain('.is-waiting-gradient')
+    expect(styles).toContain('6s')
+    expect(styles).toContain('@keyframes startup-brand-gradient')
+    expect(styles).toContain('.startup-brand.is-paused::after')
     expect(styles).toContain('animation-play-state: paused')
     expect(styles).toContain('.startup-progress-fill')
     expect(styles).toContain('.startup-toast')
     expect(styles).toContain('.startup-timeout-actions')
     const rootStyles = styles.match(/:root\s*\{([^}]+)\}/)?.[1]
     const footerStyles = styles.match(/\.startup-status\s*\{([^}]+)\}/)?.[1]
-    expect(html).toContain('name="color-scheme" content="dark"')
+    expect(html).toContain('name="color-scheme" content="light dark"')
+    expect(html.indexOf('src="./theme.js"')).toBeLessThan(html.indexOf('href="./styles.css"'))
     expect(rootStyles).toContain('color-scheme: dark')
     expect(rootStyles).toContain('--startup-brand-background: #05070d')
     expect(rootStyles).toContain('--startup-status-background: var(--startup-brand-background)')
     expect(footerStyles).toContain('background: var(--startup-status-background)')
     expect(footerStyles).toContain('position: relative')
     expect(footerStyles).toContain('grid-row: 2')
-    expect(styles).not.toMatch(/:root\[data-theme=/)
+    expect(styles).toContain(":root[data-theme='light']")
+    expect(styles).toContain('--startup-brand-background: #fafafa')
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
     expect(script).toContain('stageTimeoutMs()')
     expect(script).toContain('weworkStartupProgress')
@@ -450,17 +458,28 @@ describe('startup splash renderer', () => {
       fillEnd: 999,
       trackEnd: 999,
       wordmarkVisible: false,
+      appearance: {
+        theme: 'dark',
+        colorScheme: 'dark',
+        background: 'rgb(5, 7, 13)',
+        footerBackground: 'rgb(5, 7, 13)',
+      },
       canvas: { x: 0, y: 0, width: 1440, height: 960 },
       viewport: { width: 1440, height: 960 },
     })
   })
 
   test.each([
-    { language: 'en-US', title: 'Ready', detail: 'Your workbench is ready.' },
-    { language: 'zh-CN', title: '准备完成', detail: '工作台已就绪' },
-  ])('completes terminal updates once with reduced motion in $language', async copy => {
+    {
+      language: 'en-US',
+      theme: 'light' as const,
+      title: 'Ready',
+      detail: 'Your workbench is ready.',
+    },
+    { language: 'zh-CN', theme: 'dark' as const, title: '准备完成', detail: '工作台已就绪' },
+  ])('completes terminal updates once with reduced motion in $language and $theme', async copy => {
     const { complete, progressListener, brandAnimation, element, frames, timers, step } =
-      await createRendererFixture(() => 10_000, { language: copy.language })
+      await createRendererFixture(() => 10_000, { language: copy.language, theme: copy.theme })
     await step(0)
     await step(0)
     progressListener?.(rendererUpdate(true))
@@ -479,6 +498,12 @@ describe('startup splash renderer', () => {
       progressNow: 100,
       fillEnd: 999,
       trackEnd: 999,
+      appearance: {
+        theme: copy.theme,
+        colorScheme: copy.theme,
+        background: copy.theme === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)',
+        footerBackground: copy.theme === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)',
+      },
     })
     progressListener?.(rendererUpdate(true))
     progressListener?.(rendererUpdate())
@@ -816,13 +841,20 @@ describe('startup splash renderer', () => {
       },
     })
 
+    const recoveryCopyLabel = element('#startup-copy-diagnostics').textContent
+    const timeoutCopyLabel = element('#startup-timeout-copy').textContent
     element('#startup-copy-diagnostics').click()
     await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+    await setImmediate()
+    expect(element('#startup-copy-diagnostics').textContent).toBe(recoveryCopyLabel)
+    expect(element('#startup-toast').textContent).toContain('诊断信息已复制')
     element('#startup-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledOnce())
 
     element('#startup-timeout-copy').click()
     await vi.waitFor(() => expect(copy).toHaveBeenCalledTimes(2))
+    await setImmediate()
+    expect(element('#startup-timeout-copy').textContent).toBe(timeoutCopyLabel)
     element('#startup-timeout-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledTimes(2))
   })

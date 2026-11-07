@@ -220,7 +220,7 @@ export function ToolBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-clip text-sm font-normal"
+      className="min-w-0 overflow-x-clip text-sm"
       data-processing-block-id={block.id}
     >
       <div

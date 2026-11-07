@@ -4,6 +4,8 @@ sidebar_position: 5
 
 # Coding workbench
 
+<a id="workspace-controls"></a>
+
 ## Application menu
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
@@ -24,7 +26,9 @@ Process attribution and collection have the following limits:
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
 
-When experimental features are enabled, the first main window shows three default tabs: Task, Workspaces, and Agent. When experimental features are off, the Workspaces tab is hidden. Every tab is an independent work instance. Two Task tabs retain separate conversations and unsent drafts, two Workspace tabs retain separate projects and routes, and two Agent tabs retain separate page state. Switching tabs does not synchronize content from another tab.
+The first main window restores **Settings → General → Fixed tabs** and activates its chosen startup item. Use top-bar **+** to add Tasks, Collaboration, Agent or other available tabs. Each tab independently retains conversations, drafts, projects and routes; switching does not synchronize another tab's content.
+
+Drag top tabs to reorder them. Right-click for **Pin/Unpin tab**, **Close other tabs** or a separate window. Manage fixed items and startup in General settings. Check unsent work and task state before closing other tabs; closing a page is not cancellation of a persistent goal.
 
 Task and Workspace tabs retain their mounted interface while they are in the background instead of recreating it whenever the user returns. Unsent drafts, the selected project, board routes, and panel state therefore restore immediately, and background tabs do not restart the workbench runtime. The first Task workbench centrally prewarms the Codex app catalog needed by composers; mounting a composer or switching tabs does not request the catalog again. A Workspace board loads task-composer model and skill catalogs on demand only when the user creates a runtime task from an issue, avoiding the complete Task-workbench startup cost during ordinary board browsing.
 
@@ -111,6 +115,8 @@ Select a project name to expand or collapse its runtime tasks. Collapsed project
 
 New tasks appear immediately at the top of their project's task list. Tasks with a saved drag order continue to follow that manual order; after a new task receives its persisted order, it remains stable within the same project ordering.
 
+<a id="ai-questions"></a>
+
 ## Handle AI questions
 
 The top-level **Needs your input** tab collects structured questions from task conversations, projects, and your stand-in. Its left list groups questions under **Tasks, Projects, and Stand-in**, newest first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in.
@@ -118,6 +124,12 @@ The top-level **Needs your input** tab collects structured questions from task c
 When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
 
 To leave a question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally.
+
+Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
+
+When you are unsure how to answer a business question, select **Talk it through** on its question card or in the question details in **Needs your input**. Wework opens a **Talk it through** tab in the original task's right sidebar, returning to that task when opened from Needs your input. Discussion sits alongside browser and file tabs instead of taking over the workbench's right side. Switching tasks shows only the destination task's sidebar; returning to the original task or switching sidebar tabs preserves the discussion and unsent message. Opening only prepares an editable question in the composer. Edit it and select Send to begin an independent discussion; opening alone never sends a message. The original question stays open.
+
+After discussing, select the text you want to use and choose **Fill answer** from the selection toolbar. For multiple questions, choose the target at the top of the sidebar first. Review and edit the selected text in the original answer before submitting. Filling a draft never sends an answer or approves an operation. Questions that were handled, cancelled, expired, or whose current state cannot be verified cannot receive a draft. Permission approvals and connector authorization retain their native confirmation flows.
 
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
 
@@ -150,6 +162,22 @@ After startup, the active task composer receives focus when it becomes available
 When no task is running, the Wework Popout Window uses a compact composer with a fixed height. After the message exceeds three lines, the text scrolls inside the editor while attachment, model, and send controls remain visible.
 
 ## Files and terminals
+
+### File tree, path menu and IDE
+
+1. Open **Files** in the right workspace. Search names/paths in the tree toolbar, refresh the directory or retry a failed load.
+2. Select a file and right-click its path/path-toolbar region for supported actions.
+
+| Action                         | Result and conditions                                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Open with                      | Choose an available local application for the file/directory; requires a local target and application |
+| Open in GitHub/GitLab/Git host | Opens the repository location when repository/file mapping is available                               |
+| Save as                        | Save a local file elsewhere; not a directory action or Git commit                                     |
+| Copy path                      | Copies the file/directory path; check private-directory details before sharing                        |
+| Copy contents                  | Copies supported text; unavailable for binary or unreadable remote content                            |
+| Reveal location                | Locate the local file or directory in the system file manager                                         |
+
+The titlebar's **Open workspace location** and neighboring IDE dropdown open the working directory and select an available IDE, with a remembered preference. This differs from the device-oriented IDE entry under bottom-panel +; verify device and directory first.
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
@@ -203,11 +231,17 @@ After restoring a conversation, you can answer an existing MCP form or another r
 
 ## Use selected response text
 
+Hover a message for its copy action. A user message shows an edit/pencil action only when editing is supported; change it in the editor and follow its submit/cancel controls. Not every historical or assistant message is editable. Quoting selected text differs from changing the original message.
+
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
 
 Process text shown above tool calls while a task is running is also selectable response content. Selecting it opens the same action menu and can add the text directly to the current task composer.
 
 ## Review and undo changes
+
+### Individual review-toolbar controls
+
+Open **Review** from an assistant reply's changes. Choose unified/split layout, toggle the file tree and word wrap. **Expand/collapse all hunks** changes presentation only. **Copy git apply command** copies a patch-application command without running it; inspect target repository and patch before executing it.
 
 Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the complete diff in the right workspace. Normal review mode keeps every file diff rendered. Selecting a file in the tree, or opening a specific changed file from an assistant message, scrolls the content to that file instead of hiding the other files. The original execution device must be online.
 

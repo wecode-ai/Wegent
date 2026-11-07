@@ -358,7 +358,13 @@ export function EditKnowledgeBaseDialog({
           handleOpenChange(nextOpen)
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent
+          className="w-[calc(100%_-_1rem)] max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col"
+          closeButtonProps={{
+            className: 'right-2 top-2 flex h-11 w-11 items-center justify-center',
+            'data-testid': 'close-edit-kb',
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{t('knowledge:document.knowledgeBase.edit')}</DialogTitle>
             <DialogDescription>

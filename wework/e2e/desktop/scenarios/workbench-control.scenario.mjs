@@ -80,6 +80,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let createdTaskId
   let cloudCreatedId
   let cloudCreatedTaskId
+  let cloudCreatedReady = false
   let cloud
   let cloudEnvironment
   let httpProxy
@@ -241,12 +242,18 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         project_space: { space_id: String(cloudProject.id), store: 'cloud' },
         options: { attachmentIds: [attachment.id] },
       }),
-      value => {
+      async value => {
         const created = findValue(value, item => item.accepted === true && item.conversation_id)
         assert.ok(created)
         assert.equal(created.deviceId, sourceDeviceId)
         cloudCreatedId = created.conversation_id
         cloudCreatedTaskId = created.taskId
+        await waitForScenarioProgress(
+          progress,
+          () => ({ step: cloudCreatedReady ? 1 : 0, error: failure }),
+          1,
+          modelResponseTimeoutMs
+        )
       },
     ],
     [
@@ -562,6 +569,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
             'Owned attachment must reach the local turn'
           )
           events = [assistantMessage('WEWORK_CONTROL_CLOUD_READY'), responseCompleted(id)]
+          cloudCreatedReady = true
+          progress.emit('change')
         } else if (serialized.includes(CREATED)) {
           events = [assistantMessage('WEWORK_CONTROL_CREATED_READY'), responseCompleted(id)]
         } else if (serialized.includes(FOLLOW_UP)) {

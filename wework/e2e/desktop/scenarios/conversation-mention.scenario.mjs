@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
@@ -270,7 +271,7 @@ export function createDesktopScenario({
       } else if (serialized.includes(LARGE_SOURCE_PROMPT) && requestAdvertisesShellTool(body)) {
         const tool = selectShellToolCommand(body, LARGE_TOOL_COMMAND, workspacePath)
         largeSourceToolRequested = true
-        output = functionCall(LARGE_TOOL_CALL_ID, tool.name, tool.arguments)
+        output = selectedToolCall(LARGE_TOOL_CALL_ID, tool)
       } else if (serialized.includes(SOURCE_PROMPT)) {
         sourceRequest = body
         completion = SOURCE_COMPLETION

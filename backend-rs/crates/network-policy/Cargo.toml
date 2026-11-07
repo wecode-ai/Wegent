@@ -1,0 +1,13 @@
+[package]
+name = "wegent-network-policy"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Outbound HTTPS trust and destination policy"
+
+[dependencies]
+brz-http = "=0.0.14"
+tokio = { version = "1", features = ["net"] }
+url = "2"
+tracing = "0.1"

@@ -196,6 +196,7 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
         await control.command('startRuntimeStreamDiagnostics', 'body')
         stopCpuProfile = await startSwitchingCpuProfile(resultDir, uiTimeoutMs)
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+        // This final-answer prefix follows all 520 model progress messages.
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
           text: PREFIX,
           timeoutMs: longResponseTimeoutMs,
@@ -314,6 +315,8 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
         // This cursor prepends items inside the same assistant row, not new message rows.
         const anchorId = coldPage.runtimeDisplayItems[0].id
         const anchorSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-runtime-item-id="${anchorId}"], ${ACTIVE_WORKBENCH_SELECTOR} [data-processing-block-id="${anchorId}"]`
+        // A user scroll needs a visible renderer after the cold reload.
+        await control.command('focusMainWindow', 'body')
         await control.command('scrollIntoViewAsUser', anchorSelector, { value: 'start' })
         await waitForWorkbenchDebugState(
           control,

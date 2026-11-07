@@ -1,9 +1,10 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
 import { createComposerLayoutChecks } from '../modules/streaming-text-composer-layout.mjs'
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
 import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
-import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { handleEmptyReplyPrediction, selectTool } from '../modules/response-protocol.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createMarkdownLinkChecks,
@@ -100,6 +101,7 @@ import { createStreamingContentChecks } from '../modules/streaming-text-content.
 import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
 import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
 import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
+import { createStreamingGuidanceOrderChecks } from '../modules/streaming-text-guidance-order.mjs'
 import { createInteractiveVisualizationChecks } from '../modules/streaming-interactive-visualization.mjs'
 import { createVisualizationScrollChecks } from '../modules/streaming-visualization-scroll.mjs'
 
@@ -117,6 +119,7 @@ export function createDesktopScenario({
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
+  const guidanceOrder = createStreamingGuidanceOrderChecks({ resultDir, uiTimeoutMs })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
   const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
   const richTaskSwitch = createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqliteHome })
@@ -284,6 +287,9 @@ export function createDesktopScenario({
     releaseResponse,
   })
   return {
+    cleanup() {
+      guidanceOrder.cleanup()
+    },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     modelProviderAuthToml: '',
     modelProviderConfigToml:
@@ -304,6 +310,9 @@ export function createDesktopScenario({
       // Rendering assertions exercise direct tools with the shared fixture label.
       model.tool_mode = 'direct'
       model.use_responses_lite = false
+      model.experimental_supported_tools = [
+        ...new Set([...(model.experimental_supported_tools ?? []), 'request_user_input_async']),
+      ]
       model.display_name = DEFAULT_MODEL_LABEL
       const catalogPath = join(codexHome, 'rendering-model-catalog.json')
       await writeFile(catalogPath, JSON.stringify(catalog))
@@ -344,6 +353,7 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
+      if (await guidanceOrder.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
       if (await composerLayout.handleModelRequest(body, response, responseId)) return true
@@ -388,7 +398,7 @@ export function createDesktopScenario({
               ...commentary.start.slice(1),
               ...textDeltaEvents(commentary.itemId, SUBAGENT_CHILD_COMMENTARY),
               ...commentary.finish.slice(0, -1),
-              ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
+              ...selectedToolCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool),
               responseCompleted(responseId),
             ])
           )
@@ -454,9 +464,10 @@ export function createDesktopScenario({
         response.end(
           sse([
             responseCreated(responseId),
-            ...namespacedFunctionCall(SUBAGENT_WAIT_CALL_ID, 'collaboration', 'wait_agent', {
-              timeout_ms: 60_000,
-            }),
+            ...selectedToolCall(
+              SUBAGENT_WAIT_CALL_ID,
+              selectTool(body, 'wait_agent', { timeout_ms: 60_000 })
+            ),
             responseCompleted(responseId),
           ])
         )
@@ -499,30 +510,19 @@ export function createDesktopScenario({
       }
       if (requestContainsSubagentPrompt(body)) {
         assert.equal(subagentStage, 'initial', `Unexpected subagent stage: ${subagentStage}`)
-        const collaborationTools = (body.tools ?? []).find(
-          tool => tool?.type === 'namespace' && tool.name === 'collaboration'
-        )?.tools
-        const collaborationToolNames = new Set(
-          (collaborationTools ?? []).map(tool => tool?.name).filter(Boolean)
-        )
-        assert.ok(
-          collaborationToolNames.has('spawn_agent'),
-          'The native collaboration.spawn_agent tool was not available'
-        )
-        assert.ok(
-          collaborationToolNames.has('wait_agent'),
-          'The native collaboration.wait_agent tool was not available'
-        )
         subagentStage = 'awaiting-spawn-output'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([
             responseCreated(responseId),
-            ...namespacedFunctionCall(SUBAGENT_CALL_ID, 'collaboration', 'spawn_agent', {
-              task_name: 'streaming_panel',
-              message: SUBAGENT_CHILD_PROMPT,
-              agent_type: 'explorer',
-            }),
+            ...selectedToolCall(
+              SUBAGENT_CALL_ID,
+              selectTool(body, 'spawn_agent', {
+                task_name: 'streaming_panel',
+                message: SUBAGENT_CHILD_PROMPT,
+                agent_type: 'explorer',
+              })
+            ),
             responseCompleted(responseId),
           ])
         )
@@ -662,13 +662,14 @@ export function createDesktopScenario({
 
       if (requestContainsTimerPrompt(body)) {
         if (timerStage === 'initial') {
-          const tool = selectShellTool(body, workspacePath, 'sleep 15', 20_000)
+          // Keep the tool active while checking its timer and switching conversations.
+          const tool = selectShellTool(body, workspacePath, 'sleep 10', 20_000)
           timerStage = 'awaiting-tool-output'
           response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
           response.end(
             sse([
               responseCreated(responseId),
-              ...functionCall('wework-running-timer', tool.name, tool.arguments),
+              ...selectedToolCall('wework-running-timer', tool),
               responseCompleted(responseId),
             ])
           )
@@ -730,7 +731,7 @@ export function createDesktopScenario({
               responseCreated(responseId),
               ...reasoningEvents('wework-reasoning-summary', REASONING_SUMMARY),
               assistantMessage(TOOL_PREAMBLE),
-              ...functionCall('wework-tool-text-offset', tool.name, tool.arguments),
+              ...selectedToolCall('wework-tool-text-offset', tool),
               responseCompleted(responseId),
             ])
           )
@@ -751,7 +752,7 @@ export function createDesktopScenario({
           response.end(
             sse([
               responseCreated(responseId),
-              ...functionCall(TOOL_DETAIL_PERSISTENCE_CALL_ID, tool.name, tool.arguments),
+              ...selectedToolCall(TOOL_DETAIL_PERSISTENCE_CALL_ID, tool),
               responseCompleted(responseId),
             ])
           )
@@ -808,14 +809,7 @@ export function createDesktopScenario({
         )
         const tool = selectImageGenerationTool(body)
         generatedImageStage = 'awaiting-image-api'
-        const toolCallEvents = tool.namespace
-          ? namespacedFunctionCall(
-              GENERATED_IMAGE_CALL_ID,
-              tool.namespace,
-              tool.name,
-              tool.arguments
-            )
-          : functionCall(GENERATED_IMAGE_CALL_ID, tool.name, tool.arguments)
+        const toolCallEvents = selectedToolCall(GENERATED_IMAGE_CALL_ID, tool)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([responseCreated(responseId), ...toolCallEvents, responseCompleted(responseId)])
@@ -915,6 +909,7 @@ export function createDesktopScenario({
             await interactiveVisualization.verify(control)
             await visualizationScroll.verify(control)
             await transcriptIdentity.verify(control)
+            await guidanceOrder.verify(control)
           },
         ],
         [

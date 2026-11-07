@@ -263,7 +263,11 @@ test.describe('Collaboration agent execution', () => {
 
     const modelBodies = await getScenarioModelBodies(request, scenarioMatch)
     expect(modelBodies.length).toBeGreaterThan(1)
-    expect(modelToolNames(modelBodies.slice(0, 1))).toContain('exec_command')
+    expect(modelToolNames(modelBodies.slice(0, 1))).toContain('exec')
+    expect(modelToolNames(modelBodies.slice(0, 1))).not.toContain('exec_command')
+    expect(
+      modelToolNames(modelBodies.slice(0, 1)).some(name => name.endsWith('get_document_info'))
+    ).toBe(false)
     expect(modelRequestText(modelBodies.slice(1))).toContain(SKILL_MARKER)
     expect(modelRequestText(modelBodies.slice(1))).toContain(PLUGIN_MARKER)
     expect(modelToolNames(modelBodies).some(name => name.endsWith('get_document_info'))).toBe(true)

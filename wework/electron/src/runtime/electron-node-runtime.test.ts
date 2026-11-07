@@ -13,7 +13,7 @@ import {
 const execFileAsync = promisify(execFile)
 
 describe('prepareElectronNodeRuntime', () => {
-  test('exposes Electron Helper through a self-contained PATH launcher', async () => {
+  test('starts the signed macOS Helper directly and retains a self-contained PATH launcher', async () => {
     const directory = await import('node:fs/promises').then(fs => fs.mkdtemp('/tmp/wework-node-'))
     const helperExecPath =
       '/Applications/WeWork.app/Contents/Frameworks/WeWork Helper.app/Contents/MacOS/WeWork Helper'
@@ -27,7 +27,7 @@ describe('prepareElectronNodeRuntime', () => {
     })
 
     const nodePath = join(directory, 'runtime', 'bin', 'node')
-    expect(runtime.environment.WEWORK_NODE_PATH).toBe(nodePath)
+    expect(runtime.environment.WEWORK_NODE_PATH).toBe(helperExecPath)
     expect(runtime.environment.WEWORK_RUNTIME_BIN).toBe(join(directory, 'runtime', 'bin'))
     expect(runtime.environment.PATH?.split(delimiter)[0]).toBe(join(directory, 'runtime', 'bin'))
     expect(runtime.environment.ELECTRON_RUN_AS_NODE).toBe('1')
@@ -42,7 +42,7 @@ describe('prepareElectronNodeRuntime', () => {
       state: 'installed',
       source: 'electron',
       version: '24.13.0',
-      path: nodePath,
+      path: helperExecPath,
     })
     expect((await stat(nodePath)).isFile()).toBe(true)
     expect(await readFile(nodePath, 'utf8')).toContain('export ELECTRON_RUN_AS_NODE=1')
@@ -79,7 +79,7 @@ describe('prepareElectronNodeRuntime', () => {
     'does not depend on the parent ELECTRON_RUN_AS_NODE environment',
     async () => {
       const directory = await import('node:fs/promises').then(fs => fs.mkdtemp('/tmp/wework-node-'))
-      const runtime = await prepareElectronNodeRuntime({
+      await prepareElectronNodeRuntime({
         dataDirectory: directory,
         environment: { PATH: process.env.PATH },
         helperExecPath: process.execPath,
@@ -90,7 +90,7 @@ describe('prepareElectronNodeRuntime', () => {
       delete environment.ELECTRON_RUN_AS_NODE
 
       const result = await execFileAsync(
-        runtime.environment.WEWORK_NODE_PATH!,
+        join(directory, 'runtime/bin/node'),
         ['-e', "process.stdout.write(process.env.ELECTRON_RUN_AS_NODE ?? 'missing')"],
         {
           env: environment,
@@ -116,7 +116,7 @@ describe('prepareElectronNodeRuntime', () => {
       })
       const child = spawn(
         runtime.environment.WEWORK_NODE_PATH!,
-        [
+        runtimeNodeArgs(runtime.environment, [
           '-e',
           [
             "process.stdin.once('data', () => {",
@@ -124,7 +124,7 @@ describe('prepareElectronNodeRuntime', () => {
             "  setTimeout(() => process.stdout.write('survived'), 50)",
             '})',
           ].join('\n'),
-        ],
+        ]),
         {
           env: runtime.environment,
           stdio: ['pipe', 'pipe', 'pipe'],

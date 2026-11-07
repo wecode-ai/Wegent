@@ -7,6 +7,7 @@ import { useRef, useState } from 'react'
 import { ChevronDown, Search, Tag, X } from 'lucide-react'
 import type { CollaborationTranslate } from '../i18n'
 import { useCollaborationPortalTheme } from '../theme'
+import { Tooltip } from '../issue-detail/Tooltip'
 
 function BoardTagFilter({
   tags,
@@ -34,20 +35,24 @@ function BoardTagFilter({
           if (open) setQuery('')
         }}
       >
-        <Popover.Trigger asChild>
-          <button
-            ref={triggerRef}
-            type="button"
-            data-testid="cloud-board-tag-filter"
-            aria-label={t('todo.board_filter_tag')}
-            title={label}
-            className={`inline-flex h-8 max-w-52 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${selected.length ? 'border-text-primary/30 bg-muted text-text-primary' : 'border-border bg-background text-text-secondary'}`}
-          >
-            <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">{label}</span>
-            <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
-          </button>
-        </Popover.Trigger>
+        <Tooltip label={label} side="bottom">
+          <Popover.Trigger asChild>
+            <button
+              ref={triggerRef}
+              type="button"
+              data-testid="cloud-board-tag-filter"
+              aria-label={t('todo.board_filter_tag')}
+              className={`project-board-compact-action inline-flex h-8 max-w-52 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${selected.length ? 'border-text-primary/30 bg-muted text-text-primary' : 'border-border bg-background text-text-secondary'}`}
+            >
+              <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="project-board-action-label truncate">{label}</span>
+              <ChevronDown
+                className="project-board-action-chevron h-3 w-3 shrink-0"
+                aria-hidden="true"
+              />
+            </button>
+          </Popover.Trigger>
+        </Tooltip>
         <Popover.Portal>
           <Popover.Content
             {...theme}

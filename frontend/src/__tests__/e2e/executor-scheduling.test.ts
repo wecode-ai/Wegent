@@ -13,6 +13,7 @@ const independent = new Set([
   'tasks/pipeline-session-archive.spec.ts',
   'tasks/claude-background-lifecycle.spec.ts',
   'tasks/provider-native-claudecode.spec.ts',
+  'tasks/shell-reference-cancel.spec.ts',
 ])
 const expectedCounts: Record<string, number> = {
   'global-setup.ts': 1,
@@ -23,6 +24,7 @@ const expectedCounts: Record<string, number> = {
   'tasks/pipeline-session-archive.spec.ts': 5,
   'tasks/claude-background-lifecycle.spec.ts': 3,
   'tasks/provider-native-claudecode.spec.ts': 2,
+  'tasks/shell-reference-cancel.spec.ts': 1,
   'collaboration/collaboration-agent-execution.spec.ts': 1,
   'collaboration/issue-dispatch-executor.spec.ts': 4,
 }

@@ -7,12 +7,19 @@
 
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import { updateSessionState } from './ai-verify-session-state.mjs'
+import {
+  captureSessionAuthOwnership,
+  cleanupSessionAuth,
+  observeSessionAuthOwnership,
+  sessionExecutorHome,
+} from './ai-verify-auth-cleanup.mjs'
 import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
 import { WindowCommandQueue } from './desktop-control-queue.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
@@ -331,9 +338,9 @@ function signalProcessGroup(processGroupId, signal) {
   })
 }
 
-async function removeSessionAuthLink(session) {
+async function removeSessionAuthLink(session, sessionPath) {
   if (!session?.directory) return
-  await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
+  await updateSessionState(sessionPath, cleanupSessionAuth, session)
 }
 
 export async function readSessionForCleanup(sessionPath, timeoutMs = failedStartCleanupGraceMs) {
@@ -360,7 +367,7 @@ async function cleanupFailedStart(sessionPath, controllerPid) {
   const session = await readSessionForCleanup(sessionPath)
   await stopOwnedSessionProcesses(session)
   await signalProcessGroup(controllerPid, 'KILL')
-  await removeSessionAuthLink(session)
+  await removeSessionAuthLink(session, sessionPath)
 }
 
 export function appExitMessage(appExit) {
@@ -511,6 +518,17 @@ export function monitorAppProcess(app, pending, onExit) {
 
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
+  const executorHome = sessionExecutorHome(session)
+  const codexHome = join(executorHome, 'codex')
+  const nativeCodexHome = session.verifyCodexHomeInitialization
+    ? join(session.directory, 'native-codex')
+    : undefined
+  session.authCleanup = await captureSessionAuthOwnership(session, {
+    nativeCodexHome: nativeCodexHome ?? process.env.WEWORK_E2E_NATIVE_CODEX_HOME?.trim(),
+  })
+  const observeAuth = async () => {
+    await updateSessionState(sessionPath, observeSessionAuthOwnership)
+  }
   const queue = new WindowCommandQueue(corsHeaders)
   const pending = new Map()
   let ready = null
@@ -527,6 +545,7 @@ async function runServer(sessionPath, token) {
         return response.end()
       }
       if (!authorized(request, token)) return json(response, 401, { error: 'Unauthorized' })
+      if (['/ready', '/status', '/command', '/shutdown'].includes(url.pathname)) await observeAuth()
       if (request.method === 'POST' && url.pathname === '/ready') {
         ready = await readBody(request)
         queue.register(ready.clientId, ready.windowLabel)
@@ -614,16 +633,15 @@ async function runServer(sessionPath, token) {
   )
   const address = server.address()
   const controlUrl = `http://127.0.0.1:${address.port}`
-  const updated = {
-    ...session,
+  Object.assign(session, {
     controlUrl,
     status: 'starting',
-  }
+  })
   const shutdown = exitCode => {
     if (shutdownPromise) return shutdownPromise
     queue.close()
     shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid })
-      .then(() => removeSessionAuthLink(session))
+      .then(() => removeSessionAuthLink(session, sessionPath))
       .finally(() => {
         server.close(() => process.exit(exitCode))
         server.closeAllConnections()
@@ -632,13 +650,10 @@ async function runServer(sessionPath, token) {
   }
   process.once('SIGINT', () => void shutdown(130))
   process.once('SIGTERM', () => void shutdown(143))
-  await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
+  await updateSessionState(sessionPath, latest => {
+    Object.assign(latest, { controlUrl, status: 'starting', authCleanup: session.authCleanup })
+  })
   const log = join(session.directory, 'app.log')
-  const executorHome = session.executorHomeOverride ?? join(session.directory, 'executor-home')
-  const codexHome = join(executorHome, 'codex')
-  const nativeCodexHome = session.verifyCodexHomeInitialization
-    ? join(session.directory, 'native-codex')
-    : undefined
   await mkdir(codexHome, { recursive: true })
   if (nativeCodexHome) {
     await mkdir(nativeCodexHome, { recursive: true })
@@ -656,6 +671,7 @@ async function runServer(sessionPath, token) {
     executorHome,
     sessionDirectory: session.directory,
   })
+  environment.WEWORK_AI_VERIFY_AUTH_OWNER = session.authCleanup.ownerId
   const sourceEnvironment =
     session.launchMode === 'source' ? await buildSourceRuntimeEnvironment() : {}
   const launch = resolveElectronLaunch({
@@ -682,7 +698,10 @@ async function runServer(sessionPath, token) {
       'data',
       chunk => void import('node:fs/promises').then(({ appendFile }) => appendFile(log, chunk))
     )
-  await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)
+  session.launcherPid = app.pid
+  await updateSessionState(sessionPath, latest => {
+    latest.launcherPid = app.pid
+  })
 }
 
 async function request(session, token, path, method = 'GET', body) {
@@ -829,7 +848,7 @@ async function main() {
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
-    await removeSessionAuthLink(session)
+    await removeSessionAuthLink(session, options.session)
     return
   }
   if (command === 'status') {

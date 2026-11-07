@@ -88,6 +88,12 @@ before opening data. Cached versioned entries in delivered launchers then forwar
 loaded bootstrap to restore the installed host. This does not confirm runtime or renderer health.
 Preparation leaves the active source record unchanged; cancellation removes only owned stages.
 
+Rollback writes the source slot to `macos-rollback` before switching `active`. Closing the
+activation journal does not prove physical `Contents` restoration completed. While this marker
+exists, even an ordinary installed entry must resume recovery instead of opening the rejected
+host. The native installer clears it only after the selected bundle is installed; failures retain
+it. A later fully healthy activation also clears stale handoff state left by an older source.
+
 Suite v8 additionally checks the actual `NSRunningApplication` URL, bundle identifier, and
 outer directory inode after upgrade and rollback. It runs the delivered source cleaner before
 continuing the original task after rollback. Suite v10 retains the delivered bootstrap,

@@ -16,7 +16,7 @@ use serde::Deserialize;
 
 use crate::apps_installed::db::{self, UserRow};
 use crate::http_compat::FastApiError;
-use crate::state::AppState;
+use wegent_identity::AuthServices;
 
 pub struct ConnectorUser(pub UserRow);
 
@@ -108,7 +108,7 @@ pub(crate) const CONNECTOR_TOKEN_TYPE: &str = "connector";
 
 /// `get_connector_runtime_user`: resolve the caller from a connector token.
 pub(crate) async fn authenticate(
-    state: &AppState,
+    state: &AuthServices,
     authorization: Option<&str>,
 ) -> Result<UserRow, FastApiError> {
     let Some(token) = connector_token(authorization) else {

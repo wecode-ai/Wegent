@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createServer } from 'node:http'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { webApi, writeSharedComposer } from '../../utils/collaboration-test-support'
 
 const GITHUB_URL = 'https://github.com/wecode-ai/Wegent/pull/3966'
+const LONG_GITHUB_URL = `https://github.com/wecode-ai/Wegent/commit/${'a'.repeat(180)}`
+const LONG_GITHUB_LABEL = `${LONG_GITHUB_URL}#source`
 const DOCUMENT_TEXT = 'The Issue comment document opened in a separate page.'
 
 interface Resource {
@@ -17,6 +19,74 @@ interface Resource {
 async function archiveResource(page: Page, path: string): Promise<void> {
   const resource = await webApi<Resource>(page, path)
   await webApi(page, `${path}?version=${resource.version}`, { method: 'DELETE' })
+}
+
+async function pasteSharedComposer(composer: Locator, text: string) {
+  await expect
+    .poll(() => composer.evaluate((element: HTMLElement) => element.isContentEditable))
+    .toBe(true)
+  await composer.click()
+  await composer.evaluate((element: HTMLElement, value: string) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', value)
+    element.dispatchEvent(
+      new ClipboardEvent('paste', {
+        clipboardData,
+        bubbles: true,
+        cancelable: true,
+      })
+    )
+  }, text)
+}
+
+async function longLinkLayout(
+  page: Page,
+  linkTestId: string,
+  containerSelector: string,
+  labelSelector: string
+) {
+  return page.evaluate(
+    ({ linkTestId, containerSelector, labelSelector }) => {
+      const link = document.querySelector<HTMLElement>(`[data-testid="${linkTestId}"]`)
+      const container = link?.closest<HTMLElement>(containerSelector)
+      const label = link?.querySelector<HTMLElement>(labelSelector)
+      const outer = document.querySelector<HTMLElement>('[data-testid="cloud-todo-detail-scroll"]')
+      if (!link || !container || !label || !outer) {
+        throw new Error('The long Issue comment link layout could not be measured')
+      }
+
+      const linkRect = link.getBoundingClientRect()
+      const containerRect = container.getBoundingClientRect()
+      const labelRect = label.getBoundingClientRect()
+      const fontSize = Number.parseFloat(getComputedStyle(label).fontSize)
+      const lineHeight = Number.parseFloat(getComputedStyle(label).lineHeight) || fontSize * 1.5
+      return {
+        linkRight: linkRect.right,
+        containerRight: containerRect.right,
+        labelHeight: labelRect.height,
+        lineHeight,
+        containerFits: container.scrollWidth <= container.clientWidth + 1,
+        outerFits: outer.scrollWidth <= outer.clientWidth + 1,
+        pageFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
+      }
+    },
+    { linkTestId, containerSelector, labelSelector }
+  )
+}
+
+function expectWrappedInsideContainer(
+  layout: Awaited<ReturnType<typeof longLinkLayout>>,
+  label: string
+) {
+  expect(layout.linkRight, `${label} link escaped its container`).toBeLessThanOrEqual(
+    layout.containerRight + 1
+  )
+  expect(layout.labelHeight, `${label} link label did not wrap`).toBeGreaterThan(
+    layout.lineHeight * 1.5
+  )
+  expect(layout.containerFits, `${label} container overflowed horizontally`).toBe(true)
+  expect(layout.outerFits, `${label} issue detail overflowed horizontally`).toBe(true)
+  expect(layout.pageFits, `${label} page overflowed horizontally`).toBe(true)
 }
 
 const commentTest = test.extend<{ commentDocumentUrl: string }>({
@@ -141,6 +211,81 @@ commentTest(
       await page.getByTestId(`collaboration-issue-${issue.id}`).getByRole('button').first().click()
       await expect(page).toHaveURL(issuePath)
       await expect(page.getByTestId('collaboration-comments')).toContainText(commentMarker)
+    } finally {
+      if (project) {
+        await archiveResource(page, `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`)
+      }
+      await archiveResource(page, `/api/v1/workspaces/${encodeURIComponent(workspace.id)}`)
+    }
+  }
+)
+
+commentTest(
+  'wraps a long Issue comment link without widening the composer or activity layout',
+  async ({ page }) => {
+    await page.setViewportSize({ width: 520, height: 900 })
+    await page.goto('/collaboration')
+    await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
+    const suffix = crypto.randomUUID()
+    const workspace = await webApi<Resource>(page, '/api/v1/workspaces', {
+      method: 'POST',
+      body: { name: `Long comment links ${suffix}` },
+    })
+    let project: Resource | undefined
+    try {
+      project = await webApi<Resource>(page, '/api/v1/cloud-projects', {
+        method: 'POST',
+        body: {
+          workspace_id: workspace.id,
+          name: `Long comment links ${suffix}`,
+          task_provider: 'local',
+          visibility: 'private',
+        },
+      })
+      const issue = await webApi<Resource>(
+        page,
+        `/api/v1/cloud-projects/${project.id}/loop-items`,
+        { method: 'POST', body: { title: `Long comment links ${suffix}` } }
+      )
+      await page.goto(
+        `/collaboration/workspaces/${workspace.id}/projects/${project.id}/issues/${issue.id}`
+      )
+      await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
+
+      const composer = page.getByTestId('collaboration-issue-comment')
+      const commentMarker = `Long persisted comment link ${suffix}`
+      await pasteSharedComposer(
+        composer,
+        [commentMarker, `[${LONG_GITHUB_LABEL}](${LONG_GITHUB_URL})`].join('\n')
+      )
+      const composerLink = composer.getByTestId('composer-link-chip')
+      await expect(composerLink).toHaveAttribute('data-composer-link-url', LONG_GITHUB_URL)
+      expectWrappedInsideContainer(
+        await longLinkLayout(
+          page,
+          'composer-link-chip',
+          '[data-testid="collaboration-issue-comment"]',
+          '.composer-mention-label'
+        ),
+        'Composer'
+      )
+
+      await page.getByTestId('collaboration-issue-comment-submit').click()
+      await expect(page.getByTestId('collaboration-comments')).toContainText(commentMarker)
+      await page.reload()
+
+      const comment = page.locator('.task-detail-comment-card').filter({ hasText: commentMarker })
+      const persistedLink = comment.getByTestId('composer-link-chip')
+      await expect(persistedLink).toHaveAttribute('href', LONG_GITHUB_URL)
+      expectWrappedInsideContainer(
+        await longLinkLayout(
+          page,
+          'composer-link-chip',
+          '.task-detail-comment-card',
+          '.composer-mention-label'
+        ),
+        'Persisted comment'
+      )
     } finally {
       if (project) {
         await archiveResource(page, `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`)

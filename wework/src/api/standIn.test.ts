@@ -6,6 +6,31 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 
+it('treats the cloud transport task_not_found as an empty first-conversation lookup', async () => {
+  const request = vi
+    .fn()
+    .mockRejectedValue(
+      Object.assign(new Error('Task not found on the owning Runtime'), { code: 'task_not_found' })
+    )
+  expect(await createStandInExecutorApi(request).readTask('cloud', 'new-conversation')).toEqual({
+    success: false,
+    code: 'task_not_found',
+  })
+  expect(request).toHaveBeenCalledWith('runtime.tasks.get', { taskId: 'new-conversation' }, 'cloud')
+})
+
+it.each(['permission_denied', 'task_archived', 'cloud_unavailable'])(
+  'preserves %s errors while looking up a conversation',
+  async code => {
+    const error = Object.assign(new Error(code), { code })
+    const api = createStandInExecutorApi(vi.fn().mockRejectedValue(error))
+    await expect(api.readTask('cloud', 'conversation')).rejects.toMatchObject({
+      code,
+      cause: error,
+    })
+  }
+)
+
 it('routes onboarding reads and explicit feature choices to the selected Executor', async () => {
   const request = vi.fn().mockResolvedValue({ state: { version: 1, completed: true } })
   const api = createStandInExecutorApi(request)
@@ -64,7 +89,6 @@ it('addresses project processing status and explicit checks to the chosen bindin
 function fixture() {
   const transport = {
     notifyAssignment: vi.fn<StandInExecutorApi['notifyAssignment']>(),
-    personalAgents: vi.fn<StandInExecutorApi['personalAgents']>(),
     personalGet: vi.fn<StandInExecutorApi['personalGet']>(),
     personalSave: vi.fn<StandInExecutorApi['personalSave']>(),
     readTask: vi.fn<StandInExecutorApi['readTask']>(),
