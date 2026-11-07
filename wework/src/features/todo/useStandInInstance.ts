@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { StandInBindingTarget, StandInInstanceBinding } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
@@ -25,6 +25,17 @@ export function useStandInInstance(
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const operation = useRef(false)
+  const pageActive = useRef(active)
+  useLayoutEffect(() => {
+    pageActive.current = active
+    return () => {
+      pageActive.current = false
+    }
+  }, [active])
+  const initialization = useRef<{
+    deviceId: string
+    request: Promise<{ binding: StandInInstanceBinding; error?: unknown }>
+  } | null>(null)
   const api = services.standInApi
   useEffect(() => {
     if (!active || operation.current) return
@@ -48,47 +59,72 @@ export function useStandInInstance(
         setStoppedProfile(profile)
       }
       if (value.status === 'unbound') {
-        const owned = await api.personalGet(userId, identity.deviceId)
-        const local =
-          userId === LOCAL_USER.id ? owned : await api.personalGet(LOCAL_USER.id, identity.deviceId)
-        if (!current) return
-        const configured = (settings: typeof owned) =>
-          Boolean(
-            settings.version > 0 ||
-            settings.roles.some(
-              role =>
-                role.version > 0 ||
-                role.enabled ||
-                role.name ||
-                role.prompt ||
-                role.connections?.length
-            ) ||
-            settings.primary?.prompt ||
-            settings.primary?.preferences
-          )
-        const localOwner = !initialDeviceId && !configured(owned) && configured(local)
-        const available = connected ? availableStandInDevices(devices) : []
-        const preferred = available.find(device => device.is_default) ?? available[0]
-        const target = {
-          userId: localOwner ? LOCAL_USER.id : userId,
-          backendUrl: localOwner || userId === LOCAL_USER.id ? '' : backendUrl,
-          deviceId:
-            initialDeviceId ||
-            (configured(owned) || localOwner
-              ? identity.deviceId
-              : (preferred?.device_id ?? identity.deviceId)),
+        const initialize = async () => {
+          const unbound = value
+          const [owned, local] = await Promise.all([
+            api.personalGet(userId, identity.deviceId),
+            userId === LOCAL_USER.id
+              ? Promise.resolve(undefined)
+              : api.personalGet(LOCAL_USER.id, identity.deviceId),
+          ])
+          if (!pageActive.current) return { binding: unbound }
+          const configured = (settings: typeof owned) =>
+            Boolean(
+              settings.version > 0 ||
+              settings.roles.some(
+                role =>
+                  role.version > 0 ||
+                  role.enabled ||
+                  role.name ||
+                  role.prompt ||
+                  role.connections?.length
+              ) ||
+              settings.primary?.prompt ||
+              settings.primary?.preferences
+            )
+          const localOwner = !initialDeviceId && !configured(owned) && !!local && configured(local)
+          const available = connected ? availableStandInDevices(devices) : []
+          const preferred = available.find(device => device.is_default) ?? available[0]
+          const target = {
+            userId: localOwner ? LOCAL_USER.id : userId,
+            backendUrl: localOwner || userId === LOCAL_USER.id ? '' : backendUrl,
+            deviceId:
+              initialDeviceId ||
+              (configured(owned) || localOwner
+                ? identity.deviceId
+                : (preferred?.device_id ?? identity.deviceId)),
+          }
+          if (target.deviceId !== identity.deviceId) {
+            await api.personalGet(target.userId, target.deviceId)
+            if (!pageActive.current) return { binding: unbound }
+          }
+          const bound = await api.binding(identity.deviceId, 'bind', unbound.version, target)
+          // Persist the binding first: a failed start remains bound and recoverable by stopping.
+          try {
+            await api.lifecycle(target.userId, target.deviceId, 'start')
+          } catch (cause) {
+            return { binding: bound, error: cause }
+          }
+          return { binding: bound }
         }
-        if (target.deviceId !== identity.deviceId) {
-          await api.personalGet(target.userId, target.deviceId)
-          if (!current) return
+        // Device discovery can refresh while bind is in flight. Every observer must
+        // share that transaction, including late reads of the old unbound version.
+        if (initialization.current?.deviceId !== identity.deviceId) {
+          const request = initialize()
+          initialization.current = { deviceId: identity.deviceId, request }
+          void request.catch(() => {
+            if (initialization.current?.request === request) initialization.current = null
+          })
         }
-        value = await api.binding(identity.deviceId, 'bind', value.version, target)
-        // Persist the binding first: a failed start remains bound and recoverable by stopping.
-        try {
-          await api.lifecycle(target.userId, target.deviceId, 'start')
-        } catch (cause) {
+        const request = initialization.current.request
+        const initialized = await request
+        value = initialized.binding
+        if (value.status === 'unbound' && initialization.current?.request === request) {
+          initialization.current = null
+        }
+        if (initialized.error) {
           if (current) setBinding(value)
-          throw cause
+          throw initialized.error
         }
       }
       if (current) {
