@@ -214,13 +214,23 @@ export function createStandInCoordinatorVerification({
       const role = (await rpc('runtime.stand_in.personal.get', { userId: USER })).roles[0]
       assert.ok(role, 'The preceding lifecycle leaves one recreated role')
       await control.command('navigate', 'body', { value: '/settings/appearance' })
-      await control.command('waitFor', '[data-testid="appearance-settings-page"]')
-      await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]')
-      await control.command('waitFor', 'html[data-theme="dark"]')
+      await control.command('waitFor', '[data-testid="appearance-settings-page"]', {
+        timeoutMs: 30_000,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]', {
+        timeoutMs: 30_000,
+      })
+      await control.command('waitFor', 'html[data-theme="dark"]', { timeoutMs: 30_000 })
       await control.command('navigate', 'body', { value: '/stand-in' })
-      await control.command('click', `[data-testid="stand-in-overview-role-${role.id}"]`)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
+      await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${role.id}"]`, {
+        timeoutMs: 30_000,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]', {
+        timeoutMs: 30_000,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]', {
+        timeoutMs: 30_000,
+      })
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')

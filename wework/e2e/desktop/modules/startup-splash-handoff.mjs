@@ -35,11 +35,10 @@ function assertCompletedFrame(completion) {
 export function assertStartupSplashHandoff(snapshot) {
   assert.equal(snapshot.state, 'closed', 'The handoff did not close the startup splash')
   const names = snapshot.events.map(event => event.name)
-  const readiness = names.indexOf('animation-ready')
+  const completionIndex = names.indexOf('completion-started')
+  const readinessEvents = names.flatMap((name, index) => (name === 'animation-ready' ? [index] : []))
   assert.ok(
-    readiness > 0 &&
-      readiness < names.indexOf('completion-started') &&
-      names.lastIndexOf('animation-ready') === readiness,
+    readinessEvents.length > 0 && readinessEvents.every(index => index < completionIndex),
     'The startup splash did not record animation readiness before completion'
   )
   // Showing the window does not wait for animation initialization. Either event
@@ -47,7 +46,9 @@ export function assertStartupSplashHandoff(snapshot) {
   assert.deepEqual(
     names.filter(name => name !== 'animation-ready'),
     STARTUP_SPLASH_HANDOFF_EVENTS.filter(name => name !== 'animation-ready'),
-    'The startup splash did not complete its painted-completion and fade lifecycle'
+    `The startup splash did not complete its painted-completion and fade lifecycle: ${names.join(
+      ','
+    )}`
   )
   assert.ok(
     snapshot.events.every(
