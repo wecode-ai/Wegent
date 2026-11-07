@@ -157,10 +157,16 @@ function assertFieldCoverage(document, source, translations, context, includeObj
   }
 }
 
-test('every settings page has the same bilingual topic owner and its literal fields are documented', async () => {
-  const sources = (await readdir(join(root, 'src'), { recursive: true }))
-    .filter(path => path.endsWith('SettingsPage.tsx'))
-    .map(path => `src/${path.replaceAll('\\', '/')}`)
+test('every desktop and shared collaboration page has a bilingual topic owner and documented literal fields', async () => {
+  const sources = []
+  for (const sourceRoot of ['src', '../packages/collaboration/src']) {
+    const files = await readdir(join(root, sourceRoot), { recursive: true })
+    sources.push(
+      ...files
+        .filter(path => path.endsWith('Page.tsx'))
+        .map(path => `${sourceRoot}/${path.replaceAll('\\', '/')}`)
+    )
+  }
   const ownersByLanguage = []
   for (const [language, locale] of [
     ['zh', 'zh-CN'],

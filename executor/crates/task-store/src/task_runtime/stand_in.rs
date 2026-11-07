@@ -66,6 +66,11 @@ impl LocalTaskStore {
                 .ok_or(TaskRuntimeError::ProjectNotFound)?;
         }
         let mut personal = read_personal(&connection, user_id, &device)?;
+        if !personal["lifecycle"]["status"].is_null() {
+            return Err(TaskRuntimeError::Invalid(
+                "Bind the stopped stand-in before editing its configuration".into(),
+            ));
+        }
         let previous_personal = personal.clone();
         let before = personal["roles"]
             .as_array()

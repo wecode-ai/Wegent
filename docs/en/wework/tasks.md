@@ -37,6 +37,8 @@ Goals may be active, paused, blocked, budget/usage-limited or complete. Exhauste
 
 ### Personal scheduled tasks
 
+<!-- ui-source: src/features/automations/AutomationsPage.tsx -->
+
 1. Open **left sidebar → Scheduled**, search existing schedules or create one.
 2. Enter a name and instructions. Choose a new task per run or an existing pinned task; enable a persistent goal only when intended and specify it.
 3. Choose local/cloud location, device, project, model and available reasoning effort. Directory, accounts and plugins belong to that device.

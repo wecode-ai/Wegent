@@ -36,6 +36,21 @@ AI uses structured `inspect` results to understand the page. `screenshot` still 
 
 The right panel shows the Agent browser-control state while AI operates the page. You can pause AI control and resume it after review. Confirm the target and impact before account, publishing, payment, deletion, or other high-risk actions.
 
+### Individual browsing-history operations
+
+<!-- ui-source: src/components/settings/BrowserHistoryPage.tsx -->
+
+<a id="browser-history-controls"></a>
+
+Open **browser toolbar … → History**, or **Settings → Integrations → Browser → Browsing history → Manage**.
+
+| Action                  | Steps and result                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Search                  | Enter keywords in the top search field; no results differs from a loading failure                                  |
+| Browse by date          | Collapse/expand a date group and select a record to open it                                                        |
+| Remove multiple records | Select record checkboxes and remove the selection; does not clear webpage cookies or conversation history          |
+| More records            | Continue loading history. Retry an initial failure on the page, or a pagination failure at its pagination controls |
+
 ## Browser controls
 
 ### Toolbar and More menu
