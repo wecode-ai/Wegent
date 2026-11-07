@@ -352,7 +352,6 @@ class RealCloudEnvironment {
     backendEnv = {},
     claudeBinary,
     codexBinary,
-    initialExecutorLatestVersion,
     managedCloudIdentity = false,
     modelServerUrl,
     scenarioConfigToml = '',
@@ -361,7 +360,6 @@ class RealCloudEnvironment {
     this.scenarioBackendEnv = backendEnv
     this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
-    this.initialExecutorLatestVersion = initialExecutorLatestVersion
     this.managedCloudIdentity = managedCloudIdentity
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
@@ -459,12 +457,10 @@ class RealCloudEnvironment {
       ...this.scenarioBackendEnv,
     }
     this.backendEnv = backendEnv
-    if (this.initialExecutorLatestVersion !== undefined) {
-      // Seed before any device request can start a competing remote version refresh.
-      await this.observePreparation('executor-version-seeding', () =>
-        this.setExecutorLatestVersion(this.initialExecutorLatestVersion)
-      )
-    }
+    // Seed before device requests can start a remote refresh that races fixture updates.
+    await this.observePreparation('executor-version-seeding', () =>
+      this.setExecutorLatestVersion('1.0.0')
+    )
     await this.observePreparation('database-migrate', () =>
       runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
         cwd: backendDirectory,
