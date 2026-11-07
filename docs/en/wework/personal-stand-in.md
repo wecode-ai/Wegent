@@ -118,9 +118,11 @@ A structured asynchronous question raised in an Issue-bound execution is persist
 
 Recipients answer through the shared **Needs your input** surface and the original Issue's question card. Targeted notifications reuse collaboration channel preferences. Answers persist in the owning comment thread and continue the original execution without granting access to another person's private Runtime or credentials. Reading does not resolve a request. Queued answers remain awaiting acceptance; only the owning execution's acceptance clears that question. Questions settle independently, and any unresolved question keeps the Issue on the human side. AI waits only for dependent steps while continuing independent work.
 
+Cloud question reports and source blocking updates require a verifiable original execution record matching the project, Issue, Runtime task, device and execution owner. Manual task bindings alone, or group activities without matching canonical evidence, return a conflict (409). A same-named device or inferred owner cannot substitute for that proof; restore the original execution's trusted record first. Local projects retain their owning Executor's native source checks.
+
 Saved board views support **Only issues needing my input**, evaluated for the current viewer rather than the view's author. Offline questions and drafts remain visible but require reconnection and authorization checks before replying. Native execution approvals and connector authentication remain separate from business answers.
 
-The project toolbar also offers a one-click **Needs my input** filter without rewriting saved views. The global pending-work page includes native project work currently assigned to the viewer and explicit project questions, without duplicating the same question as ordinary work. Selecting project work opens the real Issue in the existing split view, without fabricating a Runtime task.
+The project toolbar also offers a one-click **Needs my action** filter without rewriting saved views. The global pending-work page includes native project work currently assigned to the viewer and explicit project questions, without duplicating the same question as ordinary work. Selecting project work opens the real Issue in the existing split view, without fabricating a Runtime task.
 
 <a id="waiting-time-and-workflow-analysis"></a>
 

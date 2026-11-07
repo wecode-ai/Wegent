@@ -16,6 +16,10 @@ use crate::{background_jobs::project::notifications, http_compat::FastApiError, 
 #[path = "human_requests_mysql_tests.rs"]
 mod mysql_tests;
 
+#[path = "human_request_source.rs"]
+mod source_authority;
+use source_authority::{RuntimeEvidence, owned_devices as owned_source_devices, require_runtime};
+
 #[derive(FromMysqlRow)]
 struct Issue {
     id: String,
@@ -50,12 +54,40 @@ struct Assignment {
     blocks_progress: Option<bool>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ReporterOperation {
+    SetBlocking,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlockingUpdate {
+    #[serde(rename = "operation")]
+    _operation: ReporterOperation,
+    version: i64,
+    blocks_progress: bool,
+    runtime_device_id: String,
+    runtime_task_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum HumanRequestUpdate {
+    Blocking(BlockingUpdate),
+    Assignment(Assignment),
+}
+
 fn error(code: StatusCode, message: &str) -> FastApiError {
     FastApiError::detail(code, message)
 }
 
 fn request_id(device: &str, task: &str, item: &str) -> String {
     format!("{:x}", Sha256::digest(format!("{device}\0{task}\0{item}")))
+}
+
+fn reported_request_id(source_device: &str, payload: &Question) -> String {
+    request_id(source_device, &payload.runtime_task_id, &payload.item_id)
 }
 
 fn pending(request: &Value) -> bool {
@@ -71,6 +103,135 @@ fn requests(issue: &Issue) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn cloud_assignee_user_id(issue: &Issue) -> Option<i64> {
+    // Cloud SQL uses zero for an absent person; local user zero is unrelated.
+    issue.assignee_user_id.filter(|id| *id > 0)
+}
+
+fn responsible_user_id(issue: &Issue) -> Option<i64> {
+    let human_leader = issue.metadata.as_ref().and_then(|metadata| {
+        let leader = metadata.0.pointer("/collaboration_group/leader")?;
+        (leader["kind"] == "human")
+            .then_some(leader["id"].as_str()?.parse::<i64>().ok()?)
+            .filter(|id| *id > 0)
+    });
+    cloud_assignee_user_id(issue)
+        .or(human_leader)
+        .or(issue.created_by_user_id.filter(|id| *id > 0))
+}
+
+fn owns_report(
+    request: &Value,
+    user: i32,
+    payload: &BlockingUpdate,
+    owned_devices: &[String],
+) -> bool {
+    request["reported_by_user_id"].as_i64() == Some(i64::from(user))
+        && request["runtime_task_id"].as_str() == Some(payload.runtime_task_id.as_str())
+        && request["runtime_device_id"]
+            .as_str()
+            .is_some_and(|device| owned_devices.iter().any(|owned| owned == device))
+}
+
+fn update_blocking(
+    request: &mut Value,
+    user: i32,
+    payload: &BlockingUpdate,
+    owned_devices: &[String],
+    at: &str,
+) -> bool {
+    let Some(next_version) = payload.version.checked_add(1) else {
+        return false;
+    };
+    if request["status"] != "pending"
+        || request["version"].as_i64() != Some(payload.version)
+        || !owns_report(request, user, payload, owned_devices)
+    {
+        return false;
+    }
+    request["blocks_progress"] = json!(payload.blocks_progress);
+    request["version"] = json!(next_version);
+    request["updated_at"] = json!(at);
+    let mut events = request["events"].as_array().cloned().unwrap_or_default();
+    events.push(json!({
+        "type":"blocking_changed", "at":at, "user_id":user,
+        "blocks_progress":payload.blocks_progress,
+    }));
+    request["events"] = json!(events);
+    true
+}
+
+async fn set_blocking(
+    state: &AppState,
+    issue: &Issue,
+    request_id: &str,
+    user: i32,
+    payload: BlockingUpdate,
+) -> Result<Value, FastApiError> {
+    if [&payload.runtime_device_id, &payload.runtime_task_id]
+        .iter()
+        .any(|id| id.is_empty() || id.len() > 255)
+    {
+        return Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Invalid source identity",
+        ));
+    }
+    let owned_devices =
+        owned_source_devices(&state.mysql, i64::from(user), &payload.runtime_device_id).await?;
+    let all = requests(issue);
+    let request = all
+        .iter()
+        .find(|request| request["id"] == request_id)
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, "Question not found"))?;
+    if !owns_report(request, user, &payload, &owned_devices) {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "Only the owning question source can change blocking",
+        ));
+    }
+    let execution_id = require_runtime(
+        &state.mysql,
+        i64::from(user),
+        RuntimeEvidence {
+            execution_id: request["source_execution_id"].as_i64(),
+            project_id: &issue.cloud_project_id,
+            issue_id: &issue.id,
+            device_id: request["runtime_device_id"].as_str().unwrap_or_default(),
+            task_id: &payload.runtime_task_id,
+        },
+        &owned_devices,
+    )
+    .await?;
+    let saved = state.mysql.with_transaction(async |tx| {
+        let locked: Issue = tx.fetch_one("SELECT id,cloud_project_id,title,status,assignee_user_id,created_by_user_id,metadata FROM loop_items WHERE id=? FOR UPDATE",(issue.id.as_str(),)).await?;
+        if matches!(locked.status.as_deref(),Some("completed" | "cancelled" | "archived")) {
+            return Ok(None);
+        }
+        let mut all = requests(&locked);
+        let Some(request) = all.iter_mut().find(|request| request["id"] == request_id) else {
+            return Ok(None);
+        };
+        if request["source_execution_id"].as_i64() != Some(execution_id) {
+            return Ok(None);
+        }
+        if !update_blocking(request,user,&payload,&owned_devices,&chrono::Utc::now().to_rfc3339()) {
+            return Ok(None);
+        }
+        let saved = request.clone();
+        save_requests(tx,&issue.id,&all).await?;
+        Ok(Some(saved))
+    }).await.map_err(internal)?;
+    let saved = saved.ok_or_else(|| {
+        error(
+            StatusCode::CONFLICT,
+            "Question changed; refresh before updating blocking",
+        )
+    })?;
+    publish_changed(state, issue, user).await;
+    Ok(saved)
+}
+
 fn may_assign(issue: &Issue, request: &Value, user: i32, role: &str) -> bool {
     if !super::loop_repository::has_permission(role, "Developer") {
         return false;
@@ -82,9 +243,10 @@ fn may_assign(issue: &Issue, request: &Value, user: i32, role: &str) -> bool {
     let leads = leader.is_some_and(|leader| {
         leader["kind"] == "human" && leader["id"].as_str() == Some(user.to_string().as_str())
     });
-    issue.assignee_user_id == Some(i64::from(user))
+    let assignee = cloud_assignee_user_id(issue);
+    assignee == Some(i64::from(user))
         || leads
-        || (issue.assignee_user_id.is_none()
+        || (assignee.is_none()
             && leader.is_none_or(|leader| leader["kind"] != "human")
             && request["responsible_user_id"].as_i64() == Some(i64::from(user)))
         || super::loop_repository::has_permission(role, "Maintainer")
@@ -199,9 +361,8 @@ async fn read_issue(state: &AppState, item: &str, user: i32) -> Result<Issue, Fa
     ).await.map_err(internal)?.ok_or_else(|| error(StatusCode::NOT_FOUND, "Issue not found"))
 }
 
-async fn require_write(state: &AppState, issue: &Issue, user: i32) -> Result<(), FastApiError> {
-    let access = require_cloud_project_role(state, &issue.cloud_project_id, user).await?;
-    if !super::loop_repository::has_permission(&access.role, "Developer") {
+fn require_participation(issue: &Issue, role: &str) -> Result<(), FastApiError> {
+    if !super::loop_repository::has_permission(role, "Developer") {
         return Err(error(
             StatusCode::FORBIDDEN,
             "Issue participation requires Developer access",
@@ -214,6 +375,11 @@ async fn require_write(state: &AppState, issue: &Issue, user: i32) -> Result<(),
         return Err(error(StatusCode::CONFLICT, "Issue has ended"));
     }
     Ok(())
+}
+
+async fn require_write(state: &AppState, issue: &Issue, user: i32) -> Result<(), FastApiError> {
+    let access = require_cloud_project_role(state, &issue.cloud_project_id, user).await?;
+    require_participation(issue, &access.role)
 }
 
 #[brz_http_server::get("/api/v1/loop-items/:item_id/human-requests")]
@@ -299,27 +465,17 @@ async fn report(
             "Invalid question identity or content",
         ));
     }
-    let identities = crate::device_identity::owned_device_identity_ids(
-        &state.mysql,
-        i64::from(user.id),
-        &payload.runtime_device_id,
-    )
-    .await
-    .map_err(internal)?;
-    if identities.is_empty() {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "Question device is not owned by the caller",
-        ));
-    }
+    let identities =
+        owned_source_devices(&state.mysql, i64::from(user.id), &payload.runtime_device_id).await?;
     #[derive(FromMysqlRow)]
     struct Source {
         message_id: String,
         thread_root_message_id: String,
         runtime_device_id: String,
+        metadata: Option<Json<Value>>,
     }
     let sources: Vec<Source> = state.mysql.fetch_all(
-        "SELECT message_id,thread_root_message_id,runtime_device_id FROM project_chat_messages WHERE project_id=? AND task_id=? AND runtime_task_id=? AND sender_type='agent' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) ORDER BY id DESC",
+        "SELECT message_id,thread_root_message_id,runtime_device_id,metadata FROM project_chat_messages WHERE project_id=? AND task_id=? AND runtime_task_id=? AND sender_type='agent' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) ORDER BY id DESC",
         (issue.cloud_project_id.as_str(), item_id, payload.runtime_task_id.as_str()),
     ).await.map_err(internal)?;
     let source = sources
@@ -331,33 +487,35 @@ async fn report(
                 "Question has no owning Issue execution",
             )
         })?;
+    let source_execution_id = require_runtime(
+        &state.mysql,
+        i64::from(user.id),
+        RuntimeEvidence {
+            execution_id: source
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.0["execution_id"].as_i64()),
+            project_id: &issue.cloud_project_id,
+            issue_id: &issue.id,
+            device_id: &source.runtime_device_id,
+            task_id: &payload.runtime_task_id,
+        },
+        &identities,
+    )
+    .await?;
     let root = if source.thread_root_message_id.is_empty() {
         &source.message_id
     } else {
         &source.thread_root_message_id
     };
-    let id = request_id(
-        &payload.runtime_device_id,
-        &payload.runtime_task_id,
-        &payload.item_id,
-    );
+    let id = reported_request_id(&source.runtime_device_id, &payload);
     let now = chrono::Utc::now().to_rfc3339();
-    let human_leader = issue.metadata.as_ref().and_then(|metadata| {
-        let leader = metadata.0.pointer("/collaboration_group/leader")?;
-        (leader["kind"] == "human")
-            .then_some(leader["id"].as_str()?.parse::<i64>().ok()?)
-            .filter(|id| *id > 0)
-    });
-    let responsible = issue
-        .assignee_user_id
-        .or(human_leader)
-        .or(issue.created_by_user_id.filter(|id| *id > 0))
-        .ok_or_else(|| {
-            error(
-                StatusCode::CONFLICT,
-                "Assign a responsible person before requesting input",
-            )
-        })?;
+    let responsible = responsible_user_id(&issue).ok_or_else(|| {
+        error(
+            StatusCode::CONFLICT,
+            "Assign a responsible person before requesting input",
+        )
+    })?;
     #[derive(FromMysqlRow)]
     struct UserName {
         user_name: String,
@@ -386,6 +544,7 @@ async fn report(
         "id":id, "project_id":issue.cloud_project_id, "issue_id":item_id,
         "issue_title":issue.title, "root_comment_id":root, "source_message_id":source.message_id,
         "runtime_device_id":source.runtime_device_id, "runtime_task_id":payload.runtime_task_id,
+        "source_execution_id":source_execution_id,
         "item_id":payload.item_id, "question":payload.question, "questions":payload.questions,
         "recipient_user_id":null, "recipient_name":null, "responsible_user_id":responsible,
         "responsible_user_name":responsible_user.map(|user| user.user_name),
@@ -418,10 +577,16 @@ async fn assign(
     item_id: &str,
     request_id: &str,
     #[auth] user: FlexibleUser,
-    payload: Assignment,
+    payload: HumanRequestUpdate,
 ) -> Result<Value, FastApiError> {
     let issue = read_issue(state, item_id, user.id).await?;
     require_write(state, &issue, user.id).await?;
+    let payload = match payload {
+        HumanRequestUpdate::Blocking(payload) => {
+            return set_blocking(state, &issue, request_id, user.id, payload).await;
+        }
+        HumanRequestUpdate::Assignment(payload) => payload,
+    };
     let all = requests(&issue);
     let request = all
         .iter()
@@ -511,6 +676,158 @@ async fn assign(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn blocking_payload() -> BlockingUpdate {
+        serde_json::from_value(json!({
+            "operation":"set_blocking", "version":3, "blocks_progress":true,
+            "runtime_device_id":"device", "runtime_task_id":"task",
+        }))
+        .unwrap()
+    }
+
+    fn reported_question() -> Value {
+        json!({
+            "id":"question", "status":"pending", "version":3,
+            "reported_by_user_id":9, "runtime_device_id":"device", "runtime_task_id":"task",
+            "blocks_progress":false, "recipient_user_id":7, "recipient_name":"Recipient",
+            "responsible_user_id":8, "root_comment_id":"original-comment",
+            "waiting_since":"2026-11-01T00:00:00Z", "updated_at":"2026-11-01T00:00:00Z",
+            "events":[{"type":"requested","user_id":9}],
+        })
+    }
+
+    #[test]
+    fn source_can_change_only_blocking_without_assignment_authority() {
+        let mut request = reported_question();
+        let before = request.clone();
+        let payload = blocking_payload();
+        let mut issue = Issue {
+            id: "issue".into(),
+            cloud_project_id: "project".into(),
+            title: None,
+            status: Some("in_progress".into()),
+            assignee_user_id: Some(7),
+            created_by_user_id: Some(8),
+            metadata: None,
+        };
+        assert!(!may_assign(&issue, &request, 9, "Developer"));
+        assert!(require_participation(&issue, "Developer").is_ok());
+        assert_eq!(
+            require_participation(&issue, "Reporter")
+                .unwrap_err()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        issue.status = Some("completed".into());
+        assert_eq!(
+            require_participation(&issue, "Developer")
+                .unwrap_err()
+                .status(),
+            StatusCode::CONFLICT
+        );
+        assert!(update_blocking(
+            &mut request,
+            9,
+            &payload,
+            &["device".into()],
+            "now"
+        ));
+        assert_eq!(request["blocks_progress"], true);
+        assert_eq!(request["version"], 4);
+        assert_eq!(request["updated_at"], "now");
+        assert_eq!(
+            request["events"][1],
+            json!({
+                "type":"blocking_changed", "at":"now", "user_id":9, "blocks_progress":true,
+            })
+        );
+        for key in ["blocks_progress", "version", "updated_at", "events"] {
+            request.as_object_mut().unwrap().remove(key);
+        }
+        let mut unchanged = before;
+        for key in ["blocks_progress", "version", "updated_at", "events"] {
+            unchanged.as_object_mut().unwrap().remove(key);
+        }
+        assert_eq!(request, unchanged);
+    }
+
+    #[test]
+    fn blocking_rejects_non_source_stale_version_and_non_pending_status_without_mutation() {
+        let payload = blocking_payload();
+        for user in [7, 8, 10] {
+            let mut request = reported_question();
+            let before = request.clone();
+            assert!(!update_blocking(
+                &mut request,
+                user,
+                &payload,
+                &["device".into()],
+                "now"
+            ));
+            assert_eq!(request, before);
+        }
+        for (key, value) in [
+            ("runtime_task_id", json!("another-task")),
+            ("runtime_device_id", json!("another-device")),
+            ("reported_by_user_id", Value::Null),
+            ("version", json!(2)),
+            ("status", json!("answering")),
+            ("status", json!("resolved")),
+            ("status", json!("cancelled")),
+        ] {
+            let mut request = reported_question();
+            request[key] = value;
+            let before = request.clone();
+            assert!(!update_blocking(
+                &mut request,
+                9,
+                &payload,
+                &["device".into()],
+                "now"
+            ));
+            assert_eq!(request, before);
+        }
+        let mut request = reported_question();
+        let before = request.clone();
+        assert!(!update_blocking(&mut request, 9, &payload, &[], "now"));
+        assert_eq!(request, before);
+    }
+
+    #[test]
+    fn blocking_and_assignment_payloads_cannot_be_mixed() {
+        let valid = json!({
+            "operation":"set_blocking", "version":3, "blocks_progress":true,
+            "runtime_device_id":"device", "runtime_task_id":"task",
+        });
+        assert!(matches!(
+            serde_json::from_value::<HumanRequestUpdate>(valid.clone()).unwrap(),
+            HumanRequestUpdate::Blocking(_)
+        ));
+        for (key, value) in [
+            ("recipient_user_id", json!(7)),
+            ("recipient_user_id", Value::Null),
+            ("cancel", json!(false)),
+            ("operation", json!("assign")),
+            ("blocks_progress", json!("true")),
+        ] {
+            let mut mixed = valid.clone();
+            mixed[key] = value;
+            assert!(serde_json::from_value::<HumanRequestUpdate>(mixed).is_err());
+        }
+        let mut missing_flag = valid;
+        missing_flag
+            .as_object_mut()
+            .unwrap()
+            .remove("blocks_progress");
+        assert!(serde_json::from_value::<HumanRequestUpdate>(missing_flag).is_err());
+        assert!(matches!(
+            serde_json::from_value::<HumanRequestUpdate>(
+                json!({"version":3,"recipient_user_id":7})
+            )
+            .unwrap(),
+            HumanRequestUpdate::Assignment(_)
+        ));
+    }
+
     #[test]
     fn assignment_requires_write_access_and_current_responsibility() {
         let mut issue = Issue {
@@ -540,6 +857,50 @@ mod tests {
         assert!(may_assign(&issue, &request, 9, "Developer"));
     }
     #[test]
+    fn cloud_zero_assignee_preserves_creator_and_leader_responsibility() {
+        let mut issue = Issue {
+            id: "issue".into(),
+            cloud_project_id: "project".into(),
+            title: None,
+            status: Some("in_progress".into()),
+            assignee_user_id: Some(0),
+            created_by_user_id: Some(9),
+            metadata: None,
+        };
+        let creator_request = json!({"reported_by_user_id":10,"responsible_user_id":9});
+        for unset in [None, Some(0), Some(-1)] {
+            issue.assignee_user_id = unset;
+            assert_eq!(responsible_user_id(&issue), Some(9));
+            assert!(may_assign(&issue, &creator_request, 9, "Developer"));
+            assert!(!may_assign(&issue, &creator_request, 9, "Reporter"));
+            assert!(!may_assign(&issue, &creator_request, 10, "Developer"));
+            assert!(may_assign(&issue, &creator_request, 10, "Maintainer"));
+        }
+        issue.assignee_user_id = Some(0);
+        issue.metadata = Some(Json(
+            json!({"collaboration_group":{"leader":{"kind":"human","id":"8"}}}),
+        ));
+        let leader_request = json!({"reported_by_user_id":10,"responsible_user_id":8});
+        assert_eq!(responsible_user_id(&issue), Some(8));
+        assert!(may_assign(&issue, &leader_request, 8, "Developer"));
+        assert!(!may_assign(&issue, &creator_request, 9, "Developer"));
+        issue.assignee_user_id = Some(7);
+        assert_eq!(responsible_user_id(&issue), Some(7));
+        for user in [7, 8] {
+            assert!(may_assign(&issue, &leader_request, user, "Developer"));
+        }
+        assert!(!may_assign(&issue, &creator_request, 9, "Developer"));
+        issue.assignee_user_id = Some(0);
+        issue.metadata = Some(Json(
+            json!({"collaboration_group":{"leader":{"kind":"agent","id":"8"}}}),
+        ));
+        assert_eq!(responsible_user_id(&issue), Some(9));
+        assert!(may_assign(&issue, &creator_request, 9, "Developer"));
+        assert!(!may_assign(&issue, &creator_request, 8, "Developer"));
+        issue.created_by_user_id = Some(0);
+        assert_eq!(responsible_user_id(&issue), None);
+    }
+    #[test]
     fn stable_question_identity_is_scoped_to_its_execution() {
         assert_eq!(
             request_id("device", "task", "question"),
@@ -553,6 +914,22 @@ mod tests {
             request_id("device", "task", "question"),
             request_id("other-device", "task", "question")
         );
+    }
+    #[test]
+    fn reported_question_uses_persisted_source_identity_not_the_payload_alias() {
+        let mut payload = Question {
+            runtime_device_id: "app-record-1".into(),
+            runtime_task_id: "task".into(),
+            item_id: "question".into(),
+            question: "Decision".into(),
+            questions: vec![],
+            blocks_progress: false,
+        };
+        let first = reported_request_id("source-device", &payload);
+        payload.runtime_device_id = "transport-alias".into();
+        assert_eq!(first, reported_request_id("source-device", &payload));
+        payload.runtime_task_id = "other-task".into();
+        assert_ne!(first, reported_request_id("source-device", &payload));
     }
     #[test]
     fn read_or_queued_answer_does_not_resolve_a_question() {
