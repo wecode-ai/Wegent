@@ -69,7 +69,10 @@ async function detachVisualizationTab(control, uiTimeoutMs) {
     'The visualization workspace window did not connect'
   )
   assert.ok(ready.windowLabel.startsWith('workspace-'))
-  const detached = { command: (...args) => control.commandForWindow(ready.windowLabel, ...args) }
+  const detached = {
+    windowLabel: ready.windowLabel,
+    command: (...args) => control.commandForWindow(ready.windowLabel, ...args),
+  }
   await detached.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
   await waitForVisualizationBlob(detached, FRAME, uiTimeoutMs)
   control.activateWindow('main')
@@ -97,7 +100,7 @@ export function createInteractiveVisualizationChecks({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           capability: 'e2e.inlineVisualizationFrame',
-          params: { url, action, selector, value },
+          params: { url, action, selector, value, windowLabel: control.windowLabel ?? 'main' },
         }),
       }
     )
