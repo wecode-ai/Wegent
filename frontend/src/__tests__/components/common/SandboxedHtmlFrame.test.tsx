@@ -18,10 +18,7 @@ describe('SandboxedHtmlFrame', () => {
     )
 
     const frame = document.querySelector('iframe')
-    expect(frame).toHaveAttribute(
-      'srcdoc',
-      expect.stringContaining("source: 'wegent-html-preview'")
-    )
+    expect(frame).toHaveAttribute('srcdoc', expect.stringContaining("source:'wegent-html-preview'"))
   })
 
   it('keeps the original document when script errors are not observed', () => {
@@ -32,14 +29,23 @@ describe('SandboxedHtmlFrame', () => {
     expect(frame).toHaveAttribute('srcdoc', content)
   })
 
+  it('injects the bridge without shifting original line numbers', () => {
+    const content = '<div>fragment</div><script>throw new Error("line 5")</script>'
+    render(<SandboxedHtmlFrame content={content} title="Report" reportScriptErrors />)
+
+    const srcdoc = document.querySelector('iframe')?.getAttribute('srcdoc') ?? ''
+    expect(srcdoc).not.toContain('\n')
+    expect(srcdoc.endsWith(content)).toBe(true)
+  })
+
   it('injects the bridge after an existing head element', () => {
     const content =
       '<!doctype html><html><head><title>Report</title></head><body><div>x</div></body></html>'
     render(<SandboxedHtmlFrame content={content} title="Report" reportScriptErrors />)
 
     const srcdoc = document.querySelector('iframe')?.getAttribute('srcdoc') ?? ''
-    expect(srcdoc.indexOf("source: 'wegent-html-preview'")).toBeGreaterThan(0)
-    expect(srcdoc.indexOf("source: 'wegent-html-preview'")).toBeLessThan(srcdoc.indexOf('<title>'))
+    expect(srcdoc.indexOf("source:'wegent-html-preview'")).toBeGreaterThan(0)
+    expect(srcdoc.indexOf("source:'wegent-html-preview'")).toBeLessThan(srcdoc.indexOf('<title>'))
   })
 
   it('does not treat a header element as the document head', () => {
@@ -48,7 +54,7 @@ describe('SandboxedHtmlFrame', () => {
 
     const srcdoc = document.querySelector('iframe')?.getAttribute('srcdoc') ?? ''
     expect(srcdoc).toContain('<head>')
-    expect(srcdoc.indexOf("source: 'wegent-html-preview'")).toBeLessThan(srcdoc.indexOf('<header>'))
+    expect(srcdoc.indexOf("source:'wegent-html-preview'")).toBeLessThan(srcdoc.indexOf('<header>'))
   })
 
   it('injects the bridge into a head tag with attributes', () => {

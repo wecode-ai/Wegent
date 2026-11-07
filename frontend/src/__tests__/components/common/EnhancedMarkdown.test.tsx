@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 
 jest.mock('next/dynamic', () => () => {
@@ -86,5 +86,34 @@ After`}
     expect(iframe).toHaveAttribute('srcdoc', expect.stringContaining('body { background: red; }'))
     expect(iframe).not.toHaveAttribute('srcdoc', expect.stringContaining('window.sendToChat'))
     expect(iframe).not.toHaveAttribute('srcdoc', expect.stringContaining('send-to-chat'))
+  })
+
+  it('shows script errors reported by artifact previews', async () => {
+    const { container } = render(
+      <EnhancedMarkdown
+        theme="light"
+        source={`<artifact title="Broken report"><div>Report body</div><script>throw new Error('boom')</script></artifact>`}
+      />
+    )
+
+    const frame = container.querySelector('iframe')
+    fireEvent(
+      window,
+      new MessageEvent('message', {
+        source: frame?.contentWindow,
+        data: {
+          source: 'wegent-html-preview',
+          type: 'script-error',
+          message: 'boom',
+          line: 12,
+        },
+      })
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('artifact-preview-script-error')).toHaveTextContent(
+        'This page script failed (line 12): boom'
+      )
+    })
   })
 })

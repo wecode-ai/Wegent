@@ -89,12 +89,24 @@ test.describe('Shared Task Page', () => {
             value: 'Research answer with [cite: 1]',
             annotations: [
               {
-                title: 'Citation source',
-                url: 'https://example.invalid/source',
+                start_index: 0,
+                end_index: 1,
+                source: 'https://example.invalid/grounding-source',
               },
             ],
-            sources: [{ title: 'Source reference', url: 'https://example.invalid/reference' }],
-            retrieval_summary: 'Research retrieval summary',
+            sources: [
+              {
+                index: 1,
+                title: 'Source reference',
+                source_uri: 'https://example.invalid/reference',
+                source_type: 'external',
+                source_id: 'reference',
+              },
+            ],
+            retrieval_summary: {
+              searched_source_ids: ['reference'],
+              ignored_source_ids: [],
+            },
             messages_chain: [{ role: 'assistant', content: 'private model transcript' }],
           },
           status: 'COMPLETED',
@@ -110,9 +122,9 @@ test.describe('Shared Task Page', () => {
     await expect(page.getByRole('heading', { name: 'E2E shared report' })).toBeVisible()
     await expect(page.getByText('E2E Sharer')).toBeVisible()
     await expect(page.getByText('Research answer with (参考来源: 1)')).toBeVisible()
-    await expect(page.getByText('Citation source')).toBeVisible()
+    await expect(page.getByText('example.invalid')).toBeVisible()
     await expect(page.getByText('Source reference')).toBeVisible()
-    await expect(page.getByText('Research retrieval summary')).toBeVisible()
+    await expect(page.getByText('Cited 1 documents from 1 knowledge sources')).toBeVisible()
     expect(await page.getByText('private model transcript').count()).toBe(0)
   })
 
@@ -143,6 +155,9 @@ test.describe('Shared Task Page', () => {
     const frame = page.getByTestId('artifact-preview-iframe')
     await expect(frame).toBeVisible()
     await expect(frame).toHaveAttribute('data-artifact-script-error-reporting', 'on')
-    await expect(frame.getByText('Report body')).toBeVisible()
+    await expect(frame.contentFrame().getByText('Report body')).toBeVisible()
+    await expect(page.getByTestId('artifact-preview-script-error')).toContainText(
+      'preview library is unavailable'
+    )
   })
 })
