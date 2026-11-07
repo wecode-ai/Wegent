@@ -76,6 +76,50 @@ async function fixture() {
 }
 
 describe('startup window handoff', () => {
+  test('a late completed frame cannot restart a timed-out handoff', async () => {
+    const { splash, options, release, target } = await fixture()
+    const failure = expect(splash.handoff(options)).rejects.toThrow(
+      'Startup completion frame exceeded 1500ms'
+    )
+    await vi.advanceTimersByTimeAsync(1500)
+    await failure
+    release(completion)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(options.prepareMainWindow).not.toHaveBeenCalled()
+    expect(target.close).not.toHaveBeenCalled()
+    expect(splash.snapshot().state).toBe('visible')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test('native preparation does not consume the independent fade budget', async () => {
+    const { splash, options, release } = await fixture()
+    options.prepareMainWindow.mockImplementation(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1200))
+      return { splash: bounds, main: bounds }
+    })
+    const pending = splash.handoff(options)
+    release(completion)
+    await vi.advanceTimersByTimeAsync(1800)
+    const snapshot = await pending
+    expect(snapshot.state).toBe('closed')
+    expect(snapshot.events.map(event => event.name)).toContain('fade-completed')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test('a hung native preparation still fails within its unchanged 1500ms budget', async () => {
+    const { splash, options, release, target } = await fixture()
+    options.prepareMainWindow.mockImplementation(() => new Promise(() => {}))
+    const failure = expect(splash.handoff(options)).rejects.toThrow(
+      'Startup window preparation exceeded 1500ms'
+    )
+    release(completion)
+    await vi.advanceTimersByTimeAsync(1500)
+    await failure
+    expect(splash.snapshot().state).toBe('visible')
+    expect(target.close).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   test('keeps queued activation pending after failed startup until explicit shutdown cancellation', async () => {
     const ready = createStartupReadyHandler(async () => {
       throw new Error('Startup handoff failed')

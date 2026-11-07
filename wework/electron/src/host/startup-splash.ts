@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 
 import { STARTUP_PROGRESS_CHANNEL, type StartupProgressUpdate } from './startup-progress.js'
 import type { StartupWindowBounds } from './startup-window-handoff.js'
+import { finishStartupHandoffPhase } from './startup-tasks.js'
 
 export type StartupSplashEventName =
   | 'created'
@@ -230,6 +231,7 @@ export class StartupSplash {
     const generation = ++this.handoffGeneration
     this.handoffPromise = this.performHandoff(options, generation)
       .catch(error => {
+        this.handoffGeneration += 1
         this.restoreAfterInterruptedHandoff()
         throw error
       })
@@ -280,14 +282,18 @@ export class StartupSplash {
       options.shouldContinue()
     this.state = 'completing'
     this.record('completion-started')
-    const completion = (await this.options.window.webContents.executeJavaScript(
-      `window.weworkStartupSplash.complete(${JSON.stringify(options.update)})`
-    )) as StartupSplashCompletion
+    const completion = await finishStartupHandoffPhase('completion frame', async () => {
+      const result = (await this.options.window.webContents.executeJavaScript(
+        `window.weworkStartupSplash.complete(${JSON.stringify(options.update)})`
+      )) as StartupSplashCompletion
+      if (active()) {
+        this.record('completed')
+        await this.capture(options.capturePath)
+      }
+      return result
+    })
     if (!active()) return this.interruptedHandoff()
-    this.record('completed')
-    await this.capture(options.capturePath)
-    if (!active()) return this.interruptedHandoff()
-    const bounds = await options.prepareMainWindow()
+    const bounds = await finishStartupHandoffPhase('window preparation', options.prepareMainWindow)
     if (!active()) return this.interruptedHandoff()
     this.handoffEvidence = {
       fadeDurationMs: STARTUP_SPLASH_FADE_MS,
@@ -296,7 +302,10 @@ export class StartupSplash {
       bounds,
     }
     this.record('main-prepared')
-    if (!(await this.fadeOut(completion.reducedMotion, active))) return this.interruptedHandoff()
+    const faded = await finishStartupHandoffPhase('fade', () =>
+      this.fadeOut(completion.reducedMotion, active)
+    )
+    if (!faded) return this.interruptedHandoff()
     return this.close()
   }
 
