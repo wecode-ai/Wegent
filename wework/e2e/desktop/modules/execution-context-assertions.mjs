@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
-import { readRequestBody } from './response-protocol.mjs'
+import {
+  codexRequestKind,
+  isReplyPredictionRequest,
+  readRequestBody,
+} from './response-protocol.mjs'
 
 /** Inspect real Codex model input without adding a model call or application lifecycle. */
 export function withExecutionContextAssertions(scenario, { marker, expected, workerContext }) {
@@ -13,7 +17,11 @@ export function withExecutionContextAssertions(scenario, { marker, expected, wor
           .filter(item => item.role === 'user')
           .at(-1)
         const input = JSON.stringify(body.input ?? [])
+        const maintenance =
+          ['compaction', 'prewarm'].includes(codexRequestKind(body)) ||
+          isReplyPredictionRequest(body)
         if (
+          !maintenance &&
           JSON.stringify(latest ?? '').includes(marker) &&
           (!workerContext || input.includes(workerContext))
         ) {

@@ -55,3 +55,30 @@ test('primary requests cannot satisfy the scheduled-worker observation', async (
   await scenario.handleHttp(request(body('create a future review')), {}, url)
   await assert.rejects(scenario.verify({}), /real worker/)
 })
+
+for (const metadata of [
+  { request_kind: 'compaction' },
+  { request_kind: 'prewarm' },
+  { thread_source: 'composer_predictions' },
+]) {
+  test(`maintenance is delegated without counting quoted worker text: ${JSON.stringify(metadata)}`, async () => {
+    let delegated = false
+    const scenario = withExecutionContextAssertions(
+      {
+        async handleHttp() {
+          delegated = true
+          return true
+        },
+        async verify() {},
+      },
+      { marker: 'WORK', expected: ['already started'] }
+    )
+    const value = {
+      ...body('quoted business context, not an execution'),
+      client_metadata: { 'x-codex-turn-metadata': JSON.stringify(metadata) },
+    }
+    assert.equal(await scenario.handleHttp(request(value), {}, url), true)
+    assert.equal(delegated, true)
+    await assert.rejects(scenario.verify({}), /real worker/)
+  })
+}
