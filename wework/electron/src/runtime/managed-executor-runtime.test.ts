@@ -357,6 +357,8 @@ describe('managed executor runtime', () => {
           const identityPath = process.argv[2]
           fs.writeFileSync(identityPath, JSON.stringify({
             deviceId: process.env.WEGENT_APP_IPC_DEVICE_ID,
+            registrationDeviceId: process.env.DEVICE_ID,
+            runtimeInstanceId: process.env.WEGENT_RUNTIME_INSTANCE_ID,
             deviceName: process.env.DEVICE_NAME,
           }))
           if (process.platform !== 'win32') {
@@ -388,6 +390,8 @@ describe('managed executor runtime', () => {
           ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
           VITE_WEWORK_E2E: 'true',
           WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
+          DEVICE_ID: 'stale-launcher-device',
+          WEGENT_RUNTIME_INSTANCE_ID: 'stale-launcher-runtime',
         },
         dataDirectory: join(directory.path, 'data'),
         logDirectory: join(directory.path, 'logs'),
@@ -412,6 +416,8 @@ describe('managed executor runtime', () => {
         .poll(async () => JSON.parse(await readFile(identityPath, 'utf8')))
         .toEqual({
           deviceId: 'test-device',
+          registrationDeviceId: 'device-test-device',
+          runtimeInstanceId: 'runtime-test-device',
           deviceName: 'Test Device',
         })
 

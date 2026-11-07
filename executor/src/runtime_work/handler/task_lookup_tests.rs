@@ -122,12 +122,19 @@ async fn continuation_identity_uses_metadata_while_history_workers_are_saturated
 #[tokio::test]
 async fn task_lookup_reads_project_task_without_starting_provider_or_listing() {
     let (handler, root) = isolated_runtime_work_handler("api-task-lookup");
+    let origin = json!({
+        "type":"project_task", "initiatedBy":"stand_in",
+        "cloudProjectId":"project", "loopItemId":"issue", "projectStore":"local"
+    });
+    let change_requests = json!(["https://github.com/example/project/pull/1"]);
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "workspace-task".into(),
         thread_id: Some("original-thread".into()),
         workspace_path: "/projects/original".into(),
         runtime_handle: json!({
             "wegentTeam": {"id": 42},
+            "origin": origin,
+            "changeRequests": change_requests,
             "modelSelection": {
                 "modelName": "model-1",
                 "options": {"permissionMode": "read-only"}
@@ -147,6 +154,11 @@ async fn task_lookup_reads_project_task_without_starting_provider_or_listing() {
     assert_eq!(result["task"]["taskId"], "workspace-task");
     assert_eq!(result["task"]["workspaceKind"], "workspace");
     assert_eq!(result["task"]["runtimeHandle"]["wegentTeam"]["id"], 42);
+    assert_eq!(result["task"]["runtimeHandle"]["origin"], origin);
+    assert_eq!(
+        result["task"]["runtimeHandle"]["changeRequests"],
+        change_requests
+    );
     assert_eq!(
         result["task"]["runtimeHandle"]["threadId"],
         "original-thread"
@@ -155,6 +167,36 @@ async fn task_lookup_reads_project_task_without_starting_provider_or_listing() {
     assert!(!should_resume_persisted_turns_before_rpc(
         "runtime.tasks.get"
     ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn task_lookup_projects_current_workspace_git_info_without_provider_discovery() {
+    let (handler, root) = isolated_runtime_work_handler("api-task-lookup-git");
+    let workspace = root.join("workspace");
+    let git_dir = workspace.join(".git");
+    fs::create_dir_all(&git_dir).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature/first\n").unwrap();
+    fs::write(
+        git_dir.join("config"),
+        "[remote \"origin\"]\n\turl = https://github.com/example/project.git\n",
+    )
+    .unwrap();
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "git-task".into(),
+        workspace_path: workspace.display().to_string(),
+        ..RuntimeTaskLink::default()
+    });
+
+    let result = handler.get_task(&json!({"taskId":"git-task"})).unwrap();
+    assert_eq!(result["task"]["gitInfo"]["currentBranch"], "feature/first");
+    assert_eq!(
+        result["task"]["gitInfo"]["originUrl"],
+        "https://github.com/example/project.git"
+    );
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature/second\n").unwrap();
+    let result = handler.get_task(&json!({"taskId":"git-task"})).unwrap();
+    assert_eq!(result["task"]["gitInfo"]["currentBranch"], "feature/second");
     fs::remove_dir_all(root).unwrap();
 }
 

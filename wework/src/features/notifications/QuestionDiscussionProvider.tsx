@@ -3,6 +3,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import {
   QuestionDiscussionStoreContext,
   type QuestionDiscussionSession,
+  type QuestionDiscussionRequest,
 } from './questionDiscussion'
 
 /** Keep answer drafts shared when the same request appears in different task tabs. */
@@ -17,6 +18,30 @@ export function QuestionDiscussionProvider({
     Record<string, Record<string, QuestionDiscussionSession>>
   >({})
   const sessions = accounts[accountKey] ?? EMPTY_SESSIONS
+  const [pendingPanel, setPendingPanel] = useState<{
+    accountKey: string
+    request: QuestionDiscussionRequest
+  } | null>(null)
+  const [panelAccount, setPanelAccount] = useState(accountKey)
+  if (panelAccount !== accountKey) {
+    setPanelAccount(accountKey)
+    setPendingPanel(null)
+  }
+  const panelRequest = pendingPanel?.accountKey === accountKey ? pendingPanel.request : null
+  const requestPanel = useCallback(
+    (request: QuestionDiscussionRequest) => {
+      setPendingPanel({ accountKey, request })
+    },
+    [accountKey]
+  )
+  const consumePanelRequest = useCallback(
+    (request: QuestionDiscussionRequest) => {
+      setPendingPanel(current =>
+        current?.accountKey === accountKey && current.request === request ? null : current
+      )
+    },
+    [accountKey]
+  )
   const creating = useRef(new Map<string, Promise<RuntimeTaskAddress | false>>())
   const update = useCallback(
     (
@@ -51,8 +76,16 @@ export function QuestionDiscussionProvider({
     [accountKey, update]
   )
   const value = useMemo(
-    () => ({ accountKey, sessions, update, create }),
-    [accountKey, sessions, update, create]
+    () => ({
+      accountKey,
+      sessions,
+      update,
+      create,
+      panelRequest,
+      requestPanel,
+      consumePanelRequest,
+    }),
+    [accountKey, sessions, update, create, panelRequest, requestPanel, consumePanelRequest]
   )
   return (
     <QuestionDiscussionStoreContext.Provider value={value}>

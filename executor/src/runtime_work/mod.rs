@@ -19,6 +19,7 @@ mod connection_dependencies;
 pub(crate) mod connection_host;
 mod connection_mcp;
 mod connectors;
+mod conversation_sessions;
 pub(crate) mod dingtalk;
 mod events;
 pub mod fork_transfer;

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -9,9 +11,65 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { routeUpgradeRequests, upgradeTransportScript } from './upgrade-request-route.mjs'
-import { verifyUpgradeStartup } from './upgrade-startup-probe.mjs'
+import {
+  PROBE_EXPECTED_EXIT,
+  PROBE_QUIT_SCRIPT,
+  verifyUpgradeStartup,
+} from './upgrade-startup-probe.mjs'
 
 const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+
+test('diagnostic startup reports release selection without changing the relaunch', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wework-release-diagnostics-'))
+  const root = join(home, 'releases')
+  const previous = process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT
+  const observations = []
+  const launches = []
+  const app = new EventEmitter()
+  app.getVersion = () => '2.0.0'
+  app.getPath = () => home
+  app.isReady = () => false
+  app.whenReady = () => new Promise(() => {})
+  app.commandLine = { removeSwitch() {} }
+  app.relaunch = options => launches.push(options)
+  const session = { defaultSession: { webRequest: { onBeforeRequest() {} } } }
+  try {
+    await mkdir(root)
+    await writeFile(join(root, 'active'), 'source')
+    await writeFile(join(root, 'activation.json'), JSON.stringify({ rollbackRequested: true }))
+    process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT = 'app-rollback-recovery'
+    const childProcess = {
+      argv: ['/installed/WeWork', '--inspect-brk=127.0.0.1:0'],
+      execArgv: [],
+      execPath: '/installed/WeWork',
+      env: { HOME: home, WEWORK_RELEASE_ROOT: root },
+      pid: 42,
+      getBuiltinModule: name =>
+        ({
+          fs,
+          path,
+          module: { createRequire: () => () => ({ app, session, dialog: { showErrorBox() {} } }) },
+        })[name],
+    }
+    runInNewContext(upgradeTransportScript('http://127.0.0.1:8000', childProcess.argv[1]), {
+      process: childProcess,
+      console: { log: (name, payload) => observations.push([name, JSON.parse(payload)]) },
+      setInterval: () => ({ unref() {} }),
+      clearInterval() {},
+    })
+    app.relaunch({ execPath: '/installed/wework-launcher', args: ['release-root'] })
+    assert.equal(observations[0][1].selected, 'source')
+    assert.equal(JSON.parse(observations[0][1].pending).rollbackRequested, true)
+    assert.equal(observations[0][1].version, '2.0.0')
+    assert.equal(observations[1][1].nextExecutable, '/installed/wework-launcher')
+    assert.equal(launches[0].execPath, '/installed/wework-launcher')
+    assert.deepEqual(Array.from(launches[0].args), ['release-root'])
+  } finally {
+    if (previous === undefined) delete process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT
+    else process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT = previous
+    await rm(home, { recursive: true, force: true })
+  }
+})
 
 test('installs transport before whenReady consumers when the ready event follows resolution', async () => {
   const app = new EventEmitter()
@@ -118,14 +176,14 @@ test('routes the default update URL through the real Electron network stack', as
       join(root, 'app/main.cjs'),
       `
       const {app,net} = require('electron')
+      ${PROBE_QUIT_SCRIPT}
       if ([...process.argv, ...process.execArgv].some(argument => argument.startsWith('--inspect-brk=')) ||
           app.commandLine.hasSwitch('inspect-brk'))
         throw new Error('The driver pause switch must not reach application handoff code')
       app.setPath('userData', ${JSON.stringify(join(root, 'user-data'))})
       app.whenReady().then(async () => {
         const response = await net.fetch('https://github.com/wecode-ai/Wegent/releases/download/wework-updater/components-beta-macos-arm64.json')
-        console.log('TRANSPORT_RESULT=' + await response.text())
-        app.quit()
+        process.stdout.write('TRANSPORT_RESULT=' + await response.text() + '\\n', () => app.quit())
       }).catch(error => {console.error(error);app.exit(1)})
     `
     )
@@ -143,7 +201,7 @@ test('routes the default update URL through the real Electron network stack', as
     })
     const exited = once(child, 'exit', { signal: AbortSignal.timeout(20_000) })
     await routeUpgradeRequests(child, `http://127.0.0.1:${server.address().port}`)
-    assert.deepEqual(await exited, [0, null], errors)
+    assert.deepEqual(await exited, PROBE_EXPECTED_EXIT, errors)
     assert.ok(output.includes('TRANSPORT_RESULT=real loopback transport'), output)
     assert.deepEqual(requests, ['/components-beta-macos-arm64.json'])
   } catch (error) {

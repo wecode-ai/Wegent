@@ -1,14 +1,19 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import { useImperativeHandle, type Ref } from 'react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { useImperativeHandle, type ReactNode, type Ref } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, User } from '@/types/api'
-import { LOCAL_USER } from '@/api/local/localSession'
-import { newStandInRole } from '@/api/personalStandIn'
+import type { StandInBindingTarget, StandInInstanceBinding } from '@/api/standIn'
+import {
+  CloudConnectionContext,
+  type CloudConnectionContextValue,
+} from '@/features/cloud-connection/CloudConnectionContext'
 import '@/i18n'
 import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import * as migration from './migrateStandIn'
+import { newStandInRole } from '@/api/personalStandIn'
 
 const guard = vi.hoisted(() => vi.fn((action: () => void) => action()))
 afterEach(() => {
@@ -17,230 +22,87 @@ afterEach(() => {
   guard.mockReset()
   guard.mockImplementation(action => action())
 })
-
 vi.mock('./weworkPlatformApi', () => ({
   createWeworkPlatformApi: () => ({ projects: { list: async () => [] } }),
 }))
 vi.mock('./localWorkspaceApi', () => ({ createLocalWorkspaceApi: () => null }))
 vi.mock('./StandInOverviewPage', () => ({
   StandInOverviewPage: ({
-    initialProfileId,
-    initialSelectedRoleId,
-    onSelectLocation,
     userId,
     initialDeviceId,
+    initialProfileId,
+    headerActions,
+    onSelectLocation,
     ref,
   }: {
-    initialProfileId: string
-    initialSelectedRoleId?: string
-    onSelectLocation: (deviceId: string, roleId?: string, openSettings?: boolean) => void
     userId: number
-    initialDeviceId?: string
+    initialDeviceId: string
+    initialProfileId?: string
+    headerActions: ReactNode
+    onSelectLocation(device: string): void
     ref: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
   }) => {
     useImperativeHandle(ref, () => ({ requestLeave: guard }))
     return (
       <>
-        <button
-          data-testid="save-role-on-cloud"
-          onClick={() => onSelectLocation('cloud-one', 'reviewer')}
-        >
-          Save
-        </button>
+        <header>{headerActions}</header>
         <input
           data-testid="retained-role-draft"
           data-owner={userId}
           data-device={initialDeviceId}
-          data-role={initialSelectedRoleId}
           defaultValue={initialProfileId}
         />
+        <button data-testid="legacy-change-device" onClick={() => onSelectLocation('cloud-one')}>
+          Legacy callback
+        </button>
       </>
     )
   },
 }))
 
-it('retains the saved role when changing device without reopening its settings', async () => {
-  render(
-    <PersonalStandInWorkspace
-      services={{} as WorkbenchServices}
-      user={{ id: 7 } as User}
-      devices={[]}
-      active
-      contentRoute="/stand-in?profileId=reviewer&deviceId=mac"
-      onClose={vi.fn()}
-      onOpenTask={vi.fn()}
-    />
-  )
-  await userEvent.click(screen.getByTestId('save-role-on-cloud'))
-  const field = screen.getByTestId('retained-role-draft')
-  expect(field).toHaveAttribute('data-device', 'cloud-one')
-  expect(field).toHaveAttribute('data-role', 'reviewer')
-  expect(field).toHaveValue('')
-})
-
-it('keeps the owning tab identity and draft when another tab changes the browser query', async () => {
-  const props = {
-    services: {} as WorkbenchServices,
-    user: { id: 7, user_name: 'owner' } as unknown as User,
-    devices: [],
-    contentRoute: '/stand-in?profileId=reviewer&deviceId=device-a',
-    onClose: vi.fn(),
-    onOpenTask: vi.fn(),
-  }
-  const original = window.location.href
-  const view = render(<PersonalStandInWorkspace {...props} active />)
-  const field = screen.getByTestId('retained-role-draft')
-  await userEvent.type(field, ' unsaved')
-  try {
-    window.history.replaceState({}, '', '/plugins?workspaceTab=plugins')
-    view.rerender(<PersonalStandInWorkspace {...props} active={false} />)
-    expect(screen.getByTestId('retained-role-draft')).toBe(field)
-    expect(field).toHaveValue('reviewer unsaved')
-    window.history.replaceState({}, '', '/stand-in?profileId=reviewer&deviceId=device-a')
-    view.rerender(<PersonalStandInWorkspace {...props} active />)
-    expect(screen.getByTestId('retained-role-draft')).toBe(field)
-    expect(field).toHaveValue('reviewer unsaved')
-  } finally {
-    window.history.replaceState({}, '', original)
-  }
-})
-
-it('keeps signed-out local profiles reachable after connecting and separates cloud owners', async () => {
-  const props = {
-    services: {
-      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
-    } as WorkbenchServices,
-    user: LOCAL_USER as User,
-    devices: [] as DeviceInfo[],
-    active: true,
-    contentRoute: '/stand-in',
-    onClose: vi.fn(),
-    onOpenTask: vi.fn(),
-  }
-  const view = render(<PersonalStandInWorkspace {...props} />)
-  await screen.findByTestId('stand-in-workspace-location')
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '0')
-  view.rerender(
-    <PersonalStandInWorkspace
-      {...props}
-      user={{ id: 7, user_name: 'cloud' } as User}
-      devices={[
-        {
-          device_id: 'cloud-one',
-          device_type: 'cloud',
-          name: 'Cloud one',
-          status: 'online',
-        } as DeviceInfo,
-      ]}
-    />
-  )
-  const picker = await screen.findByTestId('stand-in-workspace-location')
-  await userEvent.selectOptions(picker, '@local')
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '0')
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
-  await userEvent.selectOptions(picker, 'cloud-one')
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
-  await userEvent.selectOptions(picker, '@local')
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '0')
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
-})
-
-it('guards location changes with the existing unsaved settings decision', async () => {
-  render(
-    <PersonalStandInWorkspace
-      services={
-        { getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }) } as WorkbenchServices
+function fixture(
+  initial: StandInInstanceBinding = {
+    version: 1,
+    status: 'active',
+    target: { userId: 7, deviceId: 'mac' },
+  },
+  backendUrl = ''
+) {
+  let current = initial
+  const binding = vi.fn(
+    async (_device: string, operation = 'get', version?: number, target?: StandInBindingTarget) => {
+      if (operation === 'get') return current
+      if (current.version !== version) throw new Error('version conflict')
+      current = {
+        version: current.version + 1,
+        status:
+          operation === 'bind' ? 'active' : operation === 'beginStop' ? 'stopping' : 'stopped',
+        target: target ?? current.target,
       }
-      user={{ id: 7 } as User}
-      devices={[]}
-      active
-      contentRoute="/stand-in"
-      onClose={vi.fn()}
-      onOpenTask={vi.fn()}
-    />
+      return current
+    }
   )
-  const picker = await screen.findByTestId('stand-in-workspace-location')
-  guard.mockImplementation(() => {})
-  await userEvent.selectOptions(picker, '@local')
-  expect(guard).toHaveBeenCalledOnce()
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
-})
-
-it.each([
-  { existing: -1, owner: '7', device: 'cloud-one' },
-  { existing: 0, owner: '0', device: 'mac' },
-  { existing: 7, owner: '7', device: 'mac' },
-])(
-  'resolves first-use to $device for owner $owner while preserving existing local profiles',
-  async ({ existing, owner, device }) => {
-    const personalGet = vi.fn(async (userId: number) => ({
-      userId,
+  const lifecycle = vi.fn(
+    async (_userId: number, _deviceId: string, operation: 'start' | 'stop') => ({
+      userId: 7,
       executionDeviceId: 'mac',
-      version: userId === existing ? 1 : 0,
-      roles: [newStandInRole('mac', 'default')],
-      primary: { enabled: userId === existing, prompt: '', preferences: '' },
-    }))
-    const services = {
-      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
-      standInApi: { personalGet },
-    } as unknown as WorkbenchServices
-    const { CloudConnectionContext } =
-      await import('@/features/cloud-connection/CloudConnectionContext')
-    render(
-      <CloudConnectionContext.Provider
-        value={
-          {
-            isConnected: true,
-          } as import('@/features/cloud-connection/CloudConnectionContext').CloudConnectionContextValue
-        }
-      >
-        <PersonalStandInWorkspace
-          services={services}
-          user={{ id: 7 } as User}
-          devices={[
-            {
-              device_id: 'cloud-one',
-              device_type: 'cloud',
-              name: 'Cloud one',
-              status: 'online',
-            } as DeviceInfo,
-          ]}
-          active
-          contentRoute="/stand-in"
-          onClose={vi.fn()}
-          onOpenTask={vi.fn()}
-        />
-      </CloudConnectionContext.Provider>
-    )
-    const field = await screen.findByTestId('retained-role-draft')
-    expect(field).toHaveAttribute('data-owner', owner)
-    expect(field).toHaveAttribute('data-device', device)
-  }
-)
-
-it('does not discover profiles for an inactive workspace', async () => {
+      version: 1,
+      roles: [],
+      lifecycle: operation === 'stop' ? { status: 'stopped' as const } : undefined,
+    })
+  )
   const identity = vi.fn(async () => ({ deviceId: 'mac' }))
-  const p = {
-    services: { getLocalRuntimeSidebarIdentity: identity } as unknown as WorkbenchServices,
-    user: LOCAL_USER as User,
-    devices: [],
-    contentRoute: '/stand-in',
-    onClose: vi.fn(),
-    onOpenTask: vi.fn(),
-  }
-  const view = render(<PersonalStandInWorkspace {...p} active={false} />)
-  expect(identity).not.toHaveBeenCalled()
-  view.rerender(<PersonalStandInWorkspace {...p} active />)
-  await screen.findByTestId('stand-in-workspace-location')
-  expect(identity).toHaveBeenCalledOnce()
-})
-
-it('remembers the explicitly selected cloud profile without sharing it with another account', async () => {
-  const p = {
+  const personalGet = vi.fn(async (userId: number) => ({
+    userId,
+    executionDeviceId: 'mac',
+    version: 1,
+    roles: [],
+  }))
+  const props = {
     services: {
-      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
-    } as WorkbenchServices,
+      getLocalRuntimeSidebarIdentity: identity,
+      standInApi: { binding, lifecycle, personalGet },
+    } as unknown as WorkbenchServices,
     user: { id: 7 } as User,
     devices: [
       {
@@ -255,99 +117,359 @@ it('remembers the explicitly selected cloud profile without sharing it with anot
     onClose: vi.fn(),
     onOpenTask: vi.fn(),
   }
-  let view = render(<PersonalStandInWorkspace {...p} />)
-  await userEvent.selectOptions(
-    await screen.findByTestId('stand-in-workspace-location'),
-    'cloud-one'
+  const workspace = (changes: Partial<typeof props> = {}) => (
+    <CloudConnectionContext.Provider
+      value={{ isConnected: true, apiBaseUrl: backendUrl } as CloudConnectionContextValue}
+    >
+      <PersonalStandInWorkspace {...props} {...changes} />
+    </CloudConnectionContext.Provider>
   )
-  view.unmount()
-  view = render(<PersonalStandInWorkspace {...p} />)
+  return { props, workspace, binding, lifecycle, identity, personalGet }
+}
+
+it('does not report another account while the instance binding is still unknown', async () => {
+  const backendUrl = 'https://cloud.example.test/api/v1'
+  const f = fixture(undefined, backendUrl)
+  let resolve!: (value: StandInInstanceBinding) => void
+  f.binding.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done
+      })
+  )
+  render(f.workspace())
+  await waitFor(() => expect(f.binding).toHaveBeenCalledOnce())
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByRole('status')).toBeVisible()
+  await act(async () =>
+    resolve({ version: 1, status: 'active', target: { userId: 7, deviceId: 'mac', backendUrl } })
+  )
+  expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
+})
+
+it('discovers account and local profiles concurrently before selecting the initial owner', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  let finish!: () => void
+  f.personalGet.mockImplementationOnce(
+    userId =>
+      new Promise(done => {
+        finish = () => done({ userId, executionDeviceId: 'mac', version: 1, roles: [] })
+      })
+  )
+  render(f.workspace())
+  await waitFor(() => expect(f.personalGet).toHaveBeenCalledTimes(2))
+  expect(f.binding).toHaveBeenCalledOnce()
+  expect(f.lifecycle).not.toHaveBeenCalled()
+  await act(async () => finish())
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
+})
+
+it('shares the first binding transaction when device discovery refreshes before bind completes', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  const original = f.binding.getMockImplementation()!
+  let finish!: () => void
+  f.binding.mockImplementation((...args) => {
+    if (args[1] !== 'bind') return original(...args)
+    return new Promise((resolve, reject) => {
+      finish = () => {
+        void original(...args).then(resolve, reject)
+      }
+    })
+  })
+  const view = render(f.workspace())
+  await waitFor(() =>
+    expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+  )
+  view.rerender(f.workspace({ devices: [...f.props.devices] }))
+  await waitFor(() => expect(f.binding.mock.calls.filter(call => !call[1])).toHaveLength(2))
+  await act(async () => finish())
+  expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
+  expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+  expect(f.lifecycle).toHaveBeenCalledOnce()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+async function confirmStop() {
+  await userEvent.click(await screen.findByTestId('stand-in-instance-stop'))
+  await userEvent.click(screen.getByTestId('stand-in-instance-stop-confirm'))
+}
+
+it('has no profile selector and cannot change the bound device via legacy navigation', async () => {
+  const f = fixture()
+  const view = render(f.workspace())
+  const field = await screen.findByTestId('retained-role-draft')
+  expect(screen.queryByTestId('stand-in-workspace-location')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-instance-stop').closest('header')).not.toBeNull()
+  await userEvent.click(screen.getByTestId('legacy-change-device'))
+  expect(field).toHaveAttribute('data-device', 'mac')
+  expect(f.binding).toHaveBeenCalledTimes(1)
+  view.rerender(f.workspace({ contentRoute: '/stand-in?deviceId=cloud-one&profileId=other' }))
+  expect(screen.getByTestId('retained-role-draft')).toBe(field)
+  expect(field).toHaveValue('')
+  expect(field).toHaveAttribute('data-device', 'mac')
+})
+
+it('honors an explicit project link only while establishing the first instance binding', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  f.personalGet.mockImplementation(async userId => ({
+    userId,
+    executionDeviceId: 'mac',
+    version: 0,
+    roles: [],
+  }))
+  render(f.workspace({ contentRoute: '/stand-in?profileId=default&deviceId=mac' }))
+  const field = await screen.findByTestId('retained-role-draft')
+  expect(field).toHaveAttribute('data-device', 'mac')
+  expect(field).toHaveValue('default')
+  expect(f.binding).toHaveBeenCalledWith('mac', 'bind', 0, {
+    userId: 7,
+    deviceId: 'mac',
+    backendUrl: '',
+  })
+})
+
+it('never stops a different binding that changed while its confirmation was open', async () => {
+  const f = fixture()
+  const view = render(f.workspace())
+  await userEvent.click(await screen.findByTestId('stand-in-instance-stop'))
+  await f.binding('mac', 'beginStop', 1)
+  await f.binding('mac', 'completeStop', 2)
+  await f.binding('mac', 'bind', 3, { userId: 7, deviceId: 'cloud-one' })
+  view.rerender(f.workspace({ devices: [...f.props.devices] }))
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+  )
+  await userEvent.click(screen.getByTestId('stand-in-instance-stop-confirm'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('其他位置更新')
+  expect(f.lifecycle).not.toHaveBeenCalled()
+})
+
+it('cancels the entire bound profile before offering another local or cloud binding', async () => {
+  const f = fixture()
+  let finish!: () => void
+  f.lifecycle.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = () =>
+          resolve({
+            userId: 7,
+            executionDeviceId: 'mac',
+            version: 2,
+            roles: [],
+            lifecycle: { status: 'stopped' },
+          })
+      })
+  )
+  render(f.workspace())
+  await confirmStop()
+  expect(await screen.findByTestId('stand-in-instance-stopping')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-instance-bind-7-cloud-one')).not.toBeInTheDocument()
+  expect(f.lifecycle).toHaveBeenCalledWith(7, 'mac', 'stop')
+  finish()
+  await userEvent.click(await screen.findByTestId('stand-in-instance-bind-7-cloud-one'))
+  await waitFor(() => expect(f.lifecycle).toHaveBeenLastCalledWith(7, 'cloud-one', 'start'))
   expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute(
     'data-device',
     'cloud-one'
   )
-  view.unmount()
-  render(<PersonalStandInWorkspace {...p} user={{ id: 8 } as User} />)
-  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+  expect(f.binding.mock.calls.map(call => call[1] ?? 'get')).toEqual([
+    'get',
+    'beginStop',
+    'completeStop',
+    'bind',
+  ])
 })
 
-it('keeps a failed local profile discovery visible after project loading and retries that discovery', async () => {
-  let localReads = 0
-  const personalGet = vi.fn(async (userId: number) => {
-    if (userId === 0 && localReads++ === 0) throw new Error('Executor offline')
-    return { userId, executionDeviceId: 'mac', version: 0, roles: [] }
+it('keeps failed cancellation locked and retries the same binding before rebinding', async () => {
+  const f = fixture()
+  f.lifecycle.mockRejectedValueOnce(new Error('Executor offline'))
+  render(f.workspace())
+  await confirmStop()
+  expect(await screen.findByRole('alert')).toBeVisible()
+  expect(screen.getByTestId('stand-in-instance-stopping')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-instance-bind-7-cloud-one')).not.toBeInTheDocument()
+  expect(f.binding.mock.calls.some(call => call[1] === 'completeStop')).toBe(false)
+  await confirmStop()
+  expect(await screen.findByTestId('stand-in-instance-stopped')).toBeVisible()
+  expect(f.lifecycle.mock.calls).toEqual([
+    [7, 'mac', 'stop'],
+    [7, 'mac', 'stop'],
+  ])
+})
+
+it('requires an explicit stopped acknowledgement before unlocking binding choices', async () => {
+  const f = fixture()
+  f.lifecycle.mockResolvedValueOnce({
+    userId: 7,
+    executionDeviceId: 'mac',
+    version: 2,
+    roles: [],
+    lifecycle: undefined,
   })
-  const services = {
-    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
-    standInApi: { personalGet },
-  } as unknown as WorkbenchServices
-  render(
-    <PersonalStandInWorkspace
-      services={services}
-      user={{ id: 7 } as User}
-      devices={[]}
-      active
-      contentRoute="/stand-in"
-      onClose={vi.fn()}
-      onOpenTask={vi.fn()}
-    />
-  )
+  render(f.workspace())
+  await confirmStop()
+  expect(await screen.findByRole('alert')).toHaveTextContent('任务尚未完全停止')
+  expect(screen.getByTestId('stand-in-instance-stopping')).toBeVisible()
+  expect(f.binding.mock.calls.some(call => call[1] === 'completeStop')).toBe(false)
+})
+
+it('binds the prepared migration target only after portable transfer succeeds', async () => {
+  const f = fixture({ version: 3, status: 'stopped', target: { userId: 7, deviceId: 'mac' } })
+  const transfer = vi
+    .spyOn(migration, 'migrateStandIn')
+    .mockResolvedValueOnce(newStandInRole('cloud-one', 'imported'))
+  const location = window.location.href
+  try {
+    render(f.workspace())
+    await userEvent.click(await screen.findByTestId('stand-in-migrate-open'))
+    await userEvent.click(screen.getByTestId('stand-in-migrate-confirm'))
+    expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute(
+      'data-device',
+      'cloud-one'
+    )
+    expect(transfer).toHaveBeenCalledOnce()
+    expect(f.binding).toHaveBeenCalledWith('mac', 'bind', 3, {
+      userId: 7,
+      deviceId: 'cloud-one',
+      backendUrl: '',
+    })
+    expect(f.lifecycle).toHaveBeenCalledExactlyOnceWith(7, 'cloud-one', 'start')
+  } finally {
+    transfer.mockRestore()
+    window.history.replaceState({}, '', location)
+  }
+})
+
+it('failed migration preparation keeps the source stopped and never binds or starts the target', async () => {
+  const f = fixture({ version: 3, status: 'stopped', target: { userId: 7, deviceId: 'mac' } })
+  const transfer = vi
+    .spyOn(migration, 'migrateStandIn')
+    .mockRejectedValueOnce(new Error('Executor offline'))
+  try {
+    render(f.workspace())
+    await userEvent.click(await screen.findByTestId('stand-in-migrate-open'))
+    await userEvent.click(screen.getByTestId('stand-in-migrate-confirm'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('stand-in-migrate-confirm')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('stand-in-instance-stopped')).toBeVisible()
+    expect(f.binding.mock.calls.every(call => !call[1])).toBe(true)
+    expect(f.lifecycle).not.toHaveBeenCalled()
+  } finally {
+    transfer.mockRestore()
+  }
+})
+
+it('keeps rebinding available when an already stopped source cannot load migration metadata', async () => {
+  const f = fixture({ version: 3, status: 'stopped', target: { userId: 7, deviceId: 'cloud-one' } })
+  f.personalGet.mockRejectedValueOnce(new Error('Executor offline'))
+  render(f.workspace())
+  expect(await screen.findByTestId('stand-in-instance-stopped')).toBeVisible()
   await screen.findByRole('alert')
-  expect(screen.queryByTestId('retained-role-draft')).toBeNull()
+  expect(screen.getByTestId('stand-in-instance-bind-7-mac')).toBeEnabled()
+  expect(screen.queryByTestId('stand-in-migration')).not.toBeInTheDocument()
+})
+
+it('uses the existing unsaved-edit decision before stopping', async () => {
+  const f = fixture()
+  render(f.workspace())
+  guard.mockImplementation(() => {})
+  await userEvent.click(await screen.findByTestId('stand-in-instance-stop'))
+  expect(guard).toHaveBeenCalledOnce()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(f.lifecycle).not.toHaveBeenCalled()
+})
+
+it('does not stop when the confirmation is cancelled', async () => {
+  const f = fixture()
+  render(f.workspace())
+  await userEvent.click(await screen.findByTestId('stand-in-instance-stop'))
+  await userEvent.click(screen.getByTestId('stand-in-instance-stop-cancel'))
+  expect(f.lifecycle).not.toHaveBeenCalled()
+  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+})
+
+it('does not replace a durable binding when the account changes', async () => {
+  const f = fixture()
+  const view = render(f.workspace())
+  await screen.findByTestId('retained-role-draft')
+  view.rerender(f.workspace({ user: { id: 8 } as User }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('另一个账号')
+  expect(screen.queryByTestId('retained-role-draft')).not.toBeInTheDocument()
+  expect(f.lifecycle).not.toHaveBeenCalled()
+  expect(f.binding.mock.calls.every(call => !call[1])).toBe(true)
+})
+
+it('retains the owning tab draft across unrelated browser navigation', async () => {
+  const f = fixture()
+  const view = render(f.workspace({ contentRoute: '/stand-in?profileId=reviewer' }))
+  const field = await screen.findByTestId('retained-role-draft')
+  await userEvent.type(field, ' unsaved')
+  view.rerender(f.workspace({ active: false, contentRoute: '/stand-in?profileId=reviewer' }))
+  view.rerender(f.workspace({ active: true, contentRoute: '/stand-in?profileId=reviewer' }))
+  expect(screen.getByTestId('retained-role-draft')).toBe(field)
+  expect(field).toHaveValue('reviewer unsaved')
+})
+
+it('does not discover or bind a profile for an inactive page', async () => {
+  const f = fixture()
+  const view = render(f.workspace({ active: false }))
+  expect(f.identity).not.toHaveBeenCalled()
+  view.rerender(f.workspace())
+  await screen.findByTestId('retained-role-draft')
+  expect(f.identity).toHaveBeenCalledOnce()
+})
+
+it('does not initialize a new binding when discovery finishes after the page becomes inactive', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  let resolve!: (identity: { deviceId: string }) => void
+  f.identity.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done
+      })
+  )
+  const view = render(f.workspace())
+  view.rerender(f.workspace({ active: false }))
+  resolve({ deviceId: 'mac' })
+  await waitFor(() => expect(f.binding).toHaveBeenCalledOnce())
+  expect(f.binding.mock.calls[0][1]).toBeUndefined()
+  expect(f.lifecycle).not.toHaveBeenCalled()
+})
+
+it('preserves a stopping binding across page remount and never resumes it automatically', async () => {
+  const f = fixture({
+    version: 2,
+    status: 'stopping',
+    target: { userId: 7, deviceId: 'cloud-one' },
+  })
+  render(f.workspace())
+  expect(await screen.findByTestId('stand-in-instance-stopping')).toBeVisible()
+  expect(f.lifecycle).not.toHaveBeenCalled()
+  await confirmStop()
+  expect(f.lifecycle).toHaveBeenCalledWith(7, 'cloud-one', 'stop')
+  expect(await screen.findByTestId('stand-in-instance-stopped')).toBeVisible()
+})
+
+it('recovers initial binding discovery errors without opening another profile', async () => {
+  const f = fixture()
+  f.binding.mockRejectedValueOnce(new Error('Executor offline'))
+  render(f.workspace())
+  await screen.findByRole('alert')
+  expect(screen.queryByTestId('retained-role-draft')).not.toBeInTheDocument()
   await userEvent.click(screen.getByTestId('stand-in-project-catalog-retry'))
   expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
-  expect(localReads).toBe(2)
-  expect(screen.queryByRole('alert')).toBeNull()
 })
 
-it('reloads scoped preferences when the enterprise user or Backend resolves without remounting', async () => {
-  const { CloudConnectionContext } =
-    await import('@/features/cloud-connection/CloudConnectionContext')
-  const key = (backend: string, account: number) =>
-    `wework.stand-in.cloud-device:${JSON.stringify([backend, account])}`
-  localStorage.setItem(key('https://enterprise-a', 7), 'cloud-one')
-  localStorage.setItem(key('https://enterprise-b', 7), 'cloud-two')
-  const services = {
-    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
-    standInApi: {
-      personalGet: async (userId: number) => ({ userId, version: userId === 0 ? 1 : 0, roles: [] }),
-    },
-  } as unknown as WorkbenchServices
-  const workspace = (user: User, backend: string) => (
-    <CloudConnectionContext.Provider
-      value={
-        {
-          isConnected: true,
-          apiBaseUrl: backend,
-        } as import('@/features/cloud-connection/CloudConnectionContext').CloudConnectionContextValue
-      }
-    >
-      <PersonalStandInWorkspace
-        services={services}
-        user={user}
-        devices={[]}
-        active
-        contentRoute="/stand-in"
-        onClose={vi.fn()}
-        onOpenTask={vi.fn()}
-      />
-    </CloudConnectionContext.Provider>
-  )
-  const view = render(workspace(LOCAL_USER as User, 'https://enterprise-a'))
+it('initializes one durable binding without restoring the obsolete device preference', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  localStorage.setItem('wework.stand-in.cloud-device:["",7]', 'cloud-one')
+  render(f.workspace())
   expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
-  view.rerender(workspace({ id: 7 } as User, 'https://enterprise-a'))
-  await waitFor(() =>
-    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
-  )
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
-  view.rerender(workspace({ id: 8 } as User, 'https://enterprise-a'))
-  await waitFor(() =>
-    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
-  )
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '0')
-  view.rerender(workspace({ id: 7 } as User, 'https://enterprise-b'))
-  await waitFor(() =>
-    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-two')
-  )
-  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
+  expect(f.binding).toHaveBeenCalledWith('mac', 'bind', 0, {
+    userId: 7,
+    deviceId: 'mac',
+    backendUrl: '',
+  })
+  expect(f.lifecycle).toHaveBeenCalledWith(7, 'mac', 'start')
 })

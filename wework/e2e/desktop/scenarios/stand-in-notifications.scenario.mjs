@@ -310,7 +310,8 @@ export function createDesktopScenario({
         project.id,
         uiTimeoutMs,
         captureScreenshot,
-        userId
+        userId,
+        modelResponseTimeoutMs
       )
       await verifyLocalStandInStatuses(
         control,

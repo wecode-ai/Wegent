@@ -33,7 +33,19 @@ impl RuntimeWorkRpcHandler {
 
         let (threads, mut complete) = self.read_codex_catalog(archived, limit).await;
         let stage_started_at = Instant::now();
+        let closed_threads: HashSet<_> = self
+            .local_task_links(true)
+            .iter()
+            .flat_map(|link| {
+                crate::runtime_work::conversation_sessions::closed_sessions(link)
+                    .unwrap_or_default()
+            })
+            .map(|session| session.thread_id)
+            .collect();
         for thread in threads {
+            if string_field(&thread, "id").is_some_and(|id| closed_threads.contains(&id)) {
+                continue;
+            }
             let thread_started_at = Instant::now();
             let thread_id = string_field(&thread, "id").unwrap_or_else(|| "none".to_owned());
             if let Some(mut link) = self.link_from_thread(&thread) {

@@ -480,6 +480,28 @@ describe('preparing the native startup destination', () => {
     expect(main.isVisible()).toBe(true)
   })
 
+  test('a hung frame capture restores the ready window after its own deadline', async () => {
+    vi.useFakeTimers()
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { prepare, main } = fixture()
+      main.webContents.capturePage.mockImplementationOnce(() => new Promise(() => {}))
+      const pending = prepare()
+      await vi.advanceTimersByTimeAsync(1500)
+      await pending
+      expect(main.setOpacity).toHaveBeenLastCalledWith(1)
+      expect(main.isVisible()).toBe(true)
+      expect(warning).toHaveBeenCalledWith(
+        '[startup-window-handoff] could not capture the main window',
+        expect.objectContaining({ message: 'Startup animation exceeded 1500ms' })
+      )
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      warning.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   test('does not hide a loaded destination because frame capture is empty', async () => {
     const { prepare, main } = fixture()
     main.webContents.capturePage.mockResolvedValueOnce({
