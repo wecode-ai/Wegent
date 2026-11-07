@@ -26,6 +26,7 @@ const LARGE_TOOL_CALL_ID = 'call_wework_large_conversation_reference'
 const LARGE_TOOL_COMMAND =
   "node -e \"process.stdout.write(require('crypto').randomBytes(14000000).toString('base64'))\""
 const MAX_REFERENCED_REQUEST_BYTES = 1024 * 1024
+const CLOUD_ONLY = process.argv.includes('--cloud-only')
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -207,6 +208,7 @@ export function createDesktopScenario({
   let largeTargetRequest = null
   let cloud = null
   let issueFixture = null
+  const createdCloudResources = { workspace: null, project: null }
 
   /** Calls the real cloud API and rejects unsuccessful fixture operations. */
   const requestCloud = async (path, method = 'GET', values) => {
@@ -225,7 +227,7 @@ export function createDesktopScenario({
 
   return {
     codexConfigToml: '\n[features]\nplugins = false\n',
-    requiresCloudEnvironment: process.argv.includes('--cloud-only'),
+    requiresCloudEnvironment: CLOUD_ONLY,
 
     async prepareCloud(environment) {
       cloud = environment
@@ -233,12 +235,14 @@ export function createDesktopScenario({
       const workspace = await requestCloud('/api/v1/workspaces', 'POST', {
         name: `Conversation mention ${process.pid}`,
       })
+      createdCloudResources.workspace = workspace
       const project = await requestCloud('/api/v1/cloud-projects', 'POST', {
         workspace_id: workspace.id,
         name: `Conversation mention ${process.pid}`,
         task_provider: 'local',
         visibility: 'private',
       })
+      createdCloudResources.project = project
       const issue = await requestCloud(`/api/v1/cloud-projects/${project.id}/loop-items`, 'POST', {
         title: CLOUD_ISSUE_TITLE,
       })
@@ -291,7 +295,7 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
-      if (process.argv.includes('--cloud-only')) {
+      if (CLOUD_ONLY) {
         assert.ok(issueFixture, 'The conversation mention Issue fixture is missing')
       }
       const issueReference = issueFixture
@@ -533,19 +537,25 @@ export function createDesktopScenario({
     },
 
     async cleanup() {
-      if (!cloud || !issueFixture) return
+      if (!cloud) return
       try {
-        const project = await requestCloud(`/api/v1/cloud-projects/${issueFixture.project.id}`)
-        await requestCloud(
-          `/api/v1/cloud-projects/${issueFixture.project.id}?version=${project.version}`,
-          'DELETE'
-        )
+        const createdProject = createdCloudResources.project
+        if (createdProject) {
+          const project = await requestCloud(`/api/v1/cloud-projects/${createdProject.id}`)
+          await requestCloud(
+            `/api/v1/cloud-projects/${createdProject.id}?version=${project.version}`,
+            'DELETE'
+          )
+        }
       } finally {
-        const workspace = await requestCloud(`/api/v1/workspaces/${issueFixture.workspace.id}`)
-        await requestCloud(
-          `/api/v1/workspaces/${issueFixture.workspace.id}?version=${workspace.version}`,
-          'DELETE'
-        )
+        const createdWorkspace = createdCloudResources.workspace
+        if (createdWorkspace) {
+          const workspace = await requestCloud(`/api/v1/workspaces/${createdWorkspace.id}`)
+          await requestCloud(
+            `/api/v1/workspaces/${createdWorkspace.id}?version=${workspace.version}`,
+            'DELETE'
+          )
+        }
       }
     },
 

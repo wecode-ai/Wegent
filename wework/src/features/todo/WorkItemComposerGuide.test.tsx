@@ -133,7 +133,13 @@ describe('WorkItemComposerGuide', () => {
     render(<WorkItemComposerGuide item={item} onOpen={onOpen} />)
 
     const summaryButton = screen.getByTestId('work-item-guide-open-summary')
-    expect(summaryButton).toHaveClass('hover:bg-background/70', 'disabled:hover:bg-transparent')
+    expect(summaryButton).toHaveClass(
+      'hover:bg-background/70',
+      'keyboard:focus-visible:ring-2',
+      'keyboard:focus-visible:ring-inset',
+      'keyboard:focus-visible:ring-primary/30',
+      'disabled:hover:bg-transparent'
+    )
 
     await user.click(summaryButton)
 

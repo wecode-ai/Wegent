@@ -46,6 +46,7 @@ const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const PAGE = `${ACTIVE} [data-testid="runtime-interactions-page"]`
 const CARD = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card"]`
 const callId = 'question-discussion-audience'
+const PENDING_INTERACTION_ARCHIVE_TIMEOUT_MS = 30_000
 
 export function createDesktopScenario({
   executorHome,
@@ -346,6 +347,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
       await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
         text: '0',
+        timeoutMs: PENDING_INTERACTION_ARCHIVE_TIMEOUT_MS,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command(

@@ -137,7 +137,7 @@ function WorkItemComposerGuideContent({
               openSummary?.()
             }}
             disabled={!openSummary}
-            className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg text-left transition hover:bg-background/70 disabled:cursor-default disabled:hover:bg-transparent"
+            className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg text-left transition hover:bg-background/70 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
           >
             <LayoutDashboard
               className={toolbar ? 'h-4 w-4 shrink-0' : 'h-4 w-4 shrink-0 text-primary'}
