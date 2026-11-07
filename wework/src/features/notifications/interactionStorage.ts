@@ -197,11 +197,13 @@ export function readInteractionDrafts(key: string): Record<string, string> {
     : {}
 }
 
-export function saveInteractionState(key: string, value: unknown): void {
+export function saveInteractionState(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value))
+    return true
   } catch (error) {
     console.error('[Wework] Could not persist interaction state', error)
+    return false
   }
 }
 

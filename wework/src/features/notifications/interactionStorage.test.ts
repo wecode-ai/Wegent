@@ -132,8 +132,17 @@ it('keeps a storage quota failure from changing the accepted response outcome', 
   const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
     throw new Error('Quota exceeded')
   })
-  expect(() => saveInteractionState('history', [entry(1)])).not.toThrow()
+  let saved: boolean | undefined
+  expect(() => {
+    saved = saveInteractionState('history', [entry(1)])
+  }).not.toThrow()
+  expect(saved).toBe(false)
   expect(log).toHaveBeenCalledOnce()
   write.mockRestore()
   log.mockRestore()
+})
+
+it('acknowledges a successful synchronous storage update', () => {
+  expect(saveInteractionState('history', [entry(1)])).toBe(true)
+  expect(readInteractionHistory('history')).toEqual([entry(1)])
 })

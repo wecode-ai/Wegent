@@ -15,7 +15,6 @@ import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContext
 import { useTranslation } from '@/hooks/useTranslation'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import { useIssueHumanInteractions } from './useIssueHumanInteractions'
 import {
@@ -56,10 +55,10 @@ import { TransientNotice } from '@/components/common/TransientNotice'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
+import { persistInteractionArchive } from './interactionArchive'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
-  archiveInteraction,
   readInteractionDrafts,
   readInteractionHistory,
   saveInteractionState,
@@ -171,6 +170,7 @@ function RuntimeInteractionsState({
   const successfulReadApi = useRef(source?.services?.runtimeWorkApi)
   const fetching = useRef(false)
   const reportedOfflineDevices = useRef(new Set<string>())
+  const failedArchiveWrites = useRef(new Set<string>())
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
@@ -235,9 +235,9 @@ function RuntimeInteractionsState({
       answeredAt = item.createdAt,
       resolvedIssueQuestion?: InteractionHistory['resolvedIssueQuestion']
     ) => {
-      await navigator.locks.request(historyKey, async () => {
-        const current = readInteractionHistory(historyKey)
-        const next = archiveInteraction(current, {
+      await persistInteractionArchive(
+        historyKey,
+        {
           id: item.id,
           source: interactionSource(item),
           title: item.task.task.title,
@@ -247,30 +247,36 @@ function RuntimeInteractionsState({
           sourceMessageIds: item.sourceMessageIds,
           answeredAt,
           ...(resolvedIssueQuestion ? { resolvedIssueQuestion } : {}),
-        })
-        if (next !== current) saveInteractionState(historyKey, next)
-        // Renderer queues are independent; retain the lock through the host write
-        // so an older window's snapshot cannot overwrite a newer archive.
-        await flushDesktopLocalStoragePersistence()
-        if (mounted.current) {
-          setHistory(next)
-          if (resolvedIssueQuestion && submittedRef.current.has(item.id)) {
-            submittedRef.current = new Set(submittedRef.current)
-            submittedRef.current.delete(item.id)
-            setSubmitted(submittedRef.current)
+        },
+        failedArchiveWrites.current,
+        next => {
+          if (mounted.current) {
+            setHistory(next)
+            if (resolvedIssueQuestion && submittedRef.current.has(item.id)) {
+              submittedRef.current = new Set(submittedRef.current)
+              submittedRef.current.delete(item.id)
+              setSubmitted(submittedRef.current)
+            }
           }
         }
-      })
+      )
     },
     [historyKey]
   )
-  useEffect(() => {
-    for (const item of issueInteractions.resolved) {
+  const archiveResolved = useCallback(
+    (item: RuntimeInteraction) => {
       const questionIdentity = issueQuestionIdentity(item)
-      if (questionIdentity)
-        void archive(item, Date.now(), { questionIdentity, nativeInteractionId: item.id })
-    }
-  }, [archive, issueInteractions.resolved])
+      return questionIdentity
+        ? archive(item, Date.now(), { questionIdentity, nativeInteractionId: item.id }).catch(
+            cause => logInteractionLoadFailure('archive', cause, item.task.address)
+          )
+        : Promise.resolve()
+    },
+    [archive]
+  )
+  useEffect(() => {
+    for (const item of issueInteractions.resolved) void archiveResolved(item)
+  }, [archiveResolved, issueInteractions.resolved])
   useEffect(() => {
     const update = (event: StorageEvent) => {
       if (event.key?.startsWith(acceptancePrefix) && event.newValue !== null) {
@@ -302,8 +308,10 @@ function RuntimeInteractionsState({
       const api = current?.services?.runtimeWorkApi
       if (fetching.current) return
       if (!api) {
-        if (force) await issueDiscoveryRef.current.refresh()
-        else await issueDiscoveryRef.current.discover()
+        if (force) {
+          await issueDiscoveryRef.current.refresh()
+          await Promise.all(issueDiscoveryRef.current.resolved.map(archiveResolved))
+        } else await issueDiscoveryRef.current.discover()
         return
       }
       if (successfulReadApi.current !== api) {
@@ -327,6 +335,7 @@ function RuntimeInteractionsState({
             }, 5000)
           : undefined
       try {
+        if (force) await Promise.all(issueDiscoveryRef.current.resolved.map(archiveResolved))
         const discovered = await readInteractionTaskInventory(current)
         if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
         if (force) await issueDiscoveryRef.current.refresh()
@@ -504,7 +513,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setLoading(false)
       }
     },
-    [acceptancePrefix, archive, t]
+    [acceptancePrefix, archive, archiveResolved, t]
   )
   const signature = JSON.stringify(
     source?.items.map(item => [
