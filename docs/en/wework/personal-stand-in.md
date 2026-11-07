@@ -35,6 +35,8 @@ After stopping, you may migrate instead: choose **Profile to migrate** (the prim
 
 For an unbound instance, a project entry pointing to a specific device establishes that first binding. Such links never replace an existing binding.
 
+If concurrent initialization causes a first-binding version conflict, the page reads the saved authoritative binding without rebinding, restarting the stand-in, or replacing another account's binding.
+
 Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My stand-in** to open your personal task board.
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.

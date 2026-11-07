@@ -82,7 +82,25 @@ export function useStandInInstance(
           await api.personalGet(target.userId, target.deviceId)
           if (!current) return
         }
-        value = await api.binding(identity.deviceId, 'bind', value.version, target)
+        try {
+          value = await api.binding(identity.deviceId, 'bind', value.version, target)
+        } catch (cause) {
+          if (
+            !cause ||
+            typeof cause !== 'object' ||
+            !('code' in cause) ||
+            cause.code !== 'version_conflict'
+          )
+            throw cause
+          // Another initialization won. Read its authoritative target without
+          // retrying the write or starting a possibly different owner's profile.
+          const latest = await api.binding(identity.deviceId)
+          if (current) {
+            setBinding(latest)
+            setError(null)
+          }
+          return
+        }
         // Persist the binding first: a failed start remains bound and recoverable by stopping.
         try {
           await api.lifecycle(target.userId, target.deviceId, 'start')
