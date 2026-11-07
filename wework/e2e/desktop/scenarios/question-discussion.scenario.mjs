@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
+  DEFAULT_STEP_TIMEOUT_MS,
   DEFAULT_MODEL_ID,
   createSingleRootLocalProject,
   selectE2EModel,
@@ -46,7 +47,6 @@ const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const PAGE = `${ACTIVE} [data-testid="runtime-interactions-page"]`
 const CARD = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card"]`
 const callId = 'question-discussion-audience'
-const PENDING_INTERACTION_ARCHIVE_TIMEOUT_MS = 30_000
 
 export function createDesktopScenario({
   executorHome,
@@ -347,7 +347,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
       await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
         text: '0',
-        timeoutMs: PENDING_INTERACTION_ARCHIVE_TIMEOUT_MS,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command(

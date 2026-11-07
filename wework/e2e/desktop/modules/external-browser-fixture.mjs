@@ -79,9 +79,6 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
     `[Default Applications]\nx-scheme-handler/http=${desktopId}\nx-scheme-handler/https=${desktopId}\n`
   )
   const appEnvironment = { XDG_CONFIG_HOME: config, XDG_DATA_HOME: data }
-  // Chrome session creation is a cold native startup. Four parallel desktop
-  // checkpoints can saturate the runner long enough to exceed a normal UI step.
-  const startupTimeoutMs = Math.max(timeoutMs, 60_000)
   let child
   let baseUrl
   let sessionId
@@ -112,7 +109,7 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
       if (sessionId) {
         const response = await fetch(`${baseUrl}/session/${sessionId}`, {
           method: 'DELETE',
-          signal: AbortSignal.timeout(startupTimeoutMs),
+          signal: AbortSignal.timeout(timeoutMs),
         })
         assert.ok(response.ok, 'ChromeDriver could not close the isolated browser')
       }
@@ -120,7 +117,7 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
       try {
         const exited =
           child?.pid && child.exitCode === null && child.signalCode === null
-            ? once(child, 'exit', { signal: AbortSignal.timeout(startupTimeoutMs) })
+            ? once(child, 'exit', { signal: AbortSignal.timeout(timeoutMs) })
             : Promise.resolve()
         try {
           if (child?.pid) process.kill(-child.pid, 'SIGTERM')
@@ -129,7 +126,7 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
         }
         await exited
       } finally {
-        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+        await rm(root, { recursive: true, force: true })
       }
     }
   }
@@ -145,31 +142,27 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
           env: { ...process.env, ...appEnvironment },
           stdio: ['ignore', 'pipe', 'pipe'],
         })
-        baseUrl = `http://127.0.0.1:${await driverPort(child, startupTimeoutMs)}`
+        baseUrl = `http://127.0.0.1:${await driverPort(child, timeoutMs)}`
         await record('create-browser-session')
-        const session = await request(
-          '/session',
-          {
-            capabilities: {
-              alwaysMatch: {
-                browserName: 'chrome',
-                'goog:chromeOptions': {
-                  binary: CHROME_BINARY,
-                  // Chrome rejects OS URL handoffs when --enable-automation is present.
-                  excludeSwitches: ['enable-automation'],
-                  args: [
-                    `--user-data-dir=${profile}`,
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--no-first-run',
-                    '--no-default-browser-check',
-                  ],
-                },
+        const session = await request('/session', {
+          capabilities: {
+            alwaysMatch: {
+              browserName: 'chrome',
+              'goog:chromeOptions': {
+                binary: CHROME_BINARY,
+                // Chrome rejects OS URL handoffs when --enable-automation is present.
+                excludeSwitches: ['enable-automation'],
+                args: [
+                  `--user-data-dir=${profile}`,
+                  '--no-sandbox',
+                  '--disable-dev-shm-usage',
+                  '--no-first-run',
+                  '--no-default-browser-check',
+                ],
               },
             },
           },
-          startupTimeoutMs
-        )
+        })
         sessionId = session.sessionId
         assert.ok(sessionId, 'ChromeDriver did not create a real browser session')
         await record('ready')

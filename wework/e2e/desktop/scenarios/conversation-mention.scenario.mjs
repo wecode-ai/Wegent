@@ -295,12 +295,11 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      let issueReference = null
       if (CLOUD_ONLY) {
         assert.ok(issueFixture, 'The conversation mention Issue fixture is missing')
+        issueReference = `[$#${issueFixture.issue.sequence_number ?? issueFixture.issue.id} ${CLOUD_ISSUE_TITLE}](wework-issue://${encodeURIComponent(issueFixture.project.id)}/${encodeURIComponent(issueFixture.issue.id)})`
       }
-      const issueReference = issueFixture
-        ? `[$#${issueFixture.issue.sequence_number ?? issueFixture.issue.id} ${CLOUD_ISSUE_TITLE}](wework-issue://${encodeURIComponent(issueFixture.project.id)}/${encodeURIComponent(issueFixture.issue.id)})`
-        : null
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', '[data-testid="new-chat-button"]', {
         timeoutMs: uiTimeoutMs,
@@ -392,7 +391,8 @@ export function createDesktopScenario({
           targetTaskTabTestId?.startsWith('workspace-tab-select-task-'),
         `The target task tab was not active before issue reference navigation: ${targetTaskTabTestId}`
       )
-      if (issueReference) {
+      if (CLOUD_ONLY) {
+        assert.ok(issueReference, 'The cloud conversation mention Issue reference is missing')
         await control.command('waitFor', '[data-testid^="sent-issue-token-"]', {
           timeoutMs: uiTimeoutMs,
         })
@@ -434,7 +434,8 @@ export function createDesktopScenario({
         await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       }
 
-      if (issueReference) {
+      if (CLOUD_ONLY) {
+        assert.ok(issueReference, 'The cloud conversation mention Issue reference is missing')
         await verifyComposerIssueReference(control, issueReference, targetTaskRoute, {
           issueFixture,
           issueTitle: CLOUD_ISSUE_TITLE,
