@@ -27,6 +27,7 @@ import {
   verifyInteractionArchiving,
 } from '../modules/human-interaction-dismiss.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import { verifyInteractionTime } from '../modules/human-interaction-time.mjs'
 import {
   handleArchivedTaskInteractionModel,
   verifyArchivedTaskInteractionCleanup,
@@ -386,6 +387,7 @@ export function createDesktopScenario({
         { text: QUESTION }
       )
       await verifyPendingInteractionsTab(control, 1, { openFromMenu: true })
+      const questionTime = await verifyInteractionTime(control, page)
       await control.command('waitFor', page, { text: CONTEXT })
       if (issueFixture) {
         const execution = issueDiagnostics.find(
@@ -543,6 +545,7 @@ export function createDesktopScenario({
         await control.command('waitFor', `${page} [data-testid="interactions-back-to-list"]`, {
           visible: true,
         })
+        await verifyInteractionTime(control, page, { visible: 'detail', expected: questionTime })
         focusDiagnostics.narrowContext = await waitForElementInsideScroller(
           control,
           contextParagraph,
@@ -624,6 +627,7 @@ export function createDesktopScenario({
           visible: true,
         })
         await captureScreenshot(control, '05c-narrow-inbox-list.png')
+        await verifyInteractionTime(control, page, { visible: 'list', expected: questionTime })
         await control.command('click', `${page} [data-testid="interaction-list-item"]`)
         assert.equal(await control.command('getValue', input), ANSWER)
       } finally {
@@ -632,6 +636,7 @@ export function createDesktopScenario({
       await reloadMainWindow(control, 'The pending inbox did not reconnect after reload')
       await control.command('waitFor', page, { text: QUESTION, timeoutMs: modelResponseTimeoutMs })
       await verifyPendingInteractionsTab(control, 1)
+      await verifyInteractionTime(control, page, { expected: questionTime })
       await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
       assert.equal(await control.command('getValue', input), ANSWER)
       await captureScreenshot(control, '06-draft-survives-reload.png')
@@ -707,6 +712,8 @@ export function createDesktopScenario({
       await verifyPendingInteractionsTab(control, 0)
       await control.command('click', `${page} [data-testid="interactions-history"]`)
       await control.command('waitFor', page, { text: QUESTION })
+      const handledTime = await verifyInteractionTime(control, page)
+      assert.ok(Date.parse(handledTime) >= Date.parse(questionTime))
       await control.command('waitFor', contextParagraph, {
         text: CONTEXT,
         visible: true,
