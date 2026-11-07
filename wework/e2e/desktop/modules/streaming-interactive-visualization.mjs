@@ -76,6 +76,11 @@ async function detachVisualizationTab(control, uiTimeoutMs) {
   await detached.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
   await waitForVisualizationBlob(detached, FRAME, uiTimeoutMs)
   control.activateWindow('main')
+  // Transferring the task can select the interactions tab in the source window.
+  // Settings is owned by a task workbench, so establish that owner through the UI.
+  await main.command('click', '[data-testid="workspace-tab-add"]')
+  await main.command('click', '[data-testid="workspace-tab-add-task"]')
+  await main.command('waitFor', COMPOSER_SELECTOR, { visible: true, timeoutMs: uiTimeoutMs })
   return { main, detached, tab }
 }
 
