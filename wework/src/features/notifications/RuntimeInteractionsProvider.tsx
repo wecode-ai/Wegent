@@ -145,17 +145,19 @@ function RuntimeInteractionsState({
   sourceRef.current = source
   const cacheKey = `wework.interactions:${accountKey}:pending`
   const cached = useMemo(() => readPendingInteractionCache(cacheKey), [cacheKey])
+  // Shared Issue cache belongs to its inbox, never native Runtime discovery.
+  const cachedNative = useMemo(() => cached.filter(item => !item.sharedRequest), [cached])
   const issueInteractions = useIssueHumanInteractions(source?.services, cached)
   const { refresh: refreshIssueInteractions, errors: issueErrors } = issueInteractions
   const issueDiscoveryRef = useRef(issueInteractions)
   issueDiscoveryRef.current = issueInteractions
   const [loaded, setLoaded] = useState<Record<string, RuntimeInteraction[]>>(() => {
     const groups: Record<string, RuntimeInteraction[]> = {}
-    for (const item of cached) (groups[item.task.key] ??= []).push(item)
+    for (const item of cachedNative) (groups[item.task.key] ??= []).push(item)
     return groups
   })
   const [inventory, setInventory] = useState<RuntimeTaskReminderItem[]>(() =>
-    cached.map(item => item.task)
+    cachedNative.map(item => item.task)
   )
   const inventoryRef = useRef(inventory)
   inventoryRef.current = inventory
