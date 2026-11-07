@@ -1290,7 +1290,13 @@ function OwnedWorkbenchProvider({
   ])
 
   useEffect(() => {
-    if (lastProjectRestoreAttemptedRef.current || !state.runtimeWork) return
+    if (
+      lastProjectRestoreAttemptedRef.current ||
+      !state.runtimeWork ||
+      state.runtimeWorkLoad.phase === 'loading' ||
+      state.runtimeWorkLoad.phase === 'refreshing'
+    )
+      return
     if (
       projectSelectionStartedRef.current ||
       parseRuntimeTaskRoute(stripAppBasePath(window.location.pathname), window.location.search) ||
@@ -1318,6 +1324,7 @@ function OwnedWorkbenchProvider({
     state.currentRuntimeTask,
     state.projects,
     state.runtimeWork,
+    state.runtimeWorkLoad.phase,
     state.standaloneWorkspacePath,
     ownershipKey,
   ])

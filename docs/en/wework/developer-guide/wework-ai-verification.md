@@ -12,6 +12,8 @@ Wework can start an isolated development verification session so an AI can opera
 
 Identity descriptions share only not-yet-dispatched requests within the same synchronous batch; post-operation identity checks still fetch fresh descriptions. Confirmed local Runtime telemetry policy is not rewritten on idle polls. Runtime, account, API, or policy changes resynchronize it, and failed writes retry. Work-list changes refresh task data only; device events and explicit refresh retain device discovery. Work events preserve an in-flight full cloud sync and coalesce into one fresh work read afterward. Bootstrap device and team synchronization is not discarded when the task-read revision changes.
 
+Last-project restoration waits until the initial local work-list load settles; an earlier cloud-composed list must not consume that restoration attempt. Device and cloud catalogs may publish independently, without implying that local projects are ready.
+
 ```bash
 pnpm --filter wework e2e:desktop --segment idle-executor-requests
 ```
