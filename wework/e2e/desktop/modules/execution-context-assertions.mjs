@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { isNativeApprovalReviewRequest } from './native-approval-model.mjs'
 import {
   codexRequestKind,
   isReplyPredictionRequest,
@@ -17,11 +18,12 @@ export function withExecutionContextAssertions(scenario, { marker, expected, wor
           .filter(item => item.role === 'user')
           .at(-1)
         const input = JSON.stringify(body.input ?? [])
-        const maintenance =
+        const nonWorker =
           ['compaction', 'prewarm'].includes(codexRequestKind(body)) ||
-          isReplyPredictionRequest(body)
+          isReplyPredictionRequest(body) ||
+          isNativeApprovalReviewRequest(body)
         if (
-          !maintenance &&
+          !nonWorker &&
           JSON.stringify(latest ?? '').includes(marker) &&
           (!workerContext || input.includes(workerContext))
         ) {
