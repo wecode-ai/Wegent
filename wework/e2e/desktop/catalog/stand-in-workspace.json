@@ -2,6 +2,7 @@
   "order": 53000,
   "scenario": "./scenarios/stand-in-workspace.scenario.mjs",
   "scenarioOnly": true,
+  "paths": ["wework/e2e/desktop/modules/stand-in-instance-flows.mjs"],
   "ci": {
     "core": {
       "order": 42000,

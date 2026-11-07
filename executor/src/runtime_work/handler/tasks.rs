@@ -1097,6 +1097,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(receipt) = self.existing_payload_command(&payload).await? {
             return Ok(receipt);
         }
+        let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
         if payload["automaticStandIn"] == true
             && existing_link.as_ref().is_some_and(|link| {
                 link.interaction_status
@@ -1196,7 +1197,7 @@ impl RuntimeWorkRpcHandler {
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
-        request.new_session = false;
+        request.new_session = start_new_session;
         if request.runtime_project_key.is_none() {
             request.runtime_project_key = existing_link
                 .as_ref()
@@ -1295,7 +1296,11 @@ impl RuntimeWorkRpcHandler {
             self.recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
                 .await
         };
-        let thread_id = runtime_session_id_from_payload(&payload)
+        let thread_id = existing_link
+            .as_ref()
+            .filter(|link| super::super::conversation_sessions::is_identity_conversation(link))
+            .and_then(runtime_session_id_from_link)
+            .or_else(|| runtime_session_id_from_payload(&payload))
             .or_else(|| {
                 existing_link
                     .as_ref()
@@ -1347,8 +1352,10 @@ impl RuntimeWorkRpcHandler {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
         }
         self.schedule_worktree_prune();
-        let direct_thread_id = thread_id.clone().filter(|_| ephemeral);
-        let resume_thread_id = thread_id.filter(|_| !ephemeral);
+        let direct_thread_id = thread_id
+            .clone()
+            .filter(|_| ephemeral && !start_new_session);
+        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_new_session);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
@@ -2027,6 +2034,16 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         stop_timeout: Duration,
     ) -> Result<Value, AppIpcError> {
+        self.cancel_task_with_stop_policy(payload, stop_timeout, false)
+            .await
+    }
+
+    pub(super) async fn cancel_task_with_stop_policy(
+        &self,
+        payload: Value,
+        stop_timeout: Duration,
+        require_stopped: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         self.invalidate_stand_in_owner_request(&local_task_id);
@@ -2037,7 +2054,11 @@ impl RuntimeWorkRpcHandler {
             .map_or(true, |link| link.runtime.eq_ignore_ascii_case("codex"));
         let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if self.remove_queued_turn(&local_task_id).await? {
+        let removed_queued = self.remove_queued_turn(&local_task_id).await?;
+        if removed_queued && require_stopped {
+            while self.remove_queued_turn(&local_task_id).await? {}
+        }
+        if removed_queued && (!require_stopped || !had_active_local_execution) {
             return Ok(match link {
                 Some(link) => task_action_success(&link),
                 None => json!({
@@ -2098,7 +2119,7 @@ impl RuntimeWorkRpcHandler {
             }
         };
         let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
-        if !local_stopped {
+        if !local_stopped && !require_stopped {
             self.force_settle_local_task_execution(
                 &local_task_id,
                 thread_id,
@@ -2297,7 +2318,9 @@ impl RuntimeWorkRpcHandler {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
                 clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
-            link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
+            if !thread_id.is_empty() || payload["startNewSession"] != true {
+                link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
+            }
             clear_runtime_handle_messages(&mut link.runtime_handle);
             if let Some(presentation) = presentation.clone() {
                 append_runtime_handle_user_message_presentation(
@@ -2646,7 +2669,7 @@ fn superseded_turn_identities(link: &RuntimeTaskLink, turn_id: &str) -> Vec<Stri
     identities
 }
 
-fn retry_source_turn_id(payload: &Value) -> Option<String> {
+pub(super) fn retry_source_turn_id(payload: &Value) -> Option<String> {
     string_field(payload, "retrySourceTurnId")
         .or_else(|| string_field(payload, "retry_source_turn_id"))
         .filter(|turn_id| !turn_id.trim().is_empty())

@@ -3,14 +3,14 @@ import { newStandInRole, type StandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 
 export class StandInMigrationError extends Error {
-  readonly code: 'changed' | 'conflict' | 'same_device'
-  constructor(code: 'changed' | 'conflict' | 'same_device') {
+  readonly code: 'changed' | 'conflict' | 'same_device' | 'not_stopped'
+  constructor(code: 'changed' | 'conflict' | 'same_device' | 'not_stopped') {
     super(code)
     this.code = code
   }
 }
 
-/** Copy portable settings and role-visible memories before pausing the local intake. */
+/** Copy portable settings and role-visible memories only after the entire source stopped. */
 export async function migrateStandIn(
   api: StandInExecutorApi,
   input: {
@@ -29,6 +29,7 @@ export async function migrateStandIn(
     api.memories(sourceUser, sourceDevice),
     api.personalGet(targetUser, targetDevice),
   ])
+  if (source.lifecycle?.status !== 'stopped') throw new StandInMigrationError('not_stopped')
   const original = roleId ? source.roles.find(role => role.id === roleId) : source.primary
   if (!original) throw new StandInMigrationError('changed')
   const key = JSON.stringify([sourceDevice, sourceUser, roleId ?? '@primary'])
@@ -105,20 +106,7 @@ export async function migrateStandIn(
   }
   const current = await api.personalGet(sourceUser, sourceDevice)
   if (current.version !== source.version) throw new StandInMigrationError('changed')
-  // History, memories, source bindings and already running work remain on their original device.
-  await api.personalSave(
-    sourceUser,
-    {
-      ...current,
-      ...(roleId
-        ? {
-            roles: current.roles.map(role =>
-              role.id === roleId ? { ...role, enabled: false } : role
-            ),
-          }
-        : { primary: { ...current.primary!, enabled: false } }),
-    },
-    sourceDevice
-  )
+  if (current.lifecycle?.status !== 'stopped') throw new StandInMigrationError('not_stopped')
+  // History, memories and device grants remain on the stopped source. Never restart it here.
   return existing ?? migrated
 }

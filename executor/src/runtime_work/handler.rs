@@ -140,6 +140,7 @@ mod connections;
 mod context_compaction;
 mod control;
 mod control_metadata;
+mod conversation_sessions;
 mod creation;
 mod execution_control;
 mod fork_transfer;
@@ -180,6 +181,7 @@ mod stand_in_events;
 mod stand_in_execution;
 mod stand_in_history;
 mod stand_in_ingress;
+mod stand_in_lifecycle;
 mod stand_in_memory;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
@@ -537,6 +539,7 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+    stand_in_lifecycle_gate: Arc<Mutex<()>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
@@ -903,6 +906,7 @@ impl RuntimeWorkRpcHandler {
             event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
+            stand_in_lifecycle_gate: Arc::new(Mutex::new(())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
                 runtime_settings,
                 queued_turns,
@@ -1196,6 +1200,8 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
         || method.starts_with("runtime.stand_in.telemetry.")
         || method.starts_with("runtime.stand_in.onboarding.")
         || method == "runtime.stand_in.processing.status"
+        || method == "runtime.stand_in.binding"
+        || method == "runtime.stand_in.personal.lifecycle"
     {
         return false;
     }

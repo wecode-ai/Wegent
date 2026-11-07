@@ -6,6 +6,63 @@ sidebar_position: 3
 
 <a id="project-controls"></a>
 
+<!-- ui-source: ../packages/collaboration/src/project-manage/ProjectSettingsPage.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/ResourceCatalogPage.tsx -->
+<!-- ui-source: ../packages/collaboration/src/templates/CollaborationTemplatePage.tsx -->
+<!-- ui-source: ../packages/collaboration/src/milestones/MilestonesPage.tsx -->
+<!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
+
+## Collaboration spaces and global resource catalogs
+
+<a id="workspace-resource-controls"></a>
+
+Open **top + → Collaboration**. Global catalogs, space settings and project settings are separate levels: spaces contain projects, while code directories remain separate resources. Project AI team settings do not replace space membership management.
+
+| Feature                           | Entry and steps                                                                                                                              | Conditions and limits                                                                                                       |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Agents / Teams / Devices catalogs | Select the left navigation item, search/filter All, Created by me or Team shared; create with the appropriate owner and save the form        | Not the project member list; creation/deletion depends on resource type and permission                                      |
+| Add resource to space             | Resource row → Add to space → choose space → confirm; Settings opens its configuration                                                       | Does not expand all project members' permissions or move code directories                                                   |
+| Space name/description            | Space-name … → Space settings → Basic information → edit → Save                                                                              | Requires space management permission; not project renaming                                                                  |
+| Cloud space members               | Space settings → Collaboration members → Members → Invite → search/choose role → click result                                                | Clicking submits; role/removal actions request immediately and remain constrained by inherited membership/management rights |
+| Transfer ownership                | Owner selects a new owner on the space members page, reviews and transfers                                                                   | Previous owner retains administrator permissions; unrelated to assigning an Issue                                           |
+| Space agents/teams                | Space settings → Collaboration members → Agents / Teams; add/create and configure lead, members, rules and execution requirements, then save | Removing a shared association differs from deleting a project-owned group; inspect impact                                   |
+| Space execution environment       | Space settings → Execution environment → add/share                                                                                           | Separate from project repository initialization; depends on storage type and capabilities                                   |
+
+### Register a space Runner
+
+When supported for a cloud space, use the create action under **Space settings → Execution environment** to open **Register workspace runner**. Enter its name and register. Follow the dialog to securely configure `DEVICE_ID`, `WEGENT_AUTH_TOKEN` and `WEGENT_BACKEND_URL` on the target server and run Executor, then verify online status in Wework.
+
+Credentials are shown only this time. Do not put their values in chat, documents or screenshots; retain them through your organization's secure process before closing. Removing a public space environment revokes its credentials. Registration does not prove the process started, and cloud connection status does not establish Runner availability.
+
+## Collaboration templates and configuration sharing
+
+| Action                            | UI steps and result                                                                                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Find templates                    | Collaboration left navigation → Templates → Discover, Available or My templates; search, refresh or use More                                                                    |
+| Use                               | Open details → Use this template → choose the creation/application target and review configuration                                                                              |
+| Import YAML                       | Import → .yaml/.yml (up to 1 MiB) → preview → save to My templates; resolve validation errors                                                                                   |
+| Save/export project configuration | Project settings → Configuration sharing (requires template-store support) → import, save to My templates or export configuration YAML                                          |
+| Save/export group configuration   | Use save/export template in team details; inspect content and sensitive information before sharing                                                                              |
+| Sync/publish                      | Sync pending local content; publishing requires reviewing its confirmation before submitting. Save, sync and publish differ; unavailability does not mean content became public |
+
+## New Issue content and assignee
+
+Open **Collaboration → New Issue**, choose the project first and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
+
+Type **#** and select a matching Issue from this project. After switching projects, recheck/reselect references rather than retaining invalid old-project links. This creates an Issue, not a runtime task, so do not assume task plan-mode/plugin/Skill-slash controls are available. Review project, assignee and references before submitting, then continue in details.
+
+## Manage milestones
+
+Open **Milestones** in the project. The Issue-detail selector only associates existing milestones and is not the management page.
+
+| Feature         | Steps                                                                                                                                                                  |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browse/filter   | Switch Open/Closed, select a milestone for its Issues and use Back to leave details                                                                                    |
+| Create/edit     | Create or edit a row, enter title, description and due date, then Save; Cancel discards                                                                                |
+| Close/reopen    | Use the row action; this changes the milestone state without automatically completing its Issues                                                                       |
+| Delete          | Verify the target and review confirmation/permissions; deletion differs from closing                                                                                   |
+| Archived Issues | When the selected milestone contains archived Issues, use its Archived entry to view those records; not the Closed milestone filter or globally archived conversations |
+
 ## Members, discussion assignment and archival
 
 | Feature                            | Steps                                                                                                                       | Conditions and result                                                                                              |
@@ -39,7 +96,7 @@ Projects group conversations that use the same codebase. A project can map to fo
 
 When the project list is empty, the sidebar's **Projects** section shows **+ New project** directly. Select it to choose a **Local project** or **Cloud project**; cloud projects still require a cloud connection. Wework hides this empty-state action while project data is synchronizing so an unfinished load is not mistaken for an empty list.
 
-Choose **Use existing folder** for code already on the device. Confirming creation saves a distinct project; multiple projects can share the same source folder. Select an existing project from the project list instead of creating it again. Registered projects remain in the project list after refresh or restart, including when their source folders are inside a `Codex` directory.
+Choose **Local project** to open the system folder picker. Select an already registered project directly rather than adding it again. Registered entries survive refresh/restart and are not hidden merely because their source is inside a `Codex` directory.
 
 In local mode, choose **Local project** and select one or more folders in the system directory picker. This entry always uses the local execution device, even when cloud or remote devices are connected. To use another device, choose **Cloud project**, then open an existing directory, create a blank project, or enter a Git repository URL to clone on the target device. Git projects use the repository name as the directory name by default and allow an optional branch and target parent directory. After submission, the dialog closes immediately and the project list shows clone progress; failed clones can be retried or dismissed there.
 
@@ -133,6 +190,21 @@ When two or more agents are selected, the creation flow recommends organizing th
 After creating or adding an agent under **Project settings → AI team → Agents**, an administrator can select it under **Assignee → Workspace agents** on a new or existing Issue. Assignment executes according to project configuration. Use **Add agent → Existing agents** on that settings page to enable it beforehand. Catalogs show the configured display name or the resource name when no display name is set.
 
 Local spaces save the agent configuration in the project, preserving its resource name, display name, model policy, and tools. In cloud spaces, workspace sharing grants use permission, while a project binding determines where the agent is available. Sharing does not grant permission to edit its source definition. Execution still requires an authorized project device and model.
+
+### Agent capabilities and disabled state
+
+In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
+
+| Option/action                       | Steps and limits                                                                                                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Follow runtime device (recommended) | Uses that running device's current user's plugins, Skills, MCP and local capabilities; today's device preview is not a guarantee for a different device               |
+| Fix capabilities to Agent           | Search/add/remove plugins and Skills to store them with the agent; plugin capability selection is Codex-only and configured capabilities synchronize before execution |
+| Advanced MCP                        | In fixed mode, edit MCP JSON in advanced settings and check format/source trust; do not put credentials in prose or chat                                              |
+| Prompt references                   | Plugin/Skill references require fixed capabilities and lock required selections; review/remove the reference before changing its required item                        |
+| Save                                | Explicitly save after reviewing capabilities, execution environment and model; choosing an option alone does not save                                                 |
+| Disable                             | Disabling in project agent configuration submits immediately, without another confirmation dialog; not deletion of the source agent or termination of an existing run |
+| Share and re-enable                 | Restore a disabled project entry after checking its sharing scope; this both re-enables it and shares it with the space                                               |
+| Remove from space                   | Removes the space association, not a project's Disable action or deletion of the source resource                                                                      |
 
 ### Add and create Agents
 
@@ -312,7 +384,7 @@ The **Execution tasks** section lists these independent tasks separately. An inc
 
 For ordinary linked tasks, the Executor writes the issue's execution status from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status.
 
-An issue that is no longer needed can be deleted from the board card menu, the table row actions, or the detail panel's "…" menu. Deletion is a soft delete: the issue and its sub-issues disappear from the board while their data is kept, and any run still executing is cancelled first so no orphaned process is left behind.
+Use the UI's archive action for an unneeded Issue from its board card, table row or details' More information entry. Review subtasks and linked runs first; failure to stop a run means that merely submitting the request is not successful archival. Restore from the project's Archived list. Archival is not permanent deletion.
 
 ## Project-space files
 
@@ -386,6 +458,8 @@ A project can reference a different folder on each local, cloud, or remote devic
 On macOS, open a folder from a terminal with `wework .` or `wework /path/to/project`.
 
 ## Editing deliveries
+
+For the initial entry, open **current task workbench → Toggle summary → Deliver / Deliver to task…**. It requires a current task and available linked-project/delivery context. If no Issue is associated, first use the summary's project-space association action; arbitrary historical messages are not a delivery entry. Inspect summary output/source items before choosing what to include in the snapshot.
 
 Set a title and Markdown notes when delivering, and select the messages, files, or folders to include. The title initially uses the current task title.
 

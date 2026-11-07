@@ -5,6 +5,7 @@ import { verifyAssignmentActivityReceipts } from './assignment-activity-receipts
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const RECEIPTS = `${CONTENT} [data-testid="issue-assignment-receipts"]`
+const STAND_IN_RECEIPT = `${RECEIPTS} [title^="分身已接收"]`
 
 export async function verifyIssueAssignmentReceipts(
   control,
@@ -90,7 +91,8 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('waitFor', `${RECEIPTS} svg[data-figure="stand-in"]`)
   await capture('assignment-receipts-03-both-received.png')
   await dismissInbox()
-  await control.command('hover', `${RECEIPTS} [title^="分身已接收"]`)
+  await control.command('waitFor', STAND_IN_RECEIPT)
+  await control.command('hover', STAND_IN_RECEIPT)
   await control.command('waitFor', '[role="tooltip"]', {
     text: '分身已接收',
     timeoutMs: 15_000,

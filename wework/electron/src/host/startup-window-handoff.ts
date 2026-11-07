@@ -1,5 +1,6 @@
 import type { BrowserWindow, NativeImage, Rectangle } from 'electron'
 import { centeredWindowBounds } from './window-layout.js'
+import { finishStartupAnimation } from './startup-tasks.js'
 
 type GeometryWindow = Pick<
   BrowserWindow,
@@ -294,11 +295,13 @@ export async function prepareStartupMainWindow(
       // Capturing forces a composited frame even when Windows suspends rAF in an occluded window.
       trace.record('before-capture')
       assertActive()
-      const frame = await main.webContents.capturePage().catch(error => {
-        trace.record('capture-failed', error)
-        console.warn('[startup-window-handoff] could not capture the main window', error)
-        return undefined
-      })
+      const frame = await finishStartupAnimation(() => main.webContents.capturePage()).catch(
+        error => {
+          trace.record('capture-failed', error)
+          console.warn('[startup-window-handoff] could not capture the main window', error)
+          return undefined
+        }
+      )
       trace.record('after-capture', undefined, frame)
       return { splash: bounds, main: main.getBounds() }
     } finally {

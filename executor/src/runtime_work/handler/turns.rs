@@ -1206,6 +1206,21 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
+        let _lifecycle_guard = self
+            .stand_in_lifecycle_gate
+            .lock()
+            .expect("stand-in lifecycle gate poisoned");
+        if let Err(error) = self.validate_stand_in_lifecycle(&turn.request, &turn.local_task_id) {
+            self.retain_failed_runtime_task(&turn.local_task_id, &error);
+            let handler = self.clone();
+            tokio::spawn(async move {
+                handler
+                    .finish_prepared_command(&turn, command_journal::CommandState::Failed)
+                    .await;
+                handler.finish_scheduled_turn(&turn.local_task_id).await;
+            });
+            return;
+        }
         if self.automatic_stand_in_waits(&turn) {
             let handler = self.clone();
             tokio::spawn(async move {
@@ -1230,6 +1245,14 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         if let Some(payload) = turn.send_payload.as_ref() {
+            if payload["startNewSession"] != true {
+                if let Some(link) = self
+                    .local_task_link(&turn.local_task_id)
+                    .filter(super::super::conversation_sessions::is_identity_conversation)
+                {
+                    turn.resume_thread_id = link.thread_id;
+                }
+            }
             let thread_id = turn
                 .resume_thread_id
                 .as_deref()
