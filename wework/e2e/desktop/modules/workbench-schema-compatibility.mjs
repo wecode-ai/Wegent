@@ -79,6 +79,36 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       const metadata = JSON.parse(await fs.readFile(path.join(appRoot, 'package.json'), 'utf8'));
       const runtimeRoot = path.join(appRoot, path.dirname(metadata.main), 'runtime');
       const load = name => import(pathToFileURL(path.join(runtimeRoot, name + '.js')).href);
+      const { parseLocalWorkspaceOpenRequest } = await load('local-workspace-cli');
+      // Windows prevents deleting the current directory; POSIX permits a stale cwd.
+      const deletedStartupDirectoryHandled = process.platform !== 'win32';
+      if (deletedStartupDirectoryHandled) {
+        const originalDirectory = process.cwd();
+        const startupDirectory = path.join(input.root, 'deleted-startup-directory');
+        const workspace = path.join(input.root, 'workspace');
+        await fs.mkdir(startupDirectory);
+        process.chdir(startupDirectory);
+        try {
+          await fs.rmdir(startupDirectory);
+          assert.throws(() => process.cwd(), { code: 'ENOENT' });
+          assert.equal(parseLocalWorkspaceOpenRequest(['Wework']), null);
+          assert.equal(parseLocalWorkspaceOpenRequest(['Wework', '--open-workspace', ' ']), null);
+          assert.deepEqual(
+            parseLocalWorkspaceOpenRequest(['Wework', '--open-workspace', workspace]),
+            { path: workspace }
+          );
+          assert.deepEqual(
+            parseLocalWorkspaceOpenRequest(['Wework', '--open-workspace', './workspace'], input.root),
+            { path: workspace }
+          );
+          assert.throws(
+            () => parseLocalWorkspaceOpenRequest(['Wework', '--open-workspace', './workspace']),
+            { code: 'ENOENT' }
+          );
+        } finally {
+          process.chdir(originalDirectory);
+        }
+      }
       const { migrateWorkbenchDesktopData, prepareDesktopDataSource } = await load('workbench-desktop-data');
       const { packagedUpdaterCache, restoreNativeUpdaterCache } = await load('../host/app-update-cache');
       const updaterCacheRecoveryStates = [];
@@ -318,6 +348,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       assert.equal(await fs.readFile(statePath, 'utf8'), sharedState);
       await assert.rejects(fs.lstat(home), { code: 'ENOENT' });
       process.stdout.write(JSON.stringify({
+        deletedStartupDirectoryHandled,
         compatibleExecutorAccepted: true,
         nativeFileLockMutualExclusion: true,
         incompatibleExecutorRejectedBeforeHomeWrites: true,
@@ -350,6 +381,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
     }
   )
   const evidence = JSON.parse(stdout)
+  assert.equal(evidence.deletedStartupDirectoryHandled, process.platform !== 'win32')
   if (macosLogStartup) evidence.macosLogStartup = macosLogStartup
   evidence.missingDesktopUserData = missingDesktopUserData
   if (windowsDesktopDataStartup) evidence.windowsDesktopDataStartup = windowsDesktopDataStartup

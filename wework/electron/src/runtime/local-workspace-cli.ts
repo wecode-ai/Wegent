@@ -7,7 +7,7 @@ export interface LocalWorkspaceOpenRequest {
 
 export function parseLocalWorkspaceOpenRequest(
   argv: string[],
-  cwd: string = process.cwd()
+  cwd: string = ''
 ): LocalWorkspaceOpenRequest | null {
   const openWorkspaceIndex = argv.indexOf('--open-workspace')
   if (openWorkspaceIndex < 0) return null
@@ -16,6 +16,7 @@ export function parseLocalWorkspaceOpenRequest(
   const workspaceLabelIndex = argv.indexOf('--workspace-label')
   const label = workspaceLabelIndex < 0 ? '' : (argv[workspaceLabelIndex + 1]?.trim() ?? '')
   return {
+    // resolve reads cwd only when the request has no absolute path or base.
     path: resolve(cwd, path),
     ...(label ? { label } : {}),
   }
