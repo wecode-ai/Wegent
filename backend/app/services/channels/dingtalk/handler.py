@@ -40,6 +40,7 @@ from app.services.channels.dingtalk.card_binding import (
     reply_address,
     save_binding,
 )
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
@@ -212,7 +213,11 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             sender_id=sender_id,
             sender_name=sender_nick,
             conversation_id=conversation_id,
-            conversation_type="group" if conversation_type == "2" else "private",
+            conversation_type=(
+                "group"
+                if conversation_type == DingTalkConversationType.GROUP
+                else "private"
+            ),
             is_mention=is_in_at_list,
             raw_message=message,
             extra_data=extra_data,
@@ -370,6 +375,38 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
     def chat_card_config(self) -> Optional[DingTalkChatCardConfig]:
         raw = self._get_chat_card_config() if self._get_chat_card_config else None
         return DingTalkChatCardConfig.model_validate(raw) if raw is not None else None
+
+    async def _reject_concurrent_runtime_quote(
+        self, callback_key: str, message_context: MessageContext
+    ) -> bool:
+        callback_data = message_context.extra_data.get("callback_data")
+        if not isinstance(callback_data, dict):
+            return False
+        text = callback_data.get("text")
+        if not isinstance(text, dict) or not text.get("isReplyMsg"):
+            return False
+        replied = text.get("repliedMsg")
+        if not isinstance(replied, dict) or replied.get("msgType") != "interactiveCard":
+            return False
+        callback_service = self.get_callback_service()
+        if not callback_service or not await callback_service.has_callback_info(
+            callback_key
+        ):
+            return False
+        log_dingtalk_message(
+            self.logger,
+            "card_quote_busy",
+            {
+                "channel_id": self._channel_id,
+                "conversation_id": message_context.conversation_id,
+                "message_id": message_context.extra_data.get("message_id"),
+            },
+        )
+        await self.send_text_reply(
+            message_context,
+            "上一条消息仍在处理或结果尚未送达，请稍后在 Wework 查看后再试。",
+        )
+        return True
 
     async def _register_streaming_emitter(
         self,

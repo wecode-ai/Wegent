@@ -737,8 +737,7 @@ async def test_runtime_follow_up_uses_original_address_without_switching_session
         AsyncMock(return_value=Mock()),
     )
     monkeypatch.setattr(handler, "_register_private_im_runtime_callback", AsyncMock())
-    monkeypatch.setattr(handler, "_delete_private_im_runtime_callback", AsyncMock())
-    monkeypatch.setattr(handler, "_emit_private_im_runtime_stream_error", AsyncMock())
+    monkeypatch.setattr(handler, "_fail_private_im_runtime_continuation", AsyncMock())
     send = AsyncMock(return_value=SimpleNamespace(accepted=True))
     if failure:
         send.side_effect = HTTPException(404, "Unavailable")

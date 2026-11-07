@@ -611,6 +611,9 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
+        async def get_callback_info(self, task_id):
+            return None
+
         async def save_callback_info(self, task_id, callback_info):
             calls["callback"] = {
                 "task_id": task_id,
@@ -708,6 +711,9 @@ async def test_task_mode_runtime_message_migrates_app_device_callback_route(
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
+        async def get_callback_info(self, task_id):
+            return None
+
         async def save_callback_info(self, task_id, callback_info):
             calls["callback_key"] = task_id
 
@@ -764,6 +770,9 @@ async def test_dingtalk_runtime_message_registers_started_card_for_cross_worker(
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
+        async def get_callback_info(self, task_id):
+            return None
+
         async def save_callback_info(self, task_id, callback_info):
             calls["saved"] = (task_id, callback_info)
 
@@ -861,6 +870,9 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
+        async def get_callback_info(self, task_id):
+            return None
+
         async def save_callback_info(self, task_id, callback_info):
             calls["callback"] = {
                 "task_id": task_id,
@@ -961,6 +973,9 @@ async def test_task_mode_dingtalk_quoted_notification_switches_runtime_task(
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
+        async def get_callback_info(self, task_id):
+            return None
+
         async def save_callback_info(self, task_id, callback_info):
             calls["callback"] = {
                 "task_id": task_id,
@@ -1035,6 +1050,9 @@ async def test_runtime_notification_reply_continues_task_from_chat_mode(
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
+        async def get_callback_info(self, task_id):
+            return None
+
         async def save_callback_info(self, task_id, callback_info):
             calls["callback"] = task_id
 
@@ -1100,6 +1118,9 @@ async def test_task_mode_runtime_message_rejects_invalid_address_before_callback
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
+        async def get_callback_info(self, task_id):
+            return None
+
         async def save_callback_info(self, task_id, callback_info):
             calls["callback"] = task_id
 

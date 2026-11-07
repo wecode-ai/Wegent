@@ -9,6 +9,8 @@ from dingtalk_stream import ChatbotMessage
 from dingtalk_stream.card_replier import AICardStatus
 
 from app.services.channels.dingtalk.card_adapter import TemplateChatCardAdapter
+from app.services.channels.dingtalk.card_quotes import quote_key
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from tests.services.channels.dingtalk.test_chat_card import binding, cache, config
 
@@ -145,3 +147,71 @@ async def test_delivery_logs_only_correlation_fields(
     assert "do-not-log" not in caplog.text
     assert "private-content" not in caplog.text
     assert "secret-token" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_private_delivery_saves_quote_address(config, binding, cache, httpx_mock):
+    private = binding.model_copy(
+        update={
+            "incoming_data": {
+                **binding.incoming_data,
+                "conversationId": "dm-a",
+                "conversationType": DingTalkConversationType.PRIVATE,
+            }
+        }
+    )
+    adapter = TemplateChatCardAdapter(
+        cached_client(),
+        ChatbotMessage.from_dict(private.incoming_data),
+        config,
+        77,
+    )
+    httpx_mock.add_response(json={"success": True})
+    httpx_mock.add_response(
+        json={
+            "success": True,
+            "result": [
+                {
+                    "carrierId": "private-carrier",
+                    "spaceType": "IM_ROBOT",
+                    "spaceId": "staff-a",
+                    "success": True,
+                }
+            ],
+        }
+    )
+
+    await adapter.start()
+
+    assert (
+        await cache.get(quote_key(77, "dm-a", "private-carrier"))
+        == adapter.out_track_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_group_delivery_rejects_foreign_space(config, binding, cache, httpx_mock):
+    adapter = TemplateChatCardAdapter(
+        cached_client(),
+        ChatbotMessage.from_dict(binding.incoming_data),
+        config,
+        77,
+    )
+    httpx_mock.add_response(json={"success": True})
+    httpx_mock.add_response(
+        json={
+            "success": True,
+            "result": [
+                {
+                    "carrierId": "foreign-carrier",
+                    "spaceType": "IM_GROUP",
+                    "spaceId": "another-group",
+                    "success": True,
+                }
+            ],
+        }
+    )
+
+    await adapter.start()
+
+    assert await cache.get(quote_key(77, "group-a", "foreign-carrier")) is None

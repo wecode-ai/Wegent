@@ -14,6 +14,7 @@ from dingtalk_stream import AckMessage
 
 from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.dingtalk import handler as handler_module
+from app.services.channels.dingtalk.callback import DingTalkCallbackInfo
 from app.services.channels.dingtalk.handler import (
     DingTalkChannelHandler,
     WegentChatbotHandler,
@@ -544,3 +545,223 @@ async def test_device_mode_migrates_legacy_app_selection_before_routing(
     assert handler._create_and_process_device_task.await_args.kwargs["device_id"] == (
         "app-record-1819"
     )
+
+
+class _CallbackService:
+    def __init__(self, info):
+        self.info = info
+        self.saved = []
+        self.deleted = []
+        self.registered = []
+
+    async def get_callback_info(self, task_id):
+        return self.info
+
+    async def has_callback_info(self, task_id):
+        return self.info is not None
+
+    async def save_callback_info(self, *, task_id, callback_info):
+        self.saved.append((task_id, callback_info))
+        self.info = callback_info
+
+    async def delete_callback_info(self, task_id):
+        self.deleted.append(task_id)
+        self.info = None
+
+    async def register_emitter(self, *, task_id, emitter):
+        self.registered.append((task_id, emitter))
+
+
+def _private_runtime_quote_context() -> MessageContext:
+    context = _message_context()
+    context.content = "分析一下失败原因"
+    context.extra_data = {
+        "message_id": "quote-message",
+        "callback_data": {
+            "msgId": "quote-message",
+            "conversationType": "1",
+            "text": {
+                "isReplyMsg": True,
+                "content": context.content,
+                "repliedMsg": {
+                    "msgType": "interactiveCard",
+                    "msgId": "quoted-card",
+                    "senderId": "robot-a",
+                },
+            },
+        },
+    }
+    return context
+
+
+def _runtime_session():
+    return SimpleNamespace(
+        session_key="session-a",
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        active_runtime_task=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_private_quote_while_runtime_turn_runs_keeps_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import runtime_work_service
+
+    previous = DingTalkCallbackInfo(
+        channel_id=77,
+        conversation_id="conv-private",
+        card_instance_id="old-card",
+        incoming_message_data={"msgId": "old-message"},
+    )
+    service = _CallbackService(previous)
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    handler.get_callback_service = Mock(return_value=service)
+    create_emitter = AsyncMock()
+    handler._create_private_im_runtime_streaming_emitter = create_emitter
+    send = AsyncMock()
+    monkeypatch.setattr(runtime_work_service, "send_runtime_message", send)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "canonical_runtime_event_address",
+        Mock(side_effect=lambda db, *, user_id, address: address),
+    )
+
+    handled = await handler._execute_private_im_continue_runtime_task(
+        db=Mock(),
+        user=SimpleNamespace(id=9),
+        im_session=_runtime_session(),
+        message="分析一下失败原因",
+        message_context=_private_runtime_quote_context(),
+        runtime_task={"deviceId": "device-a", "localTaskId": "task-a"},
+    )
+
+    assert handled is False
+    handler.send_text_reply.assert_awaited_once()
+    assert "仍在处理" in handler.send_text_reply.await_args.args[1]
+    create_emitter.assert_not_awaited()
+    send.assert_not_awaited()
+    assert service.saved == []
+    assert service.deleted == []
+    assert service.registered == []
+
+
+@pytest.mark.asyncio
+async def test_rejected_runtime_continuation_leaves_previous_callback_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import runtime_work_service
+
+    previous = DingTalkCallbackInfo(
+        channel_id=77,
+        conversation_id="conv-private",
+        card_instance_id="old-card",
+        incoming_message_data={"msgId": "old-message"},
+    )
+    service = _CallbackService(previous)
+    emitter = SimpleNamespace(
+        card_instance_id="new-card",
+        emit_error=AsyncMock(),
+        close=AsyncMock(),
+    )
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    handler.get_callback_service = Mock(return_value=service)
+    handler._create_private_im_runtime_streaming_emitter = AsyncMock(
+        return_value=emitter
+    )
+    send = AsyncMock(
+        return_value=SimpleNamespace(
+            accepted=False,
+            error="runtime task is already running",
+        )
+    )
+    monkeypatch.setattr(runtime_work_service, "send_runtime_message", send)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "canonical_runtime_event_address",
+        Mock(side_effect=lambda db, *, user_id, address: address),
+    )
+
+    handled = await handler._execute_private_im_continue_runtime_task(
+        db=Mock(),
+        user=SimpleNamespace(id=9),
+        im_session=_runtime_session(),
+        message="继续",
+        message_context=_message_context(),
+        runtime_task={"deviceId": "device-a", "localTaskId": "task-a"},
+    )
+
+    assert handled is False
+    assert service.deleted == []
+    assert service.registered == []
+    assert service.saved == []
+    assert service.info is previous
+    emitter.emit_error.assert_awaited_once()
+    assert (
+        emitter.emit_error.await_args.kwargs["error"]
+        == "上一条消息仍在执行，请等当前回答完成后再发送。"
+    )
+    emitter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rejected_runtime_continuation_falls_back_to_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import runtime_work_service
+
+    previous = DingTalkCallbackInfo(
+        channel_id=77,
+        conversation_id="conv-private",
+        card_instance_id="old-card",
+        incoming_message_data={"msgId": "old-message"},
+    )
+    service = _CallbackService(previous)
+    emitter = SimpleNamespace(
+        card_instance_id="new-card",
+        emit_error=AsyncMock(side_effect=RuntimeError("card delivery failed")),
+        close=AsyncMock(),
+    )
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    handler.get_callback_service = Mock(return_value=service)
+    handler._create_private_im_runtime_streaming_emitter = AsyncMock(
+        return_value=emitter
+    )
+    send = AsyncMock(
+        return_value=SimpleNamespace(
+            accepted=False,
+            error="runtime task is already running",
+        )
+    )
+    monkeypatch.setattr(runtime_work_service, "send_runtime_message", send)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "canonical_runtime_event_address",
+        Mock(side_effect=lambda db, *, user_id, address: address),
+    )
+
+    handled = await handler._execute_private_im_continue_runtime_task(
+        db=Mock(),
+        user=SimpleNamespace(id=9),
+        im_session=_runtime_session(),
+        message="继续",
+        message_context=_message_context(),
+        runtime_task={"deviceId": "device-a", "localTaskId": "task-a"},
+    )
+
+    assert handled is False
+    handler.send_text_reply.assert_awaited_once()
+    assert (
+        handler.send_text_reply.await_args.args[1]
+        == "上一条消息仍在执行，请等当前回答完成后再发送。"
+    )
+    assert service.saved == []
+    assert service.deleted == []
+    assert service.info is previous
+    emitter.close.assert_awaited_once()
