@@ -239,7 +239,7 @@ test('supports high-frequency resource diagnostics without periodic process spaw
 })
 
 test('rejects invalid sampling intervals before starting the command', () => {
-  for (const interval of ['0', '99', '100.5', 'invalid']) {
+  for (const interval of ['0', '99', '100.5', '2147483648', 'invalid']) {
     const result = spawnSync(
       process.execPath,
       [script, process.execPath, '-e', 'process.exit(0)'],
@@ -250,7 +250,7 @@ test('rejects invalid sampling intervals before starting the command', () => {
     )
     assert.ifError(result.error)
     assert.notEqual(result.status, 0)
-    assert.match(result.stderr, /must be an integer of at least 100/)
+    assert.match(result.stderr, /must be an integer from 100 to 2147483647/)
   }
 })
 

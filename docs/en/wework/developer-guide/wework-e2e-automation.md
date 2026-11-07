@@ -371,8 +371,8 @@ after tests finish. Records include CPU utilization, load average, memory, avail
 space, Linux CPU/memory/I/O pressure, and cgroup CPU limits, memory peaks, and OOM
 counters. Unreadable kernel metrics report `unavailable`. CPU utilization is the
 average between samples; its initial value is `null`.
-`RUNNER_RESOURCE_SAMPLE_INTERVAL_MS` selects a sampling interval of at least
-100ms; the default remains 15 seconds. Periodic `schedulingDelayMs` records the
+`RUNNER_RESOURCE_SAMPLE_INTERVAL_MS` selects a sampling interval from 100 to
+2147483647ms; the default remains 15 seconds. Periodic `schedulingDelayMs` records the
 sampler's own scheduling delay, not the tested process's delay. Intervals below
 one second collect process lists only at startup and completion to avoid
 frequently spawning `ps`. The streaming-activity Redis CI step uses 100ms

@@ -263,7 +263,7 @@ Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]
 记录包含 CPU 使用率、load average、
 内存、磁盘可用空间、Linux CPU/内存/I/O 压力及 cgroup CPU 限额、内存峰值和 OOM 计数；
 不可读取的内核指标会记录 `unavailable`。CPU 使用率是两次采样间的平均值，首次记录为 `null`。
-`RUNNER_RESOURCE_SAMPLE_INTERVAL_MS` 可指定至少 100ms 的采样周期，默认仍为 15 秒；
+`RUNNER_RESOURCE_SAMPLE_INTERVAL_MS` 可指定 100–2147483647ms 的采样周期，默认仍为 15 秒；
 周期记录中的 `schedulingDelayMs` 表示采样器自身的调度延迟，不代表被测进程的延迟。
 小于 1 秒的周期仅在开始和结束采集进程列表，避免高频启动 `ps`。
 流式活动 Redis CI 步骤使用 100ms 资源采样及不含参数和值的服务端命令到达时间，

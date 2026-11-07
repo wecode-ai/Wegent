@@ -8,8 +8,12 @@ const [command, ...args] = process.argv.slice(2)
 if (!command) throw new Error('A command is required')
 
 const sampleIntervalMs = Number(process.env.RUNNER_RESOURCE_SAMPLE_INTERVAL_MS ?? 15_000)
-if (!Number.isSafeInteger(sampleIntervalMs) || sampleIntervalMs < 100) {
-  throw new Error('RUNNER_RESOURCE_SAMPLE_INTERVAL_MS must be an integer of at least 100')
+if (
+  !Number.isSafeInteger(sampleIntervalMs) ||
+  sampleIntervalMs < 100 ||
+  sampleIntervalMs > 2_147_483_647
+) {
+  throw new Error('RUNNER_RESOURCE_SAMPLE_INTERVAL_MS must be an integer from 100 to 2147483647')
 }
 
 const logPath = resolve(
