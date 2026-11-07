@@ -235,8 +235,9 @@ export function ProjectBoardBody<TItem>({
 }: ProjectBoardBodyProps<TItem>) {
   const isExecutionColumn = (column: ProjectBoardColumn) =>
     isExecutionBoardColumn(column, state.groupBy)
+  const selectedGroupColumn = columns.find(column => column.key === state.groupFilter)
   const groupFilterLabel = state.groupFilter
-    ? columns.find(column => column.key === state.groupFilter)?.label
+    ? (selectedGroupColumn?.label ?? state.groupFilter)
     : `全部${groupFields.find(field => field.id === state.groupBy)?.name ?? '任务'}`
   const leafCount = (parentId?: string | null) =>
     new Set(
@@ -360,7 +361,7 @@ export function ProjectBoardBody<TItem>({
               </label>
             ) : null}
             {!customView && renderGroupPicker(state.groupBy, state.selectGroupBy)}
-            <Tooltip label={groupFilterLabel ?? ''} side="bottom">
+            <Tooltip label={groupFilterLabel} side="bottom">
               <label className="project-board-compact-action relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
                 <ListFilter className="project-board-action-icon h-4 w-4" aria-hidden="true" />
                 <span
@@ -378,6 +379,9 @@ export function ProjectBoardBody<TItem>({
                   aria-label="分组值筛选"
                 >
                   <option value="">全部</option>
+                  {state.groupFilter && !selectedGroupColumn ? (
+                    <option value={state.groupFilter}>{groupFilterLabel}</option>
+                  ) : null}
                   {columns.map(column => (
                     <option key={column.key} value={column.key}>
                       {column.label}

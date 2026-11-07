@@ -103,49 +103,61 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe('ProjectBoardBody', () => {
-  it('keeps filter names and icons independent from collapsible text', () => {
-    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-    const container = document.createElement('div')
-    const root = createRoot(container)
-    const onChange = vi.fn()
-    const options = props()
-    try {
-      act(() =>
-        root.render(
-          <ProjectBoardBody
-            {...options}
-            renderGroupPicker={() => (
-              <ProjectBoardGroupPicker
-                fields={[{ id: 'status', name: '状态' }]}
-                value="status"
-                onChange={onChange}
-                testIdPrefix="cloud-board-group"
-              />
-            )}
-          />
+  it.each(['', 'removed-lane'])(
+    'keeps filter names and icons independent from collapsible text (%s)',
+    groupFilter => {
+      Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      const onChange = vi.fn()
+      const options = props()
+      options.state.groupFilter = groupFilter
+      try {
+        act(() =>
+          root.render(
+            <ProjectBoardBody
+              {...options}
+              renderGroupPicker={() => (
+                <ProjectBoardGroupPicker
+                  fields={[{ id: 'status', name: '状态' }]}
+                  value="status"
+                  onChange={onChange}
+                  testIdPrefix="cloud-board-group"
+                />
+              )}
+            />
+          )
         )
-      )
-      const group = container.querySelector('[data-testid="cloud-board-group-by"]')!
-      expect(group.getAttribute('aria-label')).toBe('状态')
-      expect(group.querySelector('.project-board-action-icon')).not.toBeNull()
-      expect(group.querySelector('.project-board-action-label')?.textContent).toBe('状态')
-      const filter = container.querySelector<HTMLSelectElement>(
-        '[data-testid="cloud-board-group-filter"]'
-      )!
-      expect(filter.getAttribute('aria-label')).toBe('分组值筛选')
-      expect(filter.closest('label')?.querySelector('.project-board-action-icon')).not.toBeNull()
-      expect(
-        filter.closest('label')?.querySelector('.project-board-action-label')?.textContent
-      ).toBe('全部状态')
-      act(() => {
-        filter.value = 'inbox'
-        filter.dispatchEvent(new Event('change', { bubbles: true }))
-      })
-      expect(options.state.setGroupFilter).toHaveBeenCalledWith('inbox')
-    } finally {
-      act(() => root.unmount())
+        const group = container.querySelector('[data-testid="cloud-board-group-by"]')!
+        expect(group.getAttribute('aria-label')).toBe('状态')
+        expect(group.querySelector('.project-board-action-icon')).not.toBeNull()
+        expect(group.querySelector('.project-board-action-label')?.textContent).toBe('状态')
+        const filter = container.querySelector<HTMLSelectElement>(
+          '[data-testid="cloud-board-group-filter"]'
+        )!
+        expect(filter.getAttribute('aria-label')).toBe('分组值筛选')
+        expect(filter.value).toBe(groupFilter)
+        expect(filter.closest('label')?.querySelector('.project-board-action-icon')).not.toBeNull()
+        expect(
+          filter.closest('label')?.querySelector('.project-board-action-label')?.textContent
+        ).toBe(groupFilter || '全部状态')
+        if (groupFilter) {
+          act(() => {
+            filter.value = ''
+            filter.dispatchEvent(new Event('change', { bubbles: true }))
+          })
+          expect(options.state.setGroupFilter).toHaveBeenCalledWith('')
+        }
+        act(() => {
+          filter.value = 'inbox'
+          filter.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(options.state.setGroupFilter).toHaveBeenCalledWith('inbox')
+      } finally {
+        act(() => root.unmount())
+      }
     }
-  })
+  )
 
   it('keeps fixed actions outside scrolling while sharing toolbar typography', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
