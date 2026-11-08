@@ -20,6 +20,9 @@ mod coordination_rpc;
 #[path = "stand_in_source_bindings.rs"]
 mod source_bindings;
 
+#[path = "stand_in_session_policy.rs"]
+mod session_policy;
+
 #[cfg(test)]
 #[path = "stand_in_processing_tests.rs"]
 mod tests;
@@ -426,14 +429,12 @@ impl RuntimeWorkRpcHandler {
                         "Role is not eligible for these events",
                     ));
                 }
-                let work_id = format!("stand-in-work-{}", required(action, "id")?);
                 result = self
                     .dispatch_intake_events(
                         store,
                         user,
                         role,
                         &selected,
-                        Some(&work_id),
                         Some(required(args, "title")?),
                     )
                     .await?;
@@ -465,6 +466,7 @@ impl RuntimeWorkRpcHandler {
                     .ok_or_else(|| AppIpcError::new("role_removed", "Role is no longer enabled"))?;
                 for event in &selected {
                     self.validate_intake_role(role, event)?;
+                    self.validate_connection_session_target(store, user, role, event, id)?;
                 }
                 self.validate_followup_role(store, user, role, &link)
                     .await?;
@@ -494,8 +496,21 @@ impl RuntimeWorkRpcHandler {
                             ));
                         }
                     }
+                    let records = self.connection_event_records(
+                        store,
+                        user,
+                        required(role, "id")?,
+                        id,
+                        &selected,
+                    )?;
                     result = self
-                        .dispatch_connection_work(user, id, false, Some(required(args, "message")?))
+                        .dispatch_connection_work(
+                            user,
+                            id,
+                            false,
+                            Some(required(args, "message")?),
+                            Some(&records),
+                        )
                         .await?;
                 } else {
                     let client = required(action, "id")?;
@@ -557,6 +572,9 @@ impl RuntimeWorkRpcHandler {
             return Ok(None);
         }
         for mut event in selected {
+            if kind == "ignore_events" && event["kind"] == "connection" {
+                self.ignore_connection_event(store, user, &event)?;
+            }
             if kind == "ignore_events" && event["kind"] == "calendar" {
                 self.automation_store
                     .settle_coordinated_run(
@@ -824,7 +842,6 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         role: &Value,
         events: &[Value],
-        work_id: Option<&str>,
         title: Option<&str>,
     ) -> Result<Value, AppIpcError> {
         let echoes = events
@@ -914,81 +931,7 @@ impl RuntimeWorkRpcHandler {
                 "Only incoming source events can create work",
             ));
         }
-        if work_id.is_none() {
-            for event in events {
-                self.collect_connection_message(
-                    store,
-                    user,
-                    role,
-                    &event["source"],
-                    &event["message"],
-                )
-                .await?;
-                let known = store
-                    .known_stand_in_event_message(
-                        user,
-                        required(role, "id")?,
-                        &event["source"],
-                        &event["message"],
-                    )
-                    .map_err(settings_error)?;
-                if let Some(known) = known {
-                    let work = store
-                        .stand_in_work(user, required(&known, "workId")?)
-                        .map_err(settings_error)?;
-                    if work["status"] == "pending" {
-                        self.dispatch_connection_work(user, required(&work, "id")?, false, None)
-                            .await?;
-                    }
-                }
-            }
-            return Ok(json!({"success":true}));
-        }
-        let mut target = work_id.map(str::to_owned);
-        if let Some(known) = store
-            .known_stand_in_event_message(
-                user,
-                required(role, "id")?,
-                &events[0]["source"],
-                &events[0]["message"],
-            )
-            .map_err(settings_error)?
-        {
-            target = known["workId"].as_str().map(str::to_owned);
-        }
-        if let Some(id) = &target {
-            store
-                .ensure_coordinated_work(
-                    user,
-                    required(role, "id")?,
-                    id,
-                    &events[0]["source"],
-                    title.unwrap_or("Work"),
-                )
-                .map_err(settings_error)?;
-        }
-        for event in events {
-            let work = store
-                .ingest_stand_in_message(
-                    user,
-                    required(role, "id")?,
-                    &event["source"],
-                    &event["message"],
-                    target.as_deref(),
-                )
-                .map_err(settings_error)?;
-            target = work["id"].as_str().map(str::to_owned);
-        }
-        let id = target.unwrap();
-        if self
-            .local_task_link(&id)
-            .is_some_and(|link| link.status == "archived")
-        {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "Restore archived work explicitly before continuing it",
-            ));
-        }
-        self.dispatch_connection_work(user, &id, false, None).await
+        self.dispatch_connection_intake(store, user, role, events, title)
+            .await
     }
 }

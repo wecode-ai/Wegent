@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -132,6 +133,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         text: '已开启',
       })
       await control.command('click', '[data-testid="stand-in-overview-role-project-enable"]')
+      await openStandInActivity(control)
       await control.command('waitFor', '[data-testid="stand-in-activity"]', {
         text: '尚无处理记录',
       })

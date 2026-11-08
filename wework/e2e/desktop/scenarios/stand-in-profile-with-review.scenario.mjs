@@ -1,3 +1,7 @@
+import {
+  openStandInExamples,
+  openStandInSettings,
+} from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createProfile } from './stand-in-profile.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -89,7 +93,7 @@ async function verifyGuideExamples(control, completed = false) {
 }
 
 async function openCalendarReviewTemplate(control) {
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  await openStandInSettings(control)
   await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
   await openConnectionTypePicker(control)
   await control.command('click', '[data-testid="stand-in-time-connections"]')
@@ -292,7 +296,7 @@ export function createDesktopScenario(options) {
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
       await control.command('waitFor', GUIDE, { visible: false })
-      await control.command('waitFor', '[data-testid="stand-in-settings-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-details-open"]')
       const afterSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
       assert.equal(
         afterSetup.primary.enabled,
@@ -317,7 +321,7 @@ export function createDesktopScenario(options) {
         'Completing the guide must not create any arrangement beyond the native memory default'
       )
       // Connecting later reuses the same settings UI without repeating setup.
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-source-collaboration"]')
@@ -329,7 +333,7 @@ export function createDesktopScenario(options) {
       assert.equal(connectedLater.primary.enabled, true)
       assert.equal(connectedLater.primary.collaboration.enabled, true)
       assert.equal(connectedLater.primary.collaboration.policy.immediate, false)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')
+      await openStandInExamples(control)
       await verifyGuideExamples(control, true)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-close"]')
       await control.command('waitFor', GUIDE, { visible: false })
@@ -343,7 +347,7 @@ export function createDesktopScenario(options) {
         initialScheduleIds,
         'Closing usage examples must not create any arrangement beyond the native memory default'
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')
+      await openStandInExamples(control)
       await verifyGuideExamples(control, true)
       await control.command(
         'nativePress',

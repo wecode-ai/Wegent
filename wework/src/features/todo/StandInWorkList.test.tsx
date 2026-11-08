@@ -150,6 +150,57 @@ it('retains the explicit retry action for a terminal failed task', async () => {
   expect(open).toHaveBeenCalledWith({ deviceId: 'device', taskId: 'work' })
 })
 
+it('restores archived source work explicitly without starting a turn or opening a conversation', async () => {
+  const item: StandInInboxWork = {
+    ...work(),
+    task: {
+      taskId: 'work',
+      title: '评审方案',
+      runtime: 'codex',
+      workspacePath: '/workspace',
+      status: 'archived',
+      running: false,
+      updatedAt: '2026-10-24T00:00:00Z',
+    },
+  }
+  const restore = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Restore failed'))
+    .mockResolvedValueOnce(undefined)
+  const runWork = vi.fn()
+  const open = vi.fn()
+  const refresh = vi.fn()
+  const stale = inboxRuntimeItem({ ...item, task: { ...item.task!, status: 'done' } }, 'device')
+  const api = {
+    runWork,
+    workMessages: vi.fn(async () => ({ messages: [item.latestMessage] })),
+  } as unknown as StandInExecutorApi
+  render(
+    <StandInWorkList
+      items={[inboxRuntimeItem(item, 'device', stale)]}
+      inbox={[item]}
+      api={api}
+      userId={7}
+      deviceId="device"
+      onRestoreTask={restore}
+      onOpenTask={open}
+      onRefresh={refresh}
+    />
+  )
+  await userEvent.click(screen.getByTestId('stand-in-activity-task-work'))
+  expect(restore).not.toHaveBeenCalled()
+  const action = screen.getByTestId('stand-in-preview-open')
+  expect(action).toHaveTextContent('取消归档')
+  await userEvent.click(action)
+  expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法完成此操作')
+  await userEvent.click(action)
+  expect(restore).toHaveBeenLastCalledWith({ deviceId: 'device', taskId: 'work' })
+  expect(refresh).toHaveBeenCalledOnce()
+  expect(runWork).not.toHaveBeenCalled()
+  expect(open).not.toHaveBeenCalled()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
 it('limits manual message moves to this role and sends the durable record ID', async () => {
   const user = userEvent.setup()
   const item = work()

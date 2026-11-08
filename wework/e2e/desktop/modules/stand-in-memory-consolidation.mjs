@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
 import { until } from './plugin-regression-fixture.mjs'
@@ -185,7 +186,8 @@ export function createMemoryConsolidation({
           'stand-in-time-connections',
           `automation-open-${schedule.id}`,
         ]) {
-          await control.command('clickWhenEnabled', `[data-testid="${selector}"]`)
+          if (selector === 'stand-in-settings-open') await openStandInSettings(control)
+          else await control.command('clickWhenEnabled', `[data-testid="${selector}"]`)
         }
         await control.command(
           'clickWhenEnabled',

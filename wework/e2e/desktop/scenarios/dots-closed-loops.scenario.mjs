@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
@@ -343,7 +344,7 @@ export function createDesktopScenario(options) {
 
   async function answer(control, title, answerText) {
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+    await openStandInActivity(control)
     const card = `[data-testid="stand-in-activity-task-${tasks.get(story)}"]`
     await control.command('waitFor', card, { timeoutMs: options.modelResponseTimeoutMs })
     await control.command('click', card)
@@ -382,7 +383,7 @@ export function createDesktopScenario(options) {
       'No successful delivery may precede the required business answer'
     )
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+    await openStandInActivity(control)
     await control.command('click', card)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
     await control.command('waitFor', INPUT_CARD, { text: title, visible: true })

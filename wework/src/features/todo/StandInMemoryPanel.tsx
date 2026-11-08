@@ -1,7 +1,8 @@
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
-import { Brain, Plus, X } from 'lucide-react'
+import { Plus } from 'lucide-react'
+import { StandInSettingsHeader } from './StandInSettingsLayout'
 import { dequal } from 'dequal'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInExecutorApi, StandInMemory, StandInMemoryScope } from '@/api/standIn'
@@ -20,6 +21,8 @@ export function StandInMemoryPanel({
   fixedScope,
   scopeLabel,
   onClose,
+  onBack,
+  parentLabel,
   ref,
 }: {
   api: StandInExecutorApi
@@ -28,6 +31,8 @@ export function StandInMemoryPanel({
   fixedScope?: StandInMemoryScope
   scopeLabel?: string
   onClose(): void
+  onBack?: () => void
+  parentLabel?: string
   ref?: Ref<StandInSettingsHandle>
 }) {
   const { t } = useTranslation('common')
@@ -137,20 +142,28 @@ export function StandInMemoryPanel({
       className="flex min-h-full flex-col px-5"
       data-testid="stand-in-memory-panel"
     >
-      <header className="sticky top-0 z-10 mb-5 flex items-center gap-2 border-b border-border bg-background py-4">
-        <Brain className="h-4 w-4" />
-        <h2 className="heading-sm flex-1">{t('standIn.memory.title')}</h2>
-        <button
-          type="button"
-          data-testid="stand-in-memory-close"
-          aria-label={t('standIn.close')}
-          onClick={close}
-          disabled={busy}
-          className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </header>
+      <StandInSettingsHeader
+        title={t('standIn.memory.title')}
+        disabled={busy}
+        back={
+          onBack
+            ? { testId: 'stand-in-memory-back', onClick: () => navigation.requestLeave(onBack) }
+            : undefined
+        }
+        close={{ testId: 'stand-in-memory-close', onClick: close }}
+        path={
+          onBack
+            ? [
+                {
+                  label: parentLabel ?? t('standIn.workspace.primary_profile'),
+                  testId: 'stand-in-memory-path-settings',
+                  onClick: () => navigation.requestLeave(onBack),
+                },
+                { label: t('standIn.memory.title'), testId: 'stand-in-memory-path-current' },
+              ]
+            : undefined
+        }
+      />
       <p className="mb-5 text-sm text-text-muted">{t('standIn.memory.help')}</p>
       {error && (
         <div role="alert" className="mb-4 text-sm text-error">

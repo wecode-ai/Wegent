@@ -279,7 +279,8 @@ impl RuntimeWorkRpcHandler {
         if payload["confirmThisRun"] == true {
             return self.confirm_connection_work_once(user, &work).await;
         }
-        self.dispatch_connection_work(user, &work, true, None).await
+        self.dispatch_connection_work(user, &work, true, None, None)
+            .await
     }
 
     async fn confirm_connection_work_once(
@@ -371,6 +372,7 @@ impl RuntimeWorkRpcHandler {
         work_id: &str,
         manual: bool,
         instructions: Option<&str>,
+        selected_records: Option<&[String]>,
     ) -> Result<Value, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let mut recovery = store.stand_in_work(user, work_id).map_err(settings_error)?;
@@ -394,17 +396,7 @@ impl RuntimeWorkRpcHandler {
         let messages = store
             .stand_in_messages(user, work_id)
             .map_err(settings_error)?;
-        let pending: Vec<Value> = messages
-            .into_iter()
-            .filter(|message| {
-                message["dispatchStatus"] == "pending"
-                    || (manual
-                        && matches!(
-                            message["dispatchStatus"].as_str(),
-                            Some("failed" | "needs_grouping")
-                        ))
-            })
-            .collect();
+        let pending = selected_pending_connection_messages(messages, manual, selected_records)?;
         let task_id = work["taskId"]
             .as_str()
             .ok_or_else(|| AppIpcError::new("bad_request", "Work task ID is missing"))?;
@@ -614,6 +606,52 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn selected_pending_connection_messages(
+    messages: Vec<Value>,
+    manual: bool,
+    selected_records: Option<&[String]>,
+) -> Result<Vec<Value>, AppIpcError> {
+    let selected = selected_records.map(|ids| {
+        ids.iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>()
+    });
+    if !manual && selected.is_none() {
+        return Err(AppIpcError::new(
+            "permission_denied",
+            "Automatic source work requires selected event records",
+        ));
+    }
+    if let Some(selected) = &selected {
+        let present = messages
+            .iter()
+            .filter_map(|message| message["recordId"].as_str())
+            .filter(|id| selected.contains(id))
+            .collect::<std::collections::BTreeSet<_>>();
+        if selected.is_empty() || present != *selected {
+            return Err(AppIpcError::new(
+                "stale_context",
+                "Selected source records changed before dispatch",
+            ));
+        }
+    }
+    Ok(messages
+        .into_iter()
+        .filter(|message| {
+            selected.as_ref().map_or(true, |ids| {
+                message["recordId"]
+                    .as_str()
+                    .is_some_and(|id| ids.contains(id))
+            }) && (message["dispatchStatus"] == "pending"
+                || (manual
+                    && matches!(
+                        message["dispatchStatus"].as_str(),
+                        Some("failed" | "needs_grouping")
+                    )))
+        })
+        .collect())
+}
+
 fn dingtalk_client_id(work: &str, ids: &[String]) -> String {
     format!(
         "dingtalk:{:x}",
@@ -652,6 +690,38 @@ mod authorization_tests;
 mod tests {
     use super::*;
 
+    #[test]
+    fn automatic_dispatch_is_limited_to_selected_immutable_records() {
+        let messages = vec![
+            json!({"recordId":"selected","dispatchStatus":"pending"}),
+            json!({"recordId":"deferred","dispatchStatus":"pending"}),
+            json!({"recordId":"ignored","dispatchStatus":"ignored"}),
+            json!({"recordId":"sent","dispatchStatus":"sent"}),
+        ];
+        let selected = vec!["selected".into(), "sent".into()];
+        let pending =
+            selected_pending_connection_messages(messages.clone(), false, Some(&selected)).unwrap();
+        assert_eq!(pending, vec![messages[0].clone()]);
+        assert_eq!(
+            selected_pending_connection_messages(messages.clone(), false, None)
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        assert_eq!(
+            selected_pending_connection_messages(
+                messages.clone(),
+                false,
+                Some(&["missing".into()])
+            )
+            .unwrap_err()
+            .code,
+            "stale_context"
+        );
+        let manual = selected_pending_connection_messages(messages.clone(), true, None).unwrap();
+        assert_eq!(manual, messages[..2]);
+    }
+
     #[tokio::test]
     async fn stand_in_source_followup_reconciles_acceptance_before_dispatching_again() {
         let root = tempfile::tempdir().unwrap();
@@ -680,7 +750,7 @@ mod tests {
             .unwrap();
         handler.upsert_local_task(RuntimeTaskLink {local_task_id:id.to_owned(),runtime_handle:json!({"userMessagePresentations":[{"clientUserMessageId":dingtalk_client_id(id,&ids)}]}),..Default::default()});
         let result = handler
-            .dispatch_connection_work(7, id, false, Some("Review the latest details"))
+            .dispatch_connection_work(7, id, false, Some("Review the latest details"), Some(&ids))
             .await
             .unwrap();
         assert_eq!(result["taskId"], id);

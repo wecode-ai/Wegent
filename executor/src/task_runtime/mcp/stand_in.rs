@@ -132,7 +132,8 @@ fn profile_settings_schema() -> Value {
     let policy = json!({"type":"object","properties":{
         "automatic":{"type":"boolean","description":"true processes incoming assigned work; false only collects it. Independent of askBeforeAct."},
         "askBeforeAct":{"type":"boolean","description":"true retains native approval before actions, including when automatic is true."},
-        "immediate":{"type":"boolean","description":"true handles new work immediately; false waits for batch processing."}
+        "immediate":{"type":"boolean","description":"true starts handling immediately; false waits for classification. Independent of sessionStrategy and approvals."},
+"sessionStrategy":{"type":"string","enum":["independent","reuse"],"description":"Connected-source events default to reuse: one conversation within the same role, account and concrete source. independent creates separate conversations for new events. Explicit replies retain their original work. Independent of immediate and approvals. Project Issues remain separate; scheduled arrangements keep their own conversation mode."}
     },"required":["automatic","askBeforeAct","immediate"]});
     let collaboration = json!({"type":"object","properties":{
         "enabled":{"type":"boolean"},"allProjects":{"type":"boolean"},

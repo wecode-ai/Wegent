@@ -9,10 +9,10 @@ sidebar_position: 12
 
 ## Individual role-profile operations
 
-1. Open **My Stand-in** from the left sidebar, select the main stand-in or a scenario role, then open its profile/settings.
+1. Open **My Stand-in** from the left sidebar, select the primary identity or a scenario role, click **Stand-in details** at the top right, then **Manage stand-in** at the bottom of the popover.
 2. Edit responsibilities and preferences. Expand **More settings (device, model, workspace)** to view the bound device and choose an available model and working directory. To use another device, follow “Instance binding and stopping” below before checking its model and source accounts.
 3. Install/authorize source apps, choose scope and handling mode, then save to enable changes. Calendar/scheduled delegation belongs to this role's connection page, not global cloud connection settings.
-4. Use the work list for execution items, **Needs your input** for human decisions and **Needs checking** for errors; these are distinct lists.
+4. **Recent activity** mixes work threads and schedules. Work opens as a read-only preview inside the same popover; Back restores the list position. Use **Open conversation in workspace** to reply, approve or use the full workspace. Human questions remain in **Needs your input** and the original work.
 5. To delete a scenario role, use its settings action and confirm the target. Deleting differs from pausing a source; adjust source reception if you want to keep the role but temporarily stop intake.
 
 When opening your stand-in, the page checks onboarding status and shows an inline loading message. Initial setup opens automatically only after the check confirms it is incomplete. Completed setup opens the stand-in directly. If the check fails, use the retry action in the error prompt.
@@ -21,17 +21,19 @@ Initial binding discovery shows a loading state, never a premature account-misma
 
 Open **My stand-in**, marked **Beta**, in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The header displays the primary identity and existing roles for switching. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
 
-A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
+A **scenario role** continuously handles a particular information flow. Both primary and role identities open their persistent conversation. The **＋ (Create role)** beside the role switcher creates a role. The details popover shows name, status, device and recent activity, without an avatar or outputs section. Recent activity mixes work threads and the current role’s schedules by recency, initially showing four entries; **Show more** adds four at a time. Work opens as a read-only preview with **Open conversation in workspace** at the bottom; schedules and monitors open the existing editor in a centered dialog, retaining the profile behind it and restoring focus on close.
 
 <a id="instance-binding-and-stopping"></a>
+
+Saving a new role enables it. Explicitly adding or enabling a source starts intake for the primary identity or role on Save, without a second intake switch. Renaming or editing duties alone does not resume a paused identity. Stopping the entire stand-in still requires native confirmation; source grants and operation approvals are unchanged.
 
 ## Instance binding and stopping
 
 Each Wework instance binds one local or cloud stand-in at a time. Scenario roles belong to that stand-in, rather than being separate instance bindings. The page and settings have no direct execution-device switch. Reopening the page, device inventory changes, or changing accounts never replaces an existing binding.
 
-To rebind, select **Stop stand-in** in the header and confirm. This stops intake for the entire stand-in and cancels its primary and role conversations, running work, and queued delegated tasks. Other accounts' stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories, and history remain; rebinding the original stand-in restores its previous intake switches.
+To rebind, open **Stand-in details → Manage stand-in**, then select **Stop stand-in** at the bottom left of the settings panel and confirm. This stops intake for the entire stand-in and cancels its primary and role conversations, running work, and queued delegated tasks. Other accounts’ stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories, and history remain; rebinding the original stand-in restores its previous intake switches.
 
-An offline device, failed cancellation, or missing process-stop acknowledgement keeps the instance **Stopping**, with rebinding unavailable. Reconnect and use **Retry stopping**. Reopening the page does not unlock the binding. **Stop stand-in** differs from turning off **Receive new work**, which leaves existing work running.
+An offline device, failed cancellation, or missing process-stop acknowledgement keeps the instance **Stopping**, with rebinding unavailable. Reconnect and use **Retry stopping**. Reopening the page does not unlock the binding. Primary and role settings keep only **Stop stand-in** at the bottom left, without a duplicate intake switch.
 
 After stopping, you may migrate instead: choose **Profile to migrate** (the primary identity or a scenario role), choose the target device, select **Migrate and bind**, and confirm. Retain old profiles, memories and conversation history while appending portable responsibilities, model settings, tags and visible memories without overwriting target settings. The imported role stays paused until its device directory, project/source grants and arrangements are configured. Only successful copying changes this instance's binding; copying failures support retry while the source stays stopped. If target startup acknowledgement fails after rebinding, retain the target binding for stopping and recovery without automatically restarting the source. A stopped target permits only these disabled, grant-free imports; migration cannot edit existing settings or restore enablement.
 
@@ -47,9 +49,9 @@ The **My stand-in** button in collaboration project headers also carries a **Bet
 
 Edit responsibilities and shared preferences in the primary profile, and role responsibilities and sources in the role profile. Preferences can be edited or deleted. Changes take effect only after saving.
 
-You can also describe a role or configuration change in conversation. After AI creates a proposal, open **Pending settings** in the header to review the affected roles, source scopes, and handling policies. Explicitly confirm before applying. Closing the dialog only collapses the proposal; it neither accepts nor rejects it. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
+You can also describe a role or configuration change in conversation. After AI creates a proposal, open **Pending settings** in the **Stand-in details** popover to review the affected roles, source scopes, and handling policies. Explicitly confirm before applying. Closing the dialog only collapses the proposal; it neither accepts nor rejects it. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
 
-The main conversation keeps the transcript and composer in focus. **Work list** shows the number of items needing attention and opens their details. Connection problems and nonblocking background failures appear under **Needs attention**, with their original review and retry actions. Proactive background updates have their own marker rather than appearing as messages sent by you.
+The main surface keeps the conversation, composer, identity switcher and adjacent **＋**, with **Stand-in details** at the top right. Connection or processing issues appear as one compact status entry; open **Connection and processing status** for complete records and retry. The question-mark icon at the top right of the details popover opens **Usage examples**; the arrow beside Recent activity opens all activity. Settings show **Memory** directly, without those extra entries. Stopping is separate at the bottom left of the settings panel. Settings, Connections and source details have explicit entry and parent-return controls; clickable **Settings navigation** paths return to Settings or Connections without bypassing unsaved-change confirmation. Proactive background updates retain their own marker.
 
 ## Inspect, edit and forget stand-in memories
 
@@ -73,7 +75,7 @@ Records with a saved excerpt show **View source evidence**. Expand it to inspect
 
 Editing a memory's content or scope in the panel clears its old evidence association; background consolidation can attach matching evidence later. Opening a record or saving it without changing its content or scope preserves its evidence.
 
-Open **left sidebar → My Stand-in → Memory** and check the selected execution device.
+Open **left sidebar → My Stand-in → Stand-in details → Manage stand-in → Memory** and check the selected execution device.
 
 | Action          | Steps and limits                                                                                                                                                               |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -87,6 +89,8 @@ Open **left sidebar → My Stand-in → Memory** and check the selected executio
 ## Model selection
 
 Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. The primary conversation and the concrete work it creates both use the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
+
+<a id="stand-in-source-session-policy"></a>
 
 ## DingTalk and collaboration sources
 
@@ -102,7 +106,12 @@ You can manually mention yourself in a connected group to delegate work. You can
 
 Choose manual delegation, approval before operations, or automatic handling independently for each source. New DingTalk sources default to approval before operations. The selected execution device uses its installed DingTalk plugin and account. Complete any requested authentication through the existing connector flow.
 
-Collaboration, Calendar, and DingTalk share the **Process directly** option under **Processing**. When enabled, incoming matters create a conversation for processing. Otherwise, the background stand-in decides how to handle them. New role connections enable direct processing by default. Operations retain the connection's approval policy.
+Open **My stand-in → Stand-in details → Manage stand-in → Connections → source details → Processing**. Processing is collapsed by default. Expand it to access three matching switches, then save the stand-in settings to apply changes:
+
+- **Handle new items immediately**: when enabled, handling starts when an event arrives; when disabled, new events are collected before the stand-in decides how to handle them. New role connections default to enabled; new primary connections default to disabled. Timing neither determines conversation ownership nor bypasses approvals.
+- **Start a new conversation each time**: off by default, continuing the same conversation for this source. Turn it on to give each new event its own conversation. Reuse remains restricted to the same role, account and concrete source. Different groups, contacts and sources stay separate, including concrete sources inside an all-resources scope. Explicit replies return to their original work; redelivery never creates another conversation.
+
+All four combinations are supported, including immediate separate conversations and delayed reused conversations. Settings changes do not reorganize existing work or messages. Events remain pending while a reused conversation awaits user input or approval. Restore archived targets explicitly through **the arrow beside Recent activity → All activity → the work → Unarchive**; restoration itself does not start a turn. Automatic dispatch includes only the selected messages, not previously ignored or deferred input. Project Issues keep independent conversations; scheduled work retains each arrangement's existing conversation mode.
 
 Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
 
@@ -114,7 +123,9 @@ Remote execution devices can still use the all-project scope. It uses the select
 
 ## Work associations and approvals
 
-Follow-up messages concerning the same concrete matter can join existing work. Uncertain associations wait for review. Expand related messages in the preview to split a message into separate work or move it to another item within the same role. Moving a completed message does not execute it again.
+Choose execution by task needs: simple or tightly coupled work can run directly in the primary stand-in; internal decomposition can use permitted native subagents; separate work threads are for independent conversations, workspaces or durable tracking. Future-condition requests such as notifying the user about a new release use native schedules/monitors, not one-time threads or permanently running subagents. An arrangement takes effect only after its existing confirmation and a successful save. Execution choice does not change source grants, authentication or operation confirmations.
+
+New events follow the source's conversation strategy; models no longer merge them automatically based on text similarity. Explicit replies retain their original conversation. Expand related messages in the preview to split a message into separate work or move it to another item within the same role. Moving a completed message does not execute it again.
 
 Operation approvals appear in **Needs your input** and link to the original conversation's approval card. Use its approval or rejection action; no typed “yes” is required. DingTalk reply approvals show the outgoing text bound to the original tool call. Approval-before-operations uses runtime enforcement for file writes, commands requiring elevated permissions, and MCP tools with write annotations. Approval applies to the individual operation, without persistent allow rules. This policy currently requires the Codex runtime.
 
@@ -132,7 +143,7 @@ Background delivery follows the notification channel settings. Eligible simple a
 
 Reading a notification, dismissing a reminder, or marking it read does not resolve a request. Accepted replies or an already resolved original question move it into history; failed sends retain the draft. Offline devices retain last-known questions and drafts, with replies enabled only after reconnecting and revalidating. Execution approvals, connector login, and complex forms remain in their original context; ordinary business answers never grant operation permissions. Issue answers persist in the owning comment thread before continuing its execution.
 
-Disable **Receive new work** and save to pause new intake while retaining existing work. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
+Use **Stop stand-in** at the bottom left of settings and confirm to stop. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 
 ## Issue human handoffs
 

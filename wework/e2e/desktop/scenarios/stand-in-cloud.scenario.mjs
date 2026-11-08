@@ -1,3 +1,4 @@
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { verifyCloudAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import { verifyLocalCloudStandInReceipt } from '../modules/stand-in-local-cloud-receipts.mjs'
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
@@ -260,11 +261,10 @@ export function createDesktopScenario({
         await control.command('waitFor', '[data-testid="stand-in-settings"]', {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]', {
+        await control.command('waitFor', '[data-testid="stand-in-role-name"]', {
           timeoutMs: uiTimeoutMs,
         })
         await verifyRemoteStandInProjectScope(control, localProject.id, String(project.id))
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         assert.equal(
           await control.command('getElementCount', '[data-testid="stand-in-agent"]'),
           '0'
@@ -290,7 +290,7 @@ export function createDesktopScenario({
           false,
           'Cloud configuration leaked into the desktop Executor'
         )
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await openStandInSettings(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-advanced-open"]')
         assert.equal(
           (await readStandInBinding(control, uiTimeoutMs)).target.deviceId,
