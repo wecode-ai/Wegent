@@ -267,12 +267,12 @@ impl RuntimeWorkRpcHandler {
         } else if event["kind"] == "connection" {
             let roles = stand_in_identities(settings);
             match roles.iter().find(|role| role["id"] == event["roleIds"][0]) {
-                Some(role) => self.connection_session_target(
+                Some(role) => self.connection_binding_target(
                     store,
                     user,
                     role,
-                    &event["source"],
-                    &event["message"],
+                    event,
+                    immediate_intake(&roles, event),
                 )?,
                 None => None,
             }

@@ -2,6 +2,33 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(in crate::runtime_work::handler) fn connection_binding_target(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        role: &Value,
+        event: &Value,
+        immediate: bool,
+    ) -> Result<Option<String>, AppIpcError> {
+        if immediate {
+            return self.connection_session_target(
+                store,
+                user,
+                role,
+                &event["source"],
+                &event["message"],
+            );
+        }
+        // A reusable conversation is not evidence that new work is already classified.
+        let Some(quoted) = event["message"]["quotedMessageId"].as_str() else {
+            return Ok(None);
+        };
+        Ok(store
+            .known_stand_in_message(user, required(role, "id")?, &event["source"], quoted)
+            .map_err(settings_error)?
+            .and_then(|message| message["workId"].as_str().map(str::to_owned)))
+    }
+
     pub(in crate::runtime_work::handler) fn connection_session_target(
         &self,
         store: &LocalTaskStore,
@@ -370,10 +397,31 @@ mod tests {
                     event["processingMode"],
                     if immediate { "immediate" } else { "silent" }
                 );
-                if strategy == "reuse" {
+                if immediate && strategy == "reuse" {
                     assert_eq!(event["binding"]["workId"], work["id"]);
                 } else {
                     assert!(event["binding"].is_null());
+                }
+                if !immediate {
+                    assert!(event["dispatch"].is_null());
+                    for quoted in ["first", "unknown"] {
+                        let mut reply_message = message(&format!("reply-{quoted}"));
+                        reply_message["quotedMessageId"] = json!(quoted);
+                        let reply = store.enqueue_stand_in_event(7,json!(["reply",quoted]),json!({"kind":"connection","roleScoped":true,"roleIds":["default"],"source":source,"message":reply_message})).unwrap();
+                        let snapshot = handler.coordination_rpc("runtime.coordination.snapshot",json!({"contextId":"personal:7","revision":LocalTaskStore::coordination_configuration_version(&settings)})).await.unwrap();
+                        let event = snapshot["events"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|event| event["id"] == reply["id"])
+                            .unwrap();
+                        if quoted == "first" {
+                            assert_eq!(event["binding"]["workId"], work["id"]);
+                        } else {
+                            assert!(event["binding"].is_null());
+                            assert!(event["dispatch"].is_null());
+                        }
+                    }
                 }
             }
         }
