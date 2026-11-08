@@ -148,8 +148,8 @@ describe('AppearanceProvider', () => {
         expect.objectContaining({
           appearanceMode: 'dark',
           appearanceThemeSnapshot: expect.objectContaining({
-            light: expect.objectContaining({ themeId: 'codex' }),
-            dark: expect.objectContaining({ themeId: 'codex' }),
+            light: expect.objectContaining({ themeId: 'wework' }),
+            dark: expect.objectContaining({ themeId: 'wework' }),
           }),
         })
       )
@@ -222,9 +222,11 @@ describe('AppearanceProvider', () => {
       JSON.parse(localStorage.getItem('wework.appearance')!).themeOverrides.dark.accentColor
     ).toBe('#0169cc')
     await userEvent.click(screen.getByTestId('reset'))
-    expect(screen.getByTestId('dark-theme')).toHaveTextContent('codex')
-    expect(screen.getByTestId('light-theme')).toHaveTextContent('codex')
-    expect(document.documentElement.dataset.appearanceTheme).toBe('codex')
+    expect(screen.getByTestId('dark-theme')).toHaveTextContent('wework')
+    expect(screen.getByTestId('light-theme')).toHaveTextContent('wework')
+    expect(document.documentElement.dataset.appearanceTheme).toBe('wework')
+    expect(document.documentElement.style.getPropertyValue('--color-bg-base')).toBe('255 255 255')
+    expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('37 99 235')
   })
 
   test.each([true, false])(

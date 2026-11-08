@@ -13,6 +13,7 @@ import { defaultAppearance } from './presets'
 import { mergeAppearance } from './storage'
 
 const expectedNames = [
+  'Wework',
   'Absolutely',
   'Ayu',
   'Catppuccin',
@@ -45,14 +46,30 @@ const expectedNames = [
 ]
 
 describe('desktop theme catalogue', () => {
-  test('contains every reference theme and all 44 supported variants', () => {
+  test('contains Wework and every reference theme with all 46 supported variants', () => {
     expect(UI_THEME_CATALOGUE.map(theme => theme.label)).toEqual(expectedNames)
-    expect(new Set(UI_THEME_CATALOGUE.map(theme => theme.id)).size).toBe(29)
-    expect(UI_THEME_CATALOGUE.filter(theme => theme.variants.light)).toHaveLength(16)
-    expect(UI_THEME_CATALOGUE.filter(theme => theme.variants.dark)).toHaveLength(28)
+    expect(new Set(UI_THEME_CATALOGUE.map(theme => theme.id)).size).toBe(30)
+    expect(UI_THEME_CATALOGUE.filter(theme => theme.variants.light)).toHaveLength(17)
+    expect(UI_THEME_CATALOGUE.filter(theme => theme.variants.dark)).toHaveLength(29)
     expect(
       UI_THEME_CATALOGUE.filter(theme => theme.variants.light && theme.variants.dark)
-    ).toHaveLength(15)
+    ).toHaveLength(16)
+  })
+
+  test.each(['light', 'dark'] as const)('defaults to the original Wework %s palette', mode => {
+    const theme = getUiTheme('wework', mode).variant
+    expect(defaultAppearance[`${mode}ThemeId`]).toBe('wework')
+    expect(theme.palette).toEqual(defaultThemeAppearance[mode])
+    expect(theme.accentColor).toBe('#2563eb')
+    const variables = resolveAppearanceThemeVariables(defaultAppearance, mode)
+    expect(variables['--color-bg-base']).toBe(mode === 'light' ? '255 255 255' : '24 24 24')
+    expect(variables['--color-bg-surface']).toBe(mode === 'light' ? '247 247 248' : '33 33 33')
+    expect(variables['--color-sidebar']).toBe(
+      mode === 'light' ? '246 246 246 / 0.88' : '33 33 33 / 0.92'
+    )
+    expect(variables['--color-border']).toBe(mode === 'light' ? '224 224 224' : '43 43 43')
+    expect(variables['--color-primary']).toBe('37 99 235')
+    expect(variables['--color-primary-contrast']).toBe('255 255 255')
   })
 
   test('provides distinct palettes and complete code and terminal colors', () => {
@@ -82,7 +99,7 @@ describe('desktop theme catalogue', () => {
         expect(Object.values(variables).join(' ')).not.toContain('NaN')
       }
     }
-    expect(signatures.size).toBe(44)
+    expect(signatures.size).toBe(46)
   })
 
   test('uses the verified Tokyo Night colors throughout the workbench', () => {
@@ -104,8 +121,24 @@ describe('desktop theme catalogue', () => {
     expect(variables['--color-bg-base']).toBe(defaultThemeAppearance.dark.bgBase)
     expect(variables['--color-primary']).toBe('37 99 235')
     expect(variables).not.toHaveProperty('--color-terminal-red')
-    expect(getUiTheme('proof', 'dark').id).toBe('codex')
-    expect(getUiTheme('tokyo-night', 'light').id).toBe('codex')
+    expect(getUiTheme('proof', 'dark').id).toBe('wework')
+    expect(getUiTheme('tokyo-night', 'light').id).toBe('wework')
+    expect(getUiTheme('removed-theme', 'dark').id).toBe('wework')
+  })
+
+  test('preserves configured sidebar opacity until translucency is disabled', () => {
+    const appearance = mergeAppearance({
+      ...defaultAppearance,
+      themeOverrides: { light: { palette: { sidebar: '4 5 6 / 0.8' } } },
+    })
+    expect(resolveAppearanceThemeVariables(appearance, 'light')['--color-sidebar']).toBe(
+      '4 5 6 / 0.8'
+    )
+    expect(
+      resolveAppearanceThemeVariables({ ...appearance, sidebarTranslucent: false }, 'light')[
+        '--color-sidebar'
+      ]
+    ).toBe('4 5 6')
   })
 
   test('preserves explicit palette edits, custom accents and opaque sidebars', () => {

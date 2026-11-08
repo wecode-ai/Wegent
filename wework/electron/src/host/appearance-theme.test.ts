@@ -36,8 +36,15 @@ describe('desktop appearance snapshot', () => {
     ).toMatchObject({ mode: 'light', themeId: 'github', backgroundColor: '#ffffff' })
     expect(resolveHostAppearance({ appearanceMode: 'dark' }, false)).toMatchObject({
       mode: 'dark',
-      themeId: 'codex',
-      backgroundColor: '#111111',
+      themeId: 'wework',
+      backgroundColor: '#181818',
+      variables: { '--color-primary': '37 99 235' },
+    })
+    expect(resolveHostAppearance({}, false)).toMatchObject({
+      mode: 'light',
+      themeId: 'wework',
+      backgroundColor: '#ffffff',
+      variables: { '--color-bg-surface': '247 247 248', '--color-primary': '37 99 235' },
     })
   })
 

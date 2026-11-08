@@ -6,6 +6,17 @@ import { mergeAppearance, readStoredAppearance, writeStoredAppearance } from './
 describe('appearance persistence', () => {
   beforeEach(() => localStorage.clear())
 
+  test('uses Wework defaults for new or unreadable preferences', () => {
+    expect(readStoredAppearance()).toMatchObject({
+      lightThemeId: 'wework',
+      darkThemeId: 'wework',
+      mode: 'system',
+      accentColor: '#2563eb',
+    })
+    localStorage.setItem('wework.appearance', '{invalid')
+    expect(readStoredAppearance()).toEqual(defaultAppearance)
+  })
+
   test('migrates old default palette snapshots without pinning preset colors', () => {
     const appearance = mergeAppearance({
       mode: 'dark',
@@ -17,8 +28,10 @@ describe('appearance persistence', () => {
       backgroundVisibility: 35,
     })
     expect(appearance.themeOverrides).toEqual({ light: {}, dark: {} })
-    expect(appearance.darkThemeId).toBe('codex')
-    expect(appearance.dark.bgBase).toBe('17 17 17')
+    expect(appearance.lightThemeId).toBe('wework')
+    expect(appearance.darkThemeId).toBe('wework')
+    expect(appearance.light).toEqual(defaultThemeAppearance.light)
+    expect(appearance.dark).toEqual(defaultThemeAppearance.dark)
     expect(appearance.uiFontSize).toBe(16)
     expect(appearance.backgroundImagePath).toBe('C:\\Pictures\\background.png')
     expect(appearance.backgroundVisibility).toBe(35)
@@ -57,6 +70,24 @@ describe('appearance persistence', () => {
     expect(readStoredAppearance().dark.bgBase).toBe('26 27 38')
   })
 
+  test('retains explicitly saved ChatGPT selections when the default changes', () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        schemaVersion: 2,
+        mode: 'dark',
+        lightThemeId: 'codex',
+        darkThemeId: 'codex',
+        themeOverrides: { dark: { accentColor: '#abcdef' } },
+      })
+    )
+    const appearance = readStoredAppearance()
+    expect(appearance.lightThemeId).toBe('codex')
+    expect(appearance.darkThemeId).toBe('codex')
+    expect(appearance.dark.bgBase).toBe('17 17 17')
+    expect(appearance.accentColor).toBe('#abcdef')
+  })
+
   test('normalizes unsupported variants and rejects invalid color values', () => {
     const appearance = mergeAppearance({
       ...defaultAppearance,
@@ -69,8 +100,8 @@ describe('appearance persistence', () => {
         },
       },
     })
-    expect(appearance.lightThemeId).toBe('codex')
-    expect(appearance.darkThemeId).toBe('codex')
+    expect(appearance.lightThemeId).toBe('wework')
+    expect(appearance.darkThemeId).toBe('wework')
     expect(appearance.themeOverrides.dark).toEqual({})
   })
 

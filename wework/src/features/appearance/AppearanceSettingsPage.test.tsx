@@ -34,6 +34,7 @@ describe('appearance theme selection', () => {
       expect([...select.options].map(option => option.value)).toEqual(
         UI_THEME_CATALOGUE.filter(theme => theme.variants[mode]).map(theme => theme.id)
       )
+      expect(select).toHaveValue('wework')
     }
   })
 
@@ -56,5 +57,20 @@ describe('appearance theme selection', () => {
     await userEvent.selectOptions(screen.getByTestId('appearance-theme-select-dark'), 'nord')
     expect(screen.getByTestId('appearance-accent-input')).toHaveValue('#88c0d0')
     expect(screen.getByTestId('appearance-theme-select-light')).toHaveValue('proof')
+  })
+
+  test('restores both Wework palettes through the visible reset control', async () => {
+    render(
+      <AppearanceProvider>
+        <AppearanceSettingsPage />
+      </AppearanceProvider>
+    )
+    await userEvent.selectOptions(screen.getByTestId('appearance-theme-select-light'), 'codex')
+    await userEvent.selectOptions(screen.getByTestId('appearance-theme-select-dark'), 'tokyo-night')
+    await userEvent.click(screen.getByTestId('appearance-reset-button'))
+    expect(screen.getByTestId('appearance-theme-select-light')).toHaveValue('wework')
+    expect(screen.getByTestId('appearance-theme-select-dark')).toHaveValue('wework')
+    expect(document.documentElement.dataset.appearanceTheme).toBe('wework')
+    expect(screen.getByTestId('appearance-accent-input')).toHaveValue('#2563eb')
   })
 })

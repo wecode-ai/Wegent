@@ -8,6 +8,9 @@ sidebar_position: 29
 
 Appearance settings store independent light and dark themes. System mode uses the appropriate choice.
 The acceptance baseline is the installed ChatGPT Desktop 26.1029.70936 (24905): 29 names and 44 variants.
+The original Wework light/dark palette is the default, giving 30 names and 46 variants in total.
+It reuses the original semantic palette and sidebar opacity: `#ffffff` light and `#181818` dark
+backgrounds with a `#2563eb` accent.
 The acceptance inventory is independent of application data to detect omissions. Tokyo Night uses
 `#1a1b26` for the background, `#a9b1d6` for text, and `#7aa2f7` for the accent.
 
@@ -22,7 +25,8 @@ retain their content colors.
 
 Changing a theme preserves fonts, font sizes and background images. Schema 2 of `wework.appearance`
 stores theme IDs and explicit overrides rather than resolved palettes. Legacy default palette snapshots
-migrate to theme defaults while user color changes survive. The main window saves both native theme
+migrate to Wework while user color changes survive. New preferences and Reset select Wework;
+saved named selections and overrides survive the default change. The main window saves both native theme
 snapshots for workbench and Process Explorer windows; startup animation does not consume named themes.
 Auxiliary windows consume preferences without overwriting them. Shared collaboration Web defaults
 remain independent of desktop theme selection.
@@ -35,7 +39,8 @@ removes isolated files and processes.
 
 | Case                          | Preconditions and actions                                                                                    | Expected result and evidence                                                                                              |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `appearance-themes` inventory | Enumerate an independent list of 16 light and 28 dark options; select every option in the real UI            | All 29 names and 44 variants apply; individual screenshots, observed colors and JSON evidence                             |
+| `appearance-themes` inventory | Enumerate an independent list of 17 light and 29 dark options; select every option in the real UI            | All 30 names and 46 variants apply; individual screenshots, observed colors and JSON evidence                             |
+| Wework defaults and reset     | Confirm fresh light/dark defaults, inspect both original palettes, then click Reset after browsing themes     | Both choices return to Wework; original backgrounds, accent and sidebar opacity match; retain a reset screenshot           |
 | Persistence                   | Select Proof and Tokyo Night independently; reload the renderer and restart Electron                         | Both choices survive; Tokyo Night matches three reference colors; light mode restores Proof                               |
 | Settings                      | Visit all 20 built-in and Git plugin settings routes in Tokyo Night                                          | Theme colors and readable titles, with a screenshot of each page                                                          |
 | Workspaces and portals        | Visit plugin marketplace/management, applications, automations, interactions, task home and settings menu    | Shared palette across real surfaces, including empty/unavailable states and portal screenshots                            |

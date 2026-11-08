@@ -96,7 +96,8 @@ export function resolveAppearanceThemeVariables(
       overrides.palette?.primaryContrast ?? contrastForegroundColor(hexToRgbTriplet(accentColor)),
   }
   const sidebar = palette.sidebar.split('/')[0].trim()
-  palette.sidebar = appearance.sidebarTranslucent ? `${sidebar} / 0.92` : sidebar
+  const translucentSidebar = palette.sidebar.includes('/') ? palette.sidebar : `${sidebar} / 0.92`
+  palette.sidebar = appearance.sidebarTranslucent ? translucentSidebar : sidebar
   const variables: Record<`--${string}`, string> = {
     ...resolveThemeVariables(mode, { ...appearance, accentColor, [mode]: palette }),
     ...resolveUiThemeVariables(mode, themeId),

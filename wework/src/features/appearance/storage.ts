@@ -103,7 +103,9 @@ function normalizeThemeOverrides(
     legacy
       ? defaultThemeAppearance[mode]
       : getUiTheme(
-          mode === 'dark' ? (update.darkThemeId ?? 'codex') : (update.lightThemeId ?? 'codex'),
+          mode === 'dark'
+            ? (update.darkThemeId ?? defaultAppearance.darkThemeId)
+            : (update.lightThemeId ?? defaultAppearance.lightThemeId),
           mode
         ).variant.palette,
     legacy ? update[mode] : source?.palette,
@@ -131,8 +133,8 @@ export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
       : null
   const nextMode: AppearanceMode =
     update.mode && APPEARANCE_MODES.has(update.mode) ? update.mode : defaultAppearance.mode
-  const lightTheme = getUiTheme(update.lightThemeId ?? 'codex', 'light')
-  const darkTheme = getUiTheme(update.darkThemeId ?? 'codex', 'dark')
+  const lightTheme = getUiTheme(update.lightThemeId ?? defaultAppearance.lightThemeId, 'light')
+  const darkTheme = getUiTheme(update.darkThemeId ?? defaultAppearance.darkThemeId, 'dark')
   const themeOverrides = {
     light: normalizeThemeOverrides(update, 'light'),
     dark: normalizeThemeOverrides(update, 'dark'),

@@ -8,8 +8,10 @@ import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 
 // Independent acceptance inventory: ChatGPT 26.1029.70936 (24905), 29 names / 44 variants.
+// Wework adds its original light/dark palette: 30 names / 46 variants in total.
 // Keep this fixture independent of the application catalogue so omissions fail CI.
 const BOTH = [
+  ['wework', 'Wework'],
   ['absolutely', 'Absolutely'],
   ['catppuccin', 'Catppuccin'],
   ['codex', 'ChatGPT'],
@@ -100,6 +102,14 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
+      for (const mode of ['light', 'dark']) {
+        assert.equal(
+          await control.command('getValue', `[data-testid="appearance-theme-select-${mode}"]`),
+          'wework',
+          `Fresh ${mode} preferences must default to Wework`
+        )
+      }
+
       for (const [mode, required] of [
         ['light', [...BOTH, ...LIGHT]],
         ['dark', [...BOTH, ...DARK]],
@@ -137,11 +147,34 @@ export function createDesktopScenario({
             await css(control, 'html', '--color-terminal-blue'),
             `${label} misses ANSI tokens`
           )
+          if (id === 'wework') {
+            assert.equal(background, mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 24)')
+            assert.equal(await css(control, 'html', '--color-primary'), '37 99 235')
+            assert.equal(
+              await css(control, 'html', '--color-sidebar'),
+              mode === 'light' ? '246 246 246 / 0.88' : '33 33 33 / 0.92'
+            )
+          }
           await captureScreenshot(control, `appearance-theme-${mode}-${id}.png`, 'body')
           evidence.variants.push({ mode, id, label, background, foreground })
         }
       }
-      assert.equal(evidence.variants.length, 44)
+      assert.equal(evidence.variants.length, 46)
+
+      await control.command('click', '[data-testid="appearance-reset-button"]')
+      await control.command('waitFor', 'html[data-appearance-theme="wework"]')
+      for (const mode of ['light', 'dark']) {
+        assert.equal(
+          await control.command('getValue', `[data-testid="appearance-theme-select-${mode}"]`),
+          'wework',
+          `Reset must restore the original Wework ${mode} palette`
+        )
+      }
+      assert.equal(
+        await control.command('getValue', '[data-testid="appearance-accent-input"]'),
+        '#2563eb'
+      )
+      await captureScreenshot(control, 'appearance-wework-reset.png', 'body')
 
       // Independent light/dark choices must survive both renderer and native restarts.
       await selectWorkbenchTheme(control, {

@@ -1,5 +1,8 @@
 import { hexToRgbTriplet } from './color'
+import { DEFAULT_ACCENT_COLOR, darkPalette, lightPalette } from './presets'
 import type { ResolvedAppearanceMode, ThemePalette } from './types'
+
+export const DEFAULT_UI_THEME_ID = 'wework'
 
 export const SYNTAX_COLOR_NAMES = [
   'keyword',
@@ -189,6 +192,20 @@ const define = (
 // Keep the color-fact table aligned with the Seed column contract above.
 // prettier-ignore
 export const UI_THEME_CATALOGUE: readonly ThemeDefinition[] = [
+  {
+    id: DEFAULT_UI_THEME_ID,
+    label: 'Wework',
+    variants: {
+      light: {
+        ...variant('light', ['#ffffff','#f7f7f8','#1a1a1a',DEFAULT_ACCENT_COLOR,'#0000ff','#a31515','#098658','#795e26','#267f99','#001080','#008000','#1a1a1a','#1a1a1a','#00a240','#dc2626','#b45309']),
+        palette: lightPalette,
+      },
+      dark: {
+        ...variant('dark', ['#181818','#212121','#ffffff',DEFAULT_ACCENT_COLOR,'#569cd6','#ce9178','#b5cea8','#dcdcaa','#4ec9b0','#9cdcfe','#6a9955','#d4d4d4','#d4d4d4','#40c977','#f87171','#fbbf24']),
+        palette: darkPalette,
+      },
+    },
+  },
   define('absolutely', 'Absolutely',
     ['#f9f9f7','#f4f4f2','#2d2d2b','#cc7d5e','#ff5f38','#00c853','#ff5f38','#2d2d2b','#bc7559','#2d2d2b','#939391','#bc7559','#939391','#008e3d','#d53538','#b67b00'],
     ['#2d2d2b','#373735','#f9f9f7','#cc7d5e','#ff5f38','#00c853','#ff5f38','#f9f9f7','#d28e73','#f9f9f7','#b2b2b0','#d28e73','#b2b2b0','#00c853','#ff5f38','#e5b95c']),
@@ -285,7 +302,7 @@ export function getUiTheme(
 ): ThemeDefinition & { variant: ThemeVariant } {
   const theme =
     UI_THEME_CATALOGUE.find(item => item.id === id && item.variants[mode]) ??
-    UI_THEME_CATALOGUE.find(item => item.id === 'codex')!
+    UI_THEME_CATALOGUE.find(item => item.id === DEFAULT_UI_THEME_ID)!
   return { ...theme, variant: theme.variants[mode]! }
 }
 

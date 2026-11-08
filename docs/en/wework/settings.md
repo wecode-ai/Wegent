@@ -354,7 +354,7 @@ Open **Settings → Personal → Appearance**. Changes stay on this device. **Re
 | Feature                                  | Steps and result                                                                                                            |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Theme                                    | Select light, dark or system                                                                                                |
-| Light theme, Dark theme                  | Choose independent named palettes from 29 names and 44 light/dark variants matching the installed ChatGPT Desktop, including Tokyo Night; system mode uses the corresponding choice |
+| Light theme, Dark theme                  | Defaults to the original Wework palette, alongside all 29 names from the installed ChatGPT Desktop, including Tokyo Night: 30 names and 46 light/dark variants in total; system mode uses the corresponding choice |
 | Accent, Contrast                         | Choose a color or move the slider to adjust emphasis and contrast                                                           |
 | Restore theme accent                     | After customizing the accent, click Restore to use the current light/dark theme's accent again; fonts and background images remain unchanged |
 | Translucent sidebar                      | Toggle transparency; system and window background affect the result                                                         |
@@ -362,6 +362,9 @@ Open **Settings → Personal → Appearance**. Changes stay on this device. **Re
 | Background image                         | Select or remove an image on the relevant mode card; adjust visibility and blur and choose main, sidebar or top-bar regions |
 | UI font, UI font size                    | Enter the interface font and adjust its size                                                                                |
 | Code font, Code font size                | Set the font and size for code/monospace content separately                                                                 |
+
+The original Wework palette uses a white light background, a `#181818` dark background and a `#2563eb` blue accent.
+New preferences, migration from legacy default palettes and Reset select Wework. Changing the default does not overwrite saved named themes or custom color edits.
 
 Named themes cover application interfaces, menus, detached windows, code, terminals and visualizations.
 Startup flow and startup colors follow upstream, and remote Wegent Agent content retains its own theme.
