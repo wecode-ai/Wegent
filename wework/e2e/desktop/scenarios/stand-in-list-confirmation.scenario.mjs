@@ -162,6 +162,7 @@ export function createDesktopScenario(options) {
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', ROOT)
+      // Local file approvals must belong to the active account on the local device.
       const user = await fetchJson(`${cloud.backendUrl}/api/users/me`, {
         headers: { Authorization: `Bearer ${cloud.authToken}` },
       })

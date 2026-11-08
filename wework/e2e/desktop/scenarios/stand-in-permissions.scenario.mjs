@@ -171,11 +171,14 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         const saved = await rpc(control, 'runtime.stand_in.get', settingsParams())
         assert.equal(saved.enabled, true)
         assert.ok(saved.prompt.includes(role))
+        // Reset the source; editing duties must not implicitly resume a paused identity.
         await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
           requirements: false,
         })
         await editProjectSource(control, false)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-saved"]')
+        await control.command('click', '[data-testid="stand-in-cancel"]')
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       }
 
