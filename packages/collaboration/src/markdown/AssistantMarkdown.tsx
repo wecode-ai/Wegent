@@ -22,10 +22,10 @@ import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelim
 import {
   classifyMarkdownLink,
   isHtmlFilePath,
-  protectComposerReferenceLinks,
   transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
+import { protectComposerReferenceLinks } from './composerReferenceMarkdown'
 import { AssistantMarkdownImage } from './AssistantMarkdownImage'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { MarkdownTable } from './MarkdownTable'

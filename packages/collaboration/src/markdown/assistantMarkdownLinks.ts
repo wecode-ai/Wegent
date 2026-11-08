@@ -1,5 +1,3 @@
-import { classifyComposerReference, parseComposerReferences } from '../composer/composerReference'
-
 const isWindowsDriveAbsolutePath = (path: string) => /^[a-zA-Z]:[\\/]/.test(path)
 
 const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
@@ -97,28 +95,6 @@ const MARKDOWN_LINK_PROTOCOLS = new Set([
 ])
 const UNSAFE_LINK_PROTOCOL = /^(?:javascript|data|vbscript):/i
 const URL_CONTROL_CHARACTERS = /[\u0000-\u0020\u007f]/g
-
-/**
- * Escapes the dollar prefix of composer reference links so the Markdown math
- * parser cannot combine adjacent mention labels into one inline formula.
- * Ordinary bracketed math such as `[$x$](https://example.com)` is untouched.
- */
-export function protectComposerReferenceLinks(content: string): string {
-  let cursor = 0
-  let protectedContent = ''
-  for (const reference of parseComposerReferences(content)) {
-    if (
-      !reference.reference.startsWith('[$') ||
-      !classifyComposerReference(reference.label, reference.href)
-    ) {
-      continue
-    }
-    protectedContent += content.slice(cursor, reference.start)
-    protectedContent += reference.reference.replace(/^\[\$/, '[\\$')
-    cursor = reference.end
-  }
-  return cursor === 0 ? content : protectedContent + content.slice(cursor)
-}
 
 export function transformMarkdownUrl(url: string, key: string): string | undefined {
   if (key !== 'href') return url

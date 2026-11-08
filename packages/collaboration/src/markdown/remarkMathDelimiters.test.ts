@@ -3,7 +3,7 @@ import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import { unified } from 'unified'
 import { describe, expect, test } from 'vitest'
-import { protectComposerReferenceLinks } from './assistantMarkdownLinks'
+import { protectComposerReferenceLinks } from './composerReferenceMarkdown'
 import { remarkMathDelimiters } from './remarkMathDelimiters'
 
 function parseMarkdown(source: string): Root {
@@ -59,5 +59,26 @@ describe('remarkMathDelimiters', () => {
         children: paragraphChildren('[$x$](https://example.com)'),
       })
     ).toBe(true)
+  })
+
+  test('keeps composer reference examples inside code and HTML literal', () => {
+    const reference = '[$Chat](wework-conversation://c)'
+    const content = [
+      `Before ${reference} after.`,
+      '',
+      `Inline: \`${reference}\``,
+      '',
+      '```markdown',
+      reference,
+      '```',
+      '',
+      `<code>${reference}</code>`,
+    ].join('\n')
+
+    const protectedContent = protectComposerReferenceLinks(content)
+    expect(protectedContent).toContain('Before [\\$Chat](wework-conversation://c) after.')
+    expect(protectedContent).toContain(`Inline: \`${reference}\``)
+    expect(protectedContent).toContain(`\`\`\`markdown\n${reference}\n\`\`\``)
+    expect(protectedContent).toContain(`<code>${reference}</code>`)
   })
 })
