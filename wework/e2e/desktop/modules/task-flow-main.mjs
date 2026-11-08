@@ -3067,6 +3067,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           text: LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        await control.command('click', '[data-testid="work-item-guide-open-summary"]')
+        await control.command('waitFor', '[data-testid="work-item-context-panel"]', {
+          visible: true,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await captureVerificationScreenshot(control, 'task-board-association-context-pill-open.png')
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,

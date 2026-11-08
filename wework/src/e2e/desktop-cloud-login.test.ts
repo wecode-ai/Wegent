@@ -1,6 +1,10 @@
 // @vitest-environment node
-import { expect, test, vi } from 'vitest'
-import { signInDesktopCloud } from '../../e2e/desktop/modules/desktop-cloud-login.mjs'
+import { afterEach, expect, test, vi } from 'vitest'
+import { join } from 'node:path'
+import {
+  redisCliBinary,
+  signInDesktopCloud,
+} from '../../e2e/desktop/modules/desktop-cloud-login.mjs'
 import { commandOutputAsync } from '../../e2e/desktop/modules/shared.mjs'
 import { pluginApi } from '../../e2e/desktop/modules/plugin-regression-fixture.mjs'
 
@@ -13,10 +17,22 @@ vi.mock('../../e2e/desktop/modules/plugin-regression-fixture.mjs', async origina
   pluginApi: vi.fn(),
 }))
 
+afterEach(() => vi.unstubAllEnvs())
+
+test('resolves the CLI shipped alongside the configured Windows Redis server', () => {
+  expect(redisCliBinary('C:\\e2e tools\\redis\\redis-server.exe', 'win32')).toBe(
+    'C:\\e2e tools\\redis\\redis-cli.exe'
+  )
+  expect(redisCliBinary('/opt/redis/bin/redis-server', 'linux')).toBe('/opt/redis/bin/redis-cli')
+  expect(redisCliBinary('', 'win32')).toBe('redis-cli')
+})
+
 test.each([0, 1])(
   'uses real UI authorization before approving its Backend session (connected=%s)',
   async connected => {
     vi.clearAllMocks()
+    const redisRoot = join(process.cwd(), 'isolated-redis-tools')
+    vi.stubEnv('WEWORK_E2E_REDIS_SERVER_BIN', join(redisRoot, 'redis-server'))
     const id = '12345678-1234-1234-1234-123456789abc'
     vi.mocked(commandOutputAsync)
       .mockResolvedValueOnce('old-session\n')
@@ -44,6 +60,10 @@ test.each([0, 1])(
       redisPort: 6379,
     }
     await expect(signInDesktopCloud({ command }, cloud)).resolves.toEqual(user)
+    expect(commandOutputAsync).toHaveBeenCalledWith(
+      join(redisRoot, process.platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'),
+      ['-p', '6379', '--raw', '--scan', '--pattern', '*wework_auth_session:*']
+    )
     expect(command).toHaveBeenCalledWith('fill', '[data-testid="cloud-backend-url-input"]', {
       value: cloud.backendUrl,
     })

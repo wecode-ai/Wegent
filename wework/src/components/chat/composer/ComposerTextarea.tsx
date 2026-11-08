@@ -16,6 +16,7 @@ import { resolvePluginLogo } from '@/components/plugins/plugin-assets'
 import { useOptionalAppearance } from '@/features/appearance'
 import { canOpenNativeWorkspacePathPicker } from '@/lib/native-workspace-path-picker'
 import type { LocalDeviceApp } from '@/types/api'
+import { useReferenceNavigation } from '../useReferenceNavigation'
 import { useComposerCatalogBinding } from './ComposerCatalogContext'
 import {
   getDesktopComposerEditorServices,
@@ -41,6 +42,7 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
   function ComposerTextarea(props, ref) {
     const { t } = useTranslation('common')
     const showTrialGuide = useContext(PluginTrialSelectionContext)
+    const { openReference } = useReferenceNavigation()
     const catalog = useComposerCatalogBinding()
     const translate = useCallback(
       (key: string, fallback?: string, options?: Record<string, unknown>) =>
@@ -86,6 +88,7 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
             (openPluginCenterAction ? () => executeDshAction(openPluginCenterAction) : undefined)
           }
           onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
+          onOpenMentionReference={openReference}
           renderAppIcon={command => (
             <ComposerPluginIcon
               app={command.app!}

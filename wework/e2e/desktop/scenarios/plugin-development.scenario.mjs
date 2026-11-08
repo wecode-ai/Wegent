@@ -48,6 +48,29 @@ async function waitForStatus(control, expected, timeoutMs) {
   assert.ok(status.includes(expected), `Unexpected plugin development status: ${status}`)
 }
 
+export async function openPluginDevelopmentPanel(control) {
+  const panel = '[data-testid="wework-plugin-development-sidebar"]'
+  const visible = async selector =>
+    Number(await control.command('getElementCount', selector, { visible: true })) > 0
+  if (await visible(panel)) return
+  const shell = '[data-testid="right-workspace-panel-shell"]'
+  if ((await control.command('getAttribute', shell, { value: 'aria-hidden' })) === 'true') {
+    await control.command('clickWhenEnabled', '[data-testid="toggle-right-workspace-panel-button"]')
+  }
+  await control.command('waitFor', `${shell}[aria-hidden="false"]`)
+  const tab = '[data-testid="right-workspace-extension-tab-wework-plugin-developer.debug"]'
+  const option = '[data-testid="right-workspace-extension-option-wework-plugin-developer.debug"]'
+  if (await visible(tab)) {
+    await control.command('clickWhenEnabled', tab)
+  } else {
+    if (!(await visible(option))) {
+      await control.command('clickWhenEnabled', '[data-testid="right-workspace-new-tab-button"]')
+    }
+    await control.command('clickWhenEnabled', option)
+  }
+  await control.command('waitFor', panel, { visible: true })
+}
+
 async function waitForFile(path, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -467,6 +490,7 @@ export async function createDesktopScenario({
         'The general Wework CLI did not discover the isolated plugin development instance'
       )
       control.activateWindow('main')
+      await openPluginDevelopmentPanel(mainControl)
       await waitForStatus(control, '运行中 · HMR 0', workbenchReadyTimeoutMs)
       await control.command('focusMainWindow', 'body')
       await control.command('waitFor', '[data-testid="wework-plugin-development-live-status"]', {
@@ -720,6 +744,7 @@ export async function createDesktopScenario({
       await captureScreenshot(control, 'plugin-development-10-debug-stopped-after-hmr.png', 'body')
       const readyCountAfterStop = control.readyCount
       await signInDesktopCloud(mainControl, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await openPluginDevelopmentPanel(mainControl)
       await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
       assert.equal(
         control.readyCount,

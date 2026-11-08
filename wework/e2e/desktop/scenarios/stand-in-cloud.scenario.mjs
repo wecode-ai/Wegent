@@ -257,7 +257,12 @@ export function createDesktopScenario({
         await control.command('navigate', 'body', {
           value: `/stand-in?${new URLSearchParams({ deviceId: REMOTE_DOCKER_DEVICE_ID, profileId: remoteDraft.id, settingsRequest: crypto.randomUUID() })}`,
         })
-        await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+        await control.command('waitFor', '[data-testid="stand-in-settings"]', {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]', {
+          timeoutMs: uiTimeoutMs,
+        })
         await verifyRemoteStandInProjectScope(control, localProject.id, String(project.id))
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         assert.equal(
