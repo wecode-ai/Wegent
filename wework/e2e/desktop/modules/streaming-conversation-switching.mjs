@@ -244,10 +244,7 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
           'clickWhenEnabled',
           `[data-testid="runtime-local-task-row-${address.taskId}"]`
         )
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-          text: SUFFIX.trim(),
-          timeoutMs: longResponseTimeoutMs,
-        })
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: SUFFIX.trim() })
         await waitForWorkbenchDebugState(
           control,
           snapshot =>
