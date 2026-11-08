@@ -452,13 +452,10 @@ jobs:
         if: contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')
         uses: ./.github/actions/setup-minio-e2e
 
-      - name: Pre-read the existing external browser runtime (approved experiment)
-        if: contains(matrix.segments, 'browser-toolbar-actions')
-        run: node .github/scripts/pre-read-external-browser.mjs
-
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'browser-toolbar-actions') && '1' || '0' }}
           RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs

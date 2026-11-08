@@ -6,6 +6,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { recordBrowserStartup } from './external-browser-diagnostics.mjs'
+import { preReadBrowserRuntime } from './external-browser-preread.mjs'
 
 const CHROME_BINARY = process.env.WEWORK_E2E_EXTERNAL_CHROME_BIN || '/opt/google/chrome/chrome'
 const CHROMEDRIVER_BINARY =
@@ -67,6 +68,16 @@ function driverPort(child, timeoutMs) {
 export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
   assert.equal(process.platform, 'linux')
   await Promise.all([access(CHROME_BINARY), access(CHROMEDRIVER_BINARY)])
+  const preRead = await preReadBrowserRuntime(
+    process.env.WEWORK_E2E_EXTERNAL_BROWSER_PREREAD === '1'
+  )
+  if (preRead) {
+    await writeFile(
+      join(resultDir, 'external-browser-preread.json'),
+      JSON.stringify(preRead, null, 2)
+    )
+    console.log(`[desktop-e2e] browser runtime preparation ${JSON.stringify(preRead)}`)
+  }
   const root = await mkdtemp(join(tmpdir(), 'wework-external-browser-'))
   const profile = join(root, 'profile')
   const config = join(root, 'config')

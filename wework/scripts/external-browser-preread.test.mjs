@@ -8,8 +8,24 @@ import { expect, test } from 'vitest'
 import {
   dependencyPaths,
   preReadFiles,
+  preReadBrowserRuntime,
   runtimeFiles,
-} from '../../.github/scripts/pre-read-external-browser.mjs'
+} from '../e2e/desktop/modules/external-browser-preread.mjs'
+
+test('does not read any runtime files unless the CI experiment is explicitly enabled', async () => {
+  expect(await preReadBrowserRuntime(false)).toBeNull()
+})
+
+test('CI pre-read runs immediately before creating the isolated browser profile', async () => {
+  const source = await readFile(
+    new URL('../e2e/desktop/modules/external-browser-fixture.mjs', import.meta.url),
+    'utf8'
+  )
+  const preparation = source.indexOf('await preReadBrowserRuntime(')
+  expect(preparation).toBeGreaterThan(0)
+  expect(preparation).toBeLessThan(source.indexOf('await mkdtemp('))
+  expect(source).toContain("process.env.WEWORK_E2E_EXTERNAL_BROWSER_PREREAD === '1'")
+})
 
 test('collects existing runtime files without following links outside the runtime', async () => {
   const root = await mkdtemp(join(tmpdir(), 'browser-preread-'))
