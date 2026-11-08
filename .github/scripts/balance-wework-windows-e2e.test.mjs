@@ -92,7 +92,7 @@ test('previously frozen Windows shards can use their successful checkpoint measu
   }
 })
 
-test('the successful Dots sample releases Core3 without losing checkpoints or adding runners', () => {
+test('the successful Dots sample releases an otherwise measured Core3 without losing checkpoints or adding runners', () => {
   const evidence = JSON.parse(
     readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
   )
@@ -103,20 +103,20 @@ test('the successful Dots sample releases Core3 without losing checkpoints or ad
   )
   const withoutDots = { ...evidence.seconds }
   delete withoutDots['dots-closed-loops']
-  const source = completeMatrix.include.find(shard => shard.id === 'core-3')
+  const source = original.include.find(shard => shard.id === 'core-3')
   assert.deepEqual(
-    balanceWindowsMatrix(completeMatrix, withoutDots).include.find(shard => shard.id === 'core-3'),
+    balanceWindowsMatrix(original, withoutDots).include.find(shard => shard.id === 'core-3'),
     source
   )
-  const balanced = balanceWindowsMatrix(completeMatrix)
+  const balanced = balanceWindowsMatrix(original)
   assert.notDeepEqual(
     balanced.include.find(shard => shard.id === 'core-3'),
     source
   )
-  assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
-  assert.deepEqual(checkpoints(balanced).sort(), checkpoints(completeMatrix).sort())
-  assert.equal(new Set(checkpoints(balanced)).size, checkpoints(completeMatrix).length)
-  assert.equal(balanced.include.length, completeMatrix.include.length)
+  assert.deepEqual(segments(balanced).sort(), segments(original).sort())
+  assert.deepEqual(checkpoints(balanced).sort(), checkpoints(original).sort())
+  assert.equal(new Set(checkpoints(balanced)).size, checkpoints(original).length)
+  assert.equal(balanced.include.length, original.include.length)
   assert.ok(
     measuredLoad(balanced.include.find(shard => shard.id === 'core-3')) < measuredLoad(source)
   )
