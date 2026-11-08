@@ -21,7 +21,6 @@ use brz_http_server::StatusCode;
 use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json, MysqlRow};
 
-use crate::attachments::share_token::decode_payload;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::task_detail_api::repository::{ContextRow, list_contexts};
@@ -152,6 +151,19 @@ struct TeamKindRow {
     kinds_json: Json<OpaqueJson>,
 }
 
+/// One active `share_links` row for a hashed task token.
+#[derive(Debug, FromMysqlRow)]
+struct TaskShareLinkRow {
+    share_links_resource_id: i64,
+    share_links_created_by_user_id: i64,
+}
+
+const TASK_SHARE_LINK_QUERY: &str = "SELECT share_links.resource_id AS \
+     share_links_resource_id, share_links.created_by_user_id AS \
+     share_links_created_by_user_id FROM share_links WHERE \
+     share_links.token_hash = ? AND share_links.resource_type = 'Task' AND \
+     share_links.is_active = true AND share_links.expires_at > NOW() LIMIT 1";
+
 /// GET /api/tasks/share/public: the source declares no authentication
 /// dependency, so the route is public.
 #[brz_http_server::get("/api/tasks/share/public", access = public)]
@@ -167,13 +179,17 @@ async fn get_public_shared_task(
 
 /// The endpoint flow after route dispatch.
 async fn run(state: &AppState, token: &str) -> Result<PublicSharedTaskResponse, FastApiError> {
-    // `urllib.parse.unquote` + `_aes_decrypt` + the `"{user_id}#{task_id}"`
-    // parse. Every failure is the route's `400 Invalid share link format`.
-    let Some(info) = decode_payload(token) else {
+    let digest = super::token::token_hash(token);
+    let share_link: Option<TaskShareLinkRow> = state
+        .mysql
+        .fetch_optional(TASK_SHARE_LINK_QUERY, (digest,))
+        .await
+        .map_err(internal)?;
+    let Some(info) = share_link else {
         return Err(bad_request(INVALID_SHARE_LINK));
     };
-    let user_id = info.user_id;
-    let task_id = info.task_id;
+    let user_id = info.share_links_created_by_user_id;
+    let task_id = info.share_links_resource_id;
 
     // `task_store.get_task_by_states(states=is_active_query(), user_id=user_id)`.
     let task = state

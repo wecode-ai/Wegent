@@ -8,25 +8,21 @@ Service for managing team sharing functionality.
 Uses the unified ResourceMember model instead of the legacy SharedTeam table.
 """
 
-import base64
+import hashlib
 import json
 import logging
 import os
-import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
+import secrets
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.core.config import settings
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
-from app.models.share_link import ResourceType
+from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
 from app.schemas.kind import Team
 from app.schemas.shared_team import (
@@ -37,6 +33,7 @@ from app.schemas.shared_team import (
     TeamShareInfo,
     TeamShareResponse,
 )
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,136 +42,94 @@ class SharedTeamService:
     """Service for managing team sharing functionality using ResourceMember"""
 
     def __init__(self):
-        # Initialize AES key and IV from settings
-        self.aes_key = settings.SHARE_TOKEN_AES_KEY.encode("utf-8")
-        self.aes_iv = settings.SHARE_TOKEN_AES_IV.encode("utf-8")
-
-    def _aes_encrypt(self, data: str) -> str:
-        """Encrypt data using AES-256-CBC"""
-        # Create cipher object
-        cipher = Cipher(
-            algorithms.AES(self.aes_key),
-            modes.CBC(self.aes_iv),
-            backend=default_backend(),
-        )
-        encryptor = cipher.encryptor()
-
-        # Pad the data to 16-byte boundary (AES block size)
-        padder = padding.PKCS7(128).padder()
-        padded_data = padder.update(data.encode("utf-8")) + padder.finalize()
-
-        # Encrypt the data
-        encrypted_bytes = encryptor.update(padded_data) + encryptor.finalize()
-
-        # Return base64 encoded encrypted data
-        return base64.b64encode(encrypted_bytes).decode("utf-8")
-
-    def _aes_decrypt(self, encrypted_data: str) -> Optional[str]:
-        """Decrypt data using AES-256-CBC"""
-        try:
-            # Decode base64 encrypted data
-            encrypted_bytes = base64.b64decode(encrypted_data.encode("utf-8"))
-
-            # Create cipher object
-            cipher = Cipher(
-                algorithms.AES(self.aes_key),
-                modes.CBC(self.aes_iv),
-                backend=default_backend(),
-            )
-            decryptor = cipher.decryptor()
-
-            # Decrypt the data
-            decrypted_padded_bytes = (
-                decryptor.update(encrypted_bytes) + decryptor.finalize()
-            )
-
-            # Unpad the data
-            unpadder = padding.PKCS7(128).unpadder()
-            decrypted_bytes = (
-                unpadder.update(decrypted_padded_bytes) + unpadder.finalize()
-            )
-
-            # Return decrypted string
-            return decrypted_bytes.decode("utf-8")
-        except Exception:
-            return None
+        self.token_hasher = hashlib.sha256
 
     def generate_share_token(self, user_id: int, team_id: int) -> str:
-        """Generate share token based on user and team information using AES encryption"""
-        # Only store user_id and team_id in the format "user_id#team_id"
-        share_data = f"{user_id}#{team_id}"
-        # Use AES encryption instead of base64 encoding
-        share_token = self._aes_encrypt(share_data)
-        # URL encode the token before returning it
-        share_token = urllib.parse.quote(share_token)
-        return share_token
+        """Generate a 256-bit opaque share token."""
+        return secrets.token_urlsafe(32)
+
+    def create_share_link(
+        self,
+        db: Session,
+        team_id: int,
+        owner_user_id: int,
+    ) -> ShareLink:
+        """Create and persist a new team share link."""
+        share_token = self.generate_share_token(owner_user_id, team_id)
+        share_link = ShareLink(
+            resource_type=ResourceType.TEAM.value,
+            resource_id=team_id,
+            share_token=share_token,
+            token_hash=self._hash_share_token(share_token),
+            require_approval=False,
+            default_role=ResourceRole.Maintainer.value,
+            expires_at=datetime.utcnow() + timedelta(days=365 * 100),
+            created_by_user_id=owner_user_id,
+            is_active=True,
+        )
+        db.add(share_link)
+        db.commit()
+        return share_link
+
+    def _hash_share_token(self, share_token: str) -> str:
+        """Return the SHA-256 digest used for token lookup."""
+        return self.token_hasher(share_token.encode("utf-8")).hexdigest()
+
+    def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
+        """Find an active, unexpired team share link by its token hash."""
+        share_link = (
+            db.query(ShareLink)
+            .filter(
+                ShareLink.token_hash == self._hash_share_token(share_token),
+                ShareLink.resource_type == ResourceType.TEAM.value,
+                ShareLink.is_active.is_(True),
+            )
+            .first()
+        )
+        if share_link and share_link.is_expired:
+            return None
+        return share_link
 
     def decode_share_token(
         self, share_token: str, db: Optional[Session] = None
     ) -> Optional[TeamShareInfo]:
-        """Decode share token to get team information using AES decryption"""
-        try:
-            # First URL decode the token, then use AES decryption
-            decoded_token = urllib.parse.unquote(share_token)
-            share_data_str = self._aes_decrypt(decoded_token)
-            if not share_data_str:
-                logger.info("Invalid share token format: %s", share_token)
-                return None
-
-            # Parse the "user_id#team_id" format
-            if "#" not in share_data_str:
-                return None
-
-            user_id_str, team_id_str = share_data_str.split("#", 1)
-            try:
-                user_id = int(user_id_str)
-                team_id = int(team_id_str)
-            except ValueError:
-                return None
-
-            # If database session is provided, query user_name and team_name from database
-            if db is not None:
-                # Query user name
-                user = (
-                    db.query(User)
-                    .filter(User.id == user_id, User.is_active == True)
-                    .first()
-                )
-
-                # Query team name
-                team = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True
-                    )
-                    .first()
-                )
-
-                if not user or not team:
-                    logger.info("User or team not found in the database.")
-                    return None
-
-                return TeamShareInfo(
-                    user_id=user_id,
-                    user_name=user.user_name,
-                    team_id=team_id,
-                    team_name=team.name,
-                    bind_mode=(
-                        team.json.get("spec", {}).get("bind_mode")
-                        if isinstance(team.json, dict)
-                        else None
-                    ),
-                )
-            else:
-                # Without database session, return basic info with placeholder names
-                return TeamShareInfo(
-                    user_id=user_id,
-                    user_name=f"User_{user_id}",
-                    team_id=team_id,
-                    team_name=f"Team_{team_id}",
-                )
-        except Exception:
+        """Resolve a team share token to its active, owned resource."""
+        if db is None:
             return None
+
+        share_link = self._find_share_link(db, share_token)
+        if not share_link:
+            logger.info("Invalid or inactive share token")
+            return None
+
+        user_id = share_link.created_by_user_id
+        team_id = share_link.resource_id
+        user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not user or not team:
+            logger.info("User or team not found in the database.")
+            return None
+
+        return TeamShareInfo(
+            user_id=user_id,
+            user_name=user.user_name,
+            team_id=team_id,
+            team_name=team.name,
+            bind_mode=(
+                team.json.get("spec", {}).get("bind_mode")
+                if isinstance(team.json, dict)
+                else None
+            ),
+        )
 
     def generate_share_url(self, share_token: str) -> str:
         """Generate share URL with token"""
@@ -396,16 +351,15 @@ class SharedTeamService:
             db.commit()
             db.refresh(team)
 
-        # Generate share token
-        share_token = self.generate_share_token(
-            user_id=user_id,
-            team_id=team_id,
-        )
+        share_link = self.create_share_link(db, team_id, user_id)
 
         # Generate share URL
-        share_url = self.generate_share_url(share_token)
+        share_url = self.generate_share_url(share_link.share_token)
 
-        return TeamShareResponse(share_url=share_url, share_token=share_token)
+        return TeamShareResponse(
+            share_url=share_url,
+            share_token=share_link.share_token,
+        )
 
     def get_share_info(self, db: Session, share_token: str) -> TeamShareInfo:
         """Get team share information from token"""

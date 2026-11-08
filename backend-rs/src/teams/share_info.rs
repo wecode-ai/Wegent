@@ -8,8 +8,8 @@
 //!
 //! The source route declares no authentication dependency: the share token is
 //! the credential. Flow, in source order:
-//! 1. `decode_share_token`: `urllib.parse.unquote` + AES-CBC/PKCS#7 decrypt of
-//!    `"{user_id}#{team_id}"`, then the active `users` row (`User.id`,
+//! 1. Resolve the SHA-256 hash of the opaque share token to an active
+//!    `share_links` row, then read the active `users` row (`User.id`,
 //!    `is_active`) and the active Team `kinds` row (`Kind.id`, `kind`,
 //!    `is_active`, no owner predicate), rendering `user_name` and the Team
 //!    `name`/`spec.bind_mode`.
@@ -28,10 +28,10 @@ use chrono::NaiveDateTime;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::attachments::share_token::decode_id_pair;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::teams::teams_repository::{KIND_COLUMNS, USER_COLUMNS};
+use sha2::{Digest, Sha256};
 
 /// `400 "Invalid share token"` (`SharedTeamService.get_share_info`).
 const INVALID_SHARE_TOKEN: &str = "Invalid share token";
@@ -106,6 +106,18 @@ struct TeamKindRow {
     kinds_updated_at: NaiveDateTime,
 }
 
+#[derive(Debug, FromMysqlRow)]
+struct TeamShareLinkRow {
+    resource_id: i64,
+    created_by_user_id: i64,
+}
+
+/// SHA-256(token) as lowercase hex, matching `share_links.token_hash`.
+fn token_hash(token: &str) -> String {
+    let digest = Sha256::digest(token.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// GET /api/teams/share/info: the source declares no authentication
 /// dependency, so the route is public.
 #[brz_http_server::get("/api/teams/share/info", access = public)]
@@ -124,10 +136,24 @@ async fn team_share_info(
     state: &AppState,
     share_token: &str,
 ) -> Result<TeamShareInfo, FastApiError> {
-    // `decode_share_token`: `_aes_decrypt` + the `"{user_id}#{team_id}"` parse.
-    let Some((user_id, team_id)) = decode_id_pair(share_token) else {
+    let share_link: Option<TeamShareLinkRow> = state
+        .mysql
+        .fetch_optional(
+            "SELECT share_links.resource_id AS resource_id, \
+             share_links.created_by_user_id AS created_by_user_id \
+             FROM share_links WHERE share_links.token_hash = ? \
+             AND share_links.resource_type = 'Team' \
+             AND share_links.is_active = true \
+             AND share_links.expires_at > NOW() LIMIT 1",
+            (token_hash(share_token),),
+        )
+        .await
+        .map_err(unhandled)?;
+    let Some(link) = share_link else {
         return Err(bad_request(INVALID_SHARE_TOKEN));
     };
+    let user_id = link.created_by_user_id;
+    let team_id = link.resource_id;
 
     // The source runs both reads unconditionally (`user = ...; team = ...;
     // if not user or not team: return None`), so neither may short-circuit the

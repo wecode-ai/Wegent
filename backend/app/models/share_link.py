@@ -11,7 +11,16 @@ Supports Team, Task, and KnowledgeBase resource types.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, Index, Integer, String
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -72,12 +81,21 @@ class ShareLink(Base):
         comment="Resource ID (kinds.id or tasks.id)",
     )
 
-    # Share link info
+    # Share link info. The token itself is only shown when it is issued;
+    # lookups use token_hash.
     share_token = Column(
         String(512),
         nullable=False,
         unique=True,
-        comment="AES encrypted share token",
+        comment="Opaque share token issued to the resource owner",
+    )
+    token_hash = Column(
+        String(64),
+        nullable=False,
+        unique=True,
+        default="",
+        server_default="",
+        comment="SHA-256 hash of the share token",
     )
 
     # Share configuration
@@ -132,6 +150,11 @@ class ShareLink(Base):
             "resource_type",
             "resource_id",
             "is_active",
+        ),
+        Index("idx_share_links_token_hash_active", "token_hash", "is_active"),
+        UniqueConstraint(
+            "token_hash",
+            name="uniq_share_links_token_hash",
         ),
         {
             "sqlite_autoincrement": True,

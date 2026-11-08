@@ -9,16 +9,14 @@ Provides common functionality for share links and resource members management.
 Resource-specific services should extend this base class.
 """
 
-import base64
+import hashlib
 import logging
 import urllib.parse
+import secrets
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -67,7 +65,7 @@ class UnifiedShareService(ABC):
     Base class for unified resource sharing.
 
     Provides common functionality:
-    - AES token encryption/decryption
+    - Opaque share-token issuance and hashed lookup
     - Share link CRUD operations
     - Resource member CRUD operations
     - Permission checking
@@ -83,8 +81,7 @@ class UnifiedShareService(ABC):
     def __init__(self, resource_type: ResourceType):
         """Initialize the share service for a specific resource type."""
         self.resource_type = resource_type
-        self.aes_key = settings.SHARE_TOKEN_AES_KEY.encode("utf-8")
-        self.aes_iv = settings.SHARE_TOKEN_AES_IV.encode("utf-8")
+        self.token_hasher = hashlib.sha256
 
     @property
     def _resource_type_variants(self) -> list[str]:
@@ -154,113 +151,29 @@ class UnifiedShareService(ABC):
         """
         pass
 
-    # =========================================================================
-    # AES Encryption/Decryption
-    # =========================================================================
-
-    def _aes_encrypt(self, data: str) -> str:
-        """Encrypt data using AES-256-CBC."""
-        cipher = Cipher(
-            algorithms.AES(self.aes_key),
-            modes.CBC(self.aes_iv),
-            backend=default_backend(),
-        )
-        encryptor = cipher.encryptor()
-
-        padder = padding.PKCS7(128).padder()
-        padded_data = padder.update(data.encode("utf-8")) + padder.finalize()
-
-        encrypted_bytes = encryptor.update(padded_data) + encryptor.finalize()
-        return base64.b64encode(encrypted_bytes).decode("utf-8")
-
-    def _aes_decrypt(self, encrypted_data: str) -> Optional[str]:
-        """Decrypt data using AES-256-CBC."""
-        try:
-            encrypted_bytes = base64.b64decode(encrypted_data.encode("utf-8"))
-
-            cipher = Cipher(
-                algorithms.AES(self.aes_key),
-                modes.CBC(self.aes_iv),
-                backend=default_backend(),
-            )
-            decryptor = cipher.decryptor()
-
-            decrypted_padded_bytes = (
-                decryptor.update(encrypted_bytes) + decryptor.finalize()
-            )
-
-            unpadder = padding.PKCS7(128).unpadder()
-            decrypted_bytes = (
-                unpadder.update(decrypted_padded_bytes) + unpadder.finalize()
-            )
-
-            return decrypted_bytes.decode("utf-8")
-        except Exception:
-            return None
-
     def _generate_share_token(self, user_id: int, resource_id: int) -> str:
-        """Generate encrypted share token."""
-        # Format: "resource_type#user_id#resource_id"
-        share_data = f"{self.resource_type.value}#{user_id}#{resource_id}"
-        token = self._aes_encrypt(share_data)
-        return urllib.parse.quote(token)
+        """Generate a 256-bit opaque share token."""
+        return secrets.token_urlsafe(32)
 
-    def _decode_share_token(self, share_token: str) -> Optional[Tuple[str, int, int]]:
+    def _hash_share_token(self, share_token: str) -> str:
         """
-        Decode share token to get resource info.
-
-        The token may come in different encoding states:
-        1. URL-encoded (from database or direct copy)
-        2. URL-decoded (from browser URL parsing)
-        3. Double-decoded (if frontend encodes and FastAPI decodes)
-        4. Space-corrupted (if + was converted to space during URL handling)
-
-        We try multiple decoding strategies to handle all cases.
-
-        Returns:
-            Tuple of (resource_type, user_id, resource_id) or None if invalid
+        Return the SHA-256 digest used for token lookup.
         """
-        # Try different decoding strategies
-        # Note: Base64 uses +, /, = which can be problematic in URLs
-        # - + can be interpreted as space in query strings
-        # - / needs to be encoded as %2F
-        # - = needs to be encoded as %3D
-        tokens_to_try = [
-            share_token,  # Try as-is first
-            urllib.parse.unquote(share_token),  # Try URL-decoded
-            urllib.parse.unquote_plus(share_token),  # Try with + as space handling
-            # If space was incorrectly introduced (+ -> space), convert back
-            share_token.replace(" ", "+"),
-            urllib.parse.unquote(share_token).replace(" ", "+"),
-        ]
+        return self.token_hasher(share_token.encode("utf-8")).hexdigest()
 
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_tokens = []
-        for token in tokens_to_try:
-            if token not in seen:
-                seen.add(token)
-                unique_tokens.append(token)
-
-        for token in unique_tokens:
-            try:
-                share_data_str = self._aes_decrypt(token)
-                if not share_data_str:
-                    continue
-
-                parts = share_data_str.split("#")
-                if len(parts) != 3:
-                    continue
-
-                resource_type = parts[0]
-                user_id = int(parts[1])
-                resource_id = int(parts[2])
-
-                return (resource_type, user_id, resource_id)
-            except Exception:
-                continue
-
-        return None
+    def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
+        """Find an active, unexpired share link by its token hash."""
+        share_link = (
+            db.query(ShareLink)
+            .filter(
+                ShareLink.token_hash == self._hash_share_token(share_token),
+                ShareLink.is_active.is_(True),
+            )
+            .first()
+        )
+        if share_link and share_link.is_expired:
+            return None
+        return share_link
 
     def _generate_share_url(self, share_token: str) -> str:
         """Generate full share URL."""
@@ -343,13 +256,13 @@ class UnifiedShareService(ABC):
             return self._share_link_to_response(existing_link)
 
         # Generate new share token
-        logger.info(f"[create_share_link] No existing link found, generating new token")
+        logger.info("[create_share_link] No existing link found, generating new token")
         share_token = self._generate_share_token(user_id, resource_id)
+        token_hash = self._hash_share_token(share_token)
         logger.info(f"[create_share_link] Generated share_token: {share_token[:50]}...")
 
-        # ADDITIONAL DIAGNOSTIC: Check if this token already exists in DB
         duplicate_check = (
-            db.query(ShareLink).filter(ShareLink.share_token == share_token).first()
+            db.query(ShareLink).filter(ShareLink.token_hash == token_hash).first()
         )
         if duplicate_check:
             logger.error(
@@ -380,6 +293,7 @@ class UnifiedShareService(ABC):
             resource_type=self.resource_type.value,
             resource_id=resource_id,
             share_token=share_token,
+            token_hash=token_hash,
             require_approval=config.require_approval,
             default_role=config.default_role.value,
             expires_at=expires_at,
@@ -457,21 +371,22 @@ class UnifiedShareService(ABC):
         # Note: Database may store resource_type in different formats
         resource_type_variants = self._resource_type_variants
 
-        share_link = (
+        share_links = (
             db.query(ShareLink)
             .filter(
                 ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active.is_(True),
             )
-            .first()
+            .all()
         )
 
-        if not share_link:
+        if not share_links:
             raise HTTPException(status_code=404, detail="Share link not found")
 
-        share_link.is_active = False
-        share_link.updated_at = datetime.utcnow()
+        for share_link in share_links:
+            share_link.is_active = False
+            share_link.updated_at = datetime.utcnow()
         db.commit()
 
         return True
@@ -504,40 +419,18 @@ class UnifiedShareService(ABC):
 
     def get_share_info(self, db: Session, share_token: str) -> ShareInfoResponse:
         """Get public info about a share link (no auth required)."""
-        # Decode token
-        token_info = self._decode_share_token(share_token)
-        if not token_info:
+        share_link = self._find_share_link(db, share_token)
+        if not share_link:
             raise HTTPException(status_code=400, detail="Invalid share token")
 
-        resource_type, owner_id, resource_id = token_info
+        resource_id = share_link.resource_id
+        owner_id = share_link.created_by_user_id
 
         # Validate resource type matches
-        if resource_type != self.resource_type.value:
+        if share_link.resource_type not in self._resource_type_variants:
             raise HTTPException(status_code=400, detail="Invalid resource type")
 
-        # Find share link by resource_id (not by token, since token encoding may vary)
-        # Note: Database may store resource_type in different formats
-        resource_type_variants = self._resource_type_variants
-
-        share_link = (
-            db.query(ShareLink)
-            .filter(
-                ShareLink.resource_type.in_(resource_type_variants),
-                ShareLink.resource_id == resource_id,
-                ShareLink.is_active.is_(True),
-            )
-            .first()
-        )
-
-        if not share_link:
-            raise HTTPException(
-                status_code=404, detail="Share link not found or inactive"
-            )
-
-        # Check expiration
-        is_expired = False
-        if share_link.expires_at and datetime.utcnow() > share_link.expires_at:
-            is_expired = True
+        is_expired = share_link.is_expired
 
         # Get resource (without user validation)
         resource = self._get_resource(db, resource_id, owner_id)
@@ -578,43 +471,23 @@ class UnifiedShareService(ABC):
         requested_role: Optional[SchemaMemberRole] = None,
     ) -> JoinByLinkResponse:
         """Handle join request via share link."""
-        # Decode token
-        token_info = self._decode_share_token(share_token)
-        if not token_info:
+        share_link = self._find_share_link(db, share_token)
+        if not share_link:
             raise HTTPException(status_code=400, detail="Invalid share token")
 
-        resource_type, owner_id, resource_id = token_info
+        resource_id = share_link.resource_id
+        owner_id = share_link.created_by_user_id
 
         # Validate resource type
-        if resource_type != self.resource_type.value:
+        if share_link.resource_type not in self._resource_type_variants:
             raise HTTPException(status_code=400, detail="Invalid resource type")
+
+        resource_type_variants = self._resource_type_variants
 
         # Cannot join own resource
         # Cannot join own resource
         if owner_id == user_id:
             raise HTTPException(status_code=400, detail="Cannot join your own resource")
-
-        # Find share link by resource_id (not by token, since token encoding may vary)
-        # Note: Database may store resource_type in different formats
-        resource_type_variants = self._resource_type_variants
-
-        share_link = (
-            db.query(ShareLink)
-            .filter(
-                ShareLink.resource_type.in_(resource_type_variants),
-                ShareLink.resource_id == resource_id,
-                ShareLink.is_active.is_(True),
-            )
-            .first()
-        )
-        if not share_link:
-            raise HTTPException(
-                status_code=404, detail="Share link not found or inactive"
-            )
-
-        # Check expiration
-        if share_link.expires_at and datetime.utcnow() > share_link.expires_at:
-            raise HTTPException(status_code=400, detail="Share link has expired")
 
         # Get resource
         resource = self._get_resource(db, resource_id, owner_id)
@@ -977,10 +850,12 @@ class UnifiedShareService(ABC):
                     share_token = self._generate_share_token(
                         current_user_id, resource_id
                     )
+                    token_hash = self._hash_share_token(share_token)
                     share_link = ShareLink(
                         resource_type=self.resource_type.value,
                         resource_id=resource_id,
                         share_token=share_token,
+                        token_hash=token_hash,
                         require_approval=True,
                         default_role=ResourceRole.Reporter.value,
                         expires_at=datetime.utcnow() + timedelta(days=365 * 100),
@@ -1020,10 +895,12 @@ class UnifiedShareService(ABC):
             # If no share link exists, create one for tracking purposes
             if not share_link:
                 share_token = self._generate_share_token(current_user_id, resource_id)
+                token_hash = self._hash_share_token(share_token)
                 share_link = ShareLink(
                     resource_type=self.resource_type.value,
                     resource_id=resource_id,
                     share_token=share_token,
+                    token_hash=token_hash,
                     require_approval=True,
                     default_role=ResourceRole.Reporter.value,
                     expires_at=datetime.utcnow() + timedelta(days=365 * 100),
@@ -1122,10 +999,12 @@ class UnifiedShareService(ABC):
         )
         if not share_link:
             share_token = self._generate_share_token(current_user_id, resource_id)
+            token_hash = self._hash_share_token(share_token)
             share_link = ShareLink(
                 resource_type=self.resource_type.value,
                 resource_id=resource_id,
                 share_token=share_token,
+                token_hash=token_hash,
                 require_approval=True,
                 default_role=ResourceRole.Reporter.value,
                 expires_at=datetime.utcnow() + timedelta(days=365 * 100),

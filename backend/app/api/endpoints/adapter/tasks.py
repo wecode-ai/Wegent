@@ -567,6 +567,7 @@ def join_shared_task(
         user_team = (
             db.query(Kind)
             .filter(
+                Kind.user_id == current_user.id,
                 Kind.kind == "Team",
                 Kind.id == request.team_id,
                 Kind.is_active == True,

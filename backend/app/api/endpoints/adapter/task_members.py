@@ -329,6 +329,7 @@ def generate_invite_link(
 
     # Generate invite token
     token = task_invite_service.generate_invite_token(
+        db=db,
         task_id=task_id,
         inviter_id=current_user.id,
         expires_hours=expires_hours,
@@ -351,7 +352,7 @@ def get_invite_info(
     Get invite link information (no authentication required).
     Used to display the invite confirmation page.
     """
-    invite_data = task_invite_service.decode_invite_token(token)
+    invite_data = task_invite_service.decode_invite_token(db, token)
     if not invite_data:
         raise HTTPException(status_code=400, detail="Invalid invite link")
 
@@ -403,7 +404,7 @@ async def join_by_invite(
     Requires authentication.
     Automatically adds the user as a group chat member.
     """
-    invite_data = task_invite_service.decode_invite_token(token)
+    invite_data = task_invite_service.decode_invite_token(db, token)
     if not invite_data:
         raise HTTPException(status_code=400, detail="Invalid invite link")
 

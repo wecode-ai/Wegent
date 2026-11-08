@@ -515,41 +515,15 @@ class KnowledgeShareService(UnifiedShareService):
         """
         import urllib.parse
 
-        # Decode token
-        token_info = self._decode_share_token(share_token)
-        if not token_info:
+        share_link = self._find_share_link(db, share_token)
+        if not share_link:
             raise ValueError("Invalid share token")
 
-        resource_type, owner_id, resource_id = token_info
+        resource_id = share_link.resource_id
 
-        # Validate resource type
-        if resource_type != self.resource_type.value:
+        if share_link.resource_type not in self._resource_type_variants:
             raise ValueError("Invalid resource type")
-
-        # Find share link by resource_id (more reliable than token matching)
-        # The token in DB is URL-encoded, but FastAPI may have decoded the input
-        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = self._resource_type_variants
-
-        share_link = (
-            db.query(ShareLink)
-            .filter(
-                ShareLink.resource_type.in_(resource_type_variants),
-                ShareLink.resource_id == resource_id,
-                ShareLink.is_active == True,
-            )
-            .first()
-        )
-
-        if not share_link:
-            raise ValueError("Share link not found or inactive")
-
-        # Check expiration
-        from datetime import datetime
-
-        is_expired = False
-        if share_link.expires_at and datetime.utcnow() > share_link.expires_at:
-            is_expired = True
+        is_expired = share_link.is_expired
 
         # Get KB info
         kb = (

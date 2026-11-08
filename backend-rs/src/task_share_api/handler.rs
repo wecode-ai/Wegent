@@ -16,13 +16,14 @@
 //! for both.
 
 use brz_http_server::StatusCode;
+use chrono::Duration;
 use tracing::warn;
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
 use super::models::TaskShareResponse;
-use super::token::{generate_share_token, generate_share_url};
+use super::token::{generate_share_token, generate_share_url, token_hash};
 
 /// `401`-independent route details, matching the source's `HTTPException`
 /// messages.
@@ -38,6 +39,11 @@ const APPROVED_MEMBERSHIP_QUERY: &str = "SELECT resource_members.id AS resource_
      AND resource_members.resource_id = ? \nAND resource_members.entity_type = 'user' \
      AND resource_members.entity_id = ? \nAND resource_members.status = 'approved' \
      AND resource_members.copied_resource_id = 0 \n LIMIT 1";
+
+const INSERT_SHARE_LINK_QUERY: &str = "INSERT INTO share_links \
+     (resource_type, resource_id, share_token, token_hash, require_approval, \
+     default_role, expires_at, created_by_user_id, is_active, created_at, updated_at) \
+     VALUES ('Task', ?, ?, ?, false, 'Reporter', ?, ?, true, NOW(6), NOW(6))";
 
 /// `task_member_service.is_member` over `task_access_store.is_member`: the
 /// viewer owns the active task, or holds an approved membership in it.
@@ -101,8 +107,22 @@ pub(super) async fn share_task(
     let owner: i64 = task
         .get_required("user_id")
         .map_err(|error| internal(&error))?;
-    let share_token =
-        generate_share_token(owner, task_id).map_err(|()| FastApiError::unhandled())?;
+    let share_token = generate_share_token().map_err(|()| FastApiError::unhandled())?;
+    let expires_at = chrono::Local::now().naive_local() + Duration::days(365 * 100);
+    state
+        .mysql
+        .execute(
+            INSERT_SHARE_LINK_QUERY,
+            (
+                task_id,
+                share_token.as_str(),
+                token_hash(&share_token),
+                expires_at,
+                owner,
+            ),
+        )
+        .await
+        .map_err(|error| internal(&error))?;
     let share_url = generate_share_url(&share_token);
     Ok(TaskShareResponse {
         share_url,
