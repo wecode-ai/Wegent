@@ -183,6 +183,8 @@ mod stand_in_history;
 mod stand_in_ingress;
 mod stand_in_lifecycle;
 mod stand_in_memory;
+mod stand_in_memory_progress;
+mod stand_in_memory_review;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;

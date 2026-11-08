@@ -3075,6 +3075,7 @@ fn task_runtime_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcErr
         crate::task_runtime::TaskRuntimeError::ProjectNotFound
         | crate::task_runtime::TaskRuntimeError::TaskNotFound => "not_found",
         crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
+        crate::task_runtime::TaskRuntimeError::MemorySuppressed => "memory_suppressed",
         crate::task_runtime::TaskRuntimeError::UnsupportedProvider(_) => "provider_unavailable",
         crate::task_runtime::TaskRuntimeError::ProviderRequest(_) => "provider_request_failed",
         crate::task_runtime::TaskRuntimeError::Invalid(_) => "bad_request",

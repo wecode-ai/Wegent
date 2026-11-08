@@ -99,6 +99,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.memory.delete" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "delete") })
             }
+            "runtime.stand_in.memory.rules.list" => {
+                boxed_rpc(move || async move { self.stand_in_memory(payload, "list_rules") })
+            }
+            "runtime.stand_in.memory.rules.delete" => {
+                boxed_rpc(move || async move { self.stand_in_memory(payload, "delete_rule") })
+            }
             "runtime.stand_in.proposal.get" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, false).await })
             }

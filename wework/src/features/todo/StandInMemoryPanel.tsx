@@ -10,6 +10,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { StandInMemoryEvidence } from './StandInMemoryEvidence'
+import { StandInMemoryRules } from './StandInMemoryRules'
 
 export function StandInMemoryPanel({
   api,
@@ -171,6 +173,7 @@ export function StandInMemoryPanel({
             <button
               type="button"
               data-testid="stand-in-memory-add"
+              disabled={busy}
               onClick={() => setEditing({ content: '', scope: fixedScope ?? { kind: 'personal' } })}
               className="mb-4 inline-flex min-h-8 items-center gap-2 self-start rounded-md border border-border px-3 text-sm hover:bg-muted"
             >
@@ -269,7 +272,8 @@ export function StandInMemoryPanel({
                 <p className="mt-2 text-xs text-text-muted">
                   {label(row.scope)} · {new Date(row.updatedAt).toLocaleDateString()}
                 </p>
-                <div className="mt-2 flex gap-2">
+                <StandInMemoryEvidence memory={row} />
+                <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     type="button"
                     data-testid="stand-in-memory-edit"
@@ -290,6 +294,9 @@ export function StandInMemoryPanel({
                   </button>
                   {deleting === row.id && (
                     <>
+                      <p className="basis-full text-sm text-text-muted">
+                        {t('standIn.memory.forget_retention')}
+                      </p>
                       <button
                         type="button"
                         data-testid="stand-in-memory-delete-confirm"
@@ -327,6 +334,16 @@ export function StandInMemoryPanel({
           </ul>
         </>
       )}
+      <StandInMemoryRules
+        api={api}
+        userId={settings.userId}
+        deviceId={settings.executionDeviceId}
+        fixedScope={fixedScope}
+        label={label}
+        refreshKey={items}
+        disabled={busy || editing !== null || deleting !== null}
+        onBusyChange={setBusy}
+      />
       <ConfirmDialog
         open={discard !== null}
         destructive

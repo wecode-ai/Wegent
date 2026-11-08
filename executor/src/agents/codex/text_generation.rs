@@ -5,18 +5,23 @@ pub(super) async fn prepare_text_model_catalog(
     request: &mut ExecutionRequest,
     generated_files: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
-    if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false) {
+    if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false)
+        && !super::memory_review::applies(request)
+    {
         return Ok(());
     }
-    let model = codex_request_model(request)
-        .ok_or_else(|| "Select a Codex model for text generation".to_owned())?;
-    let catalog = codex_model_catalog::read_model_overrides(std::slice::from_ref(&model)).await?;
-    let effective = catalog["models"]
+    let model = codex_request_model(request);
+    // An omitted auxiliary or review model retains native default selection.
+    // Restrict the complete effective catalog rather than inventing a replacement.
+    let slugs: Vec<_> = model.into_iter().collect();
+    let catalog = codex_model_catalog::read_model_overrides(&slugs).await?;
+    let effective: Vec<_> = catalog["models"]
         .as_array()
-        .and_then(|models| models.iter().find(|entry| entry["slug"] == model))
-        .map(|entry| &entry["effective"])
-        .ok_or_else(|| "The selected text model has no capability catalog".to_owned())?;
-    let catalog = text_model_catalog(effective)?;
+        .into_iter()
+        .flatten()
+        .map(|entry| entry["effective"].clone())
+        .collect();
+    let catalog = restricted_model_catalog(&effective, super::memory_review::applies(request))?;
     let mut temporary = tempfile::Builder::new()
         .prefix("wework-text-model-")
         .suffix(".json")
@@ -35,18 +40,31 @@ pub(super) async fn prepare_text_model_catalog(
     Ok(())
 }
 
-fn text_model_catalog(model: &Value) -> Result<Value, String> {
-    if !model.is_object() || !model["slug"].is_string() {
+#[cfg(test)]
+fn text_model_catalog(models: &[Value]) -> Result<Value, String> {
+    restricted_model_catalog(models, false)
+}
+
+fn restricted_model_catalog(models: &[Value], memory_review: bool) -> Result<Value, String> {
+    if models.is_empty()
+        || models
+            .iter()
+            .any(|model| !model.is_object() || !model["slug"].is_string())
+    {
         return Err("Invalid text model capability catalog".into());
     }
-    let mut model = model.clone();
+    let mut models = models.to_vec();
     // Apply-patch exposure is a model capability, not a feature flag. Keep the
     // selected model and provider authentication while removing this capability.
-    model["apply_patch_tool_type"] = Value::Null;
-    if model.get("tool_mode").is_some() {
-        model["tool_mode"] = json!("direct");
+    for model in &mut models {
+        model["apply_patch_tool_type"] = Value::Null;
+        if memory_review {
+            model["tool_mode"] = json!("code_mode_only");
+        } else if model.get("tool_mode").is_some() {
+            model["tool_mode"] = json!("direct");
+        }
     }
-    Ok(json!({"models":[model]}))
+    Ok(json!({"models":models}))
 }
 
 pub(super) fn configure_text_generation(config: &mut CodexLaunchConfig) {
@@ -62,6 +80,8 @@ pub(super) fn configure_text_generation(config: &mut CodexLaunchConfig) {
     config.config_overrides.extend(
         [
             "mcp_servers={}",
+            "features.code_mode=false",
+            "features.code_mode_only=false",
             "web_search=\"disabled\"",
             "project_doc_max_bytes=0",
             "include_environment_context=false",
@@ -86,8 +106,6 @@ pub(super) fn configure_no_execution_tools(config: &mut CodexLaunchConfig) {
         "plugins",
         "tool_suggest",
         "js_repl",
-        "code_mode",
-        "code_mode_only",
         "multi_agent",
         "multi_agent_v2",
         "image_generation",
@@ -109,8 +127,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn memory_review_catalog_keeps_native_orchestration_without_patch_execution() {
+        for mode in [Value::Null, json!("direct"), json!("code_mode_only")] {
+            let mut model = json!({"slug":"native", "supports_search_tool":true,
+                "apply_patch_tool_type":"freeform", "context_window":100000});
+            if !mode.is_null() {
+                model["tool_mode"] = mode;
+            }
+            let catalog = restricted_model_catalog(std::slice::from_ref(&model), true).unwrap();
+            model["tool_mode"] = json!("code_mode_only");
+            model["apply_patch_tool_type"] = Value::Null;
+            assert_eq!(catalog, json!({"models":[model]}));
+        }
+    }
+
+    #[test]
     fn text_model_catalog_disables_a_model_owned_code_mode_override() {
-        let catalog = text_model_catalog(&json!({"slug":"native", "tool_mode":"code_mode_only", "model_messages":{"instructions_template":"Provider instructions"}})).unwrap();
+        let catalog = text_model_catalog(&[json!({"slug":"native", "tool_mode":"code_mode_only", "model_messages":{"instructions_template":"Provider instructions"}})]).unwrap();
         assert_eq!(catalog["models"][0]["tool_mode"], "direct");
         assert_eq!(
             catalog["models"][0]["model_messages"]["instructions_template"],
@@ -121,10 +154,29 @@ mod tests {
     #[test]
     fn text_catalog_removes_patch_capability_without_changing_model_metadata() {
         let model = json!({"slug":"native-model","apply_patch_tool_type":"freeform","context_window":100000,"base_instructions":"Provider instructions","supports_reasoning_summaries":true});
-        let catalog = text_model_catalog(&model).unwrap();
+        let catalog = text_model_catalog(std::slice::from_ref(&model)).unwrap();
         let mut expected = model;
         expected["apply_patch_tool_type"] = Value::Null;
         assert_eq!(catalog, json!({"models":[expected]}));
+    }
+
+    #[test]
+    fn default_model_catalog_preserves_selection_metadata_and_restricts_every_entry() {
+        let models = vec![
+            json!({"slug":"preferred","priority":0,"is_default":true,"tool_mode":"code_mode_only","apply_patch_tool_type":"freeform"}),
+            json!({"slug":"alternate","priority":1,"is_default":false,"apply_patch_tool_type":"function"}),
+        ];
+        let catalog = text_model_catalog(&models).unwrap();
+        for (index, original) in models.iter().enumerate() {
+            let result = &catalog["models"][index];
+            assert_eq!(result["slug"], original["slug"]);
+            assert_eq!(result["priority"], original["priority"]);
+            assert_eq!(result["is_default"], original["is_default"]);
+            assert!(result["apply_patch_tool_type"].is_null());
+        }
+        assert_eq!(catalog["models"][0]["tool_mode"], "direct");
+        assert!(text_model_catalog(&[]).is_err());
+        assert!(text_model_catalog(&[json!({"slug":"valid"}), json!({})]).is_err());
     }
 
     #[test]

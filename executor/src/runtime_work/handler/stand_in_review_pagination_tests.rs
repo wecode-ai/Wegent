@@ -68,6 +68,7 @@ async fn stand_in_review_reads_more_than_fifty_messages_through_native_paginatio
         coordinator_batch: None,
         project: None,
         review: true,
+        memory_review: false,
         readonly_worker: false,
     };
     let result = async {
@@ -161,6 +162,7 @@ async fn stand_in_general_read_task_uses_native_backward_pages_and_optional_time
         coordinator_batch: None,
         project: None,
         review: false,
+        memory_review: false,
         readonly_worker: false,
     };
     let result=async {

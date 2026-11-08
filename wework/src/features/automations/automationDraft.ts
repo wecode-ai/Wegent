@@ -23,7 +23,7 @@ export type CronPreset = 'weekdays' | 'daily' | 'weekly' | 'custom'
 export type CustomFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly'
 
 export interface AutomationDraft {
-  calendarTemplate?: 'weekly_review'
+  calendarTemplate?: NonNullable<RuntimeTaskCreateRequest['standInCalendar']>['template']
   name: string
   prompt: string
   source: AutomationSource
