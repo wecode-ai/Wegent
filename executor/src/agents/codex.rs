@@ -692,7 +692,7 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        let active_turn_count = state.active_threads_snapshot().values().sum::<usize>();
+        let active_turn_count = state.protected_turn_count();
         if active_turn_count > 0 || pending_request_count > 0 {
             return Err((active_turn_count, pending_request_count));
         }
@@ -722,7 +722,7 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        let active_turn_count = state.active_threads_snapshot().values().sum::<usize>();
+        let active_turn_count = state.protected_turn_count();
         if active_turn_count > 0 || pending_request_count > 0 {
             return Err(CodexIdleMutationError::Busy {
                 active_turn_count,

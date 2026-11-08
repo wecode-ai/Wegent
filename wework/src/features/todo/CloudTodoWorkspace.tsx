@@ -4703,9 +4703,9 @@ export function CloudTodoWorkspace({
                   board: (
                     <ProjectBoardBody<LocatedLoopItem>
                       filterAction={
-                          !isAITableProject && !isExternalGitBoard && !isMyTasksBoard
-                            ? tagFilter.control
-                            : undefined
+                        !isAITableProject && !isExternalGitBoard && !isMyTasksBoard
+                          ? tagFilter.control
+                          : undefined
                       }
                       toolbarAction={parentIssueBoard.toggle}
                       parentRows={
