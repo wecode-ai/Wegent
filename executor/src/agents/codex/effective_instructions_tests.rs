@@ -3,6 +3,109 @@ use super::*;
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
 
 #[test]
+fn execution_context_discards_stale_context_and_requires_complete_runtime_identity() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "additionalContext".into(),
+        json!({
+        "wework.execution":{"kind":"application","runtimePolicy":true,"value":"stale execution"}
+        }),
+    );
+    for info in [
+        json!({}),
+        json!({"automationId":"a"}),
+        json!({"automationId":"a","runId":" "}),
+    ] {
+        request.extra.insert("automation_info".into(), info);
+        let turn = effective_instructions::turn_context_for_test(&request);
+        assert!(turn["additionalContext"].get("wework.execution").is_none());
+        assert!(!turn["developerInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("stale execution"));
+    }
+}
+
+#[test]
+fn scheduled_delegation_retains_both_execution_facts_without_policy_authority() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "automation_info".into(),
+        json!({"automationId":"a","runId":"r"}),
+    );
+    request
+        .extra
+        .insert("standInDelegation".into(), json!({"sourceTaskId":"p"}));
+    let turn = policy_turn_params(&request, &CodexLaunchConfig::default());
+    let context = &turn["additionalContext"]["wework.execution"];
+    assert!(context.get("runtimePolicy").is_none());
+    let text = context["value"].as_str().unwrap();
+    assert!(text.contains("already started"));
+    assert!(text.contains("already-created delegated worker"));
+    assert!(text.contains("source boundaries"));
+}
+
+#[test]
+fn scheduled_execution_exposes_existing_run_without_replacing_business_prompt() {
+    let mut request = ExecutionRequest {
+        prompt: json!("At the scheduled time, prepare the daily plan."),
+        ..Default::default()
+    };
+    request.extra.insert(
+        "automation_info".into(),
+        json!({
+            "automationId":"calendar-1", "runId":"run-1", "scheduledFor":"2026-11-07T17:47:01Z"
+        }),
+    );
+    request
+        .extra
+        .insert("runtime_permission_profile".into(), json!(":read-only"));
+    request.extra.insert(
+        "additionalContext".into(),
+        json!({
+            "business-data":{"kind":"application","value":"Keep the original source."}
+        }),
+    );
+    let original = serde_json::to_value(&request).unwrap();
+    let turn = effective_instructions::turn_context_for_test(&request);
+    let context = &turn["additionalContext"]["wework.execution"];
+    assert_eq!(context["kind"], "application");
+    let text = context["value"].as_str().unwrap();
+    assert!(text.contains("already started"));
+    assert!(text.contains("run-1"));
+    assert!(text.contains("2026-11-07T17:47:01Z"));
+    assert!(text.contains("Do not ask for a new trigger time"));
+    assert!(text.contains("native permissions"));
+    assert_eq!(
+        turn["additionalContext"]["business-data"]["value"],
+        "Keep the original source."
+    );
+    assert_eq!(serde_json::to_value(&request).unwrap(), original);
+}
+
+#[test]
+fn delegated_execution_does_not_need_to_create_itself_or_forward_results_manually() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "standInDelegation".into(),
+        json!({"sourceTaskId":"primary", "readSources":[]}),
+    );
+    let turn = effective_instructions::turn_context_for_test(&request);
+    let text = turn["additionalContext"]["wework.execution"]["value"]
+        .as_str()
+        .unwrap();
+    assert!(text.contains("already-created delegated worker"));
+    assert!(text.contains("primary"));
+    assert!(text.contains("host returns"));
+    assert!(text.contains("does not grant"));
+    request.extra.insert("enable_tools".into(), json!(false));
+    let text_only = effective_instructions::turn_context_for_test(&request);
+    assert!(text_only["additionalContext"]
+        .get("wework.execution")
+        .is_none());
+}
+
+#[test]
 fn runtime_policy_publication_supports_long_agent_homes() {
     let home = tempfile::tempdir().unwrap();
     let root = home

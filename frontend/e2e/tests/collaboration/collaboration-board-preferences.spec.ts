@@ -52,7 +52,9 @@ async function switchUser(
   currentUsername: string,
   nextUser: typeof REGULAR_USER
 ): Promise<void> {
-  await page.getByRole('button').filter({ hasText: currentUsername }).click()
+  const userMenu = page.getByTestId('user-floating-menu-toggle')
+  await expect(userMenu.getByText(currentUsername, { exact: true })).toBeVisible()
+  await userMenu.click()
   await page.getByRole('menuitem', { name: /^(退出登录|Logout)$/ }).click()
   await page.waitForURL(url => url.pathname === '/login')
   const loginPage = new LoginPage(page)

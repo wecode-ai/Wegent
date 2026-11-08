@@ -15,8 +15,14 @@ import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContext
 import { useTranslation } from '@/hooks/useTranslation'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
+import { useIssueHumanInteractions } from './useIssueHumanInteractions'
+import {
+  isResolvedIssueQuestion,
+  issueQuestionIdentity,
+  matchesIssueResolution,
+} from './issueHumanInteractions'
+import { createIssueQuestionEnricher } from './enrichIssueQuestions'
 import {
   interactionResponse,
   interactionId,
@@ -49,10 +55,10 @@ import { TransientNotice } from '@/components/common/TransientNotice'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
+import { persistInteractionArchive } from './interactionArchive'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
-  archiveInteraction,
   readInteractionDrafts,
   readInteractionHistory,
   saveInteractionState,
@@ -138,13 +144,19 @@ function RuntimeInteractionsState({
   sourceRef.current = source
   const cacheKey = `wework.interactions:${accountKey}:pending`
   const cached = useMemo(() => readPendingInteractionCache(cacheKey), [cacheKey])
+  // Shared Issue cache belongs to its inbox, never native Runtime discovery.
+  const cachedNative = useMemo(() => cached.filter(item => !item.sharedRequest), [cached])
+  const issueInteractions = useIssueHumanInteractions(source?.services, cached)
+  const { refresh: refreshIssueInteractions, errors: issueErrors } = issueInteractions
+  const issueDiscoveryRef = useRef(issueInteractions)
+  issueDiscoveryRef.current = issueInteractions
   const [loaded, setLoaded] = useState<Record<string, RuntimeInteraction[]>>(() => {
     const groups: Record<string, RuntimeInteraction[]> = {}
-    for (const item of cached) (groups[item.task.key] ??= []).push(item)
+    for (const item of cachedNative) (groups[item.task.key] ??= []).push(item)
     return groups
   })
   const [inventory, setInventory] = useState<RuntimeTaskReminderItem[]>(() =>
-    cached.map(item => item.task)
+    cachedNative.map(item => item.task)
   )
   const inventoryRef = useRef(inventory)
   inventoryRef.current = inventory
@@ -158,16 +170,32 @@ function RuntimeInteractionsState({
   const successfulReadApi = useRef(source?.services?.runtimeWorkApi)
   const fetching = useRef(false)
   const reportedOfflineDevices = useRef(new Set<string>())
+  const failedArchiveWrites = useRef(new Set<string>())
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
   const acceptancePrefix = `wework.interactions:${accountKey}:accepted:`
   const historyKey = `wework.interactions:${accountKey}:history`
+  const projectItemsSupported = Boolean(
+    source?.services?.projectSpaceApis?.local || source?.services?.projectSpaceApis?.cloud
+  )
+  const [projectCount, setProjectCount] = useState<{ key: string; count: number | null }>({
+    key: historyKey,
+    count: null,
+  })
+  const reportProjectPendingCount = useCallback(
+    (count: number | null) => {
+      setProjectCount(current =>
+        current.key === historyKey && current.count === count ? current : { key: historyKey, count }
+      )
+    },
+    [historyKey]
+  )
   const [history, setHistory] = useState<InteractionHistory[]>(() =>
     readInteractionHistory(historyKey)
   )
   const [submitted, setSubmitted] = useState<Set<string>>(
-    () => new Set(history.map(item => item.id))
+    () => new Set(history.filter(item => !item.resolvedIssueQuestion).map(item => item.id))
   )
   const submittedRef = useRef(submitted)
   const handledNativeReplies = useMemo(
@@ -202,10 +230,14 @@ function RuntimeInteractionsState({
   }, [])
 
   const archive = useCallback(
-    async (item: RuntimeInteraction, answeredAt = item.createdAt) => {
-      await navigator.locks.request(historyKey, async () => {
-        const current = readInteractionHistory(historyKey)
-        const next = archiveInteraction(current, {
+    async (
+      item: RuntimeInteraction,
+      answeredAt = item.createdAt,
+      resolvedIssueQuestion?: InteractionHistory['resolvedIssueQuestion']
+    ) => {
+      await persistInteractionArchive(
+        historyKey,
+        {
           id: item.id,
           source: interactionSource(item),
           title: item.task.task.title,
@@ -214,16 +246,37 @@ function RuntimeInteractionsState({
           originalUrl: interactionOriginalScheme(item),
           sourceMessageIds: item.sourceMessageIds,
           answeredAt,
-        })
-        if (next !== current) saveInteractionState(historyKey, next)
-        // Renderer queues are independent; retain the lock through the host write
-        // so an older window's snapshot cannot overwrite a newer archive.
-        await flushDesktopLocalStoragePersistence()
-        if (mounted.current) setHistory(next)
-      })
+          ...(resolvedIssueQuestion ? { resolvedIssueQuestion } : {}),
+        },
+        failedArchiveWrites.current,
+        next => {
+          if (mounted.current) {
+            setHistory(next)
+            if (resolvedIssueQuestion && submittedRef.current.has(item.id)) {
+              submittedRef.current = new Set(submittedRef.current)
+              submittedRef.current.delete(item.id)
+              setSubmitted(submittedRef.current)
+            }
+          }
+        }
+      )
     },
     [historyKey]
   )
+  const archiveResolved = useCallback(
+    (item: RuntimeInteraction) => {
+      const questionIdentity = issueQuestionIdentity(item)
+      return questionIdentity
+        ? archive(item, Date.now(), { questionIdentity, nativeInteractionId: item.id }).catch(
+            cause => logInteractionLoadFailure('archive', cause, item.task.address)
+          )
+        : Promise.resolve()
+    },
+    [archive]
+  )
+  useEffect(() => {
+    for (const item of issueInteractions.resolved) void archiveResolved(item)
+  }, [archiveResolved, issueInteractions.resolved])
   useEffect(() => {
     const update = (event: StorageEvent) => {
       if (event.key?.startsWith(acceptancePrefix) && event.newValue !== null) {
@@ -236,7 +289,13 @@ function RuntimeInteractionsState({
       if (event.key !== historyKey) return
       const next = readInteractionHistory(historyKey)
       setHistory(next)
-      submittedRef.current = new Set([...submittedRef.current, ...next.map(item => item.id)])
+      const qualified = new Set(
+        next.filter(item => item.resolvedIssueQuestion).map(item => item.id)
+      )
+      submittedRef.current = new Set([
+        ...[...submittedRef.current].filter(id => !qualified.has(id)),
+        ...next.filter(item => !item.resolvedIssueQuestion).map(item => item.id),
+      ])
       setSubmitted(submittedRef.current)
     }
     window.addEventListener('storage', update)
@@ -247,7 +306,14 @@ function RuntimeInteractionsState({
     async (force = true) => {
       const current = sourceRef.current
       const api = current?.services?.runtimeWorkApi
-      if (!api || fetching.current) return
+      if (fetching.current) return
+      if (!api) {
+        if (force) {
+          await issueDiscoveryRef.current.refresh()
+          await Promise.all(issueDiscoveryRef.current.resolved.map(archiveResolved))
+        } else await issueDiscoveryRef.current.discover()
+        return
+      }
       if (successfulReadApi.current !== api) {
         successfulReads.current.clear()
         successfulReadApi.current = api
@@ -269,8 +335,11 @@ function RuntimeInteractionsState({
             }, 5000)
           : undefined
       try {
+        if (force) await Promise.all(issueDiscoveryRef.current.resolved.map(archiveResolved))
         const discovered = await readInteractionTaskInventory(current)
         if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
+        if (force) await issueDiscoveryRef.current.refresh()
+        else await issueDiscoveryRef.current.discover(discovered.localIssueQuestionsPending)
         const retained = inventoryRef.current.filter(
           item => !discovered.refreshedDevices.has(item.address.deviceId)
         )
@@ -349,6 +418,11 @@ function RuntimeInteractionsState({
             loadedRef.current[item.key]?.some(request => !request.answered)
         )
         // Limit concurrent history reads without blocking unrelated tasks on one failure.
+        const enrichQuestions = createIssueQuestionEnricher(
+          current.services,
+          current.userId,
+          () => issueDiscoveryRef.current.items
+        )
         let index = 0
         await Promise.all(
           Array.from({ length: Math.min(4, items.length) }, async () => {
@@ -383,7 +457,7 @@ function RuntimeInteractionsState({
               let operation: 'transcript' | 'archive' = 'transcript'
               try {
                 stage = `transcript:${item.address.taskId}`
-                const requests = await readRuntimeInteractions(item, api)
+                const requests = await enrichQuestions(await readRuntimeInteractions(item, api))
                 if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
                 successfulReads.current.set(item.key, {
                   signature: readSignature,
@@ -439,7 +513,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setLoading(false)
       }
     },
-    [acceptancePrefix, archive, t]
+    [acceptancePrefix, archive, archiveResolved, t]
   )
   const signature = JSON.stringify(
     source?.items.map(item => [
@@ -461,11 +535,17 @@ function RuntimeInteractionsState({
 
   const pending = useMemo(() => {
     const visible = new Map([...(source?.items ?? []), ...inventory].map(item => [item.key, item]))
-    return Object.values(loaded)
+    const runtime = Object.values(loaded)
       .flat()
       .filter(
         item =>
           !item.answered &&
+          !isResolvedIssueQuestion(item, issueInteractions.resolved) &&
+          !history.some(
+            entry =>
+              entry.resolvedIssueQuestion &&
+              matchesIssueResolution(item, entry.resolvedIssueQuestion)
+          ) &&
           !submitted.has(item.id) &&
           localStorage.getItem(acceptancePrefix + item.id) === null &&
           visible.has(item.task.key) &&
@@ -482,7 +562,33 @@ function RuntimeInteractionsState({
         }
       })
       .sort((a, b) => b.createdAt - a.createdAt)
-  }, [acceptancePrefix, errors, inventory, loaded, source?.items, submitted])
+    const shared = new Set(issueInteractions.items.map(item => item.id))
+    const sharedQuestions = new Set(
+      issueInteractions.items.map(issueQuestionIdentity).filter(Boolean)
+    )
+    const sharedItems = issueInteractions.items.map(item => {
+      const identity = issueQuestionIdentity(item)
+      const native =
+        identity && runtime.find(candidate => issueQuestionIdentity(candidate) === identity)
+      return native ? { ...item, source: native.source, task: native.task } : item
+    })
+    return [
+      ...runtime.filter(
+        item => !shared.has(item.id) && !sharedQuestions.has(issueQuestionIdentity(item))
+      ),
+      ...sharedItems,
+    ].sort((a, b) => b.createdAt - a.createdAt)
+  }, [
+    acceptancePrefix,
+    errors,
+    inventory,
+    loaded,
+    source?.items,
+    submitted,
+    issueInteractions.items,
+    issueInteractions.resolved,
+    history,
+  ])
 
   useEffect(() => {
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
@@ -504,7 +610,7 @@ function RuntimeInteractionsState({
   )
   const dismiss = useCallback(
     async (item: RuntimeInteraction) => {
-      if (inFlight.current.has(item.id)) return
+      if (item.sharedRequest || inFlight.current.has(item.id)) return
       inFlight.current.add(item.id)
       setBusy(new Set(inFlight.current))
       try {
@@ -528,27 +634,71 @@ function RuntimeInteractionsState({
       options?: { clientMessageId?: string; send?: () => Promise<boolean> }
     ): Promise<boolean> => {
       const api = sourceRef.current?.services?.runtimeWorkApi
-      if (!api || !answer.trim() || !canReplyToInteraction(item) || inFlight.current.has(item.id))
+      if (
+        (!api && !item.sharedRequest) ||
+        !answer.trim() ||
+        !canReplyToInteraction(item) ||
+        inFlight.current.has(item.id)
+      )
         return false
       inFlight.current.add(item.id)
       setBusy(new Set(inFlight.current))
+      const confirmedResolved = () =>
+        isResolvedIssueQuestion(item, issueDiscoveryRef.current.resolved) ||
+        readInteractionHistory(historyKey).some(
+          row =>
+            row.resolvedIssueQuestion && matchesIssueResolution(item, row.resolvedIssueQuestion)
+        )
+      const clearHandledDraft = () => {
+        setDraft(item.id, '')
+        setErrors(current => {
+          const next = { ...current }
+          delete next[item.id]
+          return next
+        })
+      }
       try {
+        if (confirmedResolved()) {
+          clearHandledDraft()
+          return false
+        }
+        if (item.sharedRequest) {
+          const services = sourceRef.current?.services
+          if (!services) return false
+          if (options?.send) {
+            if (!(await options.send())) throw new Error(t('interactions.failed'))
+          } else {
+            await replyToInteractionProject(
+              item,
+              answer,
+              options?.clientMessageId ?? crypto.randomUUID(),
+              services,
+              t('interactions.failed')
+            )
+          }
+          await refreshIssueInteractions()
+          void refresh()
+          setDraft(item.id, '')
+          return true
+        }
+        if (!api) return false
         return await navigator.locks.request(historyKey + ':' + item.id, async () => {
           if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
+          if (confirmedResolved()) {
+            clearHandledDraft()
+            return false
+          }
           // The request lock and persisted acceptance are shared by every workbench window.
           if (
             submittedRef.current.has(item.id) ||
             localStorage.getItem(acceptancePrefix + item.id) !== null ||
-            readInteractionHistory(historyKey).some(row => row.id === item.id)
+            readInteractionHistory(historyKey).some(
+              row => !row.resolvedIssueQuestion && row.id === item.id
+            )
           ) {
             submittedRef.current = new Set(submittedRef.current).add(item.id)
             setSubmitted(submittedRef.current)
-            setDraft(item.id, '')
-            setErrors(current => {
-              const next = { ...current }
-              delete next[item.id]
-              return next
-            })
+            clearHandledDraft()
             return false
           }
           // Revalidate the exact request before answering; old notifications are not authority.
@@ -642,7 +792,16 @@ function RuntimeInteractionsState({
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [acceptancePrefix, archive, historyKey, markHandled, refresh, setDraft, t]
+    [
+      acceptancePrefix,
+      archive,
+      historyKey,
+      markHandled,
+      refresh,
+      setDraft,
+      t,
+      refreshIssueInteractions,
+    ]
   )
 
   const open = useCallback(
@@ -728,9 +887,10 @@ function RuntimeInteractionsState({
             await invokeDesktopHost('notification.acknowledgeReply', { id: reply.id, accountKey })
             continue
           }
-          const item = Object.values(loadedRef.current)
-            .flat()
-            .find(item => item.id === reply.interactionId)
+          const item = [
+            ...Object.values(loadedRef.current).flat(),
+            ...issueInteractions.items,
+          ].find(item => item.id === reply.interactionId)
           // Cached entries cannot authorize a response; leave the host reply queued.
           if (!item || item.cached || inFlight.current.has(item.id)) continue
           setDraft(item.id, reply.text)
@@ -766,6 +926,7 @@ function RuntimeInteractionsState({
     accountKey,
     handledNativeReplies,
     loaded,
+    issueInteractions.items,
     respond,
     setDraft,
     source?.services?.runtimeWorkApi,
@@ -786,8 +947,11 @@ function RuntimeInteractionsState({
   const value = useMemo(
     () => ({
       pending,
+      projectItemsSupported,
+      pendingProjectCount: projectCount.key === historyKey ? projectCount.count : null,
+      reportProjectPendingCount,
       history,
-      errors,
+      errors: { ...errors, ...issueErrors },
       busy,
       loading,
       respond,
@@ -800,8 +964,13 @@ function RuntimeInteractionsState({
     }),
     [
       pending,
+      projectItemsSupported,
+      projectCount,
+      historyKey,
+      reportProjectPendingCount,
       history,
       errors,
+      issueErrors,
       busy,
       loading,
       respond,

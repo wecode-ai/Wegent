@@ -120,6 +120,7 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  human_requests?: CollaborationIssue['human_requests']
   milestone_id?: string | null
   runner_binding?: { environment_id: string } | null
   human_task_binding?: CollaborationIssue['human_task_binding']
@@ -148,6 +149,8 @@ export interface CloudLoopItem {
   assignee_team_name?: string | null
   execution_id?: number | null
   execution_state?: string | null
+  processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null
+  human_waiting_since?: string | null
   execution_control_state?: string | null
   execution_observed_state?: string | null
   execution_sync_state?: string | null
@@ -778,8 +781,8 @@ export function createDeliveryApi(client: HttpClient) {
     archiveCloudProject(projectId: CloudProjectIdInput, version: number): Promise<void> {
       return client.delete(`/v1/cloud-projects/${projectId}?version=${version}`)
     },
-    listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
-      return client.get('/v1/cloud-work-items/my-work')
+    listMyWork(options?: { cursor?: string }): Promise<{ items: CloudMyWorkItem[]; errors?: string[]; next_cursor?: string | null }> {
+      return client.get(`/v1/cloud-work-items/my-work${options?.cursor ? `?cursor=${encodeURIComponent(options.cursor)}` : ''}`)
     },
     listLoopItems(
       projectId: CloudProjectIdInput,
