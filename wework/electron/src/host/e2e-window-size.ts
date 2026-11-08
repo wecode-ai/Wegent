@@ -5,6 +5,7 @@ type ResizableWindow = Pick<
   | 'getContentSize'
   | 'isDestroyed'
   | 'isMaximized'
+  | 'maximize'
   | 'on'
   | 'removeListener'
   | 'setContentSize'
@@ -21,6 +22,7 @@ function waitForNativeSizeState(
     const cleanup = () => {
       clearTimeout(timeout)
       target.removeListener('unmaximize', changed)
+      target.removeListener('maximize', changed)
       target.removeListener('resize', changed)
       target.removeListener('closed', closed)
     }
@@ -52,6 +54,7 @@ function waitForNativeSizeState(
       }
     }, 5000)
     target.on('unmaximize', changed)
+    target.on('maximize', changed)
     target.on('resize', changed)
     target.on('closed', closed)
     try {
@@ -68,10 +71,21 @@ function waitForNativeSizeState(
 export async function setE2EWindowSize(
   target: ResizableWindow,
   width: number,
-  height: number
-): Promise<{ width: number; height: number }> {
+  height: number,
+  maximized = false
+): Promise<{ width: number; height: number; maximized: boolean }> {
   if (target.isDestroyed()) throw new Error('The E2E window is unavailable for resizing')
   const [previousWidth, previousHeight] = target.getContentSize()
+  const previous = { width: previousWidth, height: previousHeight, maximized: target.isMaximized() }
+  if (maximized) {
+    await waitForNativeSizeState(
+      target,
+      () => target.maximize(),
+      () => target.isMaximized(),
+      'restore the maximized state'
+    )
+    return previous
+  }
   if (target.isMaximized()) {
     await waitForNativeSizeState(
       target,
@@ -89,5 +103,5 @@ export async function setE2EWindowSize(
     },
     `resize its content to ${width}x${height}`
   )
-  return { width: previousWidth, height: previousHeight }
+  return previous
 }

@@ -112,6 +112,28 @@ Reading a notification, dismissing a reminder, or marking it read does not resol
 
 Disable **Receive new work** and save to pause new intake while retaining existing work. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 
+## Issue human handoffs
+
+Issue cards right-align an icon and the actor's name in the existing reference/status row above the title, without adding a row. Icons distinguish agent handling, stand-in handling and waiting for a person. Waiting uses a person with a small clock and a “Waiting for [person]” tooltip; only the name is visible as text. Confirmed running executions show the agent or stand-in, while outstanding questions prioritize their recipients. Otherwise the assigned person handles the Issue; when no person is assigned, its creator takes responsibility. There is no third handling state such as awaiting assignment. Business states remain independent, and execution details retain queued, failed and offline progress.
+
+A structured asynchronous question raised in an Issue-bound execution is persisted on the Issue with its original thread, execution identity and handling record. The responsible participant or collaboration-group leader assigns a specific person. Until a recipient is selected, the responsible person handles the question, with the Issue creator taking responsibility when no person is assigned. There is no broadcast or default coordinator. AI reads `list_human_requests`; the reporting execution can explicitly flag dependent steps through `set_human_request_blocking`. This operation never transfers the question, resets its waiting time or grants assignment permission. The responsible participant uses `assign_human_request` to select the recipient.
+
+Recipients answer through the shared **Needs your input** surface and the original Issue's question card. Targeted notifications reuse collaboration channel preferences. Answers persist in the owning comment thread and continue the original execution without granting access to another person's private Runtime or credentials. Reading does not resolve a request. Queued answers remain awaiting acceptance; only the owning execution's acceptance clears that question. Questions settle independently, and any unresolved question keeps the Issue on the human side. AI waits only for dependent steps while continuing independent work.
+
+Cloud question reports and source blocking updates require a verifiable original execution record matching the project, Issue, Runtime task, device and execution owner. Manual task bindings alone, or group activities without matching canonical evidence, return a conflict (409). A same-named device or inferred owner cannot substitute for that proof; restore the original execution's trusted record first. Local projects retain their owning Executor's native source checks.
+
+Saved board views support **Only issues needing my input**, evaluated for the current viewer rather than the view's author. Offline questions and drafts remain visible but require reconnection and authorization checks before replying. Native execution approvals and connector authentication remain separate from business answers.
+
+The project toolbar also offers a one-click **Needs my action** filter without rewriting saved views. The global pending-work page includes native project work currently assigned to the viewer and explicit project questions, without duplicating the same question as ordinary work. Selecting project work opens the real Issue in the existing split view, without fabricating a Runtime task.
+
+<a id="waiting-time-and-workflow-analysis"></a>
+
+### Waiting time and workflow analysis
+
+**With you for** starts at the current handoff and resets when another person takes over. Editing a question or blocking note, reading a notification, or saving an answer does not reset it. Ordinary work uses a reliable human assignment, initial creator handoff, or the current AI execution's completion. Historical records without current-turn evidence say **Handoff time not recorded**; update timestamps are not substituted. Timestamps are UTC and durations are elapsed wall time, not business hours.
+
+Questions retain business events for requests, assignments, answers, delivery rejection and execution acceptance, including time, authenticated principal, recipient changes and original message identity, without copying answer bodies. These can support later analysis of waiting distributions, handoffs and successful continuation. A principal does not prove the physical operator was a human; waiting time, forwarding counts and reply length alone do not establish individual performance. Analysis must preserve project permissions and distinguish approval responsibilities, external dependencies, AI execution, non-working time and missing evidence. These are traceable business records, not a tamper-proof HR audit system. This feature does not automatically label people as bottlenecks or unproductive.
+
 ## Issue assignment reception receipts
 
 Collaboration notifications read Stand-in history from the local Executor and online execution devices that support remote queries. A lookup failure identifies the device and reason; it means history could not be loaded, rather than an Issue execution failure. For incompatible versions, update that device's Executor and refresh notifications. Other desktop App devices are excluded from remote queries; local history still uses the native Executor.

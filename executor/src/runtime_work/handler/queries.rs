@@ -191,11 +191,29 @@ impl RuntimeWorkRpcHandler {
         if prefer_cached && !pending_only {
             self.reconcile_codex_threads_after_cached_list();
         }
-        Ok(json!({
+        let mut response = json!({
             "success": true,
             "workspaces": workspaces,
             "coverage": {"authorized_index_complete":catalog_complete,"unavailable_reasons":if catalog_complete {json!({})} else {json!({"native_catalog_unavailable":1})}},
-        }))
+        });
+        if pending_only {
+            let users = crate::local::app_ipc::human_request_viewer_ids(
+                payload,
+                "localIssueUserIds",
+                &[0],
+            )?;
+            match LocalTaskStore::pending_issue_human_requests_at(
+                self.task_store_path.as_ref(),
+                &users,
+            ) {
+                Ok(pending) => response["localIssueQuestionsPending"] = json!(pending),
+                Err(error) => log_executor_event(
+                    "pending Issue question hint failed",
+                    &[("error", error.to_string())],
+                ),
+            }
+        }
+        Ok(response)
     }
 
     fn reconcile_codex_threads_after_cached_list(&self) {

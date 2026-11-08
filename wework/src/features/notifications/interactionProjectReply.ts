@@ -63,6 +63,26 @@ export async function replyToInteractionProject(
     binding?.store === 'local' ? services.localProjectChatClient : services.projectChatClient
   if (!binding?.rootCommentId || !client?.executeTaskComment)
     throw new Error(`${failedText} [interaction_issue_client_unavailable]`)
+  if (item.sharedRequest) {
+    const result = await dispatchTaskCommentReply({
+      client,
+      projectId: binding.projectId,
+      taskId: binding.issueId,
+      rootMessageId: binding.rootCommentId,
+      humanRequestId: item.sharedRequest.id,
+      reply: {
+        id: clientMessageId,
+        content: text,
+        createdAt: new Date().toISOString(),
+        status: 'queued',
+      },
+      onMessages: () => undefined,
+      onError: () => undefined,
+      sendFailedText: failedText,
+    })
+    if (!result.ok) throw new Error(result.error || failedText)
+    return
+  }
   const subscription = await client.subscribe(
     binding.projectId,
     binding.issueId,

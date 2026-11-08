@@ -1,0 +1,213 @@
+"""My Work keyset pages retain permissions and advance through unprojectable rows."""
+
+import base64
+import json
+from datetime import datetime, timedelta
+
+import pytest
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from app.models.delivery import CloudProject, LoopItem
+from app.models.resource_member import ResourceMember
+from app.models.user import User
+from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.loop_items.service import loop_item_service
+from tests.services.test_loop_item_assignment import _make_project
+
+
+def add_items(
+    db: Session,
+    project: CloudProject,
+    user_id: int,
+    count: int,
+    *,
+    prefix: str = "PAGE",
+    same_time: bool = False,
+) -> list[LoopItem]:
+    start = datetime(2026, 1, 1)
+    rows = [
+        LoopItem(
+            id=f"{prefix}-{index:03d}",
+            cloud_project_id=project.id,
+            title=f"Work {index}",
+            description="",
+            status="pending",
+            priority="none",
+            sequence_number=index + 1,
+            created_by_user_id=user_id,
+            metadata_json={},
+            updated_at=start if same_time else start + timedelta(minutes=index),
+        )
+        for index in range(count)
+    ]
+    db.add_all(rows)
+    db.commit()
+    return rows
+
+
+def test_pages_reach_items_beyond_the_cap_with_equal_timestamp_tiebreaker(
+    test_db, test_user
+):
+    project = _make_project(test_db, test_user)
+    rows = add_items(test_db, project, test_user.id, 105, same_time=True)
+
+    first, cursor = loop_item_service.list_my_work_page(test_db, test_user.id)
+    second, final_cursor = loop_item_service.list_my_work_page(
+        test_db, test_user.id, cursor=cursor
+    )
+
+    assert cursor is not None
+    assert final_cursor is None
+    assert [row["id"] for row in first + second] == [row.id for row in reversed(rows)]
+    assert len(first) == 100
+    assert len(second) == 5
+    assert loop_item_service.list_my_work(test_db, test_user.id) == first
+
+
+def test_newer_insert_does_not_shift_the_remaining_page(test_db, test_user):
+    project = _make_project(test_db, test_user)
+    rows = add_items(test_db, project, test_user.id, 3)
+    first, cursor = loop_item_service.list_my_work_page(test_db, test_user.id, limit=1)
+    inserted = add_items(test_db, project, test_user.id, 1, prefix="NEW")[0]
+    inserted.updated_at = datetime(2026, 2, 1)
+    test_db.commit()
+
+    second, next_cursor = loop_item_service.list_my_work_page(
+        test_db, test_user.id, cursor=cursor, limit=2
+    )
+
+    assert [row["id"] for row in first] == [rows[2].id]
+    assert [row["id"] for row in second] == [rows[1].id, rows[0].id]
+    assert next_cursor is None
+
+
+def test_every_page_retains_project_related_item_and_deletion_filters(
+    test_db, test_user
+):
+    project = _make_project(test_db, test_user)
+    rows = add_items(test_db, project, test_user.id, 3)
+    other = User(user_name="pagination-other", password_hash="unused", is_active=True)
+    test_db.add(other)
+    test_db.commit()
+    denied_project = _make_project(test_db, other)
+    add_items(test_db, denied_project, test_user.id, 1, prefix="DENIED")
+    add_items(test_db, project, other.id, 1, prefix="UNRELATED")
+    deleted = add_items(test_db, project, test_user.id, 1, prefix="DELETED")[0]
+    deleted.deleted_at = datetime(2026, 1, 2)
+    test_db.commit()
+
+    first, cursor = loop_item_service.list_my_work_page(test_db, test_user.id, limit=1)
+    second, last_cursor = loop_item_service.list_my_work_page(
+        test_db, test_user.id, limit=2, cursor=cursor
+    )
+
+    assert [row["id"] for row in first + second] == [row.id for row in reversed(rows)]
+    assert last_cursor is None
+    with pytest.raises(HTTPException, match="Invalid My Work cursor"):
+        loop_item_service.list_my_work_page(test_db, other.id, cursor=cursor)
+
+
+def test_empty_external_projection_still_advances_the_raw_row_cursor(
+    test_db, test_user, monkeypatch
+):
+    project = _make_project(test_db, test_user)
+    rows = add_items(test_db, project, test_user.id, 2)
+    rows[1].metadata_json = {"external_index": True}
+    test_db.commit()
+    requests = []
+
+    def missing_provider_row(_db, project_id, user_id, item_ids):
+        requests.append((project_id, user_id, item_ids))
+        return []
+
+    monkeypatch.setattr(external_loop_item_provider, "get_many", missing_provider_row)
+    first, cursor = loop_item_service.list_my_work_page(test_db, test_user.id, limit=1)
+    second, last_cursor = loop_item_service.list_my_work_page(
+        test_db, test_user.id, limit=1, cursor=cursor
+    )
+
+    assert first == []
+    assert cursor is not None
+    assert [row["id"] for row in second] == [rows[0].id]
+    assert last_cursor is None
+    assert requests == [(str(project.id), test_user.id, [rows[1].id])]
+
+
+def test_project_access_is_rechecked_after_a_cursor_was_issued(test_db, test_user):
+    owner = User(user_name="pagination-owner", password_hash="unused", is_active=True)
+    test_db.add(owner)
+    test_db.commit()
+    project = _make_project(test_db, owner)
+    grant = ResourceMember.create(
+        resource_type="CloudProject",
+        resource_id=int(project.id),
+        entity_type="user",
+        entity_id=str(test_user.id),
+        role="Developer",
+        status="approved",
+    )
+    test_db.add(grant)
+    test_db.commit()
+    add_items(test_db, project, test_user.id, 2)
+    first, cursor = loop_item_service.list_my_work_page(test_db, test_user.id, limit=1)
+    assert len(first) == 1
+    assert cursor is not None
+    test_db.delete(grant)
+    test_db.commit()
+
+    assert loop_item_service.list_my_work_page(
+        test_db, test_user.id, cursor=cursor
+    ) == ([], None)
+
+
+@pytest.mark.parametrize("cursor", ["", "invalid!", "a", "e30", "x" * 2049])
+def test_malformed_cursors_are_rejected(test_db, test_user, cursor):
+    with pytest.raises(HTTPException) as failure:
+        loop_item_service.list_my_work_page(test_db, test_user.id, cursor=cursor)
+    assert failure.value.status_code == 400
+
+
+def test_cursor_requires_a_canonical_naive_database_timestamp(test_db, test_user):
+    payload = {
+        "v": 1,
+        "user_id": test_user.id,
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "id": "PAGE-1",
+    }
+    cursor = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    with pytest.raises(HTTPException) as failure:
+        loop_item_service.list_my_work_page(test_db, test_user.id, cursor=cursor)
+    assert failure.value.status_code == 400
+
+
+def test_api_returns_and_accepts_opaque_next_cursor(
+    test_client, test_db, test_user, test_token
+):
+    project = _make_project(test_db, test_user)
+    rows = add_items(test_db, project, test_user.id, 3)
+    headers = {"Authorization": f"Bearer {test_token}"}
+    first = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=headers, params={"limit": 2}
+    )
+    assert first.status_code == 200
+    assert [row["id"] for row in first.json()["items"]] == [rows[2].id, rows[1].id]
+    cursor = first.json()["next_cursor"]
+    assert isinstance(cursor, str)
+    second = test_client.get(
+        "/api/v1/cloud-work-items/my-work",
+        headers=headers,
+        params={"limit": 2, "cursor": cursor},
+    )
+    assert second.status_code == 200
+    assert [row["id"] for row in second.json()["items"]] == [rows[0].id]
+    assert second.json()["next_cursor"] is None
+
+
+def test_api_rejects_invalid_cursor(test_client, test_token):
+    response = test_client.get(
+        "/api/v1/cloud-work-items/my-work",
+        headers={"Authorization": f"Bearer {test_token}"},
+        params={"cursor": "invalid!"},
+    )
+    assert response.status_code == 400

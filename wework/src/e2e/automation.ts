@@ -11,6 +11,7 @@ import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnos
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
+import { readElementVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -689,7 +690,11 @@ function desktopControlElementText(selector: string, visible = false): string {
     .join('\n')
 }
 
-function desktopControlElementMetrics(selector: string, includeText = false): string {
+function desktopControlElementMetrics(
+  selector: string,
+  includeText = false,
+  attributeNames: readonly string[] = []
+): string {
   const elements = findDesktopControlElements(selector)
   return JSON.stringify(
     elements.map(element => {
@@ -697,6 +702,15 @@ function desktopControlElementMetrics(selector: string, includeText = false): st
       return {
         ...(includeText
           ? { testId: element.dataset.testid ?? null, text: element.textContent?.trim() ?? '' }
+          : {}),
+        ...(attributeNames.length
+          ? {
+              attributes: Object.fromEntries(
+                attributeNames.map(name => [name, element.getAttribute(name)])
+              ),
+              rendered: desktopControlElementRendered(element),
+              visible: desktopControlElementVisible(element),
+            }
           : {}),
         bottom: rect.bottom,
         clientHeight: element.clientHeight,
@@ -714,6 +728,7 @@ function desktopControlElementMetrics(selector: string, includeText = false): st
         viewportHeight: window.innerHeight,
         viewportWidth: window.innerWidth,
         width: rect.width,
+        ...readElementVisibility(element),
       }
     })
   )
@@ -2731,6 +2746,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
         height?: number
+        maximized?: boolean
       }
       if (
         !Number.isFinite(nextSize.width) ||
@@ -2740,10 +2756,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         throw new Error('setMainWindowSize requires positive width and height')
       }
+      if (nextSize.maximized !== undefined && typeof nextSize.maximized !== 'boolean') {
+        throw new Error('setMainWindowSize maximized must be a boolean')
+      }
       return JSON.stringify(
         await invokeDesktopHost('e2e.setMainWindowSize', {
           width: Number(nextSize.width),
           height: Number(nextSize.height),
+          maximized: nextSize.maximized ?? false,
         })
       )
     }
@@ -2831,8 +2851,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return JSON.stringify({ observed: maxCount > 0, maxCount, samples })
     }
-    case 'getElementMetrics':
-      return desktopControlElementMetrics(command.selector, command.value === 'includeText')
+    case 'getElementMetrics': {
+      if (!command.value?.startsWith('{'))
+        return desktopControlElementMetrics(command.selector, command.value === 'includeText')
+      const options = JSON.parse(command.value) as {
+        includeText?: boolean
+        attributeNames?: string[]
+        waitForMatch?: boolean
+      }
+      if (
+        options.attributeNames !== undefined &&
+        (!Array.isArray(options.attributeNames) ||
+          options.attributeNames.some(name => typeof name !== 'string' || !name.trim()))
+      )
+        throw new Error('getElementMetrics attributeNames must contain explicit attribute names')
+      const snapshot = () =>
+        desktopControlElementMetrics(
+          command.selector,
+          options.includeText === true,
+          options.attributeNames ?? []
+        )
+      return options.waitForMatch === true
+        ? waitForDesktopControlElement(command, snapshot)
+        : snapshot()
+    }
     case 'decodeImage': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
