@@ -2928,15 +2928,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wegent-document-parser"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "flate2",
- "regex",
-]
-
-[[package]]
 name = "wegent-execution-contracts"
 version = "0.1.0"
 dependencies = [
@@ -2999,7 +2990,6 @@ dependencies = [
  "wegent-automation",
  "wegent-claude-harness",
  "wegent-crypto",
- "wegent-document-parser",
  "wegent-execution-contracts",
  "wegent-execution-stream",
  "wegent-executor-test-support",

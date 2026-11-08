@@ -15,7 +15,6 @@ pub(super) fn suppress_memory(
     let timestamp = now();
     let mut keys = vec![key];
     keys.extend(forgotten_evidence_key(user, &row["evidence"]));
-    keys.extend(forgotten_excerpt_key(user, &row["evidence"]));
     let previous = get_item_from(connection, &id, "stand_in_memory_rule")?;
     if let Some(previous) = &previous {
         for key in previous.metadata["fingerprints"]

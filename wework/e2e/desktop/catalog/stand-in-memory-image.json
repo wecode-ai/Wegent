@@ -1,8 +1,0 @@
-{
-  "order": 35520,
-  "scenario": "./scenarios/stand-in-memory-image.scenario.mjs",
-  "scenarioOnly": true,
-  "ci": {
-    "core": { "order": 40520, "shard": 3, "position": 11520 }
-  }
-}

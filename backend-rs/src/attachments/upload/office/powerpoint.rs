@@ -27,26 +27,13 @@ use super::xml::{Element, Tree};
 use super::zip::ZipArchive;
 
 /// The extracted slide texts, before the smart-truncation pass.
-pub struct PowerPointText {
+pub(crate) struct PowerPointText {
     pub slides: Vec<String>,
 }
 
 /// Extract the slide texts from a `.pptx` package.
-pub fn extract(data: &[u8]) -> Result<PowerPointText, OfficeError> {
+pub(crate) fn extract(data: &[u8]) -> Result<PowerPointText, OfficeError> {
     let archive = ZipArchive::new(data).map_err(|_| OfficeError)?;
-    extract_from_archive(&archive)
-}
-
-/// Extract using the caller's archive and cumulative decoded-byte budget.
-pub fn extract_from_archive(archive: &ZipArchive<'_>) -> Result<PowerPointText, OfficeError> {
-    extract_with_text_limit(archive, usize::MAX)
-}
-
-/// Bound retained slide text while sharing archive cancellation and byte limits.
-pub fn extract_with_text_limit(
-    archive: &ZipArchive<'_>,
-    mut remaining: usize,
-) -> Result<PowerPointText, OfficeError> {
     let presentation = archive
         .read("ppt/presentation.xml")
         .map_err(|_| OfficeError)?;
@@ -56,27 +43,22 @@ pub fn extract_with_text_limit(
         .map_err(|_| OfficeError)?;
     let rels = std::str::from_utf8(&rels).map_err(|_| OfficeError)?;
 
-    let control = archive.control();
-    let slide_ids = presentation_slide_ids(presentation, &control)?;
-    let mut targets = std::collections::HashMap::new();
-    for (id, target) in slide_relationship_targets(rels, &control)? {
-        targets.entry(id).or_insert(target);
-    }
+    let slide_ids = presentation_slide_ids(presentation)?;
+    let targets = slide_relationship_targets(rels)?;
     let mut slides = Vec::new();
     for (position, relation_id) in slide_ids.iter().enumerate() {
-        archive.check_budget().map_err(|_| OfficeError)?;
         // `prs.slides` resolves each `sldIdLst` entry's `r:id` to its part;
         // an unresolvable id raises, which the caller reports as
         // `parse_failed`.
-        let target = targets.get(relation_id).ok_or(OfficeError)?;
+        let target = targets
+            .iter()
+            .find(|(id, _)| id == relation_id)
+            .map(|(_, target)| target.clone())
+            .ok_or(OfficeError)?;
         let part_name = format!("ppt/{target}");
         let slide = archive.read(&part_name).map_err(|_| OfficeError)?;
         let slide = std::str::from_utf8(&slide).map_err(|_| OfficeError)?;
-        if let Some(rendered) = slide_text(slide, position + 1, &control)? {
-            remaining = remaining.checked_sub(rendered.len()).ok_or(OfficeError)?;
-            if !slides.is_empty() {
-                remaining = remaining.checked_sub(1).ok_or(OfficeError)?;
-            }
+        if let Some(rendered) = slide_text(slide, position + 1)? {
             slides.push(rendered);
         }
     }
@@ -84,11 +66,8 @@ pub fn extract_with_text_limit(
 }
 
 /// The `p:sldIdLst` `r:id` values in presentation order.
-fn presentation_slide_ids(
-    presentation: &str,
-    control: &crate::ParseControl,
-) -> Result<Vec<String>, OfficeError> {
-    let document = Tree::controlled(presentation, control.clone())
+fn presentation_slide_ids(presentation: &str) -> Result<Vec<String>, OfficeError> {
+    let document = Tree::new(presentation)
         .find_element("presentation")
         .map_err(|_| OfficeError)?
         .ok_or(OfficeError)?;
@@ -102,17 +81,13 @@ fn presentation_slide_ids(
 }
 
 /// The `Relationship` entries whose type is the slide relationship.
-fn slide_relationship_targets(
-    rels: &str,
-    control: &crate::ParseControl,
-) -> Result<Vec<(String, String)>, OfficeError> {
-    let relationships = Tree::controlled(rels, control.clone())
+fn slide_relationship_targets(rels: &str) -> Result<Vec<(String, String)>, OfficeError> {
+    let relationships = Tree::new(rels)
         .find_element("Relationships")
         .map_err(|_| OfficeError)?
         .ok_or(OfficeError)?;
     let mut targets = Vec::new();
     for relationship in relationships.named_children("Relationship") {
-        control.check().map_err(|_| OfficeError)?;
         let Some(relationship_type) = relationship.attr_local("Type") else {
             continue;
         };
@@ -134,12 +109,8 @@ fn slide_relationship_targets(
 
 /// One rendered slide: `--- Slide {n} ---` plus its content lines, or `None`
 /// for a slide without content (the source drops it from `slides_text`).
-fn slide_text(
-    slide: &str,
-    number: usize,
-    control: &crate::ParseControl,
-) -> Result<Option<String>, OfficeError> {
-    let document = Tree::controlled(slide, control.clone())
+fn slide_text(slide: &str, number: usize) -> Result<Option<String>, OfficeError> {
+    let document = Tree::new(slide)
         .find_element("sld")
         .map_err(|_| OfficeError)?
         .ok_or(OfficeError)?;
@@ -150,7 +121,6 @@ fn slide_text(
 
     let mut lines: Vec<String> = Vec::new();
     for shape in &tree.children {
-        control.check().map_err(|_| OfficeError)?;
         match shape.local() {
             "sp" => {
                 let text = shape_text(shape);
@@ -258,7 +228,7 @@ mod tests {
             "</p:presentation>"
         );
         assert_eq!(
-            presentation_slide_ids(presentation, &crate::ParseControl::default()).unwrap(),
+            presentation_slide_ids(presentation).unwrap(),
             vec!["rId2".to_string(), "rId9".to_string()]
         );
     }
@@ -273,7 +243,7 @@ mod tests {
             "</Relationships>"
         );
         assert_eq!(
-            slide_relationship_targets(rels, &crate::ParseControl::default()).unwrap(),
+            slide_relationship_targets(rels).unwrap(),
             vec![("rId2".to_string(), "slides/slide1.xml".to_string())]
         );
     }
@@ -288,9 +258,7 @@ mod tests {
             "</p:spTree></p:cSld></p:sld>"
         );
         assert_eq!(
-            slide_text(slide, 7, &crate::ParseControl::default())
-                .unwrap()
-                .as_deref(),
+            slide_text(slide, 7).unwrap().as_deref(),
             Some("--- Slide 7 ---\n标题\n第一段\n第二段")
         );
     }
@@ -298,11 +266,7 @@ mod tests {
     #[test]
     fn a_blank_slide_drops_out() {
         let slide = "<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p/></p:txBody></p:sp></p:spTree></p:cSld></p:sld>";
-        assert!(
-            slide_text(slide, 1, &crate::ParseControl::default())
-                .unwrap()
-                .is_none()
-        );
+        assert!(slide_text(slide, 1).unwrap().is_none());
     }
 
     /// A paragraph joins runs, fields, and vertical-tab line breaks.
@@ -366,20 +330,5 @@ mod tests {
         ]);
         let extracted = extract(&archive).expect("package parses");
         assert_eq!(extracted.slides, vec!["--- Slide 1 ---\none".to_string()]);
-        let zip = ZipArchive::with_decoded_byte_limit(&archive, 8192).unwrap();
-        let limit = extracted.slides[0].len();
-        assert_eq!(
-            extract_with_text_limit(&zip, limit).unwrap().slides,
-            extracted.slides
-        );
-        assert!(extract_with_text_limit(&zip, limit - 1).is_err());
-    }
-
-    #[test]
-    fn cancelled_slide_parsing_returns_no_partial_text() {
-        let control = crate::ParseControl::new(None, || true);
-        assert!(presentation_slide_ids("<presentation/>", &control).is_err());
-        assert!(slide_relationship_targets("<Relationships/>", &control).is_err());
-        assert!(slide_text("<sld/>", 1, &control).is_err());
     }
 }

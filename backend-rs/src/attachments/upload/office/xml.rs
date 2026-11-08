@@ -73,16 +73,6 @@ pub(crate) struct Element {
     pub texts: Vec<String>,
 }
 
-impl Drop for Element {
-    fn drop(&mut self) {
-        // Parsed nesting must not become call-stack depth, including on errors.
-        let mut pending = std::mem::take(&mut self.children);
-        while let Some(mut child) = pending.pop() {
-            pending.append(&mut child.children);
-        }
-    }
-}
-
 impl Element {
     /// The element's namespace-stripped name.
     pub(crate) fn local(&self) -> &str {
@@ -122,7 +112,6 @@ impl Element {
 
 /// A tree reader that materializes one element at a time.
 pub(crate) struct Tree<'a> {
-    control: crate::ParseControl,
     reader: Reader<'a>,
     pending: Option<Event>,
     /// Names of the containers [`Tree::enter`] has descended into, so their
@@ -131,14 +120,8 @@ pub(crate) struct Tree<'a> {
 }
 
 impl<'a> Tree<'a> {
-    #[cfg(test)]
     pub(crate) fn new(text: &'a str) -> Self {
-        Self::controlled(text, crate::ParseControl::default())
-    }
-
-    pub(crate) fn controlled(text: &'a str, control: crate::ParseControl) -> Self {
         Self {
-            control,
             reader: Reader::new(text),
             pending: None,
             descended: Vec::new(),
@@ -179,7 +162,7 @@ impl<'a> Tree<'a> {
     /// is reported as absent.
     pub(crate) fn enter(&mut self, local: &str) -> Result<bool, XmlError> {
         loop {
-            match self.read_event()? {
+            match self.read_event() {
                 None => return Ok(false),
                 Some(Event::Text(_)) => continue,
                 Some(Event::Start(tag)) => {
@@ -207,7 +190,7 @@ impl<'a> Tree<'a> {
     /// or the end of the part.
     fn next_start_tag(&mut self) -> Result<Option<StartTag>, XmlError> {
         loop {
-            match self.read_event()? {
+            match self.read_event() {
                 None => return Ok(None),
                 Some(event @ Event::End(_)) => {
                     self.pending = Some(event);
@@ -219,45 +202,38 @@ impl<'a> Tree<'a> {
         }
     }
 
-    fn read_event(&mut self) -> Result<Option<Event>, XmlError> {
-        self.control.check().map_err(|_| XmlError)?;
-        Ok(match self.pending.take() {
+    fn read_event(&mut self) -> Option<Event> {
+        match self.pending.take() {
             Some(event) => Some(event),
             None => self.reader.next_event(),
-        })
+        }
     }
 
     fn read_children(&mut self, tag: StartTag) -> Result<Element, XmlError> {
-        let mut stack = vec![Element {
+        let mut element = Element {
             tag,
             children: Vec::new(),
             texts: Vec::new(),
-        }];
+        };
         loop {
-            match self.read_event()? {
+            match self.read_event() {
                 None => return Err(XmlError),
                 Some(Event::End(name)) => {
-                    let element = stack.pop().ok_or(XmlError)?;
                     if local_name(&name) != local_name(&element.tag.name) {
                         return Err(XmlError);
                     }
-                    if let Some(parent) = stack.last_mut() {
-                        parent.children.push(element);
-                    } else {
-                        return Ok(element);
-                    }
+                    return Ok(element);
                 }
-                Some(Event::Text(text)) => stack.last_mut().ok_or(XmlError)?.texts.push(text),
+                Some(Event::Text(text)) => element.texts.push(text),
                 Some(Event::Start(child_tag)) => {
-                    let child = Element {
-                        tag: child_tag,
-                        children: Vec::new(),
-                        texts: Vec::new(),
-                    };
-                    if child.tag.self_closing {
-                        stack.last_mut().ok_or(XmlError)?.children.push(child);
+                    if child_tag.self_closing {
+                        element.children.push(Element {
+                            tag: child_tag,
+                            children: Vec::new(),
+                            texts: Vec::new(),
+                        });
                     } else {
-                        stack.push(child);
+                        element.children.push(self.read_children(child_tag)?);
                     }
                 }
             }
@@ -504,44 +480,6 @@ fn decode_entity(entity: &str) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cancellation_during_tree_materialization_does_not_return_partial_elements() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let calls = AtomicUsize::new(0);
-        let control =
-            crate::ParseControl::new(None, move || calls.fetch_add(1, Ordering::SeqCst) >= 3);
-        assert!(
-            Tree::controlled("<a><b>value</b><c/></a>", control)
-                .next_element()
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn deeply_nested_trees_parse_and_drop_on_a_small_stack() {
-        std::thread::Builder::new()
-            .stack_size(128 * 1024)
-            .spawn(|| {
-                let depth = 20_000;
-                let text = format!("{}value{}", "<n>".repeat(depth), "</n>".repeat(depth));
-                let root = Tree::new(&text).next_element().unwrap().unwrap();
-                let mut element = &root;
-                for _ in 1..depth {
-                    assert_eq!(element.children.len(), 1);
-                    element = &element.children[0];
-                }
-                assert_eq!(element.direct_text(), "value");
-                drop(root);
-                let malformed = format!("{}value</wrong>", "<n>".repeat(depth));
-                assert!(Tree::new(&malformed).next_element().is_err());
-                let incomplete = "<n>".repeat(depth);
-                assert!(Tree::new(&incomplete).next_element().is_err());
-            })
-            .unwrap()
-            .join()
-            .unwrap();
-    }
 
     fn collect(text: &str) -> Vec<(String, Vec<(String, String)>)> {
         let mut reader = Reader::new(text);

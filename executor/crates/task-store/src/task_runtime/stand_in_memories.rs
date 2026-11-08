@@ -29,25 +29,6 @@ fn forgotten_evidence_key(user: i64, evidence: &Value) -> Option<String> {
     Some(format!("stand-in-forgotten-evidence:{fingerprint:x}"))
 }
 
-fn forgotten_excerpt_key(user: i64, evidence: &Value) -> Option<String> {
-    let task = evidence["taskId"].as_str()?;
-    let excerpt = evidence["excerpt"]
-        .as_str()
-        .filter(|text| !text.is_empty())?;
-    // Mutable documents have a stable source identity separate from the whole
-    // document version. An unrelated edit must not resurrect a deleted excerpt.
-    // Conversation messages retain their existing per-statement identity.
-    let source = if let Some(attachment) = evidence["attachmentId"].as_str() {
-        json!(["attachment", task, attachment])
-    } else if evidence["source"].is_object() {
-        json!(["source", task, evidence["itemId"]])
-    } else {
-        return None;
-    };
-    let fingerprint = Sha256::digest(json!([user, source, excerpt]).to_string());
-    Some(format!("stand-in-forgotten-excerpt:{fingerprint:x}"))
-}
-
 impl LocalTaskStore {
     pub fn recall_stand_in_memories(
         &self,
@@ -300,10 +281,7 @@ impl LocalTaskStore {
                 params![forgotten],
             )?;
         }
-        for key in forgotten_evidence_key(user, &input["evidence"])
-            .into_iter()
-            .chain(forgotten_excerpt_key(user, &input["evidence"]))
-        {
+        for key in forgotten_evidence_key(user, &input["evidence"]).into_iter() {
             if get_item_from(&connection, &key, "stand_in_memory_tombstone")?.is_some() {
                 if input["restoreForgotten"] != true {
                     return Err(TaskRuntimeError::MemorySuppressed);
@@ -643,45 +621,6 @@ mod tests {
         ));
         input["evidence"]["messageId"] = json!("new-user-statement");
         assert!(store.save_stand_in_memory(1, "device", input).is_ok());
-    }
-
-    #[test]
-    fn forgotten_document_excerpt_survives_unrelated_source_version_changes() {
-        for evidence in [
-            json!({"taskId":"chat","attachmentId":"upload-1","messageId":"hash-1"}),
-            json!({"taskId":"project-source","source":{"projectId":"p"},"messageId":"hash-1"}),
-            json!({"taskId":"connection-source","source":{"provider":"fixture"},"itemId":"record-1","messageId":"hash-1"}),
-        ] {
-            let directory = tempfile::tempdir().unwrap();
-            let store = LocalTaskStore::open(directory.path().join("tasks.db")).unwrap();
-            let mut input = json!({"scope":{"kind":"personal"},"content":"Prefer concise reports","evidence":evidence});
-            input["evidence"]["excerpt"] = json!("Keep reports short");
-            let saved = store
-                .save_stand_in_memory(1, "device", input.clone())
-                .unwrap();
-            store
-                .delete_stand_in_memory(1, saved["id"].as_str().unwrap(), 1)
-                .unwrap();
-            input["content"] = json!("Reports should be brief");
-            input["evidence"]["messageId"] = json!("hash-after-unrelated-edit");
-            assert!(matches!(
-                store.save_stand_in_memory(1, "device", input.clone()),
-                Err(TaskRuntimeError::MemorySuppressed)
-            ));
-            let mut other_source = input.clone();
-            other_source["evidence"]["taskId"] = json!("different-source");
-            assert!(store
-                .save_stand_in_memory(1, "device", other_source)
-                .is_ok());
-            let mut new_statement = input.clone();
-            new_statement["content"] = json!("Prefer detailed reports");
-            new_statement["evidence"]["excerpt"] = json!("Reports now need full details");
-            assert!(store
-                .save_stand_in_memory(1, "device", new_statement)
-                .is_ok());
-            input["restoreForgotten"] = json!(true);
-            assert!(store.save_stand_in_memory(1, "device", input).is_ok());
-        }
     }
 
     #[test]

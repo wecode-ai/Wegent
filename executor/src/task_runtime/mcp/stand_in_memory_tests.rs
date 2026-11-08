@@ -170,18 +170,6 @@ async fn memory_review_tools_allow_evidence_but_reject_actions_even_when_called_
         "remember_from_conversation",
         "search_review_memories",
         "list_memory_forgetting_rules",
-        "list_memory_connections",
-        "list_memory_connection_resources",
-        "read_memory_connection",
-        "remember_from_connection",
-        "complete_memory_connection",
-        "list_memory_attachments",
-        "read_memory_attachment",
-        "remember_from_attachment",
-        "list_memory_projects",
-        "read_memory_project",
-        "remember_from_project",
-        "complete_memory_project",
     ] {
         assert!(catalog.iter().any(|tool| tool["name"] == name), "{name}");
     }
@@ -198,6 +186,18 @@ async fn memory_review_tools_allow_evidence_but_reject_actions_even_when_called_
         "remember",
         "forget_memory",
         "propose_settings",
+        "list_memory_connections",
+        "list_memory_connection_resources",
+        "read_memory_connection",
+        "remember_from_connection",
+        "complete_memory_connection",
+        "list_memory_attachments",
+        "read_memory_attachment",
+        "remember_from_attachment",
+        "list_memory_projects",
+        "read_memory_project",
+        "remember_from_project",
+        "complete_memory_project",
     ] {
         assert!(!catalog.iter().any(|tool| tool["name"] == name), "{name}");
         let result = call(&runtime, name, json!({}), &context).await;

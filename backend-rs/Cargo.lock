@@ -4454,7 +4454,6 @@ dependencies = [
  "wegent-celery",
  "wegent-crypto",
  "wegent-directory",
- "wegent-document-parser",
  "wegent-executor-manager",
  "wegent-git-repositories",
  "wegent-http-compat",
@@ -4583,15 +4582,6 @@ dependencies = [
  "brz-redis 0.0.18",
  "serde",
  "wegent-backend-persistence",
-]
-
-[[package]]
-name = "wegent-document-parser"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "flate2",
- "regex",
 ]
 
 [[package]]

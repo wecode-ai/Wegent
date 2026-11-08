@@ -8,13 +8,10 @@
 //! classic-xref documents `DocumentParser` handles; it deliberately omits
 //! encryption, object streams, and incremental-update repair paths the source
 //! library implements for arbitrary files.
-use super::budget::DecodeBudget;
 use std::collections::{BTreeMap, HashMap};
+use std::io::Read;
 
 use super::xref;
-
-#[path = "allocation.rs"]
-mod allocation;
 
 /// A PDF object. Dictionary keys keep the leading `/` the source readers
 /// retain (`NameObject`), so resource lookups compare the same strings.
@@ -60,24 +57,15 @@ fn is_regular(byte: u8) -> bool {
 pub(crate) struct Cursor<'a> {
     bytes: &'a [u8],
     pos: usize,
-    depth: usize,
 }
 
 impl<'a> Cursor<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            bytes,
-            pos: 0,
-            depth: 0,
-        }
+        Self { bytes, pos: 0 }
     }
 
     pub(crate) fn at(bytes: &'a [u8], pos: usize) -> Self {
-        Self {
-            bytes,
-            pos,
-            depth: 0,
-        }
+        Self { bytes, pos }
     }
 
     pub(crate) fn position(&self) -> usize {
@@ -384,16 +372,6 @@ impl<'a> Cursor<'a> {
     /// Any direct object (`read_object`). Indirect references appear as
     /// `Object::Reference` for the document to resolve.
     pub(crate) fn parse_object(&mut self) -> Result<Object, String> {
-        if self.depth >= super::MAX_DIRECT_OBJECT_DEPTH {
-            return Err("PDF direct-object nesting limit exceeded".into());
-        }
-        self.depth += 1;
-        let result = self.parse_object_inner();
-        self.depth -= 1;
-        result
-    }
-
-    fn parse_object_inner(&mut self) -> Result<Object, String> {
         self.skip_whitespace();
         match self.peek() {
             None => Err("unexpected end of PDF data".to_owned()),
@@ -431,22 +409,11 @@ fn hex_value(byte: u8) -> Option<u8> {
 pub(crate) struct Document {
     objects: HashMap<u32, Object>,
     trailer: Dictionary,
-    budget: DecodeBudget,
 }
 
 impl Document {
-    pub(super) fn decode_budget(&self) -> &DecodeBudget {
-        &self.budget
-    }
-
-    #[cfg(test)]
-    pub(crate) fn load(bytes: &[u8], limit: usize) -> Result<Self, String> {
-        Self::load_with_budget(bytes, DecodeBudget::new(limit))
-    }
-
-    pub(super) fn load_with_budget(bytes: &[u8], budget: DecodeBudget) -> Result<Self, String> {
-        budget.consume(0)?;
-        let xref = xref::read(bytes, &budget)?;
+    pub(crate) fn load(bytes: &[u8]) -> Result<Self, String> {
+        let xref = xref::read(bytes)?;
         if xref.trailer.contains_key("/Encrypt") {
             return Err("encrypted".to_owned());
         }
@@ -460,18 +427,15 @@ impl Document {
         let mut objects = HashMap::with_capacity(xref.entries.len());
         for (&number, entry) in &xref.entries {
             if let xref::Entry::InFile(offset) = entry {
-                budget.consume(0)?;
                 let object = xref::parse_indirect(bytes, *offset, &offsets)
                     .map_err(|error| format!("object {number} at {offset}: {error}"))?;
-                allocation::charge(&object, &budget)?;
                 objects.insert(number, object);
             }
         }
-        Self::load_object_streams(&mut objects, &xref.entries, &budget)?;
+        Self::load_object_streams(&mut objects, &xref.entries)?;
         Ok(Self {
             objects,
             trailer: xref.trailer,
-            budget,
         })
     }
 
@@ -480,7 +444,6 @@ impl Document {
     fn load_object_streams(
         objects: &mut HashMap<u32, Object>,
         entries: &HashMap<u32, xref::Entry>,
-        budget: &DecodeBudget,
     ) -> Result<(), String> {
         let mut streams: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
         for (&target, entry) in entries {
@@ -490,10 +453,10 @@ impl Document {
         }
         for (stream_number, members) in streams {
             let stream = match objects.get(&stream_number) {
-                Some(Object::Stream(stream)) => stream,
+                Some(Object::Stream(stream)) => stream.clone(),
                 _ => return Err(format!("object stream {stream_number} is missing")),
             };
-            let data = decoded_stream_data(&stream.dict, &stream.data, budget)?;
+            let data = decoded_stream_data(&stream.dict, &stream.data)?;
             let count = match stream.dict.get("/N") {
                 Some(Object::Integer(value)) if *value >= 0 => *value as usize,
                 _ => return Err("object stream is missing /N".to_owned()),
@@ -502,12 +465,8 @@ impl Document {
                 Some(Object::Integer(value)) if *value >= 0 => *value as usize,
                 _ => return Err("object stream is missing /First".to_owned()),
             };
-            let header_bytes = data
-                .get(..first)
-                .ok_or("object stream /First out of range")?;
-            let mut header = Cursor::new(header_bytes);
-            // Grow only after reading real entries, never from an untrusted /N.
-            let mut object_offsets = Vec::new();
+            let mut header = Cursor::new(&data[..first.min(data.len())]);
+            let mut object_offsets = Vec::with_capacity(count);
             for _ in 0..count {
                 header.read_integer()?;
                 object_offsets.push(header.read_integer()?);
@@ -516,18 +475,12 @@ impl Document {
                 let Some(offset) = object_offsets.get(index as usize) else {
                     return Err("object stream index out of range".to_owned());
                 };
-                let offset =
-                    usize::try_from(*offset).map_err(|_| "negative object stream offset")?;
-                let position = first
-                    .checked_add(offset)
-                    .ok_or("object stream offset overflow")?;
+                let position = first.saturating_add(*offset as usize);
                 if position > data.len() {
                     return Err("object stream offset out of range".to_owned());
                 }
                 let mut cursor = Cursor::at(&data, position);
-                let object = cursor.parse_object()?;
-                allocation::charge(&object, budget)?;
-                objects.insert(target, object);
+                objects.insert(target, cursor.parse_object()?);
             }
         }
         Ok(())
@@ -614,55 +567,48 @@ impl Document {
     }
 
     /// The page dictionaries in `/Pages` order.
-    pub(crate) fn pages(&self) -> Result<Vec<&Dictionary>, String> {
+    pub(crate) fn pages(&self) -> Vec<&Dictionary> {
         let mut pages = Vec::new();
         let Some(root) = self.get(&self.trailer, "/Root") else {
-            return Err("missing PDF root".into());
+            return pages;
         };
         let Some(root) = self.dict(root) else {
-            return Err("invalid PDF root".into());
+            return pages;
         };
         let Some(node) = self.get(root, "/Pages") else {
-            return Err("missing PDF page tree".into());
+            return pages;
         };
-        enum Frame<'a> {
-            Visit(&'a Object),
-            Leave(*const Dictionary),
+        self.collect_pages(node, &mut pages, 0);
+        pages
+    }
+
+    fn collect_pages<'a>(
+        &'a self,
+        node: &'a Object,
+        pages: &mut Vec<&'a Dictionary>,
+        depth: usize,
+    ) {
+        if depth > 64 {
+            return;
         }
-        let mut pending = vec![Frame::Visit(node)];
-        let mut ancestors = std::collections::HashSet::new();
-        while let Some(frame) = pending.pop() {
-            let node = match frame {
-                Frame::Visit(node) => node,
-                Frame::Leave(key) => {
-                    ancestors.remove(&key);
-                    continue;
-                }
-            };
-            let dict = self.dict(node).ok_or("invalid PDF page-tree node")?;
-            self.budget.consume(std::mem::size_of::<Frame<'_>>())?;
-            let key = std::ptr::from_ref(dict);
-            if !ancestors.insert(key) {
-                return Err("cyclic PDF page tree".into());
+        let Some(dict) = self.dict(node) else {
+            return;
+        };
+        if let Some(kids) = self.get(dict, "/Kids")
+            && let Some(kids) = self.array(kids)
+        {
+            for kid in kids {
+                self.collect_pages(kid, pages, depth + 1);
             }
-            pending.push(Frame::Leave(key));
-            if let Some(kids) = self.get(dict, "/Kids") {
-                let kids = self.array(kids).ok_or("invalid PDF page-tree children")?;
-                pending.extend(kids.iter().rev().map(Frame::Visit));
-            } else {
-                pages.push(dict);
-            }
+            return;
         }
-        Ok(pages)
+        pages.push(dict);
     }
 
     /// A stream's decoded bytes (`DecodedStreamObject.get_data`).
     pub(crate) fn decoded_stream(&self, stream: &Stream) -> Result<Vec<u8>, String> {
         let filters = match self.get(&stream.dict, "/Filter") {
-            None => {
-                self.budget.consume(stream.data.len())?;
-                return Ok(stream.data.clone());
-            }
+            None => return Ok(stream.data.clone()),
             Some(filter) => filter,
         };
         let mut chain: Vec<String> = Vec::new();
@@ -678,7 +624,7 @@ impl Document {
             }
             _ => return Err("invalid stream filter".to_owned()),
         }
-        apply_filters(chain, &stream.data, &self.budget).and_then(|data| {
+        apply_filters(chain, &stream.data).and_then(|data| {
             let parms = match self.get(&stream.dict, "/DecodeParms") {
                 Some(Object::Dictionary(parms)) => Some(parms),
                 Some(Object::Array(items)) => items.last().and_then(|item| self.dict(item)),
@@ -691,17 +637,10 @@ impl Document {
 
 /// Decode a stream whose filter entries are direct objects (cross-reference
 /// streams and object streams).
-pub(crate) fn decoded_stream_data(
-    dict: &Dictionary,
-    data: &[u8],
-    budget: &DecodeBudget,
-) -> Result<Vec<u8>, String> {
+pub(crate) fn decoded_stream_data(dict: &Dictionary, data: &[u8]) -> Result<Vec<u8>, String> {
     let mut chain: Vec<String> = Vec::new();
     match dict.get("/Filter") {
-        None => {
-            budget.consume(data.len())?;
-            return Ok(data.to_vec());
-        }
+        None => return Ok(data.to_vec()),
         Some(Object::Name(name)) => chain.push(name.clone()),
         Some(Object::Array(items)) => {
             for item in items {
@@ -713,7 +652,7 @@ pub(crate) fn decoded_stream_data(
         }
         _ => return Err("invalid stream filter".to_owned()),
     }
-    let decoded = apply_filters(chain, data, budget)?;
+    let decoded = apply_filters(chain, data)?;
     let parms = match dict.get("/DecodeParms") {
         Some(Object::Dictionary(parms)) => Some(parms),
         _ => None,
@@ -721,22 +660,13 @@ pub(crate) fn decoded_stream_data(
     apply_predictor(parms, decoded)
 }
 
-fn apply_filters(
-    chain: Vec<String>,
-    data: &[u8],
-    budget: &DecodeBudget,
-) -> Result<Vec<u8>, String> {
-    budget.consume(data.len())?;
+fn apply_filters(chain: Vec<String>, data: &[u8]) -> Result<Vec<u8>, String> {
     let mut data = data.to_vec();
     for filter in chain {
         data = match filter.as_str() {
-            "/FlateDecode" | "/Fl" => decode_flate(&data, budget)?,
-            "/ASCIIHexDecode" | "/AHx" => {
-                let decoded = decode_ascii_hex(&data);
-                budget.consume(decoded.len())?;
-                decoded
-            }
-            "/ASCII85Decode" | "/A85" => decode_ascii85(&data, budget)?,
+            "/FlateDecode" | "/Fl" => decode_flate(&data)?,
+            "/ASCIIHexDecode" | "/AHx" => decode_ascii_hex(&data),
+            "/ASCII85Decode" | "/A85" => decode_ascii85(&data)?,
             other => return Err(format!("unsupported stream filter {other}")),
         };
     }
@@ -763,22 +693,11 @@ fn apply_predictor(parms: Option<&Dictionary>, data: Vec<u8>) -> Result<Vec<u8>,
     if bits != 8 || predictor < 10 {
         return Err(format!("unsupported predictor {predictor}"));
     }
-    let row_length = columns
-        .checked_mul(colors)
-        .ok_or("predictor row size overflow")?;
-    let encoded_row_length = row_length
-        .checked_add(1)
-        .ok_or("predictor row size overflow")?;
-    if data.is_empty() {
-        return Ok(Vec::new());
-    }
-    if encoded_row_length > data.len() {
-        return Err("truncated predictor row".into());
-    }
+    let row_length = columns * colors;
     let mut output = Vec::with_capacity(data.len());
     let mut previous = vec![0u8; row_length];
-    for row in data.chunks(encoded_row_length) {
-        if row.len() != encoded_row_length {
+    for row in data.chunks(row_length + 1) {
+        if row.len() != row_length + 1 {
             return Err("truncated predictor row".to_owned());
         }
         let mut current = row[1..].to_vec();
@@ -826,14 +745,19 @@ fn paeth(left: u8, up: u8, upper_left: u8) -> u8 {
     }
 }
 
-fn decode_flate(data: &[u8], budget: &DecodeBudget) -> Result<Vec<u8>, String> {
-    match budget.read(flate2::read::ZlibDecoder::new(data)) {
-        Ok(output) => return Ok(output),
-        Err(error) if budget.failed() => return Err(error),
-        Err(_) => {}
+fn decode_flate(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    let mut decoder = flate2::read::ZlibDecoder::new(data);
+    if decoder.read_to_end(&mut output).is_ok() {
+        return Ok(output);
     }
     // PyPDF2 falls back to a raw deflate stream when the zlib header is absent.
-    budget.read(flate2::read::DeflateDecoder::new(data))
+    let mut output = Vec::new();
+    let mut decoder = flate2::read::DeflateDecoder::new(data);
+    decoder
+        .read_to_end(&mut output)
+        .map_err(|error| format!("FlateDecode failed: {error}"))?;
+    Ok(output)
 }
 
 fn decode_ascii_hex(data: &[u8]) -> Vec<u8> {
@@ -858,7 +782,7 @@ fn decode_ascii_hex(data: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-fn decode_ascii85(data: &[u8], budget: &DecodeBudget) -> Result<Vec<u8>, String> {
+fn decode_ascii85(data: &[u8]) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
     let mut group = [0u8; 5];
     let mut count = 0usize;
@@ -870,7 +794,6 @@ fn decode_ascii85(data: &[u8], budget: &DecodeBudget) -> Result<Vec<u8>, String>
             break;
         }
         if byte == b'z' && count == 0 {
-            budget.consume(4)?;
             output.extend_from_slice(&[0, 0, 0, 0]);
             continue;
         }
@@ -887,7 +810,6 @@ fn decode_ascii85(data: &[u8], budget: &DecodeBudget) -> Result<Vec<u8>, String>
                     .and_then(|value| value.checked_add(u32::from(digit)))
                     .ok_or("ASCII85 group overflow")?;
             }
-            budget.consume(4)?;
             output.extend_from_slice(&value.to_be_bytes());
             count = 0;
         }
@@ -903,15 +825,10 @@ fn decode_ascii85(data: &[u8], budget: &DecodeBudget) -> Result<Vec<u8>, String>
                 .and_then(|value| value.checked_add(u32::from(digit)))
                 .ok_or("ASCII85 group overflow")?;
         }
-        budget.consume(count - 1)?;
         output.extend_from_slice(&value.to_be_bytes()[..count - 1]);
     }
     Ok(output)
 }
-
-#[cfg(test)]
-#[path = "decode_budget_tests.rs"]
-mod decode_budget_tests;
 
 #[cfg(test)]
 mod tests {

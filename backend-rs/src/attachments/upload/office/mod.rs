@@ -14,14 +14,14 @@
 //!
 //! A file that cannot be opened or read is a `DocumentParseError` in the
 //! source (`parse_failed`); the extractors report that as [`OfficeError`].
-pub mod excel;
+pub(crate) mod excel;
 mod excel_formula;
 pub(crate) mod excel_serial;
-pub mod powerpoint;
-pub mod word;
+pub(crate) mod powerpoint;
+pub(crate) mod word;
 pub(crate) mod xml;
-pub mod zip;
+pub(crate) mod zip;
 
 /// A package the source's document library would refuse to parse.
 #[derive(Debug)]
-pub struct OfficeError;
+pub(crate) struct OfficeError;

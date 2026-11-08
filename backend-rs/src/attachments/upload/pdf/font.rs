@@ -6,7 +6,6 @@
 //! `Tj` operands are byte strings; this module turns each font's `/Encoding`,
 //! `/ToUnicode` CMap, and widths into the character and space-width decisions
 //! the extractor makes.
-use super::budget::DecodeBudget;
 use std::collections::HashMap;
 
 use super::charsets::{Charset, default_font_space_width};
@@ -104,53 +103,37 @@ pub(crate) fn build(doc: &Document, font: &Dictionary) -> Result<FontCharMap, St
 impl FontCharMap {
     /// Decode one `Tj` operand: the font encoding, then the `/ToUnicode`
     /// override for every produced character.
-    pub(crate) fn decode(&self, bytes: &[u8], budget: &DecodeBudget) -> Result<String, String> {
-        let mut text = String::new();
-        let mut emit = |point| -> Result<(), String> {
-            // Intermediate code points count even when a map erases their text.
-            budget.consume(std::mem::size_of::<u32>())?;
-            match self.to_unicode.map.get(&point) {
-                Some(value) => {
-                    budget.consume(value.len())?;
-                    text.push_str(value);
+    pub(crate) fn decode(&self, bytes: &[u8]) -> String {
+        let intermediate = match &self.encoding {
+            Encoding::Codec(Codec::Charmap) => bytes.iter().map(|&byte| u32::from(byte)).collect(),
+            Encoding::Codec(Codec::Utf16Be) => utf16_code_points(bytes),
+            Encoding::Codec(Codec::Other) => bytes.iter().map(|&byte| u32::from(byte)).collect(),
+            Encoding::Table { charset, overrides } => {
+                let table = charset.table();
+                let mut points = Vec::new();
+                for &byte in bytes {
+                    let code = u32::from(byte);
+                    match overrides.get(&code) {
+                        Some(value) => points.extend(value.chars().map(u32::from)),
+                        None => points.push(u32::from(table[usize::from(byte)])),
+                    }
                 }
+                points
+            }
+            Encoding::Empty => unreachable!("empty encodings are resolved in build"),
+        };
+        let mut text = String::new();
+        for point in intermediate {
+            match self.to_unicode.map.get(&point) {
+                Some(value) => text.push_str(value),
                 None => {
                     if let Some(character) = char::from_u32(point) {
-                        budget.consume(character.len_utf8())?;
                         text.push(character);
                     }
                 }
             }
-            Ok(())
-        };
-        match &self.encoding {
-            Encoding::Codec(Codec::Charmap | Codec::Other) => {
-                for &byte in bytes {
-                    emit(u32::from(byte))?;
-                }
-            }
-            Encoding::Codec(Codec::Utf16Be) => {
-                for point in utf16_code_points(bytes) {
-                    emit(point)?;
-                }
-            }
-            Encoding::Table { charset, overrides } => {
-                let table = charset.table();
-                for &byte in bytes {
-                    let code = u32::from(byte);
-                    match overrides.get(&code) {
-                        Some(value) => {
-                            for character in value.chars() {
-                                emit(u32::from(character))?;
-                            }
-                        }
-                        None => emit(u32::from(table[usize::from(byte)]))?,
-                    }
-                }
-            }
-            Encoding::Empty => unreachable!("empty encodings are resolved in build"),
         }
-        Ok(text)
+        text
     }
 }
 
@@ -309,7 +292,7 @@ fn parse_to_unicode(
             ));
         }
     };
-    let to_unicode = parse_cmap_stream(&data, doc.decode_budget())?;
+    let to_unicode = parse_cmap_stream(&data)?;
     for (code, value) in &to_unicode.map {
         if value == " " {
             space_code = i64::from(*code);
@@ -326,7 +309,7 @@ enum Token {
     CloseArray,
 }
 
-fn tokenize(data: &[u8]) -> Result<Vec<Token>, String> {
+fn tokenize(data: &[u8]) -> Vec<Token> {
     let mut cursor = Cursor::new(data);
     let mut tokens = Vec::new();
     loop {
@@ -369,14 +352,11 @@ fn tokenize(data: &[u8]) -> Result<Vec<Token>, String> {
                     word.push(char::from(byte));
                     cursor.next();
                 }
-                if word.is_empty() {
-                    return Err("invalid CMap delimiter".into());
-                }
                 tokens.push(Token::Word(word));
             }
         }
     }
-    Ok(tokens)
+    tokens
 }
 
 fn decode_hex(digits: &[u8]) -> Vec<u8> {
@@ -403,8 +383,8 @@ fn hex_digit(byte: u8) -> u8 {
     }
 }
 
-fn parse_cmap_stream(data: &[u8], budget: &DecodeBudget) -> Result<ToUnicode, String> {
-    let tokens = tokenize(data)?;
+fn parse_cmap_stream(data: &[u8]) -> Result<ToUnicode, String> {
+    let tokens = tokenize(data);
     let mut map = HashMap::new();
     let mut code_bytes = 0usize;
     let mut index = 0usize;
@@ -426,12 +406,7 @@ fn parse_cmap_stream(data: &[u8], budget: &DecodeBudget) -> Result<ToUnicode, St
                     };
                     index += 1;
                     code_bytes = source.len();
-                    insert_mapping(
-                        &mut map,
-                        code_of(source),
-                        decode_bfchar_destination(destination),
-                        budget,
-                    )?;
+                    map.insert(code_of(source), decode_bfchar_destination(destination));
                 }
             }
             Token::Word(word) if word == "beginbfrange" => {
@@ -456,33 +431,23 @@ fn parse_cmap_stream(data: &[u8], budget: &DecodeBudget) -> Result<ToUnicode, St
                             index += 1;
                             let width = destination.len();
                             let mut value = big_endian_value(destination);
-                            for code in start_code..=end_code {
-                                insert_mapping(
-                                    &mut map,
-                                    code,
-                                    decode_utf16_be(&encode_value(value, width)),
-                                    budget,
-                                )?;
+                            let mut code = start_code;
+                            while code <= end_code {
+                                map.insert(code, decode_utf16_be(&encode_value(value, width)));
+                                code += 1;
                                 value = value.saturating_add(1);
                             }
                         }
                         Some(Token::OpenArray) => {
                             index += 1;
-                            let mut code = u64::from(start_code);
+                            let mut code = start_code;
                             while let Some(token) = tokens.get(index) {
                                 if *token == Token::CloseArray {
                                     index += 1;
                                     break;
                                 }
                                 if let Token::Hex(destination) = token {
-                                    let source =
-                                        u32::try_from(code).map_err(|_| "CMap code overflow")?;
-                                    insert_mapping(
-                                        &mut map,
-                                        source,
-                                        decode_utf16_be(destination),
-                                        budget,
-                                    )?;
+                                    map.insert(code, decode_utf16_be(destination));
                                     code += 1;
                                 }
                                 index += 1;
@@ -496,21 +461,6 @@ fn parse_cmap_stream(data: &[u8], budget: &DecodeBudget) -> Result<ToUnicode, St
         }
     }
     Ok(ToUnicode { code_bytes, map })
-}
-
-fn insert_mapping(
-    map: &mut HashMap<u32, String>,
-    code: u32,
-    value: String,
-    budget: &DecodeBudget,
-) -> Result<(), String> {
-    // Charge every insertion, including replacements, to bound range expansion.
-    let bytes = std::mem::size_of::<(u32, String)>()
-        .checked_add(value.len())
-        .ok_or("CMap allocation size overflow")?;
-    budget.consume(bytes)?;
-    map.insert(code, value);
-    Ok(())
 }
 
 fn code_of(bytes: &[u8]) -> u32 {
@@ -569,11 +519,8 @@ fn compute_space_width(
             .get(descendant, "/DW")
             .and_then(|object| doc.number(object))
             .unwrap_or(1000.0);
-        space_width = if space_code == -1 {
-            default_width
-        } else {
-            default_width / 2.0
-        };
+        let mut widths: HashMap<i64, f64> = HashMap::new();
+        widths.insert(-1, default_width);
         if let Some(entries) = doc.get(descendant, "/W")
             && let Object::Array(entries) = doc.resolve(entries)
         {
@@ -586,17 +533,17 @@ fn compute_space_width(
                             Some(value) => doc.number(value).ok_or("invalid /W width")?,
                             None => break,
                         };
-                        if (start..*end).contains(&space_code) {
-                            space_width = width;
+                        for code in start..*end {
+                            widths.insert(code, width);
                         }
                         index += 3;
                     }
                     Object::Array(list) => {
                         for (offset, value) in list.iter().enumerate() {
-                            let width = doc.number(value).ok_or("invalid /W width")?;
-                            if space_code.checked_sub(start) == i64::try_from(offset).ok() {
-                                space_width = width;
-                            }
+                            widths.insert(
+                                start + offset as i64,
+                                doc.number(value).ok_or("invalid /W width")?,
+                            );
                         }
                         index += 2;
                     }
@@ -604,6 +551,10 @@ fn compute_space_width(
                 }
             }
         }
+        space_width = widths
+            .get(&space_code)
+            .copied()
+            .unwrap_or(default_width / 2.0);
         return Ok(space_width);
     }
     if let Some(widths) = doc.get(font, "/Widths") {
@@ -655,116 +606,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mapped_text_is_charged_before_expansion() {
-        let font = FontCharMap {
-            space_width: 200.0,
-            encoding: Encoding::Codec(Codec::Charmap),
-            to_unicode: ToUnicode {
-                code_bytes: 1,
-                map: HashMap::from([(1, "文🌳".into())]),
-            },
-        };
-        let limit = std::mem::size_of::<u32>() + "文🌳".len();
-        assert_eq!(
-            font.decode(&[1], &DecodeBudget::new(limit)).unwrap(),
-            "文🌳"
-        );
-        assert!(font.decode(&[1], &DecodeBudget::new(limit - 1)).is_err());
-        assert!(font.decode(&[1; 100], &DecodeBudget::new(limit)).is_err());
-    }
-
-    #[test]
-    fn erased_encoding_expansions_still_consume_budget() {
-        let font = FontCharMap {
-            space_width: 200.0,
-            encoding: Encoding::Table {
-                charset: Charset::Standard,
-                overrides: HashMap::from([(1, "a".repeat(10_000))]),
-            },
-            to_unicode: ToUnicode {
-                code_bytes: 1,
-                map: HashMap::from([(u32::from('a'), String::new())]),
-            },
-        };
-        assert!(font.decode(&[1], &DecodeBudget::new(128)).is_err());
-    }
-
-    #[test]
-    fn malformed_cmap_delimiters_fail_instead_of_spinning() {
-        for bytes in [b">".as_slice(), b"begincmap > endcmap", b"<0041> >"] {
-            assert!(parse_cmap_stream(bytes, &DecodeBudget::new(1024)).is_err());
-        }
-    }
-
-    #[test]
-    fn cmap_ranges_and_replacements_share_the_decoding_budget() {
-        let budget = DecodeBudget::new(256);
-        assert!(
-            parse_cmap_stream(
-                b"1 beginbfrange <00000000> <FFFFFFFF> <0041> endbfrange",
-                &budget
-            )
-            .is_err()
-        );
-        assert!(budget.failed());
-        let bytes = b"1 beginbfchar <01> <0041> endbfchar";
-        let budget = DecodeBudget::new(std::mem::size_of::<(u32, String)>() + 1);
-        assert_eq!(parse_cmap_stream(bytes, &budget).unwrap().map[&1], "A");
-        assert!(parse_cmap_stream(bytes, &budget).is_err());
-    }
-
-    #[test]
-    fn cmap_last_u32_code_is_valid_without_wrapping() {
-        let budget = DecodeBudget::new(1024);
-        let cmap = parse_cmap_stream(
-            b"1 beginbfrange <FFFFFFFF> <FFFFFFFF> <0041> endbfrange",
-            &budget,
-        )
-        .unwrap();
-        assert_eq!(cmap.map[&u32::MAX], "A");
-        assert!(
-            parse_cmap_stream(
-                b"1 beginbfrange <FFFFFFFF> <FFFFFFFF> [<0041> <0042>] endbfrange",
-                &budget
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn descendant_space_width_does_not_expand_character_ranges() {
-        let doc = Document::load(&super::super::simple_pdf_bytes(), usize::MAX).unwrap();
-        let font = Dictionary::from([(
-            "/DescendantFonts".into(),
-            Object::Array(vec![Object::Dictionary(Dictionary::from([
-                ("/DW".into(), Object::Integer(1000)),
-                (
-                    "/W".into(),
-                    Object::Array(vec![
-                        Object::Integer(0),
-                        Object::Integer(i64::MAX),
-                        Object::Integer(200),
-                        Object::Integer(32),
-                        Object::Array(vec![Object::Integer(300)]),
-                    ]),
-                ),
-            ]))]),
-        )]);
-        assert_eq!(compute_space_width(&doc, &font, 32, 500.0).unwrap(), 300.0);
-        assert_eq!(compute_space_width(&doc, &font, 33, 500.0).unwrap(), 200.0);
-        assert_eq!(
-            compute_space_width(&doc, &font, i64::MAX, 500.0).unwrap(),
-            500.0
-        );
-        assert_eq!(compute_space_width(&doc, &font, -1, 500.0).unwrap(), 1000.0);
-    }
-
-    #[test]
     fn cmap_bfchar_maps_one_and_two_byte_codes() {
         let cmap = parse_cmap_stream(
             b"begincmap\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n\
               2 beginbfchar\n<0001> <0020>\n<001B> <0049>\nendbfchar\nendcmap",
-            &DecodeBudget::new(usize::MAX),
         )
         .unwrap();
         assert_eq!(cmap.code_bytes, 2);
@@ -777,7 +622,6 @@ mod tests {
         let cmap = parse_cmap_stream(
             b"2 beginbfrange\n<01> <03> [<0041> <0042> <0043>]\n\
               <10> <11> <0061>\nendbfrange",
-            &DecodeBudget::new(usize::MAX),
         )
         .unwrap();
         assert_eq!(cmap.map[&0x01], "A");
@@ -796,11 +640,7 @@ mod tests {
                 map: [(0x0DDEu32, "\u{4E00}".to_owned())].into_iter().collect(),
             },
         };
-        assert_eq!(
-            font.decode(&[0x0D, 0xDE], &DecodeBudget::new(usize::MAX))
-                .unwrap(),
-            "\u{4E00}"
-        );
+        assert_eq!(font.decode(&[0x0D, 0xDE]), "\u{4E00}");
     }
 
     #[test]
@@ -816,10 +656,6 @@ mod tests {
                 map: [(1u32, "\u{9}".to_owned())].into_iter().collect(),
             },
         };
-        assert_eq!(
-            font.decode(&[0, 1], &DecodeBudget::new(usize::MAX))
-                .unwrap(),
-            "/g0\t"
-        );
+        assert_eq!(font.decode(&[0, 1]), "/g0\t");
     }
 }

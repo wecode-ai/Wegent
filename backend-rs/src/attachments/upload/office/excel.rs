@@ -24,37 +24,33 @@ use super::excel_serial::{
 use super::xml::{Element, Tree};
 use super::zip::ZipArchive;
 
-#[path = "excel_text.rs"]
-mod text;
-pub use text::read_text_with_limits;
-
 /// `knowledge_engine.excel.MAX_EXCEL_CONTEXT_NAME`.
 const MAX_EXCEL_CONTEXT_NAME: usize = 48;
 
 /// A populated row at its 1-based physical source row.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExcelRow {
+pub(crate) struct ExcelRow {
     pub source_row: u64,
     pub cells: Vec<ExcelCell>,
 }
 
 /// A populated cell at its 1-based physical source column.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExcelCell {
+pub(crate) struct ExcelCell {
     pub source_column: u64,
     pub value: ExcelValue,
 }
 
 /// A worksheet and its populated physical rows.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExcelSheet {
+pub(crate) struct ExcelSheet {
     pub name: String,
     pub rows: Vec<ExcelRow>,
 }
 
 /// `normalize_excel_value`: the deterministic JSON data of one cell.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ExcelValue {
+pub(crate) enum ExcelValue {
     /// A string value (including error codes and non-finite floats).
     Text(String),
     /// An integer, kept as its canonical decimal spelling.
@@ -69,41 +65,68 @@ pub enum ExcelValue {
 
 impl ExcelValue {
     /// The canonical single-line JSON encoding the compact projection uses.
-    pub fn to_json(&self) -> String {
-        let mut output = String::new();
-        text::write_value(&mut output, self).expect("writing to String is infallible");
-        output
+    pub(crate) fn to_json(&self) -> String {
+        match self {
+            Self::Text(value) => quote_json(value),
+            Self::Integer(value) => value.clone(),
+            Self::Float(value) => python_float_repr(*value),
+            Self::Bool(value) => value.to_string(),
+            Self::Object(fields) => {
+                let body = fields
+                    .iter()
+                    .map(|(key, value)| format!("{}:{}", quote_json(key), value.to_json()))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{{{body}}}")
+            }
+        }
+    }
+
+    /// The compact projection's spelling: strings stay JSON-quoted.
+    fn compact(&self) -> String {
+        self.to_json()
     }
 }
 
-fn charge_value(value: &ExcelValue, remaining: &mut usize) -> Result<(), OfficeError> {
-    *remaining = remaining
-        .checked_sub(std::mem::size_of::<ExcelValue>())
-        .ok_or(OfficeError)?;
-    match value {
-        ExcelValue::Text(text) | ExcelValue::Integer(text) => {
-            *remaining = remaining.checked_sub(text.len()).ok_or(OfficeError)?;
+/// `json.dumps(value, ensure_ascii=False)` for a string.
+fn quote_json(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            ch if (ch as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
         }
-        ExcelValue::Object(fields) => {
-            for (key, value) in fields {
-                *remaining = remaining.checked_sub(key.len()).ok_or(OfficeError)?;
-                charge_value(value, remaining)?;
-            }
-        }
-        _ => {}
     }
-    Ok(())
+    out.push('"');
+    out
 }
 
 /// `format_excel_row_compact`: `R<n>: v1 | v2 | [4]=v4`.
-pub fn compact_row_line(row: &ExcelRow) -> String {
-    let mut output = String::new();
-    text::write_row(&mut output, row).expect("writing to String is infallible");
-    output
+pub(crate) fn compact_row_line(row: &ExcelRow) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(row.cells.len());
+    let mut expected_column = 1;
+    for cell in &row.cells {
+        let value = cell.value.compact();
+        if cell.source_column == expected_column {
+            parts.push(value);
+        } else {
+            parts.push(format!("[{}]={value}", cell.source_column));
+        }
+        expected_column = cell.source_column + 1;
+    }
+    format!("R{}: {}", row.source_row, parts.join(" | "))
 }
 
 /// `format_excel_sheet_header`, empty when the collapsed name is empty.
-pub fn sheet_header(name: &str) -> String {
+pub(crate) fn sheet_header(name: &str) -> String {
     let collapsed = truncate_sheet_name(name, MAX_EXCEL_CONTEXT_NAME);
     if collapsed.is_empty() {
         return String::new();
@@ -112,7 +135,7 @@ pub fn sheet_header(name: &str) -> String {
 }
 
 /// `serialize_excel_sheet_compact`.
-pub fn serialize_sheet_compact(sheet: &ExcelSheet) -> String {
+pub(crate) fn serialize_sheet_compact(sheet: &ExcelSheet) -> String {
     let header = sheet_header(&sheet.name);
     let rows_text = sheet
         .rows
@@ -180,23 +203,10 @@ fn python_whitespace(ch: char) -> bool {
 }
 
 /// Read every worksheet in the workbook in `openpyxl` order.
-pub fn read_sheets(data: &[u8]) -> Result<Vec<ExcelSheet>, OfficeError> {
+pub(crate) fn read_sheets(data: &[u8]) -> Result<Vec<ExcelSheet>, OfficeError> {
     let archive = ZipArchive::new(data).map_err(|_| OfficeError)?;
-    read_sheets_from_archive(&archive)
-}
-
-/// Extract using the caller's archive and cumulative decoded-byte budget.
-pub fn read_sheets_from_archive(archive: &ZipArchive<'_>) -> Result<Vec<ExcelSheet>, OfficeError> {
-    read_sheets_with_value_limit(archive, usize::MAX)
-}
-
-/// Bound cumulative materialized cell values, including the cached-formula pass.
-pub fn read_sheets_with_value_limit(
-    archive: &ZipArchive<'_>,
-    mut remaining: usize,
-) -> Result<Vec<ExcelSheet>, OfficeError> {
-    let workbook_xml = read_part(archive, "xl/workbook.xml")?;
-    let workbook = Tree::controlled(&workbook_xml, archive.control())
+    let workbook_xml = read_part(&archive, "xl/workbook.xml")?;
+    let workbook = Tree::new(&workbook_xml)
         .find_element("workbook")
         .map_err(|_| OfficeError)?
         .ok_or(OfficeError)?;
@@ -221,24 +231,16 @@ pub fn read_sheets_with_value_limit(
         })
         .unwrap_or_default();
 
-    let relationships = read_relationships(archive)?;
-    let shared_strings = read_shared_strings(archive)?;
-    let styles = read_styles(archive)?;
+    let relationships = read_relationships(&archive)?;
+    let shared_strings = read_shared_strings(&archive)?;
+    let styles = read_styles(&archive)?;
 
     let mut loaded = Vec::with_capacity(sheets.len());
     let mut formula_cells: Vec<HashSet<(u64, u64)>> = Vec::with_capacity(sheets.len());
     for (name, relationship_id) in &sheets {
         let target = relationships.get(relationship_id).ok_or(OfficeError)?;
-        let sheet_xml = read_part(archive, target)?;
-        let parsed = parse_sheet(
-            &sheet_xml,
-            &shared_strings,
-            &styles,
-            epoch,
-            false,
-            &archive.control(),
-            &mut remaining,
-        )?;
+        let sheet_xml = read_part(&archive, target)?;
+        let parsed = parse_sheet(&sheet_xml, &shared_strings, &styles, epoch, false)?;
         loaded.push(ExcelSheet {
             name: name.clone(),
             rows: parsed.rows,
@@ -256,21 +258,13 @@ pub fn read_sheets_with_value_limit(
             continue;
         }
         let target = relationships.get(relationship_id).ok_or(OfficeError)?;
-        let sheet_xml = read_part(archive, target)?;
-        let cached = parse_sheet(
-            &sheet_xml,
-            &shared_strings,
-            &styles,
-            epoch,
-            true,
-            &archive.control(),
-            &mut remaining,
-        )?;
+        let sheet_xml = read_part(&archive, target)?;
+        let cached = parse_sheet(&sheet_xml, &shared_strings, &styles, epoch, true)?;
         let cached_values: HashMap<(u64, u64), ExcelValue> = cached
             .cells
-            .into_iter()
+            .iter()
             .filter(|(row, column, _)| formula_cells[index].contains(&(*row, *column)))
-            .map(|(row, column, value)| ((row, column), value))
+            .map(|(row, column, value)| ((*row, *column), value.clone()))
             .collect();
         merge_cached_values(&mut loaded[index], &cached_values);
     }
@@ -306,7 +300,7 @@ fn read_relationships(archive: &ZipArchive<'_>) -> Result<HashMap<String, String
         .read("xl/_rels/workbook.xml.rels")
         .map_err(|_| OfficeError)?;
     let xml = String::from_utf8(xml).map_err(|_| OfficeError)?;
-    let Some(root) = Tree::controlled(&xml, archive.control())
+    let Some(root) = Tree::new(&xml)
         .find_element("Relationships")
         .map_err(|_| OfficeError)?
     else {
@@ -335,11 +329,10 @@ fn sheet_part_path(target: &str) -> String {
 /// `read_string_table`: the shared string table, with the `x005F_` quirk.
 fn read_shared_strings(archive: &ZipArchive<'_>) -> Result<Vec<String>, OfficeError> {
     let Ok(xml) = archive.read("xl/sharedStrings.xml") else {
-        archive.check_budget().map_err(|_| OfficeError)?;
         return Ok(Vec::new());
     };
     let xml = String::from_utf8(xml).map_err(|_| OfficeError)?;
-    let Some(root) = Tree::controlled(&xml, archive.control())
+    let Some(root) = Tree::new(&xml)
         .find_element("sst")
         .map_err(|_| OfficeError)?
     else {
@@ -380,11 +373,10 @@ fn read_styles(archive: &ZipArchive<'_>) -> Result<Styles, OfficeError> {
         timedelta_styles: HashSet::new(),
     };
     let Ok(xml) = archive.read("xl/styles.xml") else {
-        archive.check_budget().map_err(|_| OfficeError)?;
         return Ok(styles);
     };
     let xml = String::from_utf8(xml).map_err(|_| OfficeError)?;
-    let Some(root) = Tree::controlled(&xml, archive.control())
+    let Some(root) = Tree::new(&xml)
         .find_element("styleSheet")
         .map_err(|_| OfficeError)?
     else {
@@ -491,10 +483,8 @@ fn parse_sheet(
     styles: &Styles,
     epoch: (i32, u32, u32),
     data_only: bool,
-    control: &crate::ParseControl,
-    remaining: &mut usize,
 ) -> Result<ParsedSheet, OfficeError> {
-    let mut tree = Tree::controlled(xml, control.clone());
+    let mut tree = Tree::new(xml);
     if !tree.enter("sheetData").map_err(|_| OfficeError)? {
         return Ok(ParsedSheet {
             rows: Vec::new(),
@@ -512,14 +502,13 @@ fn parse_sheet(
         if row_element.local() != "row" {
             continue;
         }
-        row_counter = match row_element.attr("r").and_then(|value| value.parse().ok()) {
-            Some(row) => row,
-            None => row_counter.checked_add(1).ok_or(OfficeError)?,
-        };
+        row_counter = row_element
+            .attr("r")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(row_counter + 1);
         let mut column_counter: u64 = 0;
         let row_start = cells.len();
         for cell_element in row_element.named_children("c") {
-            control.check().map_err(|_| OfficeError)?;
             let (row, column) = match cell_element.attr("r") {
                 Some(coordinate) => {
                     let (row, column) = coordinate_to_tuple(coordinate)?;
@@ -527,7 +516,7 @@ fn parse_sheet(
                     (row, column)
                 }
                 None => {
-                    column_counter = column_counter.checked_add(1).ok_or(OfficeError)?;
+                    column_counter += 1;
                     (row_counter, column_counter)
                 }
             };
@@ -555,11 +544,7 @@ fn parse_sheet(
             if cell_element.child("f").is_some() {
                 formula_cells.insert((row, column));
             }
-            charge_value(&value, remaining)?;
             cells.push((row, column, value));
-        }
-        if data_only {
-            continue;
         }
         // `_read_sheet`: a row is populated when it has a valued cell, and its
         // `source_row` comes from the first of those cells.
@@ -568,11 +553,11 @@ fn parse_sheet(
         };
         rows.push(ExcelRow {
             source_row: *source_row,
-            cells: cells
-                .drain(row_start..)
+            cells: cells[row_start..]
+                .iter()
                 .map(|(_, column, value)| ExcelCell {
-                    source_column: column,
-                    value,
+                    source_column: *column,
+                    value: value.clone(),
                 })
                 .collect(),
         });
@@ -779,10 +764,7 @@ fn coordinate_to_tuple(coordinate: &str) -> Result<(u64, u64), OfficeError> {
     let mut column: u64 = 0;
     for ch in letters.chars() {
         let index = (ch.to_ascii_uppercase() as u8 - b'A' + 1) as u64;
-        column = column
-            .checked_mul(26)
-            .and_then(|column| column.checked_add(index))
-            .ok_or(OfficeError)?;
+        column = column * 26 + index;
     }
     let row: u64 = digits.parse().map_err(|_| OfficeError)?;
     Ok((row, column))
@@ -795,5 +777,164 @@ fn read_part(archive: &ZipArchive<'_>, name: &str) -> Result<String, OfficeError
 }
 
 #[cfg(test)]
-#[path = "excel_tests.rs"]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_formula_cells_expand_before_merging_cached_values() {
+        let xml = "<worksheet><sheetData>\
+            <row r=\"1\"><c r=\"A1\"><v>1</v></c><c r=\"B1\">\
+            <f t=\"shared\" si=\"0\" ref=\"B1:B2\">A1*2</f><v>2</v></c></row>\
+            <row r=\"2\"><c r=\"A2\"><v>2</v></c><c r=\"B2\">\
+            <f t=\"shared\" si=\"0\"/><v>4</v></c></row>\
+            </sheetData></worksheet>";
+        let sheets = read_sheets(&package(xml, None, None)).unwrap();
+        assert_eq!(
+            sheets[0].rows[1].cells[1].value.compact(),
+            r#"{"formula":"=A2*2","value":4}"#
+        );
+    }
+
+    /// A minimal workbook package: the workbook, its relationships and one
+    /// worksheet, with optional shared strings and styles.
+    fn package(sheet_xml: &str, shared_strings: Option<&str>, styles: Option<&str>) -> Vec<u8> {
+        let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        entries.push((
+            "xl/workbook.xml".to_string(),
+            concat!(
+                "<?xml version=\"1.0\"?><workbook><sheets>",
+                "<sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"
+            )
+            .as_bytes()
+            .to_vec(),
+        ));
+        let mut relationships = String::from(
+            "<?xml version=\"1.0\"?><Relationships>\
+             <Relationship Id=\"rId1\" Target=\"worksheets/sheet1.xml\"/>",
+        );
+        if shared_strings.is_some() {
+            relationships.push_str("<Relationship Id=\"rId2\" Target=\"sharedStrings.xml\"/>");
+        }
+        if styles.is_some() {
+            relationships.push_str("<Relationship Id=\"rId3\" Target=\"styles.xml\"/>");
+        }
+        relationships.push_str("</Relationships>");
+        entries.push((
+            "xl/_rels/workbook.xml.rels".to_string(),
+            relationships.into_bytes(),
+        ));
+        if let Some(shared) = shared_strings {
+            entries.push((
+                "xl/sharedStrings.xml".to_string(),
+                shared.as_bytes().to_vec(),
+            ));
+        }
+        if let Some(styles) = styles {
+            entries.push(("xl/styles.xml".to_string(), styles.as_bytes().to_vec()));
+        }
+        entries.push((
+            "xl/worksheets/sheet1.xml".to_string(),
+            sheet_xml.as_bytes().to_vec(),
+        ));
+        let borrowed: Vec<(&str, &[u8])> = entries
+            .iter()
+            .map(|(name, payload)| (name.as_str(), payload.as_slice()))
+            .collect();
+        super::super::zip::stored_archive(&borrowed)
+    }
+
+    fn sheet_data(rows: &str) -> String {
+        format!(
+            "<?xml version=\"1.0\"?><worksheet><sheetPr/><dimension/>\
+             <sheetData>{rows}</sheetData></worksheet>"
+        )
+    }
+
+    #[test]
+    fn cells_normalize_with_their_physical_coordinates() {
+        let shared = "<?xml version=\"1.0\"?><sst><si><t>uid</t></si>\
+                      <si><r><t>rich</t></r><r><t> text</t></r></si></sst>";
+        let data = package(
+            &sheet_data(
+                "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c>\
+                 <c r=\"B1\" t=\"s\"><v>1</v></c><c r=\"C1\" t=\"b\"><v>1</v></c>\
+                 <c r=\"D1\" t=\"e\"><v>#DIV/0!</v></c></row>\
+                 <row r=\"2\"><c r=\"A2\"><v>42</v></c><c r=\"B2\"><v>2.5</v></c>\
+                 <c r=\"C2\"><v>3.0</v></c><c r=\"D2\" t=\"inlineStr\"><is><t>inline</t></is></c>\
+                 <c r=\"E2\"></c></row>\
+                 <row r=\"4\"><c r=\"C4\"><v>7</v></c></row>",
+            ),
+            Some(shared),
+            None,
+        );
+        let sheets = read_sheets(&data).expect("package reads");
+        assert_eq!(sheets[0].name, "Sheet1");
+        assert_eq!(
+            serialize_sheet_compact(&sheets[0]),
+            "--- Sheet: Sheet1 ---\n\
+             R1: \"uid\" | \"rich text\" | true | \"#DIV/0!\"\n\
+             R2: 42 | 2.5 | 3 | \"inline\"\n\
+             R4: [3]=7"
+        );
+    }
+
+    #[test]
+    fn number_formats_turn_serials_into_dates() {
+        let styles = "<?xml version=\"1.0\"?><styleSheet>\
+                      <numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"yyyy\\-mm\\-dd\"/>\
+                      </numFmts><cellXfs count=\"3\"><xf numFmtId=\"0\"/><xf numFmtId=\"14\"/>\
+                      <xf numFmtId=\"164\"/></cellXfs></styleSheet>";
+        let data = package(
+            &sheet_data(
+                "<row r=\"1\"><c r=\"A1\" s=\"1\"><v>45000.5</v></c>\
+                 <c r=\"B1\" s=\"2\"><v>45000.5</v></c><c r=\"C1\" s=\"2\"><v>0.25</v></c>\
+                 <c r=\"D1\" s=\"2\"><v>58.999</v></c><c r=\"E1\" s=\"1\"><v>45000</v></c></row>",
+            ),
+            None,
+            Some(styles),
+        );
+        let sheets = read_sheets(&data).expect("package reads");
+        assert_eq!(
+            sheets[0].rows[0]
+                .cells
+                .iter()
+                .map(|cell| cell.value.to_json())
+                .collect::<Vec<_>>(),
+            vec![
+                "\"2023-03-15T12:00:00\"",
+                "\"2023-03-15T12:00:00\"",
+                "\"06:00:00\"",
+                "\"1900-02-27T23:58:33.600000\"",
+                "\"2023-03-15T00:00:00\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn formula_cells_merge_their_cached_result() {
+        let data = package(
+            &sheet_data(
+                "<row r=\"1\"><c r=\"A1\"><v>1</v></c><c r=\"B1\"><v>2</v></c></row>\
+                 <row r=\"2\"><c r=\"A2\"><f>SUM(A1:B1)</f><v>3</v></c>\
+                 <c r=\"B2\" t=\"str\"><f>CONCATENATE(\"a\",\"b\")</f><v>ab</v></c>\
+                 <c r=\"C2\"><f>1+2</f></c></row>",
+            ),
+            None,
+            None,
+        );
+        let sheets = read_sheets(&data).expect("package reads");
+        assert_eq!(
+            serialize_sheet_compact(&sheets[0]),
+            "--- Sheet: Sheet1 ---\n\
+             R1: 1 | 2\n\
+             R2: {\"formula\":\"=SUM(A1:B1)\",\"value\":3} | \
+             {\"formula\":\"=CONCATENATE(\\\"a\\\",\\\"b\\\")\",\"value\":\"ab\"} | \"=1+2\""
+        );
+    }
+
+    #[test]
+    fn a_package_without_a_worksheet_is_a_parse_failure() {
+        let missing = super::super::zip::stored_archive(&[("xl/workbook.xml", b"<workbook/>")]);
+        assert!(read_sheets(&missing).is_err());
+    }
+}

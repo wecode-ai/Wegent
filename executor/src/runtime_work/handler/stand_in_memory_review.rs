@@ -53,22 +53,6 @@ impl RuntimeWorkRpcHandler {
         through: i64,
         store: &LocalTaskStore,
     ) -> Result<bool, AppIpcError> {
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(super::stand_in::settings_error)?;
-        // Connected providers may contain unread evidence even without a new local
-        // conversation. Only declare an empty increment when all inputs are local.
-        if crate::task_runtime::personal_stand_in::stand_in_identities(&settings)
-            .iter()
-            .any(|role| {
-                role["connections"]
-                    .as_array()
-                    .is_some_and(|rows| !rows.is_empty())
-                    || role["collaboration"]["enabled"] == true
-            })
-        {
-            return Ok(true);
-        }
         for link in self.local_task_links(true) {
             if !super::stand_in_history::history_owned(&link, user)
                 || link.runtime_handle["origin"]["memoryReview"] == true
@@ -83,7 +67,6 @@ impl RuntimeWorkRpcHandler {
                 .map_err(super::stand_in::settings_error)?;
             if link.updated_at == 0
                 || link.updated_at >= progress["completedThrough"].as_i64().unwrap_or(0)
-                || super::stand_in_memory_attachments::has_memory_attachments(&link, through)
             {
                 return Ok(true);
             }

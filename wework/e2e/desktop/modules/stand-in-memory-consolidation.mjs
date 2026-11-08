@@ -84,7 +84,7 @@ export function createMemoryConsolidation({
         return next(body, 'next_memory_page', { taskId: SOURCE })
       case 'next_memory_page': {
         historyComplete = result.historyReadComplete
-        assert.equal(result.unreadAttachmentCount, 0)
+        assert.equal(typeof result.pendingWriteCount, 'number')
         const message = result.page?.messages?.find(
           item => item.role === 'user' && item.content.includes(MEMORY_HISTORY_FACT)
         )
@@ -98,6 +98,8 @@ export function createMemoryConsolidation({
           })
         if (!historyComplete) return next(body, 'next_memory_page', { taskId: SOURCE })
         assert.ok(saved, 'The review must read and persist the historical user statement')
+        assert.equal(result.readyToComplete, true)
+        assert.equal(result.pendingWriteCount, 0)
         return next(body, 'complete_memory_source', { taskId: SOURCE })
       }
       case 'remember_from_conversation':

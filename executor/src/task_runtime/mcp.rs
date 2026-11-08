@@ -24,15 +24,13 @@ use crate::protocol::ExecutionRequest;
 
 mod assignment_notifications;
 #[cfg(test)]
-mod backend_inventory_tests;
-#[cfg(test)]
 mod issue_access_tests;
 
 use assignment_notifications::emit_local_assignment_notifications;
 
 use super::{
-    BinaryInput, DeliveryCreate, LocalCommentCreate, ProjectCreate, ProjectStoreKind,
-    RuntimeTaskAddress, TaskRuntime, TaskSearch, TaskUpdate,
+    BinaryInput, DeliveryCreate, LocalCommentCreate, ProjectCreate, RuntimeTaskAddress,
+    TaskRuntime, TaskSearch, TaskUpdate,
 };
 
 mod comments;
@@ -41,13 +39,11 @@ mod context;
 pub(crate) mod git_connections;
 mod human_requests;
 mod parent_issue;
-mod project_files;
 mod stand_in;
 pub(crate) mod stand_in_tasks;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
-pub(crate) use stand_in::source_read_input;
 pub(crate) use stand_in::stand_in_mcp_client_config;
 pub(crate) use stand_in::StandInMcpIdentity;
 
@@ -137,8 +133,6 @@ pub(crate) struct SpaceMcpRequestContext {
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
     control: Option<crate::workbench_control::ControlContext>,
-    // Host-selected for a validated memory evidence read; never decoded from tool arguments.
-    project_read_store: Option<ProjectStoreKind>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -167,7 +161,6 @@ impl SpaceMcpRequestContext {
             && other.grant.is_none()
             && self.backend_url == other.backend_url
             && self.auth_token == other.auth_token
-            && self.project_read_store == other.project_read_store
     }
 
     pub(super) fn shares_control_conversation(&self, other: &Self) -> bool {
@@ -196,7 +189,6 @@ impl SpaceMcpRequestContext {
             event_sender: None,
             stand_in: None,
             control: None,
-            project_read_store: None,
         }
     }
 
@@ -210,7 +202,6 @@ impl SpaceMcpRequestContext {
             event_sender: None,
             stand_in: None,
             control: None,
-            project_read_store: None,
         }
     }
 
@@ -954,30 +945,10 @@ async fn call_tool_with_runtime_context(
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .or_else(|| default_project_id.clone());
-    let is_locally_routed = match context.project_read_store {
-        Some(ProjectStoreKind::Backend) => false,
-        Some(ProjectStoreKind::Local) => {
-            let projects = match runtime.list_projects() {
-                Ok(projects) => projects,
-                Err(error) => return text_result(error.to_string(), true),
-            };
-            if !projects.iter().any(|project| {
-                Some(project.id.as_str()) == requested_project_id.as_deref()
-                    && project.metadata["project_store"] == "local"
-            }) {
-                return text_result("The requested local project is unavailable".into(), true);
-            }
-            true
-        }
-        None => requested_project_id
-            .as_deref()
-            .is_some_and(|project_id| is_locally_routed_project(runtime, project_id, name)),
-    };
+    let is_locally_routed = requested_project_id
+        .as_deref()
+        .is_some_and(|project_id| is_locally_routed_project(runtime, project_id, name));
     if name == "list_spaces" {
-        let store = arguments.get("store").and_then(Value::as_str);
-        if store.is_some_and(|store| !matches!(store, "local" | "cloud")) {
-            return text_result("Invalid project inventory store".into(), true);
-        }
         let local_projects = match runtime.list_projects().and_then(|mut projects| {
             projects.retain(|project| project.metadata["project_store"] != "backend");
             serde_json::to_value(projects).map_err(invalid_json)
@@ -986,16 +957,7 @@ async fn call_tool_with_runtime_context(
             Ok(_) => Vec::new(),
             Err(error) => return text_result(error.to_string(), true),
         };
-        if store == Some("local") {
-            return text_result(Value::Array(local_projects).to_string(), false);
-        }
         let Some((backend_url, auth_token)) = backend_url.zip(auth_token) else {
-            if store == Some("cloud") {
-                return text_result(
-                    "Cloud inventory requires an authenticated Backend connection".into(),
-                    true,
-                );
-            }
             return text_result(Value::Array(local_projects).to_string(), false);
         };
         let backend_context = BackendToolContext {
@@ -1007,9 +969,7 @@ async fn call_tool_with_runtime_context(
         };
         return match call_backend_tool(&backend_context, name, &arguments).await {
             Ok(Value::Array(mut cloud_projects)) => {
-                if store != Some("cloud") {
-                    cloud_projects.extend(local_projects);
-                }
+                cloud_projects.extend(local_projects);
                 text_result(Value::Array(cloud_projects).to_string(), false)
             }
             Ok(value) => text_result(value.to_string(), false),
@@ -1049,9 +1009,6 @@ async fn call_tool_with_runtime_context(
     }
     let result = match name {
         "list_spaces" => unreachable!("list_spaces is handled before tool routing"),
-        "list_space_files" | "read_space_file" => {
-            project_files::call_local(runtime, name, &arguments)
-        }
         "update_issue_status" => local_update_issue_status(runtime, &arguments, grant).await,
         "submit_workflow_plan" => {
             let manager_task_id = manager_runtime_task_id(grant);
@@ -2216,7 +2173,7 @@ async fn call_backend_tool(
                     .map_err(|error| error.to_string())?,
             )
             .await?;
-            download_backend_object(&client, &access, &output_path, arguments["max_bytes"].as_u64()).await?;
+            download_backend_object(&client, &access, &output_path).await?;
             return Ok(json!({"path": output_path}));
         }
         "list_board_items" => client.get(format!("{base}/cloud-projects/{project_id}/loop-items")),
@@ -2519,7 +2476,7 @@ async fn call_backend_tool(
                     .map_err(|error| error.to_string())?,
             )
             .await?;
-            download_backend_object(&client, &access, &output_path, arguments["max_bytes"].as_u64()).await?;
+            download_backend_object(&client, &access, &output_path).await?;
             return Ok(json!({"path": output_path}));
         }
         "finalize_delivery" | "discard_delivery_draft" => {
@@ -2683,13 +2640,28 @@ async fn call_backend_tool(
                 string_argument(arguments, "attachment_id").map_err(|error| error.to_string())?;
             let output_path = attachment_output_path(arguments, attachment_id)
                 .map_err(|error| error.to_string())?;
-            let request = client
+            let response = client
                 .get(format!(
                     "{base}/loop-item-attachments/{}/content",
                     encode_segment(attachment_id)
                 ))
-                .bearer_auth(auth_token);
-            download_backend_request(request, &output_path, arguments["max_bytes"].as_u64()).await?;
+                .bearer_auth(auth_token)
+                .send()
+                .await
+                .map_err(|error| error.to_string())?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.map_err(|error| error.to_string())?;
+                return Err(format!("Backend request failed ({status}): {body}"));
+            }
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| error.to_string())?;
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::write(&output_path, bytes).map_err(|error| error.to_string())?;
             return Ok(json!({"path": output_path}));
         }
         "delete_item_attachment" => {
@@ -2714,12 +2686,17 @@ async fn call_backend_tool(
         .await
         .map_err(|error| error.to_string())?;
     let value = backend_json(response).await?;
-    if matches!(name, "list_spaces" | "list_board_items" | "list_deliveries") {
-        return value
-            .get("items")
-            .filter(|items| items.is_array())
-            .cloned()
-            .ok_or_else(|| format!("Backend {name} response is missing a valid items array; source coverage is incomplete"));
+    if name == "list_spaces" {
+        return Ok(Value::Array(
+            value
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        ));
+    }
+    if name == "list_board_items" || name == "list_deliveries" {
+        return Ok(value.get("items").cloned().unwrap_or_else(|| json!([])));
     }
     Ok(value)
 }
@@ -2728,38 +2705,19 @@ async fn download_backend_object(
     client: &reqwest::Client,
     access: &Value,
     output_path: &Path,
-    max_bytes: Option<u64>,
 ) -> Result<(), String> {
     let url = access["url"]
         .as_str()
         .ok_or_else(|| "Object access URL is missing".to_owned())?;
-    download_backend_request(client.get(url), output_path, max_bytes).await
-}
-
-async fn download_backend_request(
-    request: reqwest::RequestBuilder,
-    output_path: &Path,
-    max_bytes: Option<u64>,
-) -> Result<(), String> {
-    let request = if max_bytes.is_some() {
-        request.timeout(std::time::Duration::from_secs(30))
-    } else {
-        request
-    };
-    let mut response = request.send().await.map_err(|error| error.to_string())?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
         return Err(format!("Object read failed ({})", response.status()));
     }
-    if max_bytes.is_some_and(|limit| response.content_length().is_some_and(|size| size > limit)) {
-        return Err("Object exceeds the evidence download limit".into());
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
-        if max_bytes.is_some_and(|limit| bytes.len() as u64 + chunk.len() as u64 > limit) {
-            return Err("Object exceeds the evidence download limit".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
+    let bytes = response.bytes().await.map_err(|error| error.to_string())?;
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -3055,7 +3013,7 @@ fn tools() -> Vec<Value> {
         tool(
             "list_spaces",
             "List Wework project spaces accessible to the current user. Use this when a personal conversation has no project binding; pass the selected space_id to board, file and table tools. Backend access errors must be resolved through Wework, never by substituting Git or provider APIs.",
-            json!({"type": "object", "properties": {"store":{"type":"string","enum":["local","cloud"],"description":"Optionally enumerate one storage owner independently; omitted lists both."}}}),
+            json!({"type": "object", "properties": {}}),
         ),
         tool(
             "get_current_context",

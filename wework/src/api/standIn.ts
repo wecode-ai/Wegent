@@ -134,27 +134,12 @@ export interface StandInMemory {
   updatedAt: string
   sourceTaskId?: string | null
   evidence?: {
-    kind?: 'image_observation' | null
     taskId?: string
     messageId?: string
     role?: string | null
     excerpt?: string
     observedAt?: string | number | null
     readAt?: string
-    itemId?: string
-    source?: {
-      id?: string
-      name?: string
-      providerId?: string
-      projectId?: string
-      projectStore?: 'local' | 'cloud'
-      kind?: string
-      itemId?: string | null
-      deliveryId?: string | null
-      assetId?: string
-      attachmentId?: string
-      fileId?: string
-    }
   } | null
 }
 

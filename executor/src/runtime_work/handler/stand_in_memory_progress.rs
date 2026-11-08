@@ -30,11 +30,7 @@ fn pending_reads(args: &Value, page: &Value) -> Result<Vec<Value>, AppIpcError> 
             ));
         }
     }
-    if page
-        .get("textContentMayBeIncomplete")
-        .unwrap_or(&page["sourceContentMayBeIncomplete"])
-        == true
-    {
+    if page["sourceContentMayBeIncomplete"] == true {
         return Err(AppIpcError::new(
             "incomplete_history",
             "Source history is truncated; progress was not advanced",
@@ -78,12 +74,7 @@ impl RuntimeWorkRpcHandler {
                     .memory_review_progress(identity.user, source)
                     .map_err(super::stand_in::settings_error)?;
                 let updated = item["updatedAt"].as_i64().unwrap_or(0);
-                if updated == 0
-                    || updated >= state["completedThrough"].as_i64().unwrap_or(0)
-                    || self.local_task_link(source).is_some_and(|link| {
-                        super::stand_in_memory_attachments::has_memory_attachments(&link, i64::MAX)
-                    })
-                {
+                if updated == 0 || updated >= state["completedThrough"].as_i64().unwrap_or(0) {
                     pending.push(item.clone());
                 }
             }
@@ -114,11 +105,6 @@ impl RuntimeWorkRpcHandler {
                 &json!({"taskId":source,"limit":1}),
             )
             .await?;
-            let link = self
-                .local_task_link(source)
-                .ok_or_else(|| AppIpcError::new("permission_denied", "Source is unavailable"))?;
-            self.verify_memory_attachment_coverage(identity, &link, through, &state, &store)
-                .await?;
             return store
                 .complete_memory_review_source(identity.user, source, run, version)
                 .map_err(super::stand_in::settings_error);
@@ -136,11 +122,8 @@ impl RuntimeWorkRpcHandler {
                 .local_task_link(source)
                 .ok_or_else(|| AppIpcError::new("permission_denied", "Source is unavailable"))?;
             self.validate_history_delivery(identity, &link, &store)?;
-            let attachments = super::stand_in_memory_attachments::unread_memory_attachment_count(
-                &link, through, &state,
-            );
             return Ok(
-                json!({"readyToComplete":writes == 0 && attachments == 0,"historyReadComplete":true,"unreadAttachmentCount":attachments,"pendingWriteCount":writes,"taskId":source,"version":version}),
+                json!({"readyToComplete":writes == 0,"historyReadComplete":true,"pendingWriteCount":writes,"taskId":source,"version":version}),
             );
         };
         read["taskId"] = json!(source);
@@ -153,25 +136,13 @@ impl RuntimeWorkRpcHandler {
         let page = self
             .read_stand_in_conversations(identity, "read_task", &read)
             .await?;
-        let link = self
-            .local_task_link(source)
-            .ok_or_else(|| AppIpcError::new("permission_denied", "Source is unavailable"))?;
-        if !super::stand_in_memory_attachments::page_attachments_are_bound(&link, through, &page) {
-            return Err(AppIpcError::new(
-                "incomplete_attachments",
-                "History contains attachments without a readable upload binding",
-            ));
-        }
         pending.extend(pending_reads(&read, &page)?);
         let state = store
             .record_memory_review_page(identity.user, source, run, through, version, json!(pending))
             .map_err(super::stand_in::settings_error)?;
         let writes = state["pendingWrites"].as_array().map_or(0, Vec::len);
-        let attachments = super::stand_in_memory_attachments::unread_memory_attachment_count(
-            &link, through, &state,
-        );
         Ok(
-            json!({"page":page,"readArguments":read,"version":state["version"],"pendingWriteCount":writes,"historyReadComplete":pending.is_empty(),"unreadAttachmentCount":attachments,"readyToComplete":pending.is_empty() && writes == 0 && attachments == 0}),
+            json!({"page":page,"readArguments":read,"version":state["version"],"pendingWriteCount":writes,"historyReadComplete":pending.is_empty(),"readyToComplete":pending.is_empty() && writes == 0}),
         )
     }
 }
@@ -192,14 +163,6 @@ mod tests {
             ]
         );
         assert!(pending_reads(&json!({}), &json!({"sourceContentMayBeIncomplete":true})).is_err());
-        assert!(pending_reads(
-            &json!({}),
-            &json!({
-                "sourceContentMayBeIncomplete":true,"textContentMayBeIncomplete":false,
-                "messages":[{"contentComplete":true,"unreadAttachmentCount":1}]
-            })
-        )
-        .is_ok());
         assert!(
             pending_reads(&json!({}), &json!({"messages":[{"contentComplete":false}]})).is_err()
         );

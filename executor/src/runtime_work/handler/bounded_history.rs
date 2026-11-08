@@ -39,8 +39,6 @@ struct Snapshot {
     until: Option<i64>,
     unknown_timestamps: bool,
     source_may_be_incomplete: bool,
-    #[serde(default)]
-    unread_attachments: bool,
 }
 
 fn invalid(message: &str) -> AppIpcError {
@@ -261,11 +259,6 @@ impl RuntimeWorkRpcHandler {
             unknown_timestamps: value["unknownTimestamps"] == true,
             source_may_be_incomplete: value["fullContent"] != true
                 && value["fullItemContent"] != true,
-            unread_attachments: value["messages"].as_array().is_some_and(|messages| {
-                messages
-                    .iter()
-                    .any(|message| message["unreadAttachmentCount"].as_u64().unwrap_or(0) > 0)
-            }),
         };
         let id = save(directory(self, &current), &snapshot).await?;
         if native
@@ -292,7 +285,6 @@ fn visible_messages(page: &Value) -> Vec<Value> {
         "createdAt",
         "completedAt",
         "messageIndex",
-        "unreadAttachmentCount",
     ];
     page["messages"]
         .as_array()
@@ -398,7 +390,7 @@ fn page(
         .any(|message| message["contentComplete"] != true);
     let result = json!({"success":true,"taskId":snapshot.task,"messages":messages,
         "hasMoreBefore":before.is_some(),"beforeCursor":before,"hasMoreAfter":after.is_some(),"afterCursor":after,
-        "hasMoreContent":unread,"contentMayBeTruncated":unread || snapshot.source_may_be_incomplete || snapshot.unread_attachments,"sourceContentMayBeIncomplete":snapshot.source_may_be_incomplete || snapshot.unread_attachments,"textContentMayBeIncomplete":snapshot.source_may_be_incomplete,"fullContent":!snapshot.source_may_be_incomplete && !snapshot.unread_attachments && !unread && start==0 && end==snapshot.messages.len() && snapshot.before.is_none() && snapshot.after.is_none(),
+        "hasMoreContent":unread,"contentMayBeTruncated":unread || snapshot.source_may_be_incomplete,"sourceContentMayBeIncomplete":snapshot.source_may_be_incomplete,"fullContent":!snapshot.source_may_be_incomplete && !unread && start==0 && end==snapshot.messages.len() && snapshot.before.is_none() && snapshot.after.is_none(),
         "unknownTimestamps":snapshot.unknown_timestamps});
     if result.to_string().len() > PAGE_BYTES {
         return Err(invalid("History page exceeds its byte budget"));
@@ -472,21 +464,6 @@ mod tests {
                 .read_stand_in_conversations(identity, "read_task", &args)
                 .await
         })
-    }
-
-    #[tokio::test]
-    async fn unread_attachments_are_not_certified_as_complete_history() {
-        let (_root, handler, identity) = fixture(vec![json!({
-            "id":"attachment-message", "role":"user", "content":"See the report",
-            "attachments":[{"id":1,"filename":"report.txt","local_path":"private-path-canary"}]
-        })]);
-        let page = read(&handler, &identity, json!({"taskId":"target"}))
-            .await
-            .unwrap();
-        assert_eq!(page["messages"][0]["unreadAttachmentCount"], 1);
-        assert_eq!(page["sourceContentMayBeIncomplete"], true);
-        assert_eq!(page["fullContent"], false);
-        assert!(!page.to_string().contains("private-path-canary"));
     }
 
     #[tokio::test]

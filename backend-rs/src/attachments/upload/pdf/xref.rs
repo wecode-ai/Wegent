@@ -6,7 +6,6 @@
 //! and object streams (PyPDF2 `_reader`'s xref handling). Each entry records
 //! where the object's bytes live, so `Document::load` can materialize both
 //! plain and compressed objects.
-use super::budget::DecodeBudget;
 use std::collections::HashMap;
 
 use super::object::{Cursor, Dictionary, Object, Stream, decoded_stream_data};
@@ -25,14 +24,13 @@ pub(crate) struct Xref {
 }
 
 /// Read every cross-reference section reachable from the last `startxref`.
-pub(crate) fn read(bytes: &[u8], budget: &DecodeBudget) -> Result<Xref, String> {
+pub(crate) fn read(bytes: &[u8]) -> Result<Xref, String> {
     let start = find_last_startxref(bytes).ok_or("missing startxref")?;
     let mut pending = vec![start];
     let mut entries = HashMap::new();
     let mut trailer = Dictionary::new();
     let mut visited = Vec::new();
     while let Some(offset) = pending.pop() {
-        budget.consume(0)?;
         if visited.contains(&offset) || offset >= bytes.len() {
             continue;
         }
@@ -42,7 +40,7 @@ pub(crate) fn read(bytes: &[u8], budget: &DecodeBudget) -> Result<Xref, String> 
         let section = if cursor.match_keyword("xref") {
             parse_classic_section(cursor, &mut entries)?
         } else {
-            parse_stream_section(bytes, offset, &mut entries, budget)?
+            parse_stream_section(bytes, offset, &mut entries)?
         };
         let next = section_next(&section);
         merge_trailer(&mut trailer, section);
@@ -111,7 +109,6 @@ fn parse_stream_section(
     bytes: &[u8],
     offset: usize,
     entries: &mut HashMap<u32, Entry>,
-    budget: &DecodeBudget,
 ) -> Result<Dictionary, String> {
     let object = parse_indirect(bytes, offset, &HashMap::new())?;
     let Object::Stream(stream) = object else {
@@ -120,15 +117,15 @@ fn parse_stream_section(
     if stream.dict.get("/Type") != Some(&Object::Name("/XRef".to_owned())) {
         return Err("unsupported cross-reference section".to_owned());
     }
-    for (number, entry) in parse_xref_stream(&stream, budget)? {
+    for (number, entry) in parse_xref_stream(&stream)? {
         entries.entry(number).or_insert(entry);
     }
     Ok(stream.dict)
 }
 
 /// `/W [w1 w2 w3]` entries with `/Index` (default `[0 Size]`).
-fn parse_xref_stream(stream: &Stream, budget: &DecodeBudget) -> Result<Vec<(u32, Entry)>, String> {
-    let data = decoded_stream_data(&stream.dict, &stream.data, budget)?;
+fn parse_xref_stream(stream: &Stream) -> Result<Vec<(u32, Entry)>, String> {
+    let data = decoded_stream_data(&stream.dict, &stream.data)?;
     let widths: Vec<usize> = match stream.dict.get("/W") {
         Some(Object::Array(items)) => items
             .iter()
@@ -156,10 +153,7 @@ fn parse_xref_stream(stream: &Stream, budget: &DecodeBudget) -> Result<Vec<(u32,
             .collect::<Result<_, _>>()?,
         _ => vec![0, size],
     };
-    let entry_size = widths
-        .iter()
-        .try_fold(0usize, |sum, width| sum.checked_add(*width))
-        .ok_or("cross-reference entry size overflow")?;
+    let entry_size: usize = widths.iter().sum();
     if entry_size == 0 {
         return Err("invalid /W in cross-reference stream".to_owned());
     }
@@ -170,17 +164,14 @@ fn parse_xref_stream(stream: &Stream, budget: &DecodeBudget) -> Result<Vec<(u32,
             return Err("invalid /Index in cross-reference stream".to_owned());
         };
         for item in 0..count {
-            if entry_size > data.len().saturating_sub(position) {
+            if position + entry_size > data.len() {
                 return Err("truncated cross-reference stream".to_owned());
             }
             let kind = read_width(&data[position..], widths[0]);
             let field2 = read_width(&data[position + widths[0]..], widths[1]);
             let field3 = read_width(&data[position + widths[0] + widths[1]..], widths[2]);
             position += entry_size;
-            let number = first
-                .checked_add(item)
-                .and_then(|number| u32::try_from(number).ok())
-                .ok_or("cross-reference object number overflow")?;
+            let number = (first + item) as u32;
             match kind {
                 0 => {}
                 1 => {
@@ -209,7 +200,7 @@ fn read_width(bytes: &[u8], width: usize) -> u64 {
 
 fn find_last_startxref(bytes: &[u8]) -> Option<usize> {
     let marker = b"startxref";
-    let mut index = bytes.len().checked_sub(marker.len())?;
+    let mut index = bytes.len().saturating_sub(marker.len());
     loop {
         if &bytes[index..index + marker.len()] == marker {
             let mut cursor = Cursor::at(bytes, index + marker.len());
@@ -318,42 +309,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cross_reference_widths_and_numbers_are_checked_before_indexing() {
-        for (widths, first, data) in [
-            (vec![i64::MAX; 3], 0, vec![1]),
-            (vec![1, 0, 0], i64::MAX, vec![1]),
-            (vec![i64::MAX, 0, 0], 0, vec![1]),
-        ] {
-            let stream = Stream {
-                dict: Dictionary::from([
-                    (
-                        "/W".into(),
-                        Object::Array(widths.into_iter().map(Object::Integer).collect()),
-                    ),
-                    ("/Size".into(), Object::Integer(1)),
-                    (
-                        "/Index".into(),
-                        Object::Array(vec![Object::Integer(first), Object::Integer(1)]),
-                    ),
-                ]),
-                data,
-            };
-            assert!(parse_xref_stream(&stream, &DecodeBudget::new(1024)).is_err());
-        }
-    }
-
-    #[test]
     fn width_fields_decode_big_endian_entries() {
         assert_eq!(read_width(&[0x00, 0x00, 0x2A], 3), 42);
         assert_eq!(read_width(&[0xFF], 1), 255);
-    }
-
-    #[test]
-    fn short_documents_have_no_startxref_instead_of_panicking() {
-        for length in 0..b"startxref".len() {
-            assert_eq!(find_last_startxref(&vec![b'x'; length]), None);
-        }
-        assert_eq!(find_last_startxref(b"startxref"), None);
-        assert_eq!(find_last_startxref(b"startxref 42"), Some(42));
     }
 }

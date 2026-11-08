@@ -592,16 +592,7 @@ fn project_conversation_context_messages(messages: &mut Vec<Value>) {
         if !visible_role {
             return false;
         }
-        // Text-only projection must not silently certify unread attachments as
-        // complete evidence. Do not expose local paths or provider credentials.
-        let attachment_count = object
-            .get("attachments")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
         object.retain(|key, _| KEYS.contains(&key.as_str()));
-        if attachment_count > 0 {
-            object.insert("unreadAttachmentCount".into(), json!(attachment_count));
-        }
         true
     });
 }

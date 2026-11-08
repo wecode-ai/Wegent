@@ -395,7 +395,7 @@ impl LocalTaskStore {
     ) -> Result<TaskAttachment, TaskRuntimeError> {
         self.get_project(project_id)?;
         if persisted_task {
-            self.get_task(project_id, item_id)?;
+            self.get_item(item_id, "task")?;
         }
         let bytes = decode_binary(&input)?;
         let id = numeric_id();
@@ -440,7 +440,6 @@ impl LocalTaskStore {
 
     pub fn list_task_attachments(
         &self,
-        project_id: &str,
         item_id: &str,
     ) -> Result<Vec<TaskAttachment>, TaskRuntimeError> {
         let connection = self.connection()?;
@@ -450,44 +449,21 @@ impl LocalTaskStore {
                     created_at
              FROM loop_items
              WHERE resource_type = 'attachment'
-               AND cloud_project_id = ?2
-               AND COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')) = ?1
+               AND (loop_item_id = ?1 OR json_extract(metadata, '$.external_item_id') = ?1)
                AND deleted_at IS NULL
              ORDER BY created_at DESC",
         )?;
-        let rows = statement.query_map([item_id, project_id], map_task_attachment)?;
+        let rows = statement.query_map([item_id], map_task_attachment)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(TaskRuntimeError::from)
     }
 
-    pub fn task_attachment_path(
-        &self,
-        project_id: &str,
-        item_id: &str,
-        attachment_id: &str,
-    ) -> Result<PathBuf, TaskRuntimeError> {
-        let connection = self.connection()?;
-        let key = connection
-            .query_row(
-                "SELECT object_key FROM loop_items
-             WHERE id = ?1 AND resource_type = 'attachment' AND cloud_project_id = ?2
-               AND COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')) = ?3
-               AND deleted_at IS NULL",
-                params![attachment_id, project_id, item_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .ok_or(TaskRuntimeError::TaskNotFound)?;
-        self.resolve_object_key(Path::new(&key))
+    pub fn task_attachment_path(&self, attachment_id: &str) -> Result<PathBuf, TaskRuntimeError> {
+        self.object_path(attachment_id, "attachment")
     }
 
-    pub fn delete_task_attachment(
-        &self,
-        project_id: &str,
-        item_id: &str,
-        attachment_id: &str,
-    ) -> Result<(), TaskRuntimeError> {
-        let path = self.task_attachment_path(project_id, item_id, attachment_id)?;
+    pub fn delete_task_attachment(&self, attachment_id: &str) -> Result<(), TaskRuntimeError> {
+        let path = self.task_attachment_path(attachment_id)?;
         let connection = self.connection()?;
         let item_id = connection
             .query_row(

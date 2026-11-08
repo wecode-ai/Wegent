@@ -19,18 +19,13 @@ pub(super) fn required<'a>(args: &'a Value, field: &str) -> Result<&'a str, AppI
 impl RuntimeWorkRpcHandler {
     pub(super) fn register_stand_in_task_dispatcher(&self) {
         let handler = self.clone();
-        stand_in_tasks::register(Arc::new(move |identity, operation| {
+        stand_in_tasks::register(Arc::new(move |identity, name, args| {
             let handler = handler.clone();
             Box::pin(async move {
-                let result = match operation {
-                    stand_in_tasks::HostOperation::Tool(name, args) => {
-                        handler.stand_in_task_operation(identity, &name, args).await
-                    }
-                    stand_in_tasks::HostOperation::InterpretImage(data_url) => {
-                        handler.interpret_review_image(&identity, &data_url).await
-                    }
-                };
-                result.map_err(|error| format!("{}: {}", error.code, error.message))
+                handler
+                    .stand_in_task_operation(identity, &name, args)
+                    .await
+                    .map_err(|error| format!("{}: {}", error.code, error.message))
             })
         }));
     }
@@ -41,26 +36,6 @@ impl RuntimeWorkRpcHandler {
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
-        if matches!(
-            name,
-            "list_memory_attachments" | "read_memory_attachment" | "remember_from_attachment"
-        ) {
-            return self
-                .memory_attachment_operation(&identity, name, &args)
-                .await;
-        }
-        if matches!(
-            name,
-            "list_memory_connections"
-                | "list_memory_connection_resources"
-                | "read_memory_connection"
-                | "remember_from_connection"
-                | "complete_memory_connection"
-        ) {
-            return self
-                .memory_connection_operation(&identity, name, &args)
-                .await;
-        }
         if matches!(
             name,
             "list_memory_sources" | "next_memory_page" | "complete_memory_source"

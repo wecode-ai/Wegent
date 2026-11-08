@@ -1,6 +1,0 @@
-{
-  "order": 35550,
-  "scenario": "./scenarios/stand-in-memory-unreadable-document.scenario.mjs",
-  "scenarioOnly": true,
-  "ci": { "core": { "order": 40550, "shard": 3, "position": 11550 } }
-}

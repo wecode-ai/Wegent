@@ -11,7 +11,7 @@
 //! encryption are not produced by these writers; a package that uses them is
 //! reported as unreadable, which the source surfaces as a `parse_failed`
 //! document error.
-use std::{cell::Cell, collections::HashMap};
+use std::collections::HashMap;
 
 use flate2::read::DeflateDecoder;
 use std::io::Read;
@@ -30,7 +30,7 @@ const METHOD_DEFLATE: u16 = 8;
 
 /// A container that could not be read.
 #[derive(Debug)]
-pub struct ZipError;
+pub(crate) struct ZipError;
 
 struct Entry {
     name: String,
@@ -40,24 +40,16 @@ struct Entry {
 }
 
 /// An in-memory ZIP archive; `read` decompresses one entry at a time.
-pub struct ZipArchive<'a> {
+pub(crate) struct ZipArchive<'a> {
     data: &'a [u8],
     /// Entries in central-directory order, the order `zipfile.namelist` keeps.
     entries: Vec<Entry>,
     index: HashMap<String, usize>,
-    remaining_bytes: Cell<Option<usize>>,
-    budget_failed: Cell<bool>,
-    control: crate::ParseControl,
 }
 
 impl<'a> ZipArchive<'a> {
     /// Index the archive from its central directory.
-    pub fn new(data: &'a [u8]) -> Result<Self, ZipError> {
-        Self::open(data, crate::ParseControl::default())
-    }
-
-    fn open(data: &'a [u8], control: crate::ParseControl) -> Result<Self, ZipError> {
-        control.check().map_err(|_| ZipError)?;
+    pub(crate) fn new(data: &'a [u8]) -> Result<Self, ZipError> {
         let eocd = find_end_of_central_directory(data).ok_or(ZipError)?;
         let entry_count = read_u16(data, eocd + 10)? as usize;
         let directory_offset = read_u32(data, eocd + 16)? as usize;
@@ -69,7 +61,6 @@ impl<'a> ZipArchive<'a> {
         let mut index = HashMap::with_capacity(entry_count);
         let mut cursor = directory_offset;
         for position in 0..entry_count {
-            control.check().map_err(|_| ZipError)?;
             if read_u32(data, cursor)? != CENTRAL_DIRECTORY_HEADER {
                 return Err(ZipError);
             }
@@ -103,47 +94,11 @@ impl<'a> ZipArchive<'a> {
             data,
             entries,
             index,
-            remaining_bytes: Cell::new(None),
-            budget_failed: Cell::new(false),
-            control,
         })
     }
 
-    /// Bound cumulative decoded bytes, including repeated reads of the same part.
-    /// The limit is enforced on actual output, never ZIP size declarations.
-    pub fn with_decoded_byte_limit(data: &'a [u8], limit: usize) -> Result<Self, ZipError> {
-        Self::controlled(data, limit, crate::ParseControl::default())
-    }
-
-    /// Open with a shared decoded-byte budget and caller-owned cancellation.
-    pub fn controlled(
-        data: &'a [u8],
-        limit: usize,
-        control: crate::ParseControl,
-    ) -> Result<Self, ZipError> {
-        let archive = Self::open(data, control)?;
-        archive.remaining_bytes.set(Some(limit));
-        Ok(archive)
-    }
-
-    pub(crate) fn control(&self) -> crate::ParseControl {
-        self.control.clone()
-    }
-
-    /// Optional parts may be absent, but a resource-limit failure is never optional.
-    pub(crate) fn check_budget(&self) -> Result<(), ZipError> {
-        if self.control.check().is_err() {
-            self.budget_failed.set(true);
-        }
-        if self.budget_failed.get() {
-            Err(ZipError)
-        } else {
-            Ok(())
-        }
-    }
-
     /// The entry names in archive order.
-    pub fn names(&self) -> Vec<&str> {
+    pub(crate) fn names(&self) -> Vec<&str> {
         self.entries
             .iter()
             .map(|entry| entry.name.as_str())
@@ -151,8 +106,7 @@ impl<'a> ZipArchive<'a> {
     }
 
     /// The decompressed payload of one entry.
-    pub fn read(&self, name: &str) -> Result<Vec<u8>, ZipError> {
-        self.check_budget()?;
+    pub(crate) fn read(&self, name: &str) -> Result<Vec<u8>, ZipError> {
         let entry = self
             .index
             .get(name)
@@ -163,38 +117,16 @@ impl<'a> ZipArchive<'a> {
             .checked_add(entry.compressed_size)
             .ok_or(ZipError)?;
         let compressed = self.data.get(data_offset..end).ok_or(ZipError)?;
-        let remaining = self.remaining_bytes.get();
-        let decoded = match entry.method {
-            METHOD_STORED => {
-                if remaining.is_some_and(|limit| compressed.len() > limit) {
-                    self.remaining_bytes.set(Some(0));
-                    self.budget_failed.set(true);
-                    return Err(ZipError);
-                }
-                compressed.to_vec()
-            }
+        match entry.method {
+            METHOD_STORED => Ok(compressed.to_vec()),
             METHOD_DEFLATE => {
                 let mut decoded = Vec::new();
-                let decoder = DeflateDecoder::new(compressed);
-                let limit = remaining.map_or(u64::MAX, |limit| (limit as u64).saturating_add(1));
-                let mut reader = ControlledReader {
-                    reader: decoder.take(limit),
-                    archive: self,
-                };
-                let result = reader.read_to_end(&mut decoded);
-                if result.is_err() || remaining.is_some_and(|limit| decoded.len() > limit) {
-                    self.remaining_bytes.set(remaining.map(|_| 0));
-                    self.budget_failed.set(remaining.is_some());
-                    return Err(ZipError);
-                }
-                decoded
+                let mut decoder = DeflateDecoder::new(compressed);
+                decoder.read_to_end(&mut decoded).map_err(|_| ZipError)?;
+                Ok(decoded)
             }
-            _ => return Err(ZipError),
-        };
-        if let Some(remaining) = remaining {
-            self.remaining_bytes.set(Some(remaining - decoded.len()));
+            _ => Err(ZipError),
         }
-        Ok(decoded)
     }
 
     /// The payload offset: the local header repeats the name and extra fields.
@@ -206,22 +138,6 @@ impl<'a> ZipArchive<'a> {
         let name_len = read_u16(self.data, cursor + 26)? as usize;
         let extra_len = read_u16(self.data, cursor + 28)? as usize;
         Ok(cursor + 30 + name_len + extra_len)
-    }
-}
-
-struct ControlledReader<'a, 'b, R> {
-    reader: R,
-    archive: &'a ZipArchive<'b>,
-}
-
-impl<R: Read> Read for ControlledReader<'_, '_, R> {
-    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
-        self.archive
-            .check_budget()
-            .map_err(|_| std::io::Error::other("Document parsing stopped"))?;
-        // Keep cooperative cancellation checks between bounded decompressor reads.
-        let end = bytes.len().min(8192);
-        self.reader.read(&mut bytes[..end])
     }
 }
 
@@ -250,19 +166,19 @@ fn read_u32(data: &[u8], offset: usize) -> Result<u32, ZipError> {
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 fn push_u16(out: &mut Vec<u8>, value: u16) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 fn push_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
 /// Build a stored-method archive from named payloads, for parser fixtures.
-#[cfg(any(test, feature = "test-support"))]
-pub fn stored_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+#[cfg(test)]
+pub(crate) fn stored_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut central = Vec::new();
     for (name, payload) in entries {
@@ -292,7 +208,7 @@ pub fn stored_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     out
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 fn write_local_header(out: &mut Vec<u8>, name: &str, stored_len: usize, method: u16) {
     push_u32(out, LOCAL_FILE_HEADER);
     push_u16(out, 20);
@@ -307,7 +223,7 @@ fn write_local_header(out: &mut Vec<u8>, name: &str, stored_len: usize, method: 
     push_u16(out, 0);
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 fn write_central_header(
     out: &mut Vec<u8>,
     name: &str,
@@ -339,24 +255,6 @@ fn write_central_header(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cancelled_archives_fail_for_stored_deflated_and_missing_parts() {
-        use std::sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        };
-        let bytes = sample_archive();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let observed = cancelled.clone();
-        let control = crate::ParseControl::new(None, move || observed.load(Ordering::SeqCst));
-        let archive = ZipArchive::controlled(&bytes, 8192, control).unwrap();
-        cancelled.store(true, Ordering::SeqCst);
-        assert!(archive.read("stored.txt").is_err());
-        assert!(archive.read("deflated.txt").is_err());
-        assert!(archive.read("missing.txt").is_err());
-        assert!(archive.check_budget().is_err());
-    }
 
     /// A minimal deflate-compressed archive holding one stored and one
     /// deflated entry, written with the record layout `zipfile` produces.
@@ -429,30 +327,5 @@ mod tests {
     #[test]
     fn a_body_without_an_end_record_is_rejected() {
         assert!(ZipArchive::new(b"not an archive").is_err());
-    }
-
-    #[test]
-    fn decoded_budget_counts_actual_output_and_repeated_reads() {
-        let mut bytes = sample_archive();
-        let eocd = find_end_of_central_directory(&bytes).unwrap();
-        let mut cursor = read_u32(&bytes, eocd + 16).unwrap() as usize;
-        for _ in 0..2 {
-            // Forged uncompressed sizes cannot bypass the decoded-byte budget.
-            bytes[cursor + 24..cursor + 28].copy_from_slice(&0u32.to_le_bytes());
-            cursor += 46 + read_u16(&bytes, cursor + 28).unwrap() as usize;
-        }
-        let zip = ZipArchive::with_decoded_byte_limit(&bytes, 21).unwrap();
-        assert_eq!(zip.read("stored.txt").unwrap(), b"hello");
-        assert_eq!(zip.read("deflated.txt").unwrap(), b"deflated payload");
-        assert!(zip.read("stored.txt").is_err());
-
-        let zip = ZipArchive::with_decoded_byte_limit(&bytes, 15).unwrap();
-        assert!(zip.read("deflated.txt").is_err());
-        assert!(zip.read("stored.txt").is_err());
-
-        let zip = ZipArchive::with_decoded_byte_limit(&bytes, 4).unwrap();
-        assert!(zip.read("stored.txt").is_err());
-        let zip = ZipArchive::new(&bytes).unwrap();
-        assert_eq!(zip.read("deflated.txt").unwrap(), b"deflated payload");
     }
 }

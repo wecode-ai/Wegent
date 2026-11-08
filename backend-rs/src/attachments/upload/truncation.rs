@@ -11,7 +11,7 @@
 //! head and tail when the middle is dropped — `MIDDLE_RATIO` is 0 — and the
 //! length arithmetic matches the source exactly, because the rendered text is
 //! what the attachment stores.
-use wegent_document_parser::office::excel::{
+use crate::attachments::upload::office::excel::{
     ExcelSheet, compact_row_line, serialize_sheet_compact, sheet_header,
 };
 
@@ -596,7 +596,7 @@ fn truncate_chars(text: &str, max_length: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wegent_document_parser::office::excel::{ExcelCell, ExcelRow, ExcelValue};
+    use crate::attachments::upload::office::excel::{ExcelCell, ExcelRow, ExcelValue};
 
     fn sheet(name: &str, rows: usize) -> ExcelSheet {
         ExcelSheet {

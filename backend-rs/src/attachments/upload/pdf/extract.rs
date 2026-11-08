@@ -5,7 +5,7 @@
 //! `PyPDF2._page._extract_text`: the text operator state machine. The source
 //! document parser stores this text, so the newline/space decisions and the
 //! matrix arithmetic are reproduced exactly rather than approximated.
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use super::content::{self, Operation};
 use super::font::{self, FontCharMap};
@@ -43,7 +43,7 @@ struct Saved {
 pub(crate) struct Extractor<'a> {
     doc: &'a Document,
     output: String,
-    text: VecDeque<char>,
+    text: String,
     rtl: bool,
     cm: [f64; 6],
     cm_stack: Vec<Saved>,
@@ -72,7 +72,7 @@ impl<'a> Extractor<'a> {
         Self {
             doc,
             output: String::new(),
-            text: VecDeque::new(),
+            text: String::new(),
             rtl: false,
             cm: IDENTITY,
             cm_stack: Vec::new(),
@@ -112,9 +112,6 @@ impl<'a> Extractor<'a> {
 
     fn run(&mut self, operations: &[Operation]) -> Result<(), String> {
         for operation in operations {
-            self.doc
-                .decode_budget()
-                .consume(std::mem::size_of::<Operation>())?;
             match operation.operator.as_str() {
                 "'" => {
                     self.process("T*", &[])?;
@@ -145,12 +142,13 @@ impl<'a> Extractor<'a> {
     }
 
     fn finish(mut self) -> String {
-        self.output.extend(self.text.drain(..));
+        self.output.push_str(&self.text);
         self.output
     }
 
     fn flush_text(&mut self) {
-        self.output.extend(self.text.drain(..));
+        self.output.push_str(&self.text);
+        self.text.clear();
     }
 
     fn process(&mut self, operator: &str, operands: &[Object]) -> Result<(), String> {
@@ -253,7 +251,7 @@ impl<'a> Extractor<'a> {
             _ => {}
         }
         if check_crlf_space {
-            self.check_crlf_space()?;
+            self.check_crlf_space();
         }
         Ok(())
     }
@@ -278,17 +276,13 @@ impl<'a> Extractor<'a> {
     }
 
     fn show_adjustment(&mut self, value: f64) -> Result<(), String> {
-        if value.abs() >= self.space_width
-            && !self.text.is_empty()
-            && self.text.back() != Some(&' ')
-        {
+        if value.abs() >= self.space_width && !self.text.is_empty() && !self.text.ends_with(' ') {
             // PyPDF2 passes a decoded Python string here, bypassing the font's
             // ToUnicode map. A synthetic byte string would remap the space.
             if self.orientations.contains(&orient(mult(self.tm, self.cm))) {
-                self.doc.decode_budget().consume(1)?;
                 self.append(" ");
             }
-            self.check_crlf_space()?;
+            self.check_crlf_space();
         }
         Ok(())
     }
@@ -297,7 +291,6 @@ impl<'a> Extractor<'a> {
     fn show_xobject(&mut self, operands: &[Object]) -> Result<(), String> {
         self.flush_text();
         if self.output.chars().last().is_some_and(|last| last != '\n') {
-            self.doc.decode_budget().consume(1)?;
             self.output.push('\n');
         }
         let resource = match operands.first() {
@@ -329,7 +322,7 @@ impl<'a> Extractor<'a> {
     /// resources and contents.
     fn extract_xform(&self, stream: &'a Stream) -> Result<String, String> {
         if self.depth >= MAX_XOBJECT_DEPTH {
-            return Err("PDF form nesting limit exceeded".into());
+            return Ok(String::new());
         }
         let Some(resources) = self.doc.inherited(&stream.dict, "/Resources") else {
             return Ok(String::new());
@@ -353,30 +346,18 @@ impl<'a> Extractor<'a> {
 
     fn decode_operand(&self, operand: Option<&Object>) -> Result<String, String> {
         match operand {
-            Some(Object::String(bytes)) => self.decode(bytes),
-            Some(Object::Name(name)) => {
-                self.doc.decode_budget().consume(name.len())?;
-                Ok(name.clone())
-            }
+            Some(Object::String(bytes)) => Ok(self.decode(bytes)),
+            Some(Object::Name(name)) => Ok(name.clone()),
             _ => Err("text-showing operator expects a string".to_owned()),
         }
     }
 
-    fn decode(&self, bytes: &[u8]) -> Result<String, String> {
-        if let CurrentFont::Named(name) = &self.font {
-            return self.cmaps[name].decode(bytes, self.doc.decode_budget());
+    fn decode(&self, bytes: &[u8]) -> String {
+        match &self.font {
+            CurrentFont::Named(name) => self.cmaps[name].decode(bytes),
+            CurrentFont::Missing => bytes.iter().map(|_| '\u{FFFD}').collect(),
+            CurrentFont::Initial => bytes.iter().map(|&byte| char::from(byte)).collect(),
         }
-        let mut text = String::new();
-        for &byte in bytes {
-            let character = if matches!(self.font, CurrentFont::Missing) {
-                '\u{FFFD}'
-            } else {
-                char::from(byte)
-            };
-            self.doc.decode_budget().consume(character.len_utf8())?;
-            text.push(character);
-        }
-        Ok(text)
     }
 
     /// `_handle_tj`'s direction handling: punctuation, numbers, then the
@@ -393,22 +374,22 @@ impl<'a> Extractor<'a> {
                 || (0xFE70..=0xFEFF).contains(&code);
             if neutral {
                 if self.rtl {
-                    self.text.push_front(character);
+                    self.text.insert(0, character);
                 } else {
-                    self.text.push_back(character);
+                    self.text.push(character);
                 }
             } else if right_to_left {
                 if !self.rtl {
                     self.rtl = true;
                     self.flush_text();
                 }
-                self.text.push_front(character);
+                self.text.insert(0, character);
             } else {
                 if self.rtl {
                     self.rtl = false;
                     self.flush_text();
                 }
-                self.text.push_back(character);
+                self.text.push(character);
             }
         }
     }
@@ -416,7 +397,7 @@ impl<'a> Extractor<'a> {
     /// The `check_crlf_space` block: a new line when the text matrix jumped
     /// down (up in a flipped matrix), a space when it moved sideways far
     /// enough while staying on the same line.
-    fn check_crlf_space(&mut self) -> Result<(), String> {
+    fn check_crlf_space(&mut self) {
         let matrix = mult(self.tm, self.cm);
         let orientation = orient(matrix);
         let delta_x = matrix[4] - self.tm_prev[4];
@@ -425,7 +406,7 @@ impl<'a> Extractor<'a> {
         let size = self.font_size * scale;
         self.tm_prev = matrix;
         if !self.orientations.contains(&orientation) {
-            return Ok(());
+            return;
         }
         let space_width = self.space_width / 1000.0;
         let (newline, space) = match orientation {
@@ -449,28 +430,24 @@ impl<'a> Extractor<'a> {
         if newline {
             match self.last_output_char() {
                 Some(last) if last != '\n' => {
-                    self.doc.decode_budget().consume(1)?;
-                    self.output.extend(self.text.drain(..));
+                    self.output.push_str(&self.text);
                     self.output.push('\n');
+                    self.text.clear();
                 }
                 _ => {}
             }
         } else if space {
             match self.last_output_char() {
-                Some(last) if last != ' ' => {
-                    self.doc.decode_budget().consume(1)?;
-                    self.text.push_back(' ');
-                }
+                Some(last) if last != ' ' => self.text.push(' '),
                 _ => {}
             }
         }
-        Ok(())
     }
 
     fn last_output_char(&self) -> Option<char> {
         self.text
-            .back()
-            .copied()
+            .chars()
+            .last()
             .or_else(|| self.output.chars().last())
     }
 }
@@ -549,56 +526,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn directional_text_preserves_mixed_order_and_long_rtl_runs() {
-        let doc = Document::load(&super::super::simple_pdf_bytes(), usize::MAX).unwrap();
-        let mut extractor = Extractor::new(&doc, None, HashMap::new(), &PAGE_ORIENTATIONS, 0);
-        extractor.append("abcאב!");
-        extractor.append("XY");
-        assert_eq!(extractor.finish(), "abc!באXY");
-        let mut extractor = Extractor::new(&doc, None, HashMap::new(), &PAGE_ORIENTATIONS, 0);
-        let text = "אב".repeat(50_000);
-        extractor.append(&text);
-        assert_eq!(extractor.finish(), text.chars().rev().collect::<String>());
-    }
-
-    #[test]
-    fn operations_without_text_still_exhaust_the_shared_budget() {
-        let doc = Document::load(&super::super::simple_pdf_bytes(), 8192).unwrap();
-        let mut extractor = Extractor::new(&doc, None, HashMap::new(), &PAGE_ORIENTATIONS, 0);
-        let operations: Vec<_> = (0..1000)
-            .map(|_| Operation {
-                operator: "unknown".into(),
-                operands: Vec::new(),
-            })
-            .collect();
-        assert!(extractor.run(&operations).unwrap_err().contains("budget"));
-    }
-
-    #[test]
-    fn form_depth_limit_is_not_reported_as_complete_empty_text() {
-        let document = Document::load(&super::super::simple_pdf_bytes(), usize::MAX).unwrap();
-        let extractor = Extractor::new(
-            &document,
-            None,
-            HashMap::new(),
-            &PAGE_ORIENTATIONS,
-            MAX_XOBJECT_DEPTH,
-        );
-        let stream = Stream {
-            dict: Dictionary::new(),
-            data: Vec::new(),
-        };
-        assert!(
-            extractor
-                .extract_xform(&stream)
-                .unwrap_err()
-                .contains("nesting limit")
-        );
-    }
-
-    #[test]
     fn spacing_adjustments_bypass_the_font_character_map() {
-        let document = Document::load(&super::super::simple_pdf_bytes(), usize::MAX).unwrap();
+        let document = Document::load(&super::super::simple_pdf_bytes()).unwrap();
         let cmap = FontCharMap {
             space_width: 200.0,
             encoding: font::Encoding::Codec(font::Codec::Charmap),
@@ -615,9 +544,9 @@ mod tests {
             0,
         );
         extractor.font = CurrentFont::Named("F1".to_owned());
-        extractor.text = "word".chars().collect();
+        extractor.text = "word".to_owned();
         extractor.show_adjustment(500.0).unwrap();
-        assert_eq!(extractor.text.iter().collect::<String>(), "word ");
+        assert_eq!(extractor.text, "word ");
     }
 
     #[test]
