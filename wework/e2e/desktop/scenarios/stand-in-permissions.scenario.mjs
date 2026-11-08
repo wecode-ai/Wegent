@@ -1,4 +1,4 @@
-import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { editProjectSource, openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -171,10 +171,12 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         const saved = await rpc(control, 'runtime.stand_in.get', settingsParams())
         assert.equal(saved.enabled, true)
         assert.ok(saved.prompt.includes(role))
-        await rpc(control, 'runtime.stand_in.save', {
-          ...settingsParams(),
-          settings: { ...saved, enabled: false },
+        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+          requirements: false,
         })
+        await editProjectSource(control, false)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       }
 
       const executionProbe = await request(
