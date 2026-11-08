@@ -158,6 +158,15 @@ fn main() {
         return;
     }
     raise_open_files_soft_limit();
+    if wegent_executor::plugin_python::is_plugin_python_command() {
+        match runtime().block_on(wegent_executor::plugin_python::run()) {
+            Ok(code) => std::process::exit(code),
+            Err(error) => {
+                eprintln!("plugin Python execution failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     if wegent_executor::artifact_cli::is_artifact_command() {
         if let Err(error) = runtime().block_on(wegent_executor::artifact_cli::run()) {
             eprintln!("artifact command failed: {error}");

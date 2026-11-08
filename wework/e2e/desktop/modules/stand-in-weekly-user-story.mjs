@@ -219,7 +219,10 @@ export function createWeeklyUserStory(options) {
         )
         await options.captureScreenshot(control, 'weekly-story-result-in-primary.png')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-        await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-connections-open"]'
+        )
         await openConnectionTypePicker(control)
         await control.command('click', '[data-testid="stand-in-time-connections"]')
         await control.command('click', `[data-testid="automation-open-${schedule.id}"]`)

@@ -92,6 +92,73 @@ describe('localConnectorAuthHealth cache', () => {
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
   })
 
+  test('only explicit plugin use requests runtime preparation and bypasses passive cached health', async () => {
+    const target = { pluginKey: 'wiki', connectorSlug: 'wiki' }
+    await localConnectorAuthHealth(target)
+    expect(mocks.requestLocalExecutor.mock.calls[0][1]).not.toHaveProperty('prepareRuntime')
+    await localConnectorAuthHealth(target, { prepareRuntime: true })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
+    expect(mocks.requestLocalExecutor.mock.calls[1][1]).toMatchObject({ prepareRuntime: true })
+  })
+
+  test.each([false, true])(
+    'preserves the instance binding with runtime preparation=%s',
+    async prepareRuntime => {
+      const target = {
+        pluginKey: 'gitlab',
+        connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
+        instance: 'https://gitlab.example.test',
+      }
+      await localConnectorAuthHealth(target, { bypassCache: true, prepareRuntime })
+      expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.local_connector_auth.health',
+        {
+          pluginKey: target.pluginKey,
+          connectorSlug: target.connectorSlug,
+          instance: target.instance,
+          pluginRoot: undefined,
+          sessionId: undefined,
+          ...(prepareRuntime ? { prepareRuntime: true } : {}),
+        }
+      )
+    }
+  )
+
+  test.each([
+    ['Python', ['scripts/auth.py', 'login']],
+    ['shell', ['scripts/local-auth.sh', 'login']],
+    ['PowerShell', ['scripts/local-auth.ps1', 'login']],
+    ['native', ['bin/local-auth', 'login']],
+  ])('delegates %s runtime readiness to the executor', async (_name, start) => {
+    const target = {
+      pluginKey: 'native-connector',
+      connectorSlug: 'native-connector',
+      localAuth: {
+        kind: 'browser_oauth' as const,
+        health: [start[0], 'health'],
+        start,
+        poll: [],
+      },
+    }
+
+    await localConnectorAuthStart(target)
+
+    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.local_connector_auth.start', {
+      pluginKey: target.pluginKey,
+      connectorSlug: target.connectorSlug,
+      pluginRoot: undefined,
+      sessionId: undefined,
+    })
+  })
+
+  test('propagates runtime preparation failure from the executor', async () => {
+    mocks.requestLocalExecutor.mockRejectedValueOnce(new Error('python_runtime_unavailable'))
+    await expect(
+      localConnectorAuthStart({ pluginKey: 'wiki', connectorSlug: 'wiki' })
+    ).rejects.toThrow('python_runtime_unavailable')
+  })
+
   test('gh login is owned by the CLI, so every health check reads the actual executor state', async () => {
     await expect(localConnectorAuthHealth(GITHUB_CLI_TARGET)).resolves.toEqual({ status: 'ok' })
     mocks.requestLocalExecutor.mockResolvedValueOnce({ status: 'need_login' })

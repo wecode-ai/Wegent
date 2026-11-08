@@ -417,6 +417,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.runner.local_models.replace" => {
                 boxed_rpc(move || async move { self.replace_local_runner_models(payload) })
             }
+            "runtime.python.has_demand" => boxed_rpc(move || async move {
+                crate::python_runtime::prewarm::has_demand()
+                    .await
+                    .map(|demanded| json!({"demanded": demanded}))
+                    .map_err(|message| AppIpcError::new("python_demand_unavailable", message))
+            }),
             "runtime.codex.models.list" => {
                 boxed_rpc(move || async move { self.list_codex_models(payload).await })
             }

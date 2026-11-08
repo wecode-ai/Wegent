@@ -10,7 +10,6 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   reloadMainWindow,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -20,6 +19,10 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
+import {
+  selectCollaborationProjectView,
+  collaborationProjectViewSelector,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身交互-${process.pid}`
@@ -291,7 +294,11 @@ export async function createDesktopScenario({
       await reloadMainWindow(control, 'Stand-in settings did not survive renderer reload')
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-project-${project.id}"]`)
       // Execution must not depend on the board being mounted or on composer navigation.
-      await selectCollaborationProjectView(control, CONTENT, 'table', uiTimeoutMs)
+      await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'table'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await selectCollaborationProjectView(control, CONTENT, 'table')
       const issue = await requestExecutor(
         control,
         'todos.create',

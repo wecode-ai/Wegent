@@ -5,8 +5,11 @@ import {
   expandCollaborationWorkspace,
   inCollaborationSidebar,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
+import {
+  selectCollaborationProjectView,
+  collaborationProjectViewSelector,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = '项目角色覆盖验收'
@@ -435,16 +438,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await openMembers(control)
         await control.command('select', memberControl('role'), { value: 'Viewer' })
         await waitForRole('Viewer', 'Viewer')
-        await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'), {
+        await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'manage'), {
           visible: false,
         })
         await control.command('waitFor', scoped('[data-testid="cloud-project-members-panel"]'), {
           visible: false,
         })
-        await control.command(
-          'waitFor',
-          `${scoped('[data-testid="collaboration-tab-board"][aria-current="page"]')}, ${scoped('[data-testid="collaboration-project-view-select"]:has(option[value="board"]:checked)')}`
-        )
+        await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board', true))
         assert.equal(
           Number(
             await control.command(
