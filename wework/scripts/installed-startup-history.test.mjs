@@ -33,9 +33,13 @@ for (const version of ['target', 'wrong-source']) {
         installedVersion: async () => version,
         timeoutMs: 10_000,
         control: {
-          async command(name) {
+          async command(name, _selector, options) {
             commands.push(name)
-            if (name === 'quitApp') host.send('quit')
+            if (name === 'quitApp') {
+              assert.equal(options.exitProcessId, host.pid)
+              host.send('quit')
+              await exited
+            }
           },
         },
         async restartDesktopApp({ afterStop }) {
