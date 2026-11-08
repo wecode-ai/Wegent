@@ -6,6 +6,17 @@ export async function verifyStandInScheduleActivity(control, rpc, schedule, capt
   const id = `${schedule.id}-hourly-profile`
   const row = `[data-testid="stand-in-details-schedule-${id}"]`
   const dialog = '[data-testid="stand-in-schedule-dialog"]'
+  const waitForTriggerFocus = async () => {
+    try {
+      await control.command('waitFor', `${row}:focus`)
+    } catch (error) {
+      console.error('[stand-in-schedule-focus]', {
+        activeElement: await control.command('getActiveElementTestId', 'body'),
+        window: await control.command('getWindowFocusSnapshot', 'body'),
+      })
+      throw error
+    }
+  }
   await rpc('runtime.automations.create', {
     automation: {
       ...schedule,
@@ -55,14 +66,14 @@ export async function verifyStandInScheduleActivity(control, rpc, schedule, capt
     await control.command('click', '[data-testid="stand-in-schedule-dialog-close"]')
     await control.command('click', '[data-testid="automation-discard"]')
     await control.command('waitFor', dialog, { visible: false })
-    await control.command('waitFor', `${row}:focus`)
+    await waitForTriggerFocus()
     await control.command('click', row)
     await control.command('fill', '[data-testid="automation-name-input"]', {
       value: '仅改名，不改频率',
     })
     await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]')
     await control.command('waitFor', dialog, { visible: false })
-    await control.command('waitFor', `${row}:focus`)
+    await waitForTriggerFocus()
     const saved = (await rpc('runtime.automations.list', {})).items.find(item => item.id === id)
     assert.equal(saved.name, '仅改名，不改频率')
     assert.equal(saved.enabled, false)
