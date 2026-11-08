@@ -27,6 +27,7 @@ import {
   verifyInteractionArchiving,
 } from '../modules/human-interaction-dismiss.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import { writeIssueInteractionIdentities } from '../modules/human-interaction-identity-diagnostics.mjs'
 import { verifyInteractionTime } from '../modules/human-interaction-time.mjs'
 import {
   handleArchivedTaskInteractionModel,
@@ -38,7 +39,9 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import { waitForElementInsideScroller, waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
+  assignHumanInteractionIssueToResponsible,
   startHumanInteractionIssue,
+  verifyHumanInteractionIssueAccepted,
   verifyHumanInteractionIssueReply,
 } from '../modules/human-interaction-issue.mjs'
 
@@ -348,6 +351,9 @@ export function createDesktopScenario({
         visible: true,
       })
       await control.command('hover', '[data-testid="runtime-interaction-notice"]')
+      if (issueFixture) {
+        await assignHumanInteractionIssueToResponsible(issueFixture, control, QUESTION, uiTimeoutMs)
+      }
       await control.command('click', '[data-testid="interaction-notice-reply"]')
       try {
         await control.command(
@@ -386,7 +392,16 @@ export function createDesktopScenario({
         `${page} [data-testid="interaction-source-group-${issueFixture ? 'project' : 'task'}"]`,
         { text: QUESTION }
       )
-      await verifyPendingInteractionsTab(control, 1, { openFromMenu: true })
+      if (issueFixture) {
+        await control.command(
+          'waitFor',
+          '[data-testid="workspace-tab-select-pending-interactions"][data-project-count-state="known"]'
+        )
+      }
+      await verifyPendingInteractionsTab(control, 1, {
+        openFromMenu: true,
+        expectedProjectCount: 0,
+      })
       const questionTime = await verifyInteractionTime(control, page)
       await control.command('waitFor', page, { text: CONTEXT })
       if (issueFixture) {
@@ -635,7 +650,7 @@ export function createDesktopScenario({
       }
       await reloadMainWindow(control, 'The pending inbox did not reconnect after reload')
       await control.command('waitFor', page, { text: QUESTION, timeoutMs: modelResponseTimeoutMs })
-      await verifyPendingInteractionsTab(control, 1)
+      await verifyPendingInteractionsTab(control, 1, { expectedProjectCount: 0 })
       await verifyInteractionTime(control, page, { expected: questionTime })
       await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
       assert.equal(await control.command('getValue', input), ANSWER)
@@ -700,17 +715,67 @@ export function createDesktopScenario({
       } else {
         await control.command('click', submit)
       }
+      if (issueFixture) {
+        const canonical = await verifyHumanInteractionIssueAccepted(
+          issueFixture,
+          callId,
+          ANSWER,
+          modelResponseTimeoutMs
+        )
+        await writeIssueInteractionIdentities({
+          control,
+          canonical,
+          page,
+          resultDir,
+          timeoutMs: uiTimeoutMs,
+        })
+      }
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-select-pending-interactions"][data-pending-question-count="0"]',
+        { timeoutMs: modelResponseTimeoutMs }
+      )
+      await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: issueFixture ? 1 : 0 })
       await control.command('waitFor', `${page} [data-testid="interactions-pending-count"]`, {
-        text: '0',
+        text: issueFixture ? '1' : '0',
         timeoutMs: modelResponseTimeoutMs,
       })
-      await control.command('waitFor', `${page} [data-testid="interactions-empty"]`, {
-        visible: true,
-        timeoutMs: modelResponseTimeoutMs,
-      })
+      assert.equal(
+        await control.command('getText', `${page} [data-testid="interactions-pending-count"]`),
+        issueFixture ? '1' : '0'
+      )
+      if (issueFixture) {
+        const ordinary = `${page} [data-testid="interaction-list-item"][data-project-issue="true"]`
+        await control.command('waitFor', ordinary, { visible: true })
+        assert.equal(Number(await control.command('getElementCount', ordinary)), 1)
+        await control.command(
+          'waitFor',
+          '[data-testid="workspace-tab-select-pending-interactions"][data-project-count-state="known"][data-project-pending-count="1"]'
+        )
+        assert.equal(
+          await control.command('getAttribute', ordinary, { value: 'data-interaction-id' }),
+          `project-issue:backend:${issueFixture.projectId}:${issueFixture.issueId}`
+        )
+        assert.equal(
+          await control.command(
+            'getAttribute',
+            '[data-testid="workspace-tab-select-pending-interactions"]',
+            { value: 'data-project-pending-count' }
+          ),
+          '1'
+        )
+      } else {
+        await control.command('waitFor', `${page} [data-testid="interactions-empty"]`, {
+          visible: true,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+      }
       await captureScreenshot(control, '07-accepted-response-clears-pending.png')
-      await verifyPendingInteractionsTab(control, 0)
+      await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: issueFixture ? 1 : 0 })
       await control.command('click', `${page} [data-testid="interactions-history"]`)
+      await control.command('waitFor', `${page} [data-testid="interactions-history-count"]`, {
+        visible: true,
+      })
       await control.command('waitFor', page, { text: QUESTION })
       const handledTime = await verifyInteractionTime(control, page)
       assert.ok(Date.parse(handledTime) >= Date.parse(questionTime))

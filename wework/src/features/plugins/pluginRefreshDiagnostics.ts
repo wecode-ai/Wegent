@@ -3,6 +3,7 @@ import { isPerformanceDiagnosticsEnabled } from '@/lib/performanceDiagnostics'
 export type PluginSyncOwner =
   | 'unspecified'
   | 'policy'
+  | 'install'
   | 'auto-update'
   | 'status-report'
   | 'auto-sync'

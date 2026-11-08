@@ -206,7 +206,7 @@ export function AutomationEmptyState({
             data-testid="stand-in-weekly-review-template"
             onClick={onReviewTemplate}
           >
-            {t('standIn.onboarding.review')}
+            {t('standIn.onboarding.review_add')}
           </Button>
         ) : null}
         {error ? <AutomationError error={error} onClear={onClearError} /> : null}

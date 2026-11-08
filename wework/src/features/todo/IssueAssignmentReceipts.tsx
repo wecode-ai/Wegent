@@ -3,6 +3,7 @@ import { StandInIcon } from '@wegent/collaboration'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useEffect, useRef, useState } from 'react'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
+import { sameIssueAssignment } from './issueAssignmentReceiptScope'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -14,6 +15,7 @@ type ReceiptApi = Pick<
 export interface IssueAssignmentReceiptState {
   issueId: string
   version: number
+  assignmentRevision?: string
   assigneeUserId?: number | null
   rows: IssueAssignmentReceipt[]
   error: boolean
@@ -26,6 +28,7 @@ function sameReceiptState(
   return (
     previous?.issueId === next.issueId &&
     previous.version === next.version &&
+    previous.assignmentRevision === next.assignmentRevision &&
     previous.assigneeUserId === next.assigneeUserId &&
     previous.error === next.error &&
     previous.rows.length === next.rows.length &&
@@ -48,6 +51,7 @@ export function IssueAssignmentReceipts({
   api,
   issueId,
   version,
+  assignmentRevision,
   currentUserId,
   assigneeUserId,
   onStateChange,
@@ -55,15 +59,22 @@ export function IssueAssignmentReceipts({
   api: ReceiptApi
   issueId: string
   version: number
+  assignmentRevision?: string
   currentUserId?: string | number
   assigneeUserId?: number | null
   onStateChange?(state: IssueAssignmentReceiptState): void
 }) {
   const containerRef = useRef<HTMLSpanElement>(null)
   const [state, setState] = useState<IssueAssignmentReceiptState | null>(null)
-  // Revalidate revisions without unmounting the current recipient's hovered icons.
-  const scopedState =
-    state?.issueId === issueId && state.assigneeUserId === assigneeUserId ? state : null
+  const scopedState = sameIssueAssignment(
+    state,
+    issueId,
+    version,
+    assigneeUserId,
+    assignmentRevision
+  )
+    ? state
+    : null
 
   useEffect(() => {
     if (scopedState) onStateChange?.(scopedState)
@@ -78,7 +89,7 @@ export function IssueAssignmentReceipts({
       !containerRef.current?.closest('[aria-hidden="true"], [hidden]')
     const refresh = async () => {
       const publish = (rows: IssueAssignmentReceipt[], error: boolean) => {
-        const next = { issueId, version, assigneeUserId, rows, error }
+        const next = { issueId, version, assignmentRevision, assigneeUserId, rows, error }
         setState(previous => (sameReceiptState(previous, next) ? previous : next))
       }
       try {
@@ -112,7 +123,7 @@ export function IssueAssignmentReceipts({
       active = false
       clearTimeout(timer)
     }
-  }, [api, issueId, currentUserId, assigneeUserId, version])
+  }, [api, issueId, currentUserId, assigneeUserId, version, assignmentRevision])
 
   return (
     <span

@@ -246,6 +246,18 @@ Calendar due runs use the existing per-automation history budget of 100 as their
 
 ## First-use feature choices and recurring reviews
 
+The host regenerates Codex's `wework.execution` application context from current
+runtime metadata. Scheduled work includes its arrangement, run ID and scheduled
+time, and states that execution has already started. Delegated work identifies
+the source task and states that the worker already exists and the host delivers
+its result. Tool `message` fields describe executable business work, not requests
+to create the worker again or ask for another trigger time. Stale execution
+context is discarded; text-only generation receives none. This context grants no
+tools, source access or action authority: native approvals and source boundaries
+remain unchanged. One-time and recurring reviews of the owner's work history can
+use the existing `weekly_review` read-only boundary; ordinary scheduled work does
+not gain history tools.
+
 `runtime.stand_in.onboarding.get/complete` reads and submits feature choices for
 the current account on the selected Executor. Reads require no model, cloud
 catalog or execution preparation. The two-step introduction reuses StandInConnectionSettings for app authorization and scope editing. Continue remains available without connections. Final confirmation saves personal settings and enables the primary identity before recording completion. Failed saves retain drafts; retrying completion does not resubmit already saved settings. Closing protects unsaved connection drafts. No arrangement is created. The question-mark examples retain their equivalent buttons without inline scheduling. Weekly reviews are scheduled through the conversation after

@@ -1021,6 +1021,9 @@ impl RuntimeWorkRpcHandler {
         self.register_cloud_collaboration_dispatcher();
         self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
+        for link in self.local_task_links(false) {
+            self.sync_issue_human_requests(&link.local_task_id);
+        }
         self.start_supervisor_scheduler();
         self
     }

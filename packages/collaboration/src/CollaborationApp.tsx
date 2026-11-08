@@ -99,6 +99,8 @@ export interface CollaborationIssueDetailRenderContext {
 }
 
 interface CollaborationAppProps {
+  /** Handling identity is independent of the project's permission identity. */
+  participationUserId?: import("./issueParticipation").IssueParticipationViewer;
   parentGroupingEnabled?: boolean;
   api: SharedWorkspaceApi;
   host: CollaborationHostAdapter;
@@ -119,6 +121,10 @@ interface CollaborationAppProps {
   onPrepareIssueArchive?(issue: CollaborationIssue): Promise<void>;
   onCreateTask?(project: CollaborationProject, issue: CollaborationIssue): void;
   renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
+  isIssueRunning?(
+    issue: CollaborationIssue,
+    bindings: WorkspaceTaskBinding[],
+  ): boolean;
   renderBoardIssueCard?(
     context: ProjectBoardIssueCardRenderContext & {
       onMarkRead(): Promise<void>;
@@ -127,6 +133,7 @@ interface CollaborationAppProps {
 }
 
 export function CollaborationApp({
+  participationUserId,
   parentGroupingEnabled = false,
   api,
   host,
@@ -142,6 +149,7 @@ export function CollaborationApp({
   onPrepareIssueArchive,
   renderBoardIssueCard,
   renderIssueDetail,
+  isIssueRunning,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
   const templateStore = useCollaborationTemplateStore();
@@ -880,6 +888,8 @@ export function CollaborationApp({
                 board: (
                   <div className="relative flex min-h-0 min-w-0 flex-1">
                     <ProjectBoardAdapter
+                      participationUserId={participationUserId}
+                      isIssueRunning={isIssueRunning}
                       parentGroupingEnabled={parentGroupingEnabled}
                       emptyState={
                         <div
