@@ -86,6 +86,8 @@ Choose manual delegation, approval before operations, or automatic handling inde
 
 Collaboration, Calendar, and DingTalk share the **Process directly** option under **Processing**. When enabled, incoming matters create a conversation for processing. Otherwise, the background stand-in decides how to handle them. New role connections enable direct processing by default. Operations retain the connection's approval policy.
 
+Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
+
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
 
 Connected collaboration projects display their names, including accessible projects whose parent workspace you have not joined. Names remain visible and existing connections can be removed when switching the stand-in execution device. New local project connections can only be added when executing on the current device.

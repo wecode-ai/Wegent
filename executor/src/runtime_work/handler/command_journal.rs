@@ -223,6 +223,58 @@ pub(super) fn project_queue(
 }
 
 impl RuntimeWorkRpcHandler {
+    /// Recover only exact native command evidence; unresolved execution is never restarted.
+    pub(super) fn recover_settled_command_session(
+        &self,
+        task: &str,
+        user: i64,
+    ) -> Result<Option<String>, AppIpcError> {
+        let journal = self
+            .command_journal
+            .lock()
+            .map_err(|_| AppIpcError::new("internal_error", "Command journal is unavailable"))?;
+        let commands = journal
+            .values()
+            .filter(|command| command.turn.local_task_id == task)
+            .collect::<Vec<_>>();
+        for command in &commands {
+            if command
+                .turn
+                .request
+                .extra
+                .get("user_id")
+                .and_then(Value::as_i64)
+                != Some(user)
+            {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "Command owner does not match the conversation",
+                ));
+            }
+            if !command.is_owner_abandoned()
+                && !matches!(
+                    command.state,
+                    CommandState::Failed | CommandState::Settled | CommandState::Cancelled
+                )
+            {
+                return Err(AppIpcError::new(
+                    "command_recovery_required",
+                    "Resolve the original command before starting a native session",
+                ));
+            }
+        }
+        Ok(commands
+            .into_iter()
+            .filter_map(|command| {
+                command
+                    .native
+                    .as_ref()
+                    .map(|native| (command.accepted_at, native.1.clone()))
+            })
+            .max_by_key(|(at, _)| *at)
+            .map(|(_, thread)| thread))
+    }
+
     pub(super) async fn existing_payload_command(
         &self,
         payload: &Value,
