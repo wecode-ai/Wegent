@@ -1,11 +1,12 @@
 import i18n from '@/i18n'
-import type { Attachment, DeviceInfo } from '@/types/api'
+import type { Attachment, DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationTurns,
+  reconcileRuntimeConversationSnapshot,
 } from './runtimeConversationCache'
 import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
@@ -59,6 +60,38 @@ function messagingFixture(
   }
   const { result } = renderHook(() => useWorkbenchRuntimeMessaging(options))
   return { address, store, cancel, send, compact, refresh, messaging: result.current }
+}
+
+function cacheAsyncQuestion(
+  address: RuntimeTaskAddress,
+  payload: { interactionStatus?: 'cancelled'; expiresAtUnixMs?: number } = {}
+) {
+  reconcileRuntimeConversationSnapshot(address, [
+    {
+      id: 'async-turn',
+      status: 'done',
+      items: [
+        {
+          id: 'async-question',
+          type: 'block',
+          block: {
+            id: 'async-question',
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'done',
+            createdAt: 1,
+            renderPayload: {
+              kind: 'request_user_input',
+              delivery: 'async',
+              itemId: 'async-question',
+              questions: [{ id: 'audience', question: 'Audience?' }],
+              ...payload,
+            },
+          },
+        },
+      ],
+    },
+  ])
 }
 
 test('compaction renders only its native turn and remains active after an early RPC response', async () => {
@@ -190,6 +223,67 @@ describe('runtime pane cancellation', () => {
 describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true }])(
   'runtime question responses with unavailable composer model %j',
   modelState => {
+    test.each([true, false])(
+      'preserves native acceptance for an async reply while composer discovery is unavailable (accepted=%s)',
+      async accepted => {
+        const { address, store, send, messaging } = messagingFixture(modelState)
+        send.mockResolvedValue({ accepted })
+        cacheAsyncQuestion(address)
+        const onError = vi.fn()
+        const destination = {
+          ...address,
+          runtimeHandle: { modelSelection: { modelName: 'task-model' } },
+        }
+        try {
+          await expect(
+            messaging.sendRuntimePaneMessage(
+              { address: destination, message: 'owner' },
+              { onError }
+            )
+          ).resolves.toBe(accepted)
+          expect(send).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({
+              address: destination,
+              message: 'owner',
+              modelId: 'task-model',
+              modelSelection: { modelName: 'task-model', modelType: null, options: {} },
+            })
+          )
+          if (accepted) expect(onError).not.toHaveBeenCalled()
+          else expect(onError).toHaveBeenCalledWith('发送失败')
+        } finally {
+          store.remove(address)
+          clearRuntimeConversationCacheForTests()
+        }
+      }
+    )
+
+    test.each(['expired', 'cancelled', 'another-task'] as const)(
+      'does not treat a question from %s as a current async reply',
+      async scope => {
+        const { address, store, send, messaging } = messagingFixture(modelState)
+        cacheAsyncQuestion(
+          scope === 'another-task' ? { ...address, taskId: 'other-task' } : address,
+          scope === 'expired'
+            ? { expiresAtUnixMs: 1 }
+            : scope === 'cancelled'
+              ? { interactionStatus: 'cancelled' }
+              : {}
+        )
+        const onError = vi.fn()
+        try {
+          expect(
+            await messaging.sendRuntimePaneMessage({ address, message: 'Continue' }, { onError })
+          ).toBe(false)
+          expect(send).not.toHaveBeenCalled()
+          expect(onError).toHaveBeenCalledWith(i18n.t('workbench.harness_model_required'))
+        } finally {
+          store.remove(address)
+          clearRuntimeConversationCacheForTests()
+        }
+      }
+    )
+
     test.each(['requestUserInputResponse', 'request_user_input_response'] as const)(
       'delivers %s to the existing runtime request without resolving a model',
       async field => {
