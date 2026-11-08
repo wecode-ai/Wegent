@@ -118,6 +118,22 @@ describe('Issue reception receipts', () => {
     expect(api.acknowledgeIssueAssignment).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    { issueId: 'other-issue', assigneeUserId: 7 },
+    { issueId: 'issue', assigneeUserId: 8 },
+  ])('clears receipts when their scope changes: %o', async scope => {
+    const { api, rerender } = setup(8, [
+      { ...receipt, stand_in_received_at: '2026-11-07T19:09:38Z' },
+    ])
+    await act(async () => {})
+    expect(screen.getByTitle(/分身已接收/)).toBeInTheDocument()
+    api.getIssueAssignmentReceipts.mockReturnValueOnce(new Promise(() => {}))
+    rerender(
+      <IssueAssignmentReceipts api={api as never} {...scope} version={2} currentUserId={8} />
+    )
+    expect(screen.queryByTitle(/分身已接收/)).not.toBeInTheDocument()
+  })
+
   it('does not acknowledge a detail kept mounted in an inactive workspace tab', async () => {
     vi.useFakeTimers()
     const api = {

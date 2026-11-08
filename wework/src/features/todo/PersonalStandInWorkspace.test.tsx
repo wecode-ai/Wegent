@@ -164,30 +164,33 @@ it('discovers account and local profiles concurrently before selecting the initi
   expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
 })
 
-it('shares the first binding transaction when device discovery refreshes before bind completes', async () => {
-  const f = fixture({ version: 0, status: 'unbound', target: null })
-  const original = f.binding.getMockImplementation()!
-  let finish!: () => void
-  f.binding.mockImplementation((...args) => {
-    if (args[1] !== 'bind') return original(...args)
-    return new Promise((resolve, reject) => {
-      finish = () => {
-        void original(...args).then(resolve, reject)
-      }
+it.each(['/stand-in', '/stand-in?deviceId=mac'])(
+  'shares the first binding transaction when device discovery refreshes before bind completes: %s',
+  async contentRoute => {
+    const f = fixture({ version: 0, status: 'unbound', target: null })
+    const original = f.binding.getMockImplementation()!
+    let finish!: () => void
+    f.binding.mockImplementation((...args) => {
+      if (args[1] !== 'bind') return original(...args)
+      return new Promise((resolve, reject) => {
+        finish = () => {
+          void original(...args).then(resolve, reject)
+        }
+      })
     })
-  })
-  const view = render(f.workspace())
-  await waitFor(() =>
+    const view = render(f.workspace({ contentRoute }))
+    await waitFor(() =>
+      expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
+    )
+    view.rerender(f.workspace({ contentRoute, devices: [...f.props.devices] }))
+    await waitFor(() => expect(f.binding.mock.calls.filter(call => !call[1])).toHaveLength(2))
+    await act(async () => finish())
+    expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
     expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
-  )
-  view.rerender(f.workspace({ devices: [...f.props.devices] }))
-  await waitFor(() => expect(f.binding.mock.calls.filter(call => !call[1])).toHaveLength(2))
-  await act(async () => finish())
-  expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
-  expect(f.binding.mock.calls.filter(call => call[1] === 'bind')).toHaveLength(1)
-  expect(f.lifecycle).toHaveBeenCalledOnce()
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-})
+    expect(f.lifecycle).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  }
+)
 
 async function confirmStop() {
   await userEvent.click(await screen.findByTestId('stand-in-instance-stop'))
