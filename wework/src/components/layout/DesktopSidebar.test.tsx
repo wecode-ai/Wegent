@@ -333,14 +333,14 @@ describe('DesktopSidebar', () => {
       ].map(name => [name, root.getAttribute(name)] as const)
       try {
         for (const [accentColor, expectedAccent] of [
-          [defaultAppearance.accentColor, '1 105 204'],
+          [defaultAppearance.accentColor, '37 99 235'],
           ['#123456', '18 52 86'],
           ['#facc15', '250 204 21'],
           ['#808080', '128 128 128'],
           ['#000000', '0 0 0'],
           ['#ffffff', '255 255 255'],
           ['#fff', '255 255 255'],
-          [defaultAppearance.accentColor, '1 105 204'],
+          [defaultAppearance.accentColor, '37 99 235'],
         ]) {
           applyAppearance(
             {
