@@ -133,6 +133,11 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
 
       const readmeSelector = await findTreeItem(control, 'README.md', uiTimeoutMs)
       await control.command('click', readmeSelector)
+      await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
+        text: 'Desktop E2E workspace',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-file-markdown-mode-button"]')
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'Desktop E2E workspace',
         timeoutMs: uiTimeoutMs,
