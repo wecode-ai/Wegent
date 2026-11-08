@@ -7,31 +7,37 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// One automatic preparation attempt per executor lifetime; foreground retries stay explicit.
+/// Wait for demand changes during login preparation; actual failures still end the attempt.
 pub(crate) fn start() -> Option<tokio::task::JoinHandle<()>> {
     if !super::managed_python_bridge_configured() {
         return None;
     }
     Some(tokio::spawn(async {
         loop {
-            let demanded = {
-                let _activation = crate::services::capability_activation::begin_execution().await;
-                tokio::task::spawn_blocking(installed_plugins_need_python)
-                    .await
-                    .unwrap_or(false)
-            };
+            let demanded = has_demand().await.unwrap_or(false);
             if demanded {
-                if let Err(error) = super::prewarm_managed_python().await {
-                    crate::logging::log_executor_event(
-                        "plugin Python prewarm failed",
-                        &[("error", error)],
-                    );
+                match super::prewarm_managed_python().await {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(error) => {
+                        crate::logging::log_executor_event(
+                            "plugin Python prewarm failed",
+                            &[("error", error)],
+                        );
+                        return;
+                    }
                 }
-                return;
             }
             crate::services::capability_activation::changed().await;
         }
     }))
+}
+
+pub(crate) async fn has_demand() -> Result<bool, String> {
+    let _activation = crate::services::capability_activation::begin_execution().await;
+    tokio::task::spawn_blocking(installed_plugins_need_python)
+        .await
+        .map_err(|_| "Plugin Python demand could not be inspected".to_owned())
 }
 
 fn installed_plugins_need_python() -> bool {
@@ -217,5 +223,43 @@ mod tests {
         )
         .unwrap();
         assert!(native_roots(home.path()).contains(&root.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn managed_inventory_rechecks_disabled_and_removed_demand() {
+        let home = tempfile::tempdir().unwrap();
+        let capabilities = home.path().join("capabilities");
+        let package = capabilities.join("store/plugins/python");
+        fs::create_dir_all(package.join(".codex-plugin")).unwrap();
+        fs::write(
+            package.join(".codex-plugin/plugin.json"),
+            r#"{"name":"python","runtimeRequirements":{"python":{}}}"#,
+        )
+        .unwrap();
+        let manifest = capabilities.join("manifest-v2.json");
+        let shared = home.path().join("shared/plugins");
+        for (plugins, expected) in [
+            (
+                serde_json::json!({"python":{"enabled":true,"store_path":"store/plugins/python"}}),
+                true,
+            ),
+            (
+                serde_json::json!({"python":{"enabled":false,"store_path":"store/plugins/python"}}),
+                false,
+            ),
+            (serde_json::json!({}), false),
+        ] {
+            fs::write(
+                &manifest,
+                serde_json::to_vec(&serde_json::json!({"plugins":plugins})).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                managed_roots(&manifest, &shared)
+                    .iter()
+                    .any(|root| package_needs_python(root)),
+                expected
+            );
+        }
     }
 }

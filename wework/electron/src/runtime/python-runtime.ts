@@ -111,6 +111,7 @@ export interface PythonRuntimeManagerOptions {
   dataDirectory: string
   environment: NodeJS.ProcessEnv
   resolveDownloads: () => Promise<PythonRuntimeDownloads>
+  hasPluginDemand?: () => Promise<boolean>
   platform?: NodeJS.Platform
   arch?: string
   fetch?: typeof fetch
@@ -127,6 +128,7 @@ export class PythonRuntimeManager {
   private readonly runtimeEnvironment: NodeJS.ProcessEnv
   private readonly runtimeBin: string
   private readonly resolveDownloads: () => Promise<PythonRuntimeDownloads>
+  private readonly hasPluginDemand: () => Promise<boolean>
   private readonly platform: NodeJS.Platform
   private readonly arch: string
   private readonly fetch: typeof fetch
@@ -142,12 +144,14 @@ export class PythonRuntimeManager {
   private temporaryPythonVersion: string | undefined
   private automaticPreparationAttempted = false
   private waitingForLogin = false
+  private manualPreparationRequested = false
   private readonly onStatusChange?: (status: PythonRuntimeStatus) => void
 
   constructor(options: PythonRuntimeManagerOptions) {
     this.root = join(options.dataDirectory, 'managed-runtimes', 'python')
     this.runtimeBin = join(this.root, 'bin')
     this.resolveDownloads = options.resolveDownloads
+    this.hasPluginDemand = options.hasPluginDemand ?? (async () => false)
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? globalThis.fetch
@@ -248,11 +252,13 @@ export class PythonRuntimeManager {
     return { ...this.currentStatus }
   }
 
-  ensure(): Promise<PythonRuntimeStatus> {
+  ensure({ manual = false } = {}): Promise<PythonRuntimeStatus> {
+    if (manual) this.manualPreparationRequested = true
     this.automaticPreparationAttempted = true
     if (this.activeEnsure) return this.activeEnsure
     this.activeEnsure = this.performEnsure().finally(() => {
       this.activeEnsure = null
+      if (!this.waitingForLogin) this.manualPreparationRequested = false
     })
     return this.activeEnsure
   }
@@ -267,9 +273,14 @@ export class PythonRuntimeManager {
 
   resumeAfterLogin(): Promise<PythonRuntimeStatus> {
     // A login event may precede the pending request's login-required result.
-    return (this.activeEnsure?.catch(() => undefined) ?? Promise.resolve()).then(() => {
+    return (this.activeEnsure?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
       if (!this.waitingForLogin) return this.status()
-      this.automaticPreparationAttempted = false
+      const demanded = this.manualPreparationRequested || (await this.hasPluginDemand())
+      // Another login can have resumed preparation while the demand query was pending.
+      if (!this.waitingForLogin || this.activeEnsure) return this.activeEnsure ?? this.status()
+      if (!demanded && !this.manualPreparationRequested) {
+        return this.status()
+      }
       return this.prewarm()
     })
   }
@@ -345,6 +356,7 @@ export class PythonRuntimeManager {
       if (error instanceof PythonRuntimeLoginRequiredError) {
         this.waitingForLogin = true
         this.automaticPreparationAttempted = false
+        this.log({ event: 'python-runtime-waiting-for-login', version: PYTHON_VERSION })
         const usable = installed ? await this.inspectInstalledPython() : null
         this.setStatus(usable ?? this.statusValue('notInstalled'))
         if (usable) return { ...usable }

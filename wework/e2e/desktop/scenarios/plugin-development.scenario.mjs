@@ -9,10 +9,14 @@ import { promisify } from 'node:util'
 import {
   assertManagedPythonReady,
   assertPathMissing,
-  requestManagedPythonInstall,
+  waitForPythonRuntimeEvent,
   inspectManagedPython,
   managedPythonPath,
 } from '../modules/managed-python.mjs'
+
+import { createPluginPythonChat } from '../modules/plugin-python-chat.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { disconnectDesktopCloud, signInDesktopCloud } from '../modules/desktop-cloud-login.mjs'
 
 const STATUS = '[data-testid="wework-plugin-development-sidebar-status"]'
 const execFileAsync = promisify(execFile)
@@ -111,8 +115,11 @@ export async function createDesktopScenario({
   assert.ok(websiteAddress && typeof websiteAddress !== 'string')
   const websiteUrl = `http://127.0.0.1:${websiteAddress.port}/`
 
+  let cloudEnvironment
   const appEnvironment = {
     WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
+    WEWORK_E2E_CLOUD_TOKEN: '',
+    VITE_WEWORK_E2E_CLOUD_TOKEN: '',
     WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
     WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
     WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: controlRegistry,
@@ -120,7 +127,9 @@ export async function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
-    requiresNativeCloudAuthorization: true,
+    setCloudEnvironment(cloud) {
+      cloudEnvironment = cloud
+    },
     requiresRemoteExecutor: false,
     requiresPackagedHarnessRuntime: true,
     async prepareCloud({ backendUrl }) {
@@ -128,6 +137,12 @@ export async function createDesktopScenario({
     },
     async prepareApp() {
       await upgradeFixture.prepare()
+      await createPluginPythonChat({
+        resultDir,
+        workspacePath: pluginRoot,
+        electronUserDataDirectory,
+        uiTimeoutMs,
+      }).prepare()
     },
     appEnvironment,
 
@@ -293,7 +308,96 @@ export async function createDesktopScenario({
         managedPythonPath(isolatedUserData),
         'Starting plugin development installed Python before use'
       )
-      await requestManagedPythonInstall(control, isolatedWindowLabel)
+      const mainControl = { command: (...args) => control.commandForWindow('main', ...args) }
+      const childControl = {
+        command: (...args) => control.commandForWindow(isolatedWindowLabel, ...args),
+      }
+      assert.deepEqual(
+        await requestExecutor(childControl, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: false,
+        }
+      )
+      const focusSnapshot = JSON.parse(await mainControl.command('getWindowFocusSnapshot', 'body'))
+      assert.equal(
+        focusSnapshot.mainFocused,
+        false,
+        'Starting plugin debugging did not focus the isolated Wework instance'
+      )
+
+      const installedPythonPlugin = await requestExecutor(
+        childControl,
+        'runtime.codex.plugin.install_local_first',
+        {
+          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.equal(
+        installedPythonPlugin.localCommitted,
+        true,
+        'The child Python demand must come from a real enabled plugin'
+      )
+      assert.deepEqual(
+        await requestExecutor(childControl, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: true,
+        }
+      )
+      await waitForPythonRuntimeEvent(
+        join(dirname(isolatedUserData), 'logs', 'wework-plugin-development.log'),
+        'python-runtime-waiting-for-login'
+      )
+      await assertPathMissing(
+        managedPythonPath(isolatedUserData),
+        'The child installed Python before parent login'
+      )
+      await requestExecutor(
+        childControl,
+        'runtime.codex.plugin.uninstall_local',
+        {
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.deepEqual(
+        await requestExecutor(childControl, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: false,
+        }
+      )
+      await signInDesktopCloud(mainControl, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await childControl.command('navigate', 'body', { value: '/settings/execution-environments' })
+      await childControl.command('waitFor', '[data-testid="execution-environment-python-status"]', {
+        text: '未安装',
+        stableMs: 1_000,
+      })
+      assert.ok(
+        !(
+          await readFile(
+            join(dirname(isolatedUserData), 'logs', 'wework-plugin-development.log'),
+            'utf8'
+          )
+        ).includes('python-runtime-uv-download-started'),
+        'Parent login downloaded Python after the child demand was removed'
+      )
+      await disconnectDesktopCloud(mainControl)
+      const restoredPythonPlugin = await requestExecutor(
+        childControl,
+        'runtime.codex.plugin.install_local_first',
+        {
+          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.equal(restoredPythonPlugin.localCommitted, true)
+      await signInDesktopCloud(mainControl, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await assertPathMissing(
+        managedPythonPath(electronUserDataDirectory),
+        'Child demand caused an installation in the parent'
+      )
       await assertManagedPythonReady(control, {
         userDataDirectory: isolatedUserData,
         windowLabel: isolatedWindowLabel,
@@ -364,12 +468,6 @@ export async function createDesktopScenario({
       )
       control.activateWindow('main')
       await waitForStatus(control, '运行中 · HMR 0', workbenchReadyTimeoutMs)
-      const focusSnapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
-      assert.equal(
-        focusSnapshot.mainFocused,
-        false,
-        'Starting plugin debugging did not focus the isolated Wework instance'
-      )
       await control.command('focusMainWindow', 'body')
       await control.command('waitFor', '[data-testid="wework-plugin-development-live-status"]', {
         text: '实时状态',
@@ -620,6 +718,23 @@ export async function createDesktopScenario({
       )
       await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
       await captureScreenshot(control, 'plugin-development-10-debug-stopped-after-hmr.png', 'body')
+      const readyCountAfterStop = control.readyCount
+      await signInDesktopCloud(mainControl, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
+      assert.equal(
+        control.readyCount,
+        readyCountAfterStop,
+        'Login started a stopped development instance'
+      )
+      const stoppedInstances = JSON.parse(
+        await runWeworkCli(['instances'], pluginRoot, controlRegistry)
+      )
+      assert.ok(
+        !stoppedInstances.some(
+          instance => instance.instanceId === `plugin-development-${isolatedInstanceId}`
+        ),
+        'The stopped development instance was registered again after login'
+      )
     },
 
     async cleanup() {

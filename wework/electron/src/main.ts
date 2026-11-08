@@ -79,7 +79,8 @@ import {
   initializeWorkbenchModePreference,
   normalizeWorkbenchMode,
 } from './runtime/workbench-mode.js'
-import { RendererStorageStore } from './host/renderer-storage-store.js'
+import type { RendererStorageStore } from './host/renderer-storage-store.js'
+import { createDesktopRendererStorage } from './host/desktop-renderer-storage.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
   EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR,
@@ -164,6 +165,7 @@ import {
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
 import { PythonRuntimeManager } from './runtime/python-runtime.js'
+import { desktopInstanceMayStart } from './runtime/plugin-development-command.js'
 import {
   fetchPythonRuntimeDownloads,
   fetchParentPythonRuntimeDownloads,
@@ -350,6 +352,12 @@ if (desktopDataPaths) {
   hasSingleInstanceLock = app.requestSingleInstanceLock(singleInstanceData)
   if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 }
+
+hasSingleInstanceLock = desktopInstanceMayStart(
+  app,
+  hasSingleInstanceLock,
+  pluginDevelopmentCommand
+)
 
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
@@ -2111,7 +2119,7 @@ function installIpc(): void {
     if (!pythonRuntimeEnabled) {
       return pythonRuntime.status()
     }
-    return pythonRuntime.ensure()
+    return pythonRuntime.ensure({ manual: true })
   })
   ipcMain.handle('runtime:choose-node-executable', async () => {
     const options: OpenDialogOptions = {
@@ -2853,7 +2861,12 @@ if (hasSingleInstanceLock) {
           await performanceRecorder.setEnabled(enabled)
         },
       })
-      rendererStorage = new RendererStorageStore(app.getPath('userData'))
+      rendererStorage = createDesktopRendererStorage(app.getPath('userData'), {
+        enabled: pythonRuntimeEnabled,
+        isShuttingDown: () => quitting,
+        python: () => pythonRuntimeManagerPromise,
+        development: () => pluginDevelopment,
+      })
       logStartupStep('desktop-stores-create', 'completed')
       if (!pluginDevelopmentInstance) {
         popoutShortcut = new GlobalShortcutController(globalShortcut, togglePopoutWindow, error =>
@@ -3249,6 +3262,13 @@ function managedPythonRuntime(): Promise<PythonRuntimeManager> {
       dataDirectory: app.getPath('userData'),
       environment: nodeRuntime.environment,
       resolveDownloads: pythonRuntimeDownloads,
+      hasPluginDemand: async () => {
+        if (!desktopRuntime || quitting) return false
+        const result = await desktopRuntime.requestExecutor<{ demanded: boolean }>(
+          'runtime.python.has_demand'
+        )
+        return result.demanded === true
+      },
       fetch: cloudFetch,
       resolveProxy: targetUrl => resolveSystemProxy(session.defaultSession, targetUrl),
       log: event => console.info('[python-runtime]', event),

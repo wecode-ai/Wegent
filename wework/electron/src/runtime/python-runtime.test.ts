@@ -42,6 +42,7 @@ describe('PythonRuntimeManager', () => {
       platform: 'darwin',
       arch: 'arm64',
       resolveDownloads: load,
+      hasPluginDemand: async () => true,
       fetch,
     })
     await expect(manager.resumeAfterLogin()).resolves.toMatchObject({ state: 'notInstalled' })
@@ -108,6 +109,7 @@ describe('PythonRuntimeManager', () => {
         platform: 'darwin',
         arch: 'arm64',
         resolveDownloads: load,
+        hasPluginDemand: async () => true,
         fetch: artifactFetch,
         fileSha256: async () => 'd54989c0037e115f53c34a5658c2cc0ff5c44e35b5635ed9a5463b9caa364f81',
         runFile: async file => {

@@ -30,7 +30,8 @@ struct PreparationResponse {
     data: Option<Value>,
 }
 
-pub(crate) async fn prewarm_managed_python() -> Result<(), String> {
+/// False means login is still required; a real preparation failure remains an error.
+pub(crate) async fn prewarm_managed_python() -> Result<bool, String> {
     request_configured_python(
         configured_value(RUNTIME_URL_ENV)?.as_deref(),
         configured_value(RUNTIME_TOKEN_ENV)?.as_deref(),
@@ -276,16 +277,18 @@ fn bridge_configuration(url: Option<&str>, token: Option<&str>) -> Result<Option
 
 #[cfg(test)]
 async fn ensure_configured_python(url: Option<&str>, token: Option<&str>) -> Result<(), String> {
-    request_configured_python(url, token, ENSURE_PATH).await
+    request_configured_python(url, token, ENSURE_PATH)
+        .await
+        .map(|_| ())
 }
 
 async fn request_configured_python(
     url: Option<&str>,
     token: Option<&str>,
     path: &str,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let Some(mut url) = bridge_configuration(url, token)? else {
-        return Ok(());
+        return Ok(true);
     };
     url.set_path(path);
     let client = reqwest::Client::builder()
@@ -314,7 +317,16 @@ async fn request_configured_python(
             .as_ref()
             .is_some_and(|status| status["id"] == "python" && status["state"] == "installed")
     {
-        return Ok(());
+        return Ok(true);
+    }
+    if path == PREWARM_PATH
+        && response.ok
+        && response
+            .data
+            .as_ref()
+            .is_some_and(|status| status["id"] == "python" && status["state"] == "notInstalled")
+    {
+        return Ok(false);
     }
     Err("Managed Python runtime could not be prepared".to_owned())
 }
@@ -382,22 +394,22 @@ mod tests {
     ) -> TestBridge {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let router = Router::new().route(
-            ENSURE_PATH,
-            post(move |headers: HeaderMap| {
-                let location = location.clone();
-                async move {
-                    assert_eq!(headers[header::AUTHORIZATION], "Bearer test-runtime-token");
-                    let mut response = (status, body).into_response();
-                    if let Some(location) = location {
-                        response
-                            .headers_mut()
-                            .insert(header::LOCATION, location.parse().unwrap());
-                    }
+        let route = post(move |headers: HeaderMap| {
+            let location = location.clone();
+            async move {
+                assert_eq!(headers[header::AUTHORIZATION], "Bearer test-runtime-token");
+                let mut response = (status, body).into_response();
+                if let Some(location) = location {
                     response
+                        .headers_mut()
+                        .insert(header::LOCATION, location.parse().unwrap());
                 }
-            }),
-        );
+                response
+            }
+        });
+        let router = Router::new()
+            .route(ENSURE_PATH, route.clone())
+            .route(PREWARM_PATH, route);
         let task = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
@@ -581,10 +593,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prewarm_distinguishes_login_wait_from_completion_and_failure() {
+        for (body, expected) in [
+            (
+                r#"{"ok":true,"data":{"id":"python","state":"notInstalled"}}"#,
+                Ok(false),
+            ),
+            (
+                r#"{"ok":true,"data":{"id":"python","state":"installed"}}"#,
+                Ok(true),
+            ),
+            (
+                r#"{"ok":true,"data":{"id":"python","state":"error"}}"#,
+                Err("Managed Python runtime could not be prepared".to_owned()),
+            ),
+        ] {
+            let bridge = test_bridge(StatusCode::OK, body, None).await;
+            assert_eq!(
+                request_configured_python(
+                    Some(&bridge.url),
+                    Some("test-runtime-token"),
+                    PREWARM_PATH
+                )
+                .await,
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn rejects_failed_pending_or_malformed_preparation_responses() {
         for body in [
             r#"{"ok":false,"error":"download failed"}"#,
             r#"{"ok":true,"data":{"id":"python","state":"downloading"}}"#,
+            r#"{"ok":true,"data":{"id":"python","state":"notInstalled"}}"#,
             r#"{"ok":true,"data":{"id":"node","state":"installed"}}"#,
             r#"{"ok":true}"#,
             "not JSON",

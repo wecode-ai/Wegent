@@ -13,6 +13,56 @@ import {
 } from './plugin-development-manager.js'
 
 describe('PluginDevelopmentManager', () => {
+  test('state polling cannot undo stopping or reopen login recovery', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'development-stop-login-'))
+    const pendingStop = Promise.withResolvers<void>()
+    const child: { exitCode: number | null } = { exitCode: null }
+    const manager = new PluginDevelopmentManager({
+      command: process.execPath,
+      args: [],
+      environment: {},
+      userDataDirectory: root,
+    })
+    Object.assign(manager, {
+      session: { status: 'ready', userDataDirectory: join(root, 'user-data') },
+      child,
+    })
+    const command = vi
+      .spyOn(manager as unknown as { command(name: string): Promise<void> }, 'command')
+      .mockImplementation(name => (name === 'stop' ? pendingStop.promise : Promise.resolve()))
+    await writeFile(join(root, 'state.json'), JSON.stringify({ status: 'ready' }))
+    const stopped = manager.stop()
+    try {
+      expect((await manager.list())[0].status).toBe('stopping')
+      await manager.resumePythonAfterLogin()
+      expect(command.mock.calls).toEqual([['stop']])
+    } finally {
+      child.exitCode = 0
+      pendingStop.resolve()
+      await stopped
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test.each(['stopping', 'stopped', 'ready'] as const)(
+    'login recovery respects the development session status %s',
+    async status => {
+      const manager = new PluginDevelopmentManager({
+        command: process.execPath,
+        args: [],
+        environment: {},
+        userDataDirectory: tmpdir(),
+      })
+      Object.assign(manager, { session: { status }, child: { exitCode: null } })
+      const command = vi
+        .spyOn(manager as unknown as { command(name: string): Promise<void> }, 'command')
+        .mockResolvedValue(undefined)
+      await manager.resumePythonAfterLogin()
+      expect(command).toHaveBeenCalledTimes(status === 'ready' ? 1 : 0)
+      if (status === 'ready') expect(command).toHaveBeenCalledWith('python-login')
+    }
+  )
+
   test('inherits Electron runtime switches required by an isolated parent process', () => {
     const enabled = new Set(['no-sandbox', 'disable-gpu', 'unrelated-switch'])
 

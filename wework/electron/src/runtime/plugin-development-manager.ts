@@ -378,18 +378,18 @@ export class PluginDevelopmentManager {
   }
 
   async resumePythonAfterLogin(): Promise<void> {
-    if (!this.session || !this.isRunning()) return
+    if (!this.session || this.isStoppingOrStopped() || !this.isRunning()) return
     await this.command('python-login')
   }
 
   async stop(): Promise<void> {
     const child = this.child
     if (!child) return
+    this.stopPolling()
     this.updateSession({ status: 'stopping' })
     await this.command('stop').catch(() => {})
     await terminateProcessTree(child, 5_000).catch(() => {})
     if (this.child === child) this.child = null
-    this.stopPolling()
     this.updateSession({
       status: 'stopped',
       electronPid: null,
@@ -441,6 +441,10 @@ export class PluginDevelopmentManager {
     return Boolean(this.child && this.child.exitCode === null)
   }
 
+  private isStoppingOrStopped(): boolean {
+    return this.session?.status === 'stopping' || this.session?.status === 'stopped'
+  }
+
   private startPolling(): void {
     this.stopPolling()
     const generation = this.statePollGeneration
@@ -455,7 +459,7 @@ export class PluginDevelopmentManager {
   }
 
   private async refreshChildState(generation = this.statePollGeneration): Promise<void> {
-    if (!this.session || !this.isRunning()) return
+    if (!this.session || this.isStoppingOrStopped() || !this.isRunning()) return
     const statePath = join(resolve(this.session.userDataDirectory, '..'), 'state.json')
     let state: ChildState
     try {
@@ -463,7 +467,8 @@ export class PluginDevelopmentManager {
     } catch {
       return
     }
-    if (generation !== this.statePollGeneration || !this.isRunning()) return
+    if (generation !== this.statePollGeneration || this.isStoppingOrStopped() || !this.isRunning())
+      return
     this.updateSession({
       status: state.status ?? this.session.status,
       coreDshPid: state.coreDshPid ?? null,

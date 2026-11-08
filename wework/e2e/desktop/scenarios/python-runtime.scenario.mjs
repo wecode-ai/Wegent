@@ -5,6 +5,8 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import { createPluginPythonChat } from '../modules/plugin-python-chat.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { disconnectDesktopCloud, signInDesktopCloud } from '../modules/desktop-cloud-login.mjs'
+import { createPythonDownloadGate } from '../modules/python-download-gate.mjs'
 
 import {
   assertManagedPythonSettings,
@@ -37,6 +39,7 @@ export async function createDesktopScenario({
   const marker = join(resultDir, 'project-python-executed')
   const appLog = join(resultDir, 'app.log')
   const pythonPath = managedPythonPath(electronUserDataDirectory)
+  let cloudEnvironment
   let restartDesktopApp
   const observations = []
   await mkdir(launchDirectory, { recursive: true })
@@ -49,12 +52,18 @@ export async function createDesktopScenario({
 
   const appEnvironment = {
     WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
+    WEWORK_E2E_CLOUD_TOKEN: '',
+    VITE_WEWORK_E2E_CLOUD_TOKEN: '',
     PATH: [dirname(localPython), process.env.PATH].filter(Boolean).join(delimiter),
   }
 
+  const downloadGate = await createPythonDownloadGate()
   return {
     requiresCloudEnvironment: true,
-    requiresNativeCloudAuthorization: true,
+    electronLaunchArguments: [`--proxy-server=${downloadGate.url}`],
+    setCloudEnvironment(cloud) {
+      cloudEnvironment = cloud
+    },
     requiresRemoteExecutor: false,
     requiresPackagedHarnessRuntime: true,
     async prepareCloud(cloud) {
@@ -82,12 +91,88 @@ export async function createDesktopScenario({
       })
       await assertPathMissing(pythonPath, 'Startup or opening settings installed Python before use')
       assert.ok(!(await readFile(appLog, 'utf8')).includes('python-runtime-ensure-started'))
-      await chat.start(control)
+      assert.deepEqual(
+        await requestExecutor(control, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: false,
+        }
+      )
+      await signInDesktopCloud(control, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await assertPathMissing(pythonPath, 'Login without Python demand installed the runtime')
+      assert.ok(!(await readFile(appLog, 'utf8')).includes('python-runtime-ensure-started'))
+      await disconnectDesktopCloud(control)
+      const installed = await requestExecutor(
+        control,
+        'runtime.codex.plugin.install_local_first',
+        {
+          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.equal(
+        installed.localCommitted,
+        true,
+        'The Python plugin must be installed through the real runtime'
+      )
+
+      await waitForPythonRuntimeEvent(appLog, 'python-runtime-waiting-for-login')
+      await assertPathMissing(pythonPath, 'Python was installed before the required login')
+      assert.ok(!(await readFile(appLog, 'utf8')).includes('python-runtime-install-started'))
+      await requestExecutor(
+        control,
+        'runtime.codex.plugin.uninstall_local',
+        { pluginName: 'chat-python-plugin' },
+        uiTimeoutMs
+      )
+      assert.deepEqual(
+        await requestExecutor(control, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: false,
+        }
+      )
+      await signInDesktopCloud(control, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await control.command('navigate', 'body', { value: '/settings/execution-environments' })
+      await control.command('waitFor', '[data-testid="execution-environment-python-status"]', {
+        text: '未安装',
+        stableMs: 1_000,
+      })
+      assert.ok(
+        !(await readFile(appLog, 'utf8')).includes('python-runtime-uv-download-started'),
+        'Login downloaded Python after its last plugin was uninstalled'
+      )
+      const demandOffset = (await readFile(appLog, 'utf8')).length
+      const restored = await requestExecutor(
+        control,
+        'runtime.codex.plugin.install_local_first',
+        {
+          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.equal(restored.localCommitted, true)
+      assert.deepEqual(
+        await requestExecutor(control, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: true,
+        }
+      )
       try {
+        await waitForPythonRuntimeEvent(
+          appLog,
+          'python-runtime-uv-download-started',
+          demandOffset,
+          Date.now() + uiTimeoutMs
+        )
+        await downloadGate.waitForRequest(uiTimeoutMs)
+        await chat.start(control)
         await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
           text: '托管环境继续准备',
         })
         await captureScreenshot(control, 'python-runtime-preparing.png', 'body')
+
+        downloadGate.release()
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
         await chat.verify(control)
       } catch (error) {
@@ -105,6 +190,8 @@ export async function createDesktopScenario({
           )
         }
         throw error
+      } finally {
+        downloadGate.release()
       }
       observations.push({
         phase: 'cold-start',
@@ -120,25 +207,11 @@ export async function createDesktopScenario({
       await assertPathMissing(marker, 'Refreshing Python health executed project code')
       await captureScreenshot(control, 'python-runtime-cold-installed.png', 'body')
 
-      const installed = await requestExecutor(
-        control,
-        'runtime.codex.plugin.install_local_first',
-        {
-          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
-          pluginName: 'chat-python-plugin',
-        },
-        uiTimeoutMs
-      )
-      assert.equal(
-        installed.localCommitted,
-        true,
-        'The Python plugin must be installed through the real runtime'
-      )
-
       // A real directory at the launcher's location makes uv's publication fail.
       // Keep the real executable only as a cleanup guard, never substitute a fake Python.
       const backup = `${pythonPath}.e2e-backup`
       let logOffset
+      await disconnectDesktopCloud(control)
       await restartDesktopApp({
         afterStop: async () => {
           await rename(pythonPath, backup)
@@ -147,6 +220,8 @@ export async function createDesktopScenario({
         },
       })
       try {
+        await waitForPythonRuntimeEvent(appLog, 'python-runtime-waiting-for-login', logOffset)
+        await signInDesktopCloud(control, cloudEnvironment, { timeoutMs: uiTimeoutMs })
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })
         // The installed Python plugin now requests repair automatically at startup.
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', logOffset)
@@ -164,6 +239,19 @@ export async function createDesktopScenario({
           1,
           'A failed startup preparation must not loop'
         )
+        const failedAttempts = (await readFile(appLog, 'utf8')).split(
+          'python-runtime-install-started'
+        ).length
+        await signInDesktopCloud(control, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+        assert.equal(
+          (await readFile(appLog, 'utf8')).split('python-runtime-install-started').length,
+          failedAttempts,
+          'Signing in again retried a failed automatic preparation'
+        )
+        await control.command('navigate', 'body', { value: '/settings/execution-environments' })
+        await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
+          text: '准备失败',
+        })
         await rm(pythonPath, { recursive: true })
         logOffset = (await readFile(appLog, 'utf8')).length
         await control.command('clickWhenEnabled', '[data-testid="plugin-python-runtime-retry"]')
@@ -198,6 +286,9 @@ export async function createDesktopScenario({
         join(resultDir, 'python-runtime-verification.json'),
         JSON.stringify(observations, null, 2)
       )
+    },
+    async cleanup() {
+      await downloadGate.stop()
     },
     diagnostics() {
       return { observations, launchDirectory, pythonPath }
