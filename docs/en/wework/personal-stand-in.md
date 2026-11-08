@@ -37,6 +37,8 @@ After stopping, you may migrate instead: choose **Profile to migrate** (the prim
 
 For an unbound instance, a project entry pointing to a specific device establishes that first binding. Such links never replace an existing binding.
 
+If concurrent initialization causes a first-binding version conflict, the page reads the saved authoritative binding without rebinding, restarting the stand-in, or replacing another account's binding.
+
 Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My stand-in** to open your personal task board.
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.
@@ -142,6 +144,8 @@ Inside the assignee dropdown control, an outlined person with a check marks **Re
 
 Assigners and recipients can view the receipts, which refresh while details remain open. The latest active assignment in the activity timeline shows the same receipts and updates together with the assignee control, without polling historical entries separately. Reassignment moves the displayed receipts to the latest assignment activity; unassignment removes the former recipient's receipts. Reassignment starts a new receipt history. Older assignments without reliable evidence show “No receipt recorded.” Executors retain pending cloud receipts for up to 30 days, increasing failed retry intervals to at most one hour. Restarting preserves the retry delay. Local-project receipts stay on the owning Executor.
 
+Refreshing an Issue's status or other properties preserves receipt icons and pending hover tooltips for the same assignment. Reassignment, including assigning the same person again, immediately hides old receipts until the new assignment's results arrive.
+
 Stand-ins save the recipient-owned device task binding and reception receipt before starting execution. Background handling records reception when the assignment enters its pending queue. Reception does not imply successful execution, and a later launch failure does not revoke it. Cloud acknowledgements still validate the active assignment, owned device and task binding; rejection diagnostics do not relax these checks.
 
 ## Calendar arrangements and project leaders
@@ -166,6 +170,12 @@ Enable **Settings → General → Experimental features**, then use **Talk to le
 Publication shares only the content you enter, not private chat or memories. If no commentable Issue is available, create/select an accessible Issue in the project. Pending permission checks/submission may disable controls; changing devices cannot bypass permissions.
 
 Record a matter and its trigger time in **My Stand-in → role profile → Connections → Calendar / scheduled delegation**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+
+For future execution requested in chat, the stand-in should inspect existing work evidence or immediately delegate a read-only investigation to verify the actual workflow, workspace, and required inputs. It should read available instructions and configuration instead of repeatedly asking you for those facts. Missing business choices require a question card; automatic execution must not be scheduled while they remain unresolved. Asking to use an existing automatic workflow does not prove that the workflow has been inspected, and postponing that investigation until the trigger time does not make the work ready.
+
+“Read-only investigation” describes the preparation task's required behavior, not a new sandbox or tool-permission mode. It does not guarantee that preparation tasks are technically unable to write. Preparation retains the existing permission contract, network access, and tool approval rules; this change constrains scheduling decisions without expanding or restricting existing permissions.
+
+The scheduled instructions should preserve your requested outcome and include the verified execution plan, without silently changing execution into a reminder. An explicit reminder needs its content and time, not an investigation of the underlying execution workflow. Successful creation means the arrangement was saved; it does not guarantee completion by the requested time or pre-approve external actions such as publishing. Execution still follows native permissions, approvals, and prerequisite checks.
 
 **Scheduled** in the Tasks sidebar remains independent and retains its goal, target task, model, and execution environment settings without requiring experimental features. Scheduled tasks and Calendar connections manage separate lists, editors, and run histories. The stand-in work list contains concrete work.
 
