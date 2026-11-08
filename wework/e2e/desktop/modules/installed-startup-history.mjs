@@ -1,18 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
-import { processIsAlive } from '../process-lifecycle.mjs'
 
 export async function quitInstalledHost(root, control) {
   const pid = Number((await readFile(join(root, 'active-pid'), 'utf8')).trim())
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'The upgraded host has no real process ID')
-  await control.command('quitApp', 'body')
-  const deadline = Date.now() + 10_000
-  while (processIsAlive(pid)) {
-    assert.ok(Date.now() < deadline, `The upgraded host ${pid} did not quit before restart`)
-    await delay(50)
-  }
+  await control.command('quitApp', 'body', { exitProcessId: pid })
 }
 
 /** A manual package replacement must not be undone by old updater selection. */
