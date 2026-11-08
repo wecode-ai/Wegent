@@ -10,7 +10,8 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/42255324858",
     "https://github.com/wecode-ai/Wegent/actions/runs/42264710526",
     "https://github.com/wecode-ai/Wegent/actions/runs/42296468457",
-    "https://github.com/wecode-ai/Wegent/actions/runs/42376659459"
+    "https://github.com/wecode-ai/Wegent/actions/runs/42376659459",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42437842799"
   ],
   "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
   "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
@@ -80,7 +81,9 @@
     "coordination-runtime": 76,
     "core-dsh-plugin-management": 57,
     "core-task-flow": 356.5,
+    "desktop-device-identity": 141,
     "device-artifact-declaration": 65,
+    "devtools-performance": 41,
     "dots-closed-loops": 166,
     "drawing-attachment": 25,
     "dsh-owner-capture": 48,
@@ -100,6 +103,7 @@
     "human-interactions-browser": 87,
     "human-interactions-hidden": 91.5,
     "human-interactions-issue": 70.5,
+    "idle-executor-requests": 46,
     "issue-notification-read": 77,
     "latest-conversation-history": 63,
     "local-artifact-declaration": 39.5,
@@ -162,6 +166,7 @@
     "stand-in-processing": 65,
     "stand-in-profile-settings": 80.5,
     "stand-in-project-enable": 45.5,
+    "stand-in-sessions": 45,
     "stand-in-telemetry": 69.5,
     "stand-in-workspace": 68.5,
     "startup-network-change": 21.5,
@@ -185,6 +190,7 @@
     "voice-input": 59,
     "window-background-policy": 32.5,
     "window-lifecycle": 219.5,
+    "workbench-control": 130,
     "workbench-mode": 145,
     "workspace-attachments": 194,
     "workspace-tabs": 88
@@ -198,6 +204,11 @@
     "dingtalk-protocol-fixture": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293/job/127328527189"
   },
   "checkpointSources": {
-    "dots-closed-loops": "https://github.com/wecode-ai/Wegent/actions/runs/42376659459/job/128419185892"
+    "desktop-device-identity": "https://github.com/wecode-ai/Wegent/actions/runs/42437842799/job/128603304711",
+    "devtools-performance": "https://github.com/wecode-ai/Wegent/actions/runs/42437842799/job/128603304711",
+    "dots-closed-loops": "https://github.com/wecode-ai/Wegent/actions/runs/42376659459/job/128419185892",
+    "idle-executor-requests": "https://github.com/wecode-ai/Wegent/actions/runs/42437842799/job/128603304711",
+    "stand-in-sessions": "https://github.com/wecode-ai/Wegent/actions/runs/42437842799/job/128603304695",
+    "workbench-control": "https://github.com/wecode-ai/Wegent/actions/runs/42437842799/job/128603304711"
   }
 }

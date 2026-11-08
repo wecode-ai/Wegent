@@ -122,6 +122,60 @@ test('the successful Dots sample releases an otherwise measured Core3 without lo
   )
 })
 
+for (const { shardId, samples, jobId } of [
+  { shardId: 'core-3', samples: { 'stand-in-sessions': 45 }, jobId: '128603304695' },
+  {
+    shardId: 'core-5',
+    samples: {
+      'devtools-performance': 41,
+      'desktop-device-identity': 141,
+      'idle-executor-requests': 46,
+      'workbench-control': 130,
+    },
+    jobId: '128603304711',
+  },
+]) {
+  test(`successful checkpoint samples release measured ${shardId} while retaining every check`, () => {
+    const evidence = JSON.parse(
+      readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+    )
+    const withoutSamples = { ...evidence.seconds }
+    for (const [checkpoint, seconds] of Object.entries(samples)) {
+      assert.equal(checkpointSeconds(checkpoint), seconds, checkpoint)
+      assert.equal(
+        evidence.checkpointSources[checkpoint],
+        `https://github.com/wecode-ai/Wegent/actions/runs/42437842799/job/${jobId}`
+      )
+      delete withoutSamples[checkpoint]
+    }
+    // Keep this regression scoped to measured checkpoints. The production-matrix
+    // tests below separately preserve freezing for any future unknown checkpoint.
+    const source = original.include.find(shard => shard.id === shardId)
+    assert.deepEqual(
+      balanceWindowsMatrix(original, withoutSamples).include.find(shard => shard.id === shardId),
+      source
+    )
+    const balanced = balanceWindowsMatrix(original)
+    assert.notDeepEqual(
+      balanced.include.find(shard => shard.id === shardId),
+      source
+    )
+    assert.deepEqual(segments(balanced).sort(), segments(original).sort())
+    assert.deepEqual(checkpoints(balanced).sort(), checkpoints(original).sort())
+    assert.equal(new Set(checkpoints(balanced)).size, checkpoints(original).length)
+    assert.equal(balanced.include.length, original.include.length)
+    for (const id of ['core-9', 'core-10']) {
+      assert.deepEqual(
+        balanced.include.find(shard => shard.id === id),
+        original.include.find(shard => shard.id === id)
+      )
+    }
+    assert.ok(
+      measuredLoad(balanced.include.find(shard => shard.id === shardId)) < measuredLoad(source)
+    )
+  })
+}
+
 test('measured Windows scheduling preserves every segment and expanded checkpoint exactly once', () => {
   const balanced = balanceWindowsMatrix(original)
   assert.deepEqual(segments(balanced).sort(), segments(original).sort())
