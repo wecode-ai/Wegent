@@ -349,14 +349,20 @@ mod session_policy_tests {
             for ask in [false, true] {
                 for immediate in [false, true] {
                     for strategy in ["independent", "reuse"] {
-                        assert!(validate_policy(&json!({"automatic":automatic,"askBeforeAct":ask,"immediate":immediate,"sessionStrategy":strategy})));
+                        assert!(validate_policy(
+                            &json!({"automatic":automatic,"askBeforeAct":ask,"immediate":immediate,"sessionStrategy":strategy})
+                        ));
                     }
                 }
             }
         }
-        assert!(validate_policy(&json!({"automatic":true,"askBeforeAct":true})));
-        for strategy in [json!("automatic"),json!(false),Value::Null,json!(1)] {
-            assert!(!validate_policy(&json!({"automatic":true,"askBeforeAct":true,"sessionStrategy":strategy})));
+        assert!(validate_policy(
+            &json!({"automatic":true,"askBeforeAct":true})
+        ));
+        for strategy in [json!("automatic"), json!(false), Value::Null, json!(1)] {
+            assert!(!validate_policy(
+                &json!({"automatic":true,"askBeforeAct":true,"sessionStrategy":strategy})
+            ));
         }
     }
 }

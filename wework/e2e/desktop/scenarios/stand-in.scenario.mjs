@@ -1,4 +1,8 @@
-import { openStandInSettings, openStandInMemory } from '../modules/stand-in-profile-navigation.mjs'
+import {
+  openStandInActivity,
+  openStandInSettings,
+  openStandInMemory,
+} from '../modules/stand-in-profile-navigation.mjs'
 import {
   openProjectStandIn,
   discardStandInDraft,
@@ -821,6 +825,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-role-default"]')
       await control.command('click', '[data-testid="stand-in-overview-role-default"]')
+      await openStandInActivity(control)
       await control.command('waitFor', '[data-testid="stand-in-activity"]', { text: PROJECT })
       await captureScreenshot(control, 'stand-in-project-05-overview.png')
       await control.command('waitFor', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
