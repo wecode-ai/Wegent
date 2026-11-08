@@ -1634,15 +1634,17 @@ async function main() {
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
     const readiness = control.awaitReady()
-    const ready = usesReleasePackageRuntimeAssets
-      ? await waitForColdPackageStartup(readiness, appLogPath, {
-          phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
-        })
-      : await withTimeout(
-          readiness,
-          DESKTOP_READY_TIMEOUT_MS,
-          'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-        )
+    // Release-pair diagnostics retain their previously certified startup deadline.
+    const ready =
+      usesReleasePackageRuntimeAssets && !usesDefaultUserData
+        ? await waitForColdPackageStartup(readiness, appLogPath, {
+            phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+          })
+        : await withTimeout(
+            readiness,
+            DESKTOP_READY_TIMEOUT_MS,
+            'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+          )
     assert.match(
       String(ready.location ?? ''),
       /^https?:/,
