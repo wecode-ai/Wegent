@@ -9,6 +9,10 @@ sidebar_position: 5
 <!-- ui-source: src/pages/WorkbenchPage.tsx -->
 <!-- ui-source: src/pages/PopoutWorkbenchPage.tsx -->
 
+## 启动动画
+
+启动界面的 Logo 使用从左向右的单向扫光。光带完全离开后短暂停顿，再开始下一轮，循环衔接时保持相同底色。启用系统“减少动态效果”时不播放扫光。
+
 ## 应用菜单
 
 macOS 使用系统菜单栏；Windows 和 Linux 的无边框窗口在标题栏左侧显示一个应用菜单按钮（也可用 `Alt+F` 或 `F10` 打开）。
