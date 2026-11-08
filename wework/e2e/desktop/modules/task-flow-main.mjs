@@ -1634,15 +1634,17 @@ async function main() {
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
     const readiness = control.awaitReady()
-    const ready = desktopScenario?.usesColdPackageStartup
-      ? await waitForColdPackageStartup(readiness, appLogPath, {
-          phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
-        })
-      : await withTimeout(
-          readiness,
-          DESKTOP_READY_TIMEOUT_MS,
-          'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-        )
+    // Release-pair diagnostics retain their previously certified startup deadline.
+    const ready =
+      usesReleasePackageRuntimeAssets && !usesDefaultUserData
+        ? await waitForColdPackageStartup(readiness, appLogPath, {
+            phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+          })
+        : await withTimeout(
+            readiness,
+            DESKTOP_READY_TIMEOUT_MS,
+            'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+          )
     assert.match(
       String(ready.location ?? ''),
       /^https?:/,
@@ -3046,6 +3048,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           text: LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        await control.command('click', '[data-testid="work-item-guide-open-summary"]')
+        await control.command('waitFor', '[data-testid="work-item-context-panel"]', {
+          visible: true,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await captureVerificationScreenshot(control, 'task-board-association-context-pill-open.png')
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
