@@ -2,5 +2,5 @@
   "order": 35520,
   "scenario": "./scenarios/stand-in-memory-timer.scenario.mjs",
   "scenarioOnly": true,
-  "ci": { "core": { "order": 40520, "shard": 3, "position": 11520 } }
+  "ci": { "core": { "order": 40520, "shard": 10, "position": 11520 } }
 }
