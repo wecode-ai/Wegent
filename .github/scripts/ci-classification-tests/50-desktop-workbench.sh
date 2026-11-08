@@ -57,7 +57,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "temporary chat files select temporary chat coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-10","name":"Core / shard 10","segments":"runtime-input-answer-persistence"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-3","name":"Core / shard 3","segments":"dots-closed-loops"},{"id":"core-10","name":"Core / shard 10","segments":"runtime-input-answer-persistence"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx"
@@ -73,7 +73,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "main workbench changes select fixed environment panel coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-4","name":"Core / shard 4","segments":"environment-panel-scroll"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals,cloud-context-resilience"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-3","name":"Core / shard 3","segments":"dots-closed-loops"},{"id":"core-4","name":"Core / shard 4","segments":"environment-panel-scroll"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals,cloud-context-resilience"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/DesktopWorkbenchMain.tsx"

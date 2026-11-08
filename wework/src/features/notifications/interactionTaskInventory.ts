@@ -11,6 +11,7 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
   failedDevices: Set<string>
   failedRequests: Set<string>
   refreshedDevices: Set<string>
+  localIssueQuestionsPending?: boolean
 }> {
   const api = source.services?.runtimeWorkApi
   if (!api)
@@ -44,6 +45,7 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
       .map(device => device.device_id)
   )
   let index = 0
+  let localIssueQuestionsPending: boolean | undefined
   await Promise.all(
     Array.from({ length: Math.min(4, devices.length) }, async () => {
       while (index < devices.length) {
@@ -55,6 +57,9 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
             deviceId,
           })
           const found = collectRuntimeTaskReminderItems(work)
+          if (localIdentity ? deviceId === localIdentity.deviceId : deviceId == null) {
+            localIssueQuestionsPending = work.localIssueQuestionsPending
+          }
           items.push(...found)
           if (deviceId) refreshedDevices.add(deviceId)
           for (const item of found) refreshedDevices.add(item.address.deviceId)
@@ -66,5 +71,5 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
       }
     })
   )
-  return { items, failedDevices, failedRequests, refreshedDevices }
+  return { items, failedDevices, failedRequests, refreshedDevices, localIssueQuestionsPending }
 }

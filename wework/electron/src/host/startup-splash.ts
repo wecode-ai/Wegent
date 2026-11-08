@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 
 import { STARTUP_PROGRESS_CHANNEL, type StartupProgressUpdate } from './startup-progress.js'
 import type { StartupWindowBounds } from './startup-window-handoff.js'
+import { finishStartupAnimation } from './startup-tasks.js'
 
 export type StartupSplashEventName =
   | 'created'
@@ -280,21 +281,17 @@ export class StartupSplash {
       options.shouldContinue()
     this.state = 'completing'
     this.record('completion-started')
-    const completion = (await this.options.window.webContents.executeJavaScript(
-      `window.weworkStartupSplash.complete(${JSON.stringify(options.update)})`
+    const completion = (await finishStartupAnimation(() =>
+      this.options.window.webContents.executeJavaScript(
+        `window.weworkStartupSplash.complete(${JSON.stringify(options.update)})`
+      )
     )) as StartupSplashCompletion
     if (!active()) return this.interruptedHandoff()
-    if (
-      completion?.progressNow !== 100 ||
-      !Number.isFinite(completion.fillEnd) ||
-      completion.fillEnd <= 1 ||
-      completion.fillEnd !== completion.trackEnd
-    ) {
-      throw new Error('Startup splash did not present a complete progress line')
-    }
     this.record('completed')
-    await this.capture(options.capturePath)
+    await finishStartupAnimation(() => this.capture(options.capturePath))
     if (!active()) return this.interruptedHandoff()
+    // Native window preparation has its own bounds/capture deadlines. It must
+    // not consume the subsequent fade's independent animation budget.
     const bounds = await options.prepareMainWindow()
     if (!active()) return this.interruptedHandoff()
     this.handoffEvidence = {
@@ -304,7 +301,9 @@ export class StartupSplash {
       bounds,
     }
     this.record('main-prepared')
-    if (!(await this.fadeOut(completion.reducedMotion, active))) return this.interruptedHandoff()
+    if (!(await finishStartupAnimation(() => this.fadeOut(completion.reducedMotion, active)))) {
+      return this.interruptedHandoff()
+    }
     return this.close()
   }
 
@@ -390,8 +389,14 @@ export class StartupSplash {
     target.once('closed', () => this.markClosed())
 
     if (!target.webContents.isDestroyed()) {
-      await target.webContents.executeJavaScript(WAIT_FOR_ANIMATION_READY)
-      this.record('animation-ready')
+      void target.webContents
+        .executeJavaScript(WAIT_FOR_ANIMATION_READY)
+        .then(() => {
+          this.record('animation-ready')
+        })
+        .catch(error => {
+          console.warn('[startup-splash] animation initialization failed', error)
+        })
     }
     if (!target.isDestroyed()) {
       await target.show()

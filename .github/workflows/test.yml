@@ -283,6 +283,8 @@ jobs:
           set -o pipefail
           cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
+          cargo test --locked --lib loop_tasks::human_requests::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/human-requests-mysql.log
 
       - name: Verify batched project roster permission compatibility with MySQL
         working-directory: backend-rs
@@ -530,6 +532,7 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: |
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
+          cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::marketplace_sources::tests
           cargo test --all-features --lib agents::runtime_capabilities::json_file::tests
           cargo test --all-features --lib effective_instructions_tests
           cargo test -p wegent-executor --all-features --lib side_source
@@ -751,7 +754,7 @@ jobs:
 
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs
 
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
@@ -764,6 +767,10 @@ jobs:
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1
         run: node --test wework/scripts/ci-test-sequencer.test.mjs
+
+      - name: Verify delegated work command and history contracts
+        if: matrix.shard == 1
+        run: node --test wework/scripts/dots-command-result.test.mjs wework/scripts/dots-history-navigation.test.mjs
 
       - name: Run Wework tests
         env:

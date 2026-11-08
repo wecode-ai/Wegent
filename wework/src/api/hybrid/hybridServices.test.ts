@@ -96,7 +96,16 @@ const mocks = vi.hoisted(() => {
   }
 
   const localServices = {
+    localProjectChatClient,
+    localIssueHumanRequestsApi: { inbox: vi.fn() },
+    localParticipationIdentity: {
+      nativeOwnerUserId: 0,
+      currentUser: { id: 7, user_name: 'profile-7' },
+      viewerUserIds: [0, 7],
+    },
     standInApi: {
+      binding: vi.fn(),
+      lifecycle: vi.fn(),
       taskCommands: { get: vi.fn(), resolve: vi.fn() },
       projectCoordination: vi.fn(),
       projectProcessing: vi.fn(),
@@ -190,7 +199,10 @@ const mocks = vi.hoisted(() => {
     createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
   }
   const cloudServices = {
+    issueHumanRequestsApi: { inbox: vi.fn() },
     standInApi: {
+      binding: vi.fn(),
+      lifecycle: vi.fn(),
       taskCommands: { get: vi.fn(), resolve: vi.fn() },
       projectCoordination: vi.fn(),
       projectProcessing: vi.fn(),
@@ -520,6 +532,8 @@ describe('stand-in save routing', () => {
         api.projectCoordination.mockClear()
         api.projectProcessing.mockClear()
         api.personalSave.mockClear()
+        api.binding.mockClear()
+        api.lifecycle.mockClear()
         api.save.mockClear()
         api.memories.mockClear()
         api.saveMemory.mockClear()
@@ -540,6 +554,12 @@ describe('stand-in save routing', () => {
       const other = selected === local ? cloud : local
       expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
       expect(other.personalSave).not.toHaveBeenCalled()
+      await services.standInApi!.binding(deviceId, 'beginStop', 3)
+      expect(selected.binding).toHaveBeenCalledExactlyOnceWith(deviceId, 'beginStop', 3, undefined)
+      expect(other.binding).not.toHaveBeenCalled()
+      await services.standInApi!.lifecycle(7, deviceId, 'stop')
+      expect(selected.lifecycle).toHaveBeenCalledExactlyOnceWith(7, deviceId, 'stop')
+      expect(other.lifecycle).not.toHaveBeenCalled()
       const projectSettings = {
         enabled: true,
         prompt: '',
@@ -2739,5 +2759,16 @@ describe('createHybridWorkbenchServices', () => {
       launch
     )
     expect(mocks.localDecisionRouterApi.resolveLaunch).toHaveBeenCalledWith('smart-app:42')
+  })
+
+  test('retains the local participation scope without replacing cloud user authority', () => {
+    const services = createServices()
+    expect(services.localParticipationIdentity).toBe(mocks.localServices.localParticipationIdentity)
+    expect(services.localParticipationIdentity?.viewerUserIds).toEqual([0, 7])
+    expect(services.localIssueHumanRequestsApi).toBe(mocks.localServices.localIssueHumanRequestsApi)
+    expect(services.localProjectChatClient).toBe(mocks.localServices.localProjectChatClient)
+    expect(services.issueHumanRequestsApi).toBe(mocks.cloudServices.issueHumanRequestsApi)
+    expect(services.projectChatClient).toBe(mocks.cloudServices.projectChatClient)
+    expect(services.userApi).toBe(mocks.cloudServices.userApi)
   })
 })

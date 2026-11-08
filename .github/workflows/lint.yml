@@ -167,6 +167,9 @@ jobs:
       - name: Test CI change classifier
         run: .github/scripts/test-classify-ci-changes.sh
 
+      - name: Verify bundled Wework navigation documentation
+        run: node --test wework/scripts/wework-navigation-docs.test.mjs wework/scripts/bundled-wework-docs.test.mjs
+
       - name: Test Wework release gates
         run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs .github/scripts/pnpm-install-report.test.mjs
 

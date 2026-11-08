@@ -11,10 +11,13 @@ import { TodoEditor } from './TodoEditor'
 
 interface WorkItemContextPanelProps {
   api: ProjectSpaceApi
-  services: Pick<WorkbenchServices, 'projectSpaceDetailServices' | 'runtimeWorkApi'>
+  services: Pick<
+    WorkbenchServices,
+    'projectSpaceDetailServices' | 'runtimeWorkApi' | 'localParticipationIdentity'
+  >
   project: CloudProject
   item: CloudLoopItem
-  currentTask: RuntimeTaskAddress
+  currentTask?: RuntimeTaskAddress
   currentUserId?: string | number
   localProjects?: ProjectWithTasks[]
   deviceNamesById?: Readonly<Record<string, string>>
@@ -97,14 +100,20 @@ export function WorkItemContextPanel({
               </button>
             )
           }
-          selectedTaskId={currentTask.taskId}
+          selectedTaskId={currentTask?.taskId}
           deviceNamesById={deviceNamesById}
           api={api}
           projectChatClient={detailServices?.projectChatClient}
           projectChatAgentApi={detailServices?.projectChatAgentApi}
           teamApi={detailServices?.teamApi}
           selfManagedExecution={project.project_store === 'local'}
-          currentUserId={project.current_user_id ?? currentUserId}
+          currentUserId={
+            project.project_store === 'local'
+              ? (services.localParticipationIdentity?.currentUser.id ??
+                project.current_user_id ??
+                currentUserId)
+              : (project.current_user_id ?? currentUserId)
+          }
           localProjects={localProjects}
           item={currentItem}
           project={project}

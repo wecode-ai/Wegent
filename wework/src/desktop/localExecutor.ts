@@ -90,6 +90,7 @@ export interface BundledPluginMarketplace {
 }
 
 let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = null
+let scheduledLocalExecutorAvailability: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorConfiguredPromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
 let localExecutorIdentityEpoch = 0
@@ -478,9 +479,20 @@ export function ensureLocalExecutorAvailable(
   ) {
     return Promise.resolve(availableLocalExecutorStatus)
   }
+  // A fresh read may join only before dispatch, so post-operation identity
+  // checks never reuse a description requested before the operation completed.
+  if (options.refresh && scheduledLocalExecutorAvailability) {
+    return scheduledLocalExecutorAvailability
+  }
   if (options.refresh || !ensureLocalExecutorAvailablePromise) {
     const epoch = localExecutorIdentityEpoch
-    const availability = describeDshExecutor()
+    const availability = Promise.resolve()
+      .then(() => {
+        if (scheduledLocalExecutorAvailability === availability)
+          scheduledLocalExecutorAvailability = null
+        ensureLocalExecutorIdentityUnchanged(epoch)
+        return describeDshExecutor()
+      })
       .then(description => {
         ensureLocalExecutorIdentityUnchanged(epoch)
         if (
@@ -513,6 +525,7 @@ export function ensureLocalExecutorAvailable(
           ensureLocalExecutorAvailablePromise = null
       })
     ensureLocalExecutorAvailablePromise = availability
+    scheduledLocalExecutorAvailability = availability
   }
   return ensureLocalExecutorAvailablePromise
 }
@@ -628,6 +641,7 @@ export function resetLocalExecutorStateForTests(): void {
   bundledPluginUpdateTasks.clear()
   pausedBundledPluginUpdates.clear()
   ensureLocalExecutorAvailablePromise = null
+  scheduledLocalExecutorAvailability = null
   ensureLocalExecutorConfiguredPromise = null
   ensureLocalExecutorStartedPromise = null
   availableLocalExecutorStatus = null

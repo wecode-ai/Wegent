@@ -6,6 +6,8 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { readStandInBinding } from '../modules/stand-in-instance-flows.mjs'
+import { verifyStandInInstantReturn } from '../modules/stand-in-instant-open.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { shellCommandPollResponse } from '../modules/shell-command-response.mjs'
@@ -228,9 +230,11 @@ export function createDesktopScenario({
       assert.equal(beforeSave.enabled, false, 'Automatic handling must wait for explicit save')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
-      assert.ok(
-        await control.command('getValue', '[data-testid="stand-in-device"]'),
-        'Current device must be selected by default'
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-device"]'), '0')
+      assert.equal(
+        (await readStandInBinding(control, uiTimeoutMs)).target.deviceId,
+        beforeSave.executionDeviceId,
+        'Workspace settings must remain on the bound Executor'
       )
       await clickVisibleControl(
         control,
@@ -310,6 +314,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await verifyStandInInstantReturn(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-overview-role-default"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')

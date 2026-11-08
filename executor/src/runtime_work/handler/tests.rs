@@ -31,7 +31,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "native_history_test_support.rs"]
-mod native_history_test_support;
+pub(super) mod native_history_test_support;
 pub(super) use native_history_test_support::install_native_history;
 
 #[path = "command_recovery_tests.rs"]
@@ -51,12 +51,17 @@ mod text_generation_tests;
 
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
+#[path = "workspace_identity_tests.rs"]
+mod workspace_identity_tests;
 
 #[path = "mcp_elicitation_tests.rs"]
 mod mcp_elicitation_tests;
 
 #[path = "async_question_tests.rs"]
 mod async_question_tests;
+
+#[path = "issue_question_hint_tests.rs"]
+mod issue_question_hint_tests;
 
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;

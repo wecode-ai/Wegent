@@ -16,6 +16,7 @@ Wework is a desktop workbench for collaborating with AI. Open a local project an
 
 ## Guides
 
+- [Interface navigation and feature locations](./interface-navigation.md): find buttons, menus and settings
 - [Quick start](./getting-started.md)
 - [Projects and workspaces](./projects.md)
 - [Working with AI](./tasks.md)

@@ -162,37 +162,40 @@ describe('runtime human interactions', () => {
     expect(canQuickReply(payload)).toBe(false)
   })
 
-  it('restores the owning Issue thread and never treats read scope as send authority', async () => {
-    const response = {
-      ...interactionTranscript(),
-      origin: {
-        type: 'board_comment' as const,
-        cloudProjectId: '12',
-        loopItemId: 'ISSUE-1',
-        rootCommentId: 'root',
-        projectStore: 'local',
-      },
-    }
-    const [item] = await readRuntimeInteractions(interactionTask, reader(response))
-    expect(interactionOriginalScheme(item)).toBe(
-      'wework://boards/local/12/issues/ISSUE-1/comments/root'
-    )
-    expect(canReplyToInteraction(item)).toBe(true)
-    expect(
-      canReplyToInteraction({ ...item, project: { ...item.project!, rootCommentId: undefined } })
-    ).toBe(false)
-    expect(
-      canReplyToInteraction({
-        ...item,
-        project: undefined,
-        task: {
-          ...item.task,
-          address: {
-            ...item.task.address,
-            projectSession: { projectId: '12', issueId: 'ISSUE-1' },
-          },
+  it.each(['board_comment', 'board_task', 'issue_dispatch', 'project_automation'] as const)(
+    'restores the owning Issue thread from %s without treating read scope as send authority',
+    async type => {
+      const response = {
+        ...interactionTranscript(),
+        origin: {
+          type,
+          cloudProjectId: '12',
+          loopItemId: 'ISSUE-1',
+          rootCommentId: 'root',
+          projectStore: 'local',
         },
-      })
-    ).toBe(false)
-  })
+      }
+      const [item] = await readRuntimeInteractions(interactionTask, reader(response))
+      expect(interactionOriginalScheme(item)).toBe(
+        'wework://boards/local/12/issues/ISSUE-1/comments/root'
+      )
+      expect(canReplyToInteraction(item)).toBe(true)
+      expect(
+        canReplyToInteraction({ ...item, project: { ...item.project!, rootCommentId: undefined } })
+      ).toBe(false)
+      expect(
+        canReplyToInteraction({
+          ...item,
+          project: undefined,
+          task: {
+            ...item.task,
+            address: {
+              ...item.task.address,
+              projectSession: { projectId: '12', issueId: 'ISSUE-1' },
+            },
+          },
+        })
+      ).toBe(false)
+    }
+  )
 })

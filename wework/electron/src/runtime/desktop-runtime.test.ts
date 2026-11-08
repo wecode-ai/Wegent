@@ -113,14 +113,20 @@ vi.mock('./desktop-device-id.js', async importOriginal => {
   const original = await importOriginal<typeof import('./desktop-device-id.js')>()
   return {
     ...original,
-    resolveDesktopDeviceId: vi.fn((options: { environment: NodeJS.ProcessEnv }) => {
-      if (!deviceIdentityState.pending) return original.resolveDesktopDeviceId(options)
-      return new Promise<string>(resolve => {
-        deviceIdentityState.resolve = resolve
-      })
-    }),
+    resolveDesktopDeviceId: vi.fn(
+      (options: Parameters<typeof original.resolveDesktopDeviceId>[0]) => {
+        if (!deviceIdentityState.pending) return original.resolveDesktopDeviceId(options)
+        return new Promise<string>(resolve => {
+          deviceIdentityState.resolve = resolve
+        })
+      }
+    ),
   }
 })
+
+vi.mock('systeminformation', () => ({
+  system: vi.fn(async () => ({ uuid: '12345678-1234-5678-9abc-123456789abc' })),
+}))
 
 const created: FakeCoreDsh[] = []
 const createdOptions: DshRuntimeOptions[] = []
@@ -140,6 +146,7 @@ function createRuntime(
   overrides: Partial<DesktopRuntimeOptions> = {}
 ): DesktopRuntime {
   return new DesktopRuntime({
+    applicationId: 'io.wecode.wework',
     environment,
     dataDirectory: '/tmp/wework-desktop-runtime-test/data',
     logDirectory: '/tmp/wework-desktop-runtime-test/logs',
@@ -171,7 +178,70 @@ describe('DesktopRuntime lifecycle generation', () => {
     prepareState.resolveLaunch = null
   })
 
-  test('publishes device model interfaces before Core starts and removes disabled entries', async () => {
+  test.each(['pending', 'failed'])(
+    'opens Core while initial local model synchronization is %s',
+    async state => {
+      const executor = new FakeExecutor()
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const read =
+        state === 'pending'
+          ? vi.fn(() => new Promise(() => {}))
+          : vi.fn().mockRejectedValue(new Error('Model store unavailable'))
+      const runtime = createRuntime(
+        { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+        {
+          createExecutor: () => executor,
+          modelConfiguration: { read } as unknown as ModelConfigurationStore,
+        }
+      )
+      try {
+        await runtime.start()
+        expect(runtime.state().ready).toBe(true)
+        expect(created[0].startCalls).toBe(1)
+        if (state === 'failed') await vi.waitFor(() => expect(warning).toHaveBeenCalled())
+      } finally {
+        await runtime.stop()
+        warning.mockRestore()
+      }
+    }
+  )
+
+  test('a pending model read cannot stall or write into a restarted executor', async () => {
+    const oldRead = deferred<{ providers: unknown[] }>()
+    const configuration = {
+      read: vi
+        .fn()
+        .mockImplementationOnce(() => oldRead.promise)
+        .mockResolvedValue({ providers: [] }),
+      runtime: vi.fn().mockResolvedValue({ models: [] }),
+    }
+    const executors = [new FakeExecutor(), new FakeExecutor()]
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      {
+        createExecutor: () => executors[created.length],
+        modelConfiguration: configuration as unknown as ModelConfigurationStore,
+      }
+    )
+    try {
+      await runtime.start()
+      const queuedOldSync = runtime.syncLocalModels()
+      await runtime.stop()
+      await runtime.start()
+      await vi.waitFor(() =>
+        expect(executors[1].requests).toEqual(['runtime.runner.local_models.replace'])
+      )
+      oldRead.resolve({ providers: [] })
+      await queuedOldSync
+      expect(executors[0].requests).toEqual([])
+      expect(executors[1].requests).toEqual(['runtime.runner.local_models.replace'])
+      expect(configuration.runtime).toHaveBeenCalledOnce()
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  test('publishes device model interfaces during Core startup and removes disabled entries', async () => {
     const executor = new FakeExecutor()
     const request = vi.spyOn(executor, 'request')
     const configuration = {
@@ -607,6 +677,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
       .mockReturnValueOnce({ hostPipe: firstPipe, principal: '@wegent/dsh-workbench' })
       .mockReturnValueOnce({ hostPipe: secondPipe, principal: '@wegent/dsh-workbench' })
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
@@ -663,6 +734,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
     const options: unknown[] = []
     const hostPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'core' }) }
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
@@ -700,6 +772,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
   test('never provisions a host pipe for an unauthenticated legacy launch', async () => {
     const createWorkbenchHostPipe = vi.fn()
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
@@ -732,6 +805,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
     const scopedPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'scoped' }) }
     const explicitPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'explicit' }) }
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',

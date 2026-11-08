@@ -23,6 +23,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type SetStateAction,
 } from 'react'
 import i18n from '@/i18n'
@@ -127,6 +128,7 @@ import {
   getRuntimeConversationQueueDiagnosticSnapshotByKey,
   getRuntimeConversationQueuePausedByKey,
   isRuntimeGoalSnapshotCurrent,
+  isRuntimeConversationArchived,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
@@ -134,6 +136,7 @@ import {
   replaceRuntimeConversationFromUserMessage,
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
+  subscribeRuntimeConversation,
   restoreOptimisticallyInterruptedRuntimeConversation,
   takeInterruptedRuntimeConversationGuidance,
   updateRuntimeConversationBlocks,
@@ -465,10 +468,33 @@ export function useWorkbenchPaneSession({
     useState<RuntimeTaskLoadTarget | null>(() =>
       currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null
     )
-  const runtimeTaskLoadTarget =
+  const candidateRuntimeTaskLoadTarget =
     currentRuntimeTaskLoadTarget?.key === retainedRuntimeTaskLoadTarget?.key
       ? retainedRuntimeTaskLoadTarget
       : (currentRuntimeTaskLoadTarget ?? retainedRuntimeTaskLoadTarget)
+  // Explicit archival ends this owner's read scope, including panes retained while hidden.
+  const subscribeArchivedOwner = useCallback(
+    (listener: () => void) =>
+      candidateRuntimeTaskLoadTarget
+        ? subscribeRuntimeConversation(candidateRuntimeTaskLoadTarget.address, listener, {
+            retainWhileSubscribed: false,
+          })
+        : () => {},
+    [candidateRuntimeTaskLoadTarget]
+  )
+  const isOwnerArchived = useCallback(
+    () =>
+      candidateRuntimeTaskLoadTarget
+        ? isRuntimeConversationArchived(candidateRuntimeTaskLoadTarget.address)
+        : false,
+    [candidateRuntimeTaskLoadTarget]
+  )
+  const ownerArchived = useSyncExternalStore(
+    subscribeArchivedOwner,
+    isOwnerArchived,
+    isOwnerArchived
+  )
+  const runtimeTaskLoadTarget = ownerArchived ? null : candidateRuntimeTaskLoadTarget
   const { read: loadRuntimeTranscriptForPane, isCurrent: isTranscriptScopeCurrent } =
     useRuntimePaneTranscriptReader(
       readRuntimeTranscriptForPane,
@@ -627,12 +653,14 @@ export function useWorkbenchPaneSession({
   ])
 
   useEffect(() => {
-    if (currentRuntimeTaskLoadTarget) {
+    if (ownerArchived) {
+      setRetainedRuntimeTaskLoadTarget(null)
+    } else if (currentRuntimeTaskLoadTarget) {
       setRetainedRuntimeTaskLoadTarget(current =>
         current?.key === currentRuntimeTaskLoadTarget.key ? current : currentRuntimeTaskLoadTarget
       )
     }
-  }, [currentRuntimeTaskLoadTarget])
+  }, [currentRuntimeTaskLoadTarget, ownerArchived])
 
   useEffect(() => {
     runtimeTaskLoadTargetRef.current = runtimeTaskLoadTarget
@@ -727,6 +755,7 @@ export function useWorkbenchPaneSession({
 
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
+      loadedRuntimeTranscriptKeyRef.current = null
       setTranscriptLoadingKey(null)
       setTranscriptError(null)
       setTranscriptLoadingMoreBeforeKey(null)
@@ -1503,7 +1532,7 @@ export function useWorkbenchPaneSession({
         )
         return false
       }
-      if (currentRuntimeTask.runtime && currentRuntimeTask.runtime !== 'codex') return false
+      if (currentRuntime && currentRuntime !== 'codex') return false
 
       if (queuedMessage.status === 'sending') return false
 
@@ -1638,6 +1667,7 @@ export function useWorkbenchPaneSession({
       }
     },
     [
+      currentRuntime,
       currentRuntimeTask,
       readCurrentPaneBusy,
       queuedMessageBusyBlocks,

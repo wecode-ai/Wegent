@@ -91,6 +91,7 @@ export type ArchiveRuntimeTaskResult = {
 
 export type RefreshWorkLists = (options?: {
   syncCloud?: boolean
+  refreshDevices?: boolean
   unarchivedTasks?: RuntimeTaskAddress[]
 }) => Promise<void>
 

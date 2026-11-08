@@ -27,4 +27,4 @@ pub use model::{
 };
 pub use router::TaskRuntime;
 pub(crate) use store::milestones::MilestoneInput;
-pub use store::{LocalTaskStore, TaskRuntimeError};
+pub use store::{IssueHumanRequestScope, LocalTaskStore, TaskRuntimeError};

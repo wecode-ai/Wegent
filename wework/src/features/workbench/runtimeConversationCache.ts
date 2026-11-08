@@ -70,6 +70,7 @@ import {
 export {
   cacheRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationCacheStats,
+  isRuntimeConversationArchived,
   runtimeConversationKey,
   subscribeRuntimeConversation,
   syncRuntimeConversationDeviceAliases,
@@ -889,6 +890,7 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
 export function archiveRuntimeConversation(address: RuntimeTaskAddress) {
   markRuntimeConversationArchived(runtimeConversationKey(address))
   evictRuntimeConversation(address)
+  notifyRuntimeConversation(runtimeConversationKey(address))
 }
 
 export function unmarkRuntimeConversationArchived(address: RuntimeTaskAddress) {

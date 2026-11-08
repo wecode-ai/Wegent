@@ -61,6 +61,14 @@ flowchart TD
 
 ## 权限契约
 
+本地参与发现使用服务组合层确认的范围：本机归属主体 `0` 与当前已验证账号主体；这不是全局用户别名，也不改变云端授权。快筛、统一待办、只读原生 pending 提示和本地 inbox 使用同一范围；空闲时不新增 inbox 轮询，提示失败为未知而非空列表。新评论由组合层注入的当前实际作者写入，历史 sender 不变。答复仍要求精确 `recipient == persisted comment.sender`，例如接收人 `0`、当前作者 `7` 时必须显式转派后再答，不因发现范围包含两者而放宽 claim。既有小组、已读与任务启动权限继续使用其授权身份，不被存储归属 `0` 覆盖；CP01–CP20 不变。
+
+问题分派仍要求当前 Issue Developer 权限及责任人、小组负责人或 Maintainer 身份；仅作为问题报告人不产生分派权限。报告与阻塞标记先核验本人有效默认命名空间 Device，再以原活动持久执行 ID 校验同一项目、Issue、原 Runtime task、设备及 `executor_owner_user_id`；同名自有设备不能证明拥有别人的 Runtime。只有手工绑定、或小组 Runtime 尚无精确 canonical 执行证据时返回 409，不猜测 owner 或按会话命名补身份。请求标识使用原活动持久设备身份，切换同设备别名不会重复创建问题。
+
+问题报告源可以通过显式 `set_blocking` 操作更新是否阻塞，但仍须具备当前 Issue Developer 权限，并同时匹配持久记录的报告人、原 Runtime task 和本人拥有的原设备身份。此权限不包含分派、取消或答复；请求不得混入接收人或取消字段。行锁内校验 pending 状态与版本，仅更新阻塞标记、版本、更新时间和 `blocking_changed` 事件，保留接收人、责任人及本轮等待起点。普通分派权限与原生操作审批保持不变；缺失来源证据不补猜身份，CP01–CP20 不变。
+
+Issue 中已精确指派的业务回答只续接可信持久原执行的授权身份，不将答复人视为私有机器人的新使用者。接收人仍独立通过当前 Developer、Issue、原评论线程和 Runtime 绑定校验；入口与队列都重新验证原 assigner 的当前资源权限，答复归因保留为实际答复人。缺失原执行授权证据的绑定拒绝续接，不用 Runtime owner 或答复人推测身份。普通评论与新执行的授权规则保持不变。`test_human_reply_execution_authority.py` 覆盖跨人私有机器人续接、普通使用拒绝、撤权、错误接收人/线程/Runtime、队列身份及缺失来源拒绝；不授予私有 Runtime 或凭据访问，CP01–CP20 不变。
+
 | 编号 | 不变量 |
 | --- | --- |
 | CP01 | 每个项目有唯一、有效的父空间；归属与成员授权分别保存。 |
@@ -137,6 +145,25 @@ sequenceDiagram
 后台 MCP 桥只调用当前 Provider 声明依赖中的读取工具，不运行模型回合。工具归属同时核对完整插件身份；共享 App 服务另外核对 Connector 身份。缺少只读标注的旧工具可以由 Wework 适配插件声明精确读取契约，但不能覆盖明确的写入或破坏性标注。调用参数不能自授读取权限；后台授权交互取消后明确失败，不自动放行，也不改变分身执行时的确认策略。`connection_mcp_tests` 覆盖归属、读取边界、依赖变更和取消/超时清理，`stand-in-mcp` 桌面 checkpoint 覆盖真实 Executor 对跨依赖调用的拒绝。
 
 没有 MCP 的插件可通过通用 CLI 读取传输复用已有 `localAuth.tool`。可执行工具、Connector、固定命令和允许参数均来自精确依赖及已安装 Wework 适配插件的读取声明；调用者不能传入命令或增加参数，也不执行 Shell 或 Skill 文本。钉钉采集已使用该路径，专用读取 RPC 已删除；回复继续沿用原来源绑定及确认策略。通用 CLI 契约测试与 `stand-in-cli` CI checkpoint 覆盖写入拒绝、参数注入和旧入口删除。
+
+### 外部工作本地交付元数据
+
+分身委派和外部来源工作仅向当前线程的 Shell 注入 `WEGENT_EXECUTOR_BINARY`、
+`WEGENT_TASK_ID` 和 `WEGENT_TASK_WORKSPACE`，用于工作目录内的本地交付物声明。
+这些元数据不进入共享 App Server 进程；任务凭据、Runtime 和 Skill 身份、
+Connector Broker 凭据及 Backend Task 身份仍不提供给外部工作 Shell。
+本地声明校验文件真实路径、读取文件计算哈希并返回本地路径，不访问 Backend。
+原生审核、权限配置和 MCP 范围保持不变，CP01–CP20 不变。
+`task_artifact_env_tests` 保护精确三字段、线程隔离和 start/resume/fork 权限边界；
+`dots-closed-loops` 桌面 checkpoint 验证真实委派声明及原主会话交付物打开。
+
+任务级工作目录以持久化的执行意图为准：明确的 `workspace_source=local_path`
+保留原目录，即使它位于 Git worktree 内，也不转换为受管 worktree 或提升到仓库根。
+项目分组和 Git 属性不构成执行归属。受管 worktree、历史任务和独立聊天保留原约束；
+`workspace_identity_tests` 用真实 Git worktree 验证 get/list 的一致性和原元数据白名单。
+旧主分身记录仅在来源字段缺失、原始身份与项目绑定完整一致、执行目录精确匹配已记录根目录时，
+从这些持久证据恢复原有当前工作区意图。读取不参考当前设置、不改写索引；来源明确、绑定冲突或
+证据不完整的历史记录不进入此恢复路径。
 
 ### 子 Issue 执行的父项只读上下文
 
