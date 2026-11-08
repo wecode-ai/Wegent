@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
+  DEFAULT_STEP_TIMEOUT_MS,
   DEFAULT_MODEL_ID,
   createSingleRootLocalProject,
   selectE2EModel,
@@ -350,7 +351,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
       await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
         text: '0',
-        timeoutMs: 30_000,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command(
