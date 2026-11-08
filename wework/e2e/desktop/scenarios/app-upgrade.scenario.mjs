@@ -667,10 +667,8 @@ export async function createDesktopScenario(options) {
             installedVersion,
             assertSelectedComposition,
             captureScreenshot: options.captureScreenshot,
-            routeCurrentUpdateRequests: async () => {
-              const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
-              await routeRunningUpgradeRequests(inspectorPort, pid, origin)
-            },
+            routeCurrentUpdateRequests: () =>
+              routeRunningUpgradeRequests(inspectorPort, control, origin),
           })
         passed = true
         return

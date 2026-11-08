@@ -33,8 +33,13 @@ export async function routeUpgradeRequests(
   return new URL(socketUrl).port
 }
 
-export async function routeRunningUpgradeRequests(port, pid, origin) {
-  await inspectRunningApp(port, pid, upgradeTransportScript(origin, null, port))
+export async function routeRunningUpgradeRequests(port, control, origin) {
+  // A normal installed startup need not refresh the launcher's active-pid file.
+  // Bind the inspector to the host serving the connected workbench instead.
+  const { applicationPid } = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+  if (!Number.isSafeInteger(applicationPid) || applicationPid <= 0)
+    throw new Error('The connected workbench has no valid application process ID')
+  await inspectRunningApp(port, applicationPid, upgradeTransportScript(origin, null, port))
 }
 
 export function upgradeTransportScript(origin, pauseArgument, inspectorPort = null) {

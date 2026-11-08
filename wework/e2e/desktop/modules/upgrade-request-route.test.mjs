@@ -226,7 +226,7 @@ test('routes the default update URL through the real Electron network stack', as
 })
 
 test(
-  'the upgrade transport follows a real Electron relaunch',
+  'the upgrade transport follows a real Electron relaunch using the connected host',
   { timeout: 30_000 },
   async context => {
     const root = await mkdtemp(join(tmpdir(), 'wework-upgrade-handoff-'))
@@ -310,11 +310,22 @@ test(
       ])
       assert.deepEqual(exited, PROBE_EXPECTED_EXIT, stderr)
       const { pid } = JSON.parse(await readFile(readyPath, 'utf8'))
+      // Ordinary installed startup can leave the previous launcher's PID behind.
+      await writeFile(join(root, 'active-pid'), String(child.pid))
+      const stalePid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
+      assert.notEqual(stalePid, pid)
+      const controller = applicationPid => ({
+        async command(name, selector) {
+          assert.equal(name, 'getOwnedProcessSnapshot')
+          assert.equal(selector, 'body')
+          return JSON.stringify({ applicationPid })
+        },
+      })
       await assert.rejects(
-        routeRunningUpgradeRequests(port, process.pid, origin),
+        routeRunningUpgradeRequests(port, controller(stalePid), origin),
         /another release process/
       )
-      await routeRunningUpgradeRequests(port, pid, origin)
+      await routeRunningUpgradeRequests(port, controller(pid), origin)
       readyResponse.end('ready')
       let result
       const deadline = Date.now() + 15_000
