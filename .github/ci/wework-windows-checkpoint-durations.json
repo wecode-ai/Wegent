@@ -1,5 +1,5 @@
 {
-  "description": "Successful ordinary Windows checkpoint durations in seconds. Refreshed values are medians of ceil-rounded scheduler start/end durations from the latest three evidenced runs; checkpoints absent from these runs retain earlier medians.",
+  "description": "Successful ordinary Windows checkpoint durations in seconds. Refreshed values are medians of ceil-rounded scheduler start/end durations from the latest three evidenced runs; checkpoints absent from these runs retain earlier medians. Newly recorded checkpoints use successful scheduler measurements with explicit sources, without changing existing medians.",
   "runs": [
     "https://github.com/wecode-ai/Wegent/actions/runs/40657579676",
     "https://github.com/wecode-ai/Wegent/actions/runs/40667094596",
@@ -13,7 +13,8 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/42392978141",
     "https://github.com/wecode-ai/Wegent/actions/runs/42400229326",
     "https://github.com/wecode-ai/Wegent/actions/runs/42405065052",
-    "https://github.com/wecode-ai/Wegent/actions/runs/42411289396"
+    "https://github.com/wecode-ai/Wegent/actions/runs/42411289396",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42442121034"
   ],
   "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
   "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
@@ -24,6 +25,7 @@
   },
   "seconds": {
     "application-menu": 46,
+    "archived-fork-cleanup": 48,
     "archived-worktree-cleanup": 39,
     "automation-lifecycle": 81,
     "background-terminals": 85,
@@ -84,6 +86,7 @@
     "coordination-runtime": 61,
     "core-dsh-plugin-management": 71,
     "core-task-flow": 289,
+    "desktop-device-identity": 188,
     "device-artifact-declaration": 64,
     "devtools-performance": 33,
     "dots-closed-loops": 163,
@@ -210,6 +213,15 @@
     ],
     "checkpoints": 168,
     "note": "Refreshed ordinary shards 1-8 from successful PASS checkpoints only, using the median of available observations across these three runs. Failed and unfinished checkpoints are not timing samples. Exclusive benchmark shards 9-10 and unobserved earlier measurements remain unchanged."
+  },
+  "additionalMeasurements": {
+    "head": "02087ccd067af338ec7f20e9933c6090bd1a65f9",
+    "run": "https://github.com/wecode-ai/Wegent/actions/runs/42442121034",
+    "note": "Only these two previously unmeasured checkpoints were added. Every ordinary checkpoint in this run passed; Core 1 timed out after its final checkpoint during runner cleanup. Existing medians and exclusive benchmark weights remain unchanged.",
+    "sources": {
+      "archived-fork-cleanup": "https://github.com/wecode-ai/Wegent/actions/runs/42442121034/job/128616588312",
+      "desktop-device-identity": "https://github.com/wecode-ai/Wegent/actions/runs/42442121034/job/128616588259"
+    }
   },
   "preparationSources": {
     "dingtalk-protocol-fixture": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293/job/127328527189"

@@ -354,10 +354,7 @@ test('deadline replay rejects unknown durations and preserves known sums', () =>
   assert.equal(replayedShardSeconds(shard, { 'send-key-preference': 17 }, 125), 142)
 })
 
-test('historical Windows workloads fit the step deadline with complete replay coverage', () => {
-  const replay = JSON.parse(
-    readFileSync(new URL('./fixtures/wework-windows-deadline-replay.json', import.meta.url))
-  )
+function assertDeadlineReplay(replay) {
   const workflow = readFileSync(new URL('../workflows/wework-e2e.yml', import.meta.url), 'utf8')
   const budget =
     Number(
@@ -385,4 +382,22 @@ test('historical Windows workloads fit the step deadline with complete replay co
   const unobserved = checkpoints(completeMatrix).filter(key => !Object.hasOwn(observed, key))
   if (unobserved.length)
     console.log(`[windows-deadline-replay] no historical prediction for: ${unobserved.join(',')}`)
+}
+
+test('historical Windows workloads fit the step deadline with complete replay coverage', () => {
+  assertDeadlineReplay(
+    JSON.parse(
+      readFileSync(new URL('./fixtures/wework-windows-deadline-replay.json', import.meta.url))
+    )
+  )
+})
+
+test('new Windows checkpoint measurements leave room for startup and cleanup', () => {
+  assertDeadlineReplay(
+    JSON.parse(
+      readFileSync(
+        new URL('./fixtures/wework-windows-cleanup-deadline-replay.json', import.meta.url)
+      )
+    )
+  )
 })
