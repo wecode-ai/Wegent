@@ -74,7 +74,10 @@ test.each([false, true])(
         if (action === 'click' && saving) throw new Error('Primary settings are still saving')
         if (action === 'clickWhenEnabled' && saving) await saved
       }
-      if (action === 'getElementCount') throw pickerReached
+      if (action === 'getElementCount') {
+        if (selector === '[data-testid="stand-in-add-connection"]') throw pickerReached
+        return '0'
+      }
       if (selector === '[data-testid="automation-prompt-input"]' && action === 'getValue')
         return 'Weekly review'
       if (selector === '[data-testid="automation-open-schedule"]') {
@@ -102,7 +105,10 @@ test.each([false, true])(
       }),
     ])
     if (saving) {
-      expect(command).not.toHaveBeenCalledWith('getElementCount', expect.anything())
+      expect(command).not.toHaveBeenCalledWith(
+        'getElementCount',
+        '[data-testid="stand-in-add-connection"]'
+      )
       releaseSave()
     }
     expect(await verified).toBe(pickerReached)

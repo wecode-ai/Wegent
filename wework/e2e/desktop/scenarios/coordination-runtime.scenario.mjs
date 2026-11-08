@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { openStandInDetails } from '../modules/stand-in-profile-navigation.mjs'
+import { openStandInActivity, openStandInDetails } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
@@ -179,8 +179,10 @@ export function createDesktopScenario({
         )
         assert.equal(workTurns, 1)
         assert.equal(assessments, 0, 'One eligible role requires no coordination model call')
+        await openStandInActivity(control)
         await control.command('waitFor', `[data-testid="stand-in-activity-task-${taskId}"]`)
         await captureScreenshot(control, 'router-02-one-concrete-work.png')
+        await control.command('click', '[data-testid="stand-in-work-dialog-close"]')
         const pending = await until(
           () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
           state => state.pendingCount > 0 && Date.parse(state.nextCheckAt) > Date.now() + 240000,
@@ -278,6 +280,7 @@ export function createDesktopScenario({
         assert.equal((await rpc(control, 'todos.bindings', { task_id: issue.id })).length, 1)
         const listed = await rpc(control, 'runtime.tasks.list', { preferCached: true })
         assert.ok(!JSON.stringify(listed).includes(`stand-in-coordinator-${USER}`))
+        await openStandInActivity(control)
         await control.command('click', `[data-testid="stand-in-activity-task-${taskId}"]`)
         await control.command('click', '[data-testid="stand-in-preview-open"]')
         await control.command('waitFor', '[data-testid="message-assistant"]', {
