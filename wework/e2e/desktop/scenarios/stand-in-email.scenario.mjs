@@ -288,6 +288,10 @@ export function createDesktopScenario({
       assert.equal(accounts.length, 1)
       assert.equal(accounts[0].password, undefined)
       const accountId = accounts[0].id
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-processing-settings-toggle"]'
+      )
       await control.command('click', `[data-testid="stand-in-email-policy-${accountId}"]`)
       await captureScreenshot(control, '03-account-verified-connection-pending-save.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
