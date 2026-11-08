@@ -4,11 +4,11 @@ import { join, resolve } from 'node:path'
 
 const APPEARANCE_KEY = 'wework.appearance'
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
-// The desktop ChatGPT defaults are owned by the named theme catalogue.
+// The original Wework defaults are owned by the named theme catalogue.
 // Core DSH owns body styles; inspect the Wework tokens and their actual consumers.
 const WEWORK_PALETTE = {
-  light: { background: '255 255 255', text: '13 13 13' },
-  dark: { background: '17 17 17', text: '252 252 252' },
+  light: { background: '255 255 255', text: '26 26 26' },
+  dark: { background: '24 24 24', text: '255 255 255' },
 }
 const ACTIVE_WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const BACKGROUND_SELECTOR = `${ACTIVE_WORKBENCH} main`
