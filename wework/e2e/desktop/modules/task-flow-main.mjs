@@ -4133,7 +4133,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+      await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
         target: activeTaskWorkbenchSelector,
         text: FILE_PREVIEW_RESTORE_MARKER,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -4303,7 +4303,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The review tab was not active after switching back to the first task'
       )
       await control.command('click', '[data-testid="right-workspace-file-tab"]')
-      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+      await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
         target: activeTaskWorkbenchSelector,
         text: FILE_PREVIEW_RESTORE_MARKER,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
