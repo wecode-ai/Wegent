@@ -95,21 +95,13 @@ function extractFileChangeReferences(
     }));
 }
 
-/**
- * Codex often lists changed documents as bare paths instead of markdown links.
- * Only accept a whole line that is a workspace-relative document path so prose
- * mentions do not turn into reference cards.
- */
+/** Codex often names changed documents as bare paths instead of markdown links. */
 function extractBareFileReferences(content: string): CodexReference[] {
   const references: CodexReference[] = [];
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine
-      .trim()
-      .replace(/^[-*]\s+/, "")
-      .replace(/^`|`$/g, "")
-      .trim();
-    if (!line || /\s/.test(line) || line.includes("://")) continue;
-    const parsed = splitMarkdownFileLineSuffix(line);
+  for (const rawToken of content.split(/\s+/)) {
+    const token = rawToken.replace(/^[`"'([{]+/, "").replace(/[`"',.;:)\]}]+$/, "");
+    if (!token || token.includes("://")) continue;
+    const parsed = splitMarkdownFileLineSuffix(token);
     if (!isCodexDocumentReferencePath(parsed.path)) continue;
     if (!/^[\w./@-]+$/.test(parsed.path)) continue;
     references.push({
