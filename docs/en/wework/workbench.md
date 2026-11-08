@@ -214,7 +214,7 @@ The right workspace displays project files, previews, and change reviews. Multi-
 
 Selecting a writable text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
 
-Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
+Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
 Codex file citations appear as clickable filenames for presentations, spreadsheets, PDFs, documents, and code. Source citations appear under **Sources**, while deliverables appear under **Outputs**. Code line references open at the requested lines. Page numbers, slide numbers, worksheet ranges, and object labels appear beside the filename; clicking opens the file but does not yet navigate to an Office artifact's internal location. Legacy `【F:path†Lstart-Lend】` references also support code line navigation.
 
