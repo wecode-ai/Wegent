@@ -9,6 +9,10 @@ sidebar_position: 5
 <!-- ui-source: src/pages/WorkbenchPage.tsx -->
 <!-- ui-source: src/pages/PopoutWorkbenchPage.tsx -->
 
+## Startup animation
+
+The startup logo has a left-to-right light sweep. The light band fully exits before a brief pause and the next pass, keeping the same base color across the loop boundary. The sweep is disabled when the system's reduced-motion preference is enabled.
+
 ## Application menu
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
