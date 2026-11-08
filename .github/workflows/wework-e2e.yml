@@ -550,9 +550,15 @@ jobs:
         run: |
           # This installer only feeds the E2E run, so trade package size for
           # packaging time instead of using the release compression mode.
-          pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never --config.compression=store
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to build the Windows installer"
+          # electron-builder downloads packaging toolchains; the CDN can answer
+          # a transient 504, so retry before failing the whole verification.
+          for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+            pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never --config.compression=store
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) {
+              throw "Failed to build the Windows installer"
+            }
+            Start-Sleep -Seconds (10 * $attempt)
           }
           $installers = @(Get-ChildItem "wework/electron/release-installer" -Filter "*-setup.exe" -File)
           if ($installers.Count -ne 1) {
