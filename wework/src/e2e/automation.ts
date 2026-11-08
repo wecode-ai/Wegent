@@ -1785,6 +1785,8 @@ async function waitForDesktopControlElement(
       dataPresentation: element.dataset.presentation ?? null,
       hidden: element.hidden,
       ariaHidden: element.getAttribute('aria-hidden'),
+      enabled: desktopControlElementEnabled(element),
+      state: { ...element.dataset },
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
       rect: element.getBoundingClientRect().toJSON(),

@@ -423,6 +423,14 @@ impl RuntimeWorkRpcHandler {
             Some(gate) => Some(gate.lock().await),
             None => None,
         };
+        self.create_task_after_local_checks(payload, activity).await
+    }
+
+    async fn create_task_after_local_checks(
+        &self,
+        payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
         let schema_version = payload
             .get("schemaVersion")
             .or_else(|| payload.get("schema_version"))
@@ -1056,8 +1064,21 @@ impl RuntimeWorkRpcHandler {
                 "Coordinator batch is no longer current",
             ));
         }
+        if runtime_session_id_from_link(&link).is_none() {
+            link.thread_id = self.recover_settled_command_session(&id, user)?;
+        }
+        let needs_native_session = runtime_session_id_from_link(&link).is_none();
         link.runtime_handle["origin"] = origin.clone();
         self.upsert_local_task(link);
+        if needs_native_session {
+            let mut payload = payload;
+            self.bind_stand_in_owner_command(&mut payload, false);
+            normalize_user_message_presentation(&mut payload)?;
+            return self
+                .create_task_after_local_checks(payload, false)
+                .await
+                .map(Some);
+        }
         self.send_message_after_local_checks(payload)
             .await
             .map(Some)
