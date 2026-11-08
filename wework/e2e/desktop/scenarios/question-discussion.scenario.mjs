@@ -301,6 +301,7 @@ export function createDesktopScenario({
           y: fillButton.top + fillButton.height / 2,
         }),
       })
+      await control.command('waitFor', DIALOG, { visible: false })
       await control.command(
         'waitFor',
         `${CARD} [data-testid="request-user-input-custom-question_1"]`,
@@ -333,10 +334,13 @@ export function createDesktopScenario({
         value: SELECTED,
       })
       await control.command('clickWhenEnabled', FILL_SELECTION)
+      // The earlier fill already has SELECTED; only closing proves the async revalidation finished.
+      await control.command('waitFor', DIALOG, { visible: false })
       const answer = `${CARD} [data-testid="request-user-input-custom-question_1"]`
       await control.command('waitFor', answer, { visible: true })
       assert.equal(await control.command('getValue', answer), SELECTED)
       await control.command('fill', answer, { value: CONCLUSION })
+      assert.equal(await control.command('getValue', `${ACTIVE} ${answer}`), CONCLUSION)
       assert.equal(finalAnswers, 0, 'Filling a draft cannot submit it')
       await captureScreenshot(control, 'question-discussion-05-editable-answer.png', 'body')
       await control.command(

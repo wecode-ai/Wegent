@@ -983,7 +983,6 @@ async function verifyBackgroundTaskWindowLifecycle({
   // readiness, and that guard used to cancel app.quit() and strand the app on the
   // splash with its runtime already torn down.
   setPhase('quit-during-startup-splash')
-  // Hold the splash so a fast startup cannot close it before the quit request.
   const startupQuitApp = await restartDesktopApp({
     appEnvironmentOverrides: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '60000' },
   })

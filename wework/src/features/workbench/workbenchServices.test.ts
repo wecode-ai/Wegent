@@ -49,6 +49,8 @@ const mocks = vi.hoisted(() => {
     localDeliveryApi,
     sharedWorkspaceApi,
     backendServices: {
+      issueHumanRequestsApi: { inbox: vi.fn() },
+      projectChatClient: { subscribe: vi.fn() },
       deliveryApi: backendDeliveryApi,
       sharedWorkspaceApi,
       projectSpaceApis: {
@@ -59,6 +61,13 @@ const mocks = vi.hoisted(() => {
     localServices: {
       deliveryApi: localDeliveryApi,
       externalIssueApi,
+      localParticipationIdentity: {
+        nativeOwnerUserId: 0 as const,
+        currentUser: { id: 7, user_name: 'current-user' },
+        viewerUserIds: [0, 7],
+      },
+      localIssueHumanRequestsApi: { inbox: vi.fn() },
+      localProjectChatClient: { subscribe: vi.fn() },
     },
     hybridServices: {
       deliveryApi: backendDeliveryApi,
@@ -104,6 +113,30 @@ describe('default workbench project-space services', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
+  })
+
+  test('preserves local participation scope alongside cloud-first desktop services', () => {
+    const services = createDefaultWorkbenchServices()
+
+    expect(services.localParticipationIdentity).toBe(mocks.localServices.localParticipationIdentity)
+    expect(services.localIssueHumanRequestsApi).toBe(mocks.localServices.localIssueHumanRequestsApi)
+    expect(services.localProjectChatClient).toBe(mocks.localServices.localProjectChatClient)
+    expect(services.issueHumanRequestsApi).toBe(mocks.backendServices.issueHumanRequestsApi)
+    expect(services.projectChatClient).toBe(mocks.backendServices.projectChatClient)
+    expect(services.sharedWorkspaceApi).toBe(mocks.backendServices.sharedWorkspaceApi)
+    expect(services.projectSpaceApis?.defaultLocation).toBe('cloud')
+  })
+
+  test('keeps local-first participation and chat owned by the local composition', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+
+    const services = createDefaultWorkbenchServices()
+
+    expect(services.localParticipationIdentity).toBe(mocks.localServices.localParticipationIdentity)
+    expect(services.localIssueHumanRequestsApi).toBe(mocks.localServices.localIssueHumanRequestsApi)
+    expect(services.localProjectChatClient).toBe(mocks.localServices.localProjectChatClient)
+    expect(services.issueHumanRequestsApi).not.toBe(mocks.backendServices.issueHumanRequestsApi)
+    expect(services.projectChatClient).not.toBe(mocks.backendServices.projectChatClient)
   })
 
   test('adds build-time feedback submission to an offline local workbench', () => {

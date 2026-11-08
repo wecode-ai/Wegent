@@ -144,17 +144,13 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
       ...splitMarkdownFileLineSuffix(localPathFromMarkdownImageSrc(value)),
     }
   }
-  // Windows absolute links are percent-encoded by the runtime (`D:%5C...`).
-  const decodedValue = decodeMarkdownFilePath(value)
-  if (
-    /^[a-z][a-z0-9+.-]*:/i.test(decodedValue) &&
-    !isWindowsDriveAbsolutePath(decodedValue)
-  ) {
+  const decodedPath = decodeMarkdownFilePath(value)
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !isWindowsDriveAbsolutePath(decodedPath)) {
     return { kind: 'external' }
   }
   return {
     kind: 'file',
-    ...splitMarkdownFileLineSuffix(normalizeMarkdownDrivePath(decodedValue)),
+    ...splitMarkdownFileLineSuffix(normalizeMarkdownDrivePath(decodedPath)),
   }
 }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 import { verifyAssignmentActivityReceipts } from './assignment-activity-receipts.mjs'
+import { waitForLocalStandInTask } from './stand-in-status-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const RECEIPTS = `${CONTENT} [data-testid="issue-assignment-receipts"]`
@@ -12,7 +13,8 @@ export async function verifyIssueAssignmentReceipts(
   projectId,
   uiTimeoutMs,
   captureScreenshot,
-  userId
+  userId,
+  modelResponseTimeoutMs
 ) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const dismissInbox = async () => {
@@ -82,7 +84,7 @@ export async function verifyIssueAssignmentReceipts(
   )
   await capture('assignment-receipts-02-human-read.png')
 
-  await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
+  const delegated = await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
   const both = (await load())[0]
@@ -90,6 +92,14 @@ export async function verifyIssueAssignmentReceipts(
   assert.ok(both.human_read_at && both.stand_in_received_at)
   await control.command('waitFor', `${RECEIPTS} svg[data-figure="stand-in"]`)
   await capture('assignment-receipts-03-both-received.png')
+  // The completed turn updates the Issue version and replaces receipt nodes.
+  // Verify immediate reception first, then interact with the final owner state.
+  const binding = await waitForLocalStandInTask(rpc, issue, modelResponseTimeoutMs)
+  assert.equal(binding.task_id, delegated.taskId)
+  await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-status"]`, {
+    value: 'in_review',
+  })
+  await verifyAssignmentActivityReceipts(control, '分身已接收')
   await dismissInbox()
   await control.command('waitFor', STAND_IN_RECEIPT)
   await control.command('hover', STAND_IN_RECEIPT)

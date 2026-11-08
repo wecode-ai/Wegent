@@ -53,6 +53,37 @@ const move = (candidate: StandardCloudBoardItem, source = columns[1], target = c
   })
 
 describe('Backlog projection', () => {
+  it('checks lane mutations against stage tags without reapplying the viewer filter', () => {
+    const filtered = savedBoardColumns(
+      { ...view, filter: { needs_my_input: true, tags: ['bug'], match: 'all' } },
+      [],
+      []
+    )
+    expect(filtered[0].unmatchedFilter).toEqual({
+      needs_my_input: false,
+      tags: ['bug'],
+      match: 'all',
+    })
+    const mutation = resolveStandardCloudBoardMutation({
+      item: { ...item, tags: ['design', 'bug'] },
+      items: [item],
+      groupBy: 'status',
+      beforeItemId: null,
+      sourceColumn: filtered[1],
+      column: filtered[0],
+    })
+    expect(mutation).toMatchObject({ kind: 'tag', tags: ['bug'] })
+    expect(
+      resolveStandardCloudBoardMutation({
+        item: { ...item, tags: ['design'] },
+        items: [item],
+        groupBy: 'status',
+        beforeItemId: null,
+        sourceColumn: filtered[1],
+        column: filtered[0],
+      })
+    ).toBeNull()
+  })
   it('includes new and business-tagged Issues, and excludes every matching stage', () => {
     expect(matches({ ...item, tags: [] })).toBe(true)
     expect(matches(item)).toBe(true)

@@ -153,16 +153,21 @@ pub(crate) fn get_item_from(
 }
 
 pub(super) fn map_loop_item(connection: &Connection, row: &Row<'_>) -> rusqlite::Result<LoopItem> {
+    let mut item = map_loop_item_fields(row)?;
+    item.metadata = crate::task_runtime::runner_history::metadata(
+        connection,
+        &item.id,
+        &item.resource_type,
+        item.metadata,
+    )?;
+    Ok(item)
+}
+
+pub(super) fn map_loop_item_fields(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
     let metadata = row
         .get::<_, Option<String>>(16)?
         .and_then(|value| serde_json::from_str::<Value>(&value).ok())
         .unwrap_or_else(|| json!({}));
-    let metadata = crate::task_runtime::runner_history::metadata(
-        connection,
-        &row.get::<_, String>(0)?,
-        &row.get::<_, String>(1)?,
-        metadata,
-    )?;
     Ok(LoopItem {
         id: row.get(0)?,
         resource_type: row.get(1)?,
@@ -200,28 +205,46 @@ pub(super) fn collect_items(
         .map_err(TaskRuntimeError::from)
 }
 
+#[derive(Clone)]
+pub(super) struct ExecutionProjection {
+    id: i64,
+    state: String,
+    agent_name: Option<String>,
+    completed_at: Option<String>,
+}
+
+fn execution_projection(row: &Row<'_>) -> rusqlite::Result<ExecutionProjection> {
+    let metadata: Value = row
+        .get::<_, Option<String>>(6)?
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or(Value::Null);
+    Ok(ExecutionProjection {
+        id: row.get(0)?,
+        state: local_execution_display_state(
+            &row.get::<_, String>(1)?,
+            &row.get::<_, String>(2)?,
+            &row.get::<_, String>(3)?,
+        ),
+        agent_name: super::record_rows::execution_agent_name(&metadata, row.get(4)?, row.get(5)?),
+        completed_at: row.get(7)?,
+    })
+}
+
 /// Newest execution attempt for one task, projected to the UI vocabulary.
 pub(super) fn latest_execution(
     connection: &Connection,
     item_id: &str,
-) -> Result<Option<(i64, String)>, TaskRuntimeError> {
+) -> Result<Option<ExecutionProjection>, TaskRuntimeError> {
     connection
         .query_row(
-            "SELECT id, status, observed_state, sync_state
-             FROM loop_item_executions
-             WHERE loop_item_id = ?1
-             ORDER BY id DESC
+            "SELECT e.id, e.status, e.observed_state, e.sync_state, a.name, a.title, a.metadata, e.completed_at
+             FROM loop_item_executions e
+             LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND a.cloud_project_id=e.cloud_project_id
+             WHERE e.loop_item_id = ?1
+             ORDER BY e.id DESC
              LIMIT 1",
             params![item_id],
-            |row| {
-                let status = row.get::<_, String>(1)?;
-                let observed_state = row.get::<_, String>(2)?;
-                let sync_state = row.get::<_, String>(3)?;
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    local_execution_display_state(&status, &observed_state, &sync_state),
-                ))
-            },
+            execution_projection,
         )
         .optional()
         .map_err(TaskRuntimeError::from)
@@ -231,25 +254,17 @@ pub(super) fn latest_execution(
 pub(super) fn latest_executions_for_project(
     connection: &Connection,
     project_id: &str,
-) -> Result<HashMap<String, (i64, String)>, TaskRuntimeError> {
+) -> Result<HashMap<String, ExecutionProjection>, TaskRuntimeError> {
     let mut statement = connection.prepare(
-        "SELECT e.loop_item_id, e.id, e.status, e.observed_state, e.sync_state
+        "SELECT e.id, e.status, e.observed_state, e.sync_state, a.name, a.title, a.metadata, e.completed_at, e.loop_item_id
          FROM loop_item_executions e
          JOIN loop_items t ON t.id = e.loop_item_id
+         LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND a.cloud_project_id=e.cloud_project_id
          WHERE t.cloud_project_id = ?1 AND t.resource_type = 'task'
          ORDER BY e.id DESC",
     )?;
     let rows = statement.query_map(params![project_id], |row| {
-        let status = row.get::<_, String>(2)?;
-        let observed_state = row.get::<_, String>(3)?;
-        let sync_state = row.get::<_, String>(4)?;
-        Ok((
-            row.get::<_, String>(0)?,
-            (
-                row.get::<_, i64>(1)?,
-                local_execution_display_state(&status, &observed_state, &sync_state),
-            ),
-        ))
+        Ok((row.get::<_, String>(8)?, execution_projection(row)?))
     })?;
     let mut executions = HashMap::new();
     for row in rows {
@@ -259,10 +274,29 @@ pub(super) fn latest_executions_for_project(
     Ok(executions)
 }
 
-pub(super) fn attach_execution(mut item: LoopItem, execution: Option<(i64, String)>) -> LoopItem {
-    if let Some((id, status)) = execution {
-        item.execution_id = Some(id);
-        item.execution_state = Some(status);
+pub(super) fn attach_execution(
+    mut item: LoopItem,
+    execution: Option<ExecutionProjection>,
+) -> LoopItem {
+    if let Some(metadata) = item.metadata.as_object_mut() {
+        metadata.remove("processing_actor");
+        metadata.remove("human_waiting_since");
+    }
+    if let Some(execution) = execution {
+        if execution.state == "running" {
+            if let Some(name) = execution.agent_name {
+                item.metadata["processing_actor"] = json!({"kind":"agent","name":name});
+            }
+        } else if matches!(
+            execution.state.as_str(),
+            "succeeded" | "failed" | "cancelled"
+        ) {
+            if let Some(at) = execution.completed_at.filter(|value| !value.is_empty()) {
+                item.metadata["human_waiting_since"] = json!(at);
+            }
+        }
+        item.execution_id = Some(execution.id);
+        item.execution_state = Some(execution.state);
     }
     item
 }
@@ -276,4 +310,93 @@ pub fn task_provider(project: &LoopItem) -> Result<TaskProviderKind, TaskRuntime
             .unwrap_or_else(|| json!("local")),
     )
     .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+}
+
+#[cfg(test)]
+mod execution_actor_tests {
+    use super::*;
+
+    #[test]
+    fn unassigned_comment_execution_projects_the_real_actor_and_current_handoff() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("actor.sqlite")).unwrap();
+        let project = store
+            .create_project(
+                serde_json::from_value(json!({"name":"Actors","project_key":"ACT"})).unwrap(),
+            )
+            .unwrap();
+        let agent = store.create_chat_agent(&project.id,serde_json::from_value(json!({"name":"Mention bot","display_name":"Actual mention actor","execution_mode":"auto"})).unwrap()).unwrap();
+        let task = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Unassigned Issue"})).unwrap(),
+            )
+            .unwrap();
+        assert!(task.assignee_agent_id.is_none());
+        let execution = store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"message":"Mentioned work"}),
+                None,
+            )
+            .unwrap();
+        store.connection().unwrap().execute("UPDATE loop_items SET metadata=?1 WHERE id=?2",params![json!({"processing_actor":{"kind":"stand_in","name":"stale"},"human_waiting_since":"2000-01-01T00:00:00Z","keep":true}).to_string(),task.id]).unwrap();
+        store.connection().unwrap().execute("UPDATE loop_item_executions SET status='running',observed_state='running',sync_state='in_sync' WHERE id=?1",[execution.id]).unwrap();
+        let running = store.get_task(&project.id, &task.id).unwrap();
+        assert_eq!(
+            running.metadata["processing_actor"],
+            json!({"kind":"agent","name":"Actual mention actor"})
+        );
+        assert!(running.metadata.get("human_waiting_since").is_none());
+        assert_eq!(
+            store.list_tasks(&project.id).unwrap()[0].metadata,
+            running.metadata
+        );
+        let completed_at = "2026-11-08T05:00:00Z";
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_executions SET status='completed',completed_at=?1 WHERE id=?2",
+                params![completed_at, execution.id],
+            )
+            .unwrap();
+        let completed = store.get_task(&project.id, &task.id).unwrap();
+        assert!(completed.metadata.get("processing_actor").is_none());
+        assert_eq!(completed.metadata["human_waiting_since"], completed_at);
+        assert_eq!(completed.metadata["keep"], true);
+        let persisted: String = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT metadata FROM loop_items WHERE id=?1",
+                [&task.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&persisted).unwrap()["processing_actor"]["name"],
+            "stale"
+        );
+        let next = store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"message":"Next turn"}),
+                None,
+            )
+            .unwrap();
+        let queued = store.get_task(&project.id, &task.id).unwrap();
+        assert_eq!(queued.execution_id, Some(next.id));
+        assert_eq!(queued.execution_state.as_deref(), Some("queued"));
+        assert!(queued.metadata.get("processing_actor").is_none());
+        assert!(queued.metadata.get("human_waiting_since").is_none());
+        assert_eq!(
+            store.list_tasks(&project.id).unwrap()[0].metadata,
+            queued.metadata
+        );
+    }
 }

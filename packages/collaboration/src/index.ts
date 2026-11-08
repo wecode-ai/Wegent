@@ -54,3 +54,4 @@ export type {
   MilestoneInput,
   MilestonesApi,
 } from "./milestones/types";
+export * from "./issueParticipation";

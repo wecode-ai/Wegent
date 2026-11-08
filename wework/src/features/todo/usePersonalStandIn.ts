@@ -8,7 +8,8 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 export function usePersonalStandIn(
   services: WorkbenchServices,
   userId: number,
-  initialDeviceId?: string
+  initialDeviceId?: string,
+  localDeviceId?: string
 ) {
   const [saved, setSaved] = useState<PersonalStandInSettings | null>(null)
   const [draft, setDraft] = useState<PersonalStandInSettings | null>(null)
@@ -27,7 +28,9 @@ export function usePersonalStandIn(
   useEffect(() => {
     let active = true
     void (async () => {
-      const identity = await services.getLocalRuntimeSidebarIdentity?.()
+      const identity = localDeviceId
+        ? { deviceId: localDeviceId }
+        : await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity) throw new Error('Executor identity is unavailable')
       const target = deviceId || identity.deviceId
       const settings = await services.standInApi!.personalGet(userId, target)
@@ -54,7 +57,7 @@ export function usePersonalStandIn(
     return () => {
       active = false
     }
-  }, [services, userId, deviceId, reload])
+  }, [services, userId, deviceId, reload, localDeviceId])
 
   const updateRole = useCallback((id: string, update: (role: StandInRole) => StandInRole) => {
     setDraft(

@@ -1,6 +1,26 @@
 import { expect, test, vi } from 'vitest'
 import { createRuntimeWorkApiFromIpc } from './localServices'
 
+test.each([true, false, undefined])(
+  'preserves the lightweight pending Issue hint without inventing false (%s)',
+  async hint => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [],
+      ...(hint !== undefined ? { localIssueQuestionsPending: hint } : {}),
+    })
+    const api = createRuntimeWorkApiFromIpc(request, async () => 'device')
+    const result = await api.listRuntimeWork({ pendingOnly: true, preferCached: true })
+    expect(result.localIssueQuestionsPending).toBe(hint)
+    expect(Object.hasOwn(result, 'localIssueQuestionsPending')).toBe(hint !== undefined)
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      'runtime.tasks.list',
+      { pendingOnly: true, preferCached: true },
+      'device'
+    )
+  }
+)
+
 test('reads authoritative task state without loading history or preparing a model', async () => {
   const task = {
     taskId: 'task',

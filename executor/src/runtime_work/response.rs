@@ -401,7 +401,10 @@ fn git_workspace_info(workspace_path: &str) -> (Option<String>, Option<String>) 
     (branch, origin_url)
 }
 
-fn git_info_for_workspace(mut git_info: Option<Value>, workspace_path: &str) -> Option<Value> {
+pub(crate) fn git_info_for_workspace(
+    mut git_info: Option<Value>,
+    workspace_path: &str,
+) -> Option<Value> {
     let (current_branch, origin_url) = git_workspace_info(workspace_path);
     if current_branch.is_none() && origin_url.is_none() {
         return git_info;
