@@ -464,6 +464,31 @@ it('recovers initial binding discovery errors without opening another profile', 
   expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
 })
 
+it.each([7, 8])(
+  'reads the winning initial binding for owner %s without rebinding it',
+  async owner => {
+    const f = fixture({ version: 0, status: 'unbound', target: null })
+    f.binding
+      .mockResolvedValueOnce({ version: 0, status: 'unbound', target: null })
+      .mockRejectedValueOnce(Object.assign(new Error('task changed'), { code: 'version_conflict' }))
+      .mockResolvedValueOnce({
+        version: 1,
+        status: 'active',
+        target: { userId: owner, deviceId: 'mac' },
+      })
+    render(f.workspace())
+    if (owner === 7) {
+      expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent('另一个账号')
+      expect(screen.queryByTestId('retained-role-draft')).not.toBeInTheDocument()
+    }
+    expect(f.binding.mock.calls.map(call => call[1] ?? 'get')).toEqual(['get', 'bind', 'get'])
+    expect(f.lifecycle).not.toHaveBeenCalled()
+  }
+)
+
 it('initializes one durable binding without restoring the obsolete device preference', async () => {
   const f = fixture({ version: 0, status: 'unbound', target: null })
   localStorage.setItem('wework.stand-in.cloud-device:["",7]', 'cloud-one')

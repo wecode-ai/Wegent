@@ -3,6 +3,7 @@ import '@/i18n'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
+import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 
 const receipt: IssueAssignmentReceipt = {
   id: 'assignment-1',
@@ -33,35 +34,77 @@ function setup(user = 8, rows = [receipt], assignee: number | null = 7) {
 afterEach(() => vi.useRealTimers())
 
 describe('Issue reception receipts', () => {
-  it('keeps the hovered receipt mounted while an unrelated Issue version refreshes', async () => {
-    vi.useFakeTimers()
-    const rows = [{ ...receipt, stand_in_received_at: '2026-11-07T19:09:38Z' }]
-    const { api, rerender } = setup(8, rows)
-    await act(async () => {})
-    const icon = screen.getByTitle(/分身已接收/)
-    fireEvent.pointerOver(icon)
-    await act(async () => vi.advanceTimersByTimeAsync(400))
-    let resolveRefresh!: (value: typeof rows) => void
-    api.getIssueAssignmentReceipts.mockReturnValueOnce(
-      new Promise(resolve => {
-        resolveRefresh = resolve
+  it('identifies an assignment independently of history ordering and display names', () => {
+    const entry = {
+      at: '2026-11-07T18:35:58Z',
+      action: 'assign' as const,
+      by_user_id: 8,
+      to_type: 'user' as const,
+      to_id: '7',
+      to_name: 'Alice',
+    }
+    const previous = { ...entry, at: '2026-11-07T18:30:00Z' }
+    const revision = issueAssignmentRevision({ assignment_history: [previous, entry] })
+    expect(issueAssignmentRevision({ assignment_history: [entry, previous] })).toBe(revision)
+    expect(
+      issueAssignmentRevision({ assignment_history: [previous, { ...entry, to_name: 'Renamed' }] })
+    ).toBe(revision)
+    expect(
+      issueAssignmentRevision({
+        assignment_history: [previous, entry, { ...entry, at: '2026-11-07T18:36:00Z' }],
       })
+    ).not.toBe(revision)
+    expect(issueAssignmentRevision({})).toBeUndefined()
+  })
+
+  it('preserves a pending receipt tooltip during a same-assignment Issue refresh', async () => {
+    vi.useFakeTimers()
+    const api = {
+      getLoopItem: vi.fn(),
+      getIssueAssignmentReceipts: vi
+        .fn()
+        .mockResolvedValue([{ ...receipt, stand_in_received_at: '2026-11-07T18:35:58Z' }]),
+      acknowledgeIssueAssignment: vi.fn(),
+    }
+    const props = {
+      api,
+      issueId: 'issue',
+      currentUserId: 8,
+      assigneeUserId: 7,
+      assignmentRevision: 'assignment-1',
+    }
+    const { rerender } = render(<IssueAssignmentReceipts {...props} version={1} />)
+    await act(async () => {})
+    const icon = screen.getByText('分身已接收').closest('[title]')!
+    fireEvent.pointerOver(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(380))
+    let finishOldRefresh!: (rows: IssueAssignmentReceipt[]) => void
+    api.getIssueAssignmentReceipts.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishOldRefresh = resolve
+        })
     )
-    rerender(
-      <IssueAssignmentReceipts
-        api={api as never}
-        issueId="issue"
-        version={2}
-        currentUserId={8}
-        assigneeUserId={7}
-      />
+    rerender(<IssueAssignmentReceipts {...props} version={2} />)
+    expect(screen.getByText('分身已接收').closest('[title]')).toBe(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(320))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    let finishNewAssignment!: (rows: IssueAssignmentReceipt[]) => void
+    api.getIssueAssignmentReceipts.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishNewAssignment = resolve
+        })
     )
-    expect(screen.getByTitle(/分身已接收/)).toBe(icon)
-    await act(async () => vi.advanceTimersByTimeAsync(300))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
-    await act(async () => resolveRefresh(rows))
-    expect(screen.getByTitle(/分身已接收/)).toBe(icon)
-    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    rerender(<IssueAssignmentReceipts {...props} version={3} assignmentRevision="assignment-2" />)
+    expect(screen.queryByText('分身已接收')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    await act(async () =>
+      finishOldRefresh([{ ...receipt, stand_in_received_at: '2026-11-07T18:35:58Z' }])
+    )
+    expect(screen.queryByText('分身已接收')).not.toBeInTheDocument()
+    await act(async () => finishNewAssignment([{ ...receipt, id: 'assignment-2' }]))
+    expect(screen.getByText('未读')).toBeInTheDocument()
   })
 
   it('does not acknowledge when detail loading fails and recovers on the next poll', async () => {

@@ -5,6 +5,7 @@ import {
   IssueAssignmentReceiptStatus,
   type IssueAssignmentReceiptState,
 } from './IssueAssignmentReceipts'
+import { issueAssignmentRevision, sameIssueAssignment } from './issueAssignmentReceiptScope'
 import { issueActivityTimeline } from './issueActivityTimeline'
 import { useIssueActivityHistory } from './useIssueActivityHistory'
 import { issueActivityRole } from './issueActivityRole'
@@ -769,12 +770,15 @@ export function TaskActivityView({
     [activityHistory, commentCards, issueTimeline, task.created_at]
   )
   const latestAssignment = activityEntries.findLast(activity => activity.kind === 'assignment')
-  const currentReceipts =
-    assignmentReceipts?.issueId === task.id &&
-    assignmentReceipts.version === task.version &&
-    assignmentReceipts.assigneeUserId === task.assignee_user_id
-      ? assignmentReceipts
-      : null
+  const currentReceipts = sameIssueAssignment(
+    assignmentReceipts,
+    task.id,
+    task.version,
+    task.assignee_user_id,
+    issueAssignmentRevision(task)
+  )
+    ? assignmentReceipts
+    : null
 
   function cardSessionActive(card: TaskReplyCard) {
     if (onStartHumanTaskFromReply && humanDispatchForCard(card)) return false
