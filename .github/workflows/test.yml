@@ -756,9 +756,8 @@ jobs:
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
         run: |
-          sandbox_path="$(pnpm --dir wework/electron exec node -p 'require("node:path").join(require("node:path").dirname(require("electron")), "chrome-sandbox")')"
-          sudo chown root:root "$sandbox_path"
-          sudo chmod 4755 "$sandbox_path"
+          sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
+          sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
           dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
 
       - name: Verify measured Wework test sharding

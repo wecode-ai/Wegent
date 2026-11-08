@@ -1,0 +1,10 @@
+# Electron's Linux relaunch helper sets no_new_privs, so a setuid-only
+# chrome-sandbox setup cannot cover both initial startup and app.relaunch().
+# Allow Chromium's user-namespace sandbox only for this CI checkout's Electron.
+# https://github.com/electron/electron/issues/48280
+abi <abi/4.0>,
+include <tunables/global>
+
+profile wework-electron-ci /home/runner/work/Wegent/Wegent/wework/electron/node_modules/**/electron/dist/electron flags=(unconfined) {
+  userns,
+}
