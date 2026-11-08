@@ -98,7 +98,21 @@ export function useStandInInstance(
             await api.personalGet(target.userId, target.deviceId)
             if (!pageActive.current) return { binding: unbound }
           }
-          const bound = await api.binding(identity.deviceId, 'bind', unbound.version, target)
+          let bound: StandInInstanceBinding
+          try {
+            bound = await api.binding(identity.deviceId, 'bind', unbound.version, target)
+          } catch (cause) {
+            if (
+              !cause ||
+              typeof cause !== 'object' ||
+              !('code' in cause) ||
+              cause.code !== 'version_conflict'
+            )
+              throw cause
+            // Another initialization won. Read its authoritative target without
+            // retrying the write or starting a possibly different owner's profile.
+            return { binding: await api.binding(identity.deviceId) }
+          }
           // Persist the binding first: a failed start remains bound and recoverable by stopping.
           try {
             await api.lifecycle(target.userId, target.deviceId, 'start')

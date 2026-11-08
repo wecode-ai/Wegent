@@ -2424,6 +2424,48 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.humanRequests.inbox" => {
+            let default = if params.get("user_ids").is_some() {
+                Vec::new()
+            } else {
+                vec![params["user_id"]
+                    .as_i64()
+                    .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?]
+            };
+            let users = human_request_viewer_ids(&params, "user_ids", &default)?;
+            serialize_task_value(
+                json!({"items":runtime.stand_in_store().issue_human_request_inbox(&users).map_err(task_runtime_error)?}),
+            )
+        }
+        "todos.humanRequests.list" => {
+            let project = required_task_string(&params, "project_id")?;
+            let issue = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                json!({"items":runtime.stand_in_store().list_issue_human_requests(project,issue).map_err(task_runtime_error)?}),
+            )
+        }
+        "todos.humanRequests.assign" => {
+            let project = required_task_string(&params, "project_id")?;
+            let issue = required_task_string(&params, "task_id")?;
+            let question = required_task_string(&params, "request_id")?;
+            let name = required_task_string(&params, "recipient_name")?;
+            serialize_task_value(
+                runtime
+                    .stand_in_store()
+                    .assign_issue_human_request(
+                        crate::task_runtime::IssueHumanRequestScope {
+                            project_id: project,
+                            issue_id: issue,
+                        },
+                        question,
+                        params["version"].as_i64().unwrap_or(0),
+                        params["recipient_user_id"].as_i64().unwrap_or(0),
+                        name,
+                        params["blocks_progress"].as_bool(),
+                    )
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.comment.create" => {
             let create = task_input::<LocalCommentCreate>(&params, "comment")?;
             serialize_task_value(runtime.create_comment(create).map_err(task_runtime_error)?)
@@ -2956,6 +2998,40 @@ fn task_input<T: serde::de::DeserializeOwned>(
             .unwrap_or_else(|| params.clone()),
     )
     .map_err(|error| AppIpcError::new("bad_request", error.to_string()))
+}
+
+pub(crate) fn human_request_viewer_ids(
+    params: &Value,
+    key: &str,
+    default: &[i64],
+) -> Result<Vec<i64>, AppIpcError> {
+    let mut users = match params.get(key) {
+        None => default.to_vec(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", format!("{key} must be an integer array"))
+            })?
+            .iter()
+            .map(|value| {
+                value.as_i64().filter(|user| *user >= 0).ok_or_else(|| {
+                    AppIpcError::new(
+                        "bad_request",
+                        format!("{key} must contain non-negative integers"),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    if users.iter().any(|user| *user < 0) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Question viewer IDs must be non-negative",
+        ));
+    }
+    users.sort_unstable();
+    users.dedup();
+    Ok(users)
 }
 
 fn required_task_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, AppIpcError> {

@@ -164,6 +164,9 @@ class LoopItemResponse(BaseModel):
     assignee_team_id: int | None = None
     assignee_team_name: str | None = None
     ai_state: dict[str, Any] | None = None
+    processing_actor: dict[str, str] | None = None
+    human_waiting_since: str | None = None
+    human_requests: list[dict[str, Any]] = Field(default_factory=list)
     execution_id: int | None = None
     execution_state: str | None = None
     execution_control_state: str | None = None
@@ -279,6 +282,11 @@ class LoopItemResponse(BaseModel):
                 "milestone_id": value.get("milestone_id", metadata.get("milestone_id")),
                 "tags": _normalize_tags(metadata.get("tags")),
                 "ai_state": ai_state,
+                "processing_actor": value.get("processing_actor"),
+                "human_waiting_since": value.get("human_waiting_since"),
+                "human_requests": value.get(
+                    "human_requests", metadata.get("human_requests", [])
+                ),
                 "execution_state": (
                     value.get("execution_state")
                     if value.get("execution_state") is not None
@@ -423,6 +431,7 @@ class MyWorkItemResponse(LoopItemResponse):
 
 class MyWorkListResponse(BaseModel):
     items: list[MyWorkItemResponse]
+    next_cursor: str | None = None
 
 
 class LoopItemCollaboratorCreate(BaseModel):

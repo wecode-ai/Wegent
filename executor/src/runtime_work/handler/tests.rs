@@ -60,6 +60,9 @@ mod mcp_elicitation_tests;
 #[path = "async_question_tests.rs"]
 mod async_question_tests;
 
+#[path = "issue_question_hint_tests.rs"]
+mod issue_question_hint_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 

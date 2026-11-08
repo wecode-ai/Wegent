@@ -283,6 +283,8 @@ jobs:
           set -o pipefail
           cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
+          cargo test --locked --lib loop_tasks::human_requests::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/human-requests-mysql.log
 
       - name: Verify batched project roster permission compatibility with MySQL
         working-directory: backend-rs

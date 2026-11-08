@@ -190,12 +190,16 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
 @router.get("/cloud-work-items/my-work", response_model=MyWorkListResponse)
 def list_my_work(
     limit: int = Query(default=MY_WORK_ITEM_LIMIT, ge=1, le=MY_WORK_ITEM_LIMIT),
+    cursor: str | None = Query(default=None, max_length=2048),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MyWorkListResponse:
-    items = loop_item_service.list_my_work(db, current_user.id, limit=limit)
+    items, next_cursor = loop_item_service.list_my_work_page(
+        db, current_user.id, limit=limit, cursor=cursor
+    )
     return MyWorkListResponse(
-        items=[MyWorkItemResponse.model_validate(item) for item in items]
+        items=[MyWorkItemResponse.model_validate(item) for item in items],
+        next_cursor=next_cursor,
     )
 
 

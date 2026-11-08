@@ -1,5 +1,6 @@
 import {
   CLOUD_DEVICE_ID,
+  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   DEFAULT_STEP_TIMEOUT_MS,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -38,9 +39,8 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
     currentDevice?.runtime_instance_id,
     'The cloud lifecycle fixture did not expose a Runtime identity'
   )
-  const testLatestVersion = '999.0.0'
+  const testLatestVersion = CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION
   await control.command('navigate', 'body', { value: '/settings/general' })
-  await cloudEnvironment.setExecutorLatestVersion(testLatestVersion)
   await waitForCondition(
     async () => {
       const refreshedDevice = await cloudEnvironment.device(CLOUD_DEVICE_ID)

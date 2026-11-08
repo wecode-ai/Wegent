@@ -37,6 +37,8 @@ After stopping, you may migrate instead: choose **Profile to migrate** (the prim
 
 For an unbound instance, a project entry pointing to a specific device establishes that first binding. Such links never replace an existing binding.
 
+If concurrent initialization causes a first-binding version conflict, the page reads the saved authoritative binding without rebinding, restarting the stand-in, or replacing another account's binding.
+
 Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My stand-in** to open your personal task board.
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.
@@ -112,6 +114,28 @@ Reading a notification, dismissing a reminder, or marking it read does not resol
 
 Disable **Receive new work** and save to pause new intake while retaining existing work. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 
+## Issue human handoffs
+
+Issue cards right-align an icon and the actor's name in the existing reference/status row above the title, without adding a row. Icons distinguish agent handling, stand-in handling and waiting for a person. Waiting uses a person with a small clock and a “Waiting for [person]” tooltip; only the name is visible as text. Confirmed running executions show the agent or stand-in, while outstanding questions prioritize their recipients. Otherwise the assigned person handles the Issue; when no person is assigned, its creator takes responsibility. There is no third handling state such as awaiting assignment. Business states remain independent, and execution details retain queued, failed and offline progress.
+
+A structured asynchronous question raised in an Issue-bound execution is persisted on the Issue with its original thread, execution identity and handling record. The responsible participant or collaboration-group leader assigns a specific person. Until a recipient is selected, the responsible person handles the question, with the Issue creator taking responsibility when no person is assigned. There is no broadcast or default coordinator. AI reads `list_human_requests`; the reporting execution can explicitly flag dependent steps through `set_human_request_blocking`. This operation never transfers the question, resets its waiting time or grants assignment permission. The responsible participant uses `assign_human_request` to select the recipient.
+
+Recipients answer through the shared **Needs your input** surface and the original Issue's question card. Targeted notifications reuse collaboration channel preferences. Answers persist in the owning comment thread and continue the original execution without granting access to another person's private Runtime or credentials. Reading does not resolve a request. Queued answers remain awaiting acceptance; only the owning execution's acceptance clears that question. Questions settle independently, and any unresolved question keeps the Issue on the human side. AI waits only for dependent steps while continuing independent work.
+
+Cloud question reports and source blocking updates require a verifiable original execution record matching the project, Issue, Runtime task, device and execution owner. Manual task bindings alone, or group activities without matching canonical evidence, return a conflict (409). A same-named device or inferred owner cannot substitute for that proof; restore the original execution's trusted record first. Local projects retain their owning Executor's native source checks.
+
+Saved board views support **Only issues needing my input**, evaluated for the current viewer rather than the view's author. Offline questions and drafts remain visible but require reconnection and authorization checks before replying. Native execution approvals and connector authentication remain separate from business answers.
+
+The project toolbar also offers a one-click **Needs my action** filter without rewriting saved views. The global pending-work page includes native project work currently assigned to the viewer and explicit project questions, without duplicating the same question as ordinary work. Selecting project work opens the real Issue in the existing split view, without fabricating a Runtime task.
+
+<a id="waiting-time-and-workflow-analysis"></a>
+
+### Waiting time and workflow analysis
+
+**With you for** starts at the current handoff and resets when another person takes over. Editing a question or blocking note, reading a notification, or saving an answer does not reset it. Ordinary work uses a reliable human assignment, initial creator handoff, or the current AI execution's completion. Historical records without current-turn evidence say **Handoff time not recorded**; update timestamps are not substituted. Timestamps are UTC and durations are elapsed wall time, not business hours.
+
+Questions retain business events for requests, assignments, answers, delivery rejection and execution acceptance, including time, authenticated principal, recipient changes and original message identity, without copying answer bodies. These can support later analysis of waiting distributions, handoffs and successful continuation. A principal does not prove the physical operator was a human; waiting time, forwarding counts and reply length alone do not establish individual performance. Analysis must preserve project permissions and distinguish approval responsibilities, external dependencies, AI execution, non-working time and missing evidence. These are traceable business records, not a tamper-proof HR audit system. This feature does not automatically label people as bottlenecks or unproductive.
+
 ## Issue assignment reception receipts
 
 Collaboration notifications read Stand-in history from the local Executor and online execution devices that support remote queries. A lookup failure identifies the device and reason; it means history could not be loaded, rather than an Issue execution failure. For incompatible versions, update that device's Executor and refresh notifications. Other desktop App devices are excluded from remote queries; local history still uses the native Executor.
@@ -119,6 +143,8 @@ Collaboration notifications read Stand-in history from the local Executor and on
 Inside the assignee dropdown control, an outlined person with a check marks **Read by recipient** and a filled person with a check marks **Received by stand-in**. Hover to view the status and timestamp. A successful detail open records the human receipt; a stand-in records reception once its task is accepted, before execution completes. Both receipts retain their own timestamps and do not complete the Issue. Notification previews, marking all notifications as read, and background reads do not record a human receipt.
 
 Assigners and recipients can view the receipts, which refresh while details remain open. The latest active assignment in the activity timeline shows the same receipts and updates together with the assignee control, without polling historical entries separately. Reassignment moves the displayed receipts to the latest assignment activity; unassignment removes the former recipient's receipts. Reassignment starts a new receipt history. Older assignments without reliable evidence show “No receipt recorded.” Executors retain pending cloud receipts for up to 30 days, increasing failed retry intervals to at most one hour. Restarting preserves the retry delay. Local-project receipts stay on the owning Executor.
+
+Refreshing an Issue's status or other properties preserves receipt icons and pending hover tooltips for the same assignment. Reassignment, including assigning the same person again, immediately hides old receipts until the new assignment's results arrive.
 
 Stand-ins save the recipient-owned device task binding and reception receipt before starting execution. Background handling records reception when the assignment enters its pending queue. Reception does not imply successful execution, and a later launch failure does not revoke it. Cloud acknowledgements still validate the active assignment, owned device and task binding; rejection diagnostics do not relax these checks.
 
@@ -144,6 +170,12 @@ Enable **Settings → General → Experimental features**, then use **Talk to le
 Publication shares only the content you enter, not private chat or memories. If no commentable Issue is available, create/select an accessible Issue in the project. Pending permission checks/submission may disable controls; changing devices cannot bypass permissions.
 
 Record a matter and its trigger time in **My Stand-in → role profile → Connections → Calendar / scheduled delegation**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+
+For future execution requested in chat, the stand-in should inspect existing work evidence or immediately delegate a read-only investigation to verify the actual workflow, workspace, and required inputs. It should read available instructions and configuration instead of repeatedly asking you for those facts. Missing business choices require a question card; automatic execution must not be scheduled while they remain unresolved. Asking to use an existing automatic workflow does not prove that the workflow has been inspected, and postponing that investigation until the trigger time does not make the work ready.
+
+“Read-only investigation” describes the preparation task's required behavior, not a new sandbox or tool-permission mode. It does not guarantee that preparation tasks are technically unable to write. Preparation retains the existing permission contract, network access, and tool approval rules; this change constrains scheduling decisions without expanding or restricting existing permissions.
+
+The scheduled instructions should preserve your requested outcome and include the verified execution plan, without silently changing execution into a reminder. An explicit reminder needs its content and time, not an investigation of the underlying execution workflow. Successful creation means the arrangement was saved; it does not guarantee completion by the requested time or pre-approve external actions such as publishing. Execution still follows native permissions, approvals, and prerequisite checks.
 
 **Scheduled** in the Tasks sidebar remains independent and retains its goal, target task, model, and execution environment settings without requiring experimental features. Scheduled tasks and Calendar connections manage separate lists, editors, and run histories. The stand-in work list contains concrete work.
 

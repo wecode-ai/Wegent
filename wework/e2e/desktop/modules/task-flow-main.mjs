@@ -165,6 +165,7 @@ import {
   CHECKPOINT_TASK_PROMPT,
   CLOUD_FEATURES_ONLY,
   CLOUD_ONLY,
+  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_VISION_ONLY,
   COMPLETED_FORK_ONLY,
@@ -1285,6 +1286,10 @@ async function main() {
         backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
+        initialExecutorLatestVersion:
+          SELECTED_DESKTOP_SEGMENT === 'cloud-device-lifecycle'
+            ? CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION
+            : undefined,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
         scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',

@@ -729,6 +729,15 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
+  const isIssueRunning = useCallback(
+    (_issue: CollaborationIssue, bindings: WorkspaceTaskBinding[]) =>
+      bindings.some(binding =>
+        runtimeRunningByAddress.get(
+          runtimeConversationKey({ deviceId: binding.deviceId, taskId: binding.taskId })
+        )
+      ),
+    [runtimeRunningByAddress]
+  )
   // Local archives require the Runtime to stop first. Cloud archives own the
   // tombstone and cancellation transaction in the Backend before stopping work.
   const prepareIssueArchive = useCallback(
@@ -1128,6 +1137,12 @@ export function WeworkSharedProject({
       />
       <div className="min-w-0 flex-1">
         <CollaborationApp
+          participationUserId={
+            project.project_store === 'local'
+              ? (services.localParticipationIdentity?.viewerUserIds ?? taskOwnerUserId)
+              : taskOwnerUserId
+          }
+          isIssueRunning={isIssueRunning}
           parentGroupingEnabled
           api={scopedApi}
           initialProject={project}

@@ -42,6 +42,256 @@ fn setup() -> (
 }
 
 #[test]
+fn human_request_reply_keeps_current_identity_and_claim_is_atomic() {
+    human_request_reply_dispatch_outcome("accepted");
+}
+
+#[test]
+fn human_request_explicit_runtime_rejection_releases_reply_atomically() {
+    human_request_reply_dispatch_outcome("rejected");
+}
+
+#[test]
+fn human_request_transport_failure_keeps_claim_uncertain() {
+    human_request_reply_dispatch_outcome("uncertain");
+}
+
+fn human_request_reply_dispatch_outcome(outcome: &str) {
+    let (_directory, store, project, agent, issue, catalog) = setup();
+    let comment = |text: &str, root: Option<String>| {
+        store
+            .create_comment(&LocalCommentCreate {
+                project_id: project.id.clone(),
+                task_id: issue.id.clone(),
+                sender_type: "user".into(),
+                sender_id: "0".into(),
+                sender_name: "Local".into(),
+                content: text.into(),
+                metadata: json!({}),
+                reply_to_message_id: root,
+                client_message_id: None,
+            })
+            .unwrap()
+    };
+    let root = comment("Start", None);
+    store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({"message":"Start"}),
+            Some(&root.message_id),
+        )
+        .unwrap();
+    let original = store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance", 300, Some(&catalog))
+        .unwrap()
+        .unwrap();
+    let task = original.runtime_task_id.as_deref().unwrap();
+    let device = original.runtime_device_id.as_deref().unwrap();
+    store
+        .request_runtime_start(original.id, device, task, 300)
+        .unwrap();
+    store.mark_runtime_running(task).unwrap();
+    let question = store
+        .report_issue_human_request(
+            crate::task_runtime::IssueHumanRequestScope {
+                project_id: &project.id,
+                issue_id: &issue.id,
+            },
+            device,
+            task,
+            "scope",
+            "Choose scope",
+            &[],
+        )
+        .unwrap();
+    let id = question["id"].as_str().unwrap();
+    store
+        .assign_issue_human_request(
+            crate::task_runtime::IssueHumanRequestScope {
+                project_id: &project.id,
+                issue_id: &issue.id,
+            },
+            id,
+            1,
+            0,
+            "Local",
+            None,
+        )
+        .unwrap();
+    store
+        .complete_execution(original.id, Some("Independent work finished"))
+        .unwrap();
+    let answer = comment("Internal", Some(root.message_id.clone()));
+    store.connection().unwrap().execute("UPDATE loop_items SET metadata=json_set(metadata,'$.human_requests[0].runtime_task_id','wrong-session') WHERE id=?1", [&issue.id]).unwrap();
+    assert!(store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({"human_request_id":id}),
+            Some(&answer.message_id)
+        )
+        .is_err());
+    assert_eq!(
+        store
+            .list_issue_human_requests(&project.id, &issue.id)
+            .unwrap()[0]["status"],
+        "pending"
+    );
+    store.connection().unwrap().execute("UPDATE loop_items SET metadata=json_set(metadata,'$.human_requests[0].runtime_task_id',?2) WHERE id=?1", params![issue.id,task]).unwrap();
+    store.connection().unwrap().execute("UPDATE loop_item_executions SET execution_payload=json_set(execution_payload,'$.human_request_id','obsolete') WHERE id=?1", [original.id]).unwrap();
+    let run = store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({"human_request_id":id}),
+            Some(&answer.message_id),
+        )
+        .unwrap();
+    assert_eq!(
+        run.execution_payload.as_ref().unwrap()["human_request_id"],
+        id
+    );
+    assert_eq!(
+        run.execution_payload.as_ref().unwrap()["continueTaskId"],
+        task
+    );
+    assert_eq!(
+        store
+            .list_issue_human_requests(&project.id, &issue.id)
+            .unwrap()[0]["status"],
+        "answering"
+    );
+    store
+        .fail_runtime_preflight(run.id, "Runner setup failed before dispatch")
+        .unwrap();
+    let rejected = store
+        .list_issue_human_requests(&project.id, &issue.id)
+        .unwrap()
+        .remove(0);
+    assert_eq!(rejected["status"], "pending");
+    assert_eq!(rejected["delivery_error"], "rejected");
+    let retry = comment("Internal retry", Some(root.message_id.clone()));
+    store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({"human_request_id":id}),
+            Some(&retry.message_id),
+        )
+        .unwrap();
+    let continued = store
+        .claim_next_execution_with_catalog(Some(device), "instance", 300, Some(&catalog))
+        .unwrap()
+        .unwrap();
+    assert_eq!(continued.runtime_task_id.as_deref(), Some(task));
+    store
+        .request_runtime_start(continued.id, device, task, 300)
+        .unwrap();
+    if outcome == "uncertain" {
+        store
+            .fail_execution(continued.id, "Transport disconnected", false)
+            .unwrap();
+        let pending = store
+            .list_issue_human_requests(&project.id, &issue.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(pending["status"], "answering");
+        assert_eq!(pending["answer_message_id"], retry.message_id);
+        let duplicate = comment("Must not dispatch twice", Some(root.message_id.clone()));
+        assert!(store
+            .enqueue_execution(
+                &project.id,
+                &issue.id,
+                &agent.id,
+                json!({"human_request_id":id}),
+                Some(&duplicate.message_id)
+            )
+            .is_err());
+        return;
+    }
+    if outcome == "rejected" {
+        let failed = store
+            .reject_runtime_dispatch(continued.id, "Runtime refused dispatch")
+            .unwrap()
+            .unwrap();
+        assert_eq!(failed.status, "failed");
+        let pending = store
+            .list_issue_human_requests(&project.id, &issue.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(pending["status"], "pending");
+        assert!(pending["answer_message_id"].is_null());
+        assert_eq!(pending["delivery_error"], "rejected");
+        let version = pending["version"].clone();
+        store
+            .reject_runtime_dispatch(continued.id, "Duplicate rejection")
+            .unwrap();
+        assert_eq!(
+            store
+                .list_issue_human_requests(&project.id, &issue.id)
+                .unwrap()[0]["version"],
+            version
+        );
+        let next = comment("After explicit rejection", Some(root.message_id.clone()));
+        store
+            .enqueue_execution(
+                &project.id,
+                &issue.id,
+                &agent.id,
+                json!({"human_request_id":id}),
+                Some(&next.message_id),
+            )
+            .unwrap();
+        let claimed = store
+            .claim_next_execution_with_catalog(Some(device), "instance", 300, Some(&catalog))
+            .unwrap()
+            .unwrap();
+        store
+            .request_runtime_start(claimed.id, device, task, 300)
+            .unwrap();
+    }
+    store.mark_runtime_running(task).unwrap();
+    assert_eq!(
+        store
+            .list_issue_human_requests(&project.id, &issue.id)
+            .unwrap()[0]["status"],
+        "resolved"
+    );
+    assert!(store.issue_human_request_inbox(&[0]).unwrap().is_empty());
+    let resolved = store
+        .list_issue_human_requests(&project.id, &issue.id)
+        .unwrap()
+        .remove(0);
+    assert!(resolved.get("delivery_error").is_none());
+    assert!(resolved["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|event| event["type"] == "delivery_rejected"));
+    let followup = comment("Extra detail", Some(root.message_id));
+    let run = store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({}),
+            Some(&followup.message_id),
+        )
+        .unwrap();
+    assert!(run
+        .execution_payload
+        .as_ref()
+        .unwrap()
+        .get("human_request_id")
+        .is_none());
+}
+
+#[test]
 fn queued_nested_runtime_payload_requires_catalog_before_claim() {
     let (_directory, store, project, agent, issue, catalog) = setup();
     assert!(!store.has_queued_executions().unwrap());
