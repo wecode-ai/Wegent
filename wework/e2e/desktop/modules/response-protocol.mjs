@@ -741,7 +741,7 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
   }
   return {
     mode: 'search',
-    ...selectToolSearch(request, toolName),
+    ...selectToolSearch(request, namespaceName ? `${namespaceName} ${toolName}` : toolName),
   }
 }
 
