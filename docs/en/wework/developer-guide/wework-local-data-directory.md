@@ -59,6 +59,12 @@ metadata. A background Git operation removing a temporary lock file after
 enumeration therefore does not block startup. Unresolvable relative symlinks
 still block migration.
 
+Local conversation panes are restored from the task catalog verified through local IPC.
+When a saved pane's device identity is no longer known, only a uniquely matching local
+task can be restored, without rewriting identity history or moving conversation data.
+Known devices, including offline devices, retain their ownership; remote catalogs and
+serialized JSON cannot claim local IPC provenance.
+
 ## Automatic Cleanup and Retention
 
 Wework runs storage maintenance in the background immediately after launch and
