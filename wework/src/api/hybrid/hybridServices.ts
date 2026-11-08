@@ -1641,6 +1641,8 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    localParticipationIdentity: localServices.localParticipationIdentity,
+    localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
     composerCatalogApi: {
       async readCatalog(address, forceRefresh) {
         const runtime = await runtimeApiForDevice(address.deviceId)

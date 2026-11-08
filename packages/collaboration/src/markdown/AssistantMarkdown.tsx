@@ -25,6 +25,7 @@ import {
   transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
+import { protectComposerReferenceLinks } from './composerReferenceMarkdown'
 import { AssistantMarkdownImage } from './AssistantMarkdownImage'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { MarkdownTable } from './MarkdownTable'
@@ -121,6 +122,7 @@ type AssistantMarkdownPart =
     }
   | { kind: 'visualization'; file: string; mode?: 'wide'; title?: string }
 
+/** Renders assistant and user Markdown with shared link and diagram handling. */
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
   isStreaming = false,
@@ -141,9 +143,11 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     () =>
       preprocessCjkEmphasis(
         normalizeMathDelimiters(
-          variant === 'user'
-            ? bufferedContent
-            : stripUnsupportedContentReferenceCitations(bufferedContent)
+          protectComposerReferenceLinks(
+            variant === 'user'
+              ? bufferedContent
+              : stripUnsupportedContentReferenceCitations(bufferedContent)
+          )
         )
       ),
     [bufferedContent, variant]

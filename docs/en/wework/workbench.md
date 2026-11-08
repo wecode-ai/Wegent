@@ -69,7 +69,7 @@ Lanes follow actual execution state: a task that is explicitly queued but has no
 
 Hover anywhere on a board card to open a task-progress panel at a stable position in the viewport's upper-right corner; moving across cards does not make the panel jump with each anchor. Its header shows the current issue title. When the runtime exposes one, the preview shows the current conversation goal. It directly reuses the task conversation component and always starts at the latest message instead of restoring the Task page's saved scroll position. While the current turn is active but has not produced new response text, the preview does not present the previous turn's final response as the latest progress. When a runtime task is associated with a board item, both local and cloud task bindings must persist that conversation's model selection. The preview restores the model from the binding instead of falling back to the global default for new conversations. Message loading, live updates, continuation, and attachments behave exactly as they do on the task page, with the composer collapsed by default. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Clicking the card's task-progress area, the pin action in the panel header, or the composer pins the same panel in place instead of opening a separate side conversation. While pinned, hovering other cards does not replace its content; clicking another card's task-progress area switches the pinned panel in the same position. Use the top-right close button or press `Esc` to leave the pinned state and restore normal hover previews.
 
-The work-item control above the composer shows the current project or linked issue and provides actions to view its details or board. Opening the linked board focuses the work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
+The work-item summary above the composer shows the current project or linked Issue. Click its title to open the current work-item details; when no Issue-details action is available, it opens the matching board. The details icon opens Issue details, and the board icon focuses the current work item in its project-space board. Opening the board preserves the original Task tab and reuses an already-open board tab for the same project instead of loading a duplicate. Reference chips in the composer and sent messages open a conversation or Issue according to their type; see [Working with AI](./tasks.md).
 
 When changing the composer's project-space association, filter by owning space on the left. Each project on the right shows its name, key, and owning space to distinguish duplicate names. Search combines project names, space names, and project keys. Projects default to ascending name order, with descending order also available. In the search field, use the arrow keys to select, `Enter` to confirm, and `Esc` to close. **Do not add to another project space** removes the extra association.
 
@@ -120,15 +120,17 @@ New tasks appear immediately at the top of their project's task list. Tasks with
 
 <a id="ai-questions"></a>
 
-## Handle AI questions
+## Handle AI questions and project work
 
 <!-- ui-source: src/features/notifications/RuntimeInteractionsPage.tsx -->
 
-The top-level **Needs your input** tab collects structured questions from task conversations, projects, and your stand-in. Its left list groups questions under **Tasks, Projects, and Stand-in**, newest first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in.
+Open **top tab bar → + → Needs your input**, or choose **Needs your input** from the title-bar notification bell. The tab collects structured questions from task conversations, projects and your stand-in, plus ordinary Issues currently awaiting you in native local and cloud projects. Its left list groups entries under **Tasks, Projects, and Stand-in**, newest recorded time first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in, and an Issue with a question entry is not repeated as ordinary work.
+
+List entries and detail headers show a timestamp: the request time for pending questions and the recorded handling time for handled entries. Today's entries show hours and minutes; other dates show month and day, including the year for a different year. Hover over the timestamp for the complete date and time in your local timezone. Missing or invalid timestamps are omitted.
 
 When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
 
-To leave a question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally.
+To leave an ordinary conversation question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally. Persistent Issue handoffs and ordinary project work do not offer this button: local archiving cannot replace an answer or a transfer.
 
 Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
 
@@ -136,7 +138,21 @@ When you are unsure how to answer a business question, select **Talk it through*
 
 After discussing, select the text you want to use and choose **Fill answer** from the selection toolbar. For multiple questions, choose the target at the top of the sidebar first. Review and edit the selected text in the original answer before submitting. Filling a draft never sends an answer or approves an operation. Questions that were handled, cancelled, expired, or whose current state cannot be verified cannot receive a draft. Permission approvals and connector authorization retain their native confirmation flows.
 
+Async business-question replies use the destination task's model configuration and are not blocked by a model catalog still loading in the current view. Model resolution, device connectivity, and native runtime validation still apply. A question becomes handled only after its answer is accepted.
+
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
+
+A queued Issue answer does not clear the wait. After confirmed acceptance, local history retains settlement identity scoped to the original project, Issue, Runtime and question. This prevents a stale native snapshot from reappearing after a failed read, device-route alias change or offline restart. The record only reconciles the same question: it grants no reply or device access permission and cannot clear another Issue's question.
+
+<a id="project-pending-work"></a>
+
+### Project work and waiting time
+
+Selecting ordinary project work opens its original Issue details on the right, even without a running task; it never creates a placeholder task. Unassigned work belongs to its creator. Questions match their effective recipient or responsible participant first. Confirmed running agents and stand-ins do not count as ordinary human work, but questions assigned to you remain visible while independent AI steps continue. Opening this page does not expand project permissions.
+
+For one project, open **Collaboration → select project → board**, then select the toolbar's **Needs my action** button and count; select it again to clear. This temporary filter resets when switching projects and does not change saved views. Use **Only issues needing my input** in board view settings for a persistent view; it evaluates the current viewer. Local discovery includes native ownership and explicit assignments to the current verified sign-in identity, without globally merging matching names or IDs. Answers use the session's actual author. If a question still targets another identity, explicitly transfer it to the current name before answering; old recipients and historical authors are never silently rewritten. Cloud authorization always uses the server's current account.
+
+**With you for** measures elapsed calendar time since this handoff, not the record date or working time. Older work without reliable evidence shows **Handoff time not recorded**; an update timestamp never invents a wait. See [Issue human handoffs](./personal-stand-in.md#issue-human-handoffs) and [Waiting time and workflow analysis](./personal-stand-in.md#waiting-time-and-workflow-analysis) for transfer, acceptance, offline recovery and analysis limits. Ordinary work currently covers native projects; external-provider projects are not guaranteed to enumerate every Issue. Failed reads retain the last same-scope results and show a retry error, rather than reporting no pending work.
 
 ## Use IM notifications
 
@@ -198,7 +214,7 @@ The right workspace displays project files, previews, and change reviews. Multi-
 
 Selecting a writable text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
 
-Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
+Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
 Codex file citations appear as clickable filenames for presentations, spreadsheets, PDFs, documents, and code. Source citations appear under **Sources**, while deliverables appear under **Outputs**. Code line references open at the requested lines. Page numbers, slide numbers, worksheet ranges, and object labels appear beside the filename; clicking opens the file but does not yet navigate to an Office artifact's internal location. Legacy `【F:path†Lstart-Lend】` references also support code line navigation.
 

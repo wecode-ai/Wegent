@@ -9,8 +9,6 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     turns: Vec<Value>,
     next_cursor: Option<&str>,
 ) {
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
     fs::create_dir_all(root).unwrap();
     let terminal_boundary = |turn: &Value| {
         matches!(
@@ -68,41 +66,16 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     ] {
         fs::write(root.join(format!("{method}.json")), response.to_string()).unwrap();
     }
-    let directory = format!("'{}'", root.display().to_string().replace('\'', "'\"'\"'"));
-    let binary = root.join("native-history.sh");
-    fs::write(
-        &binary,
-        format!(
-            r#"#!/bin/sh
-cd /
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> {directory}/requests.jsonl
-  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  [ -n "$id" ] || continue
-  method=$(printf '%s\n' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p' | tr '/' '_')
-  case "$method:$line" in thread_list:*'"cursor":"page-2"'*) method=thread_list_page2;; esac
-  if [ "$method" = "test_stop" ]; then
-    printf '{{"id":%s,"result":{{}}}}\n' "$id"
-    exit 0
-  fi
-  error_file={directory}/"$method".error-once.json
-  if [ -f "$error_file" ]; then
-    printf '{{"id":%s,"error":' "$id"
-    cat "$error_file"
-    rm "$error_file"
-    printf '}}\n'
-    continue
-  fi
-  printf '{{"id":%s,"result":' "$id"
-  cat {directory}/"$method".json
-  printf '}}\n'
-done
-"#
-        ),
-    )
-    .unwrap();
     #[cfg(unix)]
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    let binary = {
+        // Never execute a freshly written inode: concurrent forks can retain its
+        // writer descriptor until exec and cause ETXTBSY on Linux.
+        let binary = root.join("native-history.sh");
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native-history.sh");
+        std::os::unix::fs::symlink(fixture, &binary).unwrap();
+        binary
+    };
     #[cfg(windows)]
     let binary = {
         let script = root.join("native-history.ps1");

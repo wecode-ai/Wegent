@@ -71,7 +71,7 @@ export function useNotificationCommentDispatch({
   return async (
     rootId: string,
     reply: RuntimePaneQueuedMessage,
-    send: () => Promise<TaskCardDispatchResult>
+    send: (humanRequestId?: string) => Promise<TaskCardDispatchResult>
   ): Promise<TaskCardDispatchResult> => {
     if (!reply.interactionId) return send()
     const item = interactions?.pending.find(item => item.id === reply.interactionId)
@@ -90,8 +90,8 @@ export function useNotificationCommentDispatch({
     let result: TaskCardDispatchResult | undefined
     await interactions.respond(item, reply.content, {
       send: async () => {
-        result = await send()
-        return result.ok || result.persisted
+        result = await send(item.sharedRequest?.id)
+        return result.ok
       },
     })
     return result ?? { ok: false, persisted: false }

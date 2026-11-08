@@ -60,6 +60,9 @@ mod mcp_elicitation_tests;
 #[path = "async_question_tests.rs"]
 mod async_question_tests;
 
+#[path = "issue_question_hint_tests.rs"]
+mod issue_question_hint_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
@@ -3603,7 +3606,9 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 .send(json!({"event": "runtime.work.changed", "payload": {"taskId": "unrelated"}}))
                 .unwrap();
 
-            handler.delete_archived_link_background(link.clone()).await;
+            handler
+                .delete_archived_link_background(link.clone(), false)
+                .await;
 
             assert!(path.exists());
             assert!(handler.local_task_link("task-1").is_some());
@@ -3618,7 +3623,7 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 .is_empty());
 
             fs::write(path.join(".git"), marker).unwrap();
-            handler.delete_archived_link_background(link).await;
+            handler.delete_archived_link_background(link, false).await;
             assert!(!path.exists());
             assert!(handler.local_task_link("task-1").is_none());
             assert!(handler.worktrees.snapshot_source_for(path).is_none());

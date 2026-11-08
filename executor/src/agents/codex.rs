@@ -693,7 +693,7 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        let active_turn_count = state.active_threads_snapshot().values().sum::<usize>();
+        let active_turn_count = state.protected_turn_count();
         if active_turn_count > 0 || pending_request_count > 0 {
             return Err((active_turn_count, pending_request_count));
         }
@@ -705,8 +705,10 @@ impl CodexAppServerClient {
     where
         F: FnOnce() -> Result<(), String>,
     {
-        self.mutate_configuration_if_idle(|| async { mutation().map(|_| ((), true)) })
-            .await
+        self.mutate_if_idle(Some(CodexAuthMode::default()), || async {
+            mutation().map(|_| ((), true))
+        })
+        .await
     }
 
     /// Serialize file mutations with turn admission, then invalidate the idle process if needed.
@@ -718,12 +720,24 @@ impl CodexAppServerClient {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(T, bool), String>>,
     {
+        self.mutate_if_idle(None, mutation).await
+    }
+
+    async fn mutate_if_idle<F, Fut, T>(
+        &self,
+        auth_mode: Option<CodexAuthMode>,
+        mutation: F,
+    ) -> Result<T, CodexIdleMutationError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<(T, bool), String>>,
+    {
         let mut state = self.state.lock().await;
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        let active_turn_count = state.active_threads_snapshot().values().sum::<usize>();
+        let active_turn_count = state.protected_turn_count();
         if active_turn_count > 0 || pending_request_count > 0 {
             return Err(CodexIdleMutationError::Busy {
                 active_turn_count,
@@ -732,7 +746,9 @@ impl CodexAppServerClient {
         }
         let (result, changed) = mutation().await.map_err(CodexIdleMutationError::Update)?;
         if changed {
-            state.auth_mode = CodexAuthMode::default();
+            if let Some(auth_mode) = auth_mode {
+                state.auth_mode = auth_mode;
+            }
             state.thread_generations.clear();
             state.idle_thread_generations.clear();
             stop_codex_app_server_process(&mut state, None).await;

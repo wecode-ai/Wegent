@@ -5,6 +5,7 @@ import {
   IssueCardTaskSummary,
   createIssueBoardCardLabels,
   createCollaborationTranslator,
+  standInProcessingActor,
 } from '@wegent/collaboration'
 import {
   useCallback,
@@ -88,7 +89,15 @@ export function CloudTodoCardContent({
   const t = useBoardTranslate()
   return (
     <IssueBoardCardContent
-      item={item}
+      item={{
+        ...item,
+        execution_state: goalBinding?.running ? 'running' : item.execution_state,
+        processing_actor:
+          standInProcessingActor(
+            goalBinding?.runtimeTask?.runtimeHandle,
+            goalBinding?.running === true
+          ) ?? item.processing_actor,
+      }}
       reference={item.id}
       display={display}
       labels={{
@@ -242,7 +251,15 @@ export function CloudTodoBoardCard({
   return (
     <IssueBoardCard
       metadata={metadata}
-      item={item}
+      item={{
+        ...item,
+        execution_state: runningTaskBindings.length ? 'running' : item.execution_state,
+        processing_actor:
+          standInProcessingActor(
+            currentTaskBinding?.runtimeTask?.runtimeHandle,
+            currentTaskBinding?.running === true
+          ) ?? item.processing_actor,
+      }}
       unread={unread}
       reference={item.id}
       display={display}

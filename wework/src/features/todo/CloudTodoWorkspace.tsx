@@ -1992,6 +1992,7 @@ export function CloudTodoWorkspace({
     translate: boardTranslate,
   })
   const standardBoardController = useStandardCloudBoardController({
+    currentUserId: taskOwnerUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
     view: savedViews.view,

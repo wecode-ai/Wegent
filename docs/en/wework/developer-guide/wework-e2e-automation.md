@@ -8,6 +8,10 @@ Desktop E2E fixtures use `GPT 5.6 Luna`. Real runtime catalogs advertise both `G
 
 Desktop checkpoint cleanup retains `backend-rs-logs/` so CI can upload Rust gateway startup logs. Settings follows the current global route while retaining the original tab's application route, allowing Back to restore the application.
 
+Ordinary cold-start scenarios using real release-package resources share the phase verifier. Each phase retains its existing 180-second limit; stalled or regressing phases, native failures, and a missing real controller connection still fail. A second cold-start flag no longer misclassifies these scenarios under one overall connection deadline. Upgrade/rollback package-pair diagnostics retain their previously certified startup connection deadline; this change does not alter upgrade-edge verification gates.
+
+The Linux CI shard containing `browser-toolbar-actions` explicitly enables a read-only file-cache experiment during that checkpoint's application preparation, before creating its isolated directories. It sequentially reads regular files in the original Chrome and ChromeDriver directories and their `ldd`-resolved dynamic dependencies. Electron startup and prerequisite UI operations still occur before the external browser starts, so pre-reading and browser startup are not adjacent. Pre-reading does not launch a browser, create or reuse a user profile, or change versions, paths, scheduling, or the 10-second session-request budget. Logs and `external-browser-preread.json` report file count, bytes, and preparation duration; existing thread sampling retains page-fault, disk-wait, and scheduling metrics. This experiment changes the program-file cold-cache precondition, so its results must not be reported as fully cold-cache startup verification. One successful run does not establish that third-party startup variability is resolved.
+
 Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend automation bridge for operating the Wework Vite/React frontend in CI. The default entrypoint runs in browser mode, which covers most frontend interactions; the desktop task-flow E2E below covers native-window and task-execution behavior.
 
 Issue MCP attachment coverage uses the shared `setup-minio-e2e` Action on Linux and Windows to build and verify the same pinned real MinIO version. Only main writes caches; scenarios use the platform executable through `WEWORK_E2E_MINIO_BIN`.
@@ -215,6 +219,41 @@ Linux sets `CORE_RUNNER_SCALE=1.5` and redistributes a full selection across
 matrix, bounded by assignable checkpoints; selections without the history checkpoint
 retain their original matrix. The two Core benchmarks keep dedicated runners.
 Cloud uses 8 shards.
+
+Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
+Refresh existing weights as scenarios evolve, not only unknown entries. In run
+42411289396, Core 2 and 6 reached the step deadline after all completed checkpoints
+passed; profile-settings and plugin-bridge had been underestimated for three runs.
+Ordinary-shard weights use medians of successful scheduler start/end durations,
+rounded up, from the three latest evidenced runs. Unobserved weights and exclusive
+benchmarks remain unchanged. Budget checks also include the largest measured
+successful runner overhead of 125 seconds for standard-user startup, orchestration
+gaps and cleanup. An immutable fixture preserves the original ten-shard matrix and 168 checkpoints'
+successful timings, then-current weights for unfinished cases and source links,
+not raw logs. Every historical case requires a duration and exactly-once replay
+coverage. Later catalog additions explicitly have no historical prediction,
+rather than a zero cost in a complete budget. Old weights fail the historical
+replay; the complete current scenario set still requires real Windows CI.
+In run `42400229326`, Core 4 and 8 exhausted their step budgets while still
+executing checkpoints normally, whereas Core 3 finished after only its previously
+unmeasured Dots checkpoint. Recording successful `dots-closed-loops` (178 seconds)
+and `idle-executor-requests` (39 seconds) samples lets both shards participate in
+full balancing again, without changing tests or budgets. Never record unfinished
+or step-timeout-interrupted checkpoints as successful duration samples.
+
+Current-package startup and component-update scenarios declare
+`usesColdPackageStartup` and reuse phase-bounded cold-start waiting. Each phase
+keeps the existing startup budget; stalls, phase regression, native failure and
+phase timeouts remain failures, and real controller readiness is still required.
+Do not combine serial materialization and runtime startup into one phase budget.
+`usesReleasePackageRuntimeAssets` only selects asset ownership, not this mode:
+historical upgrade sources may lack complete phase logs. Ordinary startup keeps
+its original total budget.
+Codex idle-only restarts and configuration mutations must also protect turn
+preparation: thread resume and MCP authority reload own the shared process before
+native thread admission. Background model-catalog refresh must defer restarting
+during this window, not terminate the process or bypass Native teardown barriers.
+
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
 within a runner. The two Core benchmark shards and three Cloud account-auth and
@@ -368,6 +407,17 @@ after tests finish. Records include CPU utilization, load average, memory, avail
 space, Linux CPU/memory/I/O pressure, and cgroup CPU limits, memory peaks, and OOM
 counters. Unreadable kernel metrics report `unavailable`. CPU utilization is the
 average between samples; its initial value is `null`.
+`RUNNER_RESOURCE_SAMPLE_INTERVAL_MS` selects a sampling interval from 100 to
+2147483647ms; the default remains 15 seconds. Periodic `schedulingDelayMs` records the
+sampler's own scheduling delay, not the tested process's delay. Intervals below
+one second collect process lists only at startup and completion to avoid
+frequently spawning `ps`. The streaming-activity Redis CI step uses 100ms
+resource samples and server command arrival times without arguments or values.
+Its 200ms test timeout and assertions remain unchanged; successful samples do
+not prove that a historical timeout has been fixed.
+MONITOR readiness has a separate five-second bound. Capture continues until the
+test exits and the filtering pipe drains. The initial `OK` indicates readiness
+only; a successful test must also have captured actual commands.
 `[desktop-e2e-schedule]` logs list active checkpoints and actual concurrency on
 each start and completion, making overlap visible independently of the configured
 worker limit. Compare shard durations and these metrics after increasing
