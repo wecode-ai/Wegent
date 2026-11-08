@@ -98,16 +98,7 @@ export function createProvider() {
           limit: String(state.limit),
         }
       )
-      if (
-        page.contractVersion !== 'im.message-list.v1' ||
-        !Array.isArray(page.messages) ||
-        page.messages.length > state.limit ||
-        page.paginationKnown !== true ||
-        typeof page.hasMore !== 'boolean' ||
-        page.failedCount !== 0 ||
-        page.partial === true
-      )
-        throw invalid('Incomplete native conversation response')
+      validateNativePage(page, state.limit)
       const since = Date.parse(state.start)
       const until = Date.parse(state.end)
       const messages = page.messages.map(message =>
@@ -213,6 +204,21 @@ function readWindow(input) {
 }
 
 async function readMessagePage(ctx, source, window, ownId) {
+  let selfConversationId
+  if (source.kind === 'direct' && source.scope !== 'all' && source.id === ownId) {
+    const page = await readTool(ctx, 'listDirectConversation', {
+      peer: ownId,
+      profile: required(source, 'profile'),
+      time: window.end,
+      limit: '1',
+    })
+    validateNativePage(page, 1)
+    if (!page.messages.length) {
+      if (page.hasMore) throw invalid('Missing native self conversation message')
+      return { events: [], hasMore: false, nextCursor: '0' }
+    }
+    selfConversationId = required(page.messages[0], 'conversationId')
+  }
   const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
   if (source.scope !== 'all') {
     if (source.kind === 'group') args.group = required(source, 'id')
@@ -223,11 +229,24 @@ async function readMessagePage(ctx, source, window, ownId) {
     source.kind === 'group' ? 'listMentions' : 'searchMessages',
     args
   )
-  return messagePage(source, response, ownId, window.cursor)
+  return messagePage(source, response, ownId, window.cursor, selfConversationId)
 }
 
-function messagePage(source, response, ownId, cursor) {
-  const events = normalizeMessages(source, response, ownId)
+function validateNativePage(page, limit) {
+  if (
+    page.contractVersion !== 'im.message-list.v1' ||
+    !Array.isArray(page.messages) ||
+    page.messages.length > limit ||
+    page.paginationKnown !== true ||
+    typeof page.hasMore !== 'boolean' ||
+    page.failedCount !== 0 ||
+    page.partial === true
+  )
+    throw invalid('Incomplete native conversation response')
+}
+
+function messagePage(source, response, ownId, cursor, selfConversationId) {
+  const events = normalizeMessages(source, response, ownId, selfConversationId)
   if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
   const hasMore = response.result.hasMore
   const nextCursor = hasMore ? required(response.result, 'nextCursor') : '0'
@@ -235,7 +254,7 @@ function messagePage(source, response, ownId, cursor) {
   return { events, hasMore, nextCursor }
 }
 
-export function normalizeMessages(source, response, ownId) {
+export function normalizeMessages(source, response, ownId, selfConversationId) {
   if (
     response.success === true &&
     response.result?.hasMore === false &&
@@ -255,10 +274,13 @@ export function normalizeMessages(source, response, ownId) {
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       const sender = required(message, 'senderOpenDingTalkId')
-      const manualSelfMention =
-        !direct && message.sendType === 'user' && message.messageAiSendFlag === undefined
+      const manualSelfMessage =
+        message.sendType === 'user' &&
+        message.messageAiSendFlag === undefined &&
+        (!direct ||
+          (source.scope !== 'all' && source.id === ownId && conversationId === selfConversationId))
       if (
-        (sender === ownId && !manualSelfMention) ||
+        (sender === ownId && !manualSelfMessage) ||
         (direct && source.scope !== 'all' && sender !== source.id)
       )
         continue
