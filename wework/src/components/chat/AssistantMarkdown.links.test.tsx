@@ -47,3 +47,17 @@ test('renders composer reference examples literally inside inline and fenced cod
   expect(codeTexts.filter(text => text === reference)).toHaveLength(2)
   expect(codeTexts.some(text => text?.includes('\\$Chat'))).toBe(false)
 })
+
+test('renders references after inline code containing an HTML opener', () => {
+  const issue = '[$#113 Issue](wework-issue://p/i)'
+  const reference = '[$Chat](wework-conversation://c)'
+  const { container } = render(
+    <AssistantMarkdown
+      content={['`<code>`', '', `${issue} ${reference}`].join('\n')}
+      variant="user"
+    />
+  )
+
+  const hrefs = Array.from(container.querySelectorAll('a')).map(link => link.getAttribute('href'))
+  expect(hrefs).toEqual(['wework-issue://p/i', 'wework-conversation://c'])
+})

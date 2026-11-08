@@ -5,46 +5,59 @@ import { classifyComposerReference, parseComposerReferences } from '../composer/
 
 const markdownParser = unified().use(remarkParse)
 const literalTypes = new Set(['code', 'inlineCode', 'html'])
-const htmlLiteralContainerPattern = /<(pre|code|script|style|textarea|xmp)\b[^>]*>/gi
+const htmlLiteralContainerPattern = /^<(pre|code|script|style|textarea|xmp)\b[^>]*>/i
 
 interface SourceRange {
   start: number
   end: number
 }
 
+interface HtmlLiteralNode extends SourceRange {
+  value: string
+}
+
 /** Collects syntax that must retain its original bytes during preprocessing. */
 function collectLiteralRanges(source: string): SourceRange[] {
   const ranges: SourceRange[] = []
+  const htmlNodes: HtmlLiteralNode[] = []
   const visit = (node: Nodes) => {
-    if (literalTypes.has(node.type)) {
-      const start = node.position?.start.offset
-      const end = node.position?.end.offset
-      if (start !== undefined && end !== undefined) ranges.push({ start, end })
+    const start = node.position?.start.offset
+    const end = node.position?.end.offset
+    if (literalTypes.has(node.type) && start !== undefined && end !== undefined) {
+      ranges.push({ start, end })
+      if (node.type === 'html') htmlNodes.push({ start, end, value: node.value })
       return
     }
     if ('children' in node) node.children.forEach(visit)
   }
   visit(markdownParser.parse(source))
 
-  // The Markdown AST exposes opening and closing container tags separately
-  // from their inline children. Protect the complete raw-HTML literal too.
-  const lowerSource = source.toLowerCase()
-  for (const match of source.matchAll(htmlLiteralContainerPattern)) {
-    const start = match.index ?? 0
-    const closingTag = `</${match[1].toLowerCase()}>`
-    const closingStart = lowerSource.indexOf(closingTag, start + match[0].length)
-    ranges.push({
-      start,
-      end: closingStart < 0 ? source.length : closingStart + closingTag.length,
-    })
-  }
-  for (const match of source.matchAll(/<!--/g)) {
-    const start = match.index ?? 0
-    const endMarker = source.indexOf('-->', start + 4)
-    ranges.push({
-      start,
-      end: endMarker < 0 ? source.length : endMarker + 3,
-    })
+  // Raw HTML container tags are separate AST nodes from their Markdown
+  // children. Extend each real opening tag to its matching closing node.
+  // Scanning only AST HTML nodes keeps tag-like text inside code literals out
+  // of this range collection.
+  for (const [index, node] of htmlNodes.entries()) {
+    const opening = htmlLiteralContainerPattern.exec(node.value)
+    if (!opening) continue
+    const tagName = opening[1].toLowerCase()
+    if (new RegExp(`</${tagName}\\s*>`, 'i').test(node.value)) continue
+    const openingTagPattern = new RegExp(`^<${tagName}\\b`, 'i')
+    const closingTagPattern = new RegExp(`^</${tagName}\\s*>`, 'i')
+    let depth = 1
+    let end = source.length
+    for (const candidate of htmlNodes.slice(index + 1)) {
+      const value = candidate.value.trim()
+      if (openingTagPattern.test(value)) {
+        depth += 1
+      } else if (closingTagPattern.test(value)) {
+        depth -= 1
+        if (depth === 0) {
+          end = candidate.end
+          break
+        }
+      }
+    }
+    ranges.push({ start: node.start, end })
   }
 
   ranges.sort((left, right) => left.start - right.start)

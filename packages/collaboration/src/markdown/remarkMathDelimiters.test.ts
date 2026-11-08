@@ -21,6 +21,13 @@ function containsInlineMath(node: Root | Root['children'][number]): boolean {
   return 'children' in node && node.children.some(child => containsInlineMath(child))
 }
 
+function countNodeType(node: Root | Root['children'][number], type: string): number {
+  const current = node.type === type ? 1 : 0
+  return 'children' in node
+    ? current + node.children.reduce((total, child) => total + countNodeType(child, type), 0)
+    : current
+}
+
 describe('remarkMathDelimiters', () => {
   test('keeps adjacent dollar-prefixed composer links out of inline math', () => {
     const children = paragraphChildren(
@@ -80,5 +87,43 @@ describe('remarkMathDelimiters', () => {
     expect(protectedContent).toContain(`Inline: \`${reference}\``)
     expect(protectedContent).toContain(`\`\`\`markdown\n${reference}\n\`\`\``)
     expect(protectedContent).toContain(`<code>${reference}</code>`)
+  })
+
+  test('keeps references after code containing unclosed HTML openers', () => {
+    const issue = '[$#113 Issue](wework-issue://p/i)'
+    const reference = '[$Chat](wework-conversation://c)'
+    const protectedReferences =
+      '[\\$#113 Issue](wework-issue://p/i) [\\$Chat](wework-conversation://c)'
+    const literals = ['`<code>`', '`<!--`', '```html\n<code>\n<!--\n```']
+
+    for (const literal of literals) {
+      const content = [literal, '', `${issue} ${reference}`].join('\n')
+      const protectedContent = protectComposerReferenceLinks(content)
+      expect(protectedContent).toContain(literal)
+      expect(protectedContent).toContain(protectedReferences)
+      const tree = parseMarkdown(protectedContent)
+      expect(countNodeType(tree, 'link')).toBe(2)
+      expect(countNodeType(tree, 'inlineMath')).toBe(0)
+    }
+  })
+
+  test('keeps real HTML literals without swallowing following references', () => {
+    const issue = '[$#113 Issue](wework-issue://p/i)'
+    const reference = '[$Chat](wework-conversation://c)'
+    const protectedReferences =
+      '[\\$#113 Issue](wework-issue://p/i) [\\$Chat](wework-conversation://c)'
+    const container = `<code>${reference}</code>`
+    const comment = `<!-- ${reference} -->`
+    const content = [
+      `${container} ${issue} ${reference}`,
+      '',
+      comment,
+      '',
+      `${issue} ${reference}`,
+    ].join('\n')
+
+    const protectedContent = protectComposerReferenceLinks(content)
+    expect(protectedContent).toContain(`${container} ${protectedReferences}`)
+    expect(protectedContent).toContain(`${comment}\n\n${protectedReferences}`)
   })
 })
