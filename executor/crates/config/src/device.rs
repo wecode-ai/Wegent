@@ -210,8 +210,13 @@ impl DeviceConfig {
         set_from_env(&mut self.connection.backend_url, "WEGENT_BACKEND_URL");
         set_from_env(&mut self.connection.socket_url, "WEGENT_SOCKET_URL");
         set_from_env(&mut self.connection.auth_token, "WEGENT_AUTH_TOKEN");
-        set_from_env(&mut self.device_id, "DEVICE_ID");
-        set_from_env(&mut self.runtime_instance_id, "WEGENT_RUNTIME_INSTANCE_ID");
+        // Launchers seed new identities, but must not replace a persisted owner.
+        if self.device_id.trim().is_empty() {
+            set_from_env(&mut self.device_id, "DEVICE_ID");
+        }
+        if self.runtime_instance_id.trim().is_empty() {
+            set_from_env(&mut self.runtime_instance_id, "WEGENT_RUNTIME_INSTANCE_ID");
+        }
         set_from_env(&mut self.device_name, "DEVICE_NAME");
         set_from_env(&mut self.device_type, "DEVICE_TYPE");
         set_from_env(&mut self.bind_shell, "BIND_SHELL");
@@ -317,6 +322,8 @@ pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, Con
         config.local_workspace_root = crate::workspace_paths::local_workspace_root();
     }
 
+    should_save |=
+        config.device_id.trim().is_empty() || config.runtime_instance_id.trim().is_empty();
     config.apply_env_overrides();
     config.derive_backend_url_from_socket();
     remember_effective_device_type(&config.device_type);

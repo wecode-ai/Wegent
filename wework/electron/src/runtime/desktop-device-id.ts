@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { system } from 'systeminformation'
 
@@ -14,6 +14,10 @@ export async function resolveDesktopDeviceId(options: {
   const applicationId = options.applicationId.trim()
   if (!applicationId) throw new Error('Desktop application identifier is empty')
 
+  const path = join(options.dataDirectory, 'desktop-device-id')
+  const persisted = await readDesktopDeviceId(path)
+  if (persisted) return persisted
+
   const hardwareUuid = (await system()).uuid.trim().toLowerCase()
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(hardwareUuid) ||
@@ -27,10 +31,31 @@ export async function resolveDesktopDeviceId(options: {
     .digest('hex')
   const deviceId = `electron-${digest}`
 
-  // Keep the diagnostic file, but never use profile-local state as identity input.
   await mkdir(options.dataDirectory, { recursive: true, mode: 0o700 })
-  await writeFile(join(options.dataDirectory, 'desktop-device-id'), `${deviceId}\n`, {
-    mode: 0o600,
-  })
+  try {
+    const file = await open(path, 'wx', 0o600)
+    try {
+      await file.writeFile(`${deviceId}\n`)
+    } finally {
+      await file.close()
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    const existing = await readDesktopDeviceId(path)
+    if (!existing)
+      throw new Error('Desktop device identity disappeared during initialization', { cause: error })
+    return existing
+  }
   return deviceId
+}
+
+async function readDesktopDeviceId(path: string): Promise<string | null> {
+  try {
+    const value = (await readFile(path, 'utf8')).trim()
+    if (!value) throw new Error(`Desktop device identity is empty: ${path}`)
+    return value
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
 }

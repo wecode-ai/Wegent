@@ -938,7 +938,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const resolvePane = useCallback(
     (paneKey: string) => {
       if (paneKey === activePaneKey) return props.activePane
-      const resolvedPane = resolveRuntimeWorkbenchPane(state.runtimeWork, paneKey, state.devices)
+      const resolvedPane = resolveRuntimeWorkbenchPane(state.runtimeWork, paneKey)
       if (resolvedPane) return resolvedPane
 
       const activeLayout = props.splitGroups?.activeLayout
@@ -957,7 +957,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       props.splitGroups?.activeLayout,
       runtimePaneKeySet,
       state.runtimeWork,
-      state.devices,
     ]
   )
   const resolveBrowserOpenRequestPaneKey = useCallback(

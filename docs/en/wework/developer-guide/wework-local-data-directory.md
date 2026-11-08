@@ -26,29 +26,31 @@ Home. This is useful for isolated sessions, tests, and custom deployments.
 
 ## Desktop Executor Identity
 
-The Electron host derives its `electron-<hash>` device ID from the SHA-256 hash
-of the hardware UUID and application identifier (default `io.wecode.wework`).
-The same machine and application retain their ID across restarts, reinstalls,
-different user Homes or data directories, and deletion of `desktop-device-id`.
-Different hardware or application identifiers produce different IDs. The raw
-hardware UUID is neither sent as the device ID nor written to identity files or logs.
+Managed desktop and standalone Executors both prefer persisted identities and
+generate new ones only when missing.
 
-The managed Executor uses this ID for local IPC and cloud `app_device_id`,
-`device-<app_device_id>` for cloud `device_id`, and `runtime-<app_device_id>`
-for `runtime_instance_id`, preserving their distinct routing responsibilities.
-The host supplies these values over the existing environment interface,
-overriding legacy random configuration identities. Changing Executor Home
-therefore retains the same cloud device. Account permissions, session tokens
-and record-scoped routes remain controlled by the existing authentication and
-registration protocol; a hardware hash does not grant authority.
+The Electron host first reads `desktop-device-id`, preserving IDs saved by older
+versions. Only when the file is absent does it hash the machine hardware UUID and
+application identifier (default `io.wecode.wework`) with SHA-256 and save
+`electron-<hash>`. Without an existing identity, the same machine and application
+produce the same ID. The raw hardware UUID is never sent as a device ID or written
+to identity files or logs.
 
-The user-data directory's `desktop-device-id` only records the computed result;
-it is not an identity source, and old worktree records are not used to infer one.
-Legacy random IDs are replaced when the new rule first runs. Startup fails when
-a valid hardware UUID is unavailable instead of generating a random replacement.
-Isolated verification can still explicitly set `WEGENT_APP_IPC_DEVICE_ID` without
-overwriting the regular identity file. Changing only the data directory no longer
-simulates a different machine.
+The managed Executor uses the host ID for local IPC and cloud `app_device_id`.
+Both managed and standalone Executors first use the `device_id` and
+`runtime_instance_id` persisted in `device-config.json`. Environment values seed
+only missing fields: the host supplies `device-<app_device_id>` and
+`runtime-<app_device_id>`; standalone Executors generate IDs when no seeds exist.
+New identities are saved and retained on restart. These three identities preserve
+their distinct routing responsibilities. Account permissions, session tokens and
+record-scoped routing remain controlled by authentication and registration;
+hardware hashes do not grant authority.
+
+Identity resolution neither moves conversation data nor rewrites saved references,
+and does not infer identity from old worktree records. Empty or unreadable identity
+files fail startup rather than silently replacing an identity. A valid hardware
+UUID is required only when generating a new desktop identity. Isolated verification
+can explicitly set `WEGENT_APP_IPC_DEVICE_ID` without overwriting the normal file.
 
 ## Directory Scanning During Home Migration
 
@@ -58,12 +60,6 @@ into directories and validates symlinks without separately reading regular-file
 metadata. A background Git operation removing a temporary lock file after
 enumeration therefore does not block startup. Unresolvable relative symlinks
 still block migration.
-
-Local conversation panes are restored from the task catalog verified through local IPC.
-When a saved pane's device identity is no longer known, only a uniquely matching local
-task can be restored, without rewriting identity history or moving conversation data.
-Known devices, including offline devices, retain their ownership; remote catalogs and
-serialized JSON cannot claim local IPC provenance.
 
 ## Automatic Cleanup and Retention
 
