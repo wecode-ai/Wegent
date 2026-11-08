@@ -253,6 +253,10 @@ export function createDesktopScenario({
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
         )
         const timing = `[data-testid="stand-in-project-policy-${project.id}"]`
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-processing-settings-toggle"]'
+        )
         await control.command('waitFor', timing)
         assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'button')
         assert.equal(await control.command('getAttribute', timing, { value: 'role' }), 'switch')
@@ -282,6 +286,10 @@ export function createDesktopScenario({
         await control.command(
           'click',
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
+        )
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-processing-settings-toggle"]'
         )
         await control.command('click', timing)
         assert.equal(
