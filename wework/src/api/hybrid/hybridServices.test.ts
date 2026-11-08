@@ -96,6 +96,13 @@ const mocks = vi.hoisted(() => {
   }
 
   const localServices = {
+    localProjectChatClient,
+    localIssueHumanRequestsApi: { inbox: vi.fn() },
+    localParticipationIdentity: {
+      nativeOwnerUserId: 0,
+      currentUser: { id: 7, user_name: 'profile-7' },
+      viewerUserIds: [0, 7],
+    },
     standInApi: {
       binding: vi.fn(),
       lifecycle: vi.fn(),
@@ -192,6 +199,7 @@ const mocks = vi.hoisted(() => {
     createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
   }
   const cloudServices = {
+    issueHumanRequestsApi: { inbox: vi.fn() },
     standInApi: {
       binding: vi.fn(),
       lifecycle: vi.fn(),
@@ -2751,5 +2759,16 @@ describe('createHybridWorkbenchServices', () => {
       launch
     )
     expect(mocks.localDecisionRouterApi.resolveLaunch).toHaveBeenCalledWith('smart-app:42')
+  })
+
+  test('retains the local participation scope without replacing cloud user authority', () => {
+    const services = createServices()
+    expect(services.localParticipationIdentity).toBe(mocks.localServices.localParticipationIdentity)
+    expect(services.localParticipationIdentity?.viewerUserIds).toEqual([0, 7])
+    expect(services.localIssueHumanRequestsApi).toBe(mocks.localServices.localIssueHumanRequestsApi)
+    expect(services.localProjectChatClient).toBe(mocks.localServices.localProjectChatClient)
+    expect(services.issueHumanRequestsApi).toBe(mocks.cloudServices.issueHumanRequestsApi)
+    expect(services.projectChatClient).toBe(mocks.cloudServices.projectChatClient)
+    expect(services.userApi).toBe(mocks.cloudServices.userApi)
   })
 })

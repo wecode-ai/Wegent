@@ -22,8 +22,9 @@ export async function createDesktopScenario(options) {
         'cloud-task-manager-execution-'
       )
       const panel = '[data-testid="work-item-task-chat-panel"]'
+      const close = '[data-testid="ai-chat-modal"] [data-testid="ai-chat-modal-close"]'
       await control.command('click', `[data-testid="${executionTestId}"]`)
-      await control.command('waitFor', panel, { text: groupRules })
+      await control.command('waitFor', panel, { text: groupRules, visible: true })
       assert.equal(
         Number(
           await control.command(
@@ -34,23 +35,21 @@ export async function createDesktopScenario(options) {
         0,
         '远程负责人规划详情加载失败，显示了会话重试入口'
       )
-      await control.command('waitFor', `${panel} [data-testid="pause-response-button"]`)
+      await control.command('waitFor', `${panel} [data-testid="pause-response-button"]`, {
+        visible: true,
+      })
       await options.captureScreenshot(
         control,
         'remote-group-planning-details-01-loaded.png',
         'body'
       )
-      await control.command(
-        'click',
-        '[data-testid="ai-chat-modal"] [data-testid="ai-chat-modal-close"]'
-      )
+      await control.command('waitFor', close, { visible: true })
+      await control.command('click', close, { visible: true })
       await control.command('waitFor', panel, { visible: false })
       await control.command('click', `[data-testid="${executionTestId}"]`)
-      await control.command('waitFor', panel, { text: groupRules })
-      await control.command(
-        'click',
-        '[data-testid="ai-chat-modal"] [data-testid="ai-chat-modal-close"]'
-      )
+      await control.command('waitFor', panel, { text: groupRules, visible: true })
+      await control.command('waitFor', close, { visible: true })
+      await control.command('click', close, { visible: true })
       await control.command('waitFor', panel, { visible: false })
     },
   })

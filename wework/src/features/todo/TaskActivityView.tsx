@@ -1,9 +1,11 @@
 import { IssueManagerEvent } from './IssueManagerEvent'
+import { IssueHumanRequests } from './IssueHumanRequests'
 import { IssueAssignmentEvent } from './IssueAssignmentEvent'
 import {
   IssueAssignmentReceiptStatus,
   type IssueAssignmentReceiptState,
 } from './IssueAssignmentReceipts'
+import { issueAssignmentRevision, sameIssueAssignment } from './issueAssignmentReceiptScope'
 import { issueActivityTimeline } from './issueActivityTimeline'
 import { useIssueActivityHistory } from './useIssueActivityHistory'
 import { issueActivityRole } from './issueActivityRole'
@@ -768,12 +770,15 @@ export function TaskActivityView({
     [activityHistory, commentCards, issueTimeline, task.created_at]
   )
   const latestAssignment = activityEntries.findLast(activity => activity.kind === 'assignment')
-  const currentReceipts =
-    assignmentReceipts?.issueId === task.id &&
-    assignmentReceipts.version === task.version &&
-    assignmentReceipts.assigneeUserId === task.assignee_user_id
-      ? assignmentReceipts
-      : null
+  const currentReceipts = sameIssueAssignment(
+    assignmentReceipts,
+    task.id,
+    task.version,
+    task.assignee_user_id,
+    issueAssignmentRevision(task)
+  )
+    ? assignmentReceipts
+    : null
 
   function cardSessionActive(card: TaskReplyCard) {
     if (onStartHumanTaskFromReply && humanDispatchForCard(card)) return false
@@ -922,14 +927,15 @@ export function TaskActivityView({
     card: TaskReplyCard,
     reply: TaskCardQueuedReply
   ): Promise<TaskCardDispatchResult> {
-    return coordinateCommentDispatch(card.root.messageId, reply, () =>
-      sendCardReplyNow(card, reply)
+    return coordinateCommentDispatch(card.root.messageId, reply, humanRequestId =>
+      sendCardReplyNow(card, reply, humanRequestId)
     )
   }
 
   async function sendCardReplyNow(
     card: TaskReplyCard,
-    reply: TaskCardQueuedReply
+    reply: TaskCardQueuedReply,
+    humanRequestId?: string
   ): Promise<TaskCardDispatchResult> {
     if (!client)
       return { ok: false, persisted: false, error: t('workbench.project_chat_send_failed') }
@@ -938,7 +944,7 @@ export function TaskActivityView({
     try {
       const prepared = await prepareComment(reply.content, reply.attachments ?? [])
       const dispatch = humanDispatchForCard(card)
-      if (dispatch && onStartHumanTaskFromReply) {
+      if (dispatch && onStartHumanTaskFromReply && !humanRequestId) {
         const message = await client.send({
           projectId: project.id,
           taskId: task.id,
@@ -959,6 +965,7 @@ export function TaskActivityView({
         return { ok: true, persisted: true }
       }
       const result = await dispatchTaskCardReply({
+        humanRequestId,
         client,
         services: taskAiServices,
         runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
@@ -1187,6 +1194,15 @@ export function TaskActivityView({
   return (
     <>
       <IssueChangeRequestBadges api={services.deviceApi} badges={task.badges ?? []} />
+      <IssueHumanRequests
+        key={`${projectLocation}:${project.id}:${task.id}`}
+        services={services}
+        projectId={String(project.id)}
+        issueId={task.id}
+        store={projectLocation === 'local' ? 'local' : 'backend'}
+        userId={activeUserId ?? undefined}
+        members={members}
+      />
       <IssueActivityFeed
         mode={linear ? 'linear' : rail ? 'rail' : 'document'}
         testId={`cloud-task-activity-${task.id}`}
