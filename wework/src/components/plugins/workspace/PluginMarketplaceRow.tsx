@@ -1,4 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useMemo } from 'react'
+import * as Popover from '@radix-ui/react-popover'
 import { MoreHorizontal, RefreshCw, UserRoundX } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useOptionalAppearance } from '@/features/appearance'
@@ -34,8 +35,6 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
 }: PluginMarketplaceRowProps) {
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
-  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
-  const actionsRef = useRef<HTMLDivElement>(null)
   const logo = useMemo(
     () =>
       resolvePluginLogo({
@@ -83,17 +82,6 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
       ? labels.syncing
       : labels.install
 
-  useEffect(() => {
-    if (!isActionMenuOpen) return
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!actionsRef.current?.contains(event.target as Node)) {
-        setIsActionMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handlePointerDown)
-    return () => document.removeEventListener('mousedown', handlePointerDown)
-  }, [isActionMenuOpen])
-
   return (
     <article
       data-testid={`${testIdPrefix}plugin-marketplace-row-${item.id}`}
@@ -117,6 +105,7 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
           contrastPad={logo.contrastPad}
           distribution={marketplacePluginDistribution(item)}
           logoUrl={logo.url}
+          loading="lazy"
           name={item.displayName || item.name}
           useInitial={logo.source === 'fallback'}
         />
@@ -155,78 +144,79 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
             <span>{pendingLabel}</span>
           </span>
         ) : showInstalledState ? (
-          <div ref={actionsRef} className="relative">
-            <button
-              type="button"
-              data-testid={`plugin-marketplace-actions-${item.id}`}
-              aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${
-                item.displayName || item.name
-              }`}
-              aria-expanded={isActionMenuOpen}
-              className="plugin-market-card-menu"
-              onClick={event => {
-                event.stopPropagation()
-                setIsActionMenuOpen(open => !open)
-              }}
-            >
-              <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.8} />
-            </button>
-            {isActionMenuOpen && (
-              <div
+          <Popover.Root>
+            <Popover.Trigger asChild>
+              <button
+                type="button"
+                data-testid={`plugin-marketplace-actions-${item.id}`}
+                aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${
+                  item.displayName || item.name
+                }`}
+                className="plugin-market-card-menu"
+                onClick={event => {
+                  event.stopPropagation()
+                }}
+              >
+                <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.8} />
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
                 data-testid={`plugin-marketplace-actions-menu-${item.id}`}
-                className="absolute right-0 top-[calc(50%+18px)] z-30 w-44 rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
+                aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${item.displayName || item.name}`}
+                align="end"
+                sideOffset={4}
+                collisionPadding={8}
+                hideWhenDetached
+                className="z-system-popover max-h-[var(--radix-popover-content-available-height)] w-44 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/30 bg-popover p-1 shadow-lg outline-none"
                 onClick={event => event.stopPropagation()}
               >
-                <button
-                  type="button"
-                  data-testid={`plugin-marketplace-try-${item.id}`}
-                  className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
-                  onClick={() => {
-                    setIsActionMenuOpen(false)
-                    onAction('try', item)
-                  }}
-                >
-                  {labels.try}
-                </button>
-                {item.accessRole === 'recipient' && item.allowCopy ? (
+                <Popover.Close asChild>
                   <button
                     type="button"
-                    data-testid={`plugin-marketplace-copy-${item.id}`}
+                    data-testid={`plugin-marketplace-try-${item.id}`}
                     className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
-                    onClick={() => {
-                      setIsActionMenuOpen(false)
-                      onAction('copy', item)
-                    }}
+                    onClick={() => onAction('try', item)}
                   >
-                    {labels.copy}
+                    {labels.try}
                   </button>
+                </Popover.Close>
+                {item.accessRole === 'recipient' && item.allowCopy ? (
+                  <Popover.Close asChild>
+                    <button
+                      type="button"
+                      data-testid={`plugin-marketplace-copy-${item.id}`}
+                      className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
+                      onClick={() => onAction('copy', item)}
+                    >
+                      {labels.copy}
+                    </button>
+                  </Popover.Close>
                 ) : null}
-                <button
-                  type="button"
-                  data-testid={`plugin-marketplace-manage-${item.id}`}
-                  className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
-                  onClick={() => {
-                    setIsActionMenuOpen(false)
-                    onAction('manage', item)
-                  }}
-                >
-                  {labels.manage}
-                </button>
+                <Popover.Close asChild>
+                  <button
+                    type="button"
+                    data-testid={`plugin-marketplace-manage-${item.id}`}
+                    className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
+                    onClick={() => onAction('manage', item)}
+                  >
+                    {labels.manage}
+                  </button>
+                </Popover.Close>
                 <div className="my-1 border-t border-border/25" />
-                <button
-                  type="button"
-                  data-testid={`plugin-marketplace-uninstall-${item.id}`}
-                  className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
-                  onClick={() => {
-                    setIsActionMenuOpen(false)
-                    onAction('uninstall', item)
-                  }}
-                >
-                  {labels.uninstall}
-                </button>
-              </div>
-            )}
-          </div>
+                <Popover.Close asChild>
+                  <button
+                    type="button"
+                    data-testid={`plugin-marketplace-uninstall-${item.id}`}
+                    className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
+                    onClick={() => onAction('uninstall', item)}
+                  >
+                    {labels.uninstall}
+                  </button>
+                </Popover.Close>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
         ) : (
           <button
             type="button"

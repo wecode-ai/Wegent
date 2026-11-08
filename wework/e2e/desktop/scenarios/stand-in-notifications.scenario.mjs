@@ -1,5 +1,9 @@
 import { verifyIssueAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
-import { openCollaborationNotifications, openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import {
+  openCollaborationNotifications,
+  openProjectStandIn,
+  sendStandInNotificationFollowUp,
+} from '../modules/stand-in-flows.mjs'
 import { verifyLocalStandInStatuses } from '../modules/stand-in-status-flows.mjs'
 import { createStandInFailureRegression } from '../modules/stand-in-failure-notification.mjs'
 import { createSubscriptionConfigRegression } from '../modules/stand-in-subscription-config.mjs'
@@ -7,7 +11,6 @@ import { verifyStandInArchiveRecovery } from '../modules/stand-in-archive-recove
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { sendPrompt } from '../modules/conversation-navigation.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
@@ -178,9 +181,7 @@ export function createDesktopScenario({
       await control.command('activateSystemNotification', 'body', {
         value: `wework://tasks/${encodeURIComponent(binding.device_id)}/${encodeURIComponent(binding.task_id)}`,
       })
-      const composer = `${CONTENT} [data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]`
-      await control.command('waitFor', composer)
-      await sendPrompt(control, composer, FOLLOW_UP)
+      await sendStandInNotificationFollowUp(control, CONTENT, FOLLOW_UP)
       const followUpDeadline = Date.now() + uiTimeoutMs
       while (!followUpResponse && Date.now() < followUpDeadline)
         await new Promise(resolve => setTimeout(resolve, 100))
@@ -279,7 +280,10 @@ export function createDesktopScenario({
         })
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
         assert.equal(
-          await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
+          await control.command(
+            'getValueWhenReady',
+            `${CONTENT} [data-testid="cloud-todo-detail-title"]`
+          ),
           '在通知内继续处理分身任务',
           'Every notification hit target must open the original Issue'
         )
@@ -294,7 +298,10 @@ export function createDesktopScenario({
       })
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
       assert.equal(
-        await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
+        await control.command(
+          'getValueWhenReady',
+          `${CONTENT} [data-testid="cloud-todo-detail-title"]`
+        ),
         '在通知内继续处理分身任务'
       )
       await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
@@ -303,7 +310,8 @@ export function createDesktopScenario({
         project.id,
         uiTimeoutMs,
         captureScreenshot,
-        userId
+        userId,
+        modelResponseTimeoutMs
       )
       await verifyLocalStandInStatuses(
         control,

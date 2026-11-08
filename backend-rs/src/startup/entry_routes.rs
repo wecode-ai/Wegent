@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Common HTTP entry routes: health, chat history, and OIDC callback.
+use crate::chat_history;
 use crate::http_compat::FastApiError;
 #[cfg(test)]
 use crate::shutdown_state::ShutdownState;
 use crate::state::AppState;
-use crate::{chat_history, oidc_callback};
 use brz_redis::{Redis as _, SetExpiration, SetOptions};
 use serde::Serialize;
 #[cfg(test)]
@@ -196,18 +196,6 @@ async fn chat_history(
     query: brz_http_server::Query<chat_history::HistoryQuery>,
 ) -> Result<chat_history::HistoryResponse, FastApiError> {
     chat_history::get_chat_history_value(state, session_id, &query).await
-}
-
-/// GET /api/auth/oidc/callback.
-#[brz_http_server::get("/api/auth/oidc/callback", access = public)]
-async fn oidc_callback(
-    #[inject(state)] app: &AppState,
-    query: brz_http_server::Query<oidc_callback::CallbackQuery>,
-) -> Result<brz_http_server::Redirect, FastApiError> {
-    // `CallbackQuery` binds the source's `code`/`state`/`error` query names
-    // through its serde fields; positional handler parameters would bind by
-    // Rust name and could silently miss `state`.
-    app.oidc_callback.handle(app, query.0).await
 }
 
 /// The source's 503 shutdown payload rendered with its field order.

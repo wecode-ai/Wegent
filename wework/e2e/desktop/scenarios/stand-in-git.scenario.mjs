@@ -6,6 +6,11 @@ import { createGitReadonlyVerification } from '../modules/stand-in-git-readonly.
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
+import {
+  bindStoppedStandIn,
+  finishStandInOnboarding,
+  stopBoundStandIn,
+} from '../modules/stand-in-instance-flows.mjs'
 
 export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelResponseTimeoutMs }) {
   let cloud
@@ -194,10 +199,19 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           'workspace-tab-select-fixed-board',
           'workspace-tab-select-fixed-task',
           'personal-stand-in-button',
-          'stand-in-settings-open',
-          'stand-in-primary-connections-open',
         ])
           await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+        // This protocol fixture installs its connection host on the local Executor.
+        await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await finishStandInOnboarding(control)
+        await stopBoundStandIn(control, uiTimeoutMs)
+        await bindStoppedStandIn(control, user.id, deviceId, uiTimeoutMs)
+        await finishStandInOnboarding(control)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-connections-open"]'
+        )
         await openGit('github')
         const personalView = JSON.parse(await control.command('snapshot', 'body'))
         assert.match(personalView.text, /个人全部事件/)

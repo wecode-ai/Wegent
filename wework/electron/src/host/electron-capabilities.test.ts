@@ -483,6 +483,19 @@ function createIsolatedClipboardRouter(
   return { router, targetWindow, notificationNavigation }
 }
 
+describe('external browser capability', () => {
+  test('routes explicit browser opens through the host and keeps unsafe protocols rejected', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'browser.openExternal', {
+      url: 'https://example.com/',
+    })
+    expect(electronMocks.shellOpenExternal).toHaveBeenCalledWith('https://example.com/')
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'browser.openExternal', { url: 'javascript:alert(1)' })
+    ).rejects.toThrow()
+  })
+})
+
 describe('Process explorer capabilities', () => {
   test('stays read-only', () => {
     expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
@@ -929,7 +942,12 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(appUpdates.check).toHaveBeenCalledWith('stable')
     expect(appUpdates.download).toHaveBeenCalledOnce()
-    expect(appUpdates.download).toHaveBeenCalledWith('stable')
+    expect(appUpdates.download).toHaveBeenCalledWith('stable', undefined)
+    await handlers.get('appUpdate.download')?.(
+      { channel: 'stable', retryToken: 'confirmed-attempt' },
+      context
+    )
+    expect(appUpdates.download).toHaveBeenLastCalledWith('stable', 'confirmed-attempt')
     expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledWith('0.2.7')

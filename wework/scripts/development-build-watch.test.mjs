@@ -374,9 +374,13 @@ test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fr
     await expect.poll(() => completed, { timeout: 10000 }).toBe(3)
     expect(publishedImages).toEqual([svg('blue'), svg('red')])
     expect(onError).not.toHaveBeenCalled()
-    expect(
-      (await readdir(path.join(output, 'assets'))).filter(file => file.endsWith('.svg'))
-    ).toHaveLength(2)
+    await expect
+      .poll(
+        async () =>
+          (await readdir(path.join(output, 'assets'))).filter(file => file.endsWith('.svg')),
+        { timeout: 10000 }
+      )
+      .toHaveLength(2)
   } finally {
     await watcher.close()
     await rm(temporary, { recursive: true, force: true })

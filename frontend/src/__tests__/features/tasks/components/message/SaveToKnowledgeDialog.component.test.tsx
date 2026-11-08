@@ -307,3 +307,42 @@ describe('SaveToKnowledgeDialog', () => {
     expect(screen.getByTestId('mock-markdown-editor')).toHaveValue('# Edited')
   })
 })
+
+it('preserves native team sources and writable filtering under the original grouped contract', async () => {
+  const owned = knowledgeBase(72, 'Developer', {
+    user_id: 7,
+    namespace: 'source',
+    group_id: 'source',
+    group_name: 'Source team',
+    group_type: 'group',
+  })
+  const reader = knowledgeBase(73, 'Reporter', {
+    namespace: 'source',
+    group_id: 'source',
+    group_name: 'Source team',
+    group_type: 'group',
+  })
+  const response = groupedKnowledgeBases([])
+  response.groups = [
+    {
+      group_name: 'source',
+      group_display_name: 'Source team',
+      kb_count: 3,
+      knowledge_bases: [owned, owned, reader],
+    },
+  ]
+  jest.mocked(knowledgeBaseApi.getAllGrouped).mockResolvedValue(response)
+  render(
+    <SaveToKnowledgeDialog
+      open
+      onOpenChange={jest.fn()}
+      initialTitle="Saved"
+      initialContent="content"
+      onCreated={jest.fn()}
+    />
+  )
+  const option = await screen.findByRole('option', { name: 'Source team / kb-72' })
+  expect(option).toHaveValue('72')
+  expect(screen.getAllByRole('option', { name: 'Source team / kb-72' })).toHaveLength(1)
+  expect(screen.queryByRole('option', { name: /kb-73/ })).not.toBeInTheDocument()
+})

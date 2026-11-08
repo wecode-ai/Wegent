@@ -147,6 +147,7 @@ describe('programmatic exec', () => {
     expect(selectProgrammaticExec(request, 'text("ok")')).toEqual({
       name: 'exec',
       input: 'text("ok")',
+      namespace: 'functions',
     })
   })
 
@@ -156,7 +157,15 @@ describe('programmatic exec', () => {
       'Real Codex did not advertise exactly one programmatic exec tool: 0'
     )
 
-    const duplicateExecRequest = { input: [request.input[0], request.input[0]] }
+    const duplicateExecRequest = {
+      input: [
+        request.input[0],
+        {
+          ...request.input[0],
+          tools: request.input[0].tools.map(tool => ({ ...tool, name: 'other_functions' })),
+        },
+      ],
+    }
     expect(requestAdvertisesProgrammaticExec(duplicateExecRequest)).toBe(true)
     expect(() => selectProgrammaticExec(duplicateExecRequest, 'text("ok")')).toThrow(
       'Real Codex did not advertise exactly one programmatic exec tool: 2'

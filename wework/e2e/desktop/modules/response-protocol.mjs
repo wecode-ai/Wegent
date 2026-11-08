@@ -1,3 +1,17 @@
+import { modelToolOutputText } from './model-tool-output.mjs'
+import {
+  functionCall,
+  namespacedFunctionCall,
+  customToolCall,
+  selectedToolCall,
+} from './model-tool-calls.mjs'
+import { wireDeclarations } from './model-wire-contract.mjs'
+import {
+  programmaticExecTools,
+  programmaticSelection,
+  discoverySelection,
+  normalizeDiscoveredTools,
+} from './model-tool-catalog.mjs'
 import { gunzipSync, zstdDecompressSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
@@ -138,7 +152,7 @@ function isReplyPredictionRequest(body) {
 function isReplyPredictionVisionRequest(body) {
   const message = body.messages?.at(-1)
   return (
-    message?.role === 'user' && modelMessageText(message).endsWith(`\n\n${REPLY_PREDICTION_PROMPT}`)
+    message?.role === 'user' && modelMessageText(message).endsWith(`\n${REPLY_PREDICTION_PROMPT}`)
   )
 }
 
@@ -237,7 +251,7 @@ function toolOutputText(request, callId) {
       (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
       value.call_id === callId
     ) {
-      return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
+      return modelToolOutputText(value.output)
     }
     if (value.type === 'tool_search_output' && value.call_id === callId) {
       return JSON.stringify(value.tools ?? [])
@@ -249,58 +263,6 @@ function toolOutputText(request, callId) {
     return null
   }
   return findOutput(request.input ?? [])
-}
-
-function functionCall(callId, name, argumentsValue, outputIndex = 0) {
-  const argumentsText = JSON.stringify(argumentsValue)
-  const itemId = `fc_${callId}`
-  return [
-    {
-      type: 'response.output_item.added',
-      output_index: outputIndex,
-      item: {
-        id: itemId,
-        type: 'function_call',
-        status: 'in_progress',
-        call_id: callId,
-        name,
-        arguments: '',
-      },
-    },
-    {
-      type: 'response.function_call_arguments.delta',
-      output_index: outputIndex,
-      item_id: itemId,
-      call_id: callId,
-      delta: argumentsText,
-    },
-    {
-      type: 'response.function_call_arguments.done',
-      output_index: outputIndex,
-      item_id: itemId,
-      call_id: callId,
-      arguments: argumentsText,
-    },
-    {
-      type: 'response.output_item.done',
-      output_index: outputIndex,
-      item: {
-        id: itemId,
-        type: 'function_call',
-        status: 'completed',
-        call_id: callId,
-        name,
-        arguments: argumentsText,
-      },
-    },
-  ]
-}
-
-function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
-  return functionCall(callId, name, argumentsValue).map(event => ({
-    ...event,
-    item: { ...event.item, namespace },
-  }))
 }
 
 function toolSearchCall(callId, argumentsValue) {
@@ -316,23 +278,10 @@ function toolSearchCall(callId, argumentsValue) {
 }
 
 function toolSearchResponseEvents(callId, selection) {
+  if (selection.codeMode) return selectedToolCall(callId, selection)
   return selection.native
     ? [toolSearchCall(callId, selection.arguments)]
     : functionCall(callId, selection.name, selection.arguments)
-}
-
-function customToolCall(callId, name, input) {
-  return {
-    type: 'response.output_item.done',
-    item: {
-      id: `fc_${callId}`,
-      type: 'custom_tool_call',
-      status: 'completed',
-      call_id: callId,
-      name,
-      input,
-    },
-  }
 }
 
 let assistantMessageSequence = 0
@@ -613,19 +562,9 @@ function requestContainsToolOutput(request, callId) {
 }
 
 function requestAdvertisesShellTool(request) {
-  const tools = Array.isArray(request.tools) ? request.tools : []
+  if (requestAdvertisesProgrammaticExec(request)) return true
+  const tools = wireDeclarations(request, 'responses')
   return tools.some(tool => tool?.name === 'exec_command' || tool?.name === 'shell_command')
-}
-
-function programmaticExecTools(request) {
-  const input = Array.isArray(request.input) ? request.input : []
-  const injected = input
-    .filter(item => item?.type === 'additional_tools')
-    .flatMap(item => (Array.isArray(item.tools) ? item.tools : []))
-    .filter(namespace => namespace?.type === 'namespace' && namespace.name === 'functions')
-    .flatMap(namespace => (Array.isArray(namespace.tools) ? namespace.tools : []))
-  const declared = Array.isArray(request.tools) ? request.tools : []
-  return [...declared, ...injected].filter(tool => tool?.type === 'custom' && tool.name === 'exec')
 }
 
 function serializedOutputReportsSuccess(value) {
@@ -643,19 +582,32 @@ function selectProgrammaticExec(request, input) {
     1,
     `Real Codex did not advertise exactly one programmatic exec tool: ${tools.length}`
   )
-  return { name: tools[0].name, input }
+  return {
+    name: tools[0].name,
+    input,
+    ...(tools[0].type === 'function' ? { type: 'function' } : {}),
+    ...(tools[0].namespace ? { namespace: tools[0].namespace } : {}),
+  }
 }
 
 function requestAdvertisesViewImageTool(request) {
-  const tools = Array.isArray(request.tools) ? request.tools : []
+  if (requestAdvertisesProgrammaticExec(request)) return true
+  const tools = wireDeclarations(request, 'responses')
   return tools.some(tool => tool?.name === 'view_image')
 }
 
 function selectTool(request, name, argumentsValue) {
-  const tools = Array.isArray(request.tools) ? request.tools : []
+  const tools = wireDeclarations(request, 'responses')
+  if (requestAdvertisesProgrammaticExec(request) && !tools.some(tool => tool.name === name))
+    return programmaticSelection(request, name, argumentsValue)
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
   assert.ok(names.has(name), `Real Codex did not advertise ${name}: ${[...names].join(', ')}`)
-  return { name, arguments: argumentsValue }
+  const entry = tools.find(tool => tool.name === name)
+  return {
+    name,
+    arguments: argumentsValue,
+    ...(entry?.namespace ? { namespace: entry.namespace } : {}),
+  }
 }
 
 function selectOfficialPluginMcpTool(request, argumentsValue) {
@@ -683,6 +635,11 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
     tool.description.includes(`plugin \`${OFFICIAL_PLUGIN_DISPLAY_NAME}\``),
     'The searched MCP tool did not retain official plugin provenance'
   )
+  if (tool.codeModeName) {
+    for (const name of ['workspacePath', 'targetPath'])
+      assert.match(tool.description, new RegExp(`${name}: string`))
+    return programmaticSelection(request, tool.codeModeName, argumentsValue)
+  }
   assert.deepEqual(
     new Set(tool.parameters?.required),
     new Set(['workspacePath', 'targetPath']),
@@ -710,6 +667,7 @@ function selectMcpTool(request, namespaceName, toolName, argumentsValue, searchC
     candidate => candidate?.type === 'function' && candidate.name === toolName
   )
   assert.ok(tool, `Searched MCP namespace ${namespaceName} did not expose ${toolName}`)
+  if (tool.codeModeName) return programmaticSelection(request, tool.codeModeName, argumentsValue)
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
 }
 
@@ -796,19 +754,13 @@ function mcpToolRequestEvents(
     mode: selection.mode,
     events:
       selection.mode === 'direct'
-        ? selection.namespace
-          ? namespacedFunctionCall(
-              toolCallId,
-              selection.namespace,
-              selection.name,
-              selection.arguments
-            )
-          : functionCall(toolCallId, selection.name, selection.arguments)
+        ? selectedToolCall(toolCallId, selection)
         : toolSearchResponseEvents(searchCallId, selection),
   }
 }
 
 function selectToolSearch(request, query) {
+  if (requestAdvertisesProgrammaticExec(request)) return discoverySelection(request, query)
   const tools = Array.isArray(request.tools) ? request.tools : []
   const toolNames = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
   const searchTools = tools.filter(
@@ -856,7 +808,7 @@ function requestToolSearchResults(request) {
     }
     if (typeof value === 'string') {
       try {
-        visit(JSON.parse(value))
+        visit(JSON.parse(modelToolOutputText(value)))
       } catch {
         // Non-JSON strings cannot contain tool search results.
       }
@@ -869,7 +821,7 @@ function requestToolSearchResults(request) {
     Object.values(value).forEach(visit)
   }
   visit(request.input ?? [])
-  return outputs
+  return normalizeDiscoveredTools(outputs)
 }
 
 function selectShellTool(request, workspacePath) {
@@ -877,7 +829,13 @@ function selectShellTool(request, workspacePath) {
 }
 
 function selectShellToolCommand(request, command, workspacePath, { yieldTimeMs = 1000 } = {}) {
-  const tools = Array.isArray(request.tools) ? request.tools : []
+  if (requestAdvertisesProgrammaticExec(request))
+    return programmaticSelection(request, 'exec_command', {
+      cmd: command,
+      workdir: workspacePath,
+      yield_time_ms: yieldTimeMs,
+    })
+  const tools = wireDeclarations(request, 'responses')
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
       cmd: command,
@@ -898,7 +856,7 @@ function selectShellToolCommand(request, command, workspacePath, { yieldTimeMs =
 function selectApplyPatchTool(request) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   assert.ok(
-    tools.some(tool => tool?.name === 'apply_patch'),
+    requestAdvertisesProgrammaticExec(request) || tools.some(tool => tool?.name === 'apply_patch'),
     `Real Codex did not advertise apply_patch: ${tools
       .map(tool => tool?.name)
       .filter(Boolean)
@@ -912,15 +870,25 @@ function selectApplyPatchTool(request) {
   ].join('\n')
 }
 
+function applyPatchResponseEvents(request, callId, patch) {
+  return requestAdvertisesProgrammaticExec(request)
+    ? selectedToolCall(callId, programmaticSelection(request, 'apply_patch', patch))
+    : [customToolCall(callId, 'apply_patch', patch)]
+}
+
 function selectCloudApplyPatchTool(request) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const applyPatch = tools.find(tool => tool?.name === 'apply_patch')
-  assert.ok(applyPatch, 'Real cloud Codex did not advertise apply_patch')
-  assert.equal(
-    applyPatch.type,
-    'custom',
-    'Native Responses cloud models must preserve Codex custom tools'
+  assert.ok(
+    requestAdvertisesProgrammaticExec(request) || applyPatch,
+    'Real cloud Codex did not advertise apply_patch'
   )
+  if (applyPatch)
+    assert.equal(
+      applyPatch.type,
+      'custom',
+      'Native Responses cloud models must preserve Codex custom tools'
+    )
   return [
     '*** Begin Patch',
     `*** Add File: ${CLOUD_ARTIFACT_NAME}`,
@@ -957,6 +925,7 @@ export {
   responseCompleted,
   responseFailed,
   functionCall,
+  selectedToolCall,
   namespacedFunctionCall,
   toolSearchCall,
   customToolCall,
@@ -1005,6 +974,7 @@ export {
   selectShellTool,
   selectShellToolCommand,
   selectApplyPatchTool,
+  applyPatchResponseEvents,
   selectCloudApplyPatchTool,
   selectViewImageTool,
   snapshotHasAssistantActivity,

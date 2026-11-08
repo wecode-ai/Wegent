@@ -69,6 +69,7 @@ export interface TaskCardReplyInput<
 > {
   card: TaskReplyCard;
   reply: RuntimePaneQueuedMessage;
+  humanRequestId?: string;
   sessionAddress?: RuntimeTaskAddress | null;
   agent?: { id: string; name: string; systemPrompt?: string; runtime?: string };
   selfManagedExecution?: boolean;
@@ -87,6 +88,7 @@ export async function dispatchTaskCommentReply(input: {
   taskId: string;
   rootMessageId: string;
   reply: RuntimePaneQueuedMessage;
+  humanRequestId?: string;
   prepareComment?: TaskCardReplyInput<
     unknown,
     CommentExecutionTask
@@ -120,6 +122,9 @@ export async function dispatchTaskCommentReply(input: {
     input.onMessages([message]);
     input.onMessages(
       await input.client.executeTaskComment({
+        ...(input.humanRequestId
+          ? { humanRequestId: input.humanRequestId }
+          : {}),
         projectId: input.projectId,
         taskId: input.taskId,
         triggerMessageId: message.messageId,
@@ -155,6 +160,7 @@ export async function dispatchTaskCardReply<
       projectId: project.id,
       taskId: task.id,
       rootMessageId: card.root.messageId,
+      humanRequestId: input.humanRequestId,
       reply,
       prepareComment: input.prepareComment,
       onMessages,

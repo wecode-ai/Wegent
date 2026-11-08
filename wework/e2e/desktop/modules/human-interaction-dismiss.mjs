@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import {
   assistantMessage,
@@ -36,7 +37,7 @@ export function handleArchiveInteractionModel(body, response) {
           const tool = selectTool(body, 'request_user_input_async', {
             questions: [{ title: current.question }],
           })
-          return functionCall(id, tool.name, tool.arguments, 1)
+          return selectedToolCall(id, tool, 1)
         })()
       : [assistantMessage('归档验证的问题已经提出。')]
   response.end(createSse([responseCreated(id), ...items, responseCompleted(id)]))
@@ -102,6 +103,14 @@ export async function verifyInteractionArchiving(control, timeoutMs, taskId) {
       const beforeDismiss = await readUserMessages()
       await control.command('hover', `${PAGE} [data-testid="interaction-list-item"]`)
       await control.command('click', `${PAGE} [data-testid="interaction-dismiss"]`)
+      // Dismissal acquires cross-window locks before committing the archive.
+      await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
+        text: '0',
+      })
+      await control.command('click', `${PAGE} [data-testid="interactions-history"]`)
+      await control.command('waitFor', `${PAGE} [data-testid="interaction-list-item"]`, {
+        text: item.question,
+      })
       await reloadMainWindow(control, 'The dismissed interaction must survive a renderer reload')
       assert.deepEqual(
         await readUserMessages(),

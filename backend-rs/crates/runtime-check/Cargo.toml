@@ -1,0 +1,24 @@
+[package]
+name = "wegent-runtime-check"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Authorized task runtime checkpoints and streaming state"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+wegent-identity = { path = "../identity" }
+wegent-http-compat = { path = "../http-compat" }
+wegent-task-store = { path = "../task-store" }
+anyhow = "1"
+brz-http-server = { version = "=0.0.33", features = ["macros"] }
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tracing = "0.1"
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }

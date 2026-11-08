@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
+import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -19,29 +20,32 @@ const OFFICIAL_MODEL = 'gpt-5.5'
 // slow operations; ordinary UI actions retain the shared ten-second timeout.
 const RECOVERY_TIMEOUT_MS = 60_000
 
-export function assertCloudConfigDegradation(log, { expectedMethod, resumedTaskId } = {}) {
-  const entry = log
-    .split('\n')
-    .find(line => line.includes('codex auth degraded after cloud config failure'))
-  assert.ok(entry, 'Missing cloud configuration auth degradation')
-  const method = /\bmethod=(\S+)/.exec(entry)?.[1]
-  assert.ok(method, entry)
-  assert.match(entry, /\bauth_mode=wework_router(?:\s|$)/)
-  assert.match(entry, /\bpending_requests=0(?:\s|$)/)
-  assert.ok(expectedMethod || resumedTaskId, 'Missing recovery observation target')
-  if (expectedMethod) assert.equal(method, expectedMethod, entry)
-  if (resumedTaskId) {
-    const resumed = log.split('\n').some(line => {
-      const fields = line.split(/\s+/)
-      return (
-        line.includes('codex shared thread request started') &&
-        fields.includes(`task_id=${resumedTaskId}`) &&
-        fields.includes('operation=thread/resume')
-      )
+async function preparePluginSyncFixture(resultDir) {
+  const pluginName = 'cloud-config-auth-probe'
+  const root = join(resultDir, 'cloud-config-marketplace')
+  const manifestDirectory = join(root, '.agents', 'plugins')
+  const pluginDirectory = join(root, 'plugins', pluginName, '.codex-plugin')
+  await mkdir(manifestDirectory, { recursive: true })
+  await mkdir(pluginDirectory, { recursive: true })
+  const marketplacePath = join(manifestDirectory, 'marketplace.json')
+  await writeFile(
+    marketplacePath,
+    JSON.stringify({
+      name: 'wework-personal',
+      plugins: [
+        {
+          name: pluginName,
+          source: { source: 'local', path: `plugins/${pluginName}` },
+          policy: { installation: 'INSTALLED_BY_DEFAULT' },
+        },
+      ],
     })
-    assert.ok(resumed, `Missing native thread/resume for ${resumedTaskId}`)
-  }
-  return method
+  )
+  await writeFile(
+    join(pluginDirectory, 'plugin.json'),
+    JSON.stringify({ name: pluginName, version: '1.0.0' })
+  )
+  return { marketplacePath, pluginName }
 }
 
 export function createDesktopScenario({ resultDir, workspacePath }) {
@@ -166,17 +170,14 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         assert.equal(result.restarted, true, JSON.stringify(result))
         return { offset, failureCount }
       }
-      const assertDegraded = async ({ offset, failureCount }, expectedMethod, resumedTaskId) => {
+      const assertDegraded = async ({ offset, failureCount }, expected) => {
         const log = await waitForLogPattern(
           logPath,
           /codex auth degraded after cloud config failure/,
           { fromOffset: offset, timeoutMs: RECOVERY_TIMEOUT_MS }
         )
         assert.ok(model.diagnostics().bundleFailures > failureCount)
-        const recoveryMethod = assertCloudConfigDegradation(log.slice(offset), {
-          expectedMethod,
-          resumedTaskId,
-        })
+        const recoveryMethod = assertCloudConfigRecovery(log.slice(offset), expected)
         evidence.push({
           recoveryMethod,
           bundleFailures: model.diagnostics().bundleFailures,
@@ -214,10 +215,19 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       })
       assert.equal(sent.accepted, true, JSON.stringify(sent))
       const continued = await completed(oldTask, `${PREFIX}_FOLLOWUP`)
-      await assertDegraded(resumeFault, 'thread/resume')
+      await assertDegraded(resumeFault, { method: 'thread/resume' })
       assert.equal((await task(oldTask)).threadId, oldThread)
       assert.ok(continued.turns.length > original.turns.length)
       assert.ok(JSON.stringify(continued.messages).includes(`${PREFIX}_OLD_COMPLETE`))
+
+      // A real bundled-plugin change must restart the idle process without
+      // restoring the subscription auth whose cloud configuration is still down.
+      const pluginSync = await rpc(
+        'runtime.codex.plugin.sync_bundled',
+        await preparePluginSyncFixture(resultDir)
+      )
+      assert.deepEqual(pluginSync, { status: 'ready', updated: true })
+      evidence.push({ pluginSync })
 
       model.plan(`${PREFIX}_NEW_OFFLINE`)
       const offlineTask = await create('NEW_OFFLINE')
@@ -272,14 +282,14 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       // Exercise the primary config/read and thread/start recovery entry points.
       const configFault = await startFault()
       assert.ok((await native('config/read', { includeLayers: true, cwd: null })).config)
-      await assertDegraded(configFault, 'config/read')
+      await assertDegraded(configFault, { method: 'config/read' })
       assert.ok((await rpc('runtime.codex.models.list', { includeHidden: true })).data.length > 0)
       await restoreOfficial('OFFICIAL_BEFORE_START')
       const startFaultState = await startFault()
       model.plan(`${PREFIX}_NEW_RECOVERED`)
       const newTask = await create('NEW_RECOVERED')
       await completed(newTask, `${PREFIX}_NEW_RECOVERED`)
-      await assertDegraded(startFaultState, 'thread/start')
+      await assertDegraded(startFaultState, { method: 'thread/start' })
 
       await restoreOfficial('OFFICIAL_BEFORE_GOAL')
       const goalMarker = `${PREFIX}_GOAL`
@@ -306,8 +316,8 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       )
       const beforeGoal = (await rpc('runtime.tasks.goal.get', { address: address(goalTask) })).goal
       assert.equal(beforeGoal.status, 'active')
-      const goalThreadId = (await task(goalTask)).threadId
-      assert.ok(goalThreadId, 'The active Goal must own a native thread before restart')
+      const goalThread = (await task(goalTask)).threadId
+      assert.equal(typeof goalThread, 'string')
       const goalFailureCount = await model.failBundle()
       const goalOffset = (await readFile(logPath, 'utf8')).length
       assert.equal(typeof restartDesktopApp, 'function')
@@ -318,13 +328,12 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       assert.equal(afterGoal.status, 'complete')
       assert.equal(afterGoal.objective, beforeGoal.objective)
       assert.equal(afterGoal.createdAt, beforeGoal.createdAt)
-      assert.equal((await task(goalTask)).threadId, goalThreadId)
-      // Cold-start model discovery can degrade auth before the Goal resumes.
-      // Verify both the safe transition and this Goal's actual native resume.
+      assert.equal((await task(goalTask)).threadId, goalThread)
+      // Startup config reads may recover auth before the persisted Goal resumes.
+      // Require both real degradation and the Goal's exact native thread recovery.
       await assertDegraded(
         { offset: goalOffset, failureCount: goalFailureCount },
-        undefined,
-        goalTask
+        { taskId: goalTask, threadId: goalThread }
       )
 
       // A second complete desktop restart must reconstruct the final reply and

@@ -140,8 +140,8 @@ jobs:
         if: steps.classify.outputs.wework_desktop_e2e == 'true'
         id: runtime
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -356,6 +356,10 @@ jobs:
       # Codex creates its own user/mount namespaces inside this disposable runner.
       options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
+      # Reuse the hosted runner's browsers without downloading or installing them.
+      volumes:
+        - /opt/google/chrome:/opt/google/chrome:ro
+        - /usr/local/share/chromedriver-linux64:/opt/wegent-e2e/chromedriver:ro
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -373,6 +377,12 @@ jobs:
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
+      - name: Verify the existing external browser runtime
+        if: contains(matrix.segments, 'browser-toolbar-actions')
+        run: |
+          /opt/google/chrome/chrome --version
+          /opt/wegent-e2e/chromedriver/chromedriver --version
 
       - name: Prepare real mailbox server runtime
         if: contains(matrix.segments, 'stand-in-email')
@@ -435,6 +445,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'browser-toolbar-actions') && '1' || '0' }}
           RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
@@ -749,7 +760,7 @@ jobs:
         if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli')
         shell: pwsh
         env:
-          BUILD_REPLY_FIXTURE: ${{ contains(matrix.segments, 'stand-in-cli') }}
+          WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           $directory = Join-Path $env:GITHUB_WORKSPACE "wework/test-results/windows-e2e-tools/dingtalk"
           New-Item -ItemType Directory -Force -Path $directory | Out-Null
@@ -758,7 +769,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk protocol fixture" }
           "WEWORK_E2E_DWS_FIXTURE_BIN=$binary" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          if ($env:BUILD_REPLY_FIXTURE -eq 'true') {
+          if (($env:WEWORK_E2E_SEGMENTS -split ',') -contains 'stand-in-cli') {
             $replyBinary = Join-Path $directory "source-story-dws.exe"
             rustc wework/e2e/desktop/fixtures/source-story-dingtalk-cli.rs --edition 2021 -o $replyBinary
             if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk reply protocol fixture" }

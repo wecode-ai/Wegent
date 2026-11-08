@@ -54,11 +54,11 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
         redis: None,
         celery: crate::celery_broker::CeleryBroker::new(None),
         socketio_rpc: None,
-        oidc: crate::oidc_service::OidcService::new(&oidc_config).unwrap(),
+        oidc: Arc::new(crate::oidc_service::OidcService::new(&oidc_config).unwrap()),
         oidc_config,
         oidc_callback: Arc::new(crate::oidc_callback::DefaultOidcCallbackHandler),
         shutdown: Arc::new(crate::shutdown_state::ShutdownState::default()),
-        attachment_http: crate::attachments::minio_client::build_client().unwrap(),
+        attachment_http: wegent_storage::minio_client::build_client().unwrap(),
         decision_http: crate::decisions::provider::build_client().unwrap(),
         url_metadata_http: crate::url_metadata::build_client().unwrap(),
         erp: Arc::new(crate::erp_provider::NoopErpProvider),
@@ -71,11 +71,15 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
             .unwrap(),
         executor_manager: crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
             .unwrap(),
-        sites: crate::sites::SitesClient::with_settings("", "", std::time::Duration::from_secs(1))
-            .unwrap(),
+        sites: Arc::new(
+            crate::sites::SitesClient::with_settings("", "", std::time::Duration::from_secs(1))
+                .unwrap(),
+        ),
         llm_proxy_credentials: Arc::new(crate::llm_proxy::StoredLlmProxyCredentials),
         repository_tokens: Arc::new(crate::repository_tokens::StoredRepositoryTokens),
-        git_repositories: crate::git_repositories::GitRepositoriesService::new(None).unwrap(),
+        git_repositories: Arc::new(
+            crate::git_repositories::GitRepositoriesService::new(None).unwrap(),
+        ),
         token_issuer_extra_claims: Arc::new(crate::token_issuers::NoExtraClaims),
         external_knowledge_auth: Arc::new(crate::mcp::knowledge_external::auth::PersonalApiKeyAuth),
         responses_dispatch: Arc::new(crate::responses::dispatch::ResponsesDispatch::spawn()),

@@ -5,9 +5,6 @@ use crate::task_runtime::mcp::StandInMcpIdentity;
 #[tokio::test]
 async fn stand_in_review_reads_more_than_fifty_messages_through_native_pagination() {
     let (mut handler, root) = isolated_runtime_work_handler("stand-in-review-native-pages");
-    handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
-    handler.automation_store =
-        crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let settings = store.personal_stand_in(7, "device-1").unwrap();
     store

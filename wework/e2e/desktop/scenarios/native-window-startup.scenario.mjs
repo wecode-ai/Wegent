@@ -12,10 +12,7 @@ import {
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 import { verifyFirstUsePageLoading } from '../modules/first-use-page-loading.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
-import {
-  STARTUP_SPLASH_HANDOFF_EVENTS,
-  verifyStartupSplashHandoff,
-} from '../modules/startup-splash-handoff.mjs'
+import { verifyStartupSplashHandoff } from '../modules/startup-splash-handoff.mjs'
 import {
   captureStartupThemeEvidence,
   seedStoppedStartupTheme,
@@ -75,11 +72,6 @@ export async function createDesktopScenario({ resultDir }) {
         electronRoot: join(packagedResourcesRoot(appBinary), 'app.asar'),
       })
       const snapshot = await waitForClosedStartupSplash(control)
-      assert.deepEqual(
-        snapshot.events.map(event => event.name),
-        STARTUP_SPLASH_HANDOFF_EVENTS,
-        'The Electron startup splash did not complete its animated lifecycle'
-      )
       await verifyStartupSplashHandoff({ snapshot, resultDir })
       assert.ok(
         snapshot.theme === 'light' || snapshot.theme === 'dark',
@@ -102,11 +94,16 @@ export async function createDesktopScenario({ resultDir }) {
       const appLog = await waitForStartupLogs(resultDir)
       const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
       const taskListReady = appLog.indexOf("source: 'task-list'", startupReady)
+      const presentationStarted = appLog.indexOf("step: 'startup-window-presentation'")
+      const mainShown = appLog.indexOf("step: 'main-window-show'")
       const splashClosed = appLog.indexOf("step: 'startup-splash-close'")
       assert.ok(taskListReady >= 0, 'The renderer did not log task-list readiness')
+      assert.ok(startupReady >= 0, 'The renderer did not report startup readiness')
+      // Window presentation is independent of task-list health. The loaded
+      // document must become visible even when the task list is still loading.
       assert.ok(
-        startupReady <= taskListReady && taskListReady < splashClosed,
-        'The startup stages were logged out of order'
+        presentationStarted >= 0 && presentationStarted < mainShown && mainShown < splashClosed,
+        'The loaded desktop was not presented before closing the startup splash'
       )
       const runtimeStartupEvents = parseStartupEvents(appLog)
       const corePrepareStarted = startupEventIndex(

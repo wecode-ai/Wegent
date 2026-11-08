@@ -19,10 +19,10 @@ use brz_redis::Redis;
 use super::db;
 use super::models::SmartAppRow;
 use super::service::access_role;
-use crate::attachments::minio_client::{self, MinioConfig};
 use crate::config::env_or_dotenv;
 use crate::http_compat::FastApiError;
 use crate::permissions::EntityResolvers;
+use wegent_storage::minio_client::{self, MinioConfig};
 
 /// `settings.PLUGIN_STORAGE_BUCKET` default (`app/core/config.py`).
 const DEFAULT_BUCKET: &str = "wegent";

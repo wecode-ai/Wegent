@@ -197,6 +197,12 @@ test.describe('Collaboration group Executor coordination', () => {
           {
             toolName: 'wework_space__get_current_context',
             arguments: {},
+            inspectToolNames: [
+              'submit_workflow_plan',
+              'update_issue_status',
+              'spawn_agent',
+              'wait_agent',
+            ],
           },
         ],
       },
@@ -246,6 +252,7 @@ test.describe('Collaboration group Executor coordination', () => {
       const modelBodies = await getScenarioModelBodies(request, scenarioMatch)
       expect(modelBodies.length).toBeGreaterThan(2)
       expect(modelRequestText(modelBodies.slice(1))).toContain(issueTitle)
+      expect(modelRequestText(modelBodies)).toContain('ALL_TOOLS.filter')
       expect(modelToolNames(modelBodies).some(isSubmitWorkflowPlan)).toBe(false)
       expect(modelToolNames(modelBodies).some(isUpdateIssueStatus)).toBe(false)
       expect(modelToolNames(modelBodies).some(isNativeSubagentTool)).toBe(false)
@@ -373,13 +380,14 @@ test.describe('Collaboration group Executor coordination', () => {
         responseContent: `Manager evaluated ${synthesisEvidence} and moved the Issue to review.`,
       },
     ])
+    // Keep both worker responses active while verifying concurrent dispatch (maximum 10s).
     const clearCollectorScenario = await configureIssueDispatchModelScenario(
       request,
       collectorTask,
-      [{ responseContent: collectorEvidence, doneDelayMs: 15_000 }]
+      [{ responseContent: collectorEvidence, doneDelayMs: 10_000 }]
     )
     const clearReviewerScenario = await configureIssueDispatchModelScenario(request, reviewerTask, [
-      { responseContent: reviewerEvidence, doneDelayMs: 15_000 },
+      { responseContent: reviewerEvidence, doneDelayMs: 10_000 },
     ])
     const clearSynthesisScenario = await configureIssueDispatchModelScenario(
       request,

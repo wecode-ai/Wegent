@@ -70,6 +70,7 @@ import {
 export {
   cacheRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationCacheStats,
+  isRuntimeConversationArchived,
   runtimeConversationKey,
   subscribeRuntimeConversation,
   syncRuntimeConversationDeviceAliases,
@@ -889,6 +890,7 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
 export function archiveRuntimeConversation(address: RuntimeTaskAddress) {
   markRuntimeConversationArchived(runtimeConversationKey(address))
   evictRuntimeConversation(address)
+  notifyRuntimeConversation(runtimeConversationKey(address))
 }
 
 export function unmarkRuntimeConversationArchived(address: RuntimeTaskAddress) {
@@ -918,20 +920,21 @@ function scheduleStreamingConversationNotification(key: string): void {
 
   const flush = () => {
     pendingStreamingNotifications.delete(key)
-    notifyRuntimeConversation(key)
+    notifyRuntimeConversation(key, undefined, true)
   }
-  if (typeof requestAnimationFrame === 'function') {
-    const frame = requestAnimationFrame(flush)
-    pendingStreamingNotifications.set(key, () => cancelAnimationFrame(frame))
-    return
-  }
-
-  const timer = globalThis.setTimeout(flush, 16)
+  // Leave time for queued native events before another expensive transcript layout.
+  // Completion and interactive actions cancel this timer and publish immediately.
+  const timer = globalThis.setTimeout(flush, 100)
   pendingStreamingNotifications.set(key, () => globalThis.clearTimeout(timer))
 }
 
 function isStreamingConversationAction(action: RuntimePaneMessageAction): boolean {
-  return action.type === 'assistant_chunk' || action.type === 'block_updated'
+  return (
+    action.type === 'assistant_chunk' ||
+    action.type === 'block_updated' ||
+    (action.type === 'block_created' &&
+      (action.block.type === 'text' || action.block.type === 'thinking'))
+  )
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {

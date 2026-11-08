@@ -65,6 +65,10 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
     'The cloud device card did not expose the Backend-reported available update'
   )
   await control.command('click', upgradeBadge)
+  await control.command('waitFor', '[data-testid="confirm-upgrade-device-dialog"]', {
+    text: testLatestVersion,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const upgradeConfirmation = await control.command(
     'getText',
     '[data-testid="confirm-upgrade-device-dialog"]'

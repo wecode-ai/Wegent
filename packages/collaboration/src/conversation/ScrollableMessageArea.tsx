@@ -71,6 +71,7 @@ function ScrollableMessagePaneContent({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
+  onFillSelectionToAnswer,
   autoScrollSuspended = false,
   searchTarget,
   messageTarget,
@@ -97,7 +98,7 @@ function ScrollableMessagePaneContent({
     turnNavigationTargetMessageId,
     handleTurnNavigationScrollTargetChange,
     handleTurnNavigationLoadStateChange,
-    handleContentLayoutChange,
+    handleVirtualLayoutChange,
     handleScrollToBottom,
     preserveScrollPositionForNextLayout,
     prepareForHistoryPrepend,
@@ -281,7 +282,7 @@ function ScrollableMessagePaneContent({
                 messages={messages}
                 turns={turns}
                 onBeforeUserMessageToggle={preserveUserMessagePosition}
-                onVirtualLayoutChange={handleContentLayoutChange}
+                onVirtualLayoutChange={handleVirtualLayoutChange}
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
@@ -316,6 +317,7 @@ function ScrollableMessagePaneContent({
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
+                onFillSelectionToAnswer={onFillSelectionToAnswer}
                 virtualAnchorToEnd={virtualAnchorToEnd}
                 virtualAnchor={virtualAnchor}
                 virtualScrollAdjustmentEnabled={virtualScrollAdjustmentEnabled}

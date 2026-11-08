@@ -7,7 +7,6 @@ const measurements = JSON.parse(
   readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
 )
 
-// Keep shared setup in one runner, including when a member has no timing yet.
 const preparationGroups = {
   'local-harness': ['claude-runtime', 'local-harness', 'workbench-mode', 'native-window-startup'],
   'object-storage': ['collaboration-issue-mcp-comments', 'collaboration-delivery-editing'],
@@ -42,55 +41,93 @@ export function checkpointSeconds(segment, seconds = measurements.seconds) {
   return checkpoints.reduce((total, checkpoint) => total + seconds[checkpoint], 0)
 }
 
-function selectedCheckpointEntries(matrix, seconds) {
-  const seen = new Set()
-  return matrix.include.map(entry => {
-    const checkpoints = entry.segments.split(',').map(segment => {
-      if (seen.has(segment)) throw new Error(`Duplicate Windows Core segment: ${segment}`)
-      seen.add(segment)
-      return { segment, seconds: checkpointSeconds(segment, seconds) }
-    })
-    const unknown = checkpoints.filter(checkpoint => checkpoint.seconds === null)
-    const pinned = new Set(unknown.map(checkpoint => checkpoint.segment))
-    for (const group of Object.values(preparationGroups)) {
-      if (group.some(segment => pinned.has(segment))) {
-        for (const segment of group) pinned.add(segment)
-      }
+function assignTask(shard, task) {
+  shard.segments.push(...task.segments)
+  shard.seconds += task.seconds
+}
+
+function leastLoaded(shards) {
+  return shards.reduce((best, shard) => (shard.seconds < best.seconds ? shard : best))
+}
+
+function balanceMeasuredWork(shards, ordinary, unmeasured, checkpoints) {
+  const origins = new Map(checkpoints.map(checkpoint => [checkpoint.segment, checkpoint.origin]))
+  const durations = new Map(checkpoints.map(checkpoint => [checkpoint.segment, checkpoint.seconds]))
+  const retained = []
+  for (const task of preparationTasks(checkpoints)) {
+    const source = shards.find(
+      shard =>
+        unmeasured.has(shard.id) &&
+        task.segments.every(segment => origins.get(segment) === shard.id)
+    )
+    if (source) {
+      assignTask(source, task)
+      retained.push({ source, task })
+    } else {
+      assignTask(leastLoaded(ordinary), task)
     }
-    return { checkpoints, pinned }
-  })
+  }
+  const active = [...new Set([...ordinary, ...retained.map(entry => entry.source)])]
+  const knownLoad = shard =>
+    shard.segments.reduce((total, segment) => total + (durations.get(segment) ?? 0), 0)
+  retained.sort((a, b) => b.source.seconds - a.source.seconds || b.task.seconds - a.task.seconds)
+  for (const { source, task } of retained) {
+    const target = leastLoaded(ordinary)
+    const knownCost = task.segments.reduce((total, segment) => total + durations.get(segment), 0)
+    // Unknown costs are not estimated. Only move original measured work away,
+    // without raising either known checkpoint or preparation-inclusive peaks.
+    if (
+      target.seconds + task.seconds > Math.max(...active.map(shard => shard.seconds)) ||
+      knownLoad(target) + knownCost > Math.max(...active.map(knownLoad))
+    )
+      continue
+    source.segments = source.segments.filter(segment => !task.segments.includes(segment))
+    source.seconds -= task.seconds
+    assignTask(target, task)
+  }
 }
 
 export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
   // Preserve the two exclusive benchmark shards and the existing runner budget.
   const fixed = new Set(['core-9', 'core-10'])
-  const entries = selectedCheckpointEntries(matrix, seconds)
+  const unmeasured = new Set()
+  const preparationSegments = new Set(Object.values(preparationGroups).flat())
+  for (const entry of matrix.include) {
+    const unknown = entry.segments
+      .split(',')
+      .filter(segment => checkpointSeconds(segment, seconds) === null)
+    if (!unknown.length) continue
+    // Do not split a preparation group when one member's cost is unknown.
+    if (unknown.some(segment => preparationSegments.has(segment))) fixed.add(entry.id)
+    else unmeasured.add(entry.id)
+  }
   const shards = matrix.include.map(entry => ({
     ...entry,
     segments: [],
     seconds: 0,
   }))
-  // Unknown costs stay opaque: reserve their original runner and move only
-  // measured work away, so a long known prefix cannot starve new coverage.
-  const ordinary = shards.filter(
-    (entry, index) => !fixed.has(entry.id) && !entries[index].pinned.size
-  )
-  if (!ordinary.length) return matrix
+  // Never add new measured work to a shard whose remaining cost is unknown.
+  const ordinary = shards.filter(entry => !fixed.has(entry.id) && !unmeasured.has(entry.id))
+  if (!ordinary.length) {
+    // A partial selection with no measured destination retains its original work.
+    for (const id of unmeasured) fixed.add(id)
+  }
   const pending = []
+  const seen = new Set()
   for (const [index, entry] of matrix.include.entries()) {
-    for (const checkpoint of entries[index].checkpoints) {
-      if (fixed.has(entry.id) || entries[index].pinned.has(checkpoint.segment)) {
-        shards[index].segments.push(checkpoint.segment)
+    for (const segment of entry.segments.split(',')) {
+      if (seen.has(segment)) throw new Error(`Duplicate Windows Core segment: ${segment}`)
+      seen.add(segment)
+      const duration = checkpointSeconds(segment, seconds)
+      if (fixed.has(entry.id) || duration === null) {
+        shards[index].segments.push(segment)
+        shards[index].seconds += duration ?? 0
       } else {
-        pending.push(checkpoint)
+        pending.push({ segment, seconds: duration, origin: entry.id })
       }
     }
   }
-  for (const task of preparationTasks(pending)) {
-    const target = ordinary.reduce((best, shard) => (shard.seconds < best.seconds ? shard : best))
-    target.segments.push(...task.segments)
-    target.seconds += task.seconds
-  }
+  balanceMeasuredWork(shards, ordinary, unmeasured, pending)
   return {
     include: shards
       .filter(shard => shard.segments.length)

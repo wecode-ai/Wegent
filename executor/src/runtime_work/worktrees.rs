@@ -17,7 +17,7 @@ use std::{
 };
 
 use crate::{
-    config::device::worktree_persistent_storage_verified,
+    config::device::worktree_persistent_storage_verified, logging::log_executor_event,
     path_compat::strip_windows_verbatim_prefix,
 };
 use serde::{Deserialize, Serialize};
@@ -669,6 +669,11 @@ impl WorktreeManager {
             .unwrap_or(Path::new("."))
             .to_path_buf();
         self.delete_with_operation(path, preserve_snapshot, |record| {
+            // Snapshot-preserving deletion must never bypass snapshot capture.
+            // A recreated directory without Git metadata is indistinguishable
+            // from unsaved user content and must be kept when it cannot be
+            // snapshotted.
+            let orphaned_path = !preserve_snapshot && is_orphaned_worktree_residue(path);
             if path.exists() && preserve_snapshot {
                 let snapshot = snapshot_worktree(path, &snapshot_dir)?;
                 record.snapshot_ref = Some(snapshot.reference);
@@ -677,7 +682,26 @@ impl WorktreeManager {
                 record.git_common_dir = Some(snapshot.git_common_dir);
             }
             if path.exists() {
-                remove_git_worktree(path)?;
+                if orphaned_path {
+                    log_executor_event(
+                        "runtime worktree removing orphaned residue",
+                        &[
+                            ("worktree_id", record.worktree_id.clone()),
+                            ("path", path.display().to_string()),
+                            ("state", record.state.clone()),
+                            (
+                                "last_error",
+                                record
+                                    .last_error
+                                    .clone()
+                                    .unwrap_or_else(|| "none".to_owned()),
+                            ),
+                        ],
+                    );
+                    remove_orphaned_worktree_path(path)?;
+                } else {
+                    remove_git_worktree(path)?;
+                }
             }
             if !preserve_snapshot {
                 if let (Some(git_common_dir), Some(reference)) = (
@@ -719,7 +743,11 @@ impl WorktreeManager {
                 .cloned()
                 .ok_or_else(|| "Managed worktree was not found".to_owned())?;
             if path.exists() {
-                validate_record_worktree_identity(&record, path)?;
+                if preserve_snapshot {
+                    validate_record_worktree_identity(&record, path)?;
+                } else {
+                    validate_deletable_worktree_identity(&record, path)?;
+                }
             }
             record
         };
@@ -1071,6 +1099,58 @@ fn remove_git_worktree(path: &Path) -> Result<(), String> {
     command.args(["worktree", "remove", "--force", value]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
+}
+
+fn validate_deletable_worktree_identity(
+    record: &ManagedWorktree,
+    path: &Path,
+) -> Result<(), String> {
+    if is_orphaned_worktree_residue(path) {
+        // The Git worktree was already removed, but a terminal or development
+        // tool recreated a directory at the recorded path. Treat that residue
+        // as deletable so an archived task cannot get stuck forever.
+        return Ok(());
+    }
+    validate_record_worktree_identity(record, path)
+}
+
+fn is_orphaned_worktree_residue(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return false;
+    }
+    matches!(
+        fs::symlink_metadata(path.join(".git")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+fn remove_orphaned_worktree_path(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Failed to inspect orphaned worktree path: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "Refusing to remove symlinked worktree path {}",
+            path.display()
+        ));
+    }
+    if metadata.is_dir() {
+        fs::remove_dir_all(path).map_err(|error| {
+            format!(
+                "Failed to remove orphaned worktree path {}: {error}",
+                path.display()
+            )
+        })
+    } else {
+        fs::remove_file(path).map_err(|error| {
+            format!(
+                "Failed to remove orphaned worktree path {}: {error}",
+                path.display()
+            )
+        })
+    }
 }
 
 fn remove_empty_worktree_container(path: &Path) -> Result<(), String> {

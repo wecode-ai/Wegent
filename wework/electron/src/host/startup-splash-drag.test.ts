@@ -23,6 +23,10 @@ describe('startup splash native drag layout', () => {
     expect(footer).toContain('position: relative')
     expect(footer).toContain('-webkit-app-region: no-drag')
     expect(footer).toContain('overflow-y: auto')
+    expect(footer).toContain('width: 100%')
+    expect(footer).not.toContain('max-width:')
+    expect(footer).not.toContain('margin-inline:')
+    expect(footer).toContain('max(28px, calc((100% - 48rem) / 2 + 28px))')
     expect(css).toMatch(/\.startup-brand\s*\{[^}]*pointer-events:\s*none/)
     expect(css).toMatch(
       /\.startup-hero,\s*\.startup-brand\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/

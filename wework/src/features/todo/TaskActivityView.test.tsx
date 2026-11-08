@@ -24,6 +24,7 @@ import { TaskReplyQueueStore } from '@wegent/collaboration/execution/taskReplyQu
 import { cloneElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
+import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { TaskActivityView } from './TaskActivityView'
 
 const createProjectRuntimeTask = vi.fn()
@@ -551,7 +552,19 @@ describe('TaskActivityView', () => {
   it.each([
     ['current assignment', {}, {}, true],
     ['different Issue', {}, { issueId: 'other' }, false],
-    ['older version', {}, { version: 0 }, false],
+    [
+      'older version without assignment identity',
+      {},
+      { version: 0, assignmentRevision: undefined },
+      false,
+    ],
+    ['same assignment before a status update', {}, { version: 0 }, true],
+    [
+      'superseded assignment to the same recipient',
+      {},
+      { assignmentRevision: 'older-assignment' },
+      false,
+    ],
     ['different recipient', {}, { assigneeUserId: 3 }, false],
     ['unassigned', { action: 'unassign' }, {}, false],
     ['agent assignment', { to_type: 'agent' }, {}, false],
@@ -579,6 +592,7 @@ describe('TaskActivityView', () => {
         issueId: task.id,
         version: 1,
         assigneeUserId: 2,
+        assignmentRevision: issueAssignmentRevision(task as never),
         error: false,
         rows: [
           {

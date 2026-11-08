@@ -29,14 +29,14 @@ import { ArtifactWorkspacePanel } from '@/features/knowledge/artifact/components
 import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
 import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
 import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
-import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import {
   canManageKnowledgeBase,
   canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
 import { getKnowledgeBase } from '@/apis/knowledge'
-import type { KnowledgeBase, KnowledgeView } from '@/types/knowledge'
+import { isManager, isEditor } from '@/types/base-role'
+import type { MemberRole, KnowledgeBase, KnowledgeView } from '@/types/knowledge'
 import type { Team } from '@/types/api'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
@@ -45,6 +45,10 @@ import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
 interface KnowledgeDetailPanelProps {
   /** Currently selected knowledge base */
   selectedKb: KnowledgeBase | null
+  verifiedRole?: MemberRole | null
+  permissionRefreshKey?: number
+  onPermissionsChanged?: () => void
+  onAccessLost?: () => void
   /** Sync updated KB data back into sidebar state */
   onSyncKnowledgeBase?: (kb: KnowledgeBase) => void
   /** Whether the tree panel is collapsed */
@@ -65,6 +69,10 @@ interface KnowledgeDetailPanelProps {
 
 export function KnowledgeDetailPanel({
   selectedKb,
+  verifiedRole,
+  permissionRefreshKey = 0,
+  onPermissionsChanged,
+  onAccessLost,
   onSyncKnowledgeBase,
   isTreeCollapsed: _isTreeCollapsed,
   onExpandTree: _onExpandTree,
@@ -101,11 +109,10 @@ export function KnowledgeDetailPanel({
   const [capabilityDraftRequest, setCapabilityDraftRequest] =
     useState<KnowledgeCapabilityDraftRequest | null>(null)
 
-  const namespaceRoleMap = useNamespaceRoleMap()
-
   // Fetch user permission for this knowledge base
   const { myPermission, fetchMyPermission } = useKnowledgePermissions({
     kbId: selectedKb?.id || 0,
+    onAccessDenied: onAccessLost,
   })
 
   // Fetch my permission when knowledge base is loaded
@@ -113,7 +120,11 @@ export function KnowledgeDetailPanel({
     if (selectedKb) {
       fetchMyPermission()
     }
-  }, [selectedKb, fetchMyPermission])
+  }, [selectedKb, fetchMyPermission, permissionRefreshKey, verifiedRole])
+
+  useEffect(() => {
+    if (myPermission && !myPermission.has_access) onAccessLost?.()
+  }, [myPermission, onAccessLost])
 
   const filteredTeams = useMemo(() => knowledgeCapableTeams(teams), [teams])
 
@@ -135,35 +146,35 @@ export function KnowledgeDetailPanel({
 
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
-    if (!selectedKb || !user) return false
+    if (!selectedKb || !user || !myPermission?.has_access) return false
+    if (verifiedRole !== undefined && !isManager(verifiedRole)) return false
     return canManageKnowledgeBase({
       currentUserId: user.id,
       knowledgeBase: selectedKb,
       knowledgeRole: myPermission?.role,
-      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
     })
-  }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
+  }, [selectedKb, user, myPermission, verifiedRole])
 
   const canUploadDocuments = useMemo(() => {
-    if (!selectedKb || !user) return false
+    if (!selectedKb || !user || !myPermission?.has_access) return false
+    if (verifiedRole !== undefined && !isEditor(verifiedRole)) return false
     return canManageKnowledgeBaseDocuments({
       currentUserId: user.id,
       knowledgeBase: selectedKb,
       knowledgeRole: myPermission?.role,
-      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
     })
-  }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
+  }, [selectedKb, user, myPermission, verifiedRole])
 
   // Check if user can manage permissions (creator, namespace manager, or KB manager)
   const canManagePermissions = useMemo(() => {
-    if (!selectedKb || !user) return false
+    if (!selectedKb || !user || !myPermission?.has_access) return false
+    if (verifiedRole !== undefined && !isManager(verifiedRole)) return false
     return canManageKnowledgeBasePermissions({
       currentUserId: user.id,
       knowledgeBase: selectedKb,
       knowledgeRole: myPermission?.role,
-      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
     })
-  }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
+  }, [selectedKb, user, myPermission, verifiedRole])
 
   // Get search params to check for taskId in URL
   // Support multiple parameter formats for compatibility
@@ -376,12 +387,20 @@ export function KnowledgeDetailPanel({
         onValueChange={value => setActiveTab(value as 'documents' | 'permissions')}
         className="flex-shrink-0"
       >
-        <TabsList className="h-8">
-          <TabsTrigger value="documents" className="gap-1 h-7 px-2 text-xs">
+        <TabsList className="h-11 md:h-8">
+          <TabsTrigger
+            value="documents"
+            data-testid="knowledge-detail-documents-tab"
+            className="min-h-11 min-w-11 gap-1 px-2 text-xs md:h-7 md:min-h-0"
+          >
             <FileText className="w-3.5 h-3.5" />
             {t('chatPage.documents')}
           </TabsTrigger>
-          <TabsTrigger value="permissions" className="gap-1 h-7 px-2 text-xs">
+          <TabsTrigger
+            value="permissions"
+            data-testid="knowledge-detail-permissions-tab"
+            className="min-h-11 min-w-11 gap-1 px-2 text-xs md:h-7 md:min-h-0"
+          >
             <Shield className="w-3.5 h-3.5" />
             {t('document.permission.management')}
           </TabsTrigger>
@@ -396,7 +415,7 @@ export function KnowledgeDetailPanel({
       >
         {/* Content area */}
         <div className="flex-1 overflow-auto p-4 sm:p-6">
-          {activeTab === 'documents' ? (
+          {activeTab === 'documents' || !canManagePermissions ? (
             <DocumentList
               knowledgeBase={selectedKb}
               canUpload={canUploadDocuments}
@@ -412,7 +431,7 @@ export function KnowledgeDetailPanel({
           ) : (
             <>
               {/* Show header with tabs when on permissions tab */}
-              <div className="flex items-center gap-3 mb-4">
+              <div className="mb-4 flex flex-col items-stretch gap-3 md:flex-row md:items-center">
                 <div className="flex-1 min-w-0">
                   <h2 className="text-base font-medium text-text-primary truncate">
                     {selectedKb.name}
@@ -420,7 +439,15 @@ export function KnowledgeDetailPanel({
                 </div>
                 {headerActions}
               </div>
-              <PermissionManagementTab kbId={selectedKb.id} kbNamespace={selectedKb.namespace} />
+              <PermissionManagementTab
+                kbId={selectedKb.id}
+                kbNamespace={selectedKb.namespace}
+                onChanged={onPermissionsChanged ?? (() => void fetchMyPermission())}
+                onAccessDenied={() => {
+                  void fetchMyPermission()
+                  onPermissionsChanged?.()
+                }}
+              />
             </>
           )}
         </div>

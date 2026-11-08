@@ -16,12 +16,15 @@ import { useComposerCatalogBinding } from './composer/ComposerCatalogContext'
 import type { LocalDeviceSkill } from '@/types/api'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import { resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
+import { useReferenceNavigation } from './useReferenceNavigation'
 
+/** Builds the desktop services used to render and activate user-message references. */
 export function useDesktopUserMessageServices(hasSkillReferences = false): UserMessageServices {
   const images = useAttachmentImageServices()
   const openAttachment = useAttachmentPreview()
   const electron = isElectronRuntime()
   const pane = useContext(WorkbenchPaneContext)
+  const { openConversation, openIssue } = useReferenceNavigation()
   const catalog = useComposerCatalogBinding()
   const listSkills = catalog.listSkills ?? pane?.projectChat.listLocalSkills
   const getHomeDirectory = pane?.getDeviceHomeDirectory
@@ -102,9 +105,19 @@ export function useDesktopUserMessageServices(hasSkillReferences = false): UserM
       transfers: desktopComposerTransferServices,
       resolveMentionIconUrl: resolveComposerMentionBrandIconUrl,
       onOpenPlugin: reference => navigateTo(buildPluginDetailRoute(reference)),
+      onOpenConversation: openConversation,
+      onOpenIssue: openIssue,
       openAttachment: openAttachment ?? undefined,
       getCommentPreviewRightBoundary: getCodeCommentPreviewRightBoundary,
     }),
-    [images, electron, localSkills, localSkillHomeDirectory, openAttachment]
+    [
+      images,
+      electron,
+      localSkills,
+      localSkillHomeDirectory,
+      openAttachment,
+      openConversation,
+      openIssue,
+    ]
   )
 }

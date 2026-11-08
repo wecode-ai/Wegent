@@ -6,7 +6,33 @@ sidebar_position: 8
 
 A Skill gives AI task-specific instructions and resources. A plugin can package Skills, commands, tools, and application entries.
 
-Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
+## Look up Wework documentation
+
+**Wework Docs** ships with the application and is installed by default, without a separate download or authorization. Ask questions such as “How do I configure a model in Wework?”, “How do projects differ from workspaces?”, or “How do I use the built-in browser?”. The agent can automatically use the `wework-docs` Skill, or you can select it explicitly in a conversation.
+
+The Skill includes the Chinese and English Wework documentation shipped with the build, supports offline reading, and cites its sources. Documentation describes product usage; actions available in a conversation still depend on its tools, device, and permissions. Latest release information and account availability require separate verification.
+
+You can also ask “Where are proxy settings?”, “How do I open a terminal?”, or “Why can't I find Worktrees?”. The Skill starts with [Interface navigation and feature locations](./interface-navigation.md) to give the starting region, click path and visibility conditions.
+
+## Use plugins
+
+<!-- ui-source: src/components/settings/PluginSettingsPage.tsx -->
+
+### Individual plugin operations
+
+| Goal                       | UI steps                                                                       | Conditions or limits                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Find and install           | Left sidebar → Plugins → search/filter source → details → Install              | Review trust confirmation for unofficial plugins; cancel leaves them uninstalled                                 |
+| Try a task                 | Details → example task / start conversation → review composer → send           | Filling the composer is not sending or authorizing                                                               |
+| Authorize an app           | Details → App authorizations → matching app → native login → return and verify | Authorization is app-, account- and execution-device-specific                                                    |
+| Enable, disable, uninstall | Plugin management list → plugin action                                         | Disable retains installation; uninstall is not deletion of created content                                       |
+| Import ZIP                 | Plugins → Create → Import plugin → choose ZIP → review → confirm               | Standard format and trust rules apply                                                                            |
+| Share, edit or delete      | Personal plugin details → Share or … menu                                      | Depends on ownership, publication state and version support; preserve implementation-status qualifications below |
+| Online Codex connectors    | Settings → Integrations → Plugins → Load online connectors                     | Codex runtime configuration; does not replace app login or plugin installation                                   |
+
+For inconsistent installation state, use management's refresh/repair entry and inspect errors. Repeated uninstall/reinstall does not resolve authorization, offline devices or permissions.
+
+Open **left sidebar → Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
 When installing an unofficial plugin from Enterprise, Personal, or an external marketplace, including public community submissions, the confirmation dialog warns that it may execute code, access local files, or send data to external services. Public visibility does not establish official provenance. Only continue if you trust its source. Focus starts on **Cancel**, and Escape closes the dialog. Trying an uninstalled unofficial plugin also requires confirmation before installation and placing the example in a new conversation. OpenAI official and Wework official plugins retain their existing installation flow. Personal ZIP imports show the same source warning in the preview dialog.
 
@@ -176,7 +202,41 @@ were created, so restarting Wework does not remove their plugin capabilities.
 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
 
-Use **Settings → Coding → Skills** to manage local Skills. Unified management places Codex and Claude Code Skills under `~/.agents/skills`; name collisions are preserved with source suffixes.
+### Inspect and toggle individual Skills
+
+Open **left sidebar → Plugins → plugin details → included capabilities** and select a Skill to read its instructions and invocation. When installed and manageable, toggle individual components on their capability rows or use Disable/Restore at the bottom of Skill details. Disabling a component differs from disabling its whole plugin.
+
+**Run Skill** requires an installed, enabled Skill and no pending start request. Review the resulting task flow before continuing; running it does not authorize external services. Global settings currently has no **Coding → Skills** page; do not follow the obsolete unified-directory migration UI instructions.
+
+### Mini-program experience links and QR codes
+
+In **Applications → Mini Programs**, a row offers **View QR code** and copy-link actions only when experience access is supported and an experience URL exists. Open the code for scanning or copy the URL and inspect success feedback before sharing. Missing URLs/capabilities show an empty value; do not look in site-publishing menus for this code. Close a failed QR dialog and inspect the link; confirm audience and the mini-program's access restrictions before sharing.
+
+### Add a custom plugin marketplace
+
+Open **left sidebar → Plugins → Create → Add plugin marketplace**. Enter a GitHub shorthand, HTTPS/SSH Git URL or local directory as **Source**. Optionally set **Git reference** (otherwise the main branch) and **Sparse path** (currently also displayed as **稀疏路径**), then select **Add marketplace**. Leave optional fields empty unless you need a particular revision or subdirectory.
+
+Correct validation errors in the form; Cancel/Close adds nothing. Adding a source does not install every plugin in it. Still review contents, trust prompts and execution device before installation. Private repositories use that device's native authentication; do not paste access tokens into the source field.
+
+### Edit site information
+
+Open **Applications → Sites → row … → Edit site**, change the title/custom domain prefix and select **Save**; Cancel discards changes. Prefixes are lowercased and the field accepts lowercase letters, digits and hyphens. Resolve conflicts or save errors shown in the dialog rather than clicking repeatedly. Availability depends on edit capability, not collaborator-management or access-management rights.
+
+### Copy a shared plugin into personal plugins
+
+When viewing a plugin as a sharing recipient, **… → Copy to my plugins** is available only if copying is allowed. Success imports a personal copy and opens its details; this is not copying a name or link to the clipboard. The action is disabled while preparing the copy, and failures appear on the plugin page. If it is absent, check recipient status and copy permission: access to use a plugin does not imply permission to copy it.
+
+### Query site visit data
+
+<a id="site-analytics-controls"></a>
+
+Open **left sidebar → Applications → Sites → site-row … → View visit data**. The entry appears only when the site's capabilities allow it.
+
+1. Choose start/end dates and select **Query**, or choose **Last 7 days** / **Last 31 days**.
+2. Dates use Beijing time (UTC+8), include both endpoints, span at most 31 days and cannot be reversed or in the future.
+3. Inspect **Page views (PV)**, **Unique visitors in range (UV)**, daily trends and the daily table. Range UV is independently deduplicated, not a sum of daily UV.
+4. If today is included, note the incomplete-data warning. No visits differs from a failed query. Contact an administrator when reporting is unconfigured; follow retry guidance for rate limits, timeouts or loading errors.
+5. Close to return to the list. Querying statistics neither publishes the site nor changes access permissions, and does not imply visitor-identity details are available.
 
 ## Development and migration
 

@@ -10,7 +10,7 @@ import { createServer, connect } from 'node:net'
 import { reservePort } from '../port-reservation.mjs'
 
 const run = promisify(execFile)
-// Includes the noon APPEND date fix: greenmail-mail-test/greenmail#1086.
+// GreenMail 2.1.15 fixes APPEND noon timestamps being parsed as midnight.
 const VERSION = '2.1.15'
 const SHA256 = '91d58798698cac357f015365240383b936ced2f2a1a9f7db37d9e3e1a31391b1'
 
@@ -56,6 +56,12 @@ async function startImapProxy(port, targetPort) {
 
 // GreenMail is a real, isolated IMAP/SMTP service. No production mailboxes are used.
 export async function startRealMailServer(directory, runtimeRoot) {
+  const { stdout, stderr } = await run('java', ['-version'])
+  const version = `${stdout}\n${stderr}`.match(/version "(?:1\.)?(\d+)/)?.[1]
+  assert.ok(
+    Number(version) >= 11,
+    `GreenMail ${VERSION} requires Java 11 or newer on PATH; select a supported JDK before running the mail checkpoint. Detected: ${stdout.trim()} ${stderr.trim()}`
+  )
   await mkdir(directory, { recursive: true })
   const jar = join(directory, 'greenmail.jar')
   const response = await fetch(
@@ -166,14 +172,8 @@ export async function startRealMailServer(directory, runtimeRoot) {
     }
   }
   const ready = new Promise((resolve, reject) => {
-    const startupOutput = () => output.slice(-4096).replaceAll(fixturePassword, '[redacted]')
     const timer = setTimeout(
-      () =>
-        reject(
-          new Error(
-            `GreenMail did not announce IMAPS/SMTPS readiness. Startup output: ${startupOutput() || '(empty)'}`
-          )
-        ),
+      () => reject(new Error('GreenMail did not announce IMAPS/SMTPS readiness')),
       15000
     )
     const observe = () => {
@@ -188,13 +188,9 @@ export async function startRealMailServer(directory, runtimeRoot) {
       clearTimeout(timer)
       reject(error)
     })
-    child.once('close', (code, signal) => {
+    child.once('exit', code => {
       clearTimeout(timer)
-      reject(
-        new Error(
-          `GreenMail exited with ${code ?? signal}. Startup output: ${startupOutput() || '(empty)'}`
-        )
-      )
+      reject(new Error(`GreenMail exited ${code}`))
     })
     observe()
   })

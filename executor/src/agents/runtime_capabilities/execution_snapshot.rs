@@ -3,18 +3,6 @@
 
 use super::*;
 
-/// Publish the agent's latest Skill selection for browsing.
-/// Native configuration stays in the task's private execution snapshot.
-/// The caller holds the Home preparation lease.
-pub(in crate::agents) fn publish_agent_skills(home: &Path, snapshot: &Path) -> Result<(), String> {
-    let names = read_skill_manifest(&snapshot.join("skills"))?
-        .into_keys()
-        .collect::<Vec<_>>();
-    let stage = HomeSkillsStage::prepare(home)?;
-    stage.reuse_from(snapshot, &names)?;
-    stage.activate()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

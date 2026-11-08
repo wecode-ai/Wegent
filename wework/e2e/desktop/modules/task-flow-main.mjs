@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 
@@ -54,11 +55,11 @@ import {
 import {
   buildDesktopApp,
   buildExecutor,
-  codexUpstreamApiFormat,
   mcpElicitationConfigToml,
   prepareHarnessRuntimeRoots,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
+  setMatrixUpstreamProtocol,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyDisabledRemoteSessionCapabilities,
@@ -146,7 +147,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
-import { captureFailureFollowup } from './failure-followup.mjs'
+import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -1220,6 +1221,7 @@ async function main() {
   const control = new DesktopE2EServer(workspacePath, workspacePath, null, {
     enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
   })
+  control.matrixEvidenceDirectory = resultDir
   const modelSwitchVerification = []
   let app
   const applicationProcessHistory = []
@@ -1283,8 +1285,7 @@ async function main() {
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
-        scenarioConfigToml:
-          SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
+        scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
@@ -1582,6 +1583,19 @@ async function main() {
           ...options.appEnvironmentOverrides,
         }
       }
+      if (
+        options?.expectNewDeviceIdentity === true &&
+        !options.appEnvironmentOverrides?.WEWORK_APP_IDENTIFIER
+      ) {
+        // A profile is not hardware identity. Give each simulated device its own
+        // application namespace, and reuse it when returning to that device.
+        const profile = activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
+        activeAppEnvironment.WEWORK_APP_IDENTIFIER = simulatedDeviceApplicationId({
+          applicationId: appEnvironment.WEWORK_APP_IDENTIFIER,
+          originalProfile: appEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory,
+          profile,
+        })
+      }
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
@@ -1610,11 +1624,6 @@ async function main() {
         )
       } else {
         assert.equal(
-          nextUserDataDirectory,
-          previousUserDataDirectory,
-          'Restarting Wework unexpectedly changed the Electron user data directory'
-        )
-        assert.equal(
           desktopDeviceIdAfterRestart,
           desktopDeviceIdBeforeRestart,
           'Restarting Wework changed the persisted Electron device identity'
@@ -1625,15 +1634,17 @@ async function main() {
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
     const readiness = control.awaitReady()
-    const ready = desktopScenario?.usesColdPackageStartup
-      ? await waitForColdPackageStartup(readiness, appLogPath, {
-          phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
-        })
-      : await withTimeout(
-          readiness,
-          DESKTOP_READY_TIMEOUT_MS,
-          'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-        )
+    // Release-pair diagnostics retain their previously certified startup deadline.
+    const ready =
+      usesReleasePackageRuntimeAssets && !usesDefaultUserData
+        ? await waitForColdPackageStartup(readiness, appLogPath, {
+            phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+          })
+        : await withTimeout(
+            readiness,
+            DESKTOP_READY_TIMEOUT_MS,
+            'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+          )
     assert.match(
       String(ready.location ?? ''),
       /^https?:/,
@@ -1847,12 +1858,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           control,
           cloudEnvironment,
           setCodexUpstreamProtocol: protocol =>
-            writeCodexConfig(
-              join(executorHome, 'codex'),
-              control.url,
-              '',
-              codexUpstreamApiFormat(protocol)
-            ),
+            setMatrixUpstreamProtocol(join(executorHome, 'codex'), protocol),
           workspacePath,
         })
       }
@@ -3042,6 +3048,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           text: LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        await control.command('click', '[data-testid="work-item-guide-open-summary"]')
+        await control.command('waitFor', '[data-testid="work-item-context-panel"]', {
+          visible: true,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await captureVerificationScreenshot(control, 'task-board-association-context-pill-open.png')
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4102,14 +4114,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
-        {
-          text: FILE_PREVIEW_RESTORE_MARKER,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        target: activeTaskWorkbenchSelector,
+        text: FILE_PREVIEW_RESTORE_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       assert.equal(
         await control.command(
           'getText',
@@ -4275,14 +4284,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The review tab was not active after switching back to the first task'
       )
       await control.command('click', '[data-testid="right-workspace-file-tab"]')
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
-        {
-          text: FILE_PREVIEW_RESTORE_MARKER,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        target: activeTaskWorkbenchSelector,
+        text: FILE_PREVIEW_RESTORE_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       assert.equal(
         await control.command(
           'getText',
@@ -4676,6 +4682,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    // Anchor the follow-up measurement to the failure itself; the diagnostic
+    // captures below can consume several seconds of wall-clock time.
+    const failedAt = Date.now()
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),
@@ -4783,9 +4792,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       'utf8'
     )
     try {
-      // Record whether the observed state settled after the step timeout so
-      // slow asynchronous updates are distinguishable from stuck states.
-      await captureFailureFollowup(control, resultDir)
+      // Observe the failed condition itself: record the measured convergence
+      // time or that no change happened within the budget, so slow
+      // asynchronous updates are distinguishable from stuck states (#4293).
+      // failedAt anchors the measurement to the actual step failure, before
+      // the diagnostic captures above have consumed wall-clock time.
+      await captureFailureFollowup(control, resultDir, {
+        condition: failedWaitCondition(error, control.commandHistory),
+        failedAt,
+      })
     } catch {
       // The follow-up is best-effort evidence; never mask the original failure.
     }

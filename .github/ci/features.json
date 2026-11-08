@@ -169,9 +169,12 @@
         "core:collaboration-template-lifecycle",
         "core:collaboration-templates",
         "core:collaboration-worktree-policy",
+        "core:dots-closed-loops",
+        "core:issue-human-handoff",
         "core:issue-property-autosave",
         "core:project-assignment-notification",
         "core:project-member-overrides",
+        "core:question-discussion",
         "core:task-board-association",
         "core:task-board-bulk-actions"
       ],
@@ -266,6 +269,7 @@
         "cloud:priority-filter",
         "cloud:workspace-attachments",
         "cloud:workspace-tabs",
+        "core:archived-fork-cleanup",
         "core:archived-worktree-cleanup",
         "core:device-artifact-declaration",
         "core:drawing-attachment",
@@ -356,6 +360,7 @@
         "core:follow-up-task-switch",
         "core:goal-lifecycle",
         "core:goal-state-sync",
+        "core:idle-executor-requests",
         "core:latest-conversation-history",
         "core:local-harness",
         "core:model-overload-recovery",
@@ -366,7 +371,9 @@
         "core:running-plan-history",
         "core:running-sidebar-state",
         "core:runtime-input-answer-persistence",
+        "core:runtime-policy",
         "core:runtime-task-queue",
+        "core:sidebar-task-identity",
         "core:supervisor-lifecycle",
         "core:task-status-sync",
         "core:transcript-sync",
@@ -409,6 +416,10 @@
         {
           "file": "tasks/task-runtime-consistency.spec.ts",
           "project": "chromium"
+        },
+        {
+          "file": "tasks/shell-reference-cancel.spec.ts",
+          "project": "executor-chromium"
         }
       ]
     },
@@ -418,6 +429,7 @@
         "cloud:cloud-device-lifecycle",
         "core:cloud-context-resilience",
         "core:cloud-login-proxy",
+        "core:desktop-device-identity",
         "core:remote-device-onboarding"
       ],
       "specs": [
@@ -489,6 +501,10 @@
         {
           "file": "knowledge/stable-id-navigation.spec.ts",
           "project": "chromium"
+        },
+        {
+          "file": "knowledge/relationship-navigation.spec.ts",
+          "project": "chromium"
         }
       ]
     },
@@ -500,11 +516,17 @@
         "core:automation-lifecycle",
         "core:project-automation"
       ],
-      "specs": []
+      "specs": [
+        {
+          "file": "collaboration/automation-operation-attribution.spec.ts",
+          "project": "chromium"
+        }
+      ]
     },
     "stand-in": {
       "label": "ci:stand-in",
       "desktop": [
+        "cloud:stand-in-cloud-device",
         "core:stand-in",
         "core:stand-in-action-confirmation",
         "core:stand-in-alternate-source",
@@ -524,6 +546,7 @@
         "core:stand-in-plugin-bridge",
         "core:stand-in-profile",
         "core:stand-in-project-enable",
+        "core:stand-in-sessions",
         "core:stand-in-telemetry",
         "core:stand-in-workspace"
       ],
@@ -563,6 +586,7 @@
         "core:system-pac",
         "core:system-proxy",
         "core:tray-lifecycle",
+        "core:wework-docs",
         "core:window-background-policy",
         "core:window-lifecycle"
       ],
@@ -636,7 +660,10 @@
     },
     "release": {
       "label": "ci:release",
-      "desktop": ["core:component-update", "core:release-package-startup"],
+      "desktop": [
+        "core:component-update",
+        "core:release-package-startup"
+      ],
       "specs": []
     }
   }

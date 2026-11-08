@@ -35,6 +35,7 @@ jobs:
       platform_matrix: ${{ steps.classify.outputs.platform_matrix }}
       platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
+      backend_delivery_image: ${{ steps.delivery.outputs.required }}
 
     steps:
       - name: Checkout code
@@ -48,6 +49,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node .github/scripts/ci-feature-plan.mjs
+
+      - name: Classify Backend delivery image inputs
+        id: delivery
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
+        run: |
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            required="$(node .github/scripts/verify-backend-delivery-image.mjs --classify --force)"
+          else
+            required="$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA" | node .github/scripts/verify-backend-delivery-image.mjs --classify)"
+          fi
+          echo "required=$required" >> "$GITHUB_OUTPUT"
 
   build-frontend-e2e:
     name: Build Frontend E2E Artifact
@@ -170,7 +185,7 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           echo "image=$(.github/scripts/resolve-backend-rs-e2e-runtime.sh)" \
             >> "$GITHUB_OUTPUT"
@@ -285,6 +300,56 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  verify-backend-delivery-image:
+    name: Verify Backend Delivery Image
+    needs: changes
+    if: needs.changes.outputs.backend_delivery_image == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # The real CentOS delivery image has its own budget and does not delay
+      # the Noble runtime artifacts consumed by desktop and browser jobs.
+      - name: Set up Backend delivery Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build Backend delivery image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: .
+          file: docker/backend/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: wegent-backend-delivery:${{ github.event.pull_request.head.sha || github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.event.pull_request.head.sha || github.sha }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
+
+      - name: Verify Backend delivery image
+        env:
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node .github/scripts/verify-backend-delivery-image.mjs \
+            --image "wegent-backend-delivery:$REVISION" --revision "$REVISION" \
+            --evidence .ci-artifacts/backend-delivery
+
+      - name: Upload Backend delivery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-delivery-evidence
+          path: .ci-artifacts/backend-delivery/
+          if-no-files-found: warn
+          retention-days: 7
+
   build-executor-e2e-runtime:
     name: Prepare Executor E2E Runtime
     needs: changes
@@ -332,7 +397,7 @@ jobs:
       - name: Resolve Executor E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
+          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
         run: .github/scripts/resolve-executor-e2e-runtime.sh
 
       - name: Check content-addressed Executor E2E image
@@ -2119,6 +2184,7 @@ jobs:
       - build-executor-e2e-runtime
       - build-backend-rs-e2e-runtime
       - prepare-platform-e2e-image
+      - verify-backend-delivery-image
       - e2e-tests
       - executor-e2e-tests
     if: always() && !cancelled() && (github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.action != 'unlabeled') || startsWith(github.event.label.name, 'ci:'))
@@ -2150,17 +2216,15 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           FRONTEND_BUILD_RESULT: ${{ needs.build-frontend-e2e.result }}
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
+          RUN_DELIVERY: ${{ needs.changes.outputs.backend_delivery_image == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+          RUN_BACKEND_RUNTIME: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true')) }}
+          DELIVERY_BUILD_RESULT: ${{ needs.verify-backend-delivery-image.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
           EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Platform E2E change detection completed with: $CHANGES_RESULT"
             exit 1
-          fi
-
-          if [[ "$RUN_E2E" != "true" ]]; then
-            echo "Platform E2E is not required for this pull request"
-            exit 0
           fi
 
           assert_success() {
@@ -2172,8 +2236,20 @@ jobs:
             fi
           }
 
+          if [[ "$RUN_DELIVERY" == "true" ]]; then
+            assert_success "$DELIVERY_BUILD_RESULT" "Backend delivery image build and verification"
+          fi
+
+          if [[ "$RUN_BACKEND_RUNTIME" == "true" ]]; then
+            assert_success "$BACKEND_BUILD_RESULT" "Backend Rust E2E runtime"
+          fi
+
+          if [[ "$RUN_E2E" != "true" ]]; then
+            echo "Platform E2E is not required for this pull request"
+            exit 0
+          fi
+
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
-          assert_success "$BACKEND_BUILD_RESULT" "Backend Rust E2E build"
           assert_success "$IMAGE_RESULT" "Platform E2E image"
           assert_success "$FRONTEND_BUILD_RESULT" "Frontend E2E build"
           if [[ "$RUN_PLATFORM_SUITE" == "true" ]]; then

@@ -20,6 +20,7 @@ const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 const STREAM_EVENT_BATCH_INTERVAL_MS = 16
 export const E2E_DROPPED_RUNTIME_EVENTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__'
 export const E2E_RUNTIME_EVENT_DISPATCHERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__'
+export const E2E_RUNTIME_EVENT_LISTENERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_LISTENERS__'
 
 export function isRuntimeChatStreamDebugEnabled(): boolean {
   return (
@@ -53,6 +54,21 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
 
   function processNativeEvent(event: LocalExecutorEvent): void {
     if (shouldDropRuntimeEventForE2E(event.event)) return
+    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+      const root = globalThis as typeof globalThis & {
+        [E2E_RUNTIME_EVENT_LISTENERS_KEY]?: Set<(event: LocalExecutorEvent) => void>
+      }
+      for (const listener of [...(root[E2E_RUNTIME_EVENT_LISTENERS_KEY] ?? [])]) {
+        try {
+          listener(event)
+        } catch (error) {
+          console.error('[Wework] E2E runtime event listener failed', {
+            event: event.event,
+            error,
+          })
+        }
+      }
+    }
     try {
       observeRuntimePluginInvocation(event)
     } catch {
@@ -115,9 +131,22 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         subscription.eventCount,
         subscription.textDeltaCount
       )
-      measureRuntimeStreamEvent(event.event, () => {
-        emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
-      })
+      try {
+        measureRuntimeStreamEvent(event.event, () => {
+          emitResponseApiEvent(
+            subscription.handlers,
+            event.event,
+            event.payload,
+            subscription.state
+          )
+        })
+      } catch (error) {
+        console.error('[Wework] Runtime chat stream handler failed', {
+          event: event.event,
+          subscriptionId,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        })
+      }
     }
   }
 
@@ -454,6 +483,7 @@ function mergeRuntimeBlockContentSnapshots(
   if ((currentData.blockId ?? currentData.block_id) !== (nextData.blockId ?? nextData.block_id)) {
     return null
   }
+  if (asRecord(currentData.updates).status !== asRecord(nextData.updates).status) return null
   return next
 }
 

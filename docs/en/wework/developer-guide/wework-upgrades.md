@@ -88,6 +88,12 @@ before opening data. Cached versioned entries in delivered launchers then forwar
 loaded bootstrap to restore the installed host. This does not confirm runtime or renderer health.
 Preparation leaves the active source record unchanged; cancellation removes only owned stages.
 
+Rollback writes the source slot to `macos-rollback` before switching `active`. Closing the
+activation journal does not prove physical `Contents` restoration completed. While this marker
+exists, even an ordinary installed entry must resume recovery instead of opening the rejected
+host. The native installer clears it only after the selected bundle is installed; failures retain
+it. A later fully healthy activation also clears stale handoff state left by an older source.
+
 Suite v8 additionally checks the actual `NSRunningApplication` URL, bundle identifier, and
 outer directory inode after upgrade and rollback. It runs the delivered source cleaner before
 continuing the original task after rollback. Suite v10 retains the delivered bootstrap,
@@ -126,11 +132,11 @@ Incompatible restoration retains the rejected slot so subsequent cleanup cannot 
 
 ## Maintain three verification layers
 
-| Layer                        | Inputs                                                 | Purpose                                                                                  | Authorizes a production edge                           |
-| ---------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Policy and transaction tests | Small manifests and temporary directories              | Floors, routing, revocation, journals, snapshot boundaries                               | No                                                     |
-| Mechanism E2E                | Prebuilt real package pairs | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No; fault-injection results cannot authorize production edges |
-| Release-pair E2E             | Immutable delivered source and target archives         | A specific real upgrade and rollback                                                     | Only for the tested platform, architecture, and hashes |
+| Layer                        | Inputs                                         | Purpose                                                                                  | Authorizes a production edge                                  |
+| ---------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Policy and transaction tests | Small manifests and temporary directories      | Floors, routing, revocation, journals, snapshot boundaries                               | No                                                            |
+| Mechanism E2E                | Prebuilt real package pairs                    | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No; fault-injection results cannot authorize production edges |
+| Release-pair E2E             | Immutable delivered source and target archives | A specific real upgrade and rollback                                                     | Only for the tested platform, architecture, and hashes        |
 
 Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, interrupted-rollback recovery, and failed-activation recovery each establish their own fixtures. Suite v10 requires prebuilt pairs: the runner fails immediately when artifacts are missing and never compiles, packages, or signs. Reuse the release candidate archive and download immutable historical releases, checking versions, source revisions, and SHA-256. Versions are test data, not branches selecting assertions.
 
@@ -168,7 +174,11 @@ Formal pair verification reuses runtime files by their complete descriptors, inc
 
 The target's own preparation entry publishes immutable programs to `.prepared`, addressed by fingerprint, version, delivered archive SHA-256, and size. Later slots verify their delivered archive before linking the same programs. This store never publishes future versions into the source runtime catalog; slots keep private role catalogs and profiles. CI shares this immutable program store between serial checkpoints within one source shard. First preparation and final cleanup both count toward total execution; no extra target prewarming occurs.
 
-CI freezes every selected source before sharding by platform, channel, and source, with at most eight runners. Immutable source runtime caches finish before checkpoint workers start. Warm reads still verify delivered archives without rewriting shared catalogs. Checkpoints stay serial within each pair. Windows shares native legacy application-data paths and Electron singleton identity despite isolated HOME; macOS replaces the shared application bundle. Stable targets verify Stable and Beta; Beta targets verify only Beta. Aggregation requires all selected sources and rejects missing, duplicate, or mismatched evidence. Complete execution must stay below ten minutes, including resolution, downloads, preparation, every scenario, cleanup, uploads, and aggregation. External runner queues are excluded; additional waves under the eight-runner limit still count. Builds and signing are timed separately. Publication rechecks actual completed results. Diagnostics cannot generate edges or certify the complete budget.
+CI freezes every selected source before sharding by platform, channel, and source, with at most eight runners. Immutable source runtime caches finish before checkpoint workers start. Warm reads still verify delivered archives without rewriting shared catalogs. Checkpoints stay serial within each pair. Windows shares native legacy application-data paths and Electron singleton identity despite isolated HOME; macOS replaces the shared application bundle. Stable targets verify Stable and Beta; Beta targets verify only Beta. Aggregation requires all selected sources and rejects missing, duplicate, or mismatched evidence. Complete execution targets less than ten minutes, including resolution, downloads, preparation, every scenario, cleanup, uploads, and aggregation. External runner queues are excluded; additional waves under the eight-runner limit still count. Builds and signing are timed separately. Publication rechecks actual completed results. Diagnostics cannot generate edges or certify the complete budget.
+
+Timing reports do not replace exact-package functional verification. When GitHub omits execution-step timestamps, the report marks duration as unknown and lists affected jobs rather than substituting queue time or zero, without blocking actual upgrade tests. Publication still requires successful builds, source shards, and evidence aggregation; missing, failed, or unfinished verification cannot publish.
+
+When upgrade tests quit an installed host, they first confirm command execution started and then require the actual host PID to exit. Quitting closes the renderer that sends control results, so a post-exit renderer acknowledgement is not required; an acknowledgement with a still-running host cannot pass either. Explicit command errors and exit timeouts still fail verification, and scenarios must not force-kill the host to satisfy the exit assertion.
 
 When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
 

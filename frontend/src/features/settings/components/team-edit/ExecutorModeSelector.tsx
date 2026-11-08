@@ -4,7 +4,7 @@
 
 'use client'
 
-import { Bot, Code2, Settings2 } from 'lucide-react'
+import { Bot, Code2 } from 'lucide-react'
 
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
@@ -39,16 +39,9 @@ interface ExecutorModeSelectorProps {
   codingRuntime: CodingExecutorRuntime
   onCodingRuntimeChange: (value: CodingExecutorRuntime) => void
   disabledModes?: SimpleExecutorMode[]
-  visibleModes?: SimpleExecutorMode[]
   helperText?: string | null
   hideLabel?: boolean
 }
-
-const iconMap = {
-  simple: Bot,
-  complex: Code2,
-  custom: Settings2,
-} as const
 
 export default function ExecutorModeSelector({
   value,
@@ -59,7 +52,6 @@ export default function ExecutorModeSelector({
   codingRuntime,
   onCodingRuntimeChange,
   disabledModes = [],
-  visibleModes,
   helperText,
   hideLabel = false,
 }: ExecutorModeSelectorProps) {
@@ -67,9 +59,18 @@ export default function ExecutorModeSelector({
   const customShells = getCustomShells(shells)
   const hasCustomShells = customShells.length > 0
   const selectedCustomShellName = hasCustomShells ? customShellName : ''
-  const visibleOptions = getSimpleExecutorOptions().filter(
-    option => !visibleModes || visibleModes.includes(option.value)
-  )
+  const useCase = value === 'custom' ? 'complex' : value
+  const selectedRuntime = value === 'custom' ? 'custom' : codingRuntime
+  const useCaseOptions = getSimpleExecutorOptions().filter(option => option.value !== 'custom')
+
+  const handleRuntimeChange = (runtime: CodingExecutorRuntime | 'custom') => {
+    if (runtime === 'custom') {
+      onChange('custom')
+    } else {
+      onCodingRuntimeChange(runtime)
+      if (value === 'custom') onChange('complex')
+    }
+  }
 
   return (
     <section className="space-y-2">
@@ -79,17 +80,16 @@ export default function ExecutorModeSelector({
         </Label>
       )}
       <div>
-        <RadioGroup value={value} onValueChange={next => onChange(next as SimpleExecutorMode)}>
-          <div
-            className={cn(
-              'grid gap-2',
-              visibleOptions.length === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-3'
-            )}
-          >
-            {visibleOptions.map(option => {
-              const checked = value === option.value
+        <RadioGroup
+          aria-label={t('settings:team.simple.executor.title')}
+          value={useCase}
+          onValueChange={next => onChange(next as SimpleExecutorMode)}
+        >
+          <div className="grid gap-2 sm:grid-cols-2">
+            {useCaseOptions.map(option => {
+              const checked = useCase === option.value
               const disabled = disabledModes.includes(option.value)
-              const Icon = iconMap[option.value]
+              const Icon = option.value === 'simple' ? Bot : Code2
 
               return (
                 <div key={option.value} className="min-w-0">
@@ -124,8 +124,8 @@ export default function ExecutorModeSelector({
           </div>
         </RadioGroup>
 
-        {value === 'complex' && (
-          <div className="relative mt-2.5 flex flex-col gap-2.5 rounded-lg border border-primary/30 bg-primary/[0.025] p-2.5 sm:flex-row sm:items-center sm:justify-between">
+        {useCase === 'complex' && (
+          <div className="relative mt-2.5 space-y-2.5 rounded-lg border border-primary/30 bg-primary/[0.025] p-2.5">
             <div
               className="absolute -top-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-l border-t border-primary/30 bg-primary/[0.025] sm:left-3/4"
               aria-hidden="true"
@@ -139,86 +139,102 @@ export default function ExecutorModeSelector({
               </p>
             </div>
             <RadioGroup
-              value={codingRuntime}
-              onValueChange={next => onCodingRuntimeChange(next as CodingExecutorRuntime)}
-              className="relative z-10 grid shrink-0 grid-cols-2 gap-2"
+              aria-label={t('settings:team.simple.executor.coding_runtime_label')}
+              value={selectedRuntime}
+              onValueChange={next => handleRuntimeChange(next as CodingExecutorRuntime | 'custom')}
+              className="relative z-10 grid gap-2 md:grid-cols-3"
             >
-              {(['codex', 'claude_code'] as const).map(runtime => (
-                <label
-                  key={runtime}
-                  className={cn(
-                    'flex min-h-10 min-w-[136px] cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 transition-colors',
-                    codingRuntime === runtime
-                      ? 'border-primary bg-primary/10'
-                      : 'border-border bg-base hover:border-primary/40'
-                  )}
-                  data-testid={`simple-coding-runtime-${runtime}-card`}
-                >
-                  <RadioGroupItem
-                    value={runtime}
-                    aria-label={t(`settings:team.simple.executor.${runtime}.title`)}
-                    data-testid={`simple-coding-runtime-${runtime}-radio`}
-                  />
-                  <div className="min-w-0">
-                    <div
-                      className={cn(
-                        'whitespace-nowrap text-sm font-medium',
-                        codingRuntime === runtime ? 'text-primary' : 'text-text-primary'
-                      )}
-                    >
-                      {t(`settings:team.simple.executor.${runtime}.title`)}
+              {(['codex', 'claude_code', 'custom'] as const).map(runtime => {
+                const checked = selectedRuntime === runtime
+                const disabled = disabledModes.includes(runtime === 'custom' ? 'custom' : 'complex')
+                const testId =
+                  runtime === 'custom'
+                    ? 'simple-executor-custom'
+                    : `simple-coding-runtime-${runtime}`
+
+                return (
+                  <label
+                    key={runtime}
+                    className={cn(
+                      'flex min-h-11 min-w-0 cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 transition-colors md:min-h-10',
+                      checked
+                        ? 'border-primary bg-primary/10'
+                        : 'border-border bg-base hover:border-primary/40',
+                      disabled && 'cursor-not-allowed opacity-50'
+                    )}
+                    data-testid={`${testId}-card`}
+                  >
+                    <RadioGroupItem
+                      value={runtime}
+                      disabled={disabled}
+                      aria-label={t(`settings:team.simple.executor.${runtime}.title`)}
+                      data-testid={`${testId}-radio`}
+                    />
+                    <div className="min-w-0">
+                      <div
+                        className={cn(
+                          'text-sm font-medium',
+                          checked ? 'text-primary' : 'text-text-primary'
+                        )}
+                      >
+                        {t(`settings:team.simple.executor.${runtime}.title`)}
+                      </div>
+                      <p className="text-xs text-text-muted">
+                        {t(`settings:team.simple.executor.${runtime}.description`)}
+                      </p>
                     </div>
-                    <p className="whitespace-nowrap text-xs text-text-muted">
-                      {t(`settings:team.simple.executor.${runtime}.description`)}
-                    </p>
-                  </div>
-                </label>
-              ))}
+                  </label>
+                )
+              })}
             </RadioGroup>
+
+            {value === 'custom' && (
+              <div className="space-y-1.5">
+                <Select value={selectedCustomShellName} onValueChange={onCustomShellChange}>
+                  <SelectTrigger
+                    className="h-11 bg-base md:h-10"
+                    aria-label={t('settings:team.simple.executor.custom_shell_placeholder')}
+                    data-testid="simple-custom-shell-select"
+                  >
+                    <SelectValue
+                      placeholder={t(
+                        hasCustomShells
+                          ? 'settings:team.simple.executor.custom_shell_placeholder'
+                          : 'settings:team.simple.executor.no_custom_shells'
+                      )}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {hasCustomShells ? (
+                      customShells.map(shell => (
+                        <SelectItem
+                          key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
+                          value={shell.name}
+                        >
+                          {shell.displayName || shell.name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__no_custom_shells__" disabled>
+                        <span className="text-text-muted">
+                          {t('settings:team.simple.executor.no_custom_shells')}
+                        </span>
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                {!hasCustomShells && (
+                  <p className="text-xs leading-5 text-text-secondary">
+                    {t('settings:team.simple.executor.manage_custom_shells_hint')}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {helperText && <p className="text-xs text-text-secondary">{helperText}</p>}
-
-      {value === 'custom' && (
-        <div className="space-y-1.5">
-          <Select value={selectedCustomShellName} onValueChange={onCustomShellChange}>
-            <SelectTrigger className="bg-base">
-              <SelectValue
-                placeholder={t(
-                  hasCustomShells
-                    ? 'settings:team.simple.executor.custom_shell_placeholder'
-                    : 'settings:team.simple.executor.no_custom_shells'
-                )}
-              />
-            </SelectTrigger>
-            <SelectContent>
-              {hasCustomShells ? (
-                customShells.map(shell => (
-                  <SelectItem
-                    key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
-                    value={shell.name}
-                  >
-                    {shell.displayName || shell.name}
-                  </SelectItem>
-                ))
-              ) : (
-                <SelectItem value="__no_custom_shells__" disabled>
-                  <span className="text-text-muted">
-                    {t('settings:team.simple.executor.no_custom_shells')}
-                  </span>
-                </SelectItem>
-              )}
-            </SelectContent>
-          </Select>
-          {!hasCustomShells && (
-            <p className="text-xs leading-5 text-text-secondary">
-              {t('settings:team.simple.executor.manage_custom_shells_hint')}
-            </p>
-          )}
-        </div>
-      )}
     </section>
   )
 }

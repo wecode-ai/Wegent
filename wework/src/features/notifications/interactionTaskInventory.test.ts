@@ -8,6 +8,7 @@ import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversa
 
 it('discovers healthy local task requests when the cloud device catalog calls this device offline', async () => {
   const list = vi.fn(async ({ deviceId }) => ({
+    localIssueQuestionsPending: deviceId === 'device',
     projects: [],
     chats: [{ ...interactionTask.workspace, deviceId, tasks: [interactionTask.task] }],
     totalTasks: 1,
@@ -32,6 +33,7 @@ it('discovers healthy local task requests when the cloud device catalog calls th
     new Set(['device', 'remote'])
   )
   expect(inventory.failedDevices.has('device')).toBe(false)
+  expect(inventory.localIssueQuestionsPending).toBe(true)
 })
 
 it('discovers authorized device requests independently and isolates a failed device', async () => {

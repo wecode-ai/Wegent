@@ -6,7 +6,10 @@ impl RuntimeWorkRpcHandler {
         turn: &mut SpawnTurnRequest,
     ) -> Result<(), String> {
         if is_claude_runtime(&turn.runtime)
-            || turn.send_payload.is_none()
+            || turn
+                .send_payload
+                .as_ref()
+                .is_none_or(|payload| payload["startNewSession"] == true)
             || turn.resume_thread_id.is_some()
             || turn.direct_thread_id.is_some()
             || turn.fork_thread_id.is_some()
