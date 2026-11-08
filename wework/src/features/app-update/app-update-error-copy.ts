@@ -22,24 +22,21 @@ export function formatAppUpdateErrorSummary(error: AppUpdateError, t: Translate)
         defaultValue: '网络不可用，更新未能安装',
       })
     }
+    if (error.stage !== 'check') return t('workbench.app_update_network_preparation_failed')
     return t('workbench.app_update_network_check_failed', {
       defaultValue: '网络不可用，无法检查更新',
     })
   }
 
-  if (error.stage === 'download') {
-    return t('workbench.app_update_download_failed', {
-      defaultValue: '更新下载失败',
-    })
-  }
-  if (error.stage === 'install') {
-    return t('workbench.app_update_install_failed', {
-      defaultValue: '更新安装失败',
-    })
-  }
-  return t('workbench.app_update_check_failed', {
-    defaultValue: '检查更新失败',
-  })
+  const messages = {
+    check: 'workbench.app_update_check_failed',
+    download: 'workbench.app_update_download_failed',
+    extract: 'workbench.app_update_extract_failed',
+    verify: 'workbench.app_update_verify_failed',
+    prepare: 'workbench.app_update_prepare_failed',
+    install: 'workbench.app_update_install_failed',
+  } as const
+  return t(messages[error.stage])
 }
 
 export function formatAppUpdateErrorType(kind: AppUpdateErrorKind, t: Translate): string {
@@ -59,17 +56,13 @@ export function formatAppUpdateErrorType(kind: AppUpdateErrorKind, t: Translate)
 }
 
 export function formatAppUpdateErrorFeature(stage: AppUpdateErrorStage, t: Translate): string {
-  if (stage === 'download') {
-    return t('workbench.app_update_error_feature_download', {
-      defaultValue: '下载应用更新',
-    })
-  }
-  if (stage === 'install') {
-    return t('workbench.app_update_error_feature_install', {
-      defaultValue: '安装应用更新',
-    })
-  }
-  return t('workbench.app_update_error_feature_check', {
-    defaultValue: '检查应用更新',
-  })
+  const messages = {
+    check: 'workbench.app_update_error_feature_check',
+    download: 'workbench.app_update_error_feature_download',
+    extract: 'workbench.app_update_error_feature_extract',
+    verify: 'workbench.app_update_error_feature_verify',
+    prepare: 'workbench.app_update_error_feature_prepare',
+    install: 'workbench.app_update_error_feature_install',
+  } as const
+  return t(messages[stage])
 }

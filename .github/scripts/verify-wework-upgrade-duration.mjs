@@ -9,12 +9,13 @@ const MAX_PARALLEL = 8;
 /** GitHub can mark a runner active before publishing its first step. */
 export async function readUpgradeExecutionJobs(
   readJobs,
-  { now = Date.now, wait = delay } = {},
+  { now = Date.now, wait = delay, requireSteps = true } = {},
 ) {
   const started = now();
   let waiting = false;
   for (;;) {
     const jobs = await readJobs();
+    if (!requireSteps) return jobs;
     const missing = jobs.filter(
       (job) =>
         job.name.startsWith("Verify release upgrades (") &&
@@ -114,6 +115,36 @@ export function verifyUpgradeDuration({
       "A release requires all four completed producer builds",
     );
   }
+  const aggregates = jobs.filter(
+    (job) => job.name === "Aggregate complete upgrade verification",
+  );
+  assert.ok(aggregates.length <= 1, "Duplicate upgrade aggregation");
+  if (completed) {
+    assert.equal(aggregates.length, 1, "Missing complete upgrade aggregation");
+    assert.equal(aggregates[0].status, "completed");
+    assert.equal(aggregates[0].conclusion, "success");
+  }
+  const executionJobs = [...resolver, ...selected, ...aggregates].filter(
+    (job) => !["queued", "waiting", "pending"].includes(job.status),
+  );
+  for (const job of executionJobs) {
+    assert.ok(["in_progress", "completed"].includes(job.status));
+    if (job.steps?.some((step) => step.started_at)) executionDuration(job, now);
+  }
+  const missingExecutionJobs = executionJobs
+    .filter((job) => !job.steps?.some((step) => step.started_at))
+    .map((job) => job.name);
+  if (!enforceBudget && missingExecutionJobs.length) {
+    return {
+      timing: "unavailable",
+      missingExecutionJobs,
+      elapsedMs: null,
+      limitMs: LIMIT_MS,
+      completed,
+      withinBudget: null,
+      enforceBudget,
+    };
+  }
   const resolverMs = executionDuration(resolver[0], now);
   // Remove external runner waits while retaining the eight-runner resource
   // limit. Recorded execution order determines scheduling for additional waves.
@@ -134,15 +165,6 @@ export function verifyUpgradeDuration({
     slots[slot] += executionDuration(job, now);
   }
   const matrixMs = Math.max(...slots);
-  const aggregates = jobs.filter(
-    (job) => job.name === "Aggregate complete upgrade verification",
-  );
-  assert.ok(aggregates.length <= 1, "Duplicate upgrade aggregation");
-  if (completed) {
-    assert.equal(aggregates.length, 1, "Missing complete upgrade aggregation");
-    assert.equal(aggregates[0].status, "completed");
-    assert.equal(aggregates[0].conclusion, "success");
-  }
   const aggregateMs = aggregates.length
     ? executionDuration(aggregates[0], now)
     : 0;
@@ -184,22 +206,29 @@ if (
       ),
     );
   const base = `repos/${repository}/actions/runs/${runId}`;
+  const enforceBudget = !process.argv.includes("--report-only");
   const result = verifyUpgradeDuration({
     run: api(base),
-    jobs: await readUpgradeExecutionJobs(() =>
-      api(`${base}/jobs?filter=latest&per_page=100`, true).flatMap(
-        (page) => page.jobs,
-      ),
+    jobs: await readUpgradeExecutionJobs(
+      () =>
+        api(`${base}/jobs?filter=latest&per_page=100`, true).flatMap(
+          (page) => page.jobs,
+        ),
+      { requireSteps: enforceBudget },
     ),
     matrix: JSON.parse(process.env.VERIFICATION_MATRIX),
     producerRunId: process.env.UPGRADE_PRODUCER_RUN_ID,
     completed: process.argv.includes("--completed"),
-    enforceBudget: !process.argv.includes("--report-only"),
+    enforceBudget,
   });
   console.log(
     JSON.stringify({ event: "upgrade-verification-duration", ...result }),
   );
-  if (!result.withinBudget) {
+  if (result.timing === "unavailable") {
+    console.log(
+      "::warning::GitHub execution-step telemetry is unavailable; upgrade duration is unknown and package verification remains required.",
+    );
+  } else if (!result.withinBudget) {
     console.log(
       "::warning::Upgrade verification exceeded the ten-minute target; package verification remains required.",
     );
