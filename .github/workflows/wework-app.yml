@@ -31,7 +31,7 @@ on:
         required: false
         default: false
       verification_checkpoint:
-        description: "Run one diagnostic without producing upgrade evidence; refresh requires a prebuilt source"
+        description: "Run one diagnostic without producing upgrade evidence; refresh and retry require a prebuilt source"
         type: choice
         options:
           - all
@@ -40,9 +40,10 @@ on:
           - app-upgrade-recovery
           - runtime-extraction
           - app-update-refresh
+          - app-update-retry
         default: all
       verification_source_run_id:
-        description: "Immutable source producer for the non-publishing app-update-refresh diagnostic"
+        description: "Immutable source producer for a non-publishing refresh or retry diagnostic"
         type: string
         required: false
         default: ""
@@ -53,13 +54,22 @@ on:
         default: ""
 
 concurrency:
-  group: ${{ (inputs.verification_run_id != '' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id) || github.workflow }}
+  group: ${{ (inputs.verification_run_id != '' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id) || github.workflow }}
   cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
+  retry-regression:
+    name: Verify update retry with independently built regression packages
+    if: inputs.verification_checkpoint == 'app-update-retry' && inputs.verification_source_run_id == '' && inputs.verification_run_id == '' && !inputs.publish_release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wework-upgrade-regression.yml
+    with:
+      target_version: ${{ inputs.version || '0.6.6' }}
+
   profile-runtime:
     name: Profile Windows runtime extraction (${{ matrix.runner }})
     if: inputs.verification_checkpoint == 'runtime-extraction'
@@ -104,7 +114,7 @@ jobs:
 
   prepare-release:
     name: Prepare build
-    if: inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''
+    if: inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
@@ -526,7 +536,7 @@ jobs:
   prepare-upgrade-inputs:
     name: Resolve immutable upgrade inputs
     needs: [prepare-release, build]
-    if: ${{ !cancelled() && !inputs.build_only && inputs.verification_checkpoint != 'runtime-extraction' && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && !inputs.build_only && inputs.verification_checkpoint != 'runtime-extraction' && !(inputs.verification_checkpoint == 'app-update-retry' && inputs.verification_source_run_id == '' && inputs.verification_run_id == '' && !inputs.publish_release) && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

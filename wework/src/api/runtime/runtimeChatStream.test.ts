@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
-import { createRuntimeChatStream, setRuntimeChatStreamDebugEnabled } from './runtimeChatStream'
+import {
+  createRuntimeChatStream,
+  E2E_RUNTIME_EVENT_LISTENERS_KEY,
+  setRuntimeChatStreamDebugEnabled,
+} from './runtimeChatStream'
 
 const pluginTelemetryMocks = vi.hoisted(() => ({
   observeRuntimePluginInvocation: vi.fn(),
@@ -623,6 +627,38 @@ describe('createRuntimeChatStream', () => {
 
     cleanup()
     expect(subscribe).toHaveBeenCalledTimes(1)
+  })
+
+  test('broadcasts real native events to E2E listeners', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const root = globalThis as typeof globalThis & {
+      [E2E_RUNTIME_EVENT_LISTENERS_KEY]?: Set<(event: LocalExecutorEvent) => void>
+    }
+    const e2eListener = vi.fn()
+    root[E2E_RUNTIME_EVENT_LISTENERS_KEY] = new Set([e2eListener])
+    try {
+      let listener!: (event: LocalExecutorEvent) => void
+      subscribe.mockImplementation(async handler => {
+        listener = handler
+        return vi.fn()
+      })
+      createRuntimeChatStream({ subscribe, request })
+      await Promise.resolve()
+
+      const event: LocalExecutorEvent = {
+        event: 'runtime.work.changed',
+        payload: {
+          taskId: 'task-1',
+          data: { archiveCleanup: { errors: [] } },
+        },
+      }
+      listener(event)
+
+      expect(e2eListener).toHaveBeenCalledWith(event)
+    } finally {
+      delete root[E2E_RUNTIME_EVENT_LISTENERS_KEY]
+      vi.unstubAllEnvs()
+    }
   })
 
   test('shares one native event listener across multiple stream subscribers', async () => {

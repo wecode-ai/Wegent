@@ -13,16 +13,17 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
   const identityPath = join(dataDirectory, 'desktop-device-id')
   const evidence = []
 
-  async function observe(control, directory, label) {
+  async function observe(control, directory, label, expected = {}) {
     const persisted = (await readFile(join(directory, 'desktop-device-id'), 'utf8')).trim()
     const status = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
-    assert.match(persisted, /^electron-[0-9a-f]{64}$/)
+    if (expected.deviceId) assert.equal(persisted, expected.deviceId)
+    else assert.match(persisted, /^electron-[0-9a-f]{64}$/)
     assert.equal(
       status.deviceId,
       persisted,
       'Renderer and real executor must use the host identity'
     )
-    assert.equal(status.runtimeInstanceId, `runtime-${persisted}`)
+    assert.equal(status.runtimeInstanceId, expected.runtimeInstanceId ?? `runtime-${persisted}`)
     const registered = await until(
       () => cloud.devices(),
       devices =>
@@ -40,7 +41,7 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
       1,
       'Restarting or changing profile must not create a duplicate cloud device'
     )
-    assert.equal(device.device_id, `device-${persisted}`)
+    assert.equal(device.device_id, expected.registrationDeviceId ?? `device-${persisted}`)
     assert.notEqual(device.device_id, persisted)
     assert.equal(device.runtime_instance_id, status.runtimeInstanceId)
     const identity = {
@@ -80,7 +81,6 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
       await restartDesktopApp({
         afterStop: async () => {
           await mkdir(otherDirectory, { recursive: true })
-          await writeFile(join(otherDirectory, 'desktop-device-id'), 'electron-stale-random-id\n')
         },
         appEnvironmentOverrides: {
           WEWORK_USER_DATA_DIR: otherDirectory,
@@ -95,6 +95,8 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
         appEnvironmentOverrides: {
           WEWORK_USER_DATA_DIR: brandedDirectory,
           WEWORK_APP_IDENTIFIER: `${applicationId}.other`,
+          WEGENT_EXECUTOR_HOME: join(resultDir, 'branded-executor-home'),
+          WEGENT_CODEX_HOME: join(resultDir, 'branded-executor-home', 'codex'),
         },
         expectNewDeviceIdentity: true,
       })
@@ -102,6 +104,41 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
       assert.notEqual(branded.deviceId, original.deviceId)
       assert.notEqual(branded.runtimeInstanceId, original.runtimeInstanceId)
       assert.notEqual(branded.cloudRecordId, original.cloudRecordId)
+
+      const legacyDirectory = join(resultDir, 'legacy-user-data')
+      const legacyExecutorHome = join(resultDir, 'legacy-executor-home')
+      const legacy = {
+        deviceId: 'electron-12345678-1234-4567-89ab-123456789abc',
+        registrationDeviceId: 'legacy-registration-device',
+        runtimeInstanceId: 'runtime-legacy-instance',
+      }
+      await restartDesktopApp({
+        afterStop: async () => {
+          await mkdir(legacyDirectory, { recursive: true })
+          await mkdir(legacyExecutorHome, { recursive: true })
+          await writeFile(join(legacyDirectory, 'desktop-device-id'), `${legacy.deviceId}\n`)
+          await writeFile(
+            join(legacyExecutorHome, 'device-config.json'),
+            JSON.stringify({
+              device_id: legacy.registrationDeviceId,
+              runtime_instance_id: legacy.runtimeInstanceId,
+            })
+          )
+        },
+        appEnvironmentOverrides: {
+          WEWORK_USER_DATA_DIR: legacyDirectory,
+          WEWORK_APP_IDENTIFIER: applicationId,
+          WEGENT_EXECUTOR_HOME: legacyExecutorHome,
+          WEGENT_CODEX_HOME: join(legacyExecutorHome, 'codex'),
+        },
+        expectNewDeviceIdentity: true,
+      })
+      const restored = await observe(control, legacyDirectory, 'persisted-legacy-identity', legacy)
+      await restartDesktopApp()
+      assert.deepEqual(
+        await observe(control, legacyDirectory, 'persisted-legacy-restart', legacy),
+        restored
+      )
     },
   }
 }

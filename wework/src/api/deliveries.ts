@@ -781,8 +781,12 @@ export function createDeliveryApi(client: HttpClient) {
     archiveCloudProject(projectId: CloudProjectIdInput, version: number): Promise<void> {
       return client.delete(`/v1/cloud-projects/${projectId}?version=${version}`)
     },
-    listMyWork(options?: { cursor?: string }): Promise<{ items: CloudMyWorkItem[]; errors?: string[]; next_cursor?: string | null }> {
-      return client.get(`/v1/cloud-work-items/my-work${options?.cursor ? `?cursor=${encodeURIComponent(options.cursor)}` : ''}`)
+    listMyWork(options?: {
+      cursor?: string
+    }): Promise<{ items: CloudMyWorkItem[]; errors?: string[]; next_cursor?: string | null }> {
+      return client.get(
+        `/v1/cloud-work-items/my-work${options?.cursor ? `?cursor=${encodeURIComponent(options.cursor)}` : ''}`
+      )
     },
     listLoopItems(
       projectId: CloudProjectIdInput,

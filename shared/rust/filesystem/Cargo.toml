@@ -11,4 +11,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tempfile = "3.23"
 fs2 = "0.4"
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Ioctl", "Win32_System_IO", "Win32_Foundation"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Ioctl", "Win32_System_IO", "Win32_Foundation", "Win32_System_WindowsProgramming"] }

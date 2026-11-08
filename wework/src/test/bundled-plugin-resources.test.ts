@@ -377,7 +377,7 @@ describe('bundled plugin resources', () => {
       expect(workflow).toContain('plan-desktop-release.mjs')
       const concurrencyGroup = workflow.match(/^ {2}group: (.+)$/m)?.[1].trim()
       expect(concurrencyGroup).toContain(
-        "inputs.verification_run_id != '' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)"
+        `inputs.verification_run_id != '' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)`
       )
       expect(concurrencyGroup).toContain(
         'github.ref, inputs.verification_run_id || inputs.verification_source_run_id)'

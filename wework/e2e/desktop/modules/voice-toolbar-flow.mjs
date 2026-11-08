@@ -81,6 +81,9 @@ export function apply(ctx) {
     // Package installation and profile validation exceed an ordinary UI step.
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     method: 'POST',
+    // Installing a real plugin snapshots the profile, runs pnpm and validates
+    // the result. These serial phases can exceed the ordinary UI step budget.
+    timeoutMs: 60_000,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       capability: 'runtime.installCoreDshPlugin',

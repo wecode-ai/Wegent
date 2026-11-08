@@ -3234,6 +3234,7 @@ dependencies = [
  "tokio",
  "url",
  "wegent-execution-contracts",
+ "wegent-filesystem",
  "wegent-protocol",
  "wegent-runtime-logging",
  "wegent-subprocess",
