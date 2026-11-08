@@ -135,6 +135,7 @@ mod capture_tests {
     fn gated_git(
         root: &Path,
         startup_delay: &str,
+        exit_delay: &str,
     ) -> (std::path::PathBuf, BTreeMap<String, String>) {
         let fifo = root.join("blocked");
         assert!(Command::new("mkfifo")
@@ -143,7 +144,7 @@ mod capture_tests {
             .unwrap()
             .success());
         let git = root.join("git");
-        fs::write(&git, "#!/bin/sh\nif [ \"$CAPTURE_TEST_STARTUP_DELAY\" != 0 ]; then /bin/sleep \"$CAPTURE_TEST_STARTUP_DELAY\"; fi\nprintf '%s\\n' \"$$\" > \"$CAPTURE_TEST_PID\"\nexec /bin/cat \"$CAPTURE_TEST_FIFO\"\n").unwrap();
+        fs::write(&git, "#!/bin/sh\nif [ \"$CAPTURE_TEST_STARTUP_DELAY\" != 0 ]; then /bin/sleep \"$CAPTURE_TEST_STARTUP_DELAY\"; fi\nprintf '%s\\n' \"$$\" > \"$CAPTURE_TEST_PID\"\nif [ \"$CAPTURE_TEST_EXIT_DELAY\" = 0 ]; then exec /bin/cat \"$CAPTURE_TEST_FIFO\"; fi\n/bin/cat \"$CAPTURE_TEST_FIFO\"\n/bin/sleep \"$CAPTURE_TEST_EXIT_DELAY\"\n").unwrap();
         fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
         let environment = BTreeMap::from([
             (
@@ -155,23 +156,29 @@ mod capture_tests {
                 "CAPTURE_TEST_STARTUP_DELAY".to_owned(),
                 startup_delay.to_owned(),
             ),
+            ("CAPTURE_TEST_EXIT_DELAY".to_owned(), exit_delay.to_owned()),
         ]);
         (git, environment)
     }
 
     #[test]
     fn synchronous_capture_drives_io_without_polling_the_callers_runtime() {
-        assert_synchronous_capture_is_independent("0");
+        assert_synchronous_capture_is_independent("0", "0");
     }
 
     #[test]
     fn synchronous_capture_separates_slow_startup_from_io_independence() {
-        assert_synchronous_capture_is_independent("2.1");
+        assert_synchronous_capture_is_independent("2.1", "0");
     }
 
-    fn assert_synchronous_capture_is_independent(startup_delay: &str) {
+    #[test]
+    fn synchronous_capture_separates_native_exit_from_io_independence() {
+        assert_synchronous_capture_is_independent("0", "2.1");
+    }
+
+    fn assert_synchronous_capture_is_independent(startup_delay: &str, exit_delay: &str) {
         let root = tempfile::tempdir().unwrap();
-        let (git, environment) = gated_git(root.path(), startup_delay);
+        let (git, environment) = gated_git(root.path(), startup_delay, exit_delay);
         let workspace = root.path().to_owned();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -204,11 +211,7 @@ mod capture_tests {
                 // The observer may have timed out; preserve its failure diagnostic.
                 let _ = sender.send(result);
             });
-            let result = observe_independent_capture(
-                &root.path().join("blocked"),
-                pending_receiver,
-                receiver,
-            );
+            let result = observe_independent_capture(root.path(), pending_receiver, receiver);
             // Resume the caller before asserting, so even the broken implementation
             // can clean up its OS child and blocking worker without hanging teardown.
             worker.await.unwrap();
@@ -223,7 +226,7 @@ mod capture_tests {
     }
 
     fn observe_independent_capture(
-        fifo: &Path,
+        root: &Path,
         pending: mpsc::Receiver<()>,
         result: mpsc::Receiver<Result<Vec<u8>, String>>,
     ) -> Result<Result<Vec<u8>, String>, String> {
@@ -235,7 +238,7 @@ mod capture_tests {
             match fs::OpenOptions::new()
                 .write(true)
                 .custom_flags(libc::O_NONBLOCK)
-                .open(fifo)
+                .open(root.join("blocked"))
             {
                 Ok(writer) => break writer,
                 Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
@@ -247,16 +250,51 @@ mod capture_tests {
                 Err(error) => return Err(format!("Git child readiness failed: {error}")),
             }
         };
-        // Both the real child and the capture's pending I/O are ready. Keep the
-        // parent reactor unpolled while releasing output, without charging OS
-        // process startup to the original two-second independence assertion.
+        // Release the real child while keeping the parent reactor unpolled.
         writer
             .write_all(b"captured")
             .map_err(|error| error.to_string())?;
         drop(writer);
+        let pid = fs::read_to_string(root.join("pid"))
+            .map_err(|error| error.to_string())?
+            .trim()
+            .parse::<libc::id_t>()
+            .map_err(|error| error.to_string())?;
+        while !child_has_exited(pid).map_err(|error| error.to_string())? {
+            if started.elapsed() >= Duration::from_secs(5) {
+                return Err("Git child did not finish native I/O".to_owned());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Native startup, output and exit share the existing preparation budget.
+        // Only driver-dependent pipe draining and reaping use the two-second
+        // observation; the caller's reactor remains unpolled throughout.
         result
             .recv_timeout(Duration::from_secs(2))
             .map_err(|error| format!("Ready capture depended on its caller's driver: {error}"))
+    }
+
+    fn child_has_exited(pid: libc::id_t) -> std::io::Result<bool> {
+        // SAFETY: waitid initializes this siginfo_t for our child. WNOWAIT leaves
+        // reaping to the capture under test, including its timeout cleanup path.
+        unsafe {
+            let mut info: libc::siginfo_t = std::mem::zeroed();
+            if libc::waitid(
+                libc::P_PID,
+                pid,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            ) == 0
+            {
+                return Ok(info.si_pid() != 0);
+            }
+            let error = std::io::Error::last_os_error();
+            match error.raw_os_error() {
+                Some(libc::ECHILD) => Ok(true), // The capture already reaped it.
+                Some(libc::EINTR) => Ok(false),
+                _ => Err(error),
+            }
+        }
     }
 
     async fn wait_for_child_pid(path: &Path) -> i32 {
@@ -283,7 +321,7 @@ mod capture_tests {
     #[tokio::test(start_paused = true)]
     async fn capture_timeout_kills_and_reaps_blocked_git_process() {
         let root = tempfile::tempdir().unwrap();
-        let (git, environment) = gated_git(root.path(), "0");
+        let (git, environment) = gated_git(root.path(), "0", "0");
         let pid_path = root.path().join("pid");
 
         let deadline = Duration::from_millis(250);
