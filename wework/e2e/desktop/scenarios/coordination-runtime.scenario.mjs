@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInDetails } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
@@ -159,7 +160,7 @@ export function createDesktopScenario({
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
-        await control.command('waitFor', '[data-testid="stand-in-settings-open"]:not(:disabled)')
+        await control.command('waitFor', '[data-testid="stand-in-details-open"]:not(:disabled)')
         await captureScreenshot(control, 'router-01-existing-stand-in-entry.png')
         const issue = await rpc(control, 'todos.create', {
           project_id: project.id,
@@ -209,6 +210,7 @@ export function createDesktopScenario({
           userId: USER,
         })
         assert.equal(failedReceipt.state, 'failed')
+        await openStandInDetails(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-status-open"]')
         await control.command('waitFor', '[data-testid="stand-in-status-dialog"]')
         await control.command('waitFor', '[data-testid="stand-in-processing-check"]', {

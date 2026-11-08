@@ -1,5 +1,6 @@
 import {
   openStandInActivity,
+  openStandInDetails,
   openStandInSettings,
 } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
@@ -300,6 +301,7 @@ export function createDesktopScenario({
       assert.equal(saved.primary.connections[0].profile, accountId)
       assert.ok(!JSON.stringify(saved).includes(mail.config.password))
       mail.pauseImap()
+      await openStandInDetails(control)
       await control.command('waitFor', '[data-testid="stand-in-status-open"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
@@ -325,7 +327,8 @@ export function createDesktopScenario({
         'Restored IMAP transport must complete its scheduled retry before processing new mail',
         30000 + modelResponseTimeoutMs
       )
-      await control.command('waitFor', '[data-testid="stand-in-work-attention-count"]', {
+      await openStandInActivity(control)
+      await control.command('waitFor', '[data-testid^="stand-in-activity-task-"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
       const works = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
