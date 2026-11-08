@@ -9,6 +9,7 @@ export interface StandInHandlingPolicy {
   automatic: boolean
   askBeforeAct: boolean
   immediate?: boolean
+  sessionStrategy?: 'independent' | 'reuse'
 }
 
 export interface StandInSourceConnection {

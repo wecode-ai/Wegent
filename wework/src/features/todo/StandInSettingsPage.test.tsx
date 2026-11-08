@@ -70,6 +70,18 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('provides clickable paths from role source details back to connections and settings', async () => {
+    const { props } = fixture()
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    await user.click(await screen.findByTestId('stand-in-connections-open'))
+    await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+    expect(await screen.findByTestId('stand-in-path-source')).toHaveTextContent('协作项目')
+    await user.click(screen.getByTestId('stand-in-path-connections'))
+    expect(screen.queryByTestId('stand-in-path-source')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-path-settings'))
+    expect(screen.getByTestId('stand-in-connections-open')).toBeVisible()
+  })
   it('keeps connection settings save available in a role calendar and consumes the initial deep link once', async () => {
     const { props } = fixture()
     const user = userSetup()
@@ -233,10 +245,10 @@ describe('Personal stand-in settings', () => {
     const { props, personalGet } = fixture()
     const user = userSetup()
     const { rerender } = render(<StandInSettingsPage {...props} />)
-    await user.click(await screen.findByTestId('stand-in-auto'))
+    await user.type(await screen.findByTestId('stand-in-role-name'), ' changed')
     rerender(<StandInSettingsPage {...props} services={{ ...props.services }} />)
     await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
-    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('stand-in-role-name')).toHaveValue(' changed')
   })
 
   it('does not request cloud agents or show login warnings when disconnected', async () => {
@@ -353,7 +365,7 @@ describe('Personal stand-in settings', () => {
     expect(screen.getByTestId('stand-in-project-select')).toHaveValue('__new')
     expect(screen.queryByTestId('execution-settings')).not.toBeInTheDocument()
     expect(personalSave).not.toHaveBeenCalled()
-    await user.click(screen.getByTestId('stand-in-auto'))
+    expect(screen.queryByTestId('stand-in-auto')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-save'))
     expect(personalSave).toHaveBeenCalledWith(
       7,
@@ -430,7 +442,7 @@ describe('Personal stand-in settings', () => {
       expect.objectContaining({
         roles: [
           expect.objectContaining({ id: 'default' }),
-          expect.objectContaining({ name: 'Review', enabled: false }),
+          expect.objectContaining({ name: 'Review', enabled: true }),
         ],
       }),
       'mac'
@@ -523,7 +535,7 @@ describe('Personal stand-in settings', () => {
       name
     )
     expect(screen.queryByTestId('stand-in-role-select')).not.toBeInTheDocument()
-    await user.click(screen.getByTestId('stand-in-auto'))
+    await user.type(screen.getByTestId('stand-in-role-name'), ' changed')
     await user.click(screen.getByTestId('stand-in-save'))
     await waitFor(() => expect(personalSave).toHaveBeenCalledOnce())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -574,19 +586,19 @@ describe('Personal stand-in settings', () => {
     expect(personalSave).not.toHaveBeenCalled()
   })
 
-  it('applies automatic handling only after Save and preserves a failed-save draft', async () => {
+  it('applies instructions only after Save and preserves a failed-save draft', async () => {
     const { props, personalSave } = fixture()
     personalSave.mockRejectedValueOnce(new Error('version_conflict'))
     const user = userSetup()
     render(<StandInSettingsPage {...props} />)
-    await user.click(await screen.findByTestId('stand-in-auto'))
+    await user.type(await screen.findByTestId('stand-in-role-name'), ' changed')
     expect(personalSave).not.toHaveBeenCalled()
-    expect(screen.getByTestId('stand-in-pending-save')).toHaveTextContent('开启并保存后')
+    expect(screen.queryByTestId('stand-in-auto')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-save'))
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '分身设置已在其他位置更新，请刷新后重新修改。'
     )
-    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('stand-in-role-name')).toHaveValue(' changed')
   })
 
   it('saves connected roles without selection or priority settings', async () => {

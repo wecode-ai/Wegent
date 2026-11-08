@@ -432,6 +432,28 @@ mod tests {
     }
 
     #[test]
+    fn conversation_strategy_changes_revoke_pending_commands_and_preserve_timing_and_grants() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7,"mac").unwrap();
+        settings["primary"] = json!({"enabled":true,"prompt":"","preferences":"","connections":[{
+            "providerId":"example/events","profile":"account","kind":"group","id":"one","name":"One",
+            "policy":{"automatic":true,"askBeforeAct":true,"immediate":false,"sessionStrategy":"independent"}
+        }]});
+        let mut settings=store.save_personal_stand_in(7,"mac",settings).unwrap();
+        store.save_stand_in_processing_state(7,&json!({"batchId":"old"})).unwrap();
+        store.queue_stand_in_action(7,"mac","old","create_work",json!({"eventIds":["one"]})).unwrap();
+        settings["primary"]["connections"][0]["policy"]["sessionStrategy"]=json!("reuse");
+        let saved=store.save_personal_stand_in(7,"mac",settings).unwrap();
+        assert_eq!(saved["primary"]["connections"][0]["policy"],json!({"automatic":true,"askBeforeAct":true,"immediate":false,"sessionStrategy":"reuse"}));
+        let state=store.stand_in_processing_state(7).unwrap();
+        assert!(state["batchId"].is_null());
+        assert!(state["routerSnapshot"].is_null());
+        assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"],"cancelled");
+        assert!(store.queue_stand_in_action(7,"mac","old","create_work",json!({"eventIds":["one"]})).is_err());
+    }
+
+    #[test]
     fn connection_timing_changes_cancel_old_commands_and_revoke_old_batch_tools() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();

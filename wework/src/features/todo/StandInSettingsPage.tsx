@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type Ref,
+  type ReactNode,
 } from 'react'
 import { ChevronRight, Folder, Plus, Trash2 } from 'lucide-react'
 import { dequal } from 'dequal'
@@ -41,8 +42,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import {
   StandInSettingsHeader,
   StandInSettingsActions,
-  StandInReceiveWork,
-  StandInConnectionEntry,
+  StandInSettingsEntry,
 } from './StandInSettingsLayout'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
@@ -58,6 +58,8 @@ export interface StandInSettingsHandle {
 }
 
 interface StandInSettingsPageProps {
+  management?: ReactNode
+  footerLeading?: ReactNode
   api: SharedWorkspaceApi
   projects: CollaborationProject[]
   services: WorkbenchServices
@@ -129,6 +131,8 @@ export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps)
 
 /** Edit one device-owned stand-in draft and persist it only after an explicit save. */
 function StandInSettingsEditor({
+  management,
+  footerLeading,
   projects,
   services,
   devices,
@@ -183,6 +187,7 @@ function StandInSettingsEditor({
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
+  const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
   const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
   const calendarViewChanged = useCallback(
@@ -315,6 +320,7 @@ function StandInSettingsEditor({
     }
     if (!draft) return
     const added = newStandInRole(draft.executionDeviceId)
+    added.enabled = true
     if (projectRef && initialProject) {
       added.name = t('standIn.personal.project_role_name', { project: initialProject.name })
       added.collaboration = {
@@ -377,10 +383,38 @@ function StandInSettingsEditor({
       data-testid="stand-in-page"
     >
       <div
-        className={calendarOpen ? 'flex h-full min-h-0 w-full flex-col' : 'w-full'}
+        className={
+          calendarOpen ? 'flex h-full min-h-0 w-full flex-col' : 'flex min-h-full w-full flex-col'
+        }
         data-testid="stand-in-settings"
       >
         <StandInSettingsHeader
+          path={[
+            {
+              label: t('standIn.personal.settings_title'),
+              testId: 'stand-in-path-settings',
+              onClick: view !== (initialProject ? 'project' : 'main') ? close : undefined,
+            },
+            ...(view === 'connections'
+              ? [
+                  {
+                    label: t('standIn.workspace.connections'),
+                    testId: 'stand-in-path-connections',
+                    onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
+                  },
+                  ...(connectionTitle
+                    ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
+                    : []),
+                ]
+              : view === 'advanced'
+                ? [
+                    {
+                      label: t('standIn.personal.advanced_title'),
+                      testId: 'stand-in-path-advanced',
+                    },
+                  ]
+                : []),
+          ]}
           title={
             initialProject && (view === 'project' || view === 'create')
               ? t('standIn.personal.project_title', { project: initialProject.name })
@@ -412,7 +446,9 @@ function StandInSettingsEditor({
                     else close()
                   },
                 }
-              : undefined
+              : onCancel
+                ? { testId: 'stand-in-settings-back', onClick: closeSettings }
+                : undefined
           }
           close={onCancel ? { testId: 'stand-in-close', onClick: closeSettings } : undefined}
           actions={
@@ -438,15 +474,6 @@ function StandInSettingsEditor({
         ) : draft && role ? (
           <>
             <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'space-y-5 pb-5'}>
-              {(view === 'main' || view === 'create') && (
-                <StandInReceiveWork
-                  enabled={role.enabled}
-                  disabled={saving}
-                  testId="stand-in-auto"
-                  pending={dirty}
-                  onChange={enabled => changeRole({ ...role, enabled })}
-                />
-              )}
               {initialProject && (view === 'project' || view === 'create') && (
                 <StandInProjectSetup
                   project={initialProject}
@@ -536,7 +563,9 @@ function StandInSettingsEditor({
               {(view === 'main' || (view === 'create' && !initialProject)) && (
                 <>
                   <div>
-                    <StandInConnectionEntry
+                    <StandInSettingsEntry
+                      label={t('standIn.workspace.connections')}
+                      description={t('standIn.workspace.connections_help')}
                       testId="stand-in-connections-open"
                       disabled={saving}
                       onClick={() => openView('connections')}
@@ -598,6 +627,7 @@ function StandInSettingsEditor({
               {view === 'connections' && (
                 <StandInConnectionSettings
                   initialCalendar={calendarEntry}
+                  onDetailTitleChange={setConnectionTitle}
                   onCalendarViewChange={calendarViewChanged}
                   onDetailViewChange={setConnectionDetailOpen}
                   ref={connectionRef}
@@ -692,9 +722,11 @@ function StandInSettingsEditor({
                 }}
               />
             </div>
+            {view === 'main' && management}
             {!scheduleDirty && (
               <StandInSettingsActions
                 prefix="stand-in"
+                leading={footerLeading}
                 disabled={saving}
                 saveDisabled={saving || scheduleDirty || (view === 'project' && !projectRoleId)}
                 onCancel={close}

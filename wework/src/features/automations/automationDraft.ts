@@ -20,9 +20,10 @@ import type {
 
 export type ScheduleType = AutomationSchedule['type']
 export type CronPreset = 'weekdays' | 'daily' | 'weekly' | 'custom'
-export type CustomFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type CustomFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'cron'
 
 export interface AutomationDraft {
+  originalSchedule?: { schedule: AutomationSchedule; fields: string }
   calendarTemplate?: 'weekly_review'
   name: string
   prompt: string
@@ -271,6 +272,9 @@ export function toDateTimeLocal(date: Date): string {
 }
 
 export function scheduleFromAutomationDraft(draft: AutomationDraft): AutomationSchedule {
+  if (draft.originalSchedule?.fields === scheduleFields(draft)) {
+    return { ...draft.originalSchedule.schedule }
+  }
   if (draft.scheduleType === 'interval') {
     const parsedValue = Math.max(1, Number.parseInt(draft.intervalValue, 10) || 1)
     return {
@@ -286,8 +290,14 @@ export function scheduleFromAutomationDraft(draft: AutomationDraft): AutomationS
     return { type: 'one_time', executeAt: new Date(draft.executeAt).toISOString() }
   }
   if (draft.cronPreset === 'custom') {
+    if (draft.customFrequency === 'cron') {
+      return { type: 'cron', expression: draft.cronExpression }
+    }
     const value = Math.max(1, Number.parseInt(draft.customInterval, 10) || 1)
     if (draft.customFrequency === 'hourly') {
+      if (draft.originalSchedule?.schedule.type === 'cron') {
+        return { type: 'cron', expression: cronExpressionFromDraft(draft) }
+      }
       return { type: 'interval', value, unit: 'hours' }
     }
     if (draft.customFrequency === 'daily' && value > 1) {
@@ -346,7 +356,24 @@ export function automationDraftFromAutomation(
   } else {
     draft.executeAt = toDateTimeLocal(new Date(automation.schedule.executeAt))
   }
+  draft.originalSchedule = { schedule: { ...automation.schedule }, fields: scheduleFields(draft) }
   return draft
+}
+
+function scheduleFields(draft: AutomationDraft): string {
+  return JSON.stringify([
+    draft.scheduleType,
+    draft.cronPreset,
+    draft.cronExpression,
+    draft.cronTime,
+    draft.weeklyDay,
+    draft.customFrequency,
+    draft.customInterval,
+    draft.customWeekdays,
+    draft.intervalValue,
+    draft.intervalUnit,
+    draft.executeAt,
+  ])
 }
 
 function workspacePathFromStableBinding(
@@ -446,6 +473,7 @@ function timestampValue(value: string | number | null | undefined): number {
 }
 
 export function cronExpressionFromDraft(draft: AutomationDraft): string {
+  if (draft.cronPreset === 'custom' && draft.customFrequency === 'cron') return draft.cronExpression
   const [hours = '9', minutes = '0'] = draft.cronTime.split(':')
   if (draft.cronPreset === 'custom') {
     const interval = Math.max(1, Number.parseInt(draft.customInterval, 10) || 1)
@@ -484,12 +512,28 @@ function parseCronExpression(expression: string): {
       preset: 'custom',
       time: '09:00',
       weeklyDay: '1',
-      customFrequency: 'weekly',
+      customFrequency: 'cron',
       customInterval: '1',
       customWeekdays: ['1'],
     }
   }
   const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+  if (
+    /^\d+$/.test(minute) &&
+    /^(\*|\*\/\d+)$/.test(hour) &&
+    dayOfMonth === '*' &&
+    month === '*' &&
+    dayOfWeek === '*'
+  ) {
+    return {
+      preset: 'custom',
+      time: `00:${String(Number(minute)).padStart(2, '0')}`,
+      weeklyDay: '1',
+      customFrequency: 'hourly',
+      customInterval: hour === '*' ? '1' : hour.slice(2),
+      customWeekdays: ['1'],
+    }
+  }
   const defaultCustom = {
     customFrequency: 'weekly' as const,
     customInterval: '1',
@@ -546,7 +590,13 @@ function parseCronExpression(expression: string): {
     }
   }
   if (!simpleTime) {
-    return { preset: 'custom', time: '09:00', weeklyDay: '1', ...defaultCustom }
+    return {
+      preset: 'custom',
+      time: '09:00',
+      weeklyDay: '1',
+      ...defaultCustom,
+      customFrequency: 'cron',
+    }
   }
   const time = `${String(Number(hour)).padStart(2, '0')}:${String(Number(minute)).padStart(2, '0')}`
   if (dayOfWeek === '1-5') {
@@ -568,5 +618,5 @@ function parseCronExpression(expression: string): {
       customWeekdays: dayOfWeek.split(','),
     }
   }
-  return { preset: 'custom', time, weeklyDay: '1', ...defaultCustom }
+  return { preset: 'custom', time, weeklyDay: '1', ...defaultCustom, customFrequency: 'cron' }
 }

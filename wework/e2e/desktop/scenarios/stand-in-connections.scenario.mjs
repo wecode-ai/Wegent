@@ -5,6 +5,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyStandInProjectConnectionNames } from '../modules/stand-in-project-connections.mjs'
 import { verifyStandInConnectionCatalog } from '../modules/stand-in-connection-catalog.mjs'
+import { verifyStandInSessionSettings } from '../modules/stand-in-session-settings.mjs'
 
 const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
 const USER = 9001
@@ -119,6 +120,7 @@ export function createDesktopScenario(options) {
         await control.command('waitFor', '[data-testid="stand-in-add-dingtalk-connection"]')
         await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
         await control.command('waitFor', '[data-testid="stand-in-dingtalk-connections"]')
+        await verifyStandInSessionSettings(control, uiTimeoutMs)
         await control.command('click', '[data-testid="stand-in-primary-cancel"]')
         await verifyStandInProjectConnectionNames(control, uiTimeoutMs)
       } finally {

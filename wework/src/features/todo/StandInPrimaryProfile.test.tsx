@@ -96,7 +96,7 @@ it('explains an environment load failure and recovers without losing profile edi
 it('keeps existing identity and execution settings without a global processing switch', () => {
   const props = fixture()
   render(<StandInPrimaryProfile {...props} />)
-  expect(screen.getByTestId('stand-in-primary-enabled')).toBeChecked()
+  expect(screen.queryByTestId('stand-in-primary-enabled')).not.toBeInTheDocument()
   expect(screen.getByTestId('stand-in-preferences')).toBeInTheDocument()
   expect(screen.getByTestId('stand-in-device')).toBeInTheDocument()
   expect(screen.getByTestId('stand-in-primary-execution')).toBeInTheDocument()
@@ -117,6 +117,23 @@ it('consumes a menu calendar deep link once and returns to the connection list o
   await user.click(screen.getByTestId('stand-in-primary-connections-open'))
   expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
   expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+})
+
+it('provides clickable paths through all three primary settings levels and re-enters a source', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await screen.findByTestId('stand-in-path-connections')
+  await user.click(screen.getByTestId('stand-in-time-connections'))
+  expect(await screen.findByTestId('stand-in-path-source')).toHaveTextContent('日历')
+  await user.click(screen.getByTestId('stand-in-path-connections'))
+  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-path-settings'))
+  expect(screen.getByTestId('stand-in-preferences')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(screen.getByTestId('stand-in-time-connections'))
+  expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
 })
 
 it('protects an unsaved mailbox when returning from the primary connections header', async () => {
@@ -150,11 +167,11 @@ it('protects an unsaved mailbox when returning from the primary connections head
   expect(props.onSave).not.toHaveBeenCalled()
 })
 
-it('does not save a changed receive switch when the user discards the draft', async () => {
+it('does not save changed instructions when the user discards the draft', async () => {
   const props = fixture()
   const user = userEvent.setup()
   render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-enabled'))
+  await user.type(screen.getByTestId('stand-in-preferences'), ' changed')
   await user.click(screen.getByTestId('stand-in-primary-cancel'))
   expect(props.onSave).not.toHaveBeenCalled()
   expect(props.onClose).not.toHaveBeenCalled()

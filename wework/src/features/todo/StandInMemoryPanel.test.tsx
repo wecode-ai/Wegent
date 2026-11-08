@@ -33,17 +33,41 @@ function fixture(projects: CollaborationProject[] = []) {
     row,
     onClose,
     settings,
-    render: () =>
+    render: (onBack?: () => void) =>
       render(
         <StandInMemoryPanel
           api={api as unknown as StandInExecutorApi}
           settings={settings}
           projects={projects}
           onClose={onClose}
+          onBack={onBack}
         />
       ),
   }
 }
+
+it.each(['stand-in-memory-back', 'stand-in-memory-path-settings'])(
+  'returns to settings through %s without silently discarding memory edits',
+  async testId => {
+    const f = fixture()
+    const onBack = vi.fn()
+    f.render(onBack)
+    expect(screen.queryByRole('heading', { name: '记忆' })).not.toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('stand-in-memory-edit'))
+    const editor = screen.getByTestId('stand-in-memory-content')
+    await user.type(editor, ' changed')
+    await user.click(screen.getByTestId(testId))
+    expect(onBack).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-memory-keep'))
+    expect(editor).toHaveValue('回复简洁 changed')
+    await user.click(screen.getByTestId(testId))
+    await user.click(screen.getByTestId('stand-in-memory-discard'))
+    expect(onBack).toHaveBeenCalledOnce()
+    expect(f.onClose).not.toHaveBeenCalled()
+    expect(f.api.saveMemory).not.toHaveBeenCalled()
+  }
+)
 
 it('keeps an unavailable memory scope explicit until the user selects an available scope', async () => {
   const f = fixture()

@@ -104,3 +104,90 @@ test('selects the first saved automation when the user has not chosen another vi
   expect(screen.getByTestId('automation-prompt-input')).toHaveValue(savedAutomation.prompt)
   expect(onDirtyChange).toHaveBeenLastCalledWith(false)
 })
+
+test('opens the requested stand-in schedule rather than selecting the first item', async () => {
+  const owner = { userId: 7, roleId: '@primary' }
+  const first = {
+    ...savedAutomation,
+    id: 'first',
+    taskRequest: { standInOwner: owner, standInCalendar: {} },
+  }
+  const requested = { ...first, id: 'requested', name: '选中的安排' }
+  listAutomations.mockResolvedValue({ items: [first, requested] })
+  render(<AutomationsPage embedded standInOwner={owner} initialAutomationId="requested" />)
+  await waitFor(() => expect(screen.getByTestId('automation-name-input')).toHaveValue('选中的安排'))
+  expect(screen.getByTestId('automation-prompt-input')).toHaveValue(savedAutomation.prompt)
+})
+
+test('cannot select a schedule belonging to a different stand-in role', async () => {
+  listAutomations.mockResolvedValue({
+    items: [
+      {
+        ...savedAutomation,
+        taskRequest: { standInOwner: { userId: 8, roleId: '@primary' }, standInCalendar: {} },
+      },
+    ],
+  })
+  render(
+    <AutomationsPage
+      embedded
+      standInOwner={{ userId: 7, roleId: '@primary' }}
+      initialAutomationId={savedAutomation.id}
+    />
+  )
+  await waitFor(() =>
+    expect(screen.queryByTestId('automation-list-loading')).not.toBeInTheDocument()
+  )
+  expect(screen.queryByTestId('automation-name-input')).not.toBeInTheDocument()
+  expect(screen.queryByText(savedAutomation.name)).not.toBeInTheDocument()
+})
+
+test('detail-only mode does not expose a list or create action for an unavailable schedule', async () => {
+  listAutomations.mockResolvedValue({ items: [] })
+  render(
+    <AutomationsPage
+      embedded
+      detailOnly
+      standInOwner={{ userId: 7, roleId: '@primary' }}
+      initialAutomationId="missing"
+    />
+  )
+  expect(await screen.findByTestId('automation-detail-status')).toBeInTheDocument()
+  await waitFor(() =>
+    expect(screen.getByTestId('automation-detail-status')).toHaveAttribute('role', 'alert')
+  )
+  expect(screen.queryByTestId('create-automation-button')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('automation-name-input')).not.toBeInTheDocument()
+})
+
+test('detail-only editor keeps the existing unsaved-change confirmation', async () => {
+  const owner = { userId: 7, roleId: '@primary' }
+  listAutomations.mockResolvedValue({
+    items: [{ ...savedAutomation, taskRequest: { standInOwner: owner, standInCalendar: {} } }],
+  })
+  const ref = createRef<AutomationNavigationHandle>()
+  const leave = vi.fn()
+  render(
+    <AutomationsPage
+      ref={ref}
+      embedded
+      detailOnly
+      standInOwner={owner}
+      initialAutomationId={savedAutomation.id}
+    />
+  )
+  await screen.findByTestId('automation-name-input')
+  expect(screen.queryByTestId('automation-detail-close')).not.toBeInTheDocument()
+  expect(screen.getByTestId('automation-save-button')).toBeDisabled()
+  fireEvent.change(screen.getByTestId('automation-name-input'), {
+    target: { value: '修改后的安排' },
+  })
+  expect(screen.getByTestId('automation-save-button')).toBeEnabled()
+  act(() => ref.current!.requestLeave(leave))
+  expect(leave).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByTestId('automation-keep-editing'))
+  expect(screen.getByTestId('automation-name-input')).toHaveValue('修改后的安排')
+  act(() => ref.current!.requestLeave(leave))
+  fireEvent.click(screen.getByTestId('automation-discard'))
+  expect(leave).toHaveBeenCalledOnce()
+})

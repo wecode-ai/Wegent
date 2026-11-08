@@ -9,6 +9,7 @@ export function StandInSettingsHeader({
   back,
   close,
   actions,
+  path,
 }: {
   title: ReactNode
   description?: ReactNode
@@ -16,6 +17,7 @@ export function StandInSettingsHeader({
   back?: { testId: string; onClick(): void }
   close?: { testId: string; onClick(): void }
   actions?: ReactNode
+  path?: Array<{ label: string; testId: string; onClick?: () => void }>
 }) {
   const { t } = useTranslation('common')
   return (
@@ -33,7 +35,37 @@ export function StandInSettingsHeader({
         </button>
       )}
       <div className="min-w-0 flex-1">
-        <h2 className="heading-sm flex min-h-8 items-center">{title}</h2>
+        {path && path.length > 1 && (
+          <nav
+            aria-label={t('standIn.workspace.settings_path')}
+            data-testid="stand-in-settings-path"
+            className="mb-1 flex flex-wrap items-center gap-1 text-xs text-text-muted"
+          >
+            {path.map((entry, index) => (
+              <span key={entry.testId} className="inline-flex items-center gap-1">
+                {index > 0 && <ChevronRight aria-hidden="true" className="h-3 w-3" />}
+                {entry.onClick ? (
+                  <button
+                    type="button"
+                    data-testid={entry.testId}
+                    disabled={disabled}
+                    onClick={entry.onClick}
+                    className="min-h-8 rounded px-1 hover:bg-muted hover:text-text-primary"
+                  >
+                    {entry.label}
+                  </button>
+                ) : (
+                  <span data-testid={entry.testId} aria-current="page">
+                    {entry.label}
+                  </span>
+                )}
+              </span>
+            ))}
+          </nav>
+        )}
+        {title && (!path || path.length < 2) && (
+          <h2 className="heading-sm flex min-h-8 items-center">{title}</h2>
+        )}
         {description && <p className="mt-1 text-sm text-text-muted">{description}</p>}
       </div>
       {actions}
@@ -61,6 +93,7 @@ export function StandInSettingsActions({
   onSave,
   saveLabel,
   children,
+  leading,
 }: {
   prefix: string
   disabled: boolean
@@ -69,11 +102,17 @@ export function StandInSettingsActions({
   onSave(): void
   saveLabel?: string
   children?: ReactNode
+  leading?: ReactNode
 }) {
   const { t } = useTranslation('common')
   return (
-    <footer className="sticky bottom-0 z-10 mt-6 flex flex-wrap items-center justify-end gap-2 border-t border-border bg-background py-4">
+    <footer className="sticky bottom-0 z-10 mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border bg-background py-4">
       {children}
+      {leading && (
+        <div data-testid={`${prefix}-footer-leading`} className="mr-auto flex items-center">
+          {leading}
+        </div>
+      )}
       <button
         type="button"
         data-testid={`${prefix}-cancel`}
@@ -96,55 +135,19 @@ export function StandInSettingsActions({
   )
 }
 
-export function StandInReceiveWork({
-  enabled,
-  disabled,
-  testId,
-  pending,
-  onChange,
-}: {
-  enabled: boolean
-  disabled: boolean
-  testId: string
-  pending?: boolean
-  onChange(enabled: boolean): void
-}) {
-  const { t } = useTranslation('common')
-  return (
-    <div className="space-y-2">
-      <label className="flex min-h-9 items-center justify-between gap-3">
-        <span>{t('standIn.workspace.receive_new')}</span>
-        <input
-          type="checkbox"
-          role="switch"
-          data-testid={testId}
-          checked={enabled}
-          aria-checked={enabled}
-          disabled={disabled}
-          onChange={event => onChange(event.target.checked)}
-          className="h-4 w-4 accent-text-primary"
-        />
-      </label>
-      <p
-        className="text-xs text-text-muted"
-        data-testid={pending ? 'stand-in-pending-save' : undefined}
-      >
-        {t('standIn.workspace.pause_help')}
-      </p>
-    </div>
-  )
-}
-
-export function StandInConnectionEntry({
+export function StandInSettingsEntry({
   testId,
   disabled,
   onClick,
+  label,
+  description,
 }: {
   testId: string
   disabled: boolean
   onClick(): void
+  label: string
+  description?: string
 }) {
-  const { t } = useTranslation('common')
   return (
     <button
       type="button"
@@ -154,10 +157,8 @@ export function StandInConnectionEntry({
       className="flex min-h-11 w-full items-center gap-3 border-t border-border py-4 text-left disabled:opacity-40"
     >
       <span className="flex-1">
-        <span className="block font-medium">{t('standIn.workspace.connections')}</span>
-        <span className="mt-1 block text-sm text-text-muted">
-          {t('standIn.workspace.connections_help')}
-        </span>
+        <span className="block font-medium">{label}</span>
+        {description && <span className="mt-1 block text-sm text-text-muted">{description}</span>}
       </span>
       <ChevronRight className="h-4 w-4" />
     </button>
