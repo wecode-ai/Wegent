@@ -1,0 +1,12 @@
+{
+  "order": 83010,
+  "scenario": "./scenarios/archived-fork-cleanup.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 122010,
+      "shard": 8,
+      "position": 11050
+    }
+  }
+}

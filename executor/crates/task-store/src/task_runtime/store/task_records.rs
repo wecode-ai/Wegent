@@ -21,17 +21,22 @@ impl LocalTaskStore {
                AND deleted_at IS NULL
              ORDER BY sort_order, updated_at DESC, id",
         )?;
-        let rows = statement.query_map([project_id], |row| map_loop_item(&connection, row))?;
+        let rows = statement.query_map([project_id], projections::map_loop_item_fields)?;
         let mut items = collect_items(rows)?;
         drop(statement);
+        crate::task_runtime::runner_history::enrich_project_tasks(
+            &connection,
+            project_id,
+            &mut items,
+        )?;
         let executions = latest_executions_for_project(&connection, project_id)?;
-        for item in &mut items {
-            if let Some((id, status)) = executions.get(&item.id) {
-                item.execution_id = Some(*id);
-                item.execution_state = Some(status.clone());
-            }
-        }
-        Ok(items)
+        Ok(items
+            .into_iter()
+            .map(|item| {
+                let projection = executions.get(&item.id).cloned();
+                attach_execution(item, projection)
+            })
+            .collect())
     }
 
     pub fn get_task(&self, project_id: &str, task_id: &str) -> Result<LoopItem, TaskRuntimeError> {

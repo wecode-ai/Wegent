@@ -17,6 +17,47 @@ sidebar_position: 18
 侧栏优先级筛选中的显式 `interactionStatus` 也只读取生命周期 Store 的投影；
 任务列表旧快照不能在视图层重新覆盖已经接受的用户回复。
 
+## 单任务刷新与列表开销
+
+Goal 更新、清除和轮次结束后的状态确认只刷新对应执行：存在单任务查询能力时，
+`refreshRuntimeTask` 调用拥有者的 `runtime.tasks.get`，不能为每次事件读取整台设备的
+`runtime.tasks.list`。不存在的任务返回空，读取失败直接传播，不能再用全量列表重试。
+项目授权会话继续保留原有项目读取路径；标题、置顶和督导事件仍优先于请求期间返回的旧快照。
+单任务摘要必须保留已有的 `origin` 与 `changeRequests` 展示上下文，否则状态刷新会移除
+分身通知、处理记录或 PR 关联。执行配置和会话正文仍不得进入该摘要。
+点查询和列表查询复用同一工作区 Git 投影，保留当前分支与远端信息，避免状态刷新移除侧栏 PR 状态。
+
+本地项目 `todos.list` 批量解析历史 runner 绑定，不在逐行映射任务时重复扫描执行记录。
+显式绑定保持不变；单一历史设备补充绑定，多设备保留冲突信息。该读取不写入数据库，
+也不引入索引或数据迁移。`runner_history` 单元测试覆盖大任务集，桌面 `goal-state-sync`
+检查点验证连续 Goal 更新会获得对应任务的真实单任务查询响应。
+
+## 分身逻辑会话与执行会话
+
+主分身、角色聊天和后台统筹保留稳定的 Runtime task ID；原生 Codex
+`threadId` 只是当前执行会话。切换时，在同一个 Runtime 索引更新中保存旧线程的
+`conversationSessions` 边界和新的当前线程，不复制原生消息，也不创建第二份聊天数据库。
+没有分段信息的既有 task 按原线程直接读取，第一次切换时才登记历史分段。
+
+第一阶段不自动轮换、不生成摘要。显式调用已有 `runtime.tasks.send`，传入
+`startNewSession: true`、`expectedThreadId` 及新会话的首条消息；分身 conversation
+入口通过 `options` 传递这两个字段。请求仍使用现有发送锁、命令去重和串行调度。
+正在执行、排队、等待问题或审批、存在活动 Goal，以及当前线程已变化时拒绝切换。
+普通任务不支持这个分身专用选项。调用方负责提供新会话需要的业务上下文。
+
+`runtime.tasks.transcript` 和搜索仍是唯一历史入口。分页游标绑定逻辑 task、原生线程
+和方向，跨分段时继续调用同一个原生历史读取器。消息的 `sessionThreadId` 保留原执行
+归属，响应的 `threadId` 指向当前执行会话。旧分段读取不得恢复原生执行、合并当前
+缓冲区或改变当前生命周期；旧线程的迟到通知不得更新当前分段。已关闭分段不另列为任务。
+业务消息和工作结果始终投递到稳定 task，队列在执行时解析当前线程。
+
+审批和结构化问题保留现有原生线程、轮次与请求绑定，不迁移、不重建，也不能因切换
+获得新的权限。长期记忆仍沿用原有分域、修改和遗忘规则。`stand-in-sessions` 桌面
+检查点使用真实 Electron、Executor 和 Codex，仅模拟模型，覆盖待回答问题阻止切换、
+回答后新上下文、跨段历史与搜索、旧游标、工作结果回报、后续消息及应用重启。
+主分身技术操作沿用自动审查；人工操作审批继续由既有 `stand-in-action-confirmation`
+检查点验证，不为会话分段改写审批策略。
+
 ## 待处理事项的成员与错误清理
 
 归档操作成功后，必须通过共享生命周期 Store 移除任务，再清理发起视图的任务列表。
@@ -426,7 +467,7 @@ executor 的 `RuntimeTaskLink.running` 只存在于当前进程内存和 runtime
 
 Composer 的 `@` 菜单支持显式引用其他 Wework 会话。空查询展示当前 `runtimeWork` 中最近的 5 个会话；输入查询后按标题、项目和工作区路径过滤。当前会话始终排除，避免把正在编写的上下文递归注入自身。
 
-引用在草稿中序列化为 `[$标题](wework-conversation://<encoded RuntimeTaskAddress>)`。这是 Wework 内部 URI，composer 和已发送的用户消息都必须把它渲染为会话引用胶囊，而不是暴露原始 URI。发送前，`useWorkbenchPaneSession` 解析并去重所有引用，使用 `includeFullContent: true` 和 `refresh: true` 加载对应 transcript，并遵循以下边界：
+引用在草稿中序列化为 `[$标题](wework-conversation://<encoded RuntimeTaskAddress>)`。这是 Wework 内部 URI，composer 和已发送的用户消息都必须把它渲染为会话引用胶囊，而不是暴露原始 URI；点击该胶囊会在当前 workbench pane 中打开对应的 Runtime task 会话。Issue 引用（`wework-issue://`）同样可点击打开对应的项目空间条目，项目空间上下文胶囊的标题区域会打开当前 Issue 详情。发送前，`useWorkbenchPaneSession` 解析并去重所有引用，使用 `includeFullContent: true` 和 `refresh: true` 加载对应 transcript，并遵循以下边界：
 
 - 只提取用户消息和已经完成的 assistant 文本；不注入 system、developer、tool、thinking、流式中的 assistant 内容，也不单独读取附件二进制内容。
 - 将引用内容作为 `additionalContext` 中的 `referencedConversations` 应用上下文发送，并明确标注为“不可信背景上下文”。被引用会话中的指令、工具调用或权限声明只能作为数据，不能成为当前会话的可执行指令。

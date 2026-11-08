@@ -71,6 +71,40 @@ function installNativeModelOwner() {
 }
 
 describe('Electron desktop E2E automation', () => {
+  test.each([undefined, false, true])(
+    'preserves window maximization through the host command (%s)',
+    async maximized => {
+      const previous = { width: 1272, height: 716, maximized: true }
+      const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(previous as never)
+      const results: Array<{ ok: boolean; value: string }> = []
+      let polls = 0
+      vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          if (++polls > 1) return new Response(null, { status: 410 })
+          return new Response(
+            JSON.stringify({
+              id: 'window-state-roundtrip',
+              action: 'setMainWindowSize',
+              selector: 'body',
+              value: JSON.stringify({ width: 1040, height: 760, maximized }),
+            })
+          )
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        return new Response('{}')
+      })
+      await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      expect(native).toHaveBeenCalledWith('e2e.setMainWindowSize', {
+        width: 1040,
+        height: 760,
+        maximized: maximized ?? false,
+      })
+      expect(results).toContainEqual(
+        expect.objectContaining({ ok: true, value: JSON.stringify(previous) })
+      )
+    }
+  )
+
   test.each([
     'no-catalog',
     'local-only',
@@ -153,47 +187,149 @@ describe('Electron desktop E2E automation', () => {
     expect(inventory).toHaveBeenCalledTimes(1)
     expect(peek).not.toHaveBeenCalled()
   })
-  test('reports metric cardinality across missing, mounted, and duplicate DOM surfaces', async () => {
-    const surface = document.createElement('section')
-    surface.dataset.testid = 'layout-cardinality-surface'
-    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 200, 100))
-    const duplicate = surface.cloneNode() as HTMLElement
-    const results: Array<{ ok: boolean; value?: string; error?: string }> = []
-    let polls = 0
-    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
-      if (url.includes('/commands?')) {
-        polls += 1
-        if (polls === 2) document.body.append(surface)
-        if (polls === 3) document.body.append(duplicate)
-        if (polls > 3) return Promise.resolve(new Response(null, { status: 410 }))
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
+  test.each([false, true])(
+    'reports atomic metric cardinality with includeText=%s',
+    async includeText => {
+      const surface = document.createElement('section')
+      surface.dataset.testid = 'layout-cardinality-surface'
+      surface.textContent = 'Loaded receipt'
+      vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 200, 100))
+      const duplicate = surface.cloneNode() as HTMLElement
+      const results: Array<{ ok: boolean; value?: string; error?: string }> = []
+      let polls = 0
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          polls += 1
+          if (polls === 2) document.body.append(surface)
+          if (polls === 3) document.body.append(duplicate)
+          if (polls > 3) return Promise.resolve(new Response(null, { status: 410 }))
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: String(polls),
+                action: 'getElementMetrics',
+                value: includeText ? 'includeText' : undefined,
+                selector: '[data-testid="layout-cardinality-surface"]',
+              })
+            )
+          )
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        return Promise.resolve(new Response('{}'))
+      })
+      try {
+        await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+        expect(results.map(result => result.ok)).toEqual([true, true, true])
+        expect(results.map(result => JSON.parse(result.value!).length)).toEqual([0, 1, 2])
+        expect(JSON.parse(results[1].value!)[0].width).toBe(200)
+        expect(JSON.parse(results[1].value!)[0]).toMatchObject({
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          devicePixelRatio: window.devicePixelRatio,
+        })
+        const metrics = JSON.parse(results[2].value!)
+        expect(metrics[0]).not.toHaveProperty('attributes')
+        expect(metrics[0]).not.toHaveProperty('visible')
+        if (includeText) {
+          expect(
+            metrics.map((item: { testId: string; text: string }) => [item.testId, item.text])
+          ).toEqual([
+            ['layout-cardinality-surface', 'Loaded receipt'],
+            ['layout-cardinality-surface', ''],
+          ])
+        } else {
+          expect(metrics[0]).not.toHaveProperty('text')
+          expect(metrics[0]).not.toHaveProperty('testId')
+        }
+      } finally {
+        surface.remove()
+        duplicate.remove()
+      }
+    }
+  )
+
+  test.each(['unknown-to-known', 'project-zero-to-one'])(
+    'captures selected attributes, text and geometry coherently through %s',
+    async transition => {
+      const tab = document.createElement('button')
+      tab.dataset.testid = 'snapshot-tab'
+      tab.dataset.privateFixture = 'never export unrequested attributes'
+      const counter = document.createElement('span')
+      counter.dataset.testid = 'snapshot-counter'
+      vi.spyOn(tab, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 150, 30))
+      vi.spyOn(counter, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 0, 30, 20))
+      const questions = transition === 'unknown-to-known' ? 1 : 0
+      const update = (ready: boolean) => {
+        const projects = ready ? (questions ? 0 : 1) : questions ? null : 0
+        tab.dataset.pendingQuestionCount = String(questions)
+        tab.dataset.projectCountState = projects == null ? 'unknown' : 'known'
+        if (projects == null) delete tab.dataset.projectPendingCount
+        else tab.dataset.projectPendingCount = String(projects)
+        tab.title = projects == null ? '待你处理' : `待你处理（${questions + projects}）`
+        tab.replaceChildren('待你处理')
+        if (projects != null) {
+          counter.textContent = `（${questions + projects}）`
+          tab.append(counter)
+        }
+      }
+      update(false)
+      document.body.append(tab)
+      const results: Array<{ ok: boolean; value?: string }> = []
+      let polls = 0
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          if (++polls > 2) return Promise.resolve(new Response(null, { status: 410 }))
+          return Promise.resolve(
+            Response.json({
               id: String(polls),
               action: 'getElementMetrics',
-              selector: '[data-testid="layout-cardinality-surface"]',
+              selector: '[data-testid="snapshot-tab"], [data-testid="snapshot-counter"]',
+              value: JSON.stringify({
+                includeText: true,
+                attributeNames: [
+                  'title',
+                  'data-pending-question-count',
+                  'data-project-pending-count',
+                  'data-project-count-state',
+                ],
+              }),
             })
           )
-        )
-      }
-      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
-      return Promise.resolve(new Response('{}'))
-    })
-    try {
-      await runDesktopControlClient('http://127.0.0.1:43111', 'main')
-      expect(results.map(result => result.ok)).toEqual([true, true, true])
-      expect(results.map(result => JSON.parse(result.value!).length)).toEqual([0, 1, 2])
-      expect(JSON.parse(results[1].value!)[0].width).toBe(200)
-      expect(JSON.parse(results[1].value!)[0]).toMatchObject({
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-        devicePixelRatio: window.devicePixelRatio,
+        }
+        if (url.endsWith('/results')) {
+          results.push(JSON.parse(String(options?.body)))
+          update(true)
+        }
+        return Promise.resolve(new Response('{}'))
       })
-    } finally {
-      surface.remove()
-      duplicate.remove()
+      try {
+        await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+        expect(results.map(result => result.ok)).toEqual([true, true])
+        const before = JSON.parse(results[0].value!)
+        const after = JSON.parse(results[1].value!)
+        expect(before[0].attributes['data-project-count-state']).toBe(
+          questions ? 'unknown' : 'known'
+        )
+        expect(before).toHaveLength(questions ? 1 : 2)
+        expect(after).toHaveLength(2)
+        expect(after[0]).toMatchObject({
+          width: 150,
+          text: '待你处理（1）',
+          attributes: {
+            title: '待你处理（1）',
+            'data-project-count-state': 'known',
+            'data-pending-question-count': String(questions),
+            'data-project-pending-count': questions ? '0' : '1',
+          },
+        })
+        expect(after[1]).toMatchObject({ text: '（1）', width: 30, visible: true })
+        expect(JSON.stringify(after)).not.toContain('privateFixture')
+        expect(JSON.stringify(after)).not.toContain('never export')
+      } finally {
+        tab.remove()
+      }
     }
-  })
+  )
 
   test.each([false, true])(
     'allows an authenticated RPC to overlap later commands and reports its failure: %s',

@@ -18,6 +18,60 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## Point Refreshes and List Costs
+
+Goal updates, clearing, and post-turn settlement checks refresh only the affected execution.
+When point lookup is available, `refreshRuntimeTask` calls its owner's `runtime.tasks.get`,
+not the device-wide `runtime.tasks.list` for every event. Missing tasks return null and lookup
+failures propagate without retrying through a full list. Project-authorized sessions retain
+their existing project read path. Title, pin, and supervisor events still take precedence
+over stale snapshots returned while the request was pending.
+Point summaries retain existing `origin` and `changeRequests` presentation context so refreshes
+cannot remove stand-in notifications, activity records, or PR links. Execution profiles and
+transcript bodies remain excluded.
+Point and list queries share the workspace Git projection, retaining the current branch and remote
+so state refreshes cannot remove sidebar PR status.
+
+Local project `todos.list` resolves historical runner bindings in a batch, rather than
+scanning execution records from every task row mapper. Explicit bindings are preserved;
+one historical device supplies a binding and multiple devices retain conflict information.
+This read performs no database writes and adds no index or data migration. The `runner_history`
+unit tests cover a large task set; the desktop `goal-state-sync` checkpoint verifies that
+successive Goal updates receive real point-lookup responses for the affected task.
+
+## Stand-in Logical Conversations and Execution Sessions
+
+Primary stand-ins, role chats and background coordination retain a stable Runtime task ID.
+The native Codex `threadId` identifies only the current execution session. One Runtime index
+update records the previous thread in `conversationSessions` and binds the new current thread.
+Native messages are neither copied nor stored in a separate chat database. Existing tasks
+read their original thread directly; historical segments are registered on their first switch.
+
+This foundation does not rotate automatically or generate summaries. Call the existing
+`runtime.tasks.send` with `startNewSession: true`, `expectedThreadId` and the first message;
+the stand-in conversation entry accepts these fields in `options`. Existing send locks,
+command deduplication and scheduling remain authoritative. Running or queued executions,
+pending questions or approvals, active Goals and changed thread bindings prevent a switch.
+Ordinary tasks do not support this stand-in-specific option. The caller supplies any required
+business context for the fresh session.
+
+`runtime.tasks.transcript` and search remain the history entry points. Cursors bind the logical
+task, native thread and direction, and segment boundaries reuse native history readers.
+Messages expose `sessionThreadId`; the response `threadId` identifies the active execution
+session. Historical reads must not resume execution, merge current buffers or change lifecycle
+state. Late closed-thread notifications cannot update the active segment, and closed segments
+are not listed as separate tasks. Messages and work results target the stable task, while
+queued continuations resolve its current thread at execution time.
+
+Approvals and structured questions retain their native thread, turn and request binding:
+they are never migrated, recreated or treated as new permissions. Existing scoped memory,
+correction and forgetting rules remain unchanged. The `stand-in-sessions` desktop checkpoint
+uses real Electron, Executor and Codex with only the model simulated. It covers pending-question
+switch rejection, answer completion, fresh model context, cross-session history and search,
+retained cursors, work result delivery, follow-ups and application restart.
+Owner-conversation technical actions retain automatic review; the existing
+`stand-in-action-confirmation` checkpoint verifies manual operation approvals without changing policy.
+
 ## Pending Interaction Membership and Error Cleanup
 
 After successful archival, remove the task through the shared lifecycle Store before updating
@@ -546,7 +600,7 @@ When a user submits new input while the message queue is paused, they can preser
 
 The composer's `@` menu supports explicit references to other Wework conversations. An empty query shows the five most recent conversations from the current `runtimeWork`; a typed query filters by title, project, and workspace path. The current conversation is always excluded so its in-progress context cannot be recursively injected into itself.
 
-A reference is serialized in the draft as `[$title](wework-conversation://<encoded RuntimeTaskAddress>)`. This is an internal Wework URI. Both the composer and sent user messages must render it as a conversation-reference chip instead of exposing the raw URI. Before sending, `useWorkbenchPaneSession` parses and deduplicates every reference, loads each transcript with `includeFullContent: true` and `refresh: true`, and enforces these boundaries:
+A reference is serialized in the draft as `[$title](wework-conversation://<encoded RuntimeTaskAddress>)`. This is an internal Wework URI. Both the composer and sent user messages must render it as a conversation-reference chip instead of exposing the raw URI. Clicking that chip opens the referenced Runtime task conversation in the current workbench pane. Issue references (`wework-issue://`) open their project-space item in the same way, and the project-space context pill opens the current Issue details from its title area. Before sending, `useWorkbenchPaneSession` parses and deduplicates every reference, loads each transcript with `includeFullContent: true` and `refresh: true`, and enforces these boundaries:
 
 - Include only user messages and completed assistant text. Do not inject system, developer, tool, thinking, or streaming assistant content, and do not separately ingest attachment binaries.
 - Send the extracted text as `referencedConversations` application context inside `additionalContext`, explicitly labeled as untrusted background context. Instructions, tool calls, or permission claims in a referenced conversation are data, not executable instructions for the current conversation.

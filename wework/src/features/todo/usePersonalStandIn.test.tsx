@@ -22,6 +22,18 @@ function fixture() {
 }
 
 describe('personal stand-in Executor routing', () => {
+  it('reuses the instance identity without waiting for another runtime discovery', async () => {
+    const { personalGet, services } = fixture()
+    vi.mocked(services.getLocalRuntimeSidebarIdentity!).mockImplementation(
+      () => new Promise(() => {})
+    )
+    const { result } = renderHook(() => usePersonalStandIn(services, 7, 'selected-device', 'mac'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(personalGet).toHaveBeenCalledExactlyOnceWith(7, 'selected-device')
+    expect(services.getLocalRuntimeSidebarIdentity).not.toHaveBeenCalled()
+    expect(result.current.currentDeviceId).toBe('mac')
+  })
+
   it('saves to the Executor that was selected for loading, even with stale stored fields', async () => {
     const { settings, personalGet, personalSave, services } = fixture()
     const { result } = renderHook(() => usePersonalStandIn(services, 7, 'selected-device'))

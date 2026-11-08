@@ -1,0 +1,142 @@
+name: Wework Upgrade Regression
+
+on:
+  workflow_call:
+    inputs:
+      source_version:
+        default: "0.6.5"
+        required: false
+        type: string
+      target_version:
+        default: "0.6.6"
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_version:
+        description: "Version declared before building the complete source application"
+        default: "0.6.5"
+        required: true
+        type: string
+      target_version:
+        description: "A newer version declared before building the complete target application"
+        default: "0.6.6"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: "true"
+  REGRESSION_SOURCE_VERSION: ${{ inputs.source_version || '0.6.5' }}
+  REGRESSION_TARGET_VERSION: ${{ inputs.target_version || '0.6.6' }}
+
+jobs:
+  produce:
+    name: Build complete ${{ matrix.role }} (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [source, target]
+        runner: [macos-15, windows-2022]
+        include:
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+          - runner: windows-2022
+            platform: windows
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-workspace
+      - uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: executor/Cargo.toml
+      - name: Declare source version before compilation
+        env:
+          REGRESSION_ROLE: ${{ matrix.role }}
+        run: |
+          node wework/scripts/prepare-upgrade-regression.mjs validate "$REGRESSION_SOURCE_VERSION" "$REGRESSION_TARGET_VERSION"
+          if [[ "$REGRESSION_ROLE" == source ]]; then
+            node wework/scripts/sync-desktop-release-version.mjs "$REGRESSION_SOURCE_VERSION"
+          else
+            node wework/scripts/sync-desktop-release-version.mjs "$REGRESSION_TARGET_VERSION"
+          fi
+      - name: Build complete native application with the real runtime
+        env:
+          WEWORK_SOURCE_SHA: ${{ github.sha }}
+          WEWORK_EXECUTOR_PROFILE: debug
+        run: pnpm --filter wework ai:verify:electron:build
+      - name: Freeze application bytes as regression inputs
+        run: node wework/scripts/prepare-upgrade-regression.mjs archive "$RUNNER_TEMP/upgrade-regression-artifact"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-regression-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.role }}
+          path: ${{ runner.temp }}/upgrade-regression-artifact/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  verify:
+    name: Verify real retry and cleanup (${{ matrix.platform }})
+    needs: produce
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+          - runner: windows-2022
+            platform: windows
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-workspace
+      - name: Install locked test-driver dependencies without building an application
+        run: pnpm --dir wework/electron install --frozen-lockfile --ignore-scripts
+      - name: Download immutable source
+        uses: actions/download-artifact@v4
+        with:
+          name: upgrade-regression-${{ matrix.platform }}-${{ matrix.arch }}-source
+          path: ${{ runner.temp }}/upgrade-source
+      - name: Download immutable target
+        uses: actions/download-artifact@v4
+        with:
+          name: upgrade-regression-${{ matrix.platform }}-${{ matrix.arch }}-target
+          path: ${{ runner.temp }}/upgrade-target
+      - name: Verify hashes and extract the prebuilt pair
+        run: node wework/scripts/prepare-upgrade-regression.mjs pair "$RUNNER_TEMP/upgrade-source" "$RUNNER_TEMP/upgrade-target" "$RUNNER_TEMP/upgrade-pair"
+      - name: Exercise real failure, cleanup, retry, and rollback
+        env:
+          WEWORK_E2E_UPGRADE_PAIR: ${{ runner.temp }}/upgrade-pair/pair.json
+          WEWORK_E2E_RESULT_ROOT: ${{ runner.temp }}/upgrade-results
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+        run: pnpm --filter wework e2e:desktop -- --segment app-update-retry
+      - name: Retain bounded regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-regression-evidence-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/upgrade-results/**/*.log
+            ${{ runner.temp }}/upgrade-results/**/*result.json
+            ${{ runner.temp }}/upgrade-results/**/*.png
+            ${{ runner.temp }}/upgrade-results/**/failure-summary.json
+            !${{ runner.temp }}/upgrade-results/**/home/**
+            !${{ runner.temp }}/upgrade-results/**/executor-home/**
+          if-no-files-found: error
+          retention-days: 7

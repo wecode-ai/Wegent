@@ -1125,3 +1125,12 @@ path = "/api/v1/cloud-projects/:project_id/milestones"
 [[routes]]
 methods = ["PATCH", "DELETE"]
 path = "/api/v1/cloud-projects/:project_id/milestones/:milestone_id"
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/loop-items/:item_id/human-requests"
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/loop-items/:item_id/human-requests/:request_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/wework-human-requests"

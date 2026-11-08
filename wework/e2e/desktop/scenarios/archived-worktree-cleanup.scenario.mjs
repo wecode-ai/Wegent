@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { access, open, readFile } from 'node:fs/promises'
+import { access, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -22,6 +22,34 @@ export async function rewriteGitMarker(path, content) {
     await file.writeFile(content)
   } finally {
     await file.close()
+  }
+}
+
+async function startAnotherWorktreeTask({ control, prompt, uiTimeoutMs, modelResponseTimeoutMs }) {
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="new-chat-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', INPUT)
+  await selectE2EModel(control)
+  await control.command('click', '[data-testid="execution-mode-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="execution-mode-git-worktree-button"]')
+  await control.command('fill', INPUT, { value: prompt })
+  await control.command('press', INPUT, { key: 'Enter' })
+  await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
+    text: ANSWER,
+    timeoutMs: modelResponseTimeoutMs,
+  })
+  const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const selected = debug.workbench.currentRuntimeTask
+  const threadId = await waitForCompletedRuntimeTaskThread(control, selected.taskId, uiTimeoutMs)
+  const runtimeWork = JSON.parse(await control.command('getLocalRuntimeWork', 'body'))
+  const ownedTask = findRuntimeWorkTask(runtimeWork, selected.taskId)
+  assert.ok(ownedTask, 'The owning executor must expose the second completed task')
+  return {
+    deviceId: selected.deviceId,
+    taskId: selected.taskId,
+    workspacePath: ownedTask.workspacePath,
+    threadId,
   }
 }
 
@@ -130,6 +158,62 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         // Keep the fixture repairable if an assertion fails before retry.
         if (existsSync(path)) await rewriteGitMarker(markerPath, marker)
       }
+
+      const residualTask = await startAnotherWorktreeTask({
+        control,
+        prompt: 'Reply ARCHIVED_WORKTREE_RESIDUE_READY.',
+        uiTimeoutMs,
+        modelResponseTimeoutMs,
+      })
+      assert.notEqual(
+        residualTask.workspacePath,
+        workspacePath,
+        'The residual fixture must run in a managed worktree'
+      )
+      assert.equal((await rpc('runtime.tasks.archive', residualTask)).accepted, true)
+      await rm(join(residualTask.workspacePath, '.git'), { force: true })
+      await writeFile(
+        join(residualTask.workspacePath, 'residual-unsaved.txt'),
+        'keep only until archived deletion\n'
+      )
+
+      await control.command('navigate', 'body', { value: '/settings/archived-conversations' })
+      const residualSuffix = `${residualTask.deviceId}-${residualTask.taskId}`.replace(
+        /[^a-zA-Z0-9_-]/g,
+        '-'
+      )
+      const residualButton = `[data-testid="archived-delete-button-${residualSuffix}"]`
+      await control.command('waitFor', residualButton)
+      await control.command('click', residualButton)
+      await control.command(
+        'click',
+        '[data-testid="archived-delete-confirm-dialog-confirm-button"]'
+      )
+
+      const residualDeadline = Date.now() + uiTimeoutMs
+      let residualRemoved = false
+      while (Date.now() < residualDeadline) {
+        try {
+          await access(residualTask.workspacePath)
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error
+          residualRemoved = true
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      assert.equal(
+        residualRemoved,
+        true,
+        'Archived cleanup must remove a real Git worktree residue without .git metadata'
+      )
+      assert.equal(Number(await control.command('getElementCount', residualButton)), 0)
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="archived-operation-error"]')
+        ),
+        0
+      )
     },
   }
 }

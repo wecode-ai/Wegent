@@ -334,7 +334,6 @@ export async function createDesktopScenario({
 
   return {
     usesReleasePackageRuntimeAssets: true,
-    usesColdPackageStartup: true,
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {

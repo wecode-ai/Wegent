@@ -13,7 +13,7 @@ pub use store::milestones::MilestoneInput;
 pub use store::personal_stand_in;
 pub use store::project_router_store;
 pub use store::stand_in_telemetry;
-pub use store::{LocalTaskStore, TaskRuntimeError};
+pub use store::{IssueHumanRequestScope, LocalTaskStore, TaskRuntimeError};
 
 const COLLABORATION_MEMBER_RESULT_INSTRUCTIONS: &str = "\
 本轮执行的过程和最终答复会由 Executor 自动记录到当前 Issue 动态。\

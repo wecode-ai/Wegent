@@ -1,5 +1,5 @@
 {
   "order": 35000,
-  "scenario": "./scenarios/stand-in-profile-with-review.scenario.mjs",
+  "scenario": "./scenarios/stand-in-scheduled-context.scenario.mjs",
   "scenarioOnly": true
 }

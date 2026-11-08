@@ -14,6 +14,9 @@ export const boardCardMessages: Record<'zh-CN' | 'en', Record<string, string>> =
     'todo.configure_execution_for_item': '配置“{{title}}”的运行环境',
     'todo.task_progress_count': '{{count}} 个任务',
     'board.card.needs_configuration': '待配置',
+    'board.card.participation_agent': '智能体处理',
+    'board.card.participation_stand_in': '分身处理',
+    'board.card.participation_human': '等待{{name}}处理',
     'board.card.archive': '归档任务',
     'board.group.search': '搜索分组字段',
     'board.group.choose': '选择分组字段',
@@ -40,6 +43,9 @@ export const boardCardMessages: Record<'zh-CN' | 'en', Record<string, string>> =
     'todo.configure_execution_for_item': 'Configure the runtime for “{{title}}”',
     'todo.task_progress_count': '{{count}} tasks',
     'board.card.needs_configuration': 'Needs configuration',
+    'board.card.participation_agent': 'Agent handling',
+    'board.card.participation_stand_in': 'Stand-in handling',
+    'board.card.participation_human': 'Waiting for {{name}}',
     'board.card.archive': 'Archive task',
     'board.group.search': 'Search grouping fields',
     'board.group.choose': 'Choose grouping field',
@@ -58,6 +64,11 @@ export function createIssueBoardCardLabels(
   t: CollaborationTranslate
 ): CollaborationIssueCardLabels {
   return {
+    participation: {
+      agent: t('board.card.participation_agent'),
+      standIn: t('board.card.participation_stand_in'),
+      human: name => t('board.card.participation_human', undefined, { name }),
+    },
     statuses: Object.fromEntries(
       ['inbox', 'pending', 'in_progress', 'in_review', 'completed'].map(status => [
         status,

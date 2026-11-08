@@ -2391,6 +2391,7 @@ async function configureDesktopRuntime(): Promise<void> {
     )
   })
   desktopRuntime = new DesktopRuntime({
+    applicationId,
     modelConfiguration,
     environment,
     dataDirectory: app.getPath('userData'),

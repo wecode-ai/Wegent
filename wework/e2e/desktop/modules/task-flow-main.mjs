@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 
@@ -1582,6 +1583,19 @@ async function main() {
           ...options.appEnvironmentOverrides,
         }
       }
+      if (
+        options?.expectNewDeviceIdentity === true &&
+        !options.appEnvironmentOverrides?.WEWORK_APP_IDENTIFIER
+      ) {
+        // A profile is not hardware identity. Give each simulated device its own
+        // application namespace, and reuse it when returning to that device.
+        const profile = activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
+        activeAppEnvironment.WEWORK_APP_IDENTIFIER = simulatedDeviceApplicationId({
+          applicationId: appEnvironment.WEWORK_APP_IDENTIFIER,
+          originalProfile: appEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory,
+          profile,
+        })
+      }
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
@@ -1610,11 +1624,6 @@ async function main() {
         )
       } else {
         assert.equal(
-          nextUserDataDirectory,
-          previousUserDataDirectory,
-          'Restarting Wework unexpectedly changed the Electron user data directory'
-        )
-        assert.equal(
           desktopDeviceIdAfterRestart,
           desktopDeviceIdBeforeRestart,
           'Restarting Wework changed the persisted Electron device identity'
@@ -1625,15 +1634,17 @@ async function main() {
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
     const readiness = control.awaitReady()
-    const ready = desktopScenario?.usesColdPackageStartup
-      ? await waitForColdPackageStartup(readiness, appLogPath, {
-          phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
-        })
-      : await withTimeout(
-          readiness,
-          DESKTOP_READY_TIMEOUT_MS,
-          'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-        )
+    // Release-pair diagnostics retain their previously certified startup deadline.
+    const ready =
+      usesReleasePackageRuntimeAssets && !usesDefaultUserData
+        ? await waitForColdPackageStartup(readiness, appLogPath, {
+            phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+          })
+        : await withTimeout(
+            readiness,
+            DESKTOP_READY_TIMEOUT_MS,
+            'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+          )
     assert.match(
       String(ready.location ?? ''),
       /^https?:/,
@@ -3037,6 +3048,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           text: LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        await control.command('click', '[data-testid="work-item-guide-open-summary"]')
+        await control.command('waitFor', '[data-testid="work-item-context-panel"]', {
+          visible: true,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await captureVerificationScreenshot(control, 'task-board-association-context-pill-open.png')
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
