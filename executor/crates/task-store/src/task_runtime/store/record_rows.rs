@@ -312,13 +312,7 @@ pub(super) fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
         task_title: row.get::<_, Option<String>>(38)?.unwrap_or_default(),
         task_status: row.get(39)?,
         task_priority: row.get(40)?,
-        agent_name: agent_metadata
-            .get("display_name")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(ToOwned::to_owned)
-            .or(row.get::<_, Option<String>>(41)?)
-            .or(row.get::<_, Option<String>>(42)?)
+        agent_name: execution_agent_name(&agent_metadata, row.get(41)?, row.get(42)?)
             .unwrap_or_else(|| "AI".to_owned()),
         agent_system_prompt: row
             .get::<_, Option<String>>(43)?
@@ -363,6 +357,21 @@ pub(super) fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
             .cloned()
             .unwrap_or_else(|| json!({})),
     })
+}
+
+pub(super) fn execution_agent_name(
+    metadata: &Value,
+    name: Option<String>,
+    title: Option<String>,
+) -> Option<String> {
+    metadata
+        .get("display_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| name.filter(|value| !value.trim().is_empty()))
+        .or_else(|| title.filter(|value| !value.trim().is_empty()))
 }
 
 pub(super) fn local_execution_display_state(

@@ -1,0 +1,29 @@
+{
+  "order": 178000,
+  "scenario": "./scenarios/dots-closed-loops.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/modules/dots-story-fixtures.mjs",
+    "executor/src/agents/codex.rs",
+    "executor/src/agents/codex/task_artifact_env_tests.rs",
+    "executor/src/runtime_work/response/task_workspace.rs",
+    "executor/src/runtime_work/handler/queries.rs",
+    "executor/src/runtime_work/handler/stand_in_workspace.rs",
+    "executor/src/runtime_work/handler/workspace_identity_tests.rs",
+    "executor/src/runtime_work/response.rs",
+    "executor/src/runtime_work/response/workspaces.rs",
+    "executor/src/runtime_work/handler/collection/catalog.rs",
+    "wework/src/components/layout/DesktopWorkbenchMain.tsx",
+    "wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx",
+    "wework/src/features/todo/StandInConversation.tsx",
+    "wework/src/features/workbench/useWorkbenchRuntimeTasks.ts",
+    "wework/src/features/workbench/workspaceLaunchRequest.ts"
+  ],
+  "ci": {
+    "core": {
+      "order": 94000,
+      "shard": 3,
+      "position": 12000
+    }
+  }
+}

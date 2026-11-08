@@ -376,6 +376,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'project-template-settings')
       await capture(control, '04-sharing-settings')
       await click(control, 'project-template-save')
+      // Saving first snapshots the project asynchronously before mounting the dialog.
+      await wait(control, 'template-save-name')
       await control.command('fill', testId('template-save-name'), { value: savedName })
       await click(control, 'template-save-confirm')
       await wait(control, 'collaboration-template-dialog', '已保存到我的模板')

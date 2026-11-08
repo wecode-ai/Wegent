@@ -1641,6 +1641,8 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    localParticipationIdentity: localServices.localParticipationIdentity,
+    localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
     composerCatalogApi: {
       async readCatalog(address, forceRefresh) {
         const runtime = await runtimeApiForDevice(address.deviceId)
@@ -1731,6 +1733,12 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async binding(deviceId, operation, version, target) {
+        return (await standInApiForDevice(deviceId)).binding(deviceId, operation, version, target)
+      },
+      async lifecycle(userId, deviceId, operation) {
+        return (await standInApiForDevice(deviceId)).lifecycle(userId, deviceId, operation)
+      },
       taskCommands: {
         async get(deviceId, target) {
           return (await standInApiForDevice(deviceId)).taskCommands.get(deviceId, target)

@@ -59,6 +59,16 @@ Space owners and administrators always administer child projects. For other user
 
 ## Protected contracts
 
+Local participation discovery uses a composition-verified scope: native owner `0` and the current verified account principal. This is not a global user alias and grants no cloud authority. Quick filters, pending work, the read-only native pending hint and the local inbox share this scope. Empty idle workbenches add no inbox polling; failed hints remain unknown. New comments use the composition's actual current author without rewriting historical senders. Reply claims still require exact `recipient == persisted comment.sender`: recipient `0` with author `7` requires an explicit transfer, not an alias-based claim. Existing group, read and task-start permissions retain their authorization identity rather than being overwritten by storage owner `0`; CP01–CP20 remain unchanged.
+
+Question reports and blocking updates require both an actual caller-owned active/default Device and the source activity's persisted execution ID, exact project, Issue, Runtime task/device and canonical `executor_owner_user_id`. An owned Device with the same name does not prove ownership of someone else's Runtime. Manual-only bindings or group Runtime activities without matching canonical execution evidence return 409 rather than guessing an owner or deriving identity from a conversation name. Question IDs use the persisted source device identity so changing an alias cannot create another question.
+
+The reporting source may explicitly `set_blocking` only with current Issue Developer access and matching persisted reporter, original Runtime task and caller-owned original device identity. This grants no assignment, cancellation or reply authority; the payload rejects recipient and cancellation fields. Under the Issue row lock, the update requires pending status and the exact version, changing only the blocking flag, version, update time and a `blocking_changed` event while preserving recipients, responsibility and the handoff clock. Ordinary assignment authority and native operation approvals remain unchanged. Missing source evidence is not inferred; CP01–CP20 are unchanged.
+
+An exact assigned business answer continues the trusted persisted execution's original authority; it does not grant the respondent new private Agent use. The recipient independently retains current Developer, Issue, original-thread and Runtime-binding checks. Admission and queue consumption revalidate the original assigner's current resource grants while attributing the answer to its actual author. A binding without original-authority evidence is rejected rather than inferring authority from its Runtime owner or respondent. Ordinary comments and new executions are unchanged. `test_human_reply_execution_authority.py` covers cross-person private Agent continuation, ordinary-use denial, revocation, wrong recipient/thread/Runtime, queued identity and missing-source denial. No private Runtime or credential access is granted; CP01–CP20 remain unchanged.
+
+Issue human handoffs preserve the existing membership and native-approval boundaries. Reporting a question requires current Developer access and a caller-owned Runtime attached to the same Issue activity. Routing requires Developer access plus the responsible participant, group leader or Maintainer authority; reporting alone grants no routing authority. The recipient independently needs current Issue access and comment capability. The Issue row serializes versioned transfer and exact-message reply claims. An assigned person can answer in the shared original thread without receiving the source owner's private Runtime or credentials. Read receipts do not settle questions, and queued replies are not delivery acceptance. Local SQLite and cloud metadata retain the same request identity and handling states. No CP invariant changes.
+
 | ID | Invariant |
 | --- | --- |
 | CP01 | A project has exactly one active parent space; containment is separate from membership. |
@@ -113,6 +123,33 @@ Conversation creation accepts intent fields from the shared creation contract; t
 The background MCP bridge invokes only read tools of the current provider's declared dependencies, without model turns. Ownership checks use exact plugin identities and, for shared app servers, connector identities. Wework adapters may declare precise read contracts for legacy tools without annotations, but cannot override explicit write or destructive annotations. Call arguments cannot grant capabilities. Background elicitations are cancelled and fail explicitly without granting consent or changing stand-in execution confirmations. `connection_mcp_tests` covers ownership, read boundaries, dependency changes and cancellation/deadline cleanup; the `stand-in-mcp` desktop checkpoint covers cross-dependency rejection by the actual Executor.
 
 Plugins without MCP can reuse existing `localAuth.tool` declarations through the generic CLI read transport. Executable identity, Connector, command prefix and allowed arguments come from the exact dependency and the installed Wework adapter's read declaration. Callers cannot supply commands or grant parameters; neither shell code nor Skill prose is executed. DingTalk collection now uses this path and its dedicated read RPC has been removed. Replies retain existing source binding and confirmation requirements. Generic CLI contracts and the CI-registered `stand-in-cli` checkpoint cover write rejection, argument injection and removal of the old endpoint.
+
+### Local delivery metadata for external work
+
+Stand-in delegation and external-source work receive only `WEGENT_EXECUTOR_BINARY`,
+`WEGENT_TASK_ID` and `WEGENT_TASK_WORKSPACE` in the current thread's shell environment
+for local artifact declaration. This metadata never enters the shared App Server
+process. Task credentials, Runtime and Skill identities, Connector broker credentials
+and Backend Task identity remain unavailable to the external-work shell. Local
+declaration validates the canonical workspace boundary, reads the file to compute
+its hash and returns a local path without contacting Backend. Native review,
+permission profiles and MCP scope remain unchanged; CP01–CP20 are unchanged.
+`task_artifact_env_tests` protects the exact three keys, thread isolation and
+start/resume/fork permission boundaries; the `dots-closed-loops` desktop checkpoint
+verifies real delegated declaration and opening delivery from the original primary.
+
+Task working directories follow persisted execution intent. An explicit
+`workspace_source=local_path` retains its directory even inside a Git worktree;
+it is not converted to a managed worktree or promoted to the repository root.
+Project grouping and Git properties do not define execution ownership. Managed
+worktrees, legacy tasks and standalone chats retain their original constraints.
+`workspace_identity_tests` uses real Git worktrees to protect get/list consistency
+and the original metadata allowlist.
+Historical Stand-in records recover their original current-workspace intent only
+when source is absent, original identity/project bindings are complete and
+consistent, and the execution directory exactly matches a recorded root. Reads
+neither consult current settings nor rewrite the index; explicit sources,
+conflicting bindings and incomplete records do not enter this recovery path.
 
 ### Read-only parent context for child Issue executions
 

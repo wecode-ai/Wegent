@@ -17,6 +17,7 @@ import {
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkbenchMessage, RuntimeTaskComposerCreateOptions } from '@/types/workbench'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -31,36 +32,30 @@ import {
   questionDiscussionPrompt,
   pendingDiscussionQuestion,
   type QuestionDiscussionSession,
+  type QuestionDiscussionTab,
 } from './questionDiscussion'
 
 const renderUserInput = (props: RequestUserInputCardProps) => <RequestUserInputCard {...props} />
 
-/** Each workbench owns its discussion surface; drafts remain shared across tabs. */
+/** Share drafts and route entry points; task panes own the actual sidebar tabs. */
 export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
-  const { t } = useTranslation('common')
-  const opener = useRef<HTMLElement | null>(null)
+  const { openRuntimeTask } = useWorkbenchPaneContext()
+  const opener = useRef<{ key: string; element: HTMLElement | null } | null>(null)
   const store = useContext(QuestionDiscussionStoreContext)
   const inheritedServices = useToolInteractionServices()
   const toolServices = useMemo(
     () => ({ ...inheritedServices, renderRequestUserInput: renderUserInput }),
     [inheritedServices]
   )
-  const [selected, setSelected] = useState<string | null>(null)
-  const [opened, setOpened] = useState<string[]>([])
-  useEffect(() => {
-    if (!selected && opener.current?.isConnected) opener.current.focus({ preventScroll: true })
-  }, [selected])
-  const [scopeAccount, setScopeAccount] = useState(store?.accountKey)
-  if (scopeAccount !== store?.accountKey) {
-    setScopeAccount(store?.accountKey)
-    setSelected(null)
-    setOpened([])
-  }
+  const request = store?.panelRequest
   const open = useCallback(
     (source: RuntimeTaskAddress, payload: RequestUserInputPayload) => {
       if (!store || !canDiscussQuestion(payload)) return
       const key = questionDiscussionKey(source, payload)
-      opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      opener.current = {
+        key,
+        element: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      }
       store.update(key, current => ({
         ...current,
         source,
@@ -68,52 +63,61 @@ export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
         address: current?.address ?? null,
         answers: current?.answers ?? {},
       }))
-      setSelected(JSON.stringify([store.accountKey, key]))
-      setOpened(current => (current.includes(key) ? current : [...current, key]))
+      store.requestPanel({ key, source })
+      void openRuntimeTask(source)
     },
-    [store]
+    [store, openRuntimeTask]
   )
-  const close = useCallback(() => {
+  const restoreFocus = useCallback((key: string) => {
+    if (opener.current?.key !== key) return
+    if (opener.current.element?.isConnected) opener.current.element.focus({ preventScroll: true })
     opener.current = null
-    setSelected(null)
   }, [])
+  const consume = store?.consumePanelRequest
   const value = useMemo(
-    () => (store ? { open, close, isOpen: Boolean(selected) } : null),
-    [store, open, close, selected]
+    () => (store ? { open, restoreFocus, request, consume } : null),
+    [store, open, restoreFocus, request, consume]
   )
   return (
     <QuestionDiscussionContext.Provider value={value}>
-      <div className={selected ? 'flex h-full min-h-0 min-w-0' : 'contents'}>
-        <div className={selected ? 'hidden h-full min-h-0 min-w-0 flex-1 md:block' : 'contents'}>
-          <ToolInteractionServicesProvider value={toolServices}>
-            {children}
-          </ToolInteractionServicesProvider>
-        </div>
-        <aside
-          hidden={!selected}
-          aria-label={t('question_discussion.title')}
-          data-testid="question-discussion-sidebar"
-          className="h-full min-h-0 w-full shrink-0 border-l border-border bg-background md:w-[min(28rem,45vw)]"
-        >
-          {opened.map(
-            key =>
-              store?.sessions[key] && (
-                <QuestionDiscussionPanel
-                  key={`${store.accountKey}:${key}`}
-                  sessionKey={key}
-                  session={store.sessions[key]}
-                  open={selected === JSON.stringify([store.accountKey, key])}
-                  onClose={() =>
-                    setSelected(current =>
-                      current === JSON.stringify([store.accountKey, key]) ? null : current
-                    )
-                  }
-                />
-              )
-          )}
-        </aside>
-      </div>
+      <ToolInteractionServicesProvider value={toolServices}>
+        {children}
+      </ToolInteractionServicesProvider>
     </QuestionDiscussionContext.Provider>
+  )
+}
+
+export function QuestionDiscussionTabPanel({
+  tab,
+  active,
+  onClose,
+}: {
+  tab: QuestionDiscussionTab
+  active: boolean
+  onClose(): void
+}) {
+  const store = useContext(QuestionDiscussionStoreContext)
+  const discussion = useContext(QuestionDiscussionContext)
+  const activeRef = useRef(active)
+  useEffect(() => {
+    activeRef.current = active
+  }, [active])
+  const key = tab.slice('discussion:'.length)
+  const session = store?.sessions[key]
+  if (!session) return null
+  return (
+    <div data-testid="question-discussion-sidebar" className="h-full min-h-0">
+      <QuestionDiscussionPanel
+        key={`${store.accountKey}:${key}`}
+        sessionKey={key}
+        session={session}
+        open={active}
+        onClose={() => {
+          if (activeRef.current) discussion?.restoreFocus?.(key)
+          onClose()
+        }}
+      />
+    </div>
   )
 }
 
@@ -156,6 +160,7 @@ function QuestionDiscussionPanel({
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
+  const closeCurrentTab = useStableEvent(onClose)
   useEffect(() => {
     if (open) panelRef.current?.focus({ preventScroll: true })
   }, [open])
@@ -210,7 +215,7 @@ function QuestionDiscussionPanel({
         address: current?.address ?? null,
         answers: { ...current?.answers, [target.questionId]: text.trim() },
       }))
-      onClose()
+      if (panelRef.current) closeCurrentTab()
     } catch {
       setError(t('question_discussion.failed'))
     } finally {

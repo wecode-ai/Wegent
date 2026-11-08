@@ -165,6 +165,8 @@ pub(crate) use effective_instructions::turn_context_for_test;
 mod effective_instructions_tests;
 mod github_cli;
 mod host_skills;
+#[cfg(test)]
+mod task_artifact_env_tests;
 
 mod skill_config;
 pub(crate) use skill_config::reload_skill_configuration;
@@ -4847,18 +4849,27 @@ fn explicit_codex_upstream(
 }
 
 pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
-    if crate::runtime_work::external_work_kind(request).is_some() {
-        return external_work::permission_config(request);
-    }
-    task_identity_env(request)
-        .into_iter()
-        .map(|(key, value)| {
-            (
-                toml_key_path(&["shell_environment_policy", "set", &key]),
-                Value::String(value),
-            )
-        })
-        .collect()
+    let restricted = crate::runtime_work::external_work_kind(request).is_some();
+    let mut config = external_work::permission_config(request);
+    config.extend(
+        task_identity_env(request)
+            .into_iter()
+            // External work can declare local files without inheriting account credentials.
+            .filter(|(key, _)| {
+                !restricted
+                    || matches!(
+                        key.as_str(),
+                        "WEGENT_EXECUTOR_BINARY" | "WEGENT_TASK_ID" | "WEGENT_TASK_WORKSPACE"
+                    )
+            })
+            .map(|(key, value)| {
+                (
+                    toml_key_path(&["shell_environment_policy", "set", &key]),
+                    Value::String(value),
+                )
+            }),
+    );
+    config
 }
 
 fn codex_streaming_patch_config_overrides() -> Vec<String> {

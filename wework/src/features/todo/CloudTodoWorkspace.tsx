@@ -208,7 +208,11 @@ import { BoardQuickCreate } from './BoardQuickCreate'
 import { useParentIssueBoard } from '@wegent/collaboration/project-board'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
-import { createLocalWorkspaceApi, toWeworkIssueTaskBinding } from './WeworkCollaborationPlatform'
+import {
+  createLocalWorkspaceApi,
+  projectRuntimeStatusSignature,
+  toWeworkIssueTaskBinding,
+} from './WeworkCollaborationPlatform'
 import {
   rememberProjectTaskStore,
   toWorkspaceRuntimeTaskAddress,
@@ -1117,7 +1121,9 @@ export function CloudTodoWorkspace({
           })
           .sort()
           .join('|')
-      : ''
+      : selectedProjectRef
+        ? projectRuntimeStatusSignature(runtimeTaskLifecycle, selectedProjectRef)
+        : ''
   const activeLocalProjectFilter =
     localProjectFilter === '' || localProjectFilter === 'all'
       ? 'all'
@@ -1727,15 +1733,14 @@ export function CloudTodoWorkspace({
   }, [aitableApi, isAITableProject, selectedProject])
 
   const canCreateBoardTask = selectedProject !== null
-  const cloudBoardItems = useMemo(() => {
-    if (!isMyTasksBoard) return selectedCloudProjectItems
+  const persistedBoardItems = useMemo(() => {
+    if (!isMyTasksBoard) return selectedProjectBoardItems
     const bindings = Object.values(activeItemTaskBindings).flat()
     const boundItemIds = new Set(
       bindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
     )
-    return selectedCloudProjectItems.filter(item => boundItemIds.has(item.id))
-  }, [activeItemTaskBindings, isMyTasksBoard, selectedCloudProjectItems])
-  const persistedBoardItems = selectedProject?.location === 'cloud' ? cloudBoardItems : items
+    return selectedProjectBoardItems.filter(item => boundItemIds.has(item.id))
+  }, [activeItemTaskBindings, isMyTasksBoard, selectedProjectBoardItems])
   const activeBoardSourceItems = useMemo(() => {
     if (!isMyTasksBoard || !selectedProject) return persistedBoardItems
     const bindings = Object.values(activeItemTaskBindings).flat()
@@ -1987,6 +1992,7 @@ export function CloudTodoWorkspace({
     translate: boardTranslate,
   })
   const standardBoardController = useStandardCloudBoardController({
+    currentUserId: taskOwnerUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
     view: savedViews.view,
@@ -2749,28 +2755,10 @@ export function CloudTodoWorkspace({
           selectedProjectAgentApi?.list(selectedProjectId),
         ])
         const selectedItems = locateItems(selectedResponse.items, selectedProject.project_store)
-        const boardResponse = {
+        return {
           ...selectedResponse,
           items: selectedItems,
           agents: agents ?? selectedResponse.agents,
-        }
-        if (!isMyTasksBoard) return boardResponse
-        const activeBindings = (selectedResponse.task_bindings ?? []).filter(binding =>
-          runtimeTaskKeys.has(
-            runtimeConversationKey({
-              deviceId: binding.device_id,
-              taskId: binding.task_id,
-            })
-          )
-        )
-        const activeItemIds = new Set(
-          activeBindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
-        )
-        const activeItems = selectedItems.filter(item => activeItemIds.has(item.id))
-        return {
-          ...boardResponse,
-          items: activeItems,
-          task_bindings: activeBindings,
         }
       }
       void readBoard()
@@ -2919,16 +2907,13 @@ export function CloudTodoWorkspace({
     boardParentId,
     boardRefreshNonce,
     isExternalGitBoard,
-    isMyTasksBoard,
     selectedProject,
     selectedProjectApi,
     selectedProjectAgentApi,
     selectedProjectId,
     selectedProjectKey,
     locateItems,
-    runtimeTaskLifecycle,
     runtimeTaskStatusSignature,
-    runtimeTaskKeys,
     services.aitableApi,
     services.dwsApi,
   ])
@@ -4718,9 +4703,9 @@ export function CloudTodoWorkspace({
                   board: (
                     <ProjectBoardBody<LocatedLoopItem>
                       filterAction={
-                        !isAITableProject && !isExternalGitBoard && !isMyTasksBoard
-                          ? tagFilter.control
-                          : undefined
+                          !isAITableProject && !isExternalGitBoard && !isMyTasksBoard
+                            ? tagFilter.control
+                            : undefined
                       }
                       toolbarAction={parentIssueBoard.toggle}
                       parentRows={

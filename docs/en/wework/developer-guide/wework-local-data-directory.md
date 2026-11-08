@@ -24,6 +24,32 @@ The default Executor Home is `~/.wework` and contains:
 The `WEGENT_EXECUTOR_HOME` environment variable overrides the default Executor
 Home. This is useful for isolated sessions, tests, and custom deployments.
 
+## Desktop Executor Identity
+
+The Electron host derives its `electron-<hash>` device ID from the SHA-256 hash
+of the hardware UUID and application identifier (default `io.wecode.wework`).
+The same machine and application retain their ID across restarts, reinstalls,
+different user Homes or data directories, and deletion of `desktop-device-id`.
+Different hardware or application identifiers produce different IDs. The raw
+hardware UUID is neither sent as the device ID nor written to identity files or logs.
+
+The managed Executor uses this ID for local IPC and cloud `app_device_id`,
+`device-<app_device_id>` for cloud `device_id`, and `runtime-<app_device_id>`
+for `runtime_instance_id`, preserving their distinct routing responsibilities.
+The host supplies these values over the existing environment interface,
+overriding legacy random configuration identities. Changing Executor Home
+therefore retains the same cloud device. Account permissions, session tokens
+and record-scoped routes remain controlled by the existing authentication and
+registration protocol; a hardware hash does not grant authority.
+
+The user-data directory's `desktop-device-id` only records the computed result;
+it is not an identity source, and old worktree records are not used to infer one.
+Legacy random IDs are replaced when the new rule first runs. Startup fails when
+a valid hardware UUID is unavailable instead of generating a random replacement.
+Isolated verification can still explicitly set `WEGENT_APP_IPC_DEVICE_ID` without
+overwriting the regular identity file. Changing only the data directory no longer
+simulates a different machine.
+
 ## Directory Scanning During Home Migration
 
 When moving a legacy Codex Home into the workbench directory, relative symlink

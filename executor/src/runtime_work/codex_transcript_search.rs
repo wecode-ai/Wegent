@@ -65,6 +65,17 @@ pub(super) struct CodexSearchContextCursor {
     pending_turns: Vec<PendingContextTurn>,
 }
 
+/// Enter a later conversation segment at its oldest native turn without scanning its history.
+pub(super) fn first_history_cursor() -> Result<String, String> {
+    serde_json::to_string(&CodexSearchContextCursor {
+        direction: ContextDirection::Asc,
+        turn_cursor: None,
+        pending_turns: Vec::new(),
+    })
+    .map(|encoded| format!("{CONTEXT_CURSOR_PREFIX}{encoded}"))
+    .map_err(|error| format!("Cannot encode history context cursor: {error}"))
+}
+
 pub(super) fn parse_context_cursor(
     cursor: &str,
 ) -> Result<Option<CodexSearchContextCursor>, String> {

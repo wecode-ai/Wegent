@@ -4,6 +4,40 @@ sidebar_position: 10
 
 # Troubleshooting
 
+<!-- ui-source: src/components/common/WorkbenchErrorPage.tsx -->
+<!-- ui-source: src/pages/ProcessExplorerPage.tsx -->
+
+## Inspect process resource usage
+
+<a id="process-explorer-controls"></a>
+
+Open the read-only window with the native desktop menu **Help → Developer tools → Process Explorer**.
+
+| Action                | Steps and limits                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Filter and groups     | Search by name, PID or launch details; expand/collapse owner groups to locate windows, executors or plugin processes                  |
+| Resources and refresh | Inspect CPU, memory and uptime. Sampling is periodic; Refresh reads again. Totals sum listed Wework processes, not the whole computer |
+| Details and copy      | Select a process to inspect/copy launch details; check private directories/arguments before sharing                                   |
+| Columns and pinning   | Drag header edges to resize, double-click to reset; toggle always-on-top                                                              |
+| Errors/degradation    | Inspect unavailable-information reasons and refresh; partial data does not imply the app stopped                                      |
+
+This window does not terminate processes. Inspection differs from pausing tasks, quitting the app or clearing user data.
+
+## Diagnosing release-package upgrades and rollback
+
+During a release workflow diagnostic replay, `[desktop-e2e-startup]` in `app.log`
+records the real process, installed version, selected release and pending transaction.
+`[desktop-e2e-relaunch]` records the next executable. Compare these events with
+`release-state-result.json` and `activation-diagnostics.log` to distinguish a running
+package from the on-disk selection. Diagnostic replays do not produce publishable upgrade proof.
+Upgrade acceptance also starts the retained target after rollback has completed, both with
+and without a native recovery marker. Both delayed handoffs must return to the source version
+and preserve its existing task.
+
+Local verification must isolate both the workbench Home and the native macOS Home;
+never move personal application data to satisfy test prerequisites. The test preserves
+an explicitly configured `CFFIXED_USER_HOME` alongside its isolated `HOME`.
+
 ## Clicking the app icon does not open a window
 
 Clicking the Dock icon again should reveal the existing main or startup recovery window,
@@ -17,6 +51,9 @@ installed package that was opened. After a manual replacement, old release selec
 bridges, or staging directories must not redirect startup to an older application. Damaged upgrade
 history produces a warning and allows the installed package to start. Do not delete task data to
 work around a startup problem.
+Native recovery handoffs and versioned recovery payloads are not ordinary startup. Even after
+another process finalized rollback and removed its journal, they must route the selected release
+instead of reopening the rejected target.
 
 If the application still cannot open, inspect `wework-main.log`, `runtime-launch.log`, and
 `dsh-core-runtime.log` in the desktop log directory. Distinguish runtime failures from background

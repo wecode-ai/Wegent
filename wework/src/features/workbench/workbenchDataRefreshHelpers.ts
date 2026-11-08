@@ -2,6 +2,7 @@ import type { CloudRuntimeState } from '@/types/workbench'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type {
   DeviceInfo,
+  ProjectWithTasks,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
@@ -15,6 +16,31 @@ import {
   readCachedDeviceList,
 } from './workbenchCloudStatus'
 import { getRuntimeTaskRouteKey, removeRuntimeTasks } from './workbenchRuntimeHelpers'
+
+export interface CloudBackgroundRequest {
+  controller: AbortController
+  refreshDevices: boolean
+  workRefreshQueued: boolean
+}
+
+export interface CloudBackgroundRefreshOptions {
+  projects: ProjectWithTasks[]
+  standaloneDeviceId: string | null
+  standaloneWorkspacePath?: string | null
+  trigger?: 'bootstrap' | 'manual-refresh' | 'device-event'
+  refreshDevices?: boolean
+  isCancelled?: () => boolean
+}
+
+export function queueWorkRefreshAfterInventory(
+  request: CloudBackgroundRequest | null,
+  refreshDevices: boolean
+): boolean {
+  if (refreshDevices || !request?.refreshDevices || request.controller.signal.aborted) return false
+  // Finish inventory discovery, then coalesce work events into one fresh read.
+  request.workRefreshQueued = true
+  return true
+}
 
 export async function loadDevicesForRefresh(
   executorClient: ExecutorClient,

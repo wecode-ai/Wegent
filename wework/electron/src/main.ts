@@ -62,7 +62,7 @@ import {
 import { HostPipeServer } from './host/host-pipe.js'
 import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/startup-telemetry.js'
-import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
+import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.mjs'
 import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
 import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
@@ -114,7 +114,7 @@ import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
 import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
-import { finishStartupAnimation, startStartupMaintenance } from './host/startup-tasks.js'
+import { startStartupMaintenance } from './host/startup-tasks.js'
 import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
 import { prepareDevelopmentHistory } from './runtime/development-history-migration.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
@@ -1665,42 +1665,40 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
   const shouldContinue = () => handoffActive && canPresent()
   try {
     if (!splash || !splashWindow) throw new Error('Startup splash is unavailable for handoff')
-    await finishStartupAnimation(() =>
-      splash.handoff({
-        update: startupProgress.complete(),
-        capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
-        shouldContinue,
-        prepareMainWindow: async () => {
-          const bounds = await prepareStartupMainWindow(
-            target,
-            splashWindow,
-            !keepE2EWindowInBackground,
-            {
-              main: screen.getDisplayMatching(target.getBounds()).id,
-              splash: screen.getDisplayMatching(splashWindow.getBounds()).id,
-            },
-            event => {
-              const geometry = event.splash ?? event.main
-              const display = geometry ? screen.getDisplayMatching(geometry.bounds) : null
-              logStartupStep('startup-window-handoff', event.error ? 'failed' : 'completed', {
-                ...event,
-                display: display
-                  ? {
-                      id: display.id,
-                      scaleFactor: display.scaleFactor,
-                      bounds: display.bounds,
-                      workArea: display.workArea,
-                    }
-                  : null,
-              })
-            },
-            shouldContinue
-          )
-          logStartupStep('main-window-show', 'completed')
-          return bounds
-        },
-      })
-    )
+    await splash.handoff({
+      update: startupProgress.complete(),
+      capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+      shouldContinue,
+      prepareMainWindow: async () => {
+        const bounds = await prepareStartupMainWindow(
+          target,
+          splashWindow,
+          !keepE2EWindowInBackground,
+          {
+            main: screen.getDisplayMatching(target.getBounds()).id,
+            splash: screen.getDisplayMatching(splashWindow.getBounds()).id,
+          },
+          event => {
+            const geometry = event.splash ?? event.main
+            const display = geometry ? screen.getDisplayMatching(geometry.bounds) : null
+            logStartupStep('startup-window-handoff', event.error ? 'failed' : 'completed', {
+              ...event,
+              display: display
+                ? {
+                    id: display.id,
+                    scaleFactor: display.scaleFactor,
+                    bounds: display.bounds,
+                    workArea: display.workArea,
+                  }
+                : null,
+            })
+          },
+          shouldContinue
+        )
+        logStartupStep('main-window-show', 'completed')
+        return bounds
+      },
+    })
     if (!shouldContinue()) {
       if (quitting) return
       throw new Error('Startup window handoff was interrupted')
@@ -2378,6 +2376,7 @@ async function configureDesktopRuntime(): Promise<void> {
     )
   })
   desktopRuntime = new DesktopRuntime({
+    applicationId,
     modelConfiguration,
     environment,
     dataDirectory: app.getPath('userData'),

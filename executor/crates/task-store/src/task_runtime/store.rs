@@ -18,6 +18,8 @@ use uuid::Uuid;
 mod assignment_receipts;
 mod code_projects;
 pub mod execution_workspace;
+mod human_requests;
+pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
 mod ordering;
@@ -74,6 +76,8 @@ mod stand_in;
 
 #[path = "personal_stand_in.rs"]
 pub mod personal_stand_in;
+#[path = "stand_in_lifecycle.rs"]
+mod stand_in_lifecycle;
 
 #[path = "stand_in_proposals.rs"]
 mod stand_in_proposals;
