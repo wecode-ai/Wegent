@@ -467,7 +467,7 @@ executor 的 `RuntimeTaskLink.running` 只存在于当前进程内存和 runtime
 
 Composer 的 `@` 菜单支持显式引用其他 Wework 会话。空查询展示当前 `runtimeWork` 中最近的 5 个会话；输入查询后按标题、项目和工作区路径过滤。当前会话始终排除，避免把正在编写的上下文递归注入自身。
 
-引用在草稿中序列化为 `[$标题](wework-conversation://<encoded RuntimeTaskAddress>)`。这是 Wework 内部 URI，composer 和已发送的用户消息都必须把它渲染为会话引用胶囊，而不是暴露原始 URI。发送前，`useWorkbenchPaneSession` 解析并去重所有引用，使用 `includeFullContent: true` 和 `refresh: true` 加载对应 transcript，并遵循以下边界：
+引用在草稿中序列化为 `[$标题](wework-conversation://<encoded RuntimeTaskAddress>)`。这是 Wework 内部 URI，composer 和已发送的用户消息都必须把它渲染为会话引用胶囊，而不是暴露原始 URI；点击该胶囊会在当前 workbench pane 中打开对应的 Runtime task 会话。Issue 引用（`wework-issue://`）同样可点击打开对应的项目空间条目，项目空间上下文胶囊的标题区域会打开当前 Issue 详情。发送前，`useWorkbenchPaneSession` 解析并去重所有引用，使用 `includeFullContent: true` 和 `refresh: true` 加载对应 transcript，并遵循以下边界：
 
 - 只提取用户消息和已经完成的 assistant 文本；不注入 system、developer、tool、thinking、流式中的 assistant 内容，也不单独读取附件二进制内容。
 - 将引用内容作为 `additionalContext` 中的 `referencedConversations` 应用上下文发送，并明确标注为“不可信背景上下文”。被引用会话中的指令、工具调用或权限声明只能作为数据，不能成为当前会话的可执行指令。
