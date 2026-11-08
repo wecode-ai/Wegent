@@ -59,6 +59,32 @@ function show(item: RuntimeInteraction) {
 }
 
 describe('reminder action authority', () => {
+  it('shows the question creation time with the complete timestamp available', () => {
+    const date = new Date()
+    date.setHours(9, 5, 0, 0)
+    show({ ...assigned, createdAt: date.getTime() })
+    const time = screen.getByTestId('interaction-notice-time')
+    expect(time).toHaveTextContent(
+      date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    )
+    expect(time).toHaveAttribute('datetime', date.toISOString())
+    expect(time).toHaveAttribute('title', date.toLocaleString())
+  })
+
+  it('shows the date for an older question', () => {
+    const date = new Date('2020-01-02T09:05:00Z')
+    show({ ...assigned, createdAt: date.getTime() })
+    expect(screen.getByTestId('interaction-notice-time')).toHaveTextContent(
+      date.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' })
+    )
+  })
+
+  it.each([0, -1, NaN, Infinity, 1e20])('omits invalid creation time %s', createdAt => {
+    show({ ...assigned, createdAt })
+    expect(screen.queryByTestId('interaction-notice-time')).not.toBeInTheDocument()
+    expect(screen.getByTestId('interaction-notice-reply')).toBeInTheDocument()
+  })
+
   it('offers the reply disclosure only when the assigned question can be answered', () => {
     show(assigned)
     expect(screen.queryByTestId('interaction-open-original-action')).not.toBeInTheDocument()
