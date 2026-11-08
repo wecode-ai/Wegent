@@ -129,6 +129,12 @@ function createFixture(theme: StartupSplashTheme = 'light', onCloseRequest?: () 
 }
 
 describe('StartupSplash', () => {
+  test('shows the startup window even when its animation never reports readiness', async () => {
+    const { show, target } = createFixture()
+    target.webContents.executeJavaScript = vi.fn(() => new Promise(() => {}))
+    expect((await show()).window.visible).toBe(true)
+    expect(target.show).toHaveBeenCalledOnce()
+  })
   test('shows the branded animation in the main startup window and records its timeline', async () => {
     const { show, target } = createFixture()
 

@@ -4,6 +4,14 @@ sidebar_position: 13
 
 # 分身连接 GitHub 与 GitLab
 
+<!-- ui-source: src/components/settings/GitHostingSettingsPage.tsx -->
+
+## 全局代码托管设置与任务状态
+
+进入 **设置 → 编码 → 代码托管**，先确认所在执行设备及服务商，再按页面检测或连接 GitHub/GitLab。GitHub 使用该设备的 CLI 登录，不能用网页登录代替。**显示 PR / MR 状态** 开关控制任务列表中的状态展示；关闭不会关闭或合并 PR/MR。此页在专注模式下隐藏。
+
+配置分身接收仓库事件则走 **我的分身 → 角色档案 → 连接来源 → GitHub/GitLab**，不是仅打开上述显示开关。连接异常先区分缺少 CLI、未登录、网络和权限错误，再按对应登录/重试入口处理。
+
 在场景角色的连接来源中选择 GitHub 或 GitLab。支持 GitHub.com、GitLab.com 和使用 HTTPS 的企业自建 GitLab。连接提供事件和执行设备上的 `gh` / `glab` 能力；分析、审查、修改代码等职责由分身设定决定。
 
 ## 选择账号和范围

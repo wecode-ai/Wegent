@@ -50,6 +50,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
     releasePrediction = resolve
   })
   return {
+    handlesReplyPredictions: true,
     async handleHttp(request, response, url) {
       if (
         !active ||

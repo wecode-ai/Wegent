@@ -7,16 +7,19 @@ use std::{fs, path::Path, process::Command};
 #[test]
 fn docker_dependency_layer_can_parse_manifest_without_example_sources() {
     let directory = tempfile::tempdir().unwrap();
-    fs::copy("Cargo.toml", directory.path().join("Cargo.toml")).unwrap();
-    fs::copy("Cargo.lock", directory.path().join("Cargo.lock")).unwrap();
-    fs::create_dir_all(directory.path().join("src/bin")).unwrap();
+    let executor = directory.path().join("executor");
+    fs::create_dir_all(executor.join("src/bin")).unwrap();
+    fs::copy("Cargo.toml", executor.join("Cargo.toml")).unwrap();
+    fs::copy("Cargo.lock", executor.join("Cargo.lock")).unwrap();
+    copy_dependency_sources(Path::new("crates"), &executor.join("crates"));
+    copy_dependency_sources(Path::new("vendor"), &executor.join("vendor"));
+    copy_dependency_sources(
+        Path::new("../shared/rust"),
+        &directory.path().join("shared/rust"),
+    );
+    fs::write(executor.join("src/lib.rs"), "pub fn placeholder() {}\n").unwrap();
     fs::write(
-        directory.path().join("src/lib.rs"),
-        "pub fn placeholder() {}\n",
-    )
-    .unwrap();
-    fs::write(
-        directory.path().join("src/bin/wegent-executor.rs"),
+        executor.join("src/bin/wegent-executor.rs"),
         "fn main() {}\n",
     )
     .unwrap();
@@ -29,7 +32,7 @@ fn docker_dependency_layer_can_parse_manifest_without_example_sources() {
             "1",
             "--offline",
         ])
-        .current_dir(directory.path())
+        .current_dir(&executor)
         .output()
         .unwrap();
 
@@ -38,9 +41,15 @@ fn docker_dependency_layer_can_parse_manifest_without_example_sources() {
         "Docker dependency-layer manifest failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!directory.path().join("examples").exists());
+    assert!(!executor.join("examples").exists());
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let example = metadata["packages"][0]["targets"]
+    let package = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["name"] == "wegent-executor")
+        .expect("executor package must remain in dependency-layer metadata");
+    let example = package["targets"]
         .as_array()
         .unwrap()
         .iter()
@@ -322,4 +331,30 @@ fn is_generated_runtime_component(component: std::path::Component<'_>) -> bool {
         component.as_os_str().to_str(),
         Some("target" | ".venv" | "venv" | ".venv-x86_64" | "__pycache__")
     )
+}
+
+fn copy_dependency_sources(source: &Path, target: &Path) {
+    fs::create_dir_all(target).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        if entry
+            .path()
+            .components()
+            .any(is_generated_runtime_component)
+        {
+            continue;
+        }
+        let destination = target.join(entry.file_name());
+        let file_type = entry.file_type().unwrap();
+        if file_type.is_dir() {
+            copy_dependency_sources(&entry.path(), &destination);
+        } else {
+            assert!(
+                file_type.is_file(),
+                "unexpected dependency source: {}",
+                entry.path().display()
+            );
+            fs::copy(entry.path(), destination).unwrap();
+        }
+    }
 }

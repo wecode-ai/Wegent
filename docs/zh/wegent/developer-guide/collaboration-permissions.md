@@ -61,6 +61,14 @@ flowchart TD
 
 ## 权限契约
 
+本地参与发现使用服务组合层确认的范围：本机归属主体 `0` 与当前已验证账号主体；这不是全局用户别名，也不改变云端授权。快筛、统一待办、只读原生 pending 提示和本地 inbox 使用同一范围；空闲时不新增 inbox 轮询，提示失败为未知而非空列表。新评论由组合层注入的当前实际作者写入，历史 sender 不变。答复仍要求精确 `recipient == persisted comment.sender`，例如接收人 `0`、当前作者 `7` 时必须显式转派后再答，不因发现范围包含两者而放宽 claim。既有小组、已读与任务启动权限继续使用其授权身份，不被存储归属 `0` 覆盖；CP01–CP20 不变。
+
+问题分派仍要求当前 Issue Developer 权限及责任人、小组负责人或 Maintainer 身份；仅作为问题报告人不产生分派权限。报告与阻塞标记先核验本人有效默认命名空间 Device，再以原活动持久执行 ID 校验同一项目、Issue、原 Runtime task、设备及 `executor_owner_user_id`；同名自有设备不能证明拥有别人的 Runtime。只有手工绑定、或小组 Runtime 尚无精确 canonical 执行证据时返回 409，不猜测 owner 或按会话命名补身份。请求标识使用原活动持久设备身份，切换同设备别名不会重复创建问题。
+
+问题报告源可以通过显式 `set_blocking` 操作更新是否阻塞，但仍须具备当前 Issue Developer 权限，并同时匹配持久记录的报告人、原 Runtime task 和本人拥有的原设备身份。此权限不包含分派、取消或答复；请求不得混入接收人或取消字段。行锁内校验 pending 状态与版本，仅更新阻塞标记、版本、更新时间和 `blocking_changed` 事件，保留接收人、责任人及本轮等待起点。普通分派权限与原生操作审批保持不变；缺失来源证据不补猜身份，CP01–CP20 不变。
+
+Issue 中已精确指派的业务回答只续接可信持久原执行的授权身份，不将答复人视为私有机器人的新使用者。接收人仍独立通过当前 Developer、Issue、原评论线程和 Runtime 绑定校验；入口与队列都重新验证原 assigner 的当前资源权限，答复归因保留为实际答复人。缺失原执行授权证据的绑定拒绝续接，不用 Runtime owner 或答复人推测身份。普通评论与新执行的授权规则保持不变。`test_human_reply_execution_authority.py` 覆盖跨人私有机器人续接、普通使用拒绝、撤权、错误接收人/线程/Runtime、队列身份及缺失来源拒绝；不授予私有 Runtime 或凭据访问，CP01–CP20 不变。
+
 | 编号 | 不变量 |
 | --- | --- |
 | CP01 | 每个项目有唯一、有效的父空间；归属与成员授权分别保存。 |
@@ -126,9 +134,9 @@ sequenceDiagram
 
 从 Issue 创建的个人任务以原项目和 Issue 作为默认上下文，可以通过 `wework_space` 显式指定当前用户有权限访问的任意项目和 Issue，按实际权限读取、修改、指派或评论。会话起点不构成额外的访问边界，服务端继续校验目标项目和 Issue 的权限；访问其他项目或 Issue 不改变原会话或交付物绑定。Issue 会话统一使用协作上下文，不按私人任务或分身任务增加写入限制；用户任务及已配置职责所需的回写、改派和交付无需因共享 Issue 写入而另行确认。内置协作 MCP `wework_space` 的服务器与单工具策略均免于工具审批，包括分身自动模式与操作前确认模式；外部工具仍遵守原生审批，协作工具继续执行服务端实际权限校验与派发角色边界。`stand-in-personal-task` 桌面检查点同时断言协作读取、评论和指派完成后没有 AI 审核记录。`wework/src/features/todo/workItemRuntimeContext.test.ts` 保护该上下文契约。协作执行成员默认限定在派发 Issue 和执行类工具内，并允许下述直接父项只读例外；协作管理者保留项目内管理权限。`executor/src/task_runtime/mcp/issue_access_tests.rs` 覆盖同项目和跨项目的本地读写、云端读写与评论、服务端读写拒绝及默认上下文保持，角色边界由同模块现有契约测试保护。
 
-个人分身连接插件继续使用现有外部来源内容约束和操作确认机制。新的 `connection_work` 与历史 `dingtalk_work` 均不能从来源内容取得额外权限；项目限定智能体仍只能接收所属项目工作。连接记忆按用户、Provider、账号和资源精确隔离，钉钉迁移保留原记忆范围及去重身份。`stand_in_identity_contract` 覆盖迁移和 Provider 隔离；Codex 确认契约同时覆盖两种工作来源以及默认和命名 Home。
+个人分身连接插件继续使用现有外部来源内容约束和操作确认机制。新的 `connection_work` 与历史 `dingtalk_work` 均不能从来源内容取得额外权限。分身作为独立身份运行，不再引用个人或项目智能体；旧绑定迁移先将原项目限制与已选范围取交集，保留排除项和确认策略，再删除绑定字段，不扩大既有授权。`personal_stand_in_contract` 覆盖旧格式、幂等持久化、版本冲突和授权交集；CP01–CP20 保持不变。连接记忆按用户、Provider、账号和资源精确隔离，钉钉迁移保留原记忆范围及去重身份。`stand_in_identity_contract` 覆盖迁移和 Provider 隔离；Codex 确认契约同时覆盖两种工作来源以及默认和命名 Home。
 
-受管 `wework_control` 不向 `stand_in_identity`、`connection_work`、`dingtalk_work` 或项目委托执行授予个人控制入口；这些执行保留各自的工具范围与操作确认。源会话持久化身份也参与校验，不能通过缺失来源字段取得个人权限。`workbench_control` 契约测试覆盖注入与源身份校验，HTTP 回归覆盖替身与控制 surface 隔离及各自会话关闭。个人调用方可以按现有权限续聊项目或替身目标；目标仍以原身份执行，不取得调用方的个人权限。跨设备续聊复用现有目标元数据、会话授权和发送接口，不新增权限或远控豁免。发送入口从已有历史读取链路取得原始身份、工作区与 Runtime，使用前端 materialize 相同的编译器；续聊统一调用既有项目/Issue 可见性和 execute 权限服务。目标 Runtime 强制保留派发角色和项目/Issue 绑定，替身确认机制仍然生效。回归覆盖源身份伪造、目标保留执行范围、设备拒绝及后端读写拒绝，拒绝后不会改用直接写 RPC。CP01–CP20 不变量不变。
+受管 `wework_control` 不向 `stand_in_identity`、`connection_work`、`dingtalk_work` 或项目委托执行授予个人控制入口；这些执行保留各自的工具范围与操作确认。源会话持久化身份也参与校验，不能通过缺失来源字段取得个人权限。`workbench_control` 契约测试覆盖注入与源身份校验，HTTP 回归覆盖替身与控制 surface 隔离及各自会话关闭。个人调用方可以按现有权限续聊项目或替身目标；目标仍以原身份执行，不取得调用方的个人权限。跨设备续聊复用现有目标元数据、会话授权和发送接口，不新增权限或远控豁免。发送入口通过已有历史授权链路的 `identityOnly` 元信息投影取得原始身份、工作区与 Runtime，不加载消息正文或占用历史 CPU worker，按单条会话查询相同规则拒绝已归档或删除的目标，使用前端 materialize 相同的编译器；续聊统一调用既有项目/Issue 可见性和 execute 权限服务。目标 Runtime 强制保留派发角色和项目/Issue 绑定，替身确认机制仍然生效。回归覆盖源身份伪造、目标保留执行范围、设备拒绝及后端读写拒绝，拒绝后不会改用直接写 RPC。CP01–CP20 不变量不变。
 
 本机 APP 会话的云项目绑定不会改变发送位置：复用既有 `/runtime-work/materialize` 完成原生或 Team 意图编译、资源和项目执行权限校验，再通过本机 Runtime 创建或续聊。创建和续聊共用当前项目/Issue 可见性与 execute 校验；仅绑定项目而未关联 Issue 时也拒绝 Viewer 执行。原生模型凭据仍由执行设备持有，Team 和云模型配置仍由后端编译；远端请求保留原有 APP 远控限制。已授权 IM 发送携带的内部 APP 消息授权同时用于读取目标原始身份，仍检查设备归属；普通 HTTP 读取、发送不能取得该授权。回归同时验证有权 IM 续聊、普通请求拒绝、创建和续聊的 Viewer/撤权/不可见 Issue 拒绝，以及本机 APP 云项目会话的附件创建、去重续聊和界面续聊。
 
@@ -137,6 +145,25 @@ sequenceDiagram
 后台 MCP 桥只调用当前 Provider 声明依赖中的读取工具，不运行模型回合。工具归属同时核对完整插件身份；共享 App 服务另外核对 Connector 身份。缺少只读标注的旧工具可以由 Wework 适配插件声明精确读取契约，但不能覆盖明确的写入或破坏性标注。调用参数不能自授读取权限；后台授权交互取消后明确失败，不自动放行，也不改变分身执行时的确认策略。`connection_mcp_tests` 覆盖归属、读取边界、依赖变更和取消/超时清理，`stand-in-mcp` 桌面 checkpoint 覆盖真实 Executor 对跨依赖调用的拒绝。
 
 没有 MCP 的插件可通过通用 CLI 读取传输复用已有 `localAuth.tool`。可执行工具、Connector、固定命令和允许参数均来自精确依赖及已安装 Wework 适配插件的读取声明；调用者不能传入命令或增加参数，也不执行 Shell 或 Skill 文本。钉钉采集已使用该路径，专用读取 RPC 已删除；回复继续沿用原来源绑定及确认策略。通用 CLI 契约测试与 `stand-in-cli` CI checkpoint 覆盖写入拒绝、参数注入和旧入口删除。
+
+### 外部工作本地交付元数据
+
+分身委派和外部来源工作仅向当前线程的 Shell 注入 `WEGENT_EXECUTOR_BINARY`、
+`WEGENT_TASK_ID` 和 `WEGENT_TASK_WORKSPACE`，用于工作目录内的本地交付物声明。
+这些元数据不进入共享 App Server 进程；任务凭据、Runtime 和 Skill 身份、
+Connector Broker 凭据及 Backend Task 身份仍不提供给外部工作 Shell。
+本地声明校验文件真实路径、读取文件计算哈希并返回本地路径，不访问 Backend。
+原生审核、权限配置和 MCP 范围保持不变，CP01–CP20 不变。
+`task_artifact_env_tests` 保护精确三字段、线程隔离和 start/resume/fork 权限边界；
+`dots-closed-loops` 桌面 checkpoint 验证真实委派声明及原主会话交付物打开。
+
+任务级工作目录以持久化的执行意图为准：明确的 `workspace_source=local_path`
+保留原目录，即使它位于 Git worktree 内，也不转换为受管 worktree 或提升到仓库根。
+项目分组和 Git 属性不构成执行归属。受管 worktree、历史任务和独立聊天保留原约束；
+`workspace_identity_tests` 用真实 Git worktree 验证 get/list 的一致性和原元数据白名单。
+旧主分身记录仅在来源字段缺失、原始身份与项目绑定完整一致、执行目录精确匹配已记录根目录时，
+从这些持久证据恢复原有当前工作区意图。读取不参考当前设置、不改写索引；来源明确、绑定冲突或
+证据不完整的历史记录不进入此恢复路径。
 
 ### 子 Issue 执行的父项只读上下文
 

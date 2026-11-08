@@ -499,7 +499,16 @@ version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
 dependencies = [
- "dirs-sys",
+ "dirs-sys 0.4.1",
+]
+
+[[package]]
+name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys 0.5.0",
 ]
 
 [[package]]
@@ -510,8 +519,20 @@ checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users",
+ "redox_users 0.4.6",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users 0.5.3",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1821,6 +1842,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_users"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60dc65c0ff1a7ae1294b0c67b9f14baf70b644404010370171787bfac1038fc0"
+dependencies = [
+ "libredox",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2855,19 +2886,79 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
+name = "wegent-automation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "cron",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "wegent-claude-harness"
+version = "0.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "wegent-execution-contracts",
+ "wegent-execution-stream",
+ "wegent-executor-test-support",
+ "wegent-hooks",
+ "wegent-mcp-runtime",
+ "wegent-multimodal",
+ "wegent-native-home",
+ "wegent-plugin-packages",
+ "wegent-protocol",
+ "wegent-runtime-logging",
+ "wegent-subprocess",
+]
+
+[[package]]
+name = "wegent-crypto"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "cbc",
+]
+
+[[package]]
+name = "wegent-execution-contracts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "wegent-protocol",
+]
+
+[[package]]
+name = "wegent-execution-stream"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tokio",
+ "wegent-execution-contracts",
+ "wegent-runtime-logging",
+]
+
+[[package]]
 name = "wegent-executor"
 version = "1.8.7"
 dependencies = [
- "aes",
  "aes-gcm",
  "axum",
  "base64",
- "cbc",
  "chrono",
  "chrono-tz",
  "cron",
  "ctrlc",
- "dirs",
+ "dirs 5.0.1",
  "flate2",
  "fs2",
  "futures-util",
@@ -2896,8 +2987,257 @@ dependencies = [
  "tower",
  "url",
  "uuid",
+ "wegent-automation",
+ "wegent-claude-harness",
+ "wegent-crypto",
+ "wegent-execution-contracts",
+ "wegent-execution-stream",
+ "wegent-executor-test-support",
+ "wegent-filesystem",
+ "wegent-hooks",
+ "wegent-local-task-store",
+ "wegent-mcp-runtime",
+ "wegent-model-proxy",
+ "wegent-multimodal",
+ "wegent-native-home",
+ "wegent-plugin-packages",
+ "wegent-protocol",
+ "wegent-runtime-config",
+ "wegent-runtime-logging",
+ "wegent-subprocess",
+ "wegent-workspace",
  "windows-sys 0.61.2",
  "zip",
+]
+
+[[package]]
+name = "wegent-executor-test-support"
+version = "0.1.0"
+dependencies = [
+ "zip",
+]
+
+[[package]]
+name = "wegent-filesystem"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "wegent-hooks"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "libc",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "wegent-runtime-config",
+ "wegent-subprocess",
+]
+
+[[package]]
+name = "wegent-local-task-store"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64",
+ "chrono",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "url",
+ "uuid",
+ "wegent-automation",
+ "wegent-protocol",
+ "wegent-runtime-config",
+ "wegent-runtime-logging",
+ "wegent-workspace",
+]
+
+[[package]]
+name = "wegent-mcp-runtime"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "regex",
+ "reqwest",
+ "serde_json",
+ "url",
+ "wegent-protocol",
+ "wegent-runtime-logging",
+]
+
+[[package]]
+name = "wegent-model-proxy"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "futures-util",
+ "getrandom 0.3.4",
+ "httpdate",
+ "image",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml_edit",
+ "tower",
+ "url",
+ "uuid",
+ "wegent-execution-contracts",
+ "wegent-protocol",
+ "wegent-runtime-config",
+ "wegent-runtime-logging",
+]
+
+[[package]]
+name = "wegent-multimodal"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "image",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "wegent-runtime-config",
+]
+
+[[package]]
+name = "wegent-native-home"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "fs2",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "url",
+ "wegent-filesystem",
+ "wegent-plugin-packages",
+ "wegent-protocol",
+ "wegent-runtime-config",
+ "wegent-runtime-logging",
+ "wegent-subprocess",
+]
+
+[[package]]
+name = "wegent-plugin-packages"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "dirs 5.0.1",
+ "fs2",
+ "futures-util",
+ "image",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml_edit",
+ "url",
+ "uuid",
+ "wegent-execution-contracts",
+ "wegent-executor-test-support",
+ "wegent-filesystem",
+ "wegent-protocol",
+ "wegent-runtime-config",
+ "wegent-runtime-logging",
+ "windows-sys 0.61.2",
+ "zip",
+]
+
+[[package]]
+name = "wegent-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "wegent-runtime-config"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "fs2",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "url",
+ "uuid",
+ "wegent-executor-test-support",
+ "wegent-filesystem",
+]
+
+[[package]]
+name = "wegent-runtime-logging"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tempfile",
+ "wegent-runtime-config",
+]
+
+[[package]]
+name = "wegent-subprocess"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "regex",
+ "tempfile",
+ "tokio",
+ "wegent-runtime-logging",
+]
+
+[[package]]
+name = "wegent-workspace"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs 6.0.0",
+ "flate2",
+ "libc",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "url",
+ "wegent-execution-contracts",
+ "wegent-filesystem",
+ "wegent-protocol",
+ "wegent-runtime-logging",
+ "wegent-subprocess",
 ]
 
 [[package]]

@@ -49,7 +49,14 @@ export function useRuntimeConversationSnapshot(address: RuntimeTaskAddress | nul
     (listener: () => void) => {
       if (!address) return () => {}
       let cancel: (() => void) | undefined
-      const unsubscribe = subscribeRuntimeConversation(address, () => {
+      const unsubscribe = subscribeRuntimeConversation(address, (_action, coalesced) => {
+        // A coalesced publication must not queue a second render frame.
+        if (coalesced) {
+          cancel?.()
+          cancel = undefined
+          listener()
+          return
+        }
         if (cancel) return
         const flush = () => {
           cancel = undefined

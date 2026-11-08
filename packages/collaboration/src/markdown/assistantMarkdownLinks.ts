@@ -144,12 +144,13 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
       ...splitMarkdownFileLineSuffix(localPathFromMarkdownImageSrc(value)),
     }
   }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !isWindowsDriveAbsolutePath(value)) {
+  const decodedPath = decodeMarkdownFilePath(value)
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !isWindowsDriveAbsolutePath(decodedPath)) {
     return { kind: 'external' }
   }
   return {
     kind: 'file',
-    ...splitMarkdownFileLineSuffix(normalizeMarkdownDrivePath(decodeMarkdownFilePath(value))),
+    ...splitMarkdownFileLineSuffix(normalizeMarkdownDrivePath(decodedPath)),
   }
 }
 

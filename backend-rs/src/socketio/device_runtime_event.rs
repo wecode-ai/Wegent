@@ -214,7 +214,7 @@ fn forward_channel_event(envelope: &Value) {
         return;
     };
     let source = payload.get("source");
-    if !source.is_some_and(|source| source.get("source").and_then(Value::as_str) == Some("im")) {
+    if source.is_none_or(|source| source.get("source").and_then(Value::as_str) != Some("im")) {
         return;
     }
     let task_id = payload.get("taskId").and_then(Value::as_str);

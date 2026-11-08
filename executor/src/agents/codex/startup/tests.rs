@@ -103,6 +103,80 @@ async fn assert_process_retained_and_stop(
     ));
 }
 
+async fn preparing_client() -> (CodexAppServerClient, SharedTurnPreparation, u32) {
+    let (client, _, _release) = process_fixture().await;
+    let mut state = client.state.lock().await;
+    state.active_threads.clear();
+    let process = state.process.as_ref().unwrap();
+    process.pending.lock().await.clear();
+    let process_id = process.child.id().unwrap();
+    let preparation = state.preparing_turns.begin();
+    drop(state);
+    (client, preparation, process_id)
+}
+
+#[tokio::test]
+async fn preparing_turn_blocks_idle_restart_before_native_thread_admission() {
+    let (client, preparation, process_id) = preparing_client().await;
+    assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+    assert_eq!(
+        client
+            .state
+            .lock()
+            .await
+            .process
+            .as_ref()
+            .unwrap()
+            .child
+            .id(),
+        Some(process_id)
+    );
+    drop(preparation);
+    assert_eq!(client.restart_if_idle().await, Ok(()));
+    assert!(client.state.lock().await.process.is_none());
+}
+
+#[tokio::test]
+async fn preparing_turn_blocks_idle_configuration_mutation() {
+    let (client, preparation, process_id) = preparing_client().await;
+    let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = Arc::clone(&called);
+    let result = client
+        .mutate_configuration_if_idle(|| async move {
+            observed.store(true, Ordering::SeqCst);
+            Ok(((), true))
+        })
+        .await;
+    assert_eq!(
+        result,
+        Err(CodexIdleMutationError::Busy {
+            active_turn_count: 1,
+            pending_request_count: 0,
+        })
+    );
+    assert!(!called.load(Ordering::SeqCst));
+    assert_eq!(
+        client
+            .state
+            .lock()
+            .await
+            .process
+            .as_ref()
+            .unwrap()
+            .child
+            .id(),
+        Some(process_id)
+    );
+    drop(preparation);
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok(((), true)) })
+            .await,
+        Ok(())
+    );
+    assert!(client.state.lock().await.process.is_none());
+}
+
 #[tokio::test]
 async fn queued_completion_while_recovery_waits_for_admission_keeps_process() {
     let (client, notifications, mut release) = process_fixture().await;

@@ -2,7 +2,11 @@ import {
   loadRuntimeFileChangesDiff,
   revertRuntimeFileChanges,
 } from '@wegent/chat-core/runtime-file-changes'
-import { applyRequestUserInputResponseToBlock } from '@wegent/chat-core/runtime-user-input'
+import {
+  applyRequestUserInputResponseToBlock,
+  isAsyncRequestUserInputPayload,
+} from '@wegent/chat-core/runtime-user-input'
+import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import { useCallback } from 'react'
 import type { Dispatch } from 'react'
 import { ApiError } from '@/api/http'
@@ -83,6 +87,7 @@ import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import {
   applyRuntimeConversationAction,
   beginRuntimeConversationOperation,
+  getRuntimeConversationMessages,
   removeRuntimeConversationTurn,
   updateRuntimeConversationBlocks,
 } from './runtimeConversationCache'
@@ -396,8 +401,13 @@ export function useWorkbenchRuntimeMessaging({
       if (
         !isCurrentTask ||
         (modelSelection.isSelectionReady !== false &&
-          modelSelection.isConfiguredModelUnavailable !== true)
+          modelSelection.isConfiguredModelUnavailable !== true) ||
+        isAsyncRequestUserInputPayload(
+          pendingRequestUserInputPayload(getRuntimeConversationMessages(address))
+        )
       ) {
+        // Async replies must not depend on composer discovery. Destination model
+        // resolution and native validation still apply to the continuation.
         return false
       }
       reportSendBlocked(
@@ -405,6 +415,11 @@ export function useWorkbenchRuntimeMessaging({
         undefined,
         options
       )
+      logRuntimeTaskCreateStage('runtime-send-model-blocked', {
+        taskId: address.taskId,
+        selectionReady: modelSelection.isSelectionReady,
+        configuredModelUnavailable: modelSelection.isConfiguredModelUnavailable,
+      })
       return true
     },
     [
@@ -468,14 +483,12 @@ export function useWorkbenchRuntimeMessaging({
         } else {
           lifecycleStore.sendAccepted(outboundRequest.address)
         }
-        try {
-          await refreshWorkLists()
-        } catch (error) {
+        void refreshWorkLists().catch(error => {
           console.warn('[Wework] Runtime send accepted but work list refresh failed', {
             taskId: response.taskId ?? outboundRequest.address.taskId,
             error: error instanceof Error ? error.message : String(error),
           })
-        }
+        })
         return isCurrent()
       } catch (error) {
         if (!isCurrent()) return false

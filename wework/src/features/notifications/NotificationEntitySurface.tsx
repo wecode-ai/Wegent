@@ -20,7 +20,7 @@ export function NotificationEntitySurface({
   focusedRequest,
 }: {
   url: string
-  address: RuntimeTaskAddress
+  address?: RuntimeTaskAddress
   active: boolean
   interactionId?: string
   sourceMessageIds?: string[]
@@ -54,7 +54,7 @@ export function NotificationEntitySurface({
     )
   }
 
-  if (destination?.kind === 'task') {
+  if (destination?.kind === 'task' && address) {
     return (
       <TemporaryChatPanel
         key={url}

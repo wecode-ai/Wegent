@@ -1,0 +1,17 @@
+{
+  "order": 146100,
+  "scenario": "./scenarios/runtime-policy.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 107100,
+      "shard": 3,
+      "position": 16100
+    }
+  },
+  "paths": [
+    "executor/src/agents/codex/effective_instructions.rs",
+    "executor/src/agents/codex/host_skills.rs",
+    "wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/**"
+  ]
+}

@@ -3657,6 +3657,95 @@ describe('CloudTodoWorkspace', () => {
     }
   )
 
+  it('does not reload My Tasks when only Runtime snapshot metadata changes', async () => {
+    const defaultProject = {
+      ...project,
+      id: 'default-work-items',
+      project_key: 'WORK',
+      project_store: 'local' as const,
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const address = { deviceId: 'local-device', taskId: 'runtime-metadata-refresh' }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('my-tasks-metadata-refresh')
+    const task = {
+      taskId: address.taskId,
+      workspacePath: '/tmp/project',
+      title: 'Running task',
+      runtime: 'codex' as const,
+      running: true,
+      status: 'running',
+      executionState: {
+        revision: '1',
+        epoch: 'executor-1',
+        phase: 'running' as const,
+        turnId: 'native-turn',
+        latestTurnId: 'native-turn',
+        outcome: null,
+      },
+    }
+    lifecycleStore.syncRuntimeTask(address, task)
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [defaultProject],
+    })
+    const getBoardSnapshot = vi.fn(async () => ({
+      items: [],
+      task_bindings: [],
+      members: [],
+      agents: [],
+    }))
+    workbenchServices.deliveryApi!.getBoardSnapshot = getBoardSnapshot
+    workbenchServices.projectSpaceApis = {
+      local: workbenchServices.deliveryApi!,
+      defaultLocation: 'local',
+    }
+    const view = () => (
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        runtimeTaskLifecycle={lifecycleStore.getSnapshot()}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'local', projectId: defaultProject.id }}
+      />
+    )
+    const rendered = render(view())
+    await waitFor(() => expect(getBoardSnapshot).toHaveBeenCalled())
+    await act(async () => {})
+    const initialReads = getBoardSnapshot.mock.calls.length
+    const previousVersion = lifecycleStore.getSnapshot().version
+
+    for (const revision of ['2', '3', '4', '5', '6']) {
+      lifecycleStore.syncRuntimeTask(address, {
+        ...task,
+        executionState: { ...task.executionState, revision },
+      })
+      expect(lifecycleStore.getSnapshot().version).toBeGreaterThan(previousVersion)
+      await act(async () => {
+        rendered.rerender(view())
+      })
+      expect(getBoardSnapshot).toHaveBeenCalledTimes(initialReads)
+    }
+
+    lifecycleStore.syncRuntimeTask(address, {
+      ...task,
+      running: false,
+      status: 'done',
+      completedAt: '2026-11-07T15:01:00Z',
+      executionState: {
+        ...task.executionState,
+        revision: '7',
+        phase: 'idle',
+        turnId: null,
+        outcome: 'succeeded',
+      },
+    })
+    await act(async () => {
+      rendered.rerender(view())
+    })
+    expect(getBoardSnapshot).toHaveBeenCalledTimes(initialReads + 1)
+  })
+
   it('projects active Runtime Task lifecycle without bypassing persisted Issue review', async () => {
     const defaultProject = {
       ...project,

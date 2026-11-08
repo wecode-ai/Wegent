@@ -7364,6 +7364,42 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
   })
 
+  test('waits for local work readiness before consuming project restoration after a cloud refresh', async () => {
+    writeLastProjectId(JSON.stringify(['', 1]), 7)
+    const initialWork = deferred<RuntimeWorkListResponse>()
+    const latestWork = deferred<RuntimeWorkListResponse>()
+    const listRuntimeWork = vi
+      .fn()
+      .mockReturnValueOnce(initialWork.promise)
+      .mockReturnValue(latestWork.promise)
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
+    const cloudWork = vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+      cloudBackgroundApi: { listRuntimeWork: cloudWork },
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
+    })
+    renderWorkbench(<ProjectSendProbe />, services)
+    await waitFor(() => expect(onChanged).toBeDefined())
+    act(() => onChanged?.({ taskId: 'runtime-a', deviceId: 'device-1' }))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
+    await act(async () => initialWork.resolve(createRuntimeWork()))
+    await waitFor(() => expect(cloudWork).toHaveBeenCalledOnce())
+    act(() => onChanged?.({ taskId: 'runtime-a', deviceId: 'device-1' }))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
+    expect(screen.getByTestId('current-project-name')).not.toHaveTextContent('Wegent')
+    await act(async () => latestWork.resolve(createRuntimeWork()))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    )
+  })
+
   test('starts a new task in the project of the last opened task', async () => {
     renderWorkbench(<ProjectSendProbe />)
 
@@ -17359,7 +17395,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('')
   })
 
-  test('sends queued guidance through native runtime guidance without cancelling the turn', async () => {
+  test.each(['codex', 'claude_code'] as const)('gates native guidance (%s)', async runtime => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -17396,7 +17432,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                       taskId: 'runtime-a',
                       workspacePath: '/workspace/project-alpha',
                       title: 'Runtime A',
-                      runtime: 'claude_code',
+                      runtime,
                       running: true,
                     },
                   ],
@@ -17410,7 +17446,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
+        runtime,
         messages: [
           { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
           {
@@ -17470,6 +17506,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('send follow-up'))
     const queuedMessageId = screen.getByTestId('queued-message-ids').textContent
     await userEvent.click(screen.getByText('guide first queued'))
+
+    if (runtime === 'claude_code') {
+      expect(guideRuntimeTask).not.toHaveBeenCalled()
+      expect(cancelRuntimeTask).not.toHaveBeenCalled()
+      expect(sendRuntimeMessage).not.toHaveBeenCalled()
+      expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+      return
+    }
 
     await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
     expect(guideRuntimeTask).toHaveBeenCalledWith({
@@ -17621,7 +17665,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                       taskId: 'runtime-a',
                       workspacePath: '/workspace/project-alpha',
                       title: 'Runtime A',
-                      runtime: 'claude_code',
+                      runtime: 'codex',
                       running: true,
                     },
                   ],
@@ -17635,7 +17679,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
+        runtime: 'codex',
         messages: [
           { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
           {
@@ -17916,7 +17960,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                       taskId: 'runtime-a',
                       workspacePath: '/workspace/project-alpha',
                       title: 'Runtime A',
-                      runtime: 'claude_code',
+                      runtime: 'codex',
                       running: true,
                     },
                   ],
@@ -17930,7 +17974,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
+        runtime: 'codex',
         messages: [
           { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
           {
@@ -18182,7 +18226,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                       taskId: 'runtime-a',
                       workspacePath: '/workspace/project-alpha',
                       title: 'Runtime A',
-                      runtime: 'claude_code',
+                      runtime: 'codex',
                       running: true,
                     },
                   ],
@@ -18196,7 +18240,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
+        runtime: 'codex',
         messages: [
           { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
           {
@@ -18293,7 +18337,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                         taskId: 'runtime-a',
                         workspacePath: '/workspace/project-alpha',
                         title: 'Runtime A',
-                        runtime: 'claude_code',
+                        runtime: 'codex',
                         running: executorRunning,
                       },
                     ],
@@ -18309,7 +18353,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         Promise.resolve({
           taskId: 'runtime-a',
           workspacePath: '/workspace/project-alpha',
-          runtime: 'claude_code',
+          runtime: 'codex',
           running: turnRunning,
           messages: [
             { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
@@ -18759,7 +18803,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                       taskId: 'runtime-a',
                       workspacePath: '/workspace/project-alpha',
                       title: 'Runtime A',
-                      runtime: 'claude_code',
+                      runtime: 'codex',
                       running: true,
                     },
                   ],
@@ -18773,7 +18817,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
+        runtime: 'codex',
         messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
       }),
       sendRuntimeMessage,

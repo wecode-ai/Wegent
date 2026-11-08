@@ -16,9 +16,6 @@
 //! IV, and fallback rules here.
 
 use base64::Engine;
-use cbc::Encryptor;
-use cbc::cipher::block_padding::Pkcs7;
-use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 
 /// `GIT_TOKEN_AES_KEY` default (`12345678901234567890123456789012`).
 const DEFAULT_KEY: &str = "12345678901234567890123456789012";
@@ -65,9 +62,11 @@ pub(crate) fn encrypt_sensitive_data(plain: &str) -> Result<String, CryptoError>
 
 /// AES-256-CBC/PKCS7 encryption of `plain` with an explicit key and IV.
 fn encrypt_with(key: &[u8], iv: &[u8], plain: &str) -> Result<String, CryptoError> {
-    let cipher =
-        Encryptor::<aes::Aes256>::new_from_slices(key, iv).map_err(|_| CryptoError::InvalidKey)?;
-    let ciphertext = cipher.encrypt_padded_vec_mut::<Pkcs7>(plain.as_bytes());
+    if key.len() != 32 {
+        return Err(CryptoError::InvalidKey);
+    }
+    let ciphertext = wegent_crypto::encrypt_cbc(key, iv, plain.as_bytes())
+        .map_err(|_| CryptoError::InvalidKey)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(ciphertext))
 }
 
@@ -117,21 +116,7 @@ fn decrypt_with(key: &[u8], iv: &[u8], text: &str) -> Option<String> {
     let ciphertext = base64::engine::general_purpose::STANDARD
         .decode(text)
         .ok()?;
-    let plaintext = match key.len() {
-        16 => cbc::Decryptor::<aes::Aes128>::new_from_slices(key, iv)
-            .ok()?
-            .decrypt_padded_vec_mut::<Pkcs7>(&ciphertext)
-            .ok()?,
-        24 => cbc::Decryptor::<aes::Aes192>::new_from_slices(key, iv)
-            .ok()?
-            .decrypt_padded_vec_mut::<Pkcs7>(&ciphertext)
-            .ok()?,
-        32 => cbc::Decryptor::<aes::Aes256>::new_from_slices(key, iv)
-            .ok()?
-            .decrypt_padded_vec_mut::<Pkcs7>(&ciphertext)
-            .ok()?,
-        _ => return None,
-    };
+    let plaintext = wegent_crypto::decrypt_cbc(key, iv, &ciphertext).ok()?;
     String::from_utf8(plaintext).ok()
 }
 
@@ -153,6 +138,10 @@ fn parse_aes_key(key: &str) -> Result<Vec<u8>, CryptoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cbc::{
+        Encryptor,
+        cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7},
+    };
 
     #[test]
     fn empty_and_masked_values_pass_through() {

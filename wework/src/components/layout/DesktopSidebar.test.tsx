@@ -239,7 +239,7 @@ describe('DesktopSidebar', () => {
         totalTasks: 26,
       },
     })
-    expect(screen.getByTestId('desktop-sidebar')).toHaveClass('font-normal')
+    expect(screen.getByTestId('desktop-sidebar')).not.toHaveClass('font-normal')
     expect(screen.getByText('Wework')).toHaveClass('font-medium')
     await userEvent.click(screen.getByTestId('project-item-button'))
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)

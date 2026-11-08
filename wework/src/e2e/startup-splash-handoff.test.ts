@@ -43,6 +43,24 @@ describe('startup handoff regression evidence', () => {
     expect(() => assertStartupSplashHandoff(snapshot)).toThrow('did not reach 100%')
   })
 
+  test('accepts showing the window before animation initialization completes', () => {
+    const snapshot = handoffSnapshot()
+    snapshot.events[1].name = 'shown'
+    snapshot.events[2].name = 'animation-ready'
+    expect(assertStartupSplashHandoff(snapshot)).toBe(snapshot.handoff)
+  })
+
+  test.each(['missing', 'duplicate', 'late'] as const)(
+    'rejects %s animation readiness evidence',
+    mode => {
+      const snapshot = handoffSnapshot()
+      const [ready] = snapshot.events.splice(1, 1)
+      if (mode === 'duplicate') snapshot.events.splice(1, 0, ready, { ...ready })
+      if (mode === 'late') snapshot.events.splice(3, 0, ready)
+      expect(() => assertStartupSplashHandoff(snapshot)).toThrow('animation readiness')
+    }
+  )
+
   test.each([
     ['progressNow', 99, 'did not reach 100%'],
     ['fillEnd', 1000, 'physical track endpoint'],

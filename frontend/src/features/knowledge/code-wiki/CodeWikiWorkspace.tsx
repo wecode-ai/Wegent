@@ -11,14 +11,15 @@ import { useUser } from '@/features/common/UserContext'
 import { DocumentList } from '@/features/knowledge/document/components/DocumentList'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
-import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   canManageKnowledgeBase,
   canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
+import { isManager, isEditor } from '@/types/base-role'
 import type {
+  MemberRole,
   CodeWikiView,
   KbGroupInfo,
   KnowledgeBase,
@@ -30,6 +31,10 @@ type DocumentManagementView = KnowledgeContentOrigin | 'permissions'
 
 interface CodeWikiWorkspaceProps {
   wiki: KnowledgeBase
+  verifiedRole?: MemberRole | null
+  permissionRefreshKey?: number
+  onPermissionsChanged?: () => void
+  onAccessLost?: () => void
   view: CodeWikiView
   onConfigure?: () => void
   groupInfo?: KbGroupInfo
@@ -44,6 +49,10 @@ interface CodeWikiWorkspaceProps {
  */
 export function CodeWikiWorkspace({
   wiki,
+  verifiedRole,
+  permissionRefreshKey = 0,
+  onPermissionsChanged,
+  onAccessLost,
   view,
   onConfigure,
   groupInfo,
@@ -51,16 +60,22 @@ export function CodeWikiWorkspace({
 }: CodeWikiWorkspaceProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
-  const namespaceRoleMap = useNamespaceRoleMap()
   const [documentView, setDocumentView] = useState<DocumentManagementView>('generated')
-  const { myPermission, fetchMyPermission } = useKnowledgePermissions({ kbId: wiki.id })
+  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+    kbId: wiki.id,
+    onAccessDenied: onAccessLost,
+  })
 
   useEffect(() => {
     if (user) void fetchMyPermission()
-  }, [fetchMyPermission, user, wiki.id])
+  }, [fetchMyPermission, user, wiki.id, permissionRefreshKey, verifiedRole])
+
+  useEffect(() => {
+    if (myPermission && !myPermission.has_access) onAccessLost?.()
+  }, [myPermission, onAccessLost])
 
   const permissions = useMemo(() => {
-    if (!user) {
+    if (!user || !myPermission?.has_access) {
       return { canManageKb: false, canManageDocuments: false, canManagePermissions: false }
     }
 
@@ -68,25 +83,31 @@ export function CodeWikiWorkspace({
       currentUserId: user.id,
       knowledgeBase: wiki,
       knowledgeRole: myPermission?.role,
-      namespaceRole: namespaceRoleMap.get(wiki.namespace),
     }
     return {
-      canManageKb: canManageKnowledgeBase(permissionArgs),
-      canManageDocuments: canManageKnowledgeBaseDocuments(permissionArgs),
-      canManagePermissions: canManageKnowledgeBasePermissions(permissionArgs),
+      canManageKb:
+        (verifiedRole === undefined || isManager(verifiedRole)) &&
+        canManageKnowledgeBase(permissionArgs),
+      canManageDocuments:
+        (verifiedRole === undefined || isEditor(verifiedRole)) &&
+        canManageKnowledgeBaseDocuments(permissionArgs),
+      canManagePermissions:
+        (verifiedRole === undefined || isManager(verifiedRole)) &&
+        canManageKnowledgeBasePermissions(permissionArgs),
     }
-  }, [myPermission?.role, namespaceRoleMap, user, wiki])
+  }, [myPermission, user, wiki, verifiedRole])
 
+  const contentOrigin: KnowledgeContentOrigin = documentView === 'user' ? 'user' : 'generated'
   const contentTabs = (
     <Tabs
       value={documentView}
       onValueChange={next => setDocumentView(next as DocumentManagementView)}
       className="flex-shrink-0"
     >
-      <TabsList className="h-11 sm:h-8" data-testid="code-wiki-content-roots">
+      <TabsList className="h-11 md:h-8" data-testid="code-wiki-content-roots">
         <TabsTrigger
           value="generated"
-          className="min-h-11 min-w-11 gap-1 px-2 text-xs sm:h-7 sm:min-h-0 sm:min-w-0"
+          className="min-h-11 min-w-11 gap-1 px-2 text-xs md:h-7 md:min-h-0 md:min-w-0"
           data-testid="code-wiki-content-generated"
         >
           <Library className="h-3.5 w-3.5" />
@@ -94,7 +115,7 @@ export function CodeWikiWorkspace({
         </TabsTrigger>
         <TabsTrigger
           value="user"
-          className="min-h-11 min-w-11 gap-1 px-2 text-xs sm:h-7 sm:min-h-0 sm:min-w-0"
+          className="min-h-11 min-w-11 gap-1 px-2 text-xs md:h-7 md:min-h-0 md:min-w-0"
           data-testid="code-wiki-content-user"
         >
           <FileText className="h-3.5 w-3.5" />
@@ -103,7 +124,7 @@ export function CodeWikiWorkspace({
         {permissions.canManagePermissions && (
           <TabsTrigger
             value="permissions"
-            className="min-h-11 min-w-11 gap-1 px-2 text-xs sm:h-7 sm:min-h-0 sm:min-w-0"
+            className="min-h-11 min-w-11 gap-1 px-2 text-xs md:h-7 md:min-h-0 md:min-w-0"
             data-testid="code-wiki-content-permissions"
           >
             <Shield className="h-3.5 w-3.5" />
@@ -127,7 +148,7 @@ export function CodeWikiWorkspace({
           className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"
           data-testid="code-wiki-document-management"
         >
-          {documentView === 'permissions' ? (
+          {documentView === 'permissions' && permissions.canManagePermissions ? (
             <>
               <div className="mb-4 flex items-center gap-3">
                 <div className="min-w-0 flex-1">
@@ -162,14 +183,22 @@ export function CodeWikiWorkspace({
                 </div>
                 {contentTabs}
               </div>
-              <PermissionManagementTab kbId={wiki.id} kbNamespace={wiki.namespace} />
+              <PermissionManagementTab
+                kbId={wiki.id}
+                kbNamespace={wiki.namespace}
+                onChanged={onPermissionsChanged ?? (() => void fetchMyPermission())}
+                onAccessDenied={() => {
+                  void fetchMyPermission()
+                  onPermissionsChanged?.()
+                }}
+              />
             </>
           ) : (
             <DocumentList
               key={`${wiki.id}-${documentView}`}
               knowledgeBase={wiki}
-              contentOrigin={documentView}
-              readOnly={documentView === 'generated'}
+              contentOrigin={contentOrigin}
+              readOnly={contentOrigin === 'generated'}
               canUpload={documentView === 'user' && permissions.canManageDocuments}
               canManageAllDocuments={documentView === 'user' && permissions.canManageKb}
               paginationEnabled={true}

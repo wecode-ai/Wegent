@@ -2,6 +2,7 @@ import {
   IssueAssignmentReceipts,
   type IssueAssignmentReceiptState,
 } from './IssueAssignmentReceipts'
+import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { LockKeyhole, Send } from 'lucide-react'
 import {
@@ -272,6 +273,7 @@ export function TodoEditor(props: TodoEditorProps) {
           api={receiptApi}
           issueId={item.id}
           version={item.version}
+          assignmentRevision={issueAssignmentRevision(item)}
           currentUserId={props.currentUserId}
           assigneeUserId={item.assignee_user_id}
           onStateChange={setAssignmentReceipts}

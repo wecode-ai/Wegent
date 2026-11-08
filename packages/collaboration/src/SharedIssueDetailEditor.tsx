@@ -112,23 +112,6 @@ function cn(...values: Array<string | false | null | undefined>): string {
 }
 
 export interface SharedEditorIssue extends CollaborationIssue {
-  assignment_history?: Array<{
-    by_user_id: number;
-    to_type: "user" | "agent" | "team" | "group" | null;
-    to_id: string | null;
-    to_name?: string | null;
-    action: "assign" | "reassign" | "unassign";
-    at: string;
-  }>;
-  status_history?: Array<{
-    from_status: string;
-    from_status_name?: string | null;
-    to_status: string;
-    to_status_name?: string | null;
-    trigger: string;
-    by_user_id: number | null;
-    at: string;
-  }>;
   automation?: { trigger?: string } | null;
   execution_error?: string | null;
   source_record_id?: string | null;
@@ -907,6 +890,15 @@ export function TodoEditor(props: TodoEditorProps) {
   const [pendingFiles, setPendingFiles] = useState<File[]>(() =>
     draftKey ? (draftAttachmentStore.get(draftKey) ?? []) : [],
   );
+  const pendingFileIdsRef = useRef(new WeakMap<File, string>());
+  const nextPendingFileIdRef = useRef(0);
+  const pendingFileId = useCallback((file: File) => {
+    const existing = pendingFileIdsRef.current.get(file);
+    if (existing) return existing;
+    const id = `pending-${nextPendingFileIdRef.current++}`;
+    pendingFileIdsRef.current.set(file, id);
+    return id;
+  }, []);
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [editingDelivery, setEditingDelivery] = useState<{ id: string } | null>(
@@ -1500,13 +1492,21 @@ export function TodoEditor(props: TodoEditorProps) {
     tags.length > 0 ||
     pendingFiles.length > 0,
   );
-  const pendingAttachmentRows: AttachmentRow[] = pendingFiles.map(
-    (file, index) => ({
-      id: `pending-${index}`,
-      display_name: file.name,
-      content_type: file.type || null,
-      size_bytes: file.size,
-    }),
+  const pendingAttachmentRows: AttachmentRow[] = pendingFiles.map((file) => ({
+    id: pendingFileId(file),
+    display_name: file.name,
+    content_type: file.type || null,
+    size_bytes: file.size,
+  }));
+  const readPendingAttachment = useCallback(
+    async (attachmentId: string) => {
+      const file = pendingFiles.find(
+        (candidate) => pendingFileId(candidate) === attachmentId,
+      );
+      if (!file) throw new Error("Pending attachment is unavailable");
+      return file;
+    },
+    [pendingFileId, pendingFiles],
   );
   const childRailExpanded = Boolean(expandedRailSections.children);
   const executionRailExpanded = Boolean(expandedRailSections.executions);
@@ -1808,7 +1808,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
   async function removePendingFile(row: AttachmentRow) {
     setPendingFiles((current) =>
-      current.filter((_, index) => `pending-${index}` !== row.id),
+      current.filter((file) => pendingFileId(file) !== row.id),
     );
   }
 
@@ -3599,7 +3599,9 @@ export function TodoEditor(props: TodoEditorProps) {
                     downloadingId={downloadingAttachmentId}
                     onAdd={isCreate ? stageFiles : addAttachments}
                     onReadPreview={
-                      isCreate ? undefined : editorPort.attachments.read
+                      isCreate
+                        ? readPendingAttachment
+                        : editorPort.attachments.read
                     }
                     onOpen={isCreate ? undefined : openAttachment}
                     onDownload={

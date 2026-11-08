@@ -20,10 +20,16 @@ import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
 import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
+import { finishFailedUpgradeRetry } from '../modules/failed-upgrade-retry.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
-import { stopProcessGroup } from '../process-lifecycle.mjs'
+import { stopProcessGroup, waitForOwnedProcessExit } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
-import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
+import {
+  routeUpgradeRequests,
+  routeRunningUpgradeRequests,
+} from '../modules/upgrade-request-route.mjs'
+import { assertInstalledStartupWithStaleHistory } from '../modules/installed-startup-history.mjs'
+import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -105,6 +111,7 @@ export async function createDesktopScenario(options) {
     checkpoint === 'app-rollback' &&
     (pair.kind === 'regression' || Boolean(pair.from.installedSource))
   let legacyDataDirectory
+  let launchEnvironment
   assert.equal(pair.schemaVersion, 1)
   assert.equal(
     pair.suiteVersion,
@@ -125,6 +132,8 @@ export async function createDesktopScenario(options) {
   }
   const channel = pair.channel || (pair.to.version.includes('-beta.') ? 'beta' : 'stable')
   const verifiesRefreshedUpdate = checkpoint === 'app-update-refresh'
+  const verifiesRetry = checkpoint === 'app-update-retry'
+  const verifiesFailedActivation = checkpoint === 'app-upgrade-recovery' || verifiesRetry
   let offer = verifiesRefreshedUpdate ? 'unavailable' : 'target'
   const unavailablePolicy = () => ({
     ...unavailableUpdatePolicy(
@@ -135,6 +144,7 @@ export async function createDesktopScenario(options) {
     channel,
   })
   let control
+  let inspectorPort
   let passed = false
   let origin
   let modelRequests = 0
@@ -234,8 +244,7 @@ export async function createDesktopScenario(options) {
   const root = join(electronUserDataDirectory, 'releases')
   const sourceRuntimeRoot = join(electronUserDataDirectory, 'managed-runtimes/dsh')
   const appEnvironment = {}
-  if (checkpoint === 'app-upgrade-recovery')
-    appEnvironment.WEWORK_E2E_RELEASE_FAILURE_VERSION = pair.to.version
+  if (verifiesFailedActivation) appEnvironment.WEWORK_E2E_RELEASE_FAILURE_VERSION = pair.to.version
   if (checkpoint === 'app-rollback-recovery')
     appEnvironment.WEWORK_E2E_ROLLBACK_FAILURE = 'after-journal'
 
@@ -291,12 +300,19 @@ export async function createDesktopScenario(options) {
     ...(!options.preparationOnly
       ? {
           electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
-          appProcessStarted: child =>
-            routeUpgradeRequests(child, origin, join(resultDir, 'upgrade-transport.log')),
+          appProcessStarted: async child => {
+            inspectorPort = await routeUpgradeRequests(
+              child,
+              origin,
+              join(resultDir, 'upgrade-transport.log'),
+              { followHandoffs: true }
+            )
+          },
         }
       : {}),
     appEnvironment,
     async prepareApp({ appEnvironment: sourceEnvironment }) {
+      launchEnvironment = sourceEnvironment
       // Exercise each delivered package's own executor and coding CLIs. Fixed
       // runner binary overrides would otherwise survive into the target release.
       for (const key of [
@@ -603,15 +619,14 @@ export async function createDesktopScenario(options) {
         await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
         'before-update'
       )
-      if (checkpoint === 'app-upgrade-recovery')
-        await useVersionedMacosRecoveryBridge(root, pair.to.version)
+      if (verifiesFailedActivation) await useVersionedMacosRecoveryBridge(root, pair.to.version)
       const readyCount = control.readyCount
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      if (checkpoint === 'app-upgrade-recovery') {
+      if (verifiesFailedActivation) {
         assert.equal(
           await installedVersion(),
           pair.from.version,
@@ -638,10 +653,28 @@ export async function createDesktopScenario(options) {
           join(resultDir, 'upgrade-recovery-result.json'),
           JSON.stringify({ source: pair.from.sha256, target: pair.to.sha256, recovered: true })
         )
+        if (verifiesRetry)
+          await finishFailedUpgradeRetry(control, {
+            root,
+            homePath: options.homePath,
+            pair,
+            requests,
+            resultDir,
+            restartDesktopApp,
+            workbenchReadyTimeoutMs,
+            about,
+            send,
+            installedVersion,
+            assertSelectedComposition,
+            captureScreenshot: options.captureScreenshot,
+            routeCurrentUpdateRequests: () =>
+              routeRunningUpgradeRequests(inspectorPort, control, origin),
+          })
         passed = true
         return
       }
       assert.equal(await installedVersion(), pair.to.version)
+      const targetReleaseId = (await readFile(join(root, 'active'), 'utf8')).trim()
       console.log(`[upgrade-e2e] Running target ${pair.to.version}`)
       await control.command(
         'waitFor',
@@ -681,6 +714,29 @@ export async function createDesktopScenario(options) {
         'The restored task did not execute through the real runtime'
       )
       console.log('[upgrade-e2e] Persisted task continued through the real runtime')
+      if (process.platform === 'darwin' && checkpoint === 'app-rollback') {
+        await assertInstalledStartupWithStaleHistory({
+          root,
+          restartDesktopApp,
+          installedVersion,
+          expectedVersion: pair.to.version,
+          control,
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: ANSWER,
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
+        const requestsBeforeRestartedTask = modelRequests
+        await send(`${PROMPT} continue after ordinary startup with old release history`)
+        assert.ok(
+          modelRequests > requestsBeforeRestartedTask,
+          'The installed package did not continue the task after stale-history startup'
+        )
+        console.log(
+          '[upgrade-e2e] Installed target restarted with stale history and continued its task'
+        )
+      }
       if (
         verifiesUnstartedActivation ||
         verifiesRefreshedUpdate ||
@@ -743,6 +799,20 @@ export async function createDesktopScenario(options) {
           0
         )
           await control.command('click', '[data-testid="settings-back-button"]')
+        if (process.platform === 'darwin' && checkpoint === 'app-rollback-recovery') {
+          await assertDelayedRecoveryHandoffs({
+            root,
+            targetId: targetReleaseId,
+            control,
+            environment: launchEnvironment,
+            installedVersion,
+            expectedVersion: pair.from.version,
+            origin,
+            resultDir,
+            workspacePath,
+            timeoutMs: workbenchReadyTimeoutMs,
+          })
+        }
         await pruneWithRolledBackSource(root, resultDir, options.homePath)
         await send(`${PROMPT} continue after rollback`)
         await assertSelectedComposition(pair.from.version)
@@ -799,7 +869,32 @@ export async function createDesktopScenario(options) {
     async cleanup() {
       const errors = []
       try {
+        const shutdownSnapshot =
+          control && process.platform === 'win32' && checkpoint === 'app-rollback-recovery'
+            ? JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+            : null
+        if (shutdownSnapshot)
+          await writeFile(
+            join(resultDir, 'shutdown-processes-result.json'),
+            JSON.stringify(
+              shutdownSnapshot,
+              [
+                'capturedAt',
+                'platform',
+                'applicationPid',
+                'degraded',
+                'code',
+                'processes',
+                'pid',
+                'parentPid',
+                'startedAt',
+                'kind',
+              ],
+              2
+            )
+          )
         if (control) await control.command('quitApp', 'body').catch(() => undefined)
+        if (shutdownSnapshot) await waitForOwnedProcessExit(shutdownSnapshot)
         const fs = await import('node:fs/promises')
         // Default-layout runs keep product log locations. Retain diagnostics before
         // the shared result compactor removes the isolated Home and its databases.
@@ -818,7 +913,9 @@ export async function createDesktopScenario(options) {
           const state = {}
           for (const name of [
             'active',
+            'active-pid',
             'bridge',
+            'macos-rollback',
             'trial',
             'attempted',
             'healthy',

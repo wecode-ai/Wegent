@@ -44,6 +44,9 @@ vi.mock('../e2e/desktop/modules/plugin-sync-disconnect.mjs', () => ({
 vi.mock('../e2e/desktop/modules/plugin-reinstall-status.mjs', () => ({
   verifyPluginReinstallStatus: context => state.invoke('reinstall-status', context),
 }))
+vi.mock('../e2e/desktop/modules/plugin-copied-source-reinstall.mjs', () => ({
+  verifyPluginCopiedSourceReinstall: context => state.invoke('copied-source-reinstall', context),
+}))
 vi.mock('../e2e/desktop/modules/plugin-write-coordination.mjs', () => ({
   verifyPluginWriteCoordination: context => state.invoke('write-coordination', context),
 }))
@@ -265,6 +268,7 @@ test('install/update cases reuse the write-coordination cloud, MinIO and all exi
   expect(state.calls).toEqual([
     'sync-disconnect',
     'reinstall-status',
+    'copied-source-reinstall',
     'write-coordination',
     'install-and-update',
   ])
@@ -283,7 +287,7 @@ test('install/update cases reuse the write-coordination cloud, MinIO and all exi
   }
 })
 
-for (const name of ['sync-disconnect', 'write-coordination']) {
+for (const name of ['sync-disconnect', 'copied-source-reinstall', 'write-coordination']) {
   test(`a restored ${name} fault does not skip the remaining checks or hide failure`, async t => {
     const f = await fixture(t, 'plugin-write-coordination')
     state.failGroup = name
@@ -293,6 +297,7 @@ for (const name of ['sync-disconnect', 'write-coordination']) {
     expect(state.calls).toEqual([
       'sync-disconnect',
       'reinstall-status',
+      'copied-source-reinstall',
       'write-coordination',
       'install-and-update',
     ])
