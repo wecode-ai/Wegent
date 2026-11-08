@@ -24,6 +24,7 @@ import { withTemporaryBuildDirectory } from './lib/temporary-build-directory.mjs
 import { preparePackagedRuntimeCache } from './lib/packaged-runtime-preparation.mjs'
 import { prepareInstalledSourceSnapshot } from './lib/installed-source-snapshot-preparation.mjs'
 import { waitForUpgradeSourcePrefetch } from './lib/upgrade-source-prefetch.mjs'
+import { upgradeCheckpointPassed } from './lib/upgrade-checkpoint-result.mjs'
 import { usesLegacyReleaseLayout } from '../electron/src/runtime/legacy-release-layout.mjs'
 import {
   upgradeVerificationCheckpoint,
@@ -31,7 +32,6 @@ import {
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
   UPGRADE_SOURCE_DIAGNOSTICS,
   UPGRADE_SUITE_VERSION,
-  rejectFailedReleaseCheckpoint,
 } from '../e2e/desktop/upgrade-suite.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -344,7 +344,7 @@ async function verifySource(source, targetChannel, previous) {
       to: { ...release, path: join(assets, release.name) },
     })
   )
-  await run({
+  const passed = await run({
     WEWORK_E2E_APP_BIN: from.executable,
     WEWORK_E2E_EXECUTOR_BIN: from.executor,
     WEWORK_E2E_UPGRADE_PAIR: pairPath,
@@ -353,6 +353,12 @@ async function verifySource(source, targetChannel, previous) {
     WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: '1',
     WEWORK_E2E_RESULT_ROOT: join(diagnostics, targetChannel, source.version),
   })
+  if (!passed) {
+    console.warn(
+      `::warning::Incompatible upgrade candidate: ${platform}/${arch}/${targetChannel}/${source.version} -> ${release.version}; no edge will be generated`
+    )
+    return null
+  }
   if (diagnosticCheckpoint) return true
   const evidenceBytes = await readFile(evidenceFile)
   const edge = verifiedUpgradeEdge({
@@ -400,17 +406,16 @@ async function run(environment) {
     )
     child.once('error', reject)
     child.once('exit', (code, signal) => {
-      if (signal) reject(new Error(`Upgrade verification interrupted by ${signal}`))
-      else {
-        try {
-          rejectFailedReleaseCheckpoint(
+      try {
+        accept(
+          upgradeCheckpointPassed(
             diagnosticCheckpoint || upgradeVerificationCheckpoint(platform),
-            { code }
+            { code, signal },
+            Boolean(diagnosticCheckpoint)
           )
-          accept(true)
-        } catch (error) {
-          reject(error)
-        }
+        )
+      } catch (error) {
+        reject(error)
       }
     })
   })
