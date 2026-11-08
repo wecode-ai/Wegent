@@ -141,6 +141,49 @@ async fn direct_sources_do_not_require_duties_or_a_healthy_assessment() {
 }
 
 #[tokio::test]
+async fn revised_source_records_continue_only_the_exact_owned_work() {
+    let (_root, handler, store) = fixture();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    let source = json!({"providerId":"example/events","kind":"record","id":"selected","name":"Selected record","profile":"account","policy":{"automatic":true,"askBeforeAct":true,"immediate":true}});
+    settings["primary"] =
+        json!({"enabled":true,"prompt":"","preferences":"","connections":[source]});
+    settings["roles"] = json!([]);
+    let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let source = &settings["primary"]["connections"][0];
+    let old = json!({"id":"record","objectId":"entity","version":"v1","text":"Old result","at":chrono::Utc::now().to_rfc3339()});
+    let work = store
+        .ingest_stand_in_message(7, "@primary", source, &old, None)
+        .unwrap();
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: work["id"].as_str().unwrap().into(),
+        status: "done".into(),
+        runtime_handle: json!({"origin":{"type":"connection_work","initiatedBy":"stand_in","userId":7,"standInId":"@primary"}}),
+        ..Default::default()
+    });
+    for (id, object, bound) in [
+        ("record", "entity", true),
+        ("unrelated", "entity", false),
+        ("record", "other-entity", false),
+    ] {
+        let incoming = store.enqueue_stand_in_event(7,json!([id,object]),json!({"kind":"connection","roleScoped":true,"roleIds":["@primary"],"source":source,"message":{"id":id,"objectId":object,"version":"v2","text":"New result","at":chrono::Utc::now().to_rfc3339()}})).unwrap();
+        let snapshot = handler.coordination_rpc("runtime.coordination.snapshot",json!({"contextId":"personal:7","revision":LocalTaskStore::coordination_configuration_version(&settings)})).await.unwrap();
+        let event = snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["id"] == incoming["id"])
+            .unwrap();
+        if bound {
+            assert_eq!(event["binding"]["workId"], work["id"]);
+            assert!(event["dispatch"].is_null());
+        } else {
+            assert!(event["binding"].is_null());
+            assert_eq!(event["dispatch"]["roleId"], "@primary");
+        }
+    }
+}
+
+#[tokio::test]
 async fn direct_dispatch_preserves_a_waiting_coordinator_batch_and_silent_intake() {
     let (_root, handler, store) = fixture();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();

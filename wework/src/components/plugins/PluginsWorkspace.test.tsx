@@ -2203,6 +2203,7 @@ describe('PluginsWorkspace', () => {
       expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toEqual([
         expect.objectContaining({ displayName: 'New Scope Catalog' }),
       ])
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).toBeEnabled())
     }
   )
 

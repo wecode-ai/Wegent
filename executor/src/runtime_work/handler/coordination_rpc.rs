@@ -265,13 +265,24 @@ impl RuntimeWorkRpcHandler {
         let target = if event["kind"] == "followup" {
             event["taskId"].as_str().map(str::to_owned)
         } else if event["kind"] == "connection" {
+            // Revisions of the same provider-owned object retain their conversation.
+            // Unrelated messages still need an explicit quote or a new work item.
             match (
                 event["roleIds"][0].as_str(),
-                event["message"]["quotedMessageId"].as_str(),
+                event["message"]["quotedMessageId"].as_str().or_else(|| {
+                    event["message"]["objectId"]
+                        .is_string()
+                        .then(|| event["message"]["id"].as_str())
+                        .flatten()
+                }),
             ) {
-                (Some(role), Some(quoted)) => store
-                    .known_stand_in_message(user, role, &event["source"], quoted)
+                (Some(role), Some(message)) => store
+                    .known_stand_in_message(user, role, &event["source"], message)
                     .map_err(settings_error)?
+                    .filter(|previous| {
+                        event["message"]["quotedMessageId"].is_string()
+                            || previous["objectId"] == event["message"]["objectId"]
+                    })
                     .and_then(|previous| previous["workId"].as_str().map(str::to_owned)),
                 _ => None,
             }
