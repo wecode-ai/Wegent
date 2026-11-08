@@ -1,10 +1,94 @@
 use super::*;
+use crate::runtime_work::handler::tests::{install_native_history, ScalarEnv};
+
+#[test]
+fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env: Vec<_> = ["WEGENT_EXECUTOR_HOME", "CODEX_HOME", "WEGENT_CODEX_HOME"]
+                .into_iter()
+                .map(|key| ScalarEnv::set(key, root.path().to_str().unwrap()))
+                .collect();
+            let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
+            install_native_history(&mut handler, root.path(), vec![], None);
+            let path = root.path().join("source.jsonl");
+            fs::write(&path, metadata("source")).unwrap();
+            fs::write(
+                root.path().join("thread_read.json"),
+                json!({"thread":{"id":"source","modelProvider":"openai","path":path}}).to_string(),
+            )
+            .unwrap();
+            // thread/list intentionally excludes this source, as a router-default catalog does.
+            let mut source = SideSourceThread {
+                thread_id: "source".into(),
+                thread_path: None,
+                workspace_path: root.path().to_string_lossy().into_owned(),
+            };
+            let ready = tokio::time::timeout(
+                Duration::from_secs(5),
+                handler.wait_for_side_source_rollout(&mut source),
+            )
+            .await;
+            handler.codex_app_server.restart().await;
+            ready
+                .expect("a persisted source must not depend on catalog visibility")
+                .unwrap();
+            assert_eq!(source.thread_path.as_deref(), path.to_str());
+            let calls = fs::read_to_string(root.path().join("requests.jsonl")).unwrap();
+            let calls: Vec<Value> = calls
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert!(!calls.iter().any(|call| call["method"] == "thread/list"));
+            assert!(calls.iter().any(|call| call["method"] == "thread/read"
+                && call["params"] == json!({"threadId":"source","includeTurns":false})));
+        });
+}
 
 fn metadata(thread_id: &str) -> String {
     format!(
         "{}\n",
         json!({"type":"session_meta","payload":{"id":thread_id}})
     )
+}
+
+#[test]
+fn side_source_rejects_missing_or_mismatched_native_metadata() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env: Vec<_> = ["WEGENT_EXECUTOR_HOME", "CODEX_HOME", "WEGENT_CODEX_HOME"]
+                .into_iter()
+                .map(|key| ScalarEnv::set(key, root.path().to_str().unwrap()))
+                .collect();
+            let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
+            install_native_history(&mut handler, root.path(), vec![], None);
+            for response in [json!({}), json!({"thread":{"id":"another-source"}})] {
+                fs::write(root.path().join("thread_read.json"), response.to_string()).unwrap();
+                let mut source = SideSourceThread {
+                    thread_id: "source".into(),
+                    thread_path: None,
+                    workspace_path: root.path().to_string_lossy().into_owned(),
+                };
+                let error = handler
+                    .wait_for_side_source_rollout(&mut source)
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.code, "side_source_not_ready");
+                assert!(error.message.contains("different or missing source thread"));
+                assert!(source.thread_path.is_none());
+            }
+            handler.codex_app_server.restart().await;
+        });
 }
 
 #[tokio::test]

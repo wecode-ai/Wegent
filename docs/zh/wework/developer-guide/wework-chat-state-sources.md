@@ -588,6 +588,7 @@ Electron 聊天中的 assistant Markdown 图片可以引用本机绝对路径或
 - 每条发送成功或进入乐观展示的 user message 都必须保存对应的持久化附件引用，包含首条消息、普通 follow-up 和队列发送。清空 composer 附件只清理当前输入状态，不能让已经发送的附件从消息列表消失；本地 `blob:` 预览地址必须转换为可恢复的本地路径。
 - 右侧工作区只打开一个临时聊天时，默认使用紧凑的 `420px` 面板宽度；打开其他工作区 tab 后恢复通用分栏默认值，用户手动调整的宽度仍然优先。
 - 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该标记控制任务可见性：任务不写入左侧任务列表，也不触发主 pane 导航。新建的多轮侧聊由 executor 在保存的执行请求中设置 `persist_runtime_thread`，使用正常持久化的 Codex 原生线程；任务隐藏与原生线程是否落盘必须分别判断。
+- 当 `sideSource` 没有缓存的会话文件路径时，executor 必须通过 `thread/read(includeTurns=false)` 按原会话 ID 查询元数据，再校验文件中的会话标识。不能扫描默认 `thread/list`：该列表按当前模型 provider 过滤且有数量上限，会把已经持久化的跨 provider 会话误判为尚未落盘。“先聊聊”与普通临时聊天共用这条路径。
 - 新建侧聊的后续消息使用 `thread/resume` 恢复同一个原生线程，因此能力变更导致 Codex app-server 重启后仍能续聊。旧版未持久化的侧聊继续使用 `direct_thread_id`，线程丢失时明确提示新建临时聊天，不能伪造历史或悄悄开启丢失上下文的新线程。正文仍从 executor 的侧聊缓存读取；executor 整体重启后的正文恢复不由此路径保证。
 - 回复预测仅对可恢复的源线程执行 resume/fork；旧版纯内存侧聊返回无建议。预测 fork 和一次性文本生成仍使用原生 ephemeral 线程，不能继承多轮侧聊的持久化标记。
 - 能力同步按实际生效内容判定变化。相同内容重复同步不能增加 capability revision；真实变更以及部分失败后已生效的变更必须使下一轮加载新能力，过期请求或成功回滚不能凭同步次数触发重启。
