@@ -126,7 +126,16 @@ test('an incompatible optional baseline gets no edge and cannot conceal a requir
   const { frozen, shards } = fixture()
   shards[0].status = 'failed'
   shards[0].evidence = null
-  const [stable] = await aggregateUpgradeShards(frozen, shards, '123')
+  await assert.rejects(
+    aggregateUpgradeShards(frozen, shards, '123'),
+    /Baseline exclusion requires human confirmation: windows\/x64\/stable\/1.0.0/
+  )
+  await assert.rejects(
+    aggregateUpgradeShards(frozen, shards, '123', ['macos/arm64/stable/1.0.0']),
+    /human confirmation/
+  )
+  const approval = ['windows/x64/stable/1.0.0']
+  const [stable] = await aggregateUpgradeShards(frozen, shards, '123', approval)
   assert.equal(stable.edges.length, 1)
   assert.equal(stable.edges[0].from, '1.0.2')
   assert.equal(
@@ -135,12 +144,15 @@ test('an incompatible optional baseline gets no edge and cannot conceal a requir
   )
   shards[1].status = 'failed'
   shards[1].evidence = null
-  await assert.rejects(aggregateUpgradeShards(frozen, shards, '123'), /Previous release/)
+  await assert.rejects(
+    aggregateUpgradeShards(frozen, shards, '123', [...approval, 'windows/x64/stable/1.0.2']),
+    /Previous release/
+  )
   const required = fixture(['1.0.0'])
   required.shards[0].status = 'failed'
   required.shards[0].evidence = null
   await assert.rejects(
-    aggregateUpgradeShards(required.frozen, required.shards, '123'),
+    aggregateUpgradeShards(required.frozen, required.shards, '123', approval),
     /Required direct/
   )
 })
@@ -234,7 +246,7 @@ test('the aggregation CLI requires both platforms and writes every channel polic
       )
     }
   }
-  const run = () =>
+  const run = (approval = '') =>
     execFileSync(
       process.execPath,
       [
@@ -249,6 +261,7 @@ test('the aggregation CLI requires both platforms and writes every channel polic
           GITHUB_RUN_ID: '123',
           WEWORK_UPGRADE_VERSION: f.options.version,
           WEWORK_UPGRADE_CHANNEL: f.options.channel,
+          WEWORK_APPROVED_BASELINE_EXCLUSIONS: approval,
         },
         stdio: 'pipe',
       }
@@ -260,6 +273,19 @@ test('the aggregation CLI requires both platforms and writes every channel polic
     'upgrade-policy-stable-macos-arm64.json',
     'upgrade-policy-stable-windows-x64.json',
   ])
+  const rejected = join(reports, 'upgrade-shard-macos-0.json')
+  const shard = JSON.parse(await readFile(rejected, 'utf8'))
+  await writeFile(rejected, JSON.stringify({ ...shard, status: 'failed', evidence: null }))
+  assert.throws(run, /Baseline exclusion requires human confirmation/)
+  run('macos/arm64/stable/1.0.0')
+  const stable = JSON.parse(
+    await readFile(join(output, 'upgrade-policy-stable-macos-arm64.json'), 'utf8')
+  )
+  assert.deepEqual(
+    stable.edges.map(edge => edge.from),
+    ['1.0.2']
+  )
+  assert.equal(stable.releases.at(-1).minSourceVersion, '1.0.2')
   await rm(join(reports, 'upgrade-shard-macos-0.json'))
   assert.throws(run, /Missing upgrade source shard/)
 })

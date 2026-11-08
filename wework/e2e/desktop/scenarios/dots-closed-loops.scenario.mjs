@@ -10,6 +10,7 @@ import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
 import { DEFAULT_MODEL_ID } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readStoryTaskEvidence } from '../modules/stand-in-private-story-evidence.mjs'
+import { assertMarkdownPreviewAndSource } from '../modules/markdown-file-preview.mjs'
 import {
   STORY_CHAT,
   STORY_PRIMARY,
@@ -446,10 +447,14 @@ export function createDesktopScenario(options) {
       options.uiTimeoutMs,
       'The visible preview must resolve the exact canonical file path'
     )
-    await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-      text,
-      visible: true,
-    })
+    if (relative.endsWith('.md')) {
+      await assertMarkdownPreviewAndSource(control, text, { visible: true })
+    } else {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        text,
+        visible: true,
+      })
+    }
   }
 
   async function persisted(control, marker) {
