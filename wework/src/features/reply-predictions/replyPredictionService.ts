@@ -1,9 +1,11 @@
 import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskLifecycleSnapshot } from '@/features/workbench/runtimeTaskLifecycle/types'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import {
   readReplyPrediction,
   removeReplyPredictionCache,
+  subscribeReplyPredictionCache,
   writeReplyPrediction,
 } from './replyPredictionCache'
 
@@ -91,6 +93,7 @@ export function deleteReplyPredictions(address: RuntimeTaskAddress) {
 }
 
 export class ReplyPredictionService {
+  private static cacheSubscribed = false
   private api: PredictionApi
   private entries = new Map<string, PredictionEntry>()
   private owners = new Map<string, number>()
@@ -104,6 +107,18 @@ export class ReplyPredictionService {
       if (!reference.deref()) liveServices.delete(reference)
     }
     liveServices.add(new WeakRef(this))
+    if (!ReplyPredictionService.cacheSubscribed) {
+      subscribeReplyPredictionCache(ReplyPredictionService.notifyPersistedChanges)
+      ReplyPredictionService.cacheSubscribed = true
+    }
+  }
+
+  private static notifyPersistedChanges() {
+    for (const reference of liveServices) {
+      const service = reference.deref()
+      if (service) service.notify()
+      else liveServices.delete(reference)
+    }
   }
 
   removeTask(address: RuntimeTaskAddress) {
@@ -173,29 +188,17 @@ export class ReplyPredictionService {
     if (!entry) {
       this.invalidate(source.scope)
       const controller = new AbortController()
-      const cached = readReplyPrediction(source.scope, key)
-      if (cached?.failed) this.failedScopes.add(source.scope)
-      const promise = cached
-        ? Promise.resolve(cached.text)
-        : this.generate(source, controller.signal)
+      const promise = this.generateOnce(source, key, controller.signal)
       entry = {
         address: source.address,
         controller,
         promise,
-        accepted: cached?.accepted ?? false,
-        settled: Boolean(cached),
+        accepted: false,
+        settled: false,
       }
       const activeEntry = entry
-      void promise.then(text => {
+      void promise.then(() => {
         activeEntry.settled = true
-        if (!controller.signal.aborted && this.entries.get(key) === activeEntry) {
-          writeReplyPrediction(source.scope, {
-            key,
-            text,
-            accepted: activeEntry.accepted,
-            failed: this.failedScopes.has(source.scope),
-          })
-        }
         this.notify()
       })
       this.entries.set(key, entry)
@@ -208,6 +211,7 @@ export class ReplyPredictionService {
       }
     }
     const text = await entry.promise
+    entry.accepted ||= readReplyPrediction(source.scope, key)?.accepted ?? false
     if (
       !text ||
       entry.accepted ||
@@ -215,16 +219,55 @@ export class ReplyPredictionService {
       this.entries.get(key) !== entry
     )
       return null
+    const isCurrent = () =>
+      !entry.accepted &&
+      !readReplyPrediction(source.scope, key)?.accepted &&
+      !entry.controller.signal.aborted &&
+      this.entries.get(key) === entry
     return {
       text,
-      isCurrent: () =>
-        !entry.accepted && !entry.controller.signal.aborted && this.entries.get(key) === entry,
+      isCurrent,
       onAccept: () => {
-        if (entry.controller.signal.aborted || this.entries.get(key) !== entry) return
+        if (!isCurrent()) return
         entry.accepted = true
         writeReplyPrediction(source.scope, { key, text, accepted: true, failed: false })
         this.notify()
       },
+    }
+  }
+
+  private async generateOnce(source: ReplyPredictionSource, key: string, signal: AbortSignal) {
+    try {
+      return await navigator.locks.request(
+        `wework.replyPrediction:${source.scope}`,
+        { signal },
+        async () => {
+          const cached = readReplyPrediction(source.scope, key)
+          if (cached) {
+            if (cached.failed) this.failedScopes.add(source.scope)
+            return cached.text
+          }
+          const text = await this.generate(source, signal)
+          if (signal.aborted) return null
+          writeReplyPrediction(source.scope, {
+            key,
+            text,
+            accepted: false,
+            failed: this.failedScopes.has(source.scope),
+          })
+          // Other renderers may restore storage while waiting for this lock.
+          await flushDesktopLocalStoragePersistence()
+          return text
+        }
+      )
+    } catch (error) {
+      if (!signal.aborted) {
+        this.failedScopes.add(source.scope)
+        console.debug('[Wework] Reply prediction shared-cache coordination unavailable', {
+          reason: error instanceof Error ? error.name : 'unknown',
+        })
+      }
+      return null
     }
   }
 

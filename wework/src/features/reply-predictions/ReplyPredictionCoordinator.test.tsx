@@ -1,3 +1,4 @@
+import './replyPredictionTestLocks'
 import { Activity, useContext } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
@@ -116,7 +117,7 @@ describe('window reply prediction coordinator', () => {
       start()
       finish()
     })
-    expect(predict).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
     act(() => start(address, 'turn-2'))
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
     act(() => finish(address, 'turn-2'))
@@ -136,7 +137,7 @@ describe('window reply prediction coordinator', () => {
         start()
         finish()
       })
-      expect(predict).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
       if (action === 'disable') view.rerender(fixture({ enabled: false }))
       if (action === 'remove') act(() => store.remove(address))
       if (action === 'close') view.unmount()

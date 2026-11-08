@@ -14,6 +14,8 @@ Prediction results for the same turn and model configuration are saved locally a
 
 While the window is running, switching tasks does not stop prediction generation. Background tasks also generate and cache suggestions after their current turn completes. Returning to a task reuses its result, and hiding its page does not cancel an in-flight prediction. Background predictions consume that conversation model's allowance too. Generation after the window closes is not required, and opening the window does not generate a backlog for every historical task.
 
+Multiple windows share one generation and cached result for the same task, turn, and model configuration, and acceptance is synchronized. Closing a window that is only waiting for the result does not interrupt generation already running in another window.
+
 Predictions use the current conversation model's allowance. Wework forks an ephemeral Codex prediction thread, inheriting the original history, effective configuration, instructions, and tool definitions. It adds a prediction prompt and requests low reasoning effort. The prompt instructs the model not to call tools or perform actions; predictions are not added to the original conversation history. Starting another turn or disabling the feature cancels pending predictions. New conversations without a completed Codex turn do not generate suggestions.
 
 Goals that remain active do not generate suggestions, including interrupted Goals waiting in the queue. Predictions do not resume these Goals to read their history or change their status.

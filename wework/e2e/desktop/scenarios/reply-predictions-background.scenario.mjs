@@ -3,6 +3,10 @@ import { createDesktopScenario as createExistingScenario } from './reply-predict
 import { selectE2EModel } from '../modules/shared.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
+  openReplyPredictionWindows,
+  waitForReplyPredictionContention,
+} from '../modules/reply-prediction-windows.mjs'
+import {
   assistantMessage,
   createSse,
   readRequestBody,
@@ -67,6 +71,7 @@ export async function createDesktopScenario(options) {
   let heldTurn
   let heldPrediction
   let predictionRequests = 0
+  let windowContention
   return {
     ...existing,
     async handleHttp(request, response, url) {
@@ -159,17 +164,59 @@ export async function createDesktopScenario(options) {
         await control.command('click', `[data-testid="runtime-local-task-row-${task.taskId}"]`)
         await control.command('waitFor', GHOST, { text: nextSuggestion })
         assert.equal(predictionRequests, 2, 'Task switching duplicated a prediction request')
+
+        heldTurn = null
+        heldPrediction = null
+        await control.command('fill', INPUT, { value: `${PROMPT} 验证两个窗口。` })
+        await control.command('clickWhenEnabled', `${ACTIVE} [data-testid="send-message-button"]`)
+        await waitForSnapshot(control, () => heldTurn, 'The cross-window turn did not start')
+        const { main, detached } = await openReplyPredictionWindows(control, task.taskId)
+        complete(heldTurn, 'background-turn', '两个窗口中的同一轮已完成。')
+        await waitForSnapshot(
+          main,
+          () => heldPrediction,
+          'The cross-window prediction did not start'
+        )
+        windowContention = await waitForReplyPredictionContention(
+          main,
+          task.taskId,
+          options.uiTimeoutMs
+        )
+        assert.equal(predictionRequests, 3, 'Two renderers generated the same prediction')
+        const sharedSuggestion = '请验证跨窗口只生成一次。'
+        complete(
+          heldPrediction.response,
+          heldPrediction.id,
+          JSON.stringify({ suggestion: sharedSuggestion })
+        )
+        await waitForCache(main, cacheKey, sharedSuggestion)
+        await detached.command('waitFor', GHOST, { text: sharedSuggestion })
+        await main.command('waitFor', GHOST, { text: sharedSuggestion })
+        assert.equal(predictionRequests, 3, 'The waiting renderer generated another prediction')
+        await detached.command('press', INPUT, { key: 'Tab' })
+        await detached.command('waitFor', GHOST, { visible: false })
+        await main.command('waitFor', GHOST, { visible: false })
+        assert.equal(await detached.command('getValue', INPUT), sharedSuggestion)
+        const accepted = JSON.parse(
+          await main.command('getLocalStorageItem', 'body', { value: cacheKey })
+        )
+        assert.equal(accepted.accepted, true, 'Acceptance did not reach the other renderer')
       } catch (error) {
         verificationError = error
         throw error
       } finally {
         heldTurn?.end()
         heldPrediction?.response.end()
+        control.activateWindow('main')
         await restoreDisabledReplyPredictions(control, verificationError)
       }
     },
     diagnostics() {
-      return { ...existing.diagnostics(), backgroundPredictionRequests: predictionRequests }
+      return {
+        ...existing.diagnostics(),
+        backgroundPredictionRequests: predictionRequests,
+        windowContention,
+      }
     },
   }
 }
