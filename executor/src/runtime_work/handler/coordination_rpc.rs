@@ -194,6 +194,7 @@ impl RuntimeWorkRpcHandler {
         let persisted = store.stand_in_events(user).map_err(settings_error)?;
         let mut routed = Vec::new();
         let mut intake = Vec::new();
+        let roles = stand_in_identities(settings);
         for event in &events {
             let id = required(event, "id")?;
             let raw = persisted
@@ -204,30 +205,7 @@ impl RuntimeWorkRpcHandler {
                 id.to_owned(),
                 json!(LocalTaskStore::coordination_event_version(raw)),
             );
-            let roles = stand_in_identities(settings);
-            let immediate = roles.iter().any(|role| {
-                event["roleIds"]
-                    .as_array()
-                    .is_some_and(|ids| ids.contains(&role["id"]))
-                    && (if event["kind"] == "calendar" {
-                        role["calendar"]["policy"]["immediate"]
-                            .as_bool()
-                            .unwrap_or(role["id"] != "@primary")
-                    } else if event["kind"] == "assignment" {
-                        let policy = crate::task_runtime::personal_stand_in::project_policy(
-                            role,
-                            event["projectId"].as_str().unwrap_or_default(),
-                            event["projectStore"].as_str().unwrap_or_default(),
-                        );
-                        crate::task_runtime::personal_stand_in::immediate_policy(&policy)
-                    } else {
-                        stand_in_connection(role, &event["source"]).is_some_and(|connection| {
-                            crate::task_runtime::personal_stand_in::immediate_policy(
-                                &connection["policy"],
-                            )
-                        })
-                    })
-            });
+            let immediate = immediate_intake(&roles, event);
             let binding = self
                 .coordination_binding(store, user, settings, event)
                 .await?;

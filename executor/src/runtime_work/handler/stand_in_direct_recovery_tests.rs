@@ -152,8 +152,17 @@ async fn direct_dispatch_preserves_a_waiting_coordinator_batch_and_silent_intake
         json!({"enabled":true,"prompt":"","preferences":"","connections":[direct,silent]});
     settings["roles"] = json!([]);
     let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
-    for source in settings["primary"]["connections"].as_array().unwrap() {
-        store.enqueue_stand_in_event(7, source["id"].clone(), json!({"kind":"connection","roleScoped":true,"roleIds":["@primary"],"source":source,"message":{"id":source["id"],"text":"Request","at":chrono::Utc::now().to_rfc3339()}})).unwrap();
+    for source in settings["primary"]["connections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+    {
+        let count = if source["id"] == "silent" { 101 } else { 1 };
+        for index in 0..count {
+            let id = format!("{}-{index}", source["id"].as_str().unwrap());
+            store.enqueue_stand_in_event(7, json!(id), json!({"kind":"connection","roleScoped":true,"roleIds":["@primary"],"source":source,"message":{"id":id,"text":"Request","at":chrono::Utc::now().to_rfc3339()}})).unwrap();
+        }
     }
     store
         .save_stand_in_processing_state(

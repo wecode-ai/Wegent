@@ -6,6 +6,10 @@ use crate::task_runtime::personal_stand_in::{
     stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
 
+#[path = "stand_in_intake_policy.rs"]
+mod intake_policy;
+use intake_policy::{immediate_intake, intake_order};
+
 #[cfg(test)]
 #[path = "stand_in_suggestion_tests.rs"]
 mod suggestion_tests;
@@ -172,16 +176,9 @@ impl RuntimeWorkRpcHandler {
             })
             .collect();
         let now = chrono::Utc::now().timestamp_millis();
-        pending.sort_by_key(|event| {
-            let at = event["notBefore"]
-                .as_str()
-                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-                .map(|at| at.timestamp_millis())
-                .unwrap_or(i64::MIN);
-            (at > now, at)
-        });
-        let mut events = Vec::new();
         let identities = stand_in_identities(settings);
+        pending.sort_by_key(|event| intake_order(&identities, event, now));
+        let mut events = Vec::new();
         for mut event in pending {
             event = self.resolve_connection_event_binding(&event, &identities);
             let mut recipients = Vec::new();
