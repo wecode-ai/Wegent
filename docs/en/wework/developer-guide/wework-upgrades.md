@@ -178,6 +178,8 @@ CI freezes every selected source before sharding by platform, channel, and sourc
 
 Timing reports do not replace exact-package functional verification. When GitHub omits execution-step timestamps, the report marks duration as unknown and lists affected jobs rather than substituting queue time or zero, without blocking actual upgrade tests. Publication still requires successful builds, source shards, and evidence aggregation; missing, failed, or unfinished verification cannot publish.
 
+When upgrade tests quit an installed host, they first confirm command execution started and then require the actual host PID to exit. Quitting closes the renderer that sends control results, so a post-exit renderer acknowledgement is not required; an acknowledgement with a still-running host cannot pass either. Explicit command errors and exit timeouts still fail verification, and scenarios must not force-kill the host to satisfy the exit assertion.
+
 When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.

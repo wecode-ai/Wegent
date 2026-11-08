@@ -474,7 +474,7 @@ export function useWorkbenchCloudProjectContext({
     let active = true
     const lookupGeneration = contextLookupGenerationRef.current + 1
     contextLookupGenerationRef.current = lookupGeneration
-    if (!contextActive || !contextRuntimeTask) {
+    if (!contextRuntimeTask) {
       contextLookupTaskKeyRef.current = null
       queueMicrotask(() => {
         if (!active) return
@@ -494,6 +494,11 @@ export function useWorkbenchCloudProjectContext({
       setBoundCloudProject(null)
       setBoundRuntimeTaskAddress(null)
       setDeliveryItem(null)
+    }
+    if (!contextActive) {
+      return () => {
+        active = false
+      }
     }
     const contextApis = todoBindingApis
     if (contextApis.length > 0) {

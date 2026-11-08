@@ -1,6 +1,8 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { onTestFinished, test, vi } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
@@ -25,6 +27,68 @@ async function post(control, route, body) {
 async function register(control, windowLabel, clientId) {
   await post(control, 'ready', { windowLabel, clientId, location: 'http://localhost/' })
 }
+
+test('quit completes on the real process exit when the renderer cannot send its result', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const child = spawn(process.execPath, ['-e', "process.stdin.on('data', () => process.exit(0))"])
+  t.onTestFinished(() => {
+    if (child.exitCode === null) child.kill()
+  })
+  await once(child, 'spawn')
+  const quitting = control.command('quitApp', 'body', { exitProcessId: child.pid, timeoutMs: 1000 })
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  assert.equal(command.exitProcessId, undefined, 'The process observer belongs only to the runner')
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  const exited = once(child, 'exit')
+  child.stdin.end('quit')
+  await exited
+  assert.equal(await quitting, 'exited')
+  assert.equal(control.commandResults.size, 0)
+  assert.ok(
+    control.controlTransportHistory.some(
+      event =>
+        event.event === 'process-exited' &&
+        event.commandId === command.id &&
+        event.exitProcessId === child.pid
+    )
+  )
+}, 10_000)
+
+test('quit acknowledgement cannot pass while the host process remains alive', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const quitting = control.command('quitApp', 'body', { exitProcessId: process.pid, timeoutMs: 50 })
+  const rejected = assert.rejects(quitting, /did not quit before restart/)
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await post(control, 'results', { id: command.id, clientId: 'main-1', ok: true })
+  await rejected
+  assert.equal(control.commandResults.size, 0)
+})
+
+test('process exit observation preserves explicit quit errors', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const quitting = control.command('quitApp', 'body', { exitProcessId: process.pid })
+  const rejected = assert.rejects(quitting, /quit rejected/)
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await post(control, 'results', {
+    id: command.id,
+    clientId: 'main-1',
+    ok: false,
+    error: 'quit rejected',
+  })
+  await rejected
+  await assert.rejects(
+    control.command('snapshot', 'body', { exitProcessId: process.pid }),
+    /only valid for quitting/
+  )
+})
 
 for (const action of [
   'waitFor',
