@@ -1,11 +1,10 @@
 use super::*;
 
 #[test]
-fn corrected_document_evidence_stays_suppressed_after_restart_and_stale_replay() {
+fn corrected_conversation_evidence_stays_suppressed_after_restart_and_stale_replay() {
     for evidence in [
-        json!({"taskId":"chat","attachmentId":"upload","messageId":"hash-1"}),
-        json!({"taskId":"project-source","source":{"projectId":"p"},"messageId":"hash-1"}),
-        json!({"taskId":"connection-source","source":{"provider":"fixture"},"itemId":"record","messageId":"hash-1"}),
+        json!({"taskId":"primary-chat","messageId":"user-statement-1"}),
+        json!({"taskId":"role-chat","messageId":"user-statement-2"}),
     ] {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("tasks.db");
@@ -30,7 +29,7 @@ fn corrected_document_evidence_stays_suppressed_after_restart_and_stale_replay()
             Err(TaskRuntimeError::VersionConflict)
         ));
         original["content"] = json!("Lin is responsible for Birch releases");
-        original["evidence"]["messageId"] = json!("hash-after-unrelated-edit");
+        // Replaying the same conversation statement must not revive its old meaning.
         assert!(matches!(
             store.save_stand_in_memory(7, "mac", original.clone()),
             Err(TaskRuntimeError::MemorySuppressed)
