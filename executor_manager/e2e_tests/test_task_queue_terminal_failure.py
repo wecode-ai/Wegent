@@ -1,28 +1,47 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""End-to-end tests for terminal task queue failure reporting.
+"""Integration coverage for terminal task queue failure reporting.
 
 These tests use the real Redis-backed queue and the real task processor. The
 executor dispatcher is replaced with a deterministic in-process executor
-because this environment cannot start a Kubernetes cluster; the test still
-drives the production TaskProcessor and TaskQueueConsumer paths that translate
-executor failure results into terminal callbacks.
+because this environment cannot start a Kubernetes cluster. The production
+TaskProcessor, TaskQueueConsumer, TaskQueueService, Redis state, and HTTP
+callback client are all exercised together.
 """
 
+import json
 import os
+import threading
 from collections.abc import Iterator
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, ClassVar
 
 import pytest
 
+from executor_manager.clients import callback_client as callback_client_module
 from executor_manager.common.config import reset_config
 from executor_manager.common.errors import ExecutorErrorCode
 from executor_manager.common.redis_factory import RedisClientFactory
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.services.task_queue_consumer import TaskQueueConsumer
-from executor_manager.services.task_queue_service import TaskQueueService
+from executor_manager.services.task_queue_service import (
+    PENDING_INDEX_KEY,
+    PENDING_KEY_TEMPLATE,
+    TaskQueueService,
+)
+from shared.models.responses_api import ResponsesAPIStreamEvents
+
+
+class _CallbackServer(ThreadingHTTPServer):
+    """Local HTTP server that captures backend callback requests."""
+
+    daemon_threads = True
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.requests: list[dict[str, Any]] = []
+        self.request_received = threading.Event()
 
 
 @pytest.fixture
@@ -43,28 +62,67 @@ def real_queue(monkeypatch: pytest.MonkeyPatch) -> Iterator[TaskQueueService]:
         if client is not None:
             client.delete(service.queue_key)
             task_id = 101
-            client.delete(f"wegen:task_queue:pending:{task_id}")
-            client.zrem("wegent:task_queue:pending_index", str(task_id))
-            client.delete("wegent:task_queue:pending_index")
+            client.delete(PENDING_KEY_TEMPLATE.format(task_id=task_id))
+            client.zrem(PENDING_INDEX_KEY, str(task_id))
+            client.delete(PENDING_INDEX_KEY)
         RedisClientFactory.reset()
         reset_config()
         ExecutorDispatcher._executors = original_executors
 
 
+@pytest.fixture
+def callback_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[_CallbackServer]:
+    """Run a local backend callback endpoint and point the real client at it."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(content_length))
+            assert isinstance(self.server, _CallbackServer)
+            self.server.requests.append(payload)
+            self.server.request_received.set()
+
+            response = b'{"status": "ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    server = _CallbackServer(("127.0.0.1", 0), Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    monkeypatch.setenv(
+        "TASK_API_DOMAIN", f"http://127.0.0.1:{server.server_address[1]}"
+    )
+    monkeypatch.setattr(callback_client_module, "_callback_client", None)
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server_thread.join(timeout=5)
+        server.server_close()
+
+
 @pytest.mark.integration
-def test_non_retryable_failure_reports_stable_error_code(
+def test_non_retryable_failure_reports_and_clears_redis_state(
     real_queue: TaskQueueService,
+    callback_server: _CallbackServer,
 ) -> None:
     """Terminal submissions report their original code and never requeue."""
-    calls: list[tuple[str, Any]] = []
 
     class TerminalExecutor:
+        error: ClassVar[dict[str, str]] = {
+            "status": "failed",
+            "error_msg": "quota reached",
+            "error_code": ExecutorErrorCode.USER_TASK_LIMIT,
+        }
+
         def submit_executor(self, task, callback=None):
-            return {
-                "status": "failed",
-                "error_msg": "quota reached",
-                "error_code": ExecutorErrorCode.USER_TASK_LIMIT,
-            }
+            return self.error
 
     consumer = TaskQueueConsumer(
         service_pool=real_queue.service_pool,
@@ -72,40 +130,61 @@ def test_non_retryable_failure_reports_stable_error_code(
     )
     ExecutorDispatcher._executors = {"docker": TerminalExecutor()}
 
-    consumer.queue_service.requeue_task = lambda task: calls.append(("requeue", task)) or (True, 1)  # type: ignore[method-assign]
-    consumer.queue_service.clear_pending = lambda task_id: calls.append(("clear", task_id))  # type: ignore[method-assign]
-
-    callback_client = MagicMock()
-    callback_client.send_error = AsyncMock(return_value=True)
     task = {"metadata": {"task_id": 101, "subtask_id": 102, "executor_type": "docker"}}
     assert real_queue.enqueue_task(task)
-    with patch(
-        "executor_manager.clients.callback_client.get_callback_client",
-        return_value=callback_client,
-    ):
-        consumer._process_task_with_retry(real_queue.dequeue_task(timeout=1))
+    consumer._process_task_with_retry(real_queue.dequeue_task(timeout=1))
 
-    assert calls == [("clear", 101)]
-    callback_client.send_error.assert_called_once_with(
-        task_id=101,
-        subtask_id=102,
-        error_message="quota reached",
-        error_code=ExecutorErrorCode.USER_TASK_LIMIT,
-    )
+    assert callback_server.request_received.wait(timeout=5)
+    assert callback_server.requests == [
+        {
+            "event_type": ResponsesAPIStreamEvents.ERROR.value,
+            "task_id": 101,
+            "subtask_id": 102,
+            "data": {
+                "code": ExecutorErrorCode.USER_TASK_LIMIT,
+                "message": "quota reached",
+            },
+        }
+    ]
+    redis_client = real_queue.redis_client
+    assert redis_client.llen(real_queue.queue_key) == 0
+    assert redis_client.exists(PENDING_KEY_TEMPLATE.format(task_id=101)) == 0
+    assert redis_client.zscore(PENDING_INDEX_KEY, "101") is None
 
 
 @pytest.mark.integration
-def test_retryable_failure_still_requeues() -> None:
+def test_retryable_failure_requeues_through_real_redis(
+    real_queue: TaskQueueService,
+) -> None:
     """Failures without a terminal code retain the historical retry path."""
-    calls: list[tuple[str, Any]] = []
-    consumer = TaskQueueConsumer(service_pool="e2e", queue_type="online")
-    consumer.task_processor.process_tasks = lambda tasks: {  # type: ignore[method-assign]
-        101: {"status": "failed", "error_msg": "connection reset", "error_code": ""}
-        for _ in tasks
-    }
-    consumer.queue_service.requeue_task = lambda task: calls.append(("requeue", task)) or (True, 1)  # type: ignore[method-assign]
-    consumer.queue_service.clear_pending = lambda task_id: calls.append(("clear", task_id))  # type: ignore[method-assign]
 
-    consumer._process_task_with_retry({"metadata": {"task_id": 101, "subtask_id": 102}})
+    class RetryableExecutor:
+        error: ClassVar[dict[str, str]] = {
+            "status": "failed",
+            "error_msg": "connection reset",
+            "error_code": "",
+        }
 
-    assert calls == [("requeue", {"metadata": {"task_id": 101, "subtask_id": 102}})]
+        def submit_executor(self, task, callback=None):
+            return self.error
+
+    consumer = TaskQueueConsumer(
+        service_pool=real_queue.service_pool,
+        queue_type=real_queue.queue_type,
+    )
+    ExecutorDispatcher._executors = {"docker": RetryableExecutor()}
+
+    task = {"metadata": {"task_id": 101, "subtask_id": 102, "executor_type": "docker"}}
+    assert real_queue.enqueue_task(task)
+    consumer._process_task_with_retry(real_queue.dequeue_task(timeout=1))
+
+    redis_client = real_queue.redis_client
+    assert redis_client.llen(real_queue.queue_key) == 1
+    assert real_queue.peek_tasks(1) == [
+        {
+            **task,
+            "_retry_count": 1,
+        }
+    ]
+    assert redis_client.exists(PENDING_KEY_TEMPLATE.format(task_id=101)) == 1
+    assert redis_client.zscore(PENDING_INDEX_KEY, "101") is not None
