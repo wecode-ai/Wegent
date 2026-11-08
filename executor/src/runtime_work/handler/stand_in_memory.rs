@@ -152,7 +152,7 @@ impl RuntimeWorkRpcHandler {
         let memories = bounded_memories(memories);
         let forgetting_policy = crate::task_runtime::memory_policy::STAND_IN_FORGETTING_POLICY;
         let mut context = format!("Current stand-in responsibilities: {}\nUser preferences: {}\nIf available, use wework_stand_in.search_memories when more relevant memory is needed. {}", role["prompt"].as_str().unwrap_or_default(), if source.is_none() { settings["primary"]["preferences"].as_str().unwrap_or_default() } else { "" }, crate::task_runtime::memory_policy::STAND_IN_MEMORY_POLICY);
-        context.push_str("\n");
+        context.push('\n');
         context.push_str(forgetting_policy);
         if origin["type"] == "stand_in_identity" {
             context.push('\n');

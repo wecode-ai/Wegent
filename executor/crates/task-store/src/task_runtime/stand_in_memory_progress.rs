@@ -98,10 +98,8 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut state = read(&connection, user, source)?;
-        if state["runId"] != run {
-            if !pending {
-                return Err(TaskRuntimeError::VersionConflict);
-            }
+        if state["runId"] != run && !pending {
+            return Err(TaskRuntimeError::VersionConflict);
         }
         start_run(&mut state, run);
         let mut writes = state["pendingWrites"]

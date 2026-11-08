@@ -49,7 +49,7 @@ impl LocalTaskStore {
         rows: Vec<Value>,
     ) -> Result<Vec<Value>, TaskRuntimeError> {
         let mut settings = self.personal_stand_in(user, device)?;
-        let primary = role.is_none_or(|id| id == "@primary") && source.is_none();
+        let primary = role.map_or(true, |id| id == "@primary") && source.is_none();
         if !primary {
             if let Some(role) = role.filter(|id| *id != "@primary") {
                 settings["roles"] = json!(settings["roles"]

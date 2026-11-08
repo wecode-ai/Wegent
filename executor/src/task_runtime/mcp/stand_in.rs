@@ -306,7 +306,7 @@ pub(super) async fn call(
         return text_result("Missing stand-in identity".into(), true);
     };
     if tools(context).iter().any(|tool| tool["name"] == name)
-        && !(name == "list_memory_forgetting_rules" && !identity.memory_review)
+        && (name != "list_memory_forgetting_rules" || identity.memory_review)
         && super::stand_in_tasks::tools()
             .into_iter()
             .chain(super::stand_in_tasks::schedule_tools())
