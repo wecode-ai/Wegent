@@ -40,6 +40,7 @@ exclude = ["vendor/tf-rust-socketio"]
 rust-version = "1.77"
 
 [dependencies]
+wegent-document-parser = { path = "../shared/rust/document-parser" }
 wegent-claude-harness = { path = "crates/claude-harness" }
 wegent-mcp-runtime = { path = "crates/mcp-runtime" }
 wegent-native-home = { path = "crates/native-home" }
@@ -97,6 +98,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+wegent-document-parser = { path = "../shared/rust/document-parser", features = ["test-support"] }
 wegent-model-proxy = { path = "crates/model-proxy", features = ["test-support"] }
 wegent-executor-test-support = { path = "crates/test-support" }
 http-body-util = "0.1"

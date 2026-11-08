@@ -5,6 +5,22 @@ use std::{
     time::Duration,
 };
 static HOST: OnceLock<Mutex<Option<Value>>> = OnceLock::new();
+#[cfg(test)]
+tokio::task_local! {
+    pub(crate) static TEST_HOST: Value;
+}
+
+fn current_host() -> Result<Value, AppIpcError> {
+    #[cfg(test)]
+    if let Ok(host) = TEST_HOST.try_with(Clone::clone) {
+        return Ok(host);
+    }
+    HOST.get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| unavailable())?
+        .clone()
+        .ok_or_else(unavailable)
+}
 fn unavailable() -> AppIpcError {
     AppIpcError::new(
         "connection_host_unavailable",
@@ -125,12 +141,7 @@ pub(crate) async fn call(
     provider: Option<&str>,
     input: Value,
 ) -> Result<Value, AppIpcError> {
-    let host = HOST
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .map_err(|_| unavailable())?
-        .clone()
-        .ok_or_else(unavailable)?;
+    let host = current_host()?;
     if !host_is_live(&host) {
         return Err(unavailable());
     }

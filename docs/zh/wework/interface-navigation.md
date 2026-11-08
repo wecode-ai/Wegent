@@ -75,7 +75,7 @@ sidebar_position: 2
 | 功能关键词                                           | 具体操作说明                                                    |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | 空间成员、全局智能体/小组/设备、Runner、模板、里程碑 | [协作空间及资源操作](./projects.md#workspace-resource-controls) |
-| 分身记忆、作用域、编辑和遗忘                         | [记忆操作](./personal-stand-in.md#stand-in-memory-controls)     |
+| 分身记忆、来源证据、作用域、编辑、遗忘和遗忘规则     | [记忆操作](./personal-stand-in.md#stand-in-memory-controls)     |
 | 实验性负责人对话、接管、停止、发布到 Issue           | [负责人对话](./personal-stand-in.md#project-lead-controls)      |
 | 站点 PV/UV、访问日期、查看统计                       | [站点访问数据](./plugins-and-skills.md#site-analytics-controls) |
 | 系统拖拽、新对话/追问、快捷短语暂存区                | [拖拽与暂存](./settings.md#system-drag-controls)                |

@@ -16,10 +16,9 @@
 //! PNG/JPEG) report `unsupported_type` rather than inventing content: the
 //! source library's message would otherwise have to be fabricated.
 use super::model_jpeg;
-use super::office;
-use super::pdf;
 use super::truncation;
 use super::{csv, model_image};
+use wegent_document_parser::{office, pdf};
 
 /// `DocumentParser.SUPPORTED_EXTENSIONS`: extension -> MIME type.
 pub fn supported_mime_type(extension: &str) -> Option<&'static str> {

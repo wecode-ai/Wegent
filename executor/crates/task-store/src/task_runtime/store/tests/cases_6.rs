@@ -81,7 +81,9 @@ fn tracks_additional_context_for_default_runtime_issues() {
         json!(true)
     );
 
-    store.delete_task_attachment(&attachment.id).unwrap();
+    store
+        .delete_task_attachment(DEFAULT_WORK_ITEM_PROJECT_ID, &item_id, &attachment.id)
+        .unwrap();
     assert_eq!(
         store
             .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &item_id)
@@ -364,6 +366,68 @@ fn keeps_one_system_binding_alongside_the_current_user_binding() {
 }
 
 #[test]
+fn attachment_access_requires_matching_project_task_and_attachment() {
+    let (_directory, store) = store();
+    let first = local_project(&store);
+    let second = store
+        .create_project(ProjectCreate {
+            name: "Other board".into(),
+            project_key: Some("OTHER".into()),
+            description: String::new(),
+            task_provider: TaskProviderKind::Github,
+            provider_config: json!({}),
+        })
+        .unwrap();
+    let input = || BinaryInput {
+        display_name: "notes.txt".into(),
+        content_type: Some("text/plain".into()),
+        base64: "bm90ZXM=".into(),
+    };
+    // External issue identifiers can coincide across independent projects.
+    let attachment = store
+        .add_task_attachment(&first.id, "issue-1", false, input())
+        .unwrap();
+    let other = store
+        .add_task_attachment(&second.id, "issue-1", false, input())
+        .unwrap();
+    let first_list = store.list_task_attachments(&first.id, "issue-1").unwrap();
+    assert_eq!(first_list.len(), 1);
+    assert_eq!(first_list[0].id, attachment.id);
+    let second_list = store.list_task_attachments(&second.id, "issue-1").unwrap();
+    assert_eq!(second_list.len(), 1);
+    assert_eq!(second_list[0].id, other.id);
+    for (project, task) in [(&second.id, "issue-1"), (&first.id, "issue-2")] {
+        assert!(matches!(
+            store.task_attachment_path(project, task, &attachment.id),
+            Err(TaskRuntimeError::TaskNotFound)
+        ));
+        assert!(matches!(
+            store.delete_task_attachment(project, task, &attachment.id),
+            Err(TaskRuntimeError::TaskNotFound)
+        ));
+    }
+    let path = store
+        .task_attachment_path(&first.id, "issue-1", &attachment.id)
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "notes");
+    store
+        .delete_task_attachment(&first.id, "issue-1", &attachment.id)
+        .unwrap();
+    assert!(!path.exists());
+    assert!(store
+        .list_task_attachments(&first.id, "issue-1")
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .task_attachment_path(&first.id, "issue-1", &attachment.id)
+        .is_err());
+    assert!(store
+        .task_attachment_path(&second.id, "issue-1", &other.id)
+        .unwrap()
+        .exists());
+}
+
+#[test]
 fn stores_project_content_without_persisting_external_issues() {
     let (_directory, store) = store();
     let local_project = local_project(&store);
@@ -430,7 +494,12 @@ fn stores_project_content_without_persisting_external_issues() {
         )
         .unwrap();
     assert_eq!(
-        std::fs::read_to_string(store.task_attachment_path(&attachment.id).unwrap()).unwrap(),
+        std::fs::read_to_string(
+            store
+                .task_attachment_path(&local_project.id, &task.id, &attachment.id)
+                .unwrap()
+        )
+        .unwrap(),
         "notes"
     );
 

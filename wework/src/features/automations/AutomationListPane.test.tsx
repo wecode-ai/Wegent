@@ -42,6 +42,7 @@ function renderSchedule(automation: Automation, locale = 'zh-CN') {
       onCreate={vi.fn()}
       onClearError={vi.fn()}
       calendar
+      onReviewTemplate={vi.fn()}
     />
   )
   return within(screen.getByTestId('automation-row-review'))
@@ -57,6 +58,9 @@ it.each([
     await i18n.changeLanguage(locale)
     try {
       const row = renderSchedule(scheduledReview, locale)
+      expect(screen.getByTestId('stand-in-weekly-review-template')).toHaveTextContent(
+        locale === 'en' ? 'Add weekly review' : '添加每周复盘'
+      )
       expect(row.getByText(schedule)).toBeVisible()
       expect(row.getByText(status)).toBeVisible()
       expect(screen.getByTestId('automation-row-review')).toHaveTextContent(/Nov 9|11月9日/)

@@ -1182,7 +1182,7 @@ impl TaskRuntime {
                     .await
             }
             TaskProviderKind::Local | TaskProviderKind::Github => {
-                self.local_store.list_task_attachments(item_id)
+                self.local_store.list_task_attachments(project_id, item_id)
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?} attachments"
@@ -1206,7 +1206,7 @@ impl TaskRuntime {
                 .to_string()),
             TaskProviderKind::Local | TaskProviderKind::Github => Ok(self
                 .local_store
-                .task_attachment_path(attachment_id)?
+                .task_attachment_path(project_id, item_id, attachment_id)?
                 .display()
                 .to_string()),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -1228,9 +1228,9 @@ impl TaskRuntime {
                     .delete_attachment(&project, TaskProviderKind::Gitlab, item_id, attachment_id)
                     .await
             }
-            TaskProviderKind::Local | TaskProviderKind::Github => {
-                self.local_store.delete_task_attachment(attachment_id)
-            }
+            TaskProviderKind::Local | TaskProviderKind::Github => self
+                .local_store
+                .delete_task_attachment(project_id, item_id, attachment_id),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?} attachments"
             ))),

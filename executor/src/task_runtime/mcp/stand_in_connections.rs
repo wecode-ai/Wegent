@@ -204,7 +204,7 @@ fn authorized_source(
         )
 }
 
-fn source_read_input(source: Value, arguments: &Value) -> Result<Value, String> {
+pub(crate) fn source_read_input(source: Value, arguments: &Value) -> Result<Value, String> {
     if !arguments.as_object().is_some_and(|fields| {
         fields
             .keys()
@@ -517,6 +517,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
         }
     }

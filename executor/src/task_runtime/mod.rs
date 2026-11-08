@@ -12,6 +12,8 @@ mod aitable_provider;
 mod issue_provider;
 pub mod mcp;
 pub(crate) mod mcp_http;
+pub(crate) mod memory_evidence;
+pub(crate) mod memory_policy;
 pub(crate) use store::project_router_store;
 pub(crate) use store::stand_in_telemetry;
 pub use wegent_local_task_store::personal_stand_in;

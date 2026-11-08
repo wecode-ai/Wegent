@@ -133,7 +133,41 @@ export interface StandInMemory {
   createdAt: string
   updatedAt: string
   sourceTaskId?: string | null
+  evidence?: {
+    kind?: 'image_observation' | null
+    taskId?: string
+    messageId?: string
+    role?: string | null
+    excerpt?: string
+    observedAt?: string | number | null
+    readAt?: string
+    itemId?: string
+    source?: {
+      id?: string
+      name?: string
+      providerId?: string
+      projectId?: string
+      projectStore?: 'local' | 'cloud'
+      kind?: string
+      itemId?: string | null
+      deliveryId?: string | null
+      assetId?: string
+      attachmentId?: string
+      fileId?: string
+    }
+  } | null
 }
+
+export type StandInMemoryRule =
+  | (Pick<StandInMemory, 'id' | 'content' | 'scope' | 'version' | 'createdAt' | 'updatedAt'> & {
+      kind: 'forgetting_rule'
+    })
+  | {
+      kind: 'legacy_fingerprint'
+      id: string
+      version: number
+      updatedAt: string
+    }
 
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
@@ -246,6 +280,14 @@ export interface StandInExecutorApi {
     telemetryAction?: 'split' | 'merge' | 'move' | 'undo'
   ): Promise<StandInInboxWork>
   memories(userId: number, deviceId: string): Promise<StandInMemory[]>
+  memoryRules(userId: number, deviceId: string): Promise<StandInMemoryRule[]>
+  deleteMemoryRule(
+    userId: number,
+    deviceId: string,
+    id: string,
+    version: number,
+    expectedUpdatedAt?: string
+  ): Promise<void>
   saveMemory(
     userId: number,
     deviceId: string,
@@ -475,6 +517,21 @@ export function createStandInExecutorApi(
       ).items,
     saveMemory: (userId, deviceId, memory) =>
       request('runtime.stand_in.memory.save', { userId, memory }, deviceId),
+    memoryRules: async (userId, deviceId) =>
+      (
+        await request<{ items: StandInMemoryRule[] }>(
+          'runtime.stand_in.memory.rules.list',
+          { userId },
+          deviceId
+        )
+      ).items,
+    deleteMemoryRule: async (userId, deviceId, id, version, expectedUpdatedAt) => {
+      await request(
+        'runtime.stand_in.memory.rules.delete',
+        { userId, id, version, ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}) },
+        deviceId
+      )
+    },
     deleteMemory: async (userId, deviceId, id, version) => {
       await request('runtime.stand_in.memory.delete', { userId, id, version }, deviceId)
     },

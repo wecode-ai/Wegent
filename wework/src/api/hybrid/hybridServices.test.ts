@@ -107,6 +107,8 @@ const mocks = vi.hoisted(() => {
       save: vi.fn(),
       organizeWork: vi.fn(),
       memories: vi.fn(async () => []),
+      memoryRules: vi.fn(async () => []),
+      deleteMemoryRule: vi.fn(),
       saveMemory: vi.fn(),
       deleteMemory: vi.fn(),
     },
@@ -203,6 +205,8 @@ const mocks = vi.hoisted(() => {
       save: vi.fn(),
       organizeWork: vi.fn(),
       memories: vi.fn(async () => []),
+      memoryRules: vi.fn(async () => []),
+      deleteMemoryRule: vi.fn(),
       saveMemory: vi.fn(),
       deleteMemory: vi.fn(),
     },
@@ -528,6 +532,8 @@ describe('stand-in save routing', () => {
         api.lifecycle.mockClear()
         api.save.mockClear()
         api.memories.mockClear()
+        api.memoryRules.mockClear()
+        api.deleteMemoryRule.mockClear()
         api.saveMemory.mockClear()
         api.deleteMemory.mockClear()
         api.organizeWork.mockClear()
@@ -585,12 +591,26 @@ describe('stand-in save routing', () => {
       expect(other.projectProcessing).not.toHaveBeenCalled()
       const memory = { content: 'Prefer concise replies', scope: { kind: 'personal' as const } }
       await services.standInApi!.memories(7, deviceId)
+      await services.standInApi!.memoryRules(7, deviceId)
+      await services.standInApi!.deleteMemoryRule(7, deviceId, 'rule-1', 2)
       await services.standInApi!.saveMemory(7, deviceId, memory)
       await services.standInApi!.deleteMemory(7, deviceId, 'memory-1', 3)
       expect(selected.memories).toHaveBeenCalledExactlyOnceWith(7, deviceId)
+      expect(selected.memoryRules).toHaveBeenCalledExactlyOnceWith(7, deviceId)
+      expect(selected.deleteMemoryRule).toHaveBeenCalledExactlyOnceWith(7, deviceId, 'rule-1', 2)
+      await services.standInApi!.deleteMemoryRule(7, deviceId, 'legacy-1', 1, 'revision')
+      expect(selected.deleteMemoryRule).toHaveBeenLastCalledWith(
+        7,
+        deviceId,
+        'legacy-1',
+        1,
+        'revision'
+      )
       expect(selected.saveMemory).toHaveBeenCalledExactlyOnceWith(7, deviceId, memory)
       expect(selected.deleteMemory).toHaveBeenCalledExactlyOnceWith(7, deviceId, 'memory-1', 3)
       expect(other.memories).not.toHaveBeenCalled()
+      expect(other.memoryRules).not.toHaveBeenCalled()
+      expect(other.deleteMemoryRule).not.toHaveBeenCalled()
       expect(other.saveMemory).not.toHaveBeenCalled()
       expect(other.deleteMemory).not.toHaveBeenCalled()
       await services.standInApi!.organizeWork(7, deviceId, 'work', ['message'], 'target')

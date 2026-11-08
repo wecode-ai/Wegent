@@ -47,6 +47,11 @@ fn cached_transcript_response(
         turn_navigation,
     });
     response["historyUnavailable"] = Value::Bool(history_unavailable);
+    // Non-provider runtimes own their complete message text locally. Paging
+    // limits message count, not text completeness. Native caches are not proof.
+    if !runtime_has_provider_transcript_reader(&link.runtime) && !link.ephemeral {
+        response["fullItemContent"] = json!(true);
+    }
     response["threadId"] = json!(link.thread_id);
     response["supersededTurnIds"] = json!(superseded_transcript_turn_ids(&link.runtime_handle));
     if link.runtime == "claude_code" && link.status == "interrupted" && !running {
@@ -587,7 +592,16 @@ fn project_conversation_context_messages(messages: &mut Vec<Value>) {
         if !visible_role {
             return false;
         }
+        // Text-only projection must not silently certify unread attachments as
+        // complete evidence. Do not expose local paths or provider credentials.
+        let attachment_count = object
+            .get("attachments")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
         object.retain(|key, _| KEYS.contains(&key.as_str()));
+        if attachment_count > 0 {
+            object.insert("unreadAttachmentCount".into(), json!(attachment_count));
+        }
         true
     });
 }

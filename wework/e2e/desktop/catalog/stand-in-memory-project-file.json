@@ -1,0 +1,6 @@
+{
+  "order": 35530,
+  "scenario": "./scenarios/stand-in-memory-project-file.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 40530, "shard": 3, "position": 11530 } }
+}

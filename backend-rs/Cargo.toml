@@ -15,6 +15,7 @@ default-members = [".", "crates/*"]
 rust-version = "1.94"
 
 [dependencies]
+wegent-document-parser = { path = "../shared/rust/document-parser", default-features = false }
 wegent-oidc = { path = "crates/oidc" }
 wegent-onboarding = { path = "crates/onboarding" }
 wegent-authentication = { path = "crates/authentication" }
@@ -110,6 +111,7 @@ zstd = { version = "0.13.1", features = ["arrays"] }
 zip = { version = "=6.0.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+wegent-document-parser = { path = "../shared/rust/document-parser", default-features = false, features = ["test-support"] }
 wegent-identity = { path = "crates/identity", features = ["test-support"] }
 wegent-backend-test-support = { path = "crates/test-support" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
