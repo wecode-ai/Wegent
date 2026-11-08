@@ -58,6 +58,13 @@ fn continuation_queues_before_the_initial_native_session_is_ready() {
             assert!(turn.direct_thread_id.is_none());
             assert!(turn.fork_thread_id.is_none());
 
+            let mut new_session = queued[0].clone();
+            new_session.send_payload.as_mut().unwrap()["startNewSession"] = json!(true);
+            handler.bind_pending_continuation(&mut new_session).unwrap();
+            assert!(new_session.resume_thread_id.is_none());
+            assert!(new_session.direct_thread_id.is_none());
+            assert!(new_session.fork_thread_id.is_none());
+
             let no_queue = handler
                 .control_operation(&context("caller"), "continue_conversation", json!({
                     "conversation_id":workbench_control::conversation_id("control-test-device","target"),

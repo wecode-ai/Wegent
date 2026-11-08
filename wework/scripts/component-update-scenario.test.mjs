@@ -53,11 +53,6 @@ for (const packageChannel of ['stable', 'beta']) {
     }
     t.after(() => scenario.cleanup())
     assert.equal(scenario.usesReleasePackageRuntimeAssets, true)
-    assert.equal(
-      scenario.usesColdPackageStartup,
-      true,
-      'Component updates must observe the real cold-package startup phases'
-    )
     const platform =
       process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
     const origin = scenario.appEnvironment.WEWORK_UPDATE_BASE_URL

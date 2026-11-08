@@ -9,7 +9,7 @@ impl RuntimeWorkRpcHandler {
             || turn
                 .send_payload
                 .as_ref()
-                .is_none_or(|payload| payload["startNewSession"] == true)
+                .map_or(true, |payload| payload["startNewSession"] == true)
             || turn.resume_thread_id.is_some()
             || turn.direct_thread_id.is_some()
             || turn.fork_thread_id.is_some()
