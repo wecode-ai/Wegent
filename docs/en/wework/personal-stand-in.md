@@ -90,6 +90,8 @@ Open **left sidebar → My Stand-in → Stand-in details → Manage stand-in →
 
 Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. The primary conversation and the concrete work it creates both use the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
 
+<a id="stand-in-source-session-policy"></a>
+
 ## DingTalk and collaboration sources
 
 Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.

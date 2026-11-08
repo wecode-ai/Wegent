@@ -38,6 +38,7 @@ sidebar_position: 2
 | 配置项目执行设备、仓库、初始化  | 项目空间 → 项目设置 → 执行环境              | 与全局设置的执行环境不是同一页；AI 执行前需在线设备完成初始化                                                                                                          |
 | 项目 AI / 项目管理者            | 项目设置 → AI 团队 / 自动处理               | 当前入口与旧称差异见[项目 AI 管理者](./project-ai-manager.md)；不要寻找旧版底部按钮                                                                                    |
 | 个人分身                        | 左侧栏 → 我的分身                           | Beta 功能，见[个人分身](./personal-stand-in.md)                                                                                                                        |
+| 恢复已归档的分身来源工作 | 我的分身 → 分身详情 → 近期活动旁箭头 → 对应工作 → 取消归档 | 仅在工作已归档时显示；恢复不自动执行，见[来源会话策略](./personal-stand-in.md#stand-in-source-session-policy) |
 | 停止分身 / 更换绑定 | 左侧栏 → 我的分身 → 分身详情 → 管理分身 → 设置面板左下角“停止分身” | 整体停止并取消任务后才显示换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping) |
 | 换模型 / 调推理等级             | 任务输入区 → 模型选择器                     | 没有可用模型时去设置添加，见[模型设置](./user-guide/model-settings.md)                                                                                                 |
 | 添加附件、选择 Skill / 插件     | 任务输入区 → + 或能力选择入口               | 见[与 AI 协作](./tasks.md)和[插件与 Skills](./plugins-and-skills.md)                                                                                                   |
