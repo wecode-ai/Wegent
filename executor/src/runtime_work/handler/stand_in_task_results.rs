@@ -22,11 +22,18 @@ impl RuntimeWorkRpcHandler {
                 && link.interaction_status.is_none()
                 && matches!(status, "done" | "failed" | "cancelled")
             {
+                let generation = completion_generation(&link.runtime_handle);
+                let recorded = &link.runtime_handle["standInResult"];
+                // Archive/cancel reconciliation can confirm the same terminal
+                // execution again. Its observation time is not a new result.
+                if recorded["generation"] == generation && recorded["status"] == status {
+                    return;
+                }
                 link.runtime_handle["standInResult"] = json!({
                     "status":status,"completedAt":link.completed_at.unwrap_or_else(now_ms),
                     "turnId":link.runtime_handle["lastTurnId"],
                     "errorCode":link.runtime_handle["lastErrorCode"],
-                    "generation":completion_generation(&link.runtime_handle)
+                    "generation":generation
                 });
             }
         });
@@ -276,6 +283,32 @@ mod tests {
                 .queued_turns
                 .is_empty());
             assert_eq!(handler.local_task_links(true).len(), 1);
+        }
+    }
+
+    #[test]
+    fn repeated_terminal_reconciliation_preserves_acknowledged_completion() {
+        for status in ["done", "failed", "cancelled"] {
+            let (_root, mut handler, path) = completion_fixture();
+            handler.store.update_task("child", |link| {
+                link.status = status.into();
+                link.completed_at = Some(123);
+                link.runtime_handle["lastTurnId"] = json!("same-native-turn");
+            });
+            handler.record_stand_in_completion_outbox("child", status);
+            let child = handler.local_task_link("child").unwrap();
+            let completion = child.runtime_handle["standInResult"].clone();
+            let receipt = handler.stand_in_result_delivery(&child).unwrap()["commandId"].clone();
+            handler.store.update_task("child", |link| {
+                link.runtime_handle["standInResultReceipt"] = receipt;
+                // Archiving reconciles the already terminal provider execution.
+                link.completed_at = Some(456);
+            });
+            handler.record_stand_in_completion_outbox("child", status);
+            handler.store = RuntimeWorkStore::new(path);
+            let reconciled = handler.local_task_link("child").unwrap();
+            assert_eq!(reconciled.runtime_handle["standInResult"], completion);
+            assert!(handler.stand_in_result_delivery(&reconciled).is_none());
         }
     }
 
