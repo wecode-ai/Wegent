@@ -16,14 +16,28 @@ const event = (step, status, elapsedMs) =>
   `[startup] {\n  step: '${step}',\n  status: '${status}',\n  elapsedMs: ${elapsedMs}\n}\n`
 const neverReady = () => new Promise(() => {})
 
-test('current-package cold scenarios declare phase-bounded startup waiting', async () => {
-  for (const name of ['component-update', 'release-package-startup']) {
-    const scenario = await readFile(
-      new URL(`../e2e/desktop/scenarios/${name}.scenario.mjs`, import.meta.url),
+test('release-package resource ownership selects cold startup without a second opt-in', async () => {
+  const runner = await readFile(
+    new URL('../e2e/desktop/modules/task-flow-main.mjs', import.meta.url),
+    'utf8'
+  )
+  assert.ok(
+    /const ready\s*=\s*usesReleasePackageRuntimeAssets && !usesDefaultUserData\s*\? await waitForColdPackageStartup/.test(
+      runner
+    ),
+    'Only ordinary packaged cold starts use phase readiness; release-pair diagnostics retain their deadline'
+  )
+  assert.match(
+    runner,
+    /const usesDefaultUserData = UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes\(DESKTOP_SEGMENT\)/
+  )
+  for (const scenario of ['component-update', 'release-package-startup']) {
+    const source = await readFile(
+      new URL(`../e2e/desktop/scenarios/${scenario}.scenario.mjs`, import.meta.url),
       'utf8'
     )
-    assert.ok(scenario.includes('usesReleasePackageRuntimeAssets: true'), name)
-    assert.ok(scenario.includes('usesColdPackageStartup: true'), name)
+    assert.match(source, /usesReleasePackageRuntimeAssets: true/)
+    assert.doesNotMatch(source, /usesColdPackageStartup/)
   }
 })
 
