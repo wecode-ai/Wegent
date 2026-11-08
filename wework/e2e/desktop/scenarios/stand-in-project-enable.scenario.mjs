@@ -4,8 +4,8 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身项目启用-${process.pid}`

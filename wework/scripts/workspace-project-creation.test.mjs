@@ -10,25 +10,35 @@ import {
   selectCollaborationIssueAgent,
   selectCollaborationProjectView,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
 
 test.each([
-  ['manage', 'collaboration-tab-manage'],
-  ['milestones', 'collaboration-milestones-tab'],
-])('selects navigation view %s without a separate layout probe', async (view, tabId) => {
-  const calls = []
+  ['expanded', 'manage', 'collaboration-tab-manage'],
+  ['compact', 'manage', 'collaboration-tab-manage'],
+  ['expanded', 'milestones', 'collaboration-milestones-tab'],
+  ['compact', 'milestones', 'collaboration-milestones-tab'],
+])('selects %s navigation view %s after the switcher mounts', async (layout, view, tabId) => {
+  let selected = null
+  let commands = 0
   const control = {
-    command: async (...args) => {
-      calls.push(args)
+    async command(action, selector, options) {
+      commands += 1
+      assert.equal(action, 'chooseWhenEnabled')
+      assert.equal(
+        selector,
+        `main [data-testid="collaboration-project-view-select"], main [data-testid="${tabId}"]`
+      )
+      assert.deepEqual(options, {
+        value: view,
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      selected = options.value
     },
   }
   await selectCollaborationProjectView(control, 'main', view)
-  assert.deepEqual(calls, [
-    [
-      'chooseWhenEnabled',
-      'main [data-testid="collaboration-project-view-select"], main [data-testid="' + tabId + '"]',
-      { value: view, timeoutMs: 10000 },
-    ],
-  ])
+  assert.equal(selected, view)
+  assert.equal(commands, 1, 'Mount readiness and selection must use one renderer command')
 })
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {

@@ -5,6 +5,47 @@
 use super::*;
 
 #[test]
+fn python_demand_rpc_rechecks_enabled_and_uninstalled_packages_without_starting_work() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _codex = ScalarEnv::set("WEGENT_CODEX_HOME", root.path().to_str().unwrap());
+    let _workbench = ScalarEnv::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    let capabilities = root.path().join("capabilities");
+    let _capabilities = ScalarEnv::set("WEGENT_CAPABILITIES_HOME", capabilities.to_str().unwrap());
+    let package = root.path().join("plugins/cache/test/python/1.0");
+    fs::create_dir_all(package.join(".codex-plugin")).unwrap();
+    fs::write(
+        package.join(".codex-plugin/plugin.json"),
+        r#"{"name":"python","runtimeRequirements":{"python":{}}}"#,
+    )
+    .unwrap();
+    assert!(!should_resume_persisted_turns_before_rpc(
+        "runtime.python.has_demand"
+    ));
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let handler = RuntimeWorkRpcHandler::new("python-demand", "unused-codex-binary");
+            for (config, expected) in [
+                ("[plugins.'python@test']\nenabled = true\n", true),
+                ("[plugins.'python@test']\nenabled = false\n", false),
+                ("[plugins.'python@test']\nenabled = true\n", true),
+                ("", false),
+            ] {
+                fs::write(root.path().join("config.toml"), config).unwrap();
+                let response = handler
+                    .handle_runtime_rpc(json!({"method":"runtime.python.has_demand","payload":{}}))
+                    .await
+                    .unwrap();
+                assert_eq!(response, json!({"demanded":expected}));
+            }
+        });
+}
+
+#[test]
 fn runtime_rpc_dispatch_retains_control_creation_routes() {
     let _lock = crate::test_env::lock();
     tokio::runtime::Builder::new_current_thread()

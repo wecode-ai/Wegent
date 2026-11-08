@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import {
-  inCollaborationSidebar,
-  inProjectCreateDialog,
-  selectCollaborationProjectView,
-} from '../modules/workspace-flows.mjs'
+import { inCollaborationSidebar, inProjectCreateDialog } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'

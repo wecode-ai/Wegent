@@ -8,6 +8,7 @@ import { selectE2EModel } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
+  codexRequestKind,
   createSse,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
@@ -43,7 +44,11 @@ export function createDesktopScenario({
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
-      if (isReplyPredictionRequest(body)) return false
+      if (
+        isReplyPredictionRequest(body) ||
+        ['prewarm', 'compaction'].includes(codexRequestKind(body))
+      )
+        return false
       const input = JSON.stringify(body.input ?? [])
       if (!input.includes(PROPOSE) && !input.includes(FOLLOWUP)) return false
       requests.push(input.includes(FOLLOWUP) ? 'followup' : 'proposal')
