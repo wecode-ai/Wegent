@@ -84,6 +84,7 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
     await openConnectionTypePicker(control)
     await control.command('click', '[data-testid="stand-in-time-connections"]')
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-processing-settings-toggle"]')
     await control.command(
       'waitFor',
       '[data-testid="stand-in-calendar-policy"][aria-checked="false"]'
