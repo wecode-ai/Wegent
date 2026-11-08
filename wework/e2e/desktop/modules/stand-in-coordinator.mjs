@@ -88,6 +88,10 @@ export function createStandInCoordinatorVerification({
         await control.command('getElementCount', '[data-testid="stand-in-work-view-scheduled"]'),
         '0'
       )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-processing-settings-toggle"]'
+      )
       await control.command('click', '[data-testid="stand-in-calendar-policy"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
@@ -225,6 +229,10 @@ export function createStandInCoordinatorVerification({
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-processing-settings-toggle"]'
+      )
       await control.command('waitFor', '[data-testid="stand-in-calendar-policy"]')
       await control.command('waitFor', '[data-testid="stand-in-save"]')
       const previousWindowSize = JSON.parse(
