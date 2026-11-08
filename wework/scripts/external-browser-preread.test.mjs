@@ -16,7 +16,7 @@ test('does not read any runtime files unless the CI experiment is explicitly ena
   expect(await preReadBrowserRuntime(false)).toBeNull()
 })
 
-test('CI pre-read runs immediately before creating the isolated browser profile', async () => {
+test('CI pre-read runs during checkpoint preparation before creating its isolated directories', async () => {
   const source = await readFile(
     new URL('../e2e/desktop/modules/external-browser-fixture.mjs', import.meta.url),
     'utf8'
