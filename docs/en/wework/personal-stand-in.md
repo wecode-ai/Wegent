@@ -25,6 +25,8 @@ A **scenario role** continuously handles a particular information flow. Both pri
 
 <a id="instance-binding-and-stopping"></a>
 
+Saving a new role enables it. Explicitly adding or enabling a source starts intake for the primary identity or role on Save, without a second intake switch. Renaming or editing duties alone does not resume a paused identity. Stopping the entire stand-in still requires native confirmation; source grants and operation approvals are unchanged.
+
 ## Instance binding and stopping
 
 Each Wework instance binds one local or cloud stand-in at a time. Scenario roles belong to that stand-in, rather than being separate instance bindings. The page and settings have no direct execution-device switch. Reopening the page, device inventory changes, or changing accounts never replaces an existing binding.

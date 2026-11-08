@@ -108,7 +108,6 @@ export function createDesktopScenario({
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         connect: true,
       })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')

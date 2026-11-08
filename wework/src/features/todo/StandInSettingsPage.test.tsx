@@ -460,6 +460,7 @@ describe('Personal stand-in settings', () => {
     expect(screen.getByTestId('stand-in-connect-project-one')).toBeChecked()
     expect(screen.getByTestId('stand-in-connect-project-two')).toBeChecked()
     await user.click(screen.getByTestId('stand-in-connect-project-two'))
+    expect(personalSave).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-save'))
     await screen.findByTestId('stand-in-source-summary')
     expect(personalSave).toHaveBeenCalledWith(
@@ -467,6 +468,7 @@ describe('Personal stand-in settings', () => {
       expect.objectContaining({
         roles: [
           expect.objectContaining({
+            enabled: true,
             collaboration: expect.objectContaining({
               enabled: true,
               allProjects: true,

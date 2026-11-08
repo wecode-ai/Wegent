@@ -179,6 +179,9 @@ mod tests {
         first["objectId"] = json!("object-one");
         first["version"] = json!("revision-one");
         store
+            .ensure_coordinated_work(7, "default", "original-work", &source, "Original work")
+            .unwrap();
+        store
             .ingest_stand_in_message(7, "default", &source, &first, Some("original-work"))
             .unwrap();
         let mut revision = first.clone();

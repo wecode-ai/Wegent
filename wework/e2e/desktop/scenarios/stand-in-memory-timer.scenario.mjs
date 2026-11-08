@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
@@ -130,7 +131,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
           `automation-open-${schedule.id}`,
           `automation-run-open-${run.id}`,
         ]) {
-          await control.command('clickWhenEnabled', `[data-testid="${id}"]`)
+          if (id === 'stand-in-settings-open') await openStandInSettings(control)
+          else await control.command('clickWhenEnabled', `[data-testid="${id}"]`)
         }
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: 'Memory consolidation evidence committed.',

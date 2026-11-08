@@ -10,7 +10,11 @@ import {
   type ReactNode,
 } from 'react'
 import { dequal } from 'dequal'
-import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
+import {
+  connectionChangeEnablesIdentity,
+  newStandInRole,
+  type PersonalStandInSettings,
+} from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { CollaborationProject } from '@wegent/collaboration'
 import {
@@ -260,6 +264,7 @@ export function StandInPrimaryProfile({
             onChange={value =>
               setDraft({
                 ...draft,
+                enabled: draft.enabled || connectionChangeEnablesIdentity(draft, value),
                 collaboration: value.collaboration,
                 calendar: value.calendar,
                 connections: value.connections ?? [],

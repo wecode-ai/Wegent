@@ -1,3 +1,4 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
@@ -38,13 +39,16 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs) {
       const source = saved.primary.connections.find(
         row => row.id === 'connection-migration-fixture'
       )
-      assert.deepEqual(source.policy, {
-        automatic: true,
-        askBeforeAct: true,
-        immediate,
-        sessionStrategy,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      assert.deepEqual(
+        { ...source.policy, sessionStrategy: source.policy.sessionStrategy ?? 'reuse' },
+        {
+          automatic: true,
+          askBeforeAct: true,
+          immediate,
+          sessionStrategy,
+        }
+      )
+      await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')

@@ -162,7 +162,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
           connect: true,
         })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', {
           value: `以 ${role} 继承权限处理新分配给我的任务`,
@@ -209,7 +208,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         requirements: false,
       })
-      await control.command('waitFor', '[data-testid="stand-in-auto"]:not([disabled])')
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]:not([disabled])')
       await control.command('click', '[data-testid="stand-in-close"]')
 
       // Restricted projects stop ordinary inheritance, and restoring it restores access.

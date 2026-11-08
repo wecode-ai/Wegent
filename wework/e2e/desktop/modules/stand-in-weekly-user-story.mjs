@@ -1,3 +1,4 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
@@ -218,7 +219,7 @@ export function createWeeklyUserStory(options) {
           'The owner receives the actual report once, without another prompt'
         )
         await options.captureScreenshot(control, 'weekly-story-result-in-primary.png')
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await openStandInSettings(control)
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-connections-open"]'

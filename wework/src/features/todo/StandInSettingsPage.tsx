@@ -20,6 +20,7 @@ import type {
   WorkspaceStandInSettings,
 } from '@wegent/collaboration'
 import {
+  connectionChangeEnablesIdentity,
   newStandInRole,
   standInRoleName,
   roleIncludesProject,
@@ -224,8 +225,10 @@ function StandInSettingsEditor({
     setNotice(false)
   }
   const changeRole = (value: StandInRole) => {
+    const connected = connectionChangeEnablesIdentity(role ?? {}, value)
     setSelectedId(value.id)
-    updateRole(value.id, () => value)
+    // Explicit source connection replaces the removed extra intake switch, only on Save.
+    updateRole(value.id, () => (connected ? { ...value, enabled: true } : value))
   }
   const closeView = () => {
     if (saving) return

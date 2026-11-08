@@ -76,6 +76,30 @@ export interface PersonalStandInSettings {
   lifecycle?: { status: 'stopping' | 'stopped' }
 }
 
+/** Explicitly connecting/enabling a source replaces the old second intake switch. */
+export function connectionChangeEnablesIdentity(
+  previous: Pick<StandInIdentity, 'connections' | 'calendar' | 'collaboration'>,
+  next: Pick<StandInIdentity, 'connections' | 'calendar' | 'collaboration'>
+): boolean {
+  const key = (source: StandInSourceConnection) =>
+    JSON.stringify([
+      source.providerId,
+      source.profile,
+      source.kind,
+      source.id,
+      source.collectionKey,
+    ])
+  return Boolean(
+    (next.collaboration?.enabled && !previous.collaboration?.enabled) ||
+    (next.calendar && !previous.calendar) ||
+    (next.calendar?.policy.automatic && !previous.calendar?.policy.automatic) ||
+    next.connections?.some(source => {
+      const old = previous.connections?.find(row => key(row) === key(source))
+      return !old || (source.policy.automatic && !old.policy.automatic)
+    })
+  )
+}
+
 export function standInPolicy(
   role: StandInRole,
   project?: StandInProjectRef

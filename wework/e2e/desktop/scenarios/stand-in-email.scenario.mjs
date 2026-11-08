@@ -1,3 +1,7 @@
+import {
+  openStandInActivity,
+  openStandInSettings,
+} from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -223,7 +227,8 @@ export function createDesktopScenario({
         'stand-in-settings-open',
         'stand-in-primary-connections-open',
       ])
-        await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+        if (target === 'stand-in-settings-open') await openStandInSettings(control)
+        else await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
       await openConnectionTypePicker(control)
       await control.command(
         'clickWhenEnabled',
@@ -328,7 +333,7 @@ export function createDesktopScenario({
       )
       assert.equal(works.items.length, 1, 'Historical mail must not create work')
       const work = works.items[0]
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+      await openStandInActivity(control)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="stand-in-activity-task-${work.taskId}"]`
@@ -417,7 +422,8 @@ export function createDesktopScenario({
         'stand-in-primary-connections-open',
         `stand-in-add-${PROVIDER}-connection`,
       ])
-        await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+        if (target === 'stand-in-settings-open') await openStandInSettings(control)
+        else await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
       await control.command('waitFor', '[data-testid="stand-in-email-add"]', { visible: true })
       await captureScreenshot(control, '08-narrow-dark-mailbox-connections.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-email-add"]')

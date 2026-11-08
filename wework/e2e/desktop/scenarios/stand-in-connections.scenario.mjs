@@ -1,3 +1,7 @@
+import {
+  openStandInSettings,
+  verifyStandInProfileNavigation,
+} from '../modules/stand-in-profile-navigation.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
@@ -109,7 +113,8 @@ export function createDesktopScenario(options) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await verifyStandInProfileNavigation(control, options.captureScreenshot)
+        await openStandInSettings(control)
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-connections-open"]'

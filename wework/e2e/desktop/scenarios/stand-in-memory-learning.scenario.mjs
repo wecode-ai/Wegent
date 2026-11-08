@@ -1,3 +1,4 @@
+import { openStandInMemory } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -194,7 +195,7 @@ export function createDesktopScenario({
         } finally {
           database.close()
         }
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-memory-open"]')
+        await openStandInMemory(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-memory-rules-toggle"]')
         const rule = rules.find(row => row.content === CORRECTED)
         const selector = `[data-testid="stand-in-memory-rule"][data-rule-id="${rule.id}"]`
