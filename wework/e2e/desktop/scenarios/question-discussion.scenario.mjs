@@ -53,6 +53,7 @@ export function createDesktopScenario({
   resultDir,
   captureScreenshot,
   workbenchReadyTimeoutMs,
+  modelResponseTimeoutMs,
 }) {
   let active = false
   let discussionCalls = 0
@@ -344,8 +345,10 @@ export function createDesktopScenario({
         `${CARD} [data-testid="request-user-input-submit-button"]`
       )
       await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
+      // Answering resumes the runtime task; allow the cross-boundary response to settle.
       await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
         text: '0',
+        timeoutMs: modelResponseTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command(
