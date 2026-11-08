@@ -54,6 +54,7 @@ export async function openPluginDevelopmentPanel(control) {
     Number(await control.command('getElementCount', selector, { visible: true })) > 0
   if (await visible(panel)) return
   const shell = '[data-testid="right-workspace-panel-shell"]'
+  await control.command('waitFor', shell)
   if ((await control.command('getAttribute', shell, { value: 'aria-hidden' })) === 'true') {
     await control.command('clickWhenEnabled', '[data-testid="toggle-right-workspace-panel-button"]')
   }
