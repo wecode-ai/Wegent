@@ -1,4 +1,7 @@
-import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
+import {
+  openStandInSettings,
+  openStandInActivity,
+} from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
@@ -324,6 +327,7 @@ export function createDesktopScenario({
         await captureScreenshot(control, 'silent-02-feedback-without-extra-work.png')
         // Collaboration executions belong to the stand-in work list, not the ordinary task sidebar.
         const workCard = `[data-testid="stand-in-activity-task-${taskId}"]`
+        await openStandInActivity(control)
         await control.command('waitFor', workCard)
         await control.command('click', workCard)
         await control.command('click', '[data-testid="stand-in-preview-open"]')

@@ -376,7 +376,7 @@ export async function createDesktopScenario({
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
         value: `${MARKER} 保留草稿`,
       })
-      await control.command('waitFor', '[data-testid="stand-in-pending-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-save"]:not(:disabled)')
       const concurrentSettings = await requestExecutor(
         control,
         'runtime.stand_in.get',

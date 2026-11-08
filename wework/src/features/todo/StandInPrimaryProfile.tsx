@@ -264,7 +264,7 @@ export function StandInPrimaryProfile({
             onChange={value =>
               setDraft({
                 ...draft,
-                enabled: draft.enabled || connectionChangeEnablesIdentity(draft, value),
+                enabled: original.enabled || connectionChangeEnablesIdentity(original, value),
                 collaboration: value.collaboration,
                 calendar: value.calendar,
                 connections: value.connections ?? [],

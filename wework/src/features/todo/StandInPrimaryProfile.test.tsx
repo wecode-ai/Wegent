@@ -180,6 +180,21 @@ it('does not save changed instructions when the user discards the draft', async 
   expect(props.onSave).not.toHaveBeenCalled()
 })
 
+it('clears a paused primary draft when source activation is reverted before Save', async () => {
+  const props = fixture()
+  props.settings.primary.enabled = false
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+  const source = screen.getByTestId('stand-in-source-collaboration')
+  await user.click(source)
+  expect(screen.getByTestId('stand-in-primary-save')).toBeEnabled()
+  await user.click(source)
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
 it('consolidates saved instructions without losing content and keeps connection rules out of the overview', async () => {
   const props = fixture()
   const user = userEvent.setup()

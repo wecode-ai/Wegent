@@ -225,10 +225,11 @@ function StandInSettingsEditor({
     setNotice(false)
   }
   const changeRole = (value: StandInRole) => {
-    const connected = connectionChangeEnablesIdentity(role ?? {}, value)
+    const baselineRole = saved?.roles.find(row => row.id === value.id) ?? role
+    const connected = connectionChangeEnablesIdentity(baselineRole ?? {}, value)
     setSelectedId(value.id)
     // Explicit source connection replaces the removed extra intake switch, only on Save.
-    updateRole(value.id, () => (connected ? { ...value, enabled: true } : value))
+    updateRole(value.id, () => ({ ...value, enabled: Boolean(baselineRole?.enabled || connected) }))
   }
   const closeView = () => {
     if (saving) return

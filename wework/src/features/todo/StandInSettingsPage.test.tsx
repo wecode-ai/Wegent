@@ -481,6 +481,25 @@ describe('Personal stand-in settings', () => {
     )
   })
 
+  it('clears a paused role draft when an unsaved source activation is undone', async () => {
+    const { props, personalSave } = fixture()
+    const user = userSetup()
+    const onCancel = vi.fn()
+    render(<StandInSettingsPage {...props} onCancel={onCancel} />)
+    await user.click(await screen.findByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+    const source = screen.getByTestId('stand-in-source-collaboration')
+    await user.click(source)
+    await user.click(screen.getByTestId('stand-in-close'))
+    expect(screen.getByTestId('stand-in-discard')).toBeVisible()
+    await user.click(screen.getByTestId('stand-in-keep-editing'))
+    await user.click(source)
+    await user.click(screen.getByTestId('stand-in-close'))
+    expect(onCancel).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('stand-in-discard')).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
   it('creates an independent project stand-in connected only to that project', async () => {
     const { props, personalSave } = fixture()
     const user = userSetup()

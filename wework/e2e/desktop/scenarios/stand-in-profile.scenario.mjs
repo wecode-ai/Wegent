@@ -1,4 +1,8 @@
-import { openStandInSettings, openStandInMemory } from '../modules/stand-in-profile-navigation.mjs'
+import {
+  openStandInSettings,
+  openStandInMemory,
+  openStandInActivity,
+} from '../modules/stand-in-profile-navigation.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { createStandInCoordinatorVerification } from '../modules/stand-in-coordinator.mjs'
@@ -392,6 +396,7 @@ export function createDesktopScenario({
         database.close()
       }
       await control.command('click', selector(`stand-in-overview-role-${recreated.roles[0].id}`))
+      await openStandInActivity(control)
       await control.command('waitFor', '[data-testid="stand-in-activity-task-correction-current"]')
       await control.command('click', '[data-testid="stand-in-activity-task-correction-current"]')
       await control.command('click', '[data-testid="stand-in-work-messages-toggle"]')

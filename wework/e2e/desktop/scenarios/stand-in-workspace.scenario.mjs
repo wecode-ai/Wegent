@@ -1,4 +1,7 @@
-import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
+import {
+  openStandInSettings,
+  openStandInActivity,
+} from '../modules/stand-in-profile-navigation.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import {
   openProjectStandIn,
@@ -529,6 +532,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('clickWhenEnabled', selector(`stand-in-overview-role-${saved.id}`))
+      await openStandInActivity(control)
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', '[data-testid="stand-in-preview-open"]')

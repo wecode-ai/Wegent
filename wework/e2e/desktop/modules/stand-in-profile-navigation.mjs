@@ -16,6 +16,8 @@ export async function openStandInMemory(control) {
 }
 
 export async function openStandInActivity(control) {
+  if ((await control.command('getElementCount', '[data-testid="stand-in-work-dialog"]')) !== '0')
+    return
   await openStandInDetails(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
 }
