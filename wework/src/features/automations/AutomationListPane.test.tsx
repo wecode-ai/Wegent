@@ -23,7 +23,11 @@ const scheduledReview: Automation = {
   updatedAt: '',
 }
 
-function renderSchedule(automation: Automation, locale = 'zh-CN', onReviewTemplate?: () => void) {
+function renderSchedule(
+  automation: Automation,
+  locale = 'zh-CN',
+  onReviewTemplate: () => void = vi.fn()
+) {
   render(
     <AutomationListPane
       automations={[automation]}
@@ -43,7 +47,6 @@ function renderSchedule(automation: Automation, locale = 'zh-CN', onReviewTempla
       onClearError={vi.fn()}
       onReviewTemplate={onReviewTemplate}
       calendar
-      onReviewTemplate={vi.fn()}
     />
   )
   return within(screen.getByTestId('automation-row-review'))
