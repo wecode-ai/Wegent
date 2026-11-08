@@ -20,6 +20,10 @@ mod source_bindings;
 #[path = "stand_in_processing_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "stand_in_direct_recovery_tests.rs"]
+mod direct_recovery_tests;
+
 fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, AppIpcError> {
     value[key]
         .as_str()

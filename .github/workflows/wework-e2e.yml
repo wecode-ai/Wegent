@@ -785,6 +785,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk reply protocol fixture" }
             "WEWORK_E2E_DWS_REPLY_FIXTURE_BIN=$replyBinary" |
               Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $recoveryBinary = Join-Path $directory "direct-recovery-dws.exe"
+            rustc wework/e2e/desktop/fixtures/direct-recovery-dingtalk-cli.rs --edition 2021 -o $recoveryBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk recovery protocol fixture" }
+            "WEWORK_E2E_DWS_RECOVERY_FIXTURE_BIN=$recoveryBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Run Windows Wework desktop Core shard E2E

@@ -151,36 +151,32 @@ impl RuntimeWorkRpcHandler {
         }
         self.execute_coordinator_actions(store, user, settings)
             .await?;
-        if store
+        let assessment_pending = store
             .stand_in_actions(user)
             .map_err(settings_error)?
             .iter()
             .any(|action| {
                 action["kind"] == "assess"
                     && matches!(action["status"].as_str(), Some("pending" | "sending"))
-            })
-        {
-            return Ok(json!({"skip":true}));
-        }
+            });
         let execution_gate = self.task_send_gate(&task_id(user));
         let _execution_guard = execution_gate.lock().await;
-        if self.is_busy_local_task(&task_id(user))
+        let assessment_busy = self.is_busy_local_task(&task_id(user))
             || self
                 .local_task_link(&task_id(user))
-                .is_some_and(|link| waits_for_user(&link) || link.status == "archived")
-        {
-            return Ok(json!({"skip":true}));
-        }
+                .is_some_and(|link| waits_for_user(&link) || link.status == "archived");
         let mut state = store
             .stand_in_processing_state(user)
             .map_err(settings_error)?;
-        if !state["error"].is_null() && state["force"] != true {
-            return Ok(json!({"skip":true}));
-        }
+        let assessment_blocked = assessment_pending
+            || assessment_busy
+            || (!state["error"].is_null() && state["force"] != true);
         self.observe_stand_in_work(store, user, &mut state)?;
-        // Retire an idle AI batch before opening a router snapshot. Active runs never get here.
-        state["batchId"] = Value::Null;
-        state["snapshot"] = Value::Null;
+        // Native routing is independent; never revoke a live or failed assessment batch.
+        if !assessment_blocked {
+            state["batchId"] = Value::Null;
+            state["snapshot"] = Value::Null;
+        }
         store
             .split_stand_in_connection_intake(user)
             .map_err(settings_error)?;
@@ -197,6 +193,7 @@ impl RuntimeWorkRpcHandler {
         let mut versions = serde_json::Map::new();
         let persisted = store.stand_in_events(user).map_err(settings_error)?;
         let mut routed = Vec::new();
+        let mut intake = Vec::new();
         for event in &events {
             let id = required(event, "id")?;
             let raw = persisted
@@ -236,15 +233,6 @@ impl RuntimeWorkRpcHandler {
                 .await?;
             let dispatch = if binding.is_none()
                 && immediate
-                && (event["kind"] != "connection"
-                    || stand_in_identities(settings).iter().any(|role| {
-                        role["id"] == event["roleIds"][0]
-                            && ["prompt", "preferences"].iter().any(|field| {
-                                role[*field]
-                                    .as_str()
-                                    .is_some_and(|value| !value.trim().is_empty())
-                            })
-                    }))
                 && matches!(
                     event["kind"].as_str(),
                     Some("assignment" | "connection" | "calendar")
@@ -257,16 +245,28 @@ impl RuntimeWorkRpcHandler {
             } else {
                 Value::Null
             };
+            if assessment_blocked && dispatch.is_null() && binding.is_none() {
+                continue;
+            }
+            intake.push(event.clone());
             routed.push(json!({"id":id,"kind":event["kind"],"sourceKey":json!([event["source"],event["roleIds"]]).to_string(),
                 "receivedAt":event["createdAt"],"notBefore":event["notBefore"],
                 "processingMode":if immediate {"immediate"} else {"silent"},"binding":binding,"dispatch":dispatch,
                 "requiresAction":event["kind"]=="work_state" && (event["state"][0]=="failed" || event["state"][3]=="failed")}));
         }
+        if routed.is_empty() {
+            state["routerSnapshot"] = Value::Null;
+            store
+                .save_stand_in_processing_state(user, &state)
+                .map_err(settings_error)?;
+            return Ok(json!({"skip":true,"events":[]}));
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let snapshot = json!({"id":id,"context":{"id":format!("personal:{user}"),"revision":revision,"enabled":true},
             "deviceId":self.device_id,"configurationVersion":revision,"wakeVersion":state["wakeVersion"],
-            "now":now,"force":state["force"]==true,"events":routed,"eventVersions":versions,"intake":events});
+            "now":now,"force":state["force"]==true,"assessmentBlocked":assessment_blocked,
+            "events":routed,"eventVersions":versions,"intake":intake});
         state["routerSnapshot"] = snapshot.clone();
         store
             .save_stand_in_processing_state(user, &state)
@@ -416,6 +416,12 @@ impl RuntimeWorkRpcHandler {
                     )
                 }
                 "assess" if !assessment => {
+                    if snapshot["assessmentBlocked"] == true {
+                        return Err(AppIpcError::new(
+                            "stale_context",
+                            "The current assessment must be resolved before starting another batch",
+                        ));
+                    }
                     assessment = true;
                     let prompt = required(payload, "assessmentInstructions")?;
                     if prompt.len() > 20_000 {
@@ -621,11 +627,8 @@ impl RuntimeWorkRpcHandler {
         } else {
             Some(self.create_task(payload).await?)
         };
-        if result.is_some_and(|result| result["success"] == false || result["accepted"] == false) {
-            return Err(AppIpcError::new(
-                "stand_in_start_failed",
-                "Coordinator command was not accepted",
-            ));
+        if let Some(result) = result {
+            super::stand_in_execution::accepted_stand_in_result(result)?;
         }
         Ok(None)
     }
