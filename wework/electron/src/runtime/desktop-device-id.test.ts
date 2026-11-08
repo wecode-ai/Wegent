@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { system } from 'systeminformation'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -6,6 +6,10 @@ import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { temporaryDirectory } from './test-helpers.js'
 
 vi.mock('systeminformation', () => ({ system: vi.fn() }))
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, open: vi.fn(actual.open) }
+})
 
 const HARDWARE_UUID = '12345678-1234-5678-9abc-123456789abc'
 
@@ -125,6 +129,38 @@ describe('desktop device identity', () => {
     expect(await readFile(join(options().dataDirectory, 'desktop-device-id'), 'utf8')).toBe(
       'electron-winner\n'
     )
+    expect(await readdir(options().dataDirectory)).toEqual(['desktop-device-id'])
+  })
+
+  test('publishes only a fully written identity and removes temporary files', async () => {
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    vi.mocked(open).mockImplementationOnce(async (path, flags, mode) => {
+      const file = await actual.open(path, flags, mode)
+      const write = file.writeFile.bind(file)
+      vi.spyOn(file, 'writeFile').mockImplementationOnce(async (...args) => {
+        await expect(
+          readFile(join(options().dataDirectory, 'desktop-device-id'))
+        ).rejects.toMatchObject({ code: 'ENOENT' })
+        return write(...args)
+      })
+      return file
+    })
+    const id = await resolveDesktopDeviceId(options())
+    expect(await readFile(join(options().dataDirectory, 'desktop-device-id'), 'utf8')).toBe(
+      `${id}\n`
+    )
+    expect(await readdir(options().dataDirectory)).toEqual(['desktop-device-id'])
+  })
+
+  test('does not publish an identity when writing fails', async () => {
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    vi.mocked(open).mockImplementationOnce(async (path, flags, mode) => {
+      const file = await actual.open(path, flags, mode)
+      vi.spyOn(file, 'writeFile').mockRejectedValueOnce(new Error('disk write failed'))
+      return file
+    })
+    await expect(resolveDesktopDeviceId(options())).rejects.toThrow('disk write failed')
+    expect(await readdir(options().dataDirectory)).toEqual([])
   })
 
   test('rejects an empty application identifier', async () => {

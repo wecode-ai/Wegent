@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto'
-import { mkdir, open, readFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { link, mkdir, open, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { system } from 'systeminformation'
 
@@ -32,19 +32,28 @@ export async function resolveDesktopDeviceId(options: {
   const deviceId = `electron-${digest}`
 
   await mkdir(options.dataDirectory, { recursive: true, mode: 0o700 })
+  return persistDesktopDeviceId(path, deviceId)
+}
+
+async function persistDesktopDeviceId(path: string, deviceId: string): Promise<string> {
+  const temporary = `${path}.${randomUUID()}.tmp`
   try {
-    const file = await open(path, 'wx', 0o600)
+    const file = await open(temporary, 'wx', 0o600)
     try {
       await file.writeFile(`${deviceId}\n`)
+      await file.sync()
     } finally {
       await file.close()
     }
+    await link(temporary, path)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     const existing = await readDesktopDeviceId(path)
     if (!existing)
       throw new Error('Desktop device identity disappeared during initialization', { cause: error })
     return existing
+  } finally {
+    await rm(temporary, { force: true })
   }
   return deviceId
 }
