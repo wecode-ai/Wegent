@@ -38,9 +38,9 @@ import {
 import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
   waitForControlValue,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'

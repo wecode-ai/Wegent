@@ -47,7 +47,23 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(), AppIpcError> {
         loop {
             if source.thread_path.is_none() {
-                source.thread_path = self.thread_path_for_id(&source.thread_id).await;
+                let response =
+                    read_codex_thread_metadata(&self.codex_app_server, &source.thread_id)
+                        .await
+                        .map_err(|error| AppIpcError::new("side_source_not_ready", error))?;
+                let thread = response
+                    .get("thread")
+                    .filter(|thread| {
+                        string_field(thread, "id").as_deref() == Some(source.thread_id.as_str())
+                    })
+                    .ok_or_else(|| {
+                        AppIpcError::new(
+                            "side_source_not_ready",
+                            "thread/read returned metadata for a different or missing source thread",
+                        )
+                    })?;
+                source.thread_path =
+                    string_field(thread, "path").filter(|path| !path.trim().is_empty());
             }
             if let Some(path) = source.thread_path.as_deref() {
                 if rollout_metadata_ready(Path::new(path), &source.thread_id).await? {

@@ -12,6 +12,7 @@ wegent-protocol = { path = "../../../shared/rust/protocol" }
 wegent-execution-contracts = { path = "../execution-contracts" }
 wegent-subprocess = { path = "../subprocess" }
 wegent-runtime-logging = { path = "../logging" }
+wegent-filesystem = { path = "../../../shared/rust/filesystem" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 flate2 = "1.0"
 serde_json = { version = "1", features = ["preserve_order"] }

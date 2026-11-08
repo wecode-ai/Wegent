@@ -645,6 +645,18 @@ async def test_plugin_refresh_does_not_resend_completed_empty_plugin_full_sync(
     )
     full_sent = asyncio.Event()
     release_full = asyncio.Event()
+    route_checked = asyncio.Event()
+
+    async def online_info(user_id: int, device_id: str) -> dict[str, str]:
+        assert user_id == 1
+        assert device_id == "runtime-device"
+        route_checked.set()
+        return {"socket_id": "socket-device"}
+
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_rpc.device_service.get_device_online_info",
+        online_info,
+    )
     requests = []
     acknowledgements = []
 
@@ -678,6 +690,8 @@ async def test_plugin_refresh_does_not_resend_completed_empty_plugin_full_sync(
         refreshed = await asyncio.wait_for(
             plugin_reconciliation.reconcile_device_plugins(1, "device"), timeout=5
         )
+        if refresh_arrives_first:
+            await asyncio.wait_for(route_checked.wait(), timeout=5)
     finally:
         release_full.set()
         result = await asyncio.wait_for(full, timeout=5)

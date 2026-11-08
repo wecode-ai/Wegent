@@ -45,6 +45,7 @@ impl RuntimeWorkRpcHandler {
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
     let code = match &error {
         crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
+        crate::task_runtime::TaskRuntimeError::MemorySuppressed => "memory_suppressed",
         _ => "stand_in_settings",
     };
     AppIpcError::new(code, error.to_string())

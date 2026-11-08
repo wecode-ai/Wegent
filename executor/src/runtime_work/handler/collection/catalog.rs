@@ -189,15 +189,6 @@ impl RuntimeWorkRpcHandler {
         );
     }
 
-    pub(in crate::runtime_work::handler) async fn codex_threads(
-        &self,
-        archived: bool,
-    ) -> Vec<Value> {
-        self.read_codex_catalog(archived, Some(CODEX_THREAD_LIST_MAX_ITEMS))
-            .await
-            .0
-    }
-
     async fn read_codex_catalog(&self, archived: bool, limit: Option<usize>) -> (Vec<Value>, bool) {
         let started_at = Instant::now();
         let mut threads = Vec::new();
@@ -267,18 +258,6 @@ impl RuntimeWorkRpcHandler {
             ],
         );
         (threads, complete)
-    }
-
-    pub(in crate::runtime_work::handler) async fn thread_path_for_id(
-        &self,
-        thread_id: &str,
-    ) -> Option<String> {
-        for thread in self.codex_threads(false).await {
-            if string_field(&thread, "id").as_deref() == Some(thread_id) {
-                return string_field(&thread, "path").filter(|path| !path.trim().is_empty());
-            }
-        }
-        None
     }
 
     pub(in crate::runtime_work::handler) fn visible_links_for_projects(

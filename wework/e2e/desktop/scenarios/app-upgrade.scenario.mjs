@@ -20,12 +20,16 @@ import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
 import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
+import { finishFailedUpgradeRetry } from '../modules/failed-upgrade-retry.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
 import { stopProcessGroup, waitForOwnedProcessExit } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
+import {
+  routeUpgradeRequests,
+  routeRunningUpgradeRequests,
+} from '../modules/upgrade-request-route.mjs'
 import { assertInstalledStartupWithStaleHistory } from '../modules/installed-startup-history.mjs'
 import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
-import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -128,6 +132,8 @@ export async function createDesktopScenario(options) {
   }
   const channel = pair.channel || (pair.to.version.includes('-beta.') ? 'beta' : 'stable')
   const verifiesRefreshedUpdate = checkpoint === 'app-update-refresh'
+  const verifiesRetry = checkpoint === 'app-update-retry'
+  const verifiesFailedActivation = checkpoint === 'app-upgrade-recovery' || verifiesRetry
   let offer = verifiesRefreshedUpdate ? 'unavailable' : 'target'
   const unavailablePolicy = () => ({
     ...unavailableUpdatePolicy(
@@ -138,6 +144,7 @@ export async function createDesktopScenario(options) {
     channel,
   })
   let control
+  let inspectorPort
   let passed = false
   let origin
   let modelRequests = 0
@@ -237,8 +244,7 @@ export async function createDesktopScenario(options) {
   const root = join(electronUserDataDirectory, 'releases')
   const sourceRuntimeRoot = join(electronUserDataDirectory, 'managed-runtimes/dsh')
   const appEnvironment = {}
-  if (checkpoint === 'app-upgrade-recovery')
-    appEnvironment.WEWORK_E2E_RELEASE_FAILURE_VERSION = pair.to.version
+  if (verifiesFailedActivation) appEnvironment.WEWORK_E2E_RELEASE_FAILURE_VERSION = pair.to.version
   if (checkpoint === 'app-rollback-recovery')
     appEnvironment.WEWORK_E2E_ROLLBACK_FAILURE = 'after-journal'
 
@@ -294,8 +300,14 @@ export async function createDesktopScenario(options) {
     ...(!options.preparationOnly
       ? {
           electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
-          appProcessStarted: child =>
-            routeUpgradeRequests(child, origin, join(resultDir, 'upgrade-transport.log')),
+          appProcessStarted: async child => {
+            inspectorPort = await routeUpgradeRequests(
+              child,
+              origin,
+              join(resultDir, 'upgrade-transport.log'),
+              { followHandoffs: true }
+            )
+          },
         }
       : {}),
     appEnvironment,
@@ -607,15 +619,14 @@ export async function createDesktopScenario(options) {
         await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
         'before-update'
       )
-      if (checkpoint === 'app-upgrade-recovery')
-        await useVersionedMacosRecoveryBridge(root, pair.to.version)
+      if (verifiesFailedActivation) await useVersionedMacosRecoveryBridge(root, pair.to.version)
       const readyCount = control.readyCount
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      if (checkpoint === 'app-upgrade-recovery') {
+      if (verifiesFailedActivation) {
         assert.equal(
           await installedVersion(),
           pair.from.version,
@@ -642,6 +653,23 @@ export async function createDesktopScenario(options) {
           join(resultDir, 'upgrade-recovery-result.json'),
           JSON.stringify({ source: pair.from.sha256, target: pair.to.sha256, recovered: true })
         )
+        if (verifiesRetry)
+          await finishFailedUpgradeRetry(control, {
+            root,
+            homePath: options.homePath,
+            pair,
+            requests,
+            resultDir,
+            restartDesktopApp,
+            workbenchReadyTimeoutMs,
+            about,
+            send,
+            installedVersion,
+            assertSelectedComposition,
+            captureScreenshot: options.captureScreenshot,
+            routeCurrentUpdateRequests: () =>
+              routeRunningUpgradeRequests(inspectorPort, control, origin),
+          })
         passed = true
         return
       }

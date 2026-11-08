@@ -59,6 +59,7 @@ fn binding(identity: &StandInMcpIdentity, target: &RuntimeTaskLink) -> String {
                 identity.coordinator_batch,
                 identity.readonly_worker,
                 identity.review,
+                identity.memory_review,
                 target.local_task_id,
                 if super::super::conversation_sessions::is_identity_conversation(target) {
                     None
@@ -409,7 +410,7 @@ fn content(
         .ok_or_else(|| invalid("Unknown history message"))?;
     let text = message["content"].as_str().unwrap_or_default();
     let (chunk, end) = text_chunk(text, offset)?;
-    let result = json!({"success":true,"taskId":snapshot.task,"messageId":message["id"],"content":chunk,
+    let result = json!({"success":true,"taskId":snapshot.task,"messageId":message["id"],"role":message["role"],"createdAt":message["createdAt"],"content":chunk,
         "contentOffset":offset,"totalContentBytes":text.len(),"contentComplete":end==text.len(),
         "messageContentCursor":(end<text.len()).then(||encode(snapshot,id,Position::Content{message:index,offset:end}))});
     if result.to_string().len() > PAGE_BYTES {
@@ -442,6 +443,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
         };
         handler.upsert_local_task(RuntimeTaskLink {local_task_id:"actor".into(),runtime:"codex".into(),

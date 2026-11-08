@@ -183,6 +183,8 @@ mod stand_in_history;
 mod stand_in_ingress;
 mod stand_in_lifecycle;
 mod stand_in_memory;
+mod stand_in_memory_progress;
+mod stand_in_memory_review;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
@@ -282,6 +284,8 @@ const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
 const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
+const ARCHIVED_BACKGROUND_FORK_RETRY_LIMIT: usize = 3;
+const ARCHIVED_BACKGROUND_FORK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
 const WORKTREE_AUTO_CLEANUP_BATCH_DELAY: Duration = Duration::from_secs(30);
 const WORKTREE_AUTO_CLEANUP_ERROR_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -1211,6 +1215,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.python.has_demand"
             | "runtime.stand_in.assignment_tasks"
             | "runtime.tasks.get"
             | "runtime.composer.catalog.read"

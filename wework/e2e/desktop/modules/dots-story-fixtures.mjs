@@ -76,6 +76,10 @@ export function comparableDotsPath(value) {
       : path
   return readable.replace(/^[A-Z]:/, drive => drive.toLowerCase())
 }
+
+export function dotsFileLink(label, path) {
+  return `[${label}](<${encodeURI(path.replaceAll('\\', '/'))}>)`
+}
 const cartTests =
   "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { totalCents } from './cart.mjs'\ntest('empty cart',()=>assert.equal(totalCents([]),0))\ntest('single item',()=>assert.equal(totalCents([{unitPriceCents:500,quantity:1}]),500))\n"
 const quantityTest =

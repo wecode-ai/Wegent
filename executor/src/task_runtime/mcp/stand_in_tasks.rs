@@ -38,6 +38,35 @@ pub(super) fn read_tools() -> Vec<Value> {
     ]
 }
 
+pub(super) fn memory_review_tools() -> Vec<Value> {
+    let mut tools = read_tools();
+    let mut list = tools[0].clone();
+    list["name"] = json!("list_memory_sources");
+    list["description"] = json!("List currently authorized conversations with unprocessed changes. Follow nextCursor even when a filtered page is empty. The host excludes already completed source increments.");
+    tools.push(list);
+    tools.push(json!({"name":"next_memory_page","description":"Read the next unprocessed history page or long-message chunk. Use returned readArguments when saving facts. historyReadComplete means no history pages remain; pendingWriteCount must also be resolved for readyToComplete. Resolve failed saves instead of looping on empty pages. Only set restart=true to recover expired history cursors without advancing progress. After reading all evidence and saving useful facts, call complete_memory_source.","inputSchema":{"type":"object","properties":{"taskId":{"type":"string"},"restart":{"type":"boolean"}},"required":["taskId"]},"annotations":{"readOnlyHint":false,"openWorldHint":false}}));
+    tools.push(json!({"name":"complete_memory_source","description":"Commit this source's consolidation watermark after all pages/chunks have been read and all useful facts saved successfully. The host rejects unread pages, stale runs and revoked sources. Do not call after failed writes or unresolved evidence; a source with no durable facts may be completed after fully reading it.","inputSchema":{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"]},"annotations":{"readOnlyHint":false,"openWorldHint":false}}));
+    let mut schema = tools[1]["inputSchema"].clone();
+    for (name, value) in [
+        ("messageId", json!({"type":"string"})),
+        ("excerpt", json!({"type":"string","maxLength":2000})),
+        ("content", json!({"type":"string","maxLength":4000})),
+        ("id", json!({"type":"string"})),
+        ("version", json!({"type":"integer"})),
+    ] {
+        schema["properties"][name] = value;
+    }
+    schema["required"] = json!(["taskId", "messageId", "excerpt", "content"]);
+    tools.push(json!({"name":"remember_from_conversation","description":"Save or update a durable fact supported by an exact readable conversation message. Supply taskId, messageId and a verbatim excerpt, plus the same history page/content cursor used to read it when necessary. The host verifies the evidence and fixes its memory scope. Search existing memories before updating; use id and version. An assistant suggestion, quote or another person's statement is not a fact about the user. Never reconstruct a forgotten fact.","inputSchema":schema,"annotations":{"readOnlyHint":false,"openWorldHint":false}}));
+    tools.push(json!({"name":"search_review_memories","description":"Search current memories whose scope is still authorized. Empty query lists memories. Follow nextCursor with the same query until null for complete results; restart without cursor if results change. When itemChunk is present, concatenate its content in offset order until complete, then parse the reconstructed JSON record; empty items does not mean no matches. Use id and version to update an existing fact instead of duplicating it.","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"cursor":{"type":"string"}}},"annotations":{"readOnlyHint":true,"openWorldHint":false}}));
+    tools.push(memory_rules_tool());
+    tools
+}
+
+pub(super) fn memory_rules_tool() -> Value {
+    json!({"name":"list_memory_forgetting_rules","description":format!("{} Follow nextCursor until null; concatenate itemChunk content in offset order when present, then parse its JSON. An empty items array with a cursor is not the end.", crate::task_runtime::memory_policy::STAND_IN_FORGETTING_POLICY),"inputSchema":{"type":"object","properties":{"cursor":{"type":"string"}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}})
+}
+
 pub(super) fn tools() -> Vec<Value> {
     let read_sources = json!({"type":"array","maxItems":50,"description":"Exact required source references from get_profile. Omit for no source access. The host captures only this selection; wildcard scopes, later added sources and connection changes are never inherited.","items":{"type":"object","additionalProperties":false,"properties":{"providerId":{"type":"string"},"profile":{"type":"string"},"kind":{"type":"string"},"id":{"type":"string"}},"required":["providerId","profile","kind","id"]}});
     let worker_message = json!({"type":"string","description":"Executable business instructions for the worker that this call creates. Do not ask the worker to create itself or manually forward its result; the host handles creation and result delivery."});

@@ -14,7 +14,6 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
-  selectCollaborationProjectView,
   reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
 import {
@@ -24,6 +23,7 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身通知-${process.pid}`

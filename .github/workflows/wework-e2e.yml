@@ -92,11 +92,11 @@ jobs:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
         run: node .github/scripts/balance-wework-windows-e2e.mjs >> "$GITHUB_OUTPUT"
 
-      - name: Balance Linux Core checkpoints across additional runners
+      - name: Balance Linux Core checkpoints within existing runners
         id: linux-matrix
         env:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
-          CORE_RUNNER_SCALE: "1.5"
+          CORE_RUNNER_SCALE: "1"
         run: node .github/scripts/order-wework-linux-e2e.mjs --balance-core >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
@@ -455,6 +455,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'browser-toolbar-actions') && '1' || '0' }}
           RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
@@ -784,6 +785,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk reply protocol fixture" }
             "WEWORK_E2E_DWS_REPLY_FIXTURE_BIN=$replyBinary" |
               Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $recoveryBinary = Join-Path $directory "direct-recovery-dws.exe"
+            rustc wework/e2e/desktop/fixtures/direct-recovery-dingtalk-cli.rs --edition 2021 -o $recoveryBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk recovery protocol fixture" }
+            "WEWORK_E2E_DWS_RECOVERY_FIXTURE_BIN=$recoveryBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Run Windows Wework desktop Core shard E2E
@@ -946,8 +952,8 @@ jobs:
           fi
           gh --version
 
-      - name: Prepare the pinned native DWS compiler for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth-dws')
+      - name: Prepare the pinned native compiler for account authentication E2E
+        if: contains(matrix.segments, 'plugin-account-auth-dws') || contains(matrix.segments, 'plugin-account-auth-password')
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"

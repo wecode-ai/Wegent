@@ -1,6 +1,6 @@
 {
   "order": 82000,
-  "scenario": "./scenarios/reply-predictions.scenario.mjs",
+  "scenario": "./scenarios/reply-predictions-background.scenario.mjs",
   "scenarioOnly": true,
   "ci": {
     "core": {

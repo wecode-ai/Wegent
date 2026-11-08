@@ -21,6 +21,15 @@ impl RuntimeWorkRpcHandler {
                 .map_err(settings_error)?,
             (known, _) => known,
         };
+        // Provider revisions belong to the same work even with independent events.
+        let known = if known.is_none() && message["objectId"].is_string() {
+            store
+                .known_stand_in_message(user, role_id, source, required(message, "id")?)
+                .map_err(settings_error)?
+                .filter(|previous| previous["objectId"] == message["objectId"])
+        } else {
+            known
+        };
         if let Some(known) = known {
             return Ok(known["workId"].as_str().map(str::to_owned));
         }
@@ -160,6 +169,33 @@ mod tests {
 
     fn message(id: &str) -> Value {
         json!({"id":id,"text":"Incoming work","at":chrono::Utc::now().to_rfc3339()})
+    }
+
+    #[test]
+    fn provider_object_revisions_keep_the_original_work_in_independent_mode() {
+        let root = tempfile::tempdir().unwrap();
+        let (handler, store, role, source) = fixture(root.path(), true, "independent");
+        let mut first = message("provider-object");
+        first["objectId"] = json!("object-one");
+        first["version"] = json!("revision-one");
+        store
+            .ingest_stand_in_message(7, "default", &source, &first, Some("original-work"))
+            .unwrap();
+        let mut revision = first.clone();
+        revision["version"] = json!("revision-two");
+        assert_eq!(
+            handler
+                .connection_session_target(&store, 7, &role, &source, &revision)
+                .unwrap(),
+            Some("original-work".into())
+        );
+        revision["objectId"] = json!("different-object");
+        assert_eq!(
+            handler
+                .connection_session_target(&store, 7, &role, &source, &revision)
+                .unwrap(),
+            None
+        );
     }
 
     #[tokio::test]

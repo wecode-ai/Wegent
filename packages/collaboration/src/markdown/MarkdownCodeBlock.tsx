@@ -49,6 +49,7 @@ interface MarkdownCodeBlockProps {
   children: ReactNode
   compact?: boolean
   isStreaming?: boolean
+  sourceLine?: number
 }
 
 export function MarkdownCodeBlock({
@@ -56,6 +57,7 @@ export function MarkdownCodeBlock({
   children,
   compact = false,
   isStreaming = false,
+  sourceLine,
 }: MarkdownCodeBlockProps) {
   const { copyText, onCopy, translate: t, theme } = useMarkdownServices()
   const [copied, setCopied] = useState(false)
@@ -97,6 +99,7 @@ export function MarkdownCodeBlock({
       data-testid="markdown-code-block"
       data-theme={theme === 'system' ? undefined : theme}
       data-scroll-anchor
+      data-source-line={sourceLine}
       className={[
         'markdown-code-block pierre-code-block max-w-full select-none overflow-hidden rounded-lg border border-border bg-background text-left shadow-sm',
         compact ? 'mb-1.5' : 'mb-3 mt-2',

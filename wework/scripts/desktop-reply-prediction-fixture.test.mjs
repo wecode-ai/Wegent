@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
+import { EventEmitter } from 'node:events'
 import { onTestFinished, test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { createDesktopScenario as createTemporaryChatScenario } from '../e2e/desktop/scenarios/temporary-chat.scenario.mjs'
@@ -258,6 +259,38 @@ test('serves background predictions without advancing the active tool scenario',
   const message = events.find(event => event.item?.type === 'message')
   assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
 })
+
+test.each([false, true])(
+  'routes prediction models before task handlers unless explicitly owned: %s',
+  async handlesReplyPredictions => {
+    let scenarioRequests = 0
+    const server = new DesktopE2EServer('/tmp/prediction-routing', undefined, {
+      handlesReplyPredictions,
+      async handleHttp(_request, response) {
+        scenarioRequests += 1
+        response.end('owned prediction')
+        return true
+      },
+    })
+    const request = Readable.from([
+      JSON.stringify({
+        client_metadata: predictionMetadata(),
+        input: [{ role: 'user', content: REPLY_PREDICTION_PROMPT }],
+      }),
+    ])
+    request.method = 'POST'
+    request.url = '/v1/responses'
+    request.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
+    server.url = 'http://fixture'
+    const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+    await server.handle(request, response)
+    assert.equal(scenarioRequests, handlesReplyPredictions ? 1 : 0)
+    if (!handlesReplyPredictions) {
+      const message = response.events().find(event => event.item?.type === 'message')
+      assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
+    }
+  }
+)
 
 test('keeps prediction image descriptions separate from conversation cache assertions', async () => {
   const server = new DesktopE2EServer('/tmp/reply-prediction-vision-fixture')

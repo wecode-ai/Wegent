@@ -1,4 +1,4 @@
-import { test as base, expect } from '@playwright/test'
+import { test as base, expect, type APIRequestContext } from '@playwright/test'
 import { ADMIN_USER, BOOTSTRAP_ADMIN_USER } from '../config/test-users'
 import { createApiClient } from '../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
@@ -14,6 +14,20 @@ export const EXECUTOR_USER = { ...ADMIN_USER, username: `e2e-${scope}` }
 export const executorMockUrl = (base = mockUrl): string => scopedMockUrl(base, scope)
 
 type WorkerAccount = { token: string }
+
+async function fetchCurrentUserWithRetry(request: APIRequestContext, token: string) {
+  // The hybrid gateway starts listening before its Python fallback and account
+  // provisioning calls settle. Retry only transient upstream response codes.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await request.get(`${apiUrl}/api/users/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (response.ok()) return response
+    if (![502, 503, 504].includes(response.status()) || attempt === 2) return response
+    await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt))
+  }
+  throw new Error('unreachable')
+}
 
 /** Parallel files use distinct accounts and model state; real device specs keep their original fixture. */
 export const test = base.extend<object, { executorAccount: WorkerAccount }>({
@@ -41,9 +55,7 @@ export const test = base.extend<object, { executorAccount: WorkerAccount }>({
         const login = await client.login(EXECUTOR_USER.username, EXECUTOR_USER.password, 1)
         expect(login.data?.access_token).toBeTruthy()
         const token = login.data!.access_token
-        const me = await request.get(`${apiUrl}/api/users/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
+        const me = await fetchCurrentUserWithRetry(request, token)
         expect(me.ok(), await me.text()).toBe(true)
         const user = await me.json()
         expect(user.user_name).toBe(EXECUTOR_USER.username)

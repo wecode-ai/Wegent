@@ -24,7 +24,7 @@ export type CustomFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearl
 
 export interface AutomationDraft {
   originalSchedule?: { schedule: AutomationSchedule; fields: string }
-  calendarTemplate?: 'weekly_review'
+  calendarTemplate?: NonNullable<RuntimeTaskCreateRequest['standInCalendar']>['template']
   name: string
   prompt: string
   source: AutomationSource
