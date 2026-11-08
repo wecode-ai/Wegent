@@ -90,8 +90,11 @@ export function StandInDetailsPopover({
     roleId ?? '@primary',
     conversation?.deviceId
   )
+  const threads = items.filter(
+    item => !inbox.some(work => work.taskId === item.task.taskId && !work.task)
+  )
   const activity = [
-    ...items.map(item => ({ kind: 'work' as const, item, at: standInState(item).updatedAt })),
+    ...threads.map(item => ({ kind: 'work' as const, item, at: standInState(item).updatedAt })),
     ...schedules.items.map(item => ({
       kind: 'schedule' as const,
       item,
@@ -100,7 +103,7 @@ export function StandInDetailsPopover({
   ].sort((a, b) => b.at.localeCompare(a.at))
   const needsAttention = Boolean(error || device?.error || sourceErrors.length)
   const latestActivity = [
-    ...items.map(item => standInState(item).updatedAt),
+    ...threads.map(item => standInState(item).updatedAt),
     ...schedules.items.flatMap(item => (item.lastRunAt ? [item.lastRunAt] : [])),
   ]
     .sort()

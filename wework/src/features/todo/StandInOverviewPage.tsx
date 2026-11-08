@@ -549,6 +549,13 @@ export function StandInOverviewPage({
             deviceId={deviceId}
             onRefresh={inbox.refresh}
             onOpenTask={onOpenTask}
+            onRestoreTask={
+              props.services.runtimeWorkApi
+                ? async address => {
+                    await props.services.runtimeWorkApi!.unarchiveConversation(address)
+                  }
+                : undefined
+            }
           />
         </StandInReviewDialog>
         <StandInReviewDialog
@@ -720,6 +727,11 @@ export function StandInOverviewPage({
                     )}
                     onClose={() => setProfile(null)}
                     onBack={() => setProfile(roleId ? 'role' : 'primary')}
+                    parentLabel={t(
+                      roleId
+                        ? 'standIn.workspace.role_profile'
+                        : 'standIn.workspace.primary_profile'
+                    )}
                   />
                 ) : profile === 'primary' && state.draft ? (
                   <StandInPrimaryProfile

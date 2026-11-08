@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { requestExecutor } from './executor-rpc.mjs'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
+import {
+  openStandInActivity,
+  verifyStandInProfileNavigation,
+} from './stand-in-profile-navigation.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
 import {
   assistantMessage,
@@ -33,6 +37,7 @@ export function createDirectRecoveryVerification(options) {
   let coordinatorCalls = 0
   let workCalls = 0
   let round = 0
+  let dispatchBatch = false
   const rpc = (control, method, params) =>
     requestExecutor(control, method, params, options.uiTimeoutMs)
   const source = kind => ({
@@ -43,7 +48,7 @@ export function createDirectRecoveryVerification(options) {
     name: `${MARKER}-${kind}`,
     policy: { automatic: true, askBeforeAct: true, immediate: true },
   })
-  async function publish(phase) {
+  async function publish(phase, batch = false) {
     await writeFile(
       join(root, 'messages.json'),
       JSON.stringify({
@@ -51,18 +56,16 @@ export function createDirectRecoveryVerification(options) {
         result: {
           hasMore: false,
           nextCursor: '0',
-          conversationMessagesList: ['direct', 'group'].map(kind => ({
+          conversationMessagesList: (batch ? ['direct'] : ['direct', 'group']).map(kind => ({
             singleChat: kind === 'direct',
             openConversationId: kind === 'direct' ? 'self-chat' : 'direct-recovery-group',
-            messages: [
-              {
-                openMessageId: `${MARKER}-${kind}-${phase}`,
-                senderOpenDingTalkId: kind === 'direct' ? 'fixture-user' : 'other',
-                content: `${MARKER}-${kind}-${phase}`,
-                createTime: new Date().toISOString(),
-                sendType: 'user',
-              },
-            ],
+            messages: (batch ? ['a', 'b'] : ['']).map(suffix => ({
+              openMessageId: `${MARKER}-${kind}-${phase}${suffix}`,
+              senderOpenDingTalkId: kind === 'direct' ? 'fixture-user' : 'other',
+              content: `${MARKER}-${kind}-${phase}${suffix}`,
+              createTime: new Date().toISOString(),
+              sendType: 'user',
+            })),
           })),
         },
       })
@@ -157,10 +160,12 @@ export function createDirectRecoveryVerification(options) {
                 eventIds: JSON.parse(readMcpToolOutput(body, read)).snapshot.events.map(
                   event => event.id
                 ),
-                reason: 'Protocol regression completed',
+                ...(dispatchBatch
+                  ? { roleId: '@primary', title: 'Selected source batch' }
+                  : { reason: 'Protocol regression completed' }),
               }
             : {}
-          const name = ready ? 'ignore_events' : 'read_intake'
+          const name = ready ? (dispatchBatch ? 'create_work' : 'ignore_events') : 'read_intake'
           events = mcpToolRequestEvents(body, {
             toolName: name,
             directToolName: `mcp__wework_stand_in__${name}`,
@@ -170,6 +175,17 @@ export function createDirectRecoveryVerification(options) {
           }).events
         }
       } else if (!events && input.includes(MARKER)) {
+        if (dispatchBatch) {
+          const fresh = JSON.stringify(
+            [...(body.input ?? [])].reverse().find(item => item.role === 'user')
+          )
+          assert.ok(fresh.includes(`${MARKER}-direct-3a`))
+          assert.ok(fresh.includes(`${MARKER}-direct-3b`))
+          assert.ok(
+            !fresh.includes(`${MARKER}-direct-2`),
+            'Ignored input must not leak into the next dispatch'
+          )
+        }
         workCalls++
         events = [assistantMessage(`${MARKER}_DONE`)]
       }
@@ -295,6 +311,61 @@ export function createDirectRecoveryVerification(options) {
           'Later batches must reuse the established native conversation'
         )
         assert.equal(workCalls, 2, 'Silent handling must not become direct execution')
+        const ignored = database
+          .prepare(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.message.id')=?"
+          )
+          .get(USER, `${MARKER}-direct-2`)
+        assert.ok(ignored, 'The ignored intake event must exist in durable storage')
+        assert.equal(JSON.parse(ignored.metadata).status, 'handled')
+        const direct = work.items.find(
+          item => item.source?.providerId === PROVIDER && item.source.kind === 'direct'
+        )
+        const beforeBatch = await rpc(control, 'runtime.tasks.get', { taskId: direct.taskId })
+        dispatchBatch = true
+        await publish(3, true)
+        await storyUntil(
+          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
+          value => value.pendingCount >= 2,
+          options.modelResponseTimeoutMs,
+          'Two new messages must enter the silent source batch'
+        )
+        await rpc(control, 'runtime.stand_in.processing.check', { userId: USER })
+        await storyUntil(
+          () => rpc(control, 'runtime.tasks.get', { taskId: direct.taskId }),
+          value => workCalls === 3 && value.task?.status === 'done',
+          options.modelResponseTimeoutMs,
+          'The selected reuse batch must execute once through the real existing conversation'
+        )
+        const afterBatch = await rpc(control, 'runtime.tasks.get', { taskId: direct.taskId })
+        assert.equal(
+          afterBatch.task.runtimeHandle.threadId,
+          beforeBatch.task.runtimeHandle.threadId
+        )
+        assert.equal(workCalls, 3)
+        dispatchBatch = false
+        await rpc(control, 'runtime.tasks.archive', { taskId: direct.taskId })
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await openStandInActivity(control)
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="stand-in-activity-task-${direct.taskId}"]`
+        )
+        await control.command('waitFor', '[data-testid="stand-in-preview-open"]', {
+          text: '取消归档',
+        })
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
+        const restored = await storyUntil(
+          () => rpc(control, 'runtime.tasks.get', { taskId: direct.taskId }),
+          value => value.task?.status !== 'archived',
+          options.modelResponseTimeoutMs,
+          'Explicit source restoration must use the existing native unarchive operation'
+        )
+        assert.equal(restored.task.runtimeHandle.threadId, beforeBatch.task.runtimeHandle.threadId)
+        assert.equal(workCalls, 3, 'Unarchive must not start a new turn')
+        await options.captureScreenshot(control, 'stand-in-source-restored.png')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-work-dialog-close"]')
+        await verifyStandInProfileNavigation(control, options.captureScreenshot)
         console.log(
           '[stand-in-direct-recovery]',
           JSON.stringify({

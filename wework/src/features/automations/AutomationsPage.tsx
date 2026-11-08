@@ -787,7 +787,7 @@ export function AutomationsPage({
               <AutomationDetailWorkspace
                 dialogMode={detailOnly}
                 compact={Boolean(standInOwner)}
-                validationError={draftError}
+                validationError={draftError || (detailOnly ? error : null)}
                 draft={draft}
                 calendarMode={Boolean(standInOwner)}
                 inheritStandIn={Boolean(standInOwner || editing?.taskRequest?.standInOwner)}

@@ -35,7 +35,7 @@ function fixture(projects: CollaborationProject[] = []) {
     row,
     onClose,
     settings,
-    render: (onBack?: () => void) =>
+    render: (onBack?: () => void, parentLabel?: string) =>
       render(
         <StandInMemoryPanel
           api={api as unknown as StandInExecutorApi}
@@ -43,10 +43,21 @@ function fixture(projects: CollaborationProject[] = []) {
           projects={projects}
           onClose={onClose}
           onBack={onBack}
+          parentLabel={parentLabel}
         />
       ),
   }
 }
+
+it('uses the actual role settings parent in the breadcrumb', async () => {
+  const f = fixture()
+  const onBack = vi.fn()
+  f.render(onBack, '角色设置')
+  const parent = await screen.findByTestId('stand-in-memory-path-settings')
+  expect(parent).toHaveTextContent('角色设置')
+  await userEvent.click(parent)
+  expect(onBack).toHaveBeenCalledOnce()
+})
 
 it.each(['stand-in-memory-back', 'stand-in-memory-path-settings'])(
   'returns to settings through %s without silently discarding memory edits',

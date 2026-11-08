@@ -496,8 +496,21 @@ impl RuntimeWorkRpcHandler {
                             ));
                         }
                     }
+                    let records = self.connection_event_records(
+                        store,
+                        user,
+                        required(role, "id")?,
+                        id,
+                        &selected,
+                    )?;
                     result = self
-                        .dispatch_connection_work(user, id, false, Some(required(args, "message")?))
+                        .dispatch_connection_work(
+                            user,
+                            id,
+                            false,
+                            Some(required(args, "message")?),
+                            Some(&records),
+                        )
                         .await?;
                 } else {
                     let client = required(action, "id")?;
@@ -559,6 +572,9 @@ impl RuntimeWorkRpcHandler {
             return Ok(None);
         }
         for mut event in selected {
+            if kind == "ignore_events" && event["kind"] == "connection" {
+                self.ignore_connection_event(store, user, &event)?;
+            }
             if kind == "ignore_events" && event["kind"] == "calendar" {
                 self.automation_store
                     .settle_coordinated_run(

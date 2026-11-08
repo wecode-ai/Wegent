@@ -4,15 +4,17 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import type { Automation } from '@/types/automation'
 import { AutomationsPage, type AutomationNavigationHandle } from './AutomationsPage'
 
-const { listAutomations, listAutomationRuns, workbench } = vi.hoisted(() => {
+const { listAutomations, listAutomationRuns, updateAutomation, workbench } = vi.hoisted(() => {
   const listAutomations = vi.fn()
   const listAutomationRuns = vi.fn().mockResolvedValue({ items: [] })
+  const updateAutomation = vi.fn()
   return {
     listAutomations,
     listAutomationRuns,
+    updateAutomation,
     workbench: {
       state: { devices: [], projects: [], runtimeWork: null, currentRuntimeTask: null },
-      services: { automationApi: { listAutomations, listAutomationRuns } },
+      services: { automationApi: { listAutomations, listAutomationRuns, updateAutomation } },
       projectChat: { models: [], selectedModel: null, selectedModelOptions: {} },
       refreshWorkLists: vi.fn(),
     },
@@ -39,7 +41,10 @@ const savedAutomation: Automation = {
   updatedAt: '2026-11-03T00:00:00.000Z',
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  updateAutomation.mockReset()
+})
 
 function holdInitialList() {
   let resolveList!: (value: { items: Automation[] }) => void
@@ -158,6 +163,28 @@ test('detail-only mode does not expose a list or create action for an unavailabl
   )
   expect(screen.queryByTestId('create-automation-button')).not.toBeInTheDocument()
   expect(screen.queryByTestId('automation-name-input')).not.toBeInTheDocument()
+})
+
+test('detail-only editor shows failed saves without losing the draft', async () => {
+  const owner = { userId: 7, roleId: '@primary' }
+  listAutomations.mockResolvedValue({
+    items: [{ ...savedAutomation, taskRequest: { standInOwner: owner, standInCalendar: {} } }],
+  })
+  updateAutomation.mockRejectedValue(new Error('安排版本已变更，请重新加载'))
+  render(
+    <AutomationsPage
+      embedded
+      detailOnly
+      standInOwner={owner}
+      initialAutomationId={savedAutomation.id}
+    />
+  )
+  const name = await screen.findByTestId('automation-name-input')
+  fireEvent.change(name, { target: { value: '保留修改' } })
+  fireEvent.click(screen.getByTestId('automation-save-button'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('安排版本已变更，请重新加载')
+  expect(name).toHaveValue('保留修改')
+  expect(screen.getByTestId('automation-save-button')).toBeEnabled()
 })
 
 test('detail-only editor keeps the existing unsaved-change confirmation', async () => {

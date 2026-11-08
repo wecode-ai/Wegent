@@ -64,6 +64,34 @@ it('shows device, empty activity and outputs without exposing configuration cont
   expect(props.onSettings).toHaveBeenCalledOnce()
 })
 
+it('does not present unstarted source intake as an independent thread', async () => {
+  fixture({
+    items: [runtimeItem],
+    inbox: [
+      {
+        id: 'pending',
+        taskId: runtimeItem.task.taskId,
+        roleId: '@primary',
+        title: '尚未开始的来源消息',
+        status: 'pending',
+        messageCount: 1,
+        updatedAt: runtimeItem.task.updatedAt,
+        source: {
+          id: 'group',
+          profile: 'account',
+          kind: 'group',
+          name: '来源',
+          policy: { automatic: true, askBeforeAct: true },
+        },
+      },
+    ],
+    onAllActivity: vi.fn(),
+  })
+  expect(await screen.findByText('最近暂无活动')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-details-task-task')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-role-chat')).toBeVisible()
+})
+
 it('opens activity inside the same popover and restores focus on back', async () => {
   const props = fixture({ items: [runtimeItem] })
   const user = userEvent.setup()

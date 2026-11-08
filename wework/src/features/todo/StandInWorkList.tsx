@@ -17,6 +17,7 @@ type WorkFilter = 'all' | 'running' | 'completed'
 export function StandInWorkList({
   items,
   onOpenTask,
+  onRestoreTask,
   inbox = [],
   api,
   userId,
@@ -26,6 +27,7 @@ export function StandInWorkList({
 }: {
   items: RuntimeTaskReminderItem[]
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
+  onRestoreTask?(address: RuntimeTaskAddress): Promise<void>
   inbox?: StandInInboxWork[]
   api?: StandInExecutorApi
   userId?: number
@@ -58,11 +60,14 @@ export function StandInWorkList({
   const identity =
     (selectedWork?.roleId ?? selectedOrigin?.standInId) === '@primary' ? 'primary' : 'role'
   useStandInOpened('work', identity, active && !!selected, selected?.key)
+  const needsRestore = selected?.task.status === 'archived'
   const needsStart =
+    !needsRestore &&
     selectedWork &&
     selectedState?.status !== 'waiting' &&
     ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
+    if (item.task.status === 'archived') return t('workbench.settings_category_archived')
     const work = inbox.find(value => value.taskId === item.task.taskId)
     return work && work.status !== 'sent'
       ? t(`standIn.workspace.inbox_${work.status}`)
@@ -435,12 +440,20 @@ export function StandInWorkList({
               data-testid="stand-in-preview-open"
               disabled={
                 busy ||
-                (!needsStart && (!onOpenTask || (!!selectedWork && !selectedWork.task))) ||
+                (needsRestore
+                  ? !onRestoreTask
+                  : !needsStart && (!onOpenTask || (!!selectedWork && !selectedWork.task))) ||
                 (!!needsStart && !api)
               }
               onClick={async () => {
                 try {
                   setBusy(true)
+                  setError(null)
+                  if (needsRestore) {
+                    await onRestoreTask?.(selected.address)
+                    onRefresh?.()
+                    return
+                  }
                   const address =
                     needsStart && api && userId !== undefined && deviceId
                       ? await api.runWork(userId, deviceId, selectedWork.id)
@@ -455,7 +468,13 @@ export function StandInWorkList({
               }}
               className="inline-flex min-h-11 md:min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
             >
-              {t(needsStart ? 'standIn.workspace.start_work' : 'standIn.workspace.open_work')}
+              {t(
+                needsRestore
+                  ? 'workbench.archived_unarchive'
+                  : needsStart
+                    ? 'standIn.workspace.start_work'
+                    : 'standIn.workspace.open_work'
+              )}
               <ArrowUpRight className="h-4 w-4" />
             </button>
             {selectedWork?.task &&

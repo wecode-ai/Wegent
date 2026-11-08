@@ -29,7 +29,7 @@ export function StandInSettingsHeader({
           disabled={disabled}
           aria-label={t('standIn.personal.back')}
           onClick={back.onClick}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
@@ -50,7 +50,7 @@ export function StandInSettingsHeader({
                     data-testid={entry.testId}
                     disabled={disabled}
                     onClick={entry.onClick}
-                    className="min-h-8 rounded px-1 hover:bg-muted hover:text-text-primary"
+                    className="min-h-11 min-w-11 rounded px-1 hover:bg-muted hover:text-text-primary md:min-h-8 md:min-w-0"
                   >
                     {entry.label}
                   </button>
@@ -76,7 +76,7 @@ export function StandInSettingsHeader({
           disabled={disabled}
           aria-label={t('standIn.close')}
           onClick={close.onClick}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
         >
           <X className="h-4 w-4" />
         </button>

@@ -110,7 +110,7 @@ impl RuntimeWorkRpcHandler {
         events: &[Value],
         title: Option<&str>,
     ) -> Result<Value, AppIpcError> {
-        let mut result = json!({"success":true});
+        let mut groups: Vec<(String, std::collections::BTreeSet<String>)> = Vec::new();
         for event in events {
             let target = self.connection_session_target(
                 store,
@@ -133,7 +133,7 @@ impl RuntimeWorkRpcHandler {
                 if link.status == "archived" {
                     return Err(AppIpcError::new(
                         "bad_request",
-                        "Restore archived work explicitly before continuing it",
+                        format!("Work \"{}\" from \"{}\" is archived. Restore it from recent activities before continuing.", link.title, event["source"]["name"].as_str().unwrap_or("this source")),
                     ));
                 }
                 if waits_for_user(&link) {
@@ -160,14 +160,96 @@ impl RuntimeWorkRpcHandler {
                     Some(&id),
                 )
                 .map_err(settings_error)?;
+            let id = required(&work, "id")?;
+            let records = self.connection_event_records(
+                store,
+                user,
+                required(role, "id")?,
+                id,
+                std::slice::from_ref(event),
+            )?;
+            if let Some((_, selected)) = groups.iter_mut().find(|(work, _)| work == id) {
+                selected.extend(records);
+            } else {
+                groups.push((id.to_owned(), records.into_iter().collect()));
+            }
+        }
+        let mut result = json!({"success":true});
+        for (id, records) in groups {
+            let records = records.into_iter().collect::<Vec<_>>();
             result = self
-                .dispatch_connection_work(user, required(&work, "id")?, false, None)
+                .dispatch_connection_work(user, &id, false, None, Some(&records))
                 .await?;
             if result["pending"] == true {
                 return Ok(result);
             }
         }
         Ok(result)
+    }
+
+    pub(in crate::runtime_work::handler) fn connection_event_records(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        role: &str,
+        work: &str,
+        events: &[Value],
+    ) -> Result<Vec<String>, AppIpcError> {
+        let mut records = std::collections::BTreeSet::new();
+        for event in events.iter().filter(|event| event["kind"] == "connection") {
+            let record = store
+                .known_stand_in_event_message(user, role, &event["source"], &event["message"])
+                .map_err(settings_error)?
+                .ok_or_else(|| {
+                    AppIpcError::new("stale_context", "Selected source message is unavailable")
+                })?;
+            if record["workId"] != work {
+                return Err(AppIpcError::new(
+                    "stale_context",
+                    "Selected source message changed work",
+                ));
+            }
+            records.insert(required(&record, "recordId")?.to_owned());
+        }
+        Ok(records.into_iter().collect())
+    }
+
+    pub(in crate::runtime_work::handler) fn ignore_connection_event(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        event: &Value,
+    ) -> Result<(), AppIpcError> {
+        for role in event["roleIds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            let Some(record) = store
+                .known_stand_in_event_message(user, role, &event["source"], &event["message"])
+                .map_err(settings_error)?
+            else {
+                continue;
+            };
+            if matches!(
+                record["dispatchStatus"].as_str(),
+                Some("pending" | "needs_grouping")
+            ) {
+                let work = required(&record, "workId")?;
+                let state = store.stand_in_work(user, work).map_err(settings_error)?;
+                store
+                    .update_stand_in_dispatch(
+                        user,
+                        work,
+                        &[required(&record, "recordId")?.to_owned()],
+                        "ignored",
+                        state["error"].as_str(),
+                    )
+                    .map_err(settings_error)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -196,6 +278,51 @@ mod tests {
 
     fn message(id: &str) -> Value {
         json!({"id":id,"text":"Incoming work","at":chrono::Utc::now().to_rfc3339()})
+    }
+
+    #[test]
+    fn ignoring_selected_input_preserves_other_messages_and_failed_outcomes() {
+        let root = tempfile::tempdir().unwrap();
+        let (handler, store, role, source) = fixture(root.path(), false, "reuse");
+        let role_id = role["id"].as_str().unwrap();
+        let first = message("selected");
+        let second = message("failed");
+        let work = store
+            .ingest_stand_in_message(7, role_id, &source, &first, None)
+            .unwrap();
+        let id = work["id"].as_str().unwrap();
+        store
+            .ingest_stand_in_message(7, role_id, &source, &second, Some(id))
+            .unwrap();
+        let failed = store
+            .known_stand_in_event_message(7, role_id, &source, &second)
+            .unwrap()
+            .unwrap();
+        store
+            .update_stand_in_dispatch(
+                7,
+                id,
+                &[failed["recordId"].as_str().unwrap().into()],
+                "failed",
+                Some("Outcome requires review"),
+            )
+            .unwrap();
+        for message in [first, second] {
+            handler
+                .ignore_connection_event(
+                    &store,
+                    7,
+                    &json!({"roleIds":[role_id],"source":source,"message":message}),
+                )
+                .unwrap();
+        }
+        let messages = store.stand_in_messages(7, id).unwrap();
+        assert_eq!(messages[0]["dispatchStatus"], "ignored");
+        assert_eq!(messages[1]["dispatchStatus"], "failed");
+        assert_eq!(
+            store.stand_in_work(7, id).unwrap()["error"],
+            "Outcome requires review"
+        );
     }
 
     #[test]

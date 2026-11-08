@@ -22,6 +22,7 @@ export function StandInMemoryPanel({
   scopeLabel,
   onClose,
   onBack,
+  parentLabel,
   ref,
 }: {
   api: StandInExecutorApi
@@ -31,6 +32,7 @@ export function StandInMemoryPanel({
   scopeLabel?: string
   onClose(): void
   onBack?: () => void
+  parentLabel?: string
   ref?: Ref<StandInSettingsHandle>
 }) {
   const { t } = useTranslation('common')
@@ -153,7 +155,7 @@ export function StandInMemoryPanel({
           onBack
             ? [
                 {
-                  label: t('standIn.workspace.primary_profile'),
+                  label: parentLabel ?? t('standIn.workspace.primary_profile'),
                   testId: 'stand-in-memory-path-settings',
                   onClick: () => navigation.requestLeave(onBack),
                 },
