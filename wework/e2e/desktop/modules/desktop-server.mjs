@@ -1257,7 +1257,11 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
-    const { exitProcessId, ...commandOptions } = options
+    const { expectClientReplacement = false, exitProcessId, ...commandOptions } = options
+    assert.ok(
+      !expectClientReplacement || action === 'click',
+      'Only clicks may expect client replacement'
+    )
     if (exitProcessId !== undefined) {
       assert.equal(action, 'quitApp', 'Process exit completion is only valid for quitting')
       assert.ok(Number.isSafeInteger(exitProcessId) && exitProcessId > 0)
@@ -1298,6 +1302,7 @@ class DesktopE2EServer {
         reject,
         resolveDelivery,
         started: false,
+        expectClientReplacement,
       })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery })
@@ -2132,7 +2137,9 @@ class DesktopE2EServer {
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
           this.commandResults.delete(id)
-          pending.reject(replacementError)
+          // A started refresh click may replace its renderer before reporting its result.
+          if (pending.expectClientReplacement && pending.started) pending.resolve('')
+          else pending.reject(replacementError)
         }
       }
       this.ready = ready

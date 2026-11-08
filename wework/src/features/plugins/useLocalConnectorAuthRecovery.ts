@@ -112,7 +112,10 @@ export function useLocalConnectorAuthRecovery(options: {
       try {
         // The executor resolves the current installed manifest by identity.
         // Recovery must never wait for an installed-plugin catalog refresh.
-        const health = await localConnectorAuthHealth(target, { bypassCache: true })
+        const health = await localConnectorAuthHealth(target, {
+          bypassCache: true,
+          prepareRuntime: true,
+        })
         if (!isCurrent()) return
         handledMessageIdsRef.current.add(messageId)
         if (health.status === 'ok') return

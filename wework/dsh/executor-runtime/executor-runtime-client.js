@@ -72,7 +72,8 @@ export class ExecutorRuntimeClient {
     return this.description
   }
 
-  request(method, params = {}, timeoutMs = this.requestTimeoutMs, requestId, options = {}) {
+  request(method, params = {}, timeoutMs, requestId, options = {}) {
+    timeoutMs ??= executorRequestTimeoutMs(method, this.requestTimeoutMs)
     if (method !== 'executor.protocol.describe') {
       if (!this.description && this.negotiationPromise) {
         return this.negotiationPromise.then(() =>
@@ -248,6 +249,15 @@ export class ExecutorRuntimeClient {
     }
     this.pending.clear()
   }
+}
+
+export function executorRequestTimeoutMs(method, defaultTimeoutMs) {
+  const preparesPython =
+    method === 'executor.plugin_auth.migrate' ||
+    method === 'executor.plugin_auth.run' ||
+    method === 'runtime.connections.cli' ||
+    method.startsWith('runtime.local_connector_auth.')
+  return preparesPython ? 21 * 60_000 + 5_000 : defaultTimeoutMs
 }
 
 function validRendererMethods(methods) {

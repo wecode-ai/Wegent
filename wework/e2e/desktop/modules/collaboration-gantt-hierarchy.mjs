@@ -37,7 +37,7 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   const undated = await create('从底部拖入甘特图', null, 'inbox', false)
   await reloadMainWindow(control, 'Gantt hierarchy fixtures did not reload')
   await wait(`cloud-todo-card-${parent.id}`)
-  await click('collaboration-gantt-tab')
+  await selectCollaborationProjectView(control, CONTENT, 'gantt', timeoutMs)
   await wait(`collaboration-gantt-row-${grandchild.id}`)
   assert.equal(
     Number(
@@ -145,7 +145,7 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   )
 
   // The existing project uses tag columns, so no Completed column is required.
-  await selectCollaborationProjectView(control, CONTENT, 'board')
+  await selectCollaborationProjectView(control, CONTENT, 'board', timeoutMs)
   await click(`cloud-todo-card-${parent.id}`)
   await control.command('focusMainWindow', 'body')
   await click('cloud-todo-more-properties')
@@ -193,6 +193,6 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
     assert.equal(record.status, issue.status)
     assert.equal(record.parent_id, issue.parent_id)
   }
-  await click('collaboration-gantt-tab')
+  await selectCollaborationProjectView(control, CONTENT, 'gantt', timeoutMs)
   await wait(`collaboration-gantt-row-${grandchild.id}`)
 }

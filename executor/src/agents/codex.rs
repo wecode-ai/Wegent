@@ -4169,6 +4169,11 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_HUMAN_INPUT_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
         host_skills::INSTRUCTIONS,
+        if crate::python_runtime::managed_python_bridge_configured() {
+            crate::plugin_python::INSTRUCTIONS
+        } else {
+            ""
+        },
         external_work::SOURCE_CONTENT_INSTRUCTIONS,
     ]
     .into_iter()
