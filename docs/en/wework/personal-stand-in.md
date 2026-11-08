@@ -80,7 +80,7 @@ Open a source to install its plugin or sign in, then choose the receive scope an
 
 Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
 
-You can manually mention yourself in a connected group to delegate work. Stand-in replies always retain DingTalk's AI-send marker. Intake uses the provider marker to exclude your own AI messages and prevent reply loops.
+You can manually mention yourself in a connected group to delegate work. You can also select yourself explicitly as a direct-message contact under filtered sources and save, then manually send instructions in your self-chat. The source's handling and approval policies still apply. Selecting all contacts alone does not enable this entry, and your outgoing messages to other contacts are not treated as instructions. Stand-in replies always retain DingTalk's AI-send marker. Intake uses the provider marker to exclude your own AI messages and prevent reply loops.
 
 Choose manual delegation, approval before operations, or automatic handling independently for each source. New DingTalk sources default to approval before operations. The selected execution device uses its installed DingTalk plugin and account. Complete any requested authentication through the existing connector flow.
 
