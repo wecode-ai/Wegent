@@ -428,6 +428,22 @@ function syntheticChatGptAuth() {
   }
 }
 
+async function assertPrimaryComposerPlugin(control, pluginName) {
+  const diagnostics = JSON.parse(
+    await control.command('getComposerPluginInventoryDiagnostics', 'body')
+  )
+  assert.ok(
+    diagnostics.sharedInventory.installedPlugins.some(
+      plugin => plugin.pluginKey === pluginName && plugin.enabled
+    ),
+    `The primary composer lost local plugin membership: ${JSON.stringify(diagnostics)}`
+  )
+  assert.ok(
+    diagnostics.composerApps.some(app => app.id === `plugin:${pluginName}`),
+    `The primary composer lost its installed plugin: ${JSON.stringify(diagnostics)}`
+  )
+}
+
 async function verifyComposerPluginNetworkIsolation({
   blockingNetworkProxy,
   codexHome,
@@ -513,21 +529,7 @@ async function verifyComposerPluginNetworkIsolation({
           `${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}`
         )
       }
-      const inventoryDiagnostics = JSON.parse(
-        await control.command('getComposerPluginInventoryDiagnostics', 'body', {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-      )
-      assert.ok(
-        inventoryDiagnostics.composerApps.some(app => app.id === `plugin:${pluginName}`),
-        `The rendered plugin was missing from composer memory; diagnostics=${JSON.stringify(inventoryDiagnostics)}`
-      )
-      assert.ok(
-        inventoryDiagnostics.sharedInventory.installedPlugins.some(
-          plugin => plugin.pluginKey === pluginName && plugin.enabled
-        ),
-        'The composer rendered an installed plugin absent from the shared inventory'
-      )
+      await assertPrimaryComposerPlugin(control, pluginName)
       await captureVerificationScreenshot(
         control,
         'plugins-00-composer-network-isolation.png',
@@ -583,19 +585,15 @@ async function verifyComposerPluginNetworkIsolation({
     )
     assert.ok(catalogError.length < 500, 'Catalog error exposed a raw response body')
     assert.doesNotMatch(catalogError, /<html|<svg|<style/i)
-    const settled = JSON.parse(
-      await control.command('getComposerPluginInventoryDiagnostics', 'body')
+    await assertPrimaryComposerPlugin(control, pluginName)
+    await control.command('navigate', 'body', { value: '/' })
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+    await openComposerPluginPicker(control)
+    await control.command(
+      'waitFor',
+      `[data-testid="composer-plugin-picker-item-plugin:${pluginName}"]`
     )
-    assert.ok(
-      settled.sharedInventory.installedPlugins.some(
-        plugin => plugin.pluginKey === pluginName && plugin.enabled
-      ),
-      'Remote retry timeout discarded local membership'
-    )
-    assert.ok(
-      settled.composerApps.some(app => app.id === 'plugin:' + pluginName),
-      'Remote retry timeout discarded the composer plugin'
-    )
+    await closeComposerPluginPicker(control)
   } finally {
     blockingNetworkProxy.release()
     await control.command('setLocalProxyUrl', 'body', { value: '' })

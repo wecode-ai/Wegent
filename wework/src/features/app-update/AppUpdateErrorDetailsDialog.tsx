@@ -207,19 +207,21 @@ export function AppUpdateErrorDetailsDialog({
             )}
             {copyLabel}
           </button>
-          <button
-            type="button"
-            data-testid="app-update-error-retry"
-            disabled={retrying}
-            onClick={() => {
-              setRetrying(true)
-              void onRetry().finally(() => setRetrying(false))
-            }}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            {retryLabel}
-          </button>
+          {error.retryable !== false ? (
+            <button
+              type="button"
+              data-testid="app-update-error-retry"
+              disabled={retrying}
+              onClick={() => {
+                setRetrying(true)
+                void onRetry().finally(() => setRetrying(false))
+              }}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              {retryLabel}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>,

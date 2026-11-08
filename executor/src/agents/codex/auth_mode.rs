@@ -135,4 +135,38 @@ mod tests {
         apply_auth_mode(&mut state, requested, 0).await.unwrap();
         assert_eq!(state.auth_mode, CodexAuthMode::LocalSubscription);
     }
+
+    #[tokio::test]
+    async fn plugin_configuration_restart_preserves_degraded_auth_mode() {
+        let _environment = LaunchEnvironment::new();
+        let client = router_client().await;
+        client
+            .state
+            .lock()
+            .await
+            .thread_generations
+            .insert("existing-thread".to_owned(), 42);
+
+        client
+            .mutate_configuration_if_idle(|| async { Ok(((), true)) })
+            .await
+            .unwrap();
+
+        let state = client.state.lock().await;
+        assert!(state.process.is_none());
+        assert!(state.thread_generations.is_empty());
+        assert_eq!(state.auth_mode, CodexAuthMode::WeworkRouter);
+    }
+
+    #[tokio::test]
+    async fn explicit_account_mutation_restores_subscription_auth_mode() {
+        let _environment = LaunchEnvironment::new();
+        let client = router_client().await;
+
+        client.mutate_auth_if_idle(|| Ok(())).await.unwrap();
+
+        let state = client.state.lock().await;
+        assert!(state.process.is_none());
+        assert_eq!(state.auth_mode, CodexAuthMode::LocalSubscription);
+    }
 }

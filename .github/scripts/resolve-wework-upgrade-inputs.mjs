@@ -3,7 +3,10 @@ import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { releaseVerificationChannels } from "../../wework/scripts/lib/upgrade-evidence.mjs";
 
-import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from "../../wework/e2e/desktop/upgrade-suite.mjs";
+import {
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
+  UPGRADE_SOURCE_DIAGNOSTICS,
+} from "../../wework/e2e/desktop/upgrade-suite.mjs";
 import { compareVersions } from "../../wework/electron/src/runtime/upgrade-policy.mjs";
 
 export function upgradeVerificationMatrix(channel, sourceVersion = "") {
@@ -37,13 +40,15 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const diagnosticCheckpoint =
     requestedCheckpoint === "all" ? "" : requestedCheckpoint;
   const sourceRunId = environment.VERIFICATION_SOURCE_RUN_ID || "";
+  const requiresSource =
+    UPGRADE_SOURCE_DIAGNOSTICS.includes(diagnosticCheckpoint);
   if (
-    (sourceRunId && diagnosticCheckpoint !== "app-update-refresh") ||
-    (diagnosticCheckpoint === "app-update-refresh" && !sourceRunId) ||
+    (sourceRunId && !requiresSource) ||
+    (requiresSource && !sourceRunId) ||
     (sourceRunId && environment.PUBLISH_RELEASE === "true")
   )
     throw new Error(
-      "A prebuilt source requires a non-publishing app-update-refresh diagnostic",
+      "A prebuilt source requires a non-publishing app-update-refresh or app-update-retry diagnostic",
     );
   if (
     diagnosticCheckpoint &&

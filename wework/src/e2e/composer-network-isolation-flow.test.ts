@@ -44,7 +44,9 @@ test('the CI plugin flow initiates and holds app/list before opening the local-o
   })
   vi.mocked(openComposerPluginPicker).mockImplementation(async () => {
     expect(requestExecutor).toHaveBeenCalledOnce()
-    expect(proxy.release).not.toHaveBeenCalled()
+    if (vi.mocked(openComposerPluginPicker).mock.calls.length === 1)
+      expect(proxy.release).not.toHaveBeenCalled()
+    else expect(proxy.release).toHaveBeenCalledOnce()
   })
   const control = {
     command: vi.fn(async (action: string) => {
@@ -68,7 +70,12 @@ test('the CI plugin flow initiates and holds app/list before opening the local-o
       restartDesktopApp: vi.fn(),
       workspacePath: root,
     })
-    expect(openComposerPluginPicker).toHaveBeenCalledOnce()
+    expect(openComposerPluginPicker).toHaveBeenCalledTimes(2)
+    expect(control.command).toHaveBeenCalledWith('navigate', 'body', { value: '/' })
+    expect(control.command).toHaveBeenCalledWith(
+      'waitFor',
+      '[data-testid="composer-plugin-picker-item-plugin:composer-network-isolation-plugin"]'
+    )
     expect(proxy.block).toHaveBeenCalledTimes(2)
     expect(proxy.release).toHaveBeenCalledTimes(2)
     expect(control.command).toHaveBeenCalledWith(

@@ -124,12 +124,7 @@ async fn git_output_async(
 mod capture_tests {
     use super::*;
     use std::{
-        fs,
-        future::Future,
-        io::Write,
-        os::unix::fs::{OpenOptionsExt, PermissionsExt},
-        process::Command,
-        sync::mpsc,
+        fs, future::Future, io::Write, os::unix::fs::OpenOptionsExt, process::Command, sync::mpsc,
     };
 
     fn gated_git(
@@ -143,9 +138,9 @@ mod capture_tests {
             .status()
             .unwrap()
             .success());
-        let git = root.join("git");
-        fs::write(&git, "#!/bin/sh\nif [ \"$CAPTURE_TEST_STARTUP_DELAY\" != 0 ]; then /bin/sleep \"$CAPTURE_TEST_STARTUP_DELAY\"; fi\nprintf '%s\\n' \"$$\" > \"$CAPTURE_TEST_PID\"\nif [ \"$CAPTURE_TEST_EXIT_DELAY\" = 0 ]; then exec /bin/cat \"$CAPTURE_TEST_FIFO\"; fi\n/bin/cat \"$CAPTURE_TEST_FIFO\"\n/bin/sleep \"$CAPTURE_TEST_EXIT_DELAY\"\n").unwrap();
-        fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
+        // Parallel forks can retain a fresh script's writer and cause ETXTBSY.
+        // Reuse an immutable executable, as the other subprocess fixtures do.
+        let git = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/capture-git.sh");
         let environment = BTreeMap::from([
             (
                 "CAPTURE_TEST_PID".to_owned(),
@@ -320,7 +315,20 @@ mod capture_tests {
 
     #[tokio::test(start_paused = true)]
     async fn capture_timeout_kills_and_reaps_blocked_git_process() {
+        assert_capture_timeout(false).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn capture_timeout_is_independent_of_a_fresh_script_writer() {
+        assert_capture_timeout(true).await;
+    }
+
+    async fn assert_capture_timeout(hold_script_writer: bool) {
         let root = tempfile::tempdir().unwrap();
+        // Model a writer retained by a parallel fork at the old fixture path.
+        // The executable must not share that newly written inode.
+        let _writer =
+            hold_script_writer.then(|| fs::File::create(root.path().join("git")).unwrap());
         let (git, environment) = gated_git(root.path(), "0", "0");
         let pid_path = root.path().join("pid");
 
