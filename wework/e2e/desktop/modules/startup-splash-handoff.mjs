@@ -35,10 +35,11 @@ function assertCompletedFrame(completion) {
 export function assertStartupSplashHandoff(snapshot) {
   assert.equal(snapshot.state, 'closed', 'The handoff did not close the startup splash')
   const names = snapshot.events.map(event => event.name)
-  const completionIndex = names.indexOf('completion-started')
-  const readinessEvents = names.flatMap((name, index) => (name === 'animation-ready' ? [index] : []))
+  const readiness = names.indexOf('animation-ready')
   assert.ok(
-    readinessEvents.length > 0 && readinessEvents.every(index => index < completionIndex),
+    readiness > 0 &&
+      readiness < names.indexOf('completion-started') &&
+      names.lastIndexOf('animation-ready') === readiness,
     'The startup splash did not record animation readiness before completion'
   )
   // Showing the window does not wait for animation initialization. Either event
