@@ -1634,7 +1634,7 @@ async function main() {
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
     const readiness = control.awaitReady()
-    const ready = desktopScenario?.usesColdPackageStartup
+    const ready = usesReleasePackageRuntimeAssets
       ? await waitForColdPackageStartup(readiness, appLogPath, {
           phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
         })

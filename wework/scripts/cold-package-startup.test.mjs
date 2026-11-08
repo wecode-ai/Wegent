@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { test } from 'vitest'
 import { waitForColdPackageStartup } from '../e2e/desktop/modules/cold-package-startup.mjs'
 
@@ -14,6 +15,25 @@ const phases = [
 const event = (step, status, elapsedMs) =>
   `[startup] {\n  step: '${step}',\n  status: '${status}',\n  elapsedMs: ${elapsedMs}\n}\n`
 const neverReady = () => new Promise(() => {})
+
+test('release-package resource ownership selects cold startup without a second opt-in', async () => {
+  const runner = await readFile(
+    new URL('../e2e/desktop/modules/task-flow-main.mjs', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    runner,
+    /const ready = usesReleasePackageRuntimeAssets\s*\? await waitForColdPackageStartup/
+  )
+  for (const scenario of ['component-update', 'release-package-startup', 'app-upgrade']) {
+    const source = await readFile(
+      new URL(`../e2e/desktop/scenarios/${scenario}.scenario.mjs`, import.meta.url),
+      'utf8'
+    )
+    assert.match(source, /usesReleasePackageRuntimeAssets: true/)
+    assert.doesNotMatch(source, /usesColdPackageStartup/)
+  }
+})
 
 function clock(readLog) {
   let time = 0
