@@ -35,8 +35,10 @@ and startup recovery.
 A shared identity never implies shared credentials. API-key and native-account threads replace
 the complete provider definition independently. Unscoped account RPCs keep native Codex authentication.
 The local router serves the merged catalog using a non-secret catalog credential, never an account
-token or task API key. Threads must not inherit that credential or another route's bearer command. Bind model
-routes and notification subscriptions before `thread/resume`, since native Goals can continue
+token or task API key. Threads must not inherit that credential or another route's bearer command.
+Local catalog discovery has process-owned settings. Native threads retain an explicit Home
+`features.api_key_model_discovery` value; local discovery must not enable external API-key discovery.
+Bind model routes and notification subscriptions before `thread/resume`, since native Goals can continue
 before that RPC returns. Never resubmit original user input or settle an active Goal from a
 previous turn's completed outcome.
 

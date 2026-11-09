@@ -22,7 +22,11 @@ pub(super) fn process_overrides() -> Vec<String> {
         "experimental_bearer_token".into(),
         json!(local_model_proxy::API_KEY),
     );
-    serialize(selected)
+    let mut overrides = serialize(selected);
+    // This process profile can discover only Wework's loopback catalog, not
+    // an external API-key endpoint. Native thread profiles retain user policy.
+    overrides.push("features.api_key_model_discovery=true".into());
+    overrides
 }
 
 #[cfg(test)]
@@ -111,7 +115,11 @@ pub(super) fn with_headers(
             json!(merged.into_iter().collect::<BTreeMap<_, _>>()),
         );
     }
-    Ok(serialize(selected))
+    let mut overrides = serialize(selected);
+    if let Some(enabled) = config["features"]["api_key_model_discovery"].as_bool() {
+        overrides.push(format!("features.api_key_model_discovery={enabled}"));
+    }
+    Ok(overrides)
 }
 
 pub(super) fn api_overrides(base_url: String, command: &str, args: Vec<String>) -> Vec<String> {
@@ -226,6 +234,23 @@ mod tests {
         assert!(thread.get("experimental_bearer_token").is_none());
         assert!(thread.get("model_catalog_url").is_none());
         assert!(thread.get("base_url").is_none());
+    }
+
+    #[test]
+    fn native_threads_keep_api_key_discovery_opt_out_while_the_local_catalog_stays_enabled() {
+        let _lock = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "[features]\napi_key_model_discovery=false\n",
+        )
+        .unwrap();
+        let native = overrides(home.path(), "openai").unwrap();
+        assert!(native.contains(&"features.api_key_model_discovery=false".into()));
+        assert!(process_overrides().contains(&"features.api_key_model_discovery=true".into()));
+        let profile = profile_for_test(&native);
+        assert!(profile.get("experimental_bearer_token").is_none());
+        assert!(profile.get("model_catalog_url").is_none());
     }
 
     #[test]
