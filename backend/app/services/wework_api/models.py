@@ -21,6 +21,7 @@ from app.services.model_aggregation_service import model_aggregation_service
 
 
 def catalog(db: Session, user: User) -> list[dict]:
+    """Return the visible, authorized Wework LLM catalog."""
     # Match the desktop catalog: the gateway adapts upstream model protocols.
     # Native Codex shell filtering would hide supported Anthropic/chat models.
     return model_aggregation_service.list_available_models(
@@ -34,6 +35,7 @@ def catalog(db: Session, user: User) -> list[dict]:
 
 
 def model_identifier(model: dict) -> str:
+    """Join one catalog entry into its `type:namespace:owner:name` identity."""
     return ":".join(
         str(model.get(key, ""))
         for key in ("type", "namespace", "resourceUserId", "name")
@@ -41,6 +43,7 @@ def model_identifier(model: dict) -> str:
 
 
 def list_models(db: Session, user: User) -> dict:
+    """Render the OpenAI-compatible model list for Wework clients."""
     return {
         "object": "list",
         "data": [
@@ -57,6 +60,7 @@ def list_models(db: Session, user: User) -> dict:
 
 
 def _unavailable() -> HTTPException:
+    """Return the shared unavailable/ambiguous response for Wework model ids."""
     return HTTPException(
         422, "Model unavailable or ambiguous; use an id from GET /models"
     )
@@ -78,12 +82,14 @@ def _parse_model_identifier(value: str) -> tuple[str, str, int, str] | None:
 
 
 def _is_llm_model(kind: Kind) -> bool:
+    """Return whether the stored Model serves chat/completions traffic."""
     json_data = kind.json if isinstance(kind.json, dict) else {}
     spec = json_data.get("spec") if isinstance(json_data.get("spec"), dict) else {}
     return resolve_model_category(spec) == "llm"
 
 
 def _is_wework_available(kind: Kind) -> bool:
+    """Return whether the Model is enabled for the Wework desktop catalog."""
     try:
         return bool(Model.model_validate(kind.json).spec.isWeworkAvailable)
     except Exception:
@@ -180,13 +186,14 @@ def _persisted_selection(
     )
 
 
-def selection(
+def selection_with_source(
     db: Session,
     user: User,
     body: WeworkResponseCreate,
     *,
     allow_hidden: bool = False,
-) -> RuntimeModelSelection:
+) -> tuple[RuntimeModelSelection, bool]:
+    """Resolve the request model and report whether it used the hidden fallback."""
     matches = [
         model
         for model in catalog(db, user)
@@ -201,7 +208,7 @@ def selection(
         raise _unavailable()
     if not matches:
         if allow_hidden:
-            return _persisted_selection(db, user, body)
+            return _persisted_selection(db, user, body), True
         raise _unavailable()
     model = matches[0]
     options = dict(body.execution.model_options) if body.execution else {}
@@ -209,6 +216,20 @@ def selection(
     options[runtime.CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = model.get(
         "resourceUserId", 0
     )
-    return RuntimeModelSelection(
-        modelName=model["name"], modelType=model["type"], options=options
+    return (
+        RuntimeModelSelection(
+            modelName=model["name"], modelType=model["type"], options=options
+        ),
+        False,
     )
+
+
+def selection(
+    db: Session,
+    user: User,
+    body: WeworkResponseCreate,
+    *,
+    allow_hidden: bool = False,
+) -> RuntimeModelSelection:
+    """Resolve the request model for callers that do not need its source."""
+    return selection_with_source(db, user, body, allow_hidden=allow_hidden)[0]

@@ -8,6 +8,25 @@ export interface ModelRequestOptions {
 
 const REQUEST_TIMEOUT_MS = 10_000
 
+/** Run one model request with the shared abort deadline. */
+async function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new DOMException('Cloud model request timed out', 'TimeoutError')
+      reject(error)
+      controller.abort(error)
+    }, REQUEST_TIMEOUT_MS)
+  })
+  try {
+    // Settle even if a transport ignores abort, so callers never hang.
+    return await Promise.race([run(controller.signal), deadline])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export function createModelApi(client: {
   get<T>(path: string, options?: ModelRequestOptions): Promise<T>
   getCacheScope?(): unknown
@@ -15,26 +34,12 @@ export function createModelApi(client: {
   const catalog = getClientRequestCache(client)
 
   async function loadModels(endpoint: string): Promise<{ data: UnifiedModel[] }> {
-    const controller = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        const error = new DOMException('Cloud model request timed out', 'TimeoutError')
-        reject(error)
-        controller.abort(error)
-      }, REQUEST_TIMEOUT_MS)
-    })
-    try {
-      // Settle even if a transport ignores abort, so the cache can evict its pending entry.
-      return await Promise.race([
-        client.get<{ data: UnifiedModel[] }>(endpoint, {
-          signal: controller.signal,
-        }),
-        deadline,
-      ])
-    } finally {
-      clearTimeout(timer)
-    }
+    // Settle even if a transport ignores abort, so the cache can evict its pending entry.
+    return withDeadline(signal =>
+      client.get<{ data: UnifiedModel[] }>(endpoint, {
+        signal,
+      })
+    )
   }
 
   return {
@@ -67,22 +72,12 @@ export function createModelApi(client: {
       const query = new URLSearchParams()
       if (modelType) query.set('model_type', modelType)
       const suffix = query.toString()
-      const controller = new AbortController()
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const deadline = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          const error = new DOMException('Cloud model request timed out', 'TimeoutError')
-          reject(error)
-          controller.abort(error)
-        }, REQUEST_TIMEOUT_MS)
-      })
-      return Promise.race([
+      return withDeadline(signal =>
         client.get<UnifiedModel>(
           `/models/unified/${encodeURIComponent(modelName)}${suffix ? `?${suffix}` : ''}`,
-          { signal: controller.signal }
-        ),
-        deadline,
-      ]).finally(() => clearTimeout(timer))
+          { signal }
+        )
+      )
     },
   }
 }

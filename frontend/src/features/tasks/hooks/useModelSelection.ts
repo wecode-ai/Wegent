@@ -409,8 +409,9 @@ export function useModelSelection({
   useEffect(() => {
     const currentTeamId = selectedTeam?.id ?? null
 
-    // Skip if no models loaded yet
-    if (models.length === 0) {
+    // Skip if no models loaded yet. A recorded task model still restores when
+    // the visible catalog is empty because it may have been hidden.
+    if (models.length === 0 && !taskModelId) {
       return
     }
 
@@ -520,14 +521,39 @@ export function useModelSelection({
       return
     }
 
-    // Case 2: Model list changed - check compatibility
+    // Case 2: Model list changed - upgrade a restored placeholder or check compatibility
     if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-      const isStillCompatible = selectableModels.some(m => {
-        if (selectedModel.type) {
-          return m.name === selectedModel.name && m.type === selectedModel.type
+      // The recorded task model may have been hidden when the task first
+      // rendered. Once it appears in the catalog, replace the placeholder with
+      // the real model so its type and capability metadata become available.
+      const recordedModel =
+        taskModelId && selectedModel.name === taskModelId && !selectedModel.type
+          ? models.find(m => m.name === taskModelId || m.displayName === taskModelId)
+          : undefined
+      if (recordedModel) {
+        isRestoringRef.current = true
+        setSelectedModel(recordedModel)
+        if (recordedModel.isAdvanced) {
+          setShowAdvancedModelsState(true)
         }
-        return m.name === selectedModel.name
-      })
+        setTimeout(() => {
+          isRestoringRef.current = false
+        }, 100)
+        return
+      }
+
+      // The recorded task model may still be absent from the refreshed
+      // catalog. Keep its placeholder while this task remains selected.
+      const isRecordedTaskModel =
+        Boolean(taskModelId) && selectedModel.name === taskModelId && !selectedModel.type
+      const isStillCompatible =
+        isRecordedTaskModel ||
+        selectableModels.some(m => {
+          if (selectedModel.type) {
+            return m.name === selectedModel.name && m.type === selectedModel.type
+          }
+          return m.name === selectedModel.name
+        })
       if (!isStillCompatible) {
         setSelectedModel(null)
       }
@@ -559,6 +585,12 @@ export function useModelSelection({
 
     // Skip if not initialized (initial load)
     if (!hasInitializedRef.current) {
+      return
+    }
+
+    // A restored hidden/deleted task model is an untyped placeholder. It must
+    // not overwrite the team's real saved preference.
+    if (selectedModel.name !== DEFAULT_MODEL_NAME && !selectedModel.type) {
       return
     }
 

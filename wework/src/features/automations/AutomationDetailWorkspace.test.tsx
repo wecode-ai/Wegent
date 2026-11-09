@@ -22,6 +22,7 @@ function AutomationDetailHarness({
   localDeviceIds = ['local-device'],
   runs = [],
   models = [],
+  onModelChange = vi.fn(),
   onOpenRun,
   onSaveDraft,
   validationError,
@@ -33,6 +34,7 @@ function AutomationDetailHarness({
   localDeviceIds?: string[]
   runs?: AutomationRun[]
   models?: React.ComponentProps<typeof AutomationDetailWorkspace>['models']
+  onModelChange?: React.ComponentProps<typeof AutomationDetailWorkspace>['onModelChange']
   onOpenRun?(run: AutomationRun): void
   onSaveDraft?(draft: AutomationDraft): void
   validationError?: string
@@ -59,7 +61,7 @@ function AutomationDetailHarness({
       dirty
       running={false}
       onChange={(key, value) => setDraft(current => ({ ...current, [key]: value }))}
-      onModelChange={vi.fn()}
+      onModelChange={onModelChange}
       onSourceChange={source => setDraft(current => ({ ...current, source }))}
       onClose={vi.fn()}
       onSave={() => onSaveDraft?.(draft)}
@@ -177,6 +179,31 @@ describe('AutomationDetailWorkspace', () => {
     )
 
     expect(screen.getByTestId('automation-model-select')).toHaveTextContent('hidden-public-model')
+  })
+
+  test('does not rewrite a persisted model when its current value is reselected', async () => {
+    const onModelChange = vi.fn()
+    const draft = {
+      ...emptyAutomationDraft('cloud', 'cloud-device'),
+      name: '每周回顾',
+      prompt: '汇总本周进展',
+      modelId: 'hidden-public-model',
+      modelType: 'public',
+    }
+    render(
+      <AutomationDetailHarness
+        devices={[device('cloud-device', 'cloud')]}
+        initialDraft={draft}
+        onModelChange={onModelChange}
+      />
+    )
+
+    await userEvent.setup().click(screen.getByTestId('automation-model-select'))
+    await userEvent
+      .setup()
+      .click(screen.getByTestId('automation-model-select-option-public:hidden-public-model'))
+
+    expect(onModelChange).not.toHaveBeenCalled()
   })
 
   test('shows invalid draft feedback beside the editor and focuses the missing instructions', () => {

@@ -5,6 +5,7 @@ import {
   traceModelLoading,
 } from '@/lib/model-loading-diagnostics'
 import type { ModelApi } from '@/api/models'
+import { ApiError } from '@/api/http'
 import {
   getDefaultModelOptions,
   inferModelFamily,
@@ -14,7 +15,11 @@ import {
 } from '@/lib/model-ui'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import { findModelForSelection } from './runtimeContextUsage'
-import { modelSelectionIdentityOptions } from './runtimeModelSelection'
+import {
+  CLOUD_MODEL_NAMESPACE_OPTION,
+  CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+  modelSelectionIdentityOptions,
+} from './runtimeModelSelection'
 import {
   modelSelectionIdentityDiagnostics,
   modelSelectionScopeFingerprint,
@@ -48,6 +53,28 @@ interface UseWorkbenchModelsOptions {
 const DEFAULT_MODEL_SCOPE_KEY = 'default'
 const EMPTY_MODEL_OPTIONS: ModelOptions = Object.freeze({})
 const PERSISTED_CLOUD_MODEL_TYPES = new Set(['public', 'user', 'group'])
+
+/** Whether a fetched model still carries the configured group/public identity. */
+function matchesConfiguredCloudIdentity(
+  model: UnifiedModel,
+  config?: ModelSelectionConfig | null
+): boolean {
+  if (!config?.modelName) return false
+  const options = config.options ?? {}
+  const namespace = options[CLOUD_MODEL_NAMESPACE_OPTION]
+  if (namespace && (model.namespace ?? 'default') !== namespace) return false
+  const rawOwner = options[CLOUD_MODEL_RESOURCE_USER_ID_OPTION]
+  if (rawOwner !== undefined && rawOwner !== '') {
+    const owner = Number(rawOwner)
+    if (Number.isFinite(owner) && model.resourceUserId !== owner) return false
+  }
+  return true
+}
+
+/** A 404/403 lookup is definitive; network and timeout failures are transient. */
+function isDefinitiveModelLookupError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 403)
+}
 
 function toSelectionConfig(model: UnifiedModel, options: ModelOptions): ModelSelectionConfig {
   return {
@@ -126,6 +153,10 @@ export function useWorkbenchModels({
   const [locallySelectedReplacementByScope, setLocallySelectedReplacementByScope] = useState<
     Record<string, boolean>
   >({})
+  const [transientLookupFailureByScope, setTransientLookupFailureByScope] = useState<
+    Record<string, boolean>
+  >({})
+  const transientLookupFailure = Boolean(transientLookupFailureByScope[scopeKey])
   const effectiveSelectionConfig = useMemo(() => {
     if (selectionConfig?.modelName) {
       if (
@@ -149,7 +180,8 @@ export function useWorkbenchModels({
     selectedModel &&
     effectiveSelectionConfig?.modelName === selectedModel.name &&
     effectiveSelectionConfig?.modelType === selectedModel.type &&
-    PERSISTED_CLOUD_MODEL_TYPES.has(selectedModel.type)
+    PERSISTED_CLOUD_MODEL_TYPES.has(selectedModel.type) &&
+    matchesConfiguredCloudIdentity(selectedModel, effectiveSelectionConfig)
   )
   const selectedModelAvailable = Boolean(
     selectedModel &&
@@ -170,7 +202,8 @@ export function useWorkbenchModels({
     effectiveSelectionConfig?.modelName &&
     !configuredModelAvailable &&
     !hasLocallySelectedReplacement &&
-    !persistedCloudModelSelected
+    !persistedCloudModelSelected &&
+    !transientLookupFailure
   )
   const isSelectionReady = useMemo(
     () =>
@@ -232,8 +265,9 @@ export function useWorkbenchModels({
       availableModels: UnifiedModel[],
       nextSelectionConfig?: ModelSelectionConfig | null,
       isCancelled?: () => boolean
-    ) => {
+    ): Promise<boolean> => {
       let model = findModelForSelection(availableModels, nextSelectionConfig)
+      let transientFailure = false
       if (
         !model &&
         !fallbackWhenConfiguredModelUnavailable &&
@@ -244,14 +278,41 @@ export function useWorkbenchModels({
       ) {
         // A configured cloud model can be absent from the selector catalog
         // because an admin hid it. The single-model endpoint still resolves it;
-        // a deleted model answers 404 and keeps the existing replacement flow.
+        // a deleted or restricted model keeps the existing replacement flow.
         try {
           model = await api.getModel(nextSelectionConfig.modelName, nextSelectionConfig.modelType)
-        } catch {
-          model = null
+          if (
+            !model ||
+            (nextSelectionConfig.modelType && model.type !== nextSelectionConfig.modelType) ||
+            !matchesConfiguredCloudIdentity(model, nextSelectionConfig)
+          ) {
+            model = null
+          }
+        } catch (error) {
+          if (isDefinitiveModelLookupError(error)) {
+            model = null
+          } else {
+            // Network errors and timeouts must not push a valid persisted model
+            // into the replacement flow. Keep the previous selection when one
+            // exists; otherwise wait for the next catalog refresh to retry.
+            model = selectedModelRef.current[scopeKey] ?? null
+            transientFailure = !model
+          }
         }
-        if (isCancelled?.()) return
+        if (isCancelled?.()) return false
       }
+      if (transientFailure) {
+        setTransientLookupFailureByScope(current =>
+          current[scopeKey] ? current : { ...current, [scopeKey]: true }
+        )
+        return false
+      }
+      setTransientLookupFailureByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
       const nextOptions = model
         ? normalizeModelOptions(model, nextSelectionConfig?.options ?? {})
         : (nextSelectionConfig?.options ?? {})
@@ -279,6 +340,7 @@ export function useWorkbenchModels({
       setLocallySelectedReplacementByScope(current =>
         current[scopeKey] ? { ...current, [scopeKey]: false } : current
       )
+      return true
     },
     [api, configuredModelFingerprint, fallbackWhenConfiguredModelUnavailable, scopeKey, traceId]
   )
@@ -396,8 +458,8 @@ export function useWorkbenchModels({
           !scopeSelectionAlreadyRestored ||
           (configuredModelAvailable && !selectedModelRef.current[scopeKey])
         ) {
-          await restoreSelection(models, effectiveSelectionConfig, () => cancelled)
-          if (cancelled) return
+          const restored = await restoreSelection(models, effectiveSelectionConfig, () => cancelled)
+          if (cancelled || !restored) return
         }
         setRestoredSelectionKeyByScope(current =>
           current[scopeKey] === selectionKey ? current : { ...current, [scopeKey]: selectionKey }

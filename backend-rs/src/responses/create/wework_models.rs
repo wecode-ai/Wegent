@@ -19,6 +19,8 @@ pub(super) struct ModelSelection {
     pub(super) model_name: String,
     pub(super) model_type: String,
     pub(super) options: Map<String, Value>,
+    /// True when the catalog missed and the selection came from the hidden fallback.
+    pub(super) from_persisted: bool,
 }
 
 impl ModelSelection {
@@ -99,6 +101,7 @@ pub(super) async fn model_selection(
     persisted_selection(state, user, body).await
 }
 
+/// The source's unavailable/ambiguous response for a named Wework model.
 fn unavailable() -> FastApiError {
     FastApiError::detail(
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -106,6 +109,7 @@ fn unavailable() -> FastApiError {
     )
 }
 
+/// Project one visible catalog entry into the runtime model selection.
 fn selection_from_catalog(
     model: &crate::models_unified::models::UnifiedModel,
     body: &WeworkResponseCreate,
@@ -127,6 +131,7 @@ fn selection_from_catalog(
         model_name: model.name.clone(),
         model_type: model.model_type.to_string(),
         options,
+        from_persisted: false,
     }
 }
 
@@ -144,6 +149,7 @@ pub(super) fn parse_model_identifier(value: &str) -> Option<(&str, &str, i64, &s
     Some((model_type, namespace, owner, name))
 }
 
+/// Derive the catalog model type from the persisted owner and namespace.
 pub(super) fn model_type_from_row(
     row: &crate::responses::create::resolution::KindRow,
 ) -> &'static str {
@@ -217,6 +223,7 @@ async fn exact_persisted_model(
     Ok(row)
 }
 
+/// Resolve a model identity that is absent from the visible catalog.
 async fn persisted_selection(
     state: &AppState,
     user: &crate::models_unified::mysql::UserRow,
@@ -278,6 +285,7 @@ async fn persisted_selection(
         model_name: row.name,
         model_type: actual_type.to_string(),
         options,
+        from_persisted: true,
     })
 }
 

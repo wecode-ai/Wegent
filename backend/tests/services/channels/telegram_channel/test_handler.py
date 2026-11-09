@@ -973,6 +973,33 @@ class TestTelegramChannelHandler:
         create_task_mock.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_device_mode_awaits_hidden_model_compatibility_check(self, handler):
+        """A hidden device-mode selection is kept only after the async check resolves."""
+        user = SimpleNamespace(id=1, user_name="user")
+        db = MagicMock()
+        selection = SimpleNamespace(model_name="hidden-claude", model_type="public")
+        with (
+            patch(
+                "app.services.channels.handler.model_selection_manager.get_selection",
+                new=AsyncMock(return_value=selection),
+            ),
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=[],
+            ),
+            patch.object(
+                handler,
+                "_is_claude_compatible_override",
+                new=AsyncMock(return_value=True),
+            ) as compatibility,
+        ):
+            result = await handler._get_device_mode_model_override(db, user)
+
+        assert result == ("hidden-claude", "public")
+        compatibility.assert_awaited_once_with(db, user, "hidden-claude")
+
+    @pytest.mark.asyncio
     async def test_is_claude_compatible_override_matches_model_list(self, handler):
         """The override compatibility check follows the model list provider."""
         user = SimpleNamespace(id=1)

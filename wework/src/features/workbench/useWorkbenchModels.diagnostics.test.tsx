@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
+import { ApiError } from '@/api/http'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
 import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import {
@@ -149,7 +150,7 @@ test('keeps the replacement flow when the persisted cloud model no longer resolv
   const deletedTask = selection('deleted-model')
   const api = {
     listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
-    getModel: vi.fn().mockRejectedValue(new Error('not found')),
+    getModel: vi.fn().mockRejectedValue(new ApiError('not found', 404)),
   }
   const hook = renderHook(() =>
     useWorkbenchModels({
@@ -166,6 +167,62 @@ test('keeps the replacement flow when the persisted cloud model no longer resolv
   expect(hook.result.current.selectedModel).toBeNull()
   expect(hook.result.current.isSelectionReady).toBe(false)
   expect(api.getModel).toHaveBeenCalledWith('deleted-model', 'public')
+})
+
+test('does not replace a persisted cloud model on a transient lookup failure', async () => {
+  const transientTask = selection('transient-model')
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockRejectedValue(new ApiError('offline', 503)),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: transientTask,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+
+  await waitFor(() => expect(api.getModel).toHaveBeenCalled())
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+  expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(hook.result.current.selectedModel).toBeNull()
+})
+
+test('rejects a same-named model from another group identity', async () => {
+  const configuredTask: ModelSelectionConfig = {
+    modelName: 'hidden-group-model',
+    modelType: 'group',
+    options: {
+      weworkCloudModelNamespace: 'team-a',
+      weworkCloudModelResourceUserId: '2',
+    },
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockResolvedValue({
+      name: 'hidden-group-model',
+      type: 'group',
+      namespace: 'team-b',
+      resourceUserId: 2,
+    }),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: configuredTask,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+
+  await waitFor(() => expect(hook.result.current.isConfiguredModelUnavailable).toBe(true))
+  expect(hook.result.current.selectedModel).toBeNull()
 })
 
 test('correlates composer changes and background seeds without logging private options', async () => {

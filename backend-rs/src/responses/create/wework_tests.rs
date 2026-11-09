@@ -171,6 +171,7 @@ fn assembles_the_runtime_create_payload_top_level() {
             "weworkCloudModelResourceUserId": 0
         }))
         .expect("options"),
+        from_persisted: false,
     };
     let payload = assemble_create_payload(
         json!({"prompt": "测试"}),
@@ -322,6 +323,33 @@ fn projects_text_deltas_and_terminal_events() {
 }
 
 #[test]
+fn hidden_fallback_must_match_the_conversation_model() {
+    let selection = ModelSelection {
+        model_name: "hidden-model".into(),
+        model_type: "public".into(),
+        options: serde_json::from_value(json!({
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": 0
+        }))
+        .expect("options"),
+        from_persisted: true,
+    };
+    assert!(recorded_selection_matches(
+        Some(&json!({
+            "modelName": "hidden-model",
+            "modelType": "public",
+            "options": {"weworkCloudModelNamespace": "default"}
+        })),
+        &selection
+    ));
+    assert!(!recorded_selection_matches(
+        Some(&json!({"modelName": "other-model", "modelType": "public"})),
+        &selection
+    ));
+    assert!(!recorded_selection_matches(None, &selection));
+}
+
+#[test]
 fn merges_previous_selection_options_under_the_new() {
     let previous = json!({
         "options": {
@@ -336,6 +364,7 @@ fn merges_previous_selection_options_under_the_new() {
             "weworkCloudModelNamespace": "default"
         }))
         .expect("options"),
+        from_persisted: false,
     };
     let merged = merged_selection(Some(&previous), &selection);
     assert_eq!(merged.options.get("reasoning"), Some(&json!("x")));

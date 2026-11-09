@@ -6,6 +6,7 @@
 import pytest
 from fastapi import HTTPException
 
+from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.wework_api import WeworkResponseCreate
 from app.services.model_aggregation_service import (
     kind_service,
@@ -13,6 +14,7 @@ from app.services.model_aggregation_service import (
     public_model_service,
 )
 from app.services.wework_api import models
+from app.services.wework_api.service import _selection_matches_recorded
 
 
 @pytest.fixture
@@ -236,3 +238,57 @@ def test_hidden_model_keeps_the_public_user_whitelist(test_db, test_user, monkey
         models.selection(test_db, test_user, body, allow_hidden=True)
 
     assert error.value.status_code == 422
+
+
+def test_hidden_selection_reports_the_persisted_source(test_db, test_user, monkeypatch):
+    _hidden_public_model(test_db)
+    monkeypatch.setattr(models, "catalog", lambda db, user: [])
+    body = WeworkResponseCreate(
+        model="public:default:0:hidden-model",
+        input="continue",
+        conversation="conv_existing",
+    )
+
+    selection, from_persisted = models.selection_with_source(
+        test_db, test_user, body, allow_hidden=True
+    )
+
+    assert from_persisted is True
+    assert selection.model_name == "hidden-model"
+
+
+def test_visible_selection_reports_the_catalog_source(test_db, test_user, cloud_models):
+    body = WeworkResponseCreate(
+        model="public:default:0:responses-model",
+        input="new",
+        execution={"type": "wework", "device_id": "device-1"},
+    )
+
+    selection, from_persisted = models.selection_with_source(test_db, test_user, body)
+
+    assert from_persisted is False
+    assert selection.model_name == "responses-model"
+
+
+def test_hidden_fallback_must_match_the_recorded_model():
+    selection = RuntimeModelSelection(
+        modelName="hidden-model",
+        modelType="public",
+        options={
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+        },
+    )
+
+    assert _selection_matches_recorded(
+        {
+            "modelName": "hidden-model",
+            "modelType": "public",
+            "options": {"weworkCloudModelNamespace": "default"},
+        },
+        selection,
+    )
+    assert not _selection_matches_recorded(
+        {"modelName": "other-model", "modelType": "public"}, selection
+    )
+    assert not _selection_matches_recorded({}, selection)

@@ -380,6 +380,7 @@ pub(super) fn merged_selection(
         model_name: selection.model_name.clone(),
         model_type: selection.model_type.clone(),
         options,
+        from_persisted: selection.from_persisted,
     }
 }
 
