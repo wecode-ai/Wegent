@@ -370,6 +370,23 @@ fn hidden_fallback_must_match_the_conversation_model() {
         ),
         "a name-and-type-only record has no identity to compare"
     );
+    let empty_selection = ModelSelection {
+        model_name: "hidden-model".into(),
+        model_type: "public".into(),
+        options: serde_json::from_value(json!({})).expect("options"),
+        from_persisted: true,
+    };
+    assert!(
+        !recorded_selection_matches(
+            Some(&json!({
+                "modelName": "hidden-model",
+                "modelType": "public",
+                "options": {}
+            })),
+            &empty_selection
+        ),
+        "two missing identities cannot prove a match"
+    );
     assert!(
         !recorded_selection_matches(
             Some(&json!({
