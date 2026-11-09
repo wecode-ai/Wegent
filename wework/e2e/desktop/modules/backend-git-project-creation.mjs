@@ -1,10 +1,10 @@
 import { isAbsolute, relative, resolve } from 'node:path'
 import { rm } from 'node:fs/promises'
-import { assert, fetchJson, readFile, runChecked } from './shared.mjs'
+import { assert, commandOutputAsync, fetchJson, readFile, runChecked } from './shared.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 
 // App remote control remains disabled. Backend creation uses its authorized
-// record-scoped route; local assertions use the existing Executor IPC transport.
+// record-scoped route; workspace commands use the existing Executor IPC transport.
 export async function verifyBackendGitProjectCreation(control, cloud, fixture, setPhase) {
   setPhase('git-clone-recovery-backend-project-cwd')
   const headers = {
@@ -55,9 +55,17 @@ export async function verifyBackendGitProjectCreation(control, cloud, fixture, s
     await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: checkout })
     assert.equal(await command('git_branch', checkout), 'develop')
     assert.equal(await command('git_remote_url', checkout), fixture.source)
-    assert.equal(await command('git_config', checkout, ['--get', 'user.name']), 'oauth2')
+    // Inspect persisted identity; git_config is not registered in App IPC.
     assert.equal(
-      await command('git_config', checkout, ['--get', 'user.email']),
+      await commandOutputAsync('git', ['config', '--local', '--get', 'user.name'], {
+        cwd: checkout,
+      }),
+      'oauth2'
+    )
+    assert.equal(
+      await commandOutputAsync('git', ['config', '--local', '--get', 'user.email'], {
+        cwd: checkout,
+      }),
       'recovery@example.test'
     )
     const listed = await fetchJson(

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   fetchJson: vi.fn(),
   readFile: vi.fn(),
   runChecked: vi.fn(),
+  commandOutputAsync: vi.fn(),
   rm: vi.fn(),
   fetch: vi.fn(),
   requestExecutor: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('../e2e/desktop/modules/shared.mjs', async () => ({
   fetchJson: mocks.fetchJson,
   readFile: mocks.readFile,
   runChecked: mocks.runChecked,
+  commandOutputAsync: mocks.commandOutputAsync,
 }))
 vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({
   requestExecutor: mocks.requestExecutor,
@@ -37,21 +39,22 @@ beforeEach(() => {
   checkoutPath = 'private-checkout'
   mocks.readFile.mockResolvedValue('# Private Git recovery\n')
   mocks.runChecked.mockResolvedValue(undefined)
+  mocks.commandOutputAsync.mockImplementation(async (_command, args) =>
+    args.at(-1) === 'user.name' ? 'oauth2' : 'recovery@example.test'
+  )
   mocks.rm.mockResolvedValue(undefined)
   mocks.fetch.mockResolvedValue({ status: 204 })
   vi.stubGlobal('fetch', mocks.fetch)
   mocks.requestExecutor.mockImplementation(async (_control, _method, params) => {
-    const { command_key, args } = params
-    const stdout =
-      command_key === 'project_workspace_root'
-        ? '/virtual/workspace'
-        : command_key === 'git_branch'
-          ? 'develop'
-          : command_key === 'git_remote_url'
-            ? fixture.source
-            : args[1] === 'user.name'
-              ? 'oauth2'
-              : 'recovery@example.test'
+    const { command_key } = params
+    const stdout = {
+      project_workspace_root: '/virtual/workspace',
+      git_branch: 'develop',
+      git_remote_url: fixture.source,
+    }[command_key]
+    if (stdout === undefined) {
+      throw new Error(`Device command key '${command_key}' is not configured`)
+    }
     return { success: true, stdout }
   })
   mocks.fetchJson.mockImplementation(async url => {
@@ -96,17 +99,18 @@ test('checks Backend creation at workspace root, persisted path and repo identit
     cwd: '/virtual/workspace/private-checkout',
   })
   const commands = mocks.requestExecutor.mock.calls.map(([, , params]) => params)
-  expect(commands.filter(command => command.command_key === 'git_config')).toEqual([
-    {
-      command_key: 'git_config',
-      path: '/virtual/workspace/private-checkout',
-      args: ['--get', 'user.name'],
-    },
-    {
-      command_key: 'git_config',
-      path: '/virtual/workspace/private-checkout',
-      args: ['--get', 'user.email'],
-    },
+  expect(commands.filter(command => command.command_key === 'git_config')).toEqual([])
+  expect(mocks.commandOutputAsync.mock.calls).toEqual([
+    [
+      'git',
+      ['config', '--local', '--get', 'user.name'],
+      { cwd: '/virtual/workspace/private-checkout' },
+    ],
+    [
+      'git',
+      ['config', '--local', '--get', 'user.email'],
+      { cwd: '/virtual/workspace/private-checkout' },
+    ],
   ])
   expect(mocks.fetch).toHaveBeenCalledWith(
     'https://backend.invalid/api/projects/42?client_origin=wework',
@@ -130,6 +134,29 @@ test('preserves missing checkout failure and still cleans up the created project
   mocks.readFile.mockRejectedValueOnce(new Error('Checkout missing at workspace root'))
   await expect(verifyBackendGitProjectCreation(control, cloud, fixture, vi.fn())).rejects.toThrow(
     'Checkout missing at workspace root'
+  )
+  expect(mocks.fetch).toHaveBeenCalledTimes(1)
+  expect(mocks.rm).toHaveBeenCalledTimes(1)
+})
+
+test.each(['user.name', 'user.email'])(
+  'rejects an incorrect repo-local %s and still cleans up',
+  async key => {
+    mocks.commandOutputAsync.mockImplementation(async (_command, args) =>
+      args.at(-1) === key ? 'incorrect identity' : 'oauth2'
+    )
+    await expect(verifyBackendGitProjectCreation(control, cloud, fixture, vi.fn())).rejects.toThrow(
+      'incorrect identity'
+    )
+    expect(mocks.fetch).toHaveBeenCalledTimes(1)
+    expect(mocks.rm).toHaveBeenCalledTimes(1)
+  }
+)
+
+test('preserves a Git config read failure and still cleans up', async () => {
+  mocks.commandOutputAsync.mockRejectedValueOnce(new Error('Git config exited with 1'))
+  await expect(verifyBackendGitProjectCreation(control, cloud, fixture, vi.fn())).rejects.toThrow(
+    'Git config exited with 1'
   )
   expect(mocks.fetch).toHaveBeenCalledTimes(1)
   expect(mocks.rm).toHaveBeenCalledTimes(1)
