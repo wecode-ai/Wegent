@@ -76,8 +76,8 @@ else:
         sys.exit(0)
     qr = Path.home() / "conversation-qr.png"
     qr.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII="))
-    result = {"status": "ok" if approval.exists() else "waiting_scan", "qr_path": str(qr)}
-print(json.dumps(result))
+    result = {"status": "ok" if approval.exists() else "waiting_scan", "qr_path": str(qr), "hint": "等待扫码或手机确认。"}
+print(json.dumps(result, ensure_ascii=False))
 `
   )
   await writeFile(

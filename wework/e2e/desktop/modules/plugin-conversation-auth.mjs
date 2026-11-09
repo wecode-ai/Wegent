@@ -175,6 +175,9 @@ export async function verifyConversationQrAuthorization({
       const state = await beginOnUse(action)
       state.release()
       await control.command('waitFor', testId('connector-auth-qr'))
+      await control.command('waitFor', testId('connector-auth-card'), {
+        text: '等待扫码或手机确认。',
+      })
       assert.equal(state.requests, 1)
       assert.equal(state.continuations.length, 0)
       await captureScreenshot(control, `plugin-auth-conversation-${action}-qr.png`, 'body')

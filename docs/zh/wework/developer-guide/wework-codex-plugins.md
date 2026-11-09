@@ -63,6 +63,8 @@ Codex 安装成功但 `plugin/installed` 尚未确认时，安装回执保留原
 
 插件可以在 `connectors[].localAuth` 中声明设备侧授权。`local_qr` 用于二维码登录；`browser_oauth` 用于需要本机 CLI 打开浏览器的 OAuth。两种模式都必须提供相对插件根目录的 `health` 和 `start` 命令，二维码模式还必须提供非阻塞的 `poll` 命令。`authPolicy: on_install` 会在插件包完成本机同步后检查登录状态，未登录时由 Wework 显示授权界面；取消或失败会终止本次安装。首次使用和运行中授权检查继续作为凭据失效后的恢复入口。
 
+本地授权命令的标准输出必须是 UTF-8 编码的状态 JSON。Executor 为子进程设置 `PYTHONIOENCODING=utf-8` 和 `PYTHONUTF8=1`，避免 Windows 的默认代码页破坏 Python 输出的中文提示。无效的 UTF-8 输出会作为协议错误返回，不会替换为乱码后继续展示。
+
 选择插件和发送消息不执行授权预检，不读取完整的 `plugin/installed`、`plugin/list` 或插件详情。模型按任务需要使用插件；实际调用报告未登录或凭据失效时，保留 `connector_auth_required`、准确的 `pluginKey` 和 `connectorSlug`，停止该插件操作并结束本轮回复，由 Wework 显示登录卡片。不能把网络故障、缺少业务权限或远程 MCP 的原生授权请求转成本地登录卡。
 
 运行中恢复直接将插件和连接器身份传给 Executor，由设备侧解析本地 manifest，并绕过历史成功缓存检查登录状态；缺少完整身份时不猜测插件，也不枚举所有安装项。单次本地健康命令保留 45 秒超时上限，登录交互保留独立超时；健康检查不再阻塞消息发送。登录成功后发送一条从授权阻塞处继续的指令，不重发原始用户请求或重试整个失败轮次。
