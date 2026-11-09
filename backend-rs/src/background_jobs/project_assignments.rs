@@ -288,12 +288,14 @@ pub(super) async fn assign(
             if notify&&created&&previous_user!=user && let Some(pending)=notifications::direct_human_on(tx,state,project,&issue,user,owner,&name,&assignment_id).await?{notifications.push(pending);}
             tx.execute("UPDATE loop_items SET status='succeeded',completed_at=UTC_TIMESTAMP(6),version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(run.id.as_str(),)).await?;
         }else{
-            let execution=if let Some(execution)=execution{execution}else{
-                #[derive(FromMysqlRow)]struct Existing{id:i64,status:String,execution_device_id:String}
-                let existing:Existing=tx.fetch_one("SELECT id,status,execution_device_id FROM loop_item_executions WHERE automation_run_id=? ORDER BY id DESC LIMIT 1",(run.id.as_str(),)).await?;
-                queue::Execution{id:existing.id,status:existing.status,device_id:existing.execution_device_id}
+            let device_id=if let Some(execution)=execution{execution.device_id}else{
+                let (device_id,): (String,) = tx.fetch_one(
+                    "SELECT execution_device_id FROM loop_item_executions WHERE automation_run_id=? ORDER BY id DESC LIMIT 1",
+                    (run.id.as_str(),),
+                ).await?;
+                device_id
             };
-            tx.execute("UPDATE loop_items SET status='queued',assignee_agent_id=?,device_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(agent,execution.device_id.as_str(),run.id.as_str())).await?;
+            tx.execute("UPDATE loop_items SET status='queued',assignee_agent_id=?,device_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(agent,device_id.as_str(),run.id.as_str())).await?;
         }
         Ok(notifications)
     }).await?;

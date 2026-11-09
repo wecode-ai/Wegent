@@ -8,7 +8,10 @@ use std::time::Duration;
 use brz_mysql::{MysqlResult, MysqlRouteKey, MysqlRouteOutput, MysqlRouting};
 use serde_json::json;
 
-use super::{has_fork_workspace_archive, read_subtask_with_contexts, shell_supports_recovery};
+use super::{
+    has_fork_workspace_archive, payload_reports_missing, probes_executor_binding,
+    read_subtask_with_contexts, shell_supports_recovery,
+};
 use crate::chat_repository::contexts_by_subtask_ids_statement;
 use crate::sql_test_support::mysql_pool_server;
 use crate::task_store::TableTemplates;
@@ -69,6 +72,48 @@ fn a_fork_workspace_archive_requires_a_non_blank_storage_key() {
     )));
     assert!(!has_fork_workspace_archive(Some(&json!({}))));
     assert!(!has_fork_workspace_archive(None));
+}
+
+/// `_mark_missing_executor_deleted` (`dispatcher.py:341-343`): a blank or
+/// `device-*` binding is never soft-probed.
+#[test]
+fn the_executor_probe_skips_blank_and_device_bindings() {
+    assert!(probes_executor_binding(
+        "wegent-task-haoxuan3-7c2a3a222e00cad"
+    ));
+    assert!(probes_executor_binding("  wegent-task-one  "));
+    assert!(!probes_executor_binding(""));
+    assert!(!probes_executor_binding("   "));
+    assert!(!probes_executor_binding("device-abc"));
+    assert!(!probes_executor_binding(" device-abc "));
+}
+
+/// `remote_workspace_service.executor_alive`: only a terminal phase or the
+/// "No pod found" error reports the executor as missing. The recorded create
+/// case answered `200 status=success phase=Running`, which is alive.
+#[test]
+fn only_terminal_or_missing_pods_report_the_executor_as_gone() {
+    assert!(!payload_reports_missing(
+        &json!({"status": "success", "phase": "Running"})
+    ));
+    assert!(!payload_reports_missing(&json!({"status": "SUCCESS"})));
+    assert!(!payload_reports_missing(
+        &json!({"status": "success", "phase": "Succeeded"})
+    ));
+    assert!(!payload_reports_missing(&json!({"phase": "Pending"})));
+    assert!(!payload_reports_missing(
+        &json!({"error_msg": "temporarily unavailable"})
+    ));
+    assert!(!payload_reports_missing(&json!({})));
+    assert!(payload_reports_missing(
+        &json!({"status": "error", "phase": "Succeeded"})
+    ));
+    assert!(payload_reports_missing(
+        &json!({"status": "error", "phase": "Failed"})
+    ));
+    assert!(payload_reports_missing(
+        &json!({"status": "error", "error_msg": "No pod found for executor x/y"})
+    ));
 }
 
 /// The recovery read is `subtask_store.get_by_id`'s ORM projection: every

@@ -23,6 +23,7 @@ pub(super) async fn build(
         // The leader's resolved Skill set grows with the member merges below, so
         // `finalize` compiles its coding MCP servers from the merged set.
         false,
+        None,
     )
     .await?;
     let mut configs = request.bot.as_array().cloned().unwrap_or_default();
@@ -59,6 +60,7 @@ pub(super) async fn build(
             // Only the leader is a coding executor in the source's merge; a
             // member's Servers reach it through `merge_leader_capabilities`.
             false,
+            None,
         )
         .await?;
         if let Some(config) = compiled.bot.as_array().and_then(|bots| bots.first()) {

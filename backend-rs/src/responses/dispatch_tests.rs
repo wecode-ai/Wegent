@@ -535,6 +535,38 @@ fn execution_request() -> ExecutionRequest {
     }
 }
 
+/// `dispatcher.py:730-747`: the executor acknowledgement's START keeps the
+/// identity of the Task this handler created, so the job can publish
+/// `task:created` after `chat:start` like the chat-shell forward-only START.
+/// A dispatch that created no Task keeps the frame optional.
+#[test]
+fn the_executor_start_carries_the_created_task_identity() {
+    let request = execution_request();
+    let created = crate::internal_callback::emitter::CreatedTask {
+        user_id: 6501,
+        team_id: 110_467,
+        team_name: "wegent-chat".into(),
+        title: "标题".into(),
+        is_group_chat: false,
+        project_id: 2571,
+    };
+    let start = start_event(RecordingRedis::default(), &request, Some(created));
+    assert_eq!(start.task_id, TASK_ID);
+    assert_eq!(start.subtask_id, SUBTASK_ID);
+    assert_eq!(start.message_id, Some(2));
+    let created = start.created_task.expect("the created task identity");
+    assert_eq!(created.user_id, 6501);
+    assert_eq!(created.team_id, 110_467);
+    assert_eq!(created.team_name, "wegent-chat");
+    assert_eq!(created.project_id, 2571);
+
+    let start = start_event(RecordingRedis::default(), &request, None);
+    assert!(
+        start.created_task.is_none(),
+        "a dispatch without a created Task emits no task:created frame"
+    );
+}
+
 fn consumer(
     mysql: RecordingMysql,
     redis: RecordingRedis,
@@ -560,6 +592,9 @@ fn chat_job(
         target_url: target_url.to_string(),
         request: execution_request(),
         request_id: "req-test".to_string(),
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
     }
 }
 

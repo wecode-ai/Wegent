@@ -5,15 +5,20 @@ mod activity;
 #[path = "robot_admission.rs"]
 mod admission;
 #[path = "robot_authority.rs"]
-mod authority;
+pub(crate) mod authority;
 #[path = "robot_model.rs"]
-mod model;
+pub(crate) mod model;
 #[path = "robot_projection.rs"]
 mod projection;
 #[path = "robot_state.rs"]
 mod state;
 #[path = "robot_wake.rs"]
 mod wake;
+
+pub(crate) use activity::{
+    finish as finish_runtime_activity, project_runtime_completion, start_runtime_activity,
+};
+pub(crate) use state::fail_preparation;
 
 use super::{BackgroundJobRegistry, JobContext, with_lock_watchdog};
 use crate::AppState;
@@ -58,8 +63,14 @@ pub(crate) async fn coordination_context(
     Ok(row.context().get("project_coordination").cloned())
 }
 
-pub(crate) async fn prepare_and_wake(app: &AppState) -> Result<()> {
+/// Resolve pending queue assignments before selecting a runnable execution.
+pub(crate) async fn prepare_queued_assignments(app: &AppState) -> Result<()> {
     admission::prepare(app).await?;
+    Ok(())
+}
+
+pub(crate) async fn prepare_and_wake(app: &AppState) -> Result<()> {
+    prepare_queued_assignments(app).await?;
     wake::notify(app).await?;
     Ok(())
 }

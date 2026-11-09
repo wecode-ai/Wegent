@@ -1058,12 +1058,12 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #[[routes]]
 #methods = ["POST"]
 #path = "/mcp/subscription/sse" # app/mcp_server/server.py:1032
-#[[routes]]
-#methods = ["GET"]
-#path = "/socket.io/" # app/main.py:984
-#[[routes]]
-#methods = ["POST"]
-#path = "/socket.io/" # app/main.py:984
+[[routes]]
+methods = ["GET"]
+path = "/socket.io/" # app/main.py:984
+[[routes]]
+methods = ["POST"]
+path = "/socket.io/" # app/main.py:984
 
 # New APIs implemented directly in Rust.
 [[routes]]

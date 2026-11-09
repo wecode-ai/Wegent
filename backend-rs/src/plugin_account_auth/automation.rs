@@ -7,22 +7,25 @@
 //! Source: `app/services/plugin_auth_automation.py::reconcile` reached through
 //! `app/api/ws/plugin_auth_broker.py`'s `operation="automatic"` branch.
 
-use brz_mysql::{FromMysqlRow, MysqlTransaction};
+use std::collections::BTreeSet;
+
+use brz_mysql::{FromMysqlRow, MysqlError, MysqlTransaction};
 use serde_json::{Value, json};
 
 use crate::device_identity::DeviceKindRow;
 use crate::plugins_installed::write_coordination::PluginWriteLease;
+use crate::plugins_marketplace::db::KIND_COLUMNS;
 use crate::socketio::device::DeviceType;
 use crate::state::AppState;
 
+use super::EXCHANGE_FAILED;
+use super::connections::{self, AuthFailure};
+use super::local_lifecycle;
+use super::migrations::{self, MigrationCreate, MigrationOperation};
 use super::route;
-use super::{EXCHANGE_FAILED, INVALID_REQUEST};
 
 /// `PluginNativeAutomation`: strict, `extra="forbid"`, at most 256 ids.
 const MAX_INSTALLED_IDS: usize = 256;
-/// `_coordinate_owner`'s owner read: `filter(User.id == user_id).first()`.
-const OWNER_QUERY: &str = "SELECT users.id AS users_id, users.is_active AS users_is_active \
-     FROM users WHERE users.id = ? LIMIT 1";
 /// `InstalledPlugin` rows for the reported ids, ordered by primary key.
 const INSTALLED_PLUGINS_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
@@ -51,12 +54,6 @@ struct PolicyRow {
     json: Value,
 }
 
-#[derive(Debug, FromMysqlRow)]
-struct OwnerRow {
-    #[mysql(rename = "users_is_active")]
-    is_active: Option<bool>,
-}
-
 /// `plugin_auth_automation.reconcile`, on the exchange transaction.
 /// Acquire the plugin write lease. Source releases it from
 /// `after_transaction_end`, so the caller owns it across the whole transaction.
@@ -72,26 +69,18 @@ pub(crate) async fn acquire_lease<'a>(
         .map_err(|error| lease_code(&error))
 }
 
-pub(crate) async fn reconcile_on<T: MysqlTransaction>(
-    transaction: &mut T,
+pub(super) async fn reconcile_on(
+    transaction: &mut brz_mysql::MysqlTransactionService,
     lease: &PluginWriteLease<'_, brz_redis::RedisService>,
     user_id: i64,
     device_id: &str,
-    data: &Value,
+    request: &AutomationRequest,
 ) -> Result<Value, &'static str> {
-    let Some(installed_ids) = installed_plugin_ids(data) else {
-        return Err(INVALID_REQUEST);
+    let result_key = if request.prepare_only {
+        "packages"
+    } else {
+        "migrations"
     };
-    reconcile_locked(transaction, lease, user_id, device_id, &installed_ids).await
-}
-
-async fn reconcile_locked<T: MysqlTransaction>(
-    transaction: &mut T,
-    lease: &PluginWriteLease<'_, brz_redis::RedisService>,
-    user_id: i64,
-    device_id: &str,
-    installed_ids: &[i64],
-) -> Result<Value, &'static str> {
     // `_acquire_plugin_write_lock` reads the shared parent revision
     // (`read_policy_revision`); `enabled()` issues its own policy read below.
     let (_, revision) = lease
@@ -107,10 +96,12 @@ async fn reconcile_locked<T: MysqlTransaction>(
     // The acquire-time `check()` above belongs to this same `_coordinate_owner`
     // call (`plugin_account_connections.py:274-278`: `acquire_plugin_write_lock`
     // then the owner read), so only the owner row is read here.
-    owner_row(transaction, user_id).await?;
+    connections::owner_row(transaction, user_id)
+        .await
+        .map_err(failure_reason)?;
     // `reconcile`'s own `enabled()` read (`plugin_auth_automation.py:84`).
     if !enabled(transaction, user_id).await? {
-        return Ok(json!({"success": true, "migrations": []}));
+        return Ok(json!({"success": true, (result_key): []}));
     }
     // `reconcile` resolves the identity before `grant_current_device`.
     let Some(identity) = route::identity_on(transaction, user_id, device_id)
@@ -122,19 +113,61 @@ async fn reconcile_locked<T: MysqlTransaction>(
     // `grant_current_device` is a sub-procedure with its own return boundary:
     // a disabled policy or an unresolvable identity ends only the grant, while
     // `reconcile` keeps its original identity for the Local/App decision.
-    grant_current_device(transaction, lease, user_id, device_id).await?;
+    let granted = grant_current_device(transaction, lease, user_id, device_id).await?;
     // `grant_current_device` mutates only CLOUD/REMOTE devices; a local or app
     // runtime grants nothing, and every other type stops with an empty result.
     if !matches!(identity.device_type, DeviceType::Local | DeviceType::App) {
-        return Ok(json!({"success": true, "migrations": []}));
+        if let Some(expected) = revision.filter(|_| granted) {
+            lease
+                .commit_revision(transaction, expected)
+                .await
+                .map_err(|error| lease_code(&error))?;
+        }
+        return Ok(json!({"success": true, (result_key): []}));
     }
-    let plugins = installed_plugins(transaction, user_id, installed_ids).await?;
+    let plugins = installed_plugins(transaction, user_id, &request.installed_ids).await?;
     let mut migrations = Vec::new();
-    for plugin in plugins {
-        for intent in intents_for(plugin, user_id) {
-            migrations.push(intent);
-            if migrations.len() >= MAX_INSTALLED_IDS {
-                break;
+    'plugins: for plugin in plugins {
+        let spec = plugin.json.get("spec").cloned().unwrap_or_default();
+        if spec.get("enabled") == Some(&Value::Bool(false)) {
+            continue;
+        }
+        for connector in account_auth_connectors(&spec) {
+            let Some(slug) = connector["slug"].as_str() else {
+                return Err(EXCHANGE_FAILED);
+            };
+            if !request.includes(plugin.id, slug) {
+                continue;
+            }
+            // `with db.begin_nested():`: one SAVEPOINT per connector, rolled
+            // back when the intent refuses; other failures escape.
+            let outcome = transaction
+                .with_transaction(async |nested| {
+                    connector_work(
+                        nested,
+                        lease,
+                        user_id,
+                        device_id,
+                        &plugin,
+                        slug,
+                        request.prepare_only,
+                    )
+                    .await
+                    .map_err(failure_error)
+                })
+                .await;
+            match outcome {
+                Ok(Some(intent)) => {
+                    migrations.push(intent);
+                    if migrations.len() >= MAX_INSTALLED_IDS {
+                        // The source returns the bounded list; the session
+                        // commit (and its revision advance) still runs.
+                        break 'plugins;
+                    }
+                }
+                Ok(None) => {}
+                Err(MysqlError::InvalidQuery { reason }) if is_connector_refusal(&reason) => {}
+                Err(_) => return Err(EXCHANGE_FAILED),
             }
         }
     }
@@ -145,12 +178,119 @@ async fn reconcile_locked<T: MysqlTransaction>(
             .await
             .map_err(|error| lease_code(&error))?;
     }
-    Ok(json!({"success": true, "migrations": migrations}))
+    Ok(json!({"success": true, (result_key): migrations}))
+}
+
+/// One connector's `PluginAccountAuthError` code or an internal failure.
+fn failure_reason(failure: AuthFailure) -> &'static str {
+    match failure {
+        AuthFailure::Refusal(code) => code,
+        AuthFailure::Internal => EXCHANGE_FAILED,
+    }
+}
+
+/// Convert an intent failure into the savepoint's rollback reason.
+fn failure_error(failure: AuthFailure) -> MysqlError {
+    MysqlError::InvalidQuery {
+        reason: failure_reason(failure).to_string(),
+    }
+}
+
+/// Whether one rolled-back savepoint continues the connector loop.
+fn is_connector_refusal(reason: &str) -> bool {
+    reason != EXCHANGE_FAILED && reason.starts_with("plugin_")
+}
+
+/// The connectors that declare `accountAuth` (`if not connector.get(...)`).
+fn account_auth_connectors(spec: &Value) -> Vec<Value> {
+    spec.get("components")
+        .and_then(|components| components.get("connectors"))
+        .and_then(Value::as_array)
+        .map(|connectors| {
+            connectors
+                .iter()
+                .filter(|connector| {
+                    connector
+                        .get("accountAuth")
+                        .is_some_and(crate::json_compat::python_truthy)
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Prepare the package without creating an intent, or create one for a ready connector.
+async fn connector_work<T: MysqlTransaction>(
+    transaction: &mut T,
+    lease: &PluginWriteLease<'_, brz_redis::RedisService>,
+    user_id: i64,
+    device_id: &str,
+    plugin: &DeviceKindRow,
+    slug: &str,
+    prepare_only: bool,
+) -> Result<Option<Value>, AuthFailure> {
+    let Some(source) = plugin.json.get("spec").and_then(|spec| spec.get("source")) else {
+        return Err(AuthFailure::Internal);
+    };
+    let source = connections::source_identity(source);
+    if !local_lifecycle::local_sync_enabled(transaction, user_id, &source, slug)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    {
+        return Ok(None);
+    }
+    let rows = connections::connection_rows(transaction, user_id, &source, slug, None)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    let disconnected = rows.iter().any(|row| {
+        row.json
+            .get("spec")
+            .and_then(|spec| spec.get("status"))
+            .and_then(Value::as_str)
+            == Some("disconnected")
+    });
+    let binding = route::device_binding_on(transaction, user_id, device_id)
+        .await
+        .map_err(AuthFailure::from_reason)?;
+    let fresh_login = local_lifecycle::local_login_pending(
+        transaction,
+        user_id,
+        &source,
+        slug,
+        &binding.logical_device_id,
+        &binding.document,
+    )
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if disconnected && !fresh_login {
+        return Ok(None);
+    }
+    if prepare_only {
+        let (current, definition) =
+            connections::plugin(transaction, user_id, plugin.id, slug).await?;
+        return connections::package_metadata(&current, slug, definition).map(Some);
+    }
+    let request = MigrationCreate {
+        installed_plugin_id: plugin.id,
+        connector_slug: slug.to_string(),
+        device_id: device_id.to_string(),
+        expected_revision: 0,
+        expected_account_id: None,
+        operation: MigrationOperation::Export,
+    };
+    let intent =
+        migrations::create(transaction, lease, user_id, &request, true, fresh_login).await?;
+    Ok(Some(json!({
+        "id": intent.id,
+        "installed_plugin_id": plugin.id,
+        "connector_slug": slug,
+    })))
 }
 
 /// `enabled()`: `_policy` filters the active policy row; an absent row means
 /// the reconciliation is enabled.
-async fn enabled<T: MysqlTransaction>(
+pub(super) async fn enabled<T: MysqlTransaction>(
     transaction: &mut T,
     user_id: i64,
 ) -> Result<bool, &'static str> {
@@ -171,65 +311,123 @@ async fn grant_current_device<T: MysqlTransaction>(
     lease: &PluginWriteLease<'_, brz_redis::RedisService>,
     user_id: i64,
     device_id: &str,
-) -> Result<(), &'static str> {
-    coordinate_owner(transaction, lease, user_id).await?;
+) -> Result<bool, &'static str> {
+    connections::coordinate_owner(transaction, lease, user_id)
+        .await
+        .map_err(failure_reason)?;
     if !enabled(transaction, user_id).await? {
-        return Ok(());
+        return Ok(false);
     }
-    let _ = route::identity_on(transaction, user_id, device_id)
+    let Some(identity) = route::identity_on(transaction, user_id, device_id)
+        .await
+        .map_err(|_| EXCHANGE_FAILED)?
+    else {
+        return Ok(false);
+    };
+    if !matches!(identity.device_type, DeviceType::Cloud | DeviceType::Remote) {
+        return Ok(false);
+    }
+    let binding = route::device_binding_on(transaction, user_id, device_id).await?;
+    let logical = binding.logical_device_id.as_str();
+    let rows: Vec<DeviceKindRow> = transaction
+        .fetch_all(
+            format!(
+                "SELECT {KIND_COLUMNS} FROM kinds WHERE kind='ConnectorConnection' \
+                 AND namespace='plugin-auth' AND user_id=? AND is_active IS true ORDER BY id"
+            ),
+            (user_id,),
+        )
         .await
         .map_err(|_| EXCHANGE_FAILED)?;
-    Ok(())
+    let mut granted = false;
+    for mut row in rows {
+        let spec = &mut row.json["spec"];
+        if spec["status"] != "connected"
+            || !crate::json_compat::python_truthy(&spec["credential"])
+            || spec["deviceGrants"].get(logical).is_some()
+            || spec["deviceRevocations"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(logical)))
+        {
+            continue;
+        }
+        match connections::current_plugin(transaction, user_id, spec).await {
+            Ok(_) => {}
+            Err(AuthFailure::Refusal(_)) => continue,
+            Err(error) => return Err(failure_reason(error)),
+        }
+        spec["deviceGrants"][logical] = binding.document.clone();
+        connections::advance_on(transaction, lease, row.id, &mut row.json)
+            .await
+            .map_err(failure_reason)?;
+        granted = true;
+    }
+    Ok(granted)
 }
 
-/// `_coordinate_owner`: the lease is still owned and the owner is active.
-async fn coordinate_owner<T: MysqlTransaction>(
-    transaction: &mut T,
-    lease: &PluginWriteLease<'_, brz_redis::RedisService>,
-    user_id: i64,
-) -> Result<(), &'static str> {
-    lease
-        .verify_owned()
-        .await
-        .map_err(|error| lease_code(&error))?;
-    owner_row(transaction, user_id).await
+/// `PluginNativeAutomation`: preparation and targeted reconcile share strict validation.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AutomationRequest {
+    installed_ids: Vec<i64>,
+    prepare_only: bool,
+    targets: Option<BTreeSet<(i64, String)>>,
 }
 
-/// The owner read half of `_coordinate_owner`: the row must exist and be active.
-async fn owner_row<T: MysqlTransaction>(
-    transaction: &mut T,
-    user_id: i64,
-) -> Result<(), &'static str> {
-    let owner: Option<OwnerRow> = transaction
-        .fetch_optional(OWNER_QUERY, (user_id,))
-        .await
-        .map_err(|_| EXCHANGE_FAILED)?;
-    if owner.is_none_or(|owner| owner.is_active != Some(true)) {
-        return Err("plugin_auth_owner_unavailable");
-    }
-    Ok(())
-}
-
-/// `PluginNativeAutomation` validation: only one declared member, strict ints,
-/// positive and distinct.
-pub(crate) fn installed_plugin_ids(data: &Value) -> Option<Vec<i64>> {
-    let object = data.as_object()?;
-    if object.keys().any(|key| key != "installed_plugin_ids") {
-        return None;
-    }
-    let ids = object.get("installed_plugin_ids")?.as_array()?;
-    if ids.len() > MAX_INSTALLED_IDS {
-        return None;
-    }
-    let mut unique = Vec::with_capacity(ids.len());
-    for id in ids {
-        let id = id.as_i64().filter(|id| *id > 0)?;
-        if unique.contains(&id) {
+impl AutomationRequest {
+    pub(super) fn parse(data: &Value) -> Option<Self> {
+        let object = data.as_object()?;
+        if !super::only_fields(object, &["installed_plugin_ids", "prepare_only", "targets"]) {
             return None;
         }
-        unique.push(id);
+        let ids = object.get("installed_plugin_ids")?.as_array()?;
+        if ids.len() > MAX_INSTALLED_IDS {
+            return None;
+        }
+        let mut installed_ids = Vec::with_capacity(ids.len());
+        for id in ids {
+            let id = id.as_i64().filter(|id| *id > 0)?;
+            if installed_ids.contains(&id) {
+                return None;
+            }
+            installed_ids.push(id);
+        }
+        let prepare_only = match object.get("prepare_only") {
+            None => false,
+            Some(value) => value.as_bool()?,
+        };
+        let targets = match object.get("targets") {
+            None | Some(Value::Null) => None,
+            Some(value) => {
+                let entries = value.as_array()?;
+                if entries.len() > MAX_INSTALLED_IDS {
+                    return None;
+                }
+                let mut targets = BTreeSet::new();
+                for entry in entries {
+                    let entry = entry.as_object()?;
+                    if !super::only_fields(entry, &["installed_plugin_id", "connector_slug"])
+                        || !super::slug(entry.get("connector_slug"))
+                    {
+                        return None;
+                    }
+                    let id = entry["installed_plugin_id"].as_i64().filter(|id| *id > 0)?;
+                    targets.insert((id, entry["connector_slug"].as_str()?.to_string()));
+                }
+                Some(targets)
+            }
+        };
+        Some(Self {
+            installed_ids,
+            prepare_only,
+            targets,
+        })
     }
-    Some(unique)
+
+    fn includes(&self, id: i64, slug: &str) -> bool {
+        self.targets
+            .as_ref()
+            .is_none_or(|targets| targets.contains(&(id, slug.to_string())))
+    }
 }
 
 async fn installed_plugins<T: MysqlTransaction>(
@@ -261,51 +459,51 @@ fn installed_plugin_parameters(user_id: i64, ids: &[i64]) -> Vec<i64> {
     parameters
 }
 
-/// `reconcile`'s per-plugin connector loop.
-///
-/// Source skips a disabled plugin, then for every connector that advertises
-/// `accountAuth` attempts `_intent` inside a savepoint and continues when that
-/// raises `PluginAccountAuthError` (`plugin_auth_automation.py:104-124`). The
-/// intent itself is produced by `plugin_auth_migrations.create`, which is not
-/// ported, so every such connector is skipped with a bounded log instead of
-/// aborting the reconciliation or inventing a client-visible error.
-fn intents_for(plugin: DeviceKindRow, user_id: i64) -> Vec<Value> {
-    let spec = plugin.json.get("spec").cloned().unwrap_or_default();
-    if spec.get("enabled") == Some(&Value::Bool(false)) {
-        return Vec::new();
-    }
-    let connectors = spec
-        .get("components")
-        .and_then(|components| components.get("connectors"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for connector in connectors {
-        if connector
-            .get("accountAuth")
-            .is_none_or(|auth| auth.is_null())
-        {
-            continue;
-        }
-        tracing::warn!(
-            user_id,
-            installed_plugin_id = plugin.id,
-            "automatic plugin auth migration is not migrated; connector skipped"
-        );
-    }
-    Vec::new()
-}
-
 fn lease_code(error: &brz_mysql::MysqlError) -> &'static str {
-    match error {
-        brz_mysql::MysqlError::InvalidQuery { .. } => "plugin_write_unavailable",
-        _ => EXCHANGE_FAILED,
-    }
+    crate::plugins_installed::write_coordination::plugin_write_error_code(error)
+        .unwrap_or(EXCHANGE_FAILED)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn installed_plugin_ids(data: &Value) -> Option<Vec<i64>> {
+        AutomationRequest::parse(data).map(|request| request.installed_ids)
+    }
+
+    #[test]
+    fn validates_preparation_and_targeted_reconciliation() {
+        let prepared = AutomationRequest::parse(&json!({
+            "installed_plugin_ids": [7], "prepare_only": true,
+        }))
+        .unwrap();
+        assert!(prepared.prepare_only);
+        assert!(prepared.includes(7, "first"));
+
+        let targeted = AutomationRequest::parse(&json!({
+            "installed_plugin_ids": [7, 9],
+            "targets": [{"installed_plugin_id": 7, "connector_slug": "first"}],
+        }))
+        .unwrap();
+        assert!(!targeted.prepare_only);
+        assert!(targeted.includes(7, "first"));
+        assert!(!targeted.includes(7, "other"));
+        assert!(!targeted.includes(9, "first"));
+        assert!(
+            AutomationRequest::parse(&json!({
+                "installed_plugin_ids": [7], "prepare_only": 1,
+            }))
+            .is_none()
+        );
+        assert!(
+            AutomationRequest::parse(&json!({
+                "installed_plugin_ids": [7],
+                "targets": [{"installed_plugin_id": 7, "connector_slug": "INVALID"}],
+            }))
+            .is_none()
+        );
+    }
 
     #[test]
     fn the_installed_plugin_ids_bind_as_integers() {
@@ -355,23 +553,37 @@ mod tests {
 
     #[test]
     fn a_plugin_without_account_auth_connectors_needs_no_migration() {
-        let plugin = DeviceKindRow {
-            id: 5,
-            name: "code-review".into(),
-            json: json!({"spec": {"enabled": true, "components": {"connectors": []}}}),
-        };
-        assert_eq!(intents_for(plugin, 1).len(), 0);
+        let spec = json!({
+            "enabled": true,
+            "components": {"connectors": [
+                {"slug": "no-auth"},
+                {"slug": "empty", "accountAuth": {}},
+                {"slug": "null", "accountAuth": null},
+            ]}
+        });
+        assert!(account_auth_connectors(&spec).is_empty());
     }
 
     #[test]
-    fn a_disabled_plugin_is_skipped_before_its_connectors() {
-        let plugin = DeviceKindRow {
-            id: 6,
-            name: "disabled".into(),
-            json: json!({"spec": {"enabled": false, "components": {"connectors": [
-                {"slug": "x", "accountAuth": {"oauth2": ["authorize"]}}
-            ]}}}),
-        };
-        assert_eq!(intents_for(plugin, 1).len(), 0);
+    fn every_account_auth_connector_reaches_the_savepoint_loop() {
+        let spec = json!({
+            "components": {"connectors": [
+                {"slug": "dingtalk-access",
+                 "accountAuth": {"protocolVersion": 1, "credentialType": "bearer",
+                                 "adapter": "scripts/account-auth.py"}},
+                {"slug": "no-auth"},
+            ]}
+        });
+        let connectors = account_auth_connectors(&spec);
+        assert_eq!(connectors.len(), 1);
+        assert_eq!(connectors[0]["slug"], json!("dingtalk-access"));
+    }
+
+    #[test]
+    fn only_plugin_refusals_continue_after_a_savepoint_rollback() {
+        assert!(is_connector_refusal("plugin_auth_local_device_required"));
+        assert!(is_connector_refusal("plugin_auth_not_supported"));
+        assert!(!is_connector_refusal(EXCHANGE_FAILED));
+        assert!(!is_connector_refusal("database is gone"));
     }
 }

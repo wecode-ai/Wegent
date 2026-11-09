@@ -10,7 +10,7 @@ use super::super::project::{
     store::{self, LIVE, Node, iso},
 };
 
-pub(super) async fn finish(
+pub(crate) async fn finish(
     tx: &mut impl MysqlTransaction,
     message: &mut Message,
     status: &str,
@@ -52,32 +52,94 @@ pub(super) async fn finish(
     );
     let review = can_review(&task, &metadata, message);
     if review {
-        let project: Option<Node> = tx
-            .fetch_optional(
-                format!(
-                    "SELECT {} FROM loop_items WHERE id=? AND resource_type='project'",
-                    store::COLUMNS
-                ),
-                (task.cloud_project_id.as_str(),),
-            )
-            .await?;
-        let mut history = metadata["status_history"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let from = project.as_ref().map_or_else(
-            || task.status.clone(),
-            |project| issues::status_name(project, &task.status),
-        );
-        let to = project.as_ref().map_or("in_review".to_owned(), |project| {
-            issues::status_name(project, "in_review")
-        });
-        history.push(json!({"from_status":task.status,"to_status":"in_review","from_name":from,"to_name":to,"trigger":"ai_completed","by_user_id":null,"at":iso(now)}));
-        metadata["status_history"] = json!(history);
+        append_review_history(tx, &task, &mut metadata, now).await?;
     }
     if applied || review || metadata != task.metadata.0 {
         tx.execute("UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+?,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='task'",(Json(metadata),if review{"in_review"}else{task.status.as_str()},review,review,i64::from(applied)+i64::from(review),task.id.as_str())).await?;
     }
+    Ok(())
+}
+
+pub(crate) async fn project_runtime_completion(
+    state: &crate::state::AppState,
+    message: &Message,
+) -> MysqlResult<bool> {
+    if message.task_id.is_empty() {
+        return Ok(false);
+    }
+    state.mysql.with_transaction(async |tx| {
+        let task: Option<Node> = tx.fetch_optional(
+            format!("SELECT {} FROM loop_items WHERE id=? AND resource_type='task' AND {LIVE} FOR UPDATE", store::COLUMNS),
+            (message.task_id.as_str(),),
+        ).await?;
+        let Some(task) = task else {
+            return Ok(false);
+        };
+        let mut metadata = task.meta();
+        let superseded = metadata["ai_state"]["project_chat_message_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty() && id != message.message_id);
+        if task.cloud_project_id != message.project_id {
+            return Ok(false);
+        }
+        issues::update_change_request_source(
+            &mut metadata,
+            &format!("activity:{}", message.message_id),
+            &message.content,
+        );
+        if superseded || !can_review(&task, &metadata, message) {
+            if metadata == task.metadata.0 {
+                return Ok(false);
+            }
+            tx.execute(
+                "UPDATE loop_items SET metadata=?, version=version+1, updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
+                (Json(metadata), task.id.as_str()),
+            ).await?;
+            return Ok(true);
+        }
+        if !metadata["ai_state"].is_object() {
+            metadata["ai_state"] = json!({});
+        }
+        metadata["ai_state"]["project_chat_message_id"] = json!(message.message_id);
+        let now = Utc::now().naive_utc();
+        append_review_history(tx, &task, &mut metadata, message.updated_at).await?;
+        tx.execute(
+            "UPDATE loop_items SET metadata=?, status='in_review', completed_at='1970-01-01 00:00:01', sort_order=0, version=version+1, updated_at=? WHERE id=? AND resource_type='task'",
+            (Json(metadata), now, task.id.as_str()),
+        )
+        .await?;
+        Ok(true)
+    }).await
+}
+
+async fn append_review_history(
+    tx: &mut impl MysqlTransaction,
+    task: &Node,
+    metadata: &mut Value,
+    now: NaiveDateTime,
+) -> MysqlResult<()> {
+    let project: Option<Node> = tx
+        .fetch_optional(
+            format!(
+                "SELECT {} FROM loop_items WHERE id=? AND resource_type='project'",
+                store::COLUMNS
+            ),
+            (task.cloud_project_id.as_str(),),
+        )
+        .await?;
+    let mut history = metadata["status_history"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let from = project.as_ref().map_or_else(
+        || task.status.clone(),
+        |project| issues::status_name(project, &task.status),
+    );
+    let to = project.as_ref().map_or("in_review".to_owned(), |project| {
+        issues::status_name(project, "in_review")
+    });
+    history.push(json!({"from_status":task.status,"to_status":"in_review","from_status_name":from,"to_status_name":to,"trigger":"ai_completed","by_user_id":null,"at":iso(now)}));
+    metadata["status_history"] = json!(history);
     Ok(())
 }
 
@@ -98,7 +160,7 @@ fn project_ai_state(
     let run = message.metadata.0["run_id"].as_str().unwrap_or("");
     let old_run = previous.get("run_id").and_then(Value::as_str).unwrap_or("");
     let old_status = previous.get("status").and_then(Value::as_str).unwrap_or("");
-    if !old_run.is_empty() && old_run != run && !terminal(old_status) {
+    if terminal(status) && !old_run.is_empty() && old_run != run && !terminal(old_status) {
         return false;
     }
     let mut next = previous.clone();
@@ -121,6 +183,17 @@ fn project_ai_state(
         ("lease_expires_at", Value::Null),
     ] {
         next.insert(key.into(), value);
+    }
+    if status == "running" {
+        let now = json!(iso(at));
+        next.insert("started_at".into(), now.clone());
+        next.insert("heartbeat_at".into(), now);
+        next.insert(
+            "lease_expires_at".into(),
+            json!(iso(at + chrono::Duration::minutes(10))),
+        );
+        next.insert("completed_at".into(), Value::Null);
+        next.insert("last_error".into(), Value::Null);
     }
     if status != "completed" && !error.is_empty() {
         next.insert("last_error".into(), json!(error));
@@ -149,7 +222,8 @@ fn project_ai_state(
 }
 
 fn can_review(task: &Node, metadata: &Value, message: &Message) -> bool {
-    if matches!(task.status.as_str(), "completed" | "in_review")
+    if message.metadata.0["kind"] == "task_ai_subagent"
+        || matches!(task.status.as_str(), "completed" | "in_review")
         || message.agent_id.is_empty()
         || task.assignee_agent_id != message.agent_id
     {
@@ -184,6 +258,77 @@ fn optional(value: &str) -> Value {
     } else {
         json!(value)
     }
+}
+
+pub(crate) async fn start_runtime_activity(
+    tx: &mut impl MysqlTransaction,
+    message: &mut Message,
+    owner: Option<i64>,
+) -> MysqlResult<()> {
+    if message.task_id.is_empty() || message.metadata.0["conversation_only"] == true {
+        return Ok(());
+    }
+    let task: Option<Node> = tx.fetch_optional(
+        format!("SELECT {} FROM loop_items WHERE id=? AND resource_type='task' AND {LIVE} FOR UPDATE", store::COLUMNS),
+        (message.task_id.as_str(),),
+    ).await?;
+    let Some(task) = task.filter(|task| task.cloud_project_id == message.project_id) else {
+        return Ok(());
+    };
+    let now = Utc::now().naive_utc();
+    if message.metadata.0["run_id"]
+        .as_str()
+        .is_none_or(str::is_empty)
+    {
+        message.metadata.0["run_id"] = json!(notifications::uuid());
+    }
+    message.metadata.0["activity_at"] = json!(iso(now));
+    let mut metadata = task.meta();
+    project_ai_state(&mut metadata, message, "running", "", now);
+    if let Some(owner) = owner {
+        metadata["ai_state"]["updated_by_user_id"] = json!(owner);
+    }
+    let mut status = task.status.as_str();
+    if metadata["external_index"] != true
+        && metadata["external_shadow"] != true
+        && metadata["dispatch_child"] != true
+        && !matches!(status, "completed" | "in_progress")
+    {
+        let project: Option<Node> = tx
+            .fetch_optional(
+                format!(
+                    "SELECT {} FROM loop_items WHERE id=? AND resource_type='project'",
+                    store::COLUMNS
+                ),
+                (task.cloud_project_id.as_str(),),
+            )
+            .await?;
+        if let Some(project) = project {
+            let target = issues::status_name(&project, "in_progress");
+            if !target.is_empty() {
+                let mut history = metadata["status_history"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                history.push(json!({"from_status":status,"to_status":"in_progress",
+                    "from_status_name":issues::status_name(&project,status),"to_status_name":target,
+                    "trigger":"ai_started","by_user_id":null,"at":iso(now)}));
+                metadata["status_history"] = json!(history);
+                status = "in_progress";
+            }
+        }
+    }
+    let changed = status != task.status;
+    tx.execute(
+        "UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
+        (Json(metadata), status, changed, changed, task.id.as_str()),
+    ).await?;
+    tx.execute(
+        "UPDATE project_chat_messages SET metadata=? WHERE id=?",
+        (Json(message.metadata.0.clone()), message.id),
+    )
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

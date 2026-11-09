@@ -10,9 +10,8 @@
 //! `store_capabilities_state`, `get_slot_usage`) plus
 //! `_store_device_capabilities_state` and `_broadcast_device_slot_update`.
 //!
-//! Documented remainder: `_schedule_runtime_auth_sync_after_heartbeat` needs
-//! `user_runtime_config_service.sync_auth_to_devices`, which the Rust backend
-//! does not implement; the trigger condition is evaluated but no sync runs.
+//! A heartbeat reporting missing runtime auth schedules the repair worker in
+//! [`super::device_auth_sync`].
 //! `sync_pending_plugin_removals` after a heartbeat is queued on the device
 //! follow-up worker, matching Source's `_schedule_background_task`.
 
@@ -36,7 +35,7 @@ const CAPABILITIES_TTL_SECONDS: u64 = 600;
 /// `DEVICE_CAPABILITIES_KEY_PREFIX`.
 const CAPABILITIES_KEY_PREFIX: &str = "device:capabilities:";
 /// `CODEX_RUNTIME`.
-const CODEX_RUNTIME: &str = "codex";
+pub(crate) const CODEX_RUNTIME: &str = "codex";
 
 /// The source's raw heartbeat ACK.
 #[derive(Serialize)]
@@ -250,15 +249,22 @@ pub async fn heartbeat(
     if payload.capabilities.is_some() {
         store_capabilities_state(state, user_id, &route_id, payload.capabilities.as_ref()).await;
     }
-    if runtime_auth_missing(payload.runtime_auth_files.as_ref()) {
-        // Source schedules `_sync_runtime_auth_for_heartbeat_device`; the Rust
-        // backend does not implement `sync_auth_to_devices`.
-        tracing::debug!(
+    if session.reserve_presence_update() {
+        super::device_upsert::persist_observation(
+            state,
             user_id,
-            device = %route_id,
-            "runtime auth file reported missing; heartbeat auth sync is not migrated"
-        );
+            snapshot
+                .device
+                .logical_device_id
+                .as_deref()
+                .unwrap_or(&route_id),
+            snapshot.device.runtime_instance_id.as_deref(),
+            chrono::Utc::now(),
+            false,
+        )
+        .await;
     }
+    let runtime_auth_missing = runtime_auth_missing(payload.runtime_auth_files.as_ref());
     broadcast_slot_update(state, runtime, user_id, &route_id).await;
     // `_schedule_background_task(sync_pending_plugin_removals(user, device))`:
     // fire-and-forget, after the heartbeat has been persisted.
@@ -268,11 +274,19 @@ pub async fn heartbeat(
     // heartbeat call site keeps that flag distinguishable from registration.
     let reconcile_runtime = Arc::clone(runtime);
     let reconcile_device_id = route_id.clone();
+    let auth_sync_runtime = Arc::clone(runtime);
+    let auth_sync_device_id = route_id.clone();
     Ok(Reply::payload(
         serde_json::to_value(HeartbeatAck { success: true })
             .expect("a heartbeat acknowledgement serializes"),
     )
     .after_reply(move || {
+        if runtime_auth_missing {
+            // `_schedule_runtime_auth_sync_after_heartbeat`: an independent
+            // background task, deduped by `(user, device, runtime)` while one
+            // sync is in flight.
+            auth_sync_runtime.enqueue_runtime_auth_sync(user_id, &auth_sync_device_id);
+        }
         reconcile_runtime.enqueue_reconcile(super::device_reconcile::ReconcileJob {
             user_id,
             device_id: reconcile_device_id,
@@ -443,7 +457,7 @@ fn runtime_auth_missing(runtime_auth_files: Option<&Value>) -> bool {
 }
 
 /// `_broadcast_device_slot_update`: slot usage read plus the chat broadcast.
-async fn broadcast_slot_update(
+pub(crate) async fn broadcast_slot_update(
     state: &AppState,
     runtime: &SocketRuntime,
     user_id: i64,

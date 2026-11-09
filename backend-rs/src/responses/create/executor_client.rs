@@ -196,7 +196,7 @@ mod tests {
         let payload = DispatchPayload {
             model: "qwen3.7-plus".to_string(),
             stream: false,
-            input: "hi".to_string(),
+            input: serde_json::json!("hi"),
             instructions: "sys".to_string(),
             background: Some(true),
             ..DispatchPayload::new()

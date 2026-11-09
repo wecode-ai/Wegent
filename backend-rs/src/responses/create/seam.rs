@@ -180,6 +180,8 @@ pub async fn dispatch_create(
             enable_tools: input.enable_tools,
             knowledge_base_refs: input.knowledge_base_refs,
             knowledge_base_names: input.knowledge_base_names,
+            web_runtime_guidance: false,
+            subtask_bot_resolved: false,
             enable_web_search: input.enable_web_search,
             enable_deep_thinking: input.enable_chat_bot,
             reasoning: input.reasoning,
@@ -270,7 +272,9 @@ pub async fn dispatch_create(
             if target.mode == routing::CommunicationMode::Inprocess {
                 enqueue_chat_shell_dispatch(state, Some(url), request.clone(), input.request_id);
             } else {
-                enqueue_executor_dispatch(state, url, &request);
+                // The non-streaming OpenAPI path creates no Task of its own,
+                // so its START carries no `task:created` frame.
+                enqueue_executor_dispatch(state, url, &request, None);
             }
         }
         // `openapi_responses.py:936-942`: the source also queries the task's
@@ -489,7 +493,7 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
 /// assistant subtask RUNNING and re-derive the Task CRD. The source's
 /// `update_subtask_status` commits before the task status update, and its
 /// after-commit hook publishes the run metrics; a store failure only logs.
-async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
+pub(crate) async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
     let Some(redis) = state.redis.as_ref() else {
         return;
     };
@@ -501,6 +505,184 @@ async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
         executor_manager: &state.executor_manager,
     };
     completion::mark_subtask_running(&ctx, subtask_id).await;
+}
+
+/// `ExecutionDispatcher._resolve_device_route_id` (`dispatcher.py:391-415`):
+/// map a submitted device identity to its heartbeat connection route. A missing
+/// owned row falls back to the submitted route; it never errors or drops the
+/// device routing.
+async fn resolve_device_route_id(
+    state: &AppState,
+    request: &ExecutionRequest,
+    device_id: Option<&str>,
+) -> Result<Option<String>, FastApiError> {
+    let Some(device_id) = device_id else {
+        return Ok(None);
+    };
+    if request.user.get("id").and_then(Value::as_i64).is_none()
+        || has_fork_workspace_archive(request)
+    {
+        return Ok(Some(device_id.to_string()));
+    }
+    match crate::device_identity::resolve_owned_device_alias(
+        &state.mysql,
+        request.user_id,
+        device_id,
+    )
+    .await
+    {
+        Ok(Some(device)) => Ok(Some(crate::device_identity::device_connection_route_id(
+            &device,
+        ))),
+        Ok(None) => Ok(Some(device_id.to_string())),
+        Err(error) => {
+            tracing::error!(%error, task_id = request.task_id, "device route resolution failed");
+            Err(FastApiError::internal())
+        }
+    }
+}
+
+/// `_has_fork_workspace_archive`: a fork runtime with a stored archive keeps
+/// its submitted route.
+fn has_fork_workspace_archive(request: &ExecutionRequest) -> bool {
+    request
+        .fork_runtime
+        .as_ref()
+        .and_then(|runtime| runtime.get("workspaceArchive"))
+        .and_then(|archive| archive.get("storageKey"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+/// `ExecutionDispatcher._dispatch_websocket` (`dispatcher.py:571-620`): set
+/// the device executor on the subtask, emit the START pair on `/chat`, then
+/// publish `task:execute` to the device room.
+async fn dispatch_device_turn(
+    state: &AppState,
+    request: &ExecutionRequest,
+    created_task: Option<crate::internal_callback::emitter::CreatedTask>,
+    device_route: &str,
+) -> Result<(), FastApiError> {
+    set_subtask_executor(state, request, device_route).await?;
+    let Some(redis) = state.redis.as_ref() else {
+        tracing::error!(task_id = request.task_id, "device dispatch has no Redis");
+        return Err(FastApiError::internal());
+    };
+    let shell = routing::shell_type(request);
+    if let Err(error) = crate::internal_callback::publish_chat_start(
+        redis,
+        request.task_id,
+        request.subtask_id,
+        Value::String(request.bot_name.clone()),
+        &shell,
+        request.message_id,
+    )
+    .await
+    {
+        tracing::error!(%error, task_id = request.task_id, "chat:start emit failed");
+        return Err(FastApiError::internal());
+    }
+    if let Some(created) = created_task.as_ref()
+        && let Err(error) =
+            crate::internal_callback::publish_task_created(redis, request.task_id, created).await
+    {
+        tracing::error!(%error, task_id = request.task_id, "task:created emit failed");
+        return Err(FastApiError::internal());
+    }
+    let mut payload = super::dispatch::device_execution_payload(request, device_route);
+    if let Some(user) = payload.get_mut("user").and_then(Value::as_object_mut) {
+        user.remove("git_token");
+        user.remove("gitToken");
+    }
+    payload["git_auth_transport"] = serde_json::json!("device_local");
+    let message = crate::socketio_emit::device_execution_message(
+        "task:execute",
+        &payload,
+        "/local-executor",
+        &format!("device:{}:{device_route}", request.user_id),
+    );
+    use brz_redis::Redis as _;
+    if let Err(error) = redis
+        .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message)
+        .await
+    {
+        tracing::error!(%error, task_id = request.task_id, "task:execute publish failed");
+        return Err(FastApiError::internal());
+    }
+    Ok(())
+}
+
+/// `SubtaskStore.update_executor_info` (`dispatcher.py:417-454`): the subtask's
+/// executor identity must name the device before its progress/result events
+/// pass the device namespace's ownership check.
+async fn set_subtask_executor(
+    state: &AppState,
+    request: &ExecutionRequest,
+    runtime_device_id: &str,
+) -> Result<(), FastApiError> {
+    let tables = state.task_store.table_templates();
+    let mysql = state
+        .mysql
+        .route(crate::task_routing::ByTaskId(request.task_id as u64));
+    // `update_executor_info`'s `db.query(...).first()` is a different shape
+    // from the shared no-limit `db.refresh` helper, so this call site adds the
+    // Source's `LIMIT 1`.
+    let read = format!(
+        "{} \n LIMIT 1",
+        crate::task_store_statements::subtask_by_id_labeled_refresh_statement(tables.subtasks)
+    );
+    let row: Option<brz_mysql::MysqlRow> = mysql
+        .fetch_optional(read, (request.subtask_id,))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, subtask_id = request.subtask_id, "executor subtask read failed");
+            FastApiError::internal()
+        })?;
+    if row.is_none() {
+        return Ok(());
+    }
+    // `_set_subtask_executor`'s subtask session also loads the subtask's
+    // contexts (`WHERE subtask_id IN (?) ORDER BY id ASC`) before the update.
+    let contexts = format!(
+        "SELECT {} \nFROM subtask_contexts \n\
+         WHERE subtask_contexts.subtask_id IN (?) \
+         ORDER BY subtask_contexts.id ASC",
+        crate::task_store_listing::subtask_context_columns()
+    );
+    let _rows: Vec<brz_mysql::MysqlRow> = mysql
+        .fetch_all(contexts, (request.subtask_id,))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, subtask_id = request.subtask_id, "subtask contexts read failed");
+            FastApiError::internal()
+        })?;
+    use brz_mysql::MysqlTransaction as _;
+    let now = chrono::Local::now().naive_local();
+    mysql
+        .with_transaction(async |transaction| {
+            transaction
+                .execute(
+                    format!(
+                        "UPDATE {table} SET executor_namespace=?, executor_name=?, updated_at=? \
+                         WHERE {table}.id=?",
+                        table = tables.subtasks
+                    ),
+                    (
+                        format!("user-{}", request.user_id),
+                        format!("device-{runtime_device_id}"),
+                        now,
+                        request.subtask_id,
+                    ),
+                )
+                .await?;
+            Ok(())
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, subtask_id = request.subtask_id, "executor update failed");
+            FastApiError::internal()
+        })?;
+    Ok(())
 }
 
 /// The HTTP+Callback dispatch chain (`dispatcher.py:117-180,730-747`):
@@ -521,7 +703,9 @@ pub(super) async fn dispatch_executor_after_subscribe(
         if super::package_runtime::is_target(url) {
             enqueue_chat_shell_dispatch(state, Some(url), request.clone(), request_id);
         } else {
-            enqueue_executor_dispatch(state, url, request);
+            // The OpenAPI streaming path creates no Task of its own, so its
+            // START carries no `task:created` frame.
+            enqueue_executor_dispatch(state, url, request, None);
         }
     }
 }
@@ -533,6 +717,7 @@ pub(super) fn enqueue_executor_dispatch(
     state: &AppState,
     target_url: &str,
     request: &ExecutionRequest,
+    created_task: Option<crate::internal_callback::emitter::CreatedTask>,
 ) {
     let payload = dispatch::assemble(request, false, true);
     let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
@@ -545,7 +730,7 @@ pub(super) fn enqueue_executor_dispatch(
             start: state
                 .redis
                 .clone()
-                .map(|redis| crate::responses::dispatch::start_event(redis, request)),
+                .map(|redis| crate::responses::dispatch::start_event(redis, request, created_task)),
         });
 }
 
@@ -569,6 +754,9 @@ fn enqueue_chat_shell_dispatch(
         target_url: url.to_string(),
         request,
         request_id: request_id.to_string(),
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
     };
     state
         .responses_dispatch
@@ -614,6 +802,94 @@ pub(super) fn sse_stream_response(stream: BodyStream) -> HttpResponse<BodyStream
     response
         .header("x-accel-buffering", "no")
         .expect("a literal x-accel-buffering")
+}
+
+/// `/chat` `chat:send`'s `ExecutionDispatcher.dispatch` half: recover the
+/// executor, mark the assistant subtask RUNNING and admit the turn's dispatch.
+///
+/// The chat path always streams its events to the Socket.IO emitter, so a
+/// chat-shell target runs in forwarding mode and an executor target keeps the
+/// fire-and-forget POST plus its `chat:start` acknowledgement.
+pub(crate) async fn dispatch_chat_turn(
+    state: &AppState,
+    request: &ExecutionRequest,
+    request_id: &str,
+    created_task: Option<crate::internal_callback::emitter::CreatedTask>,
+    device_id: Option<&str>,
+) -> Result<(), FastApiError> {
+    super::recover_executor::recover_executor_if_needed(state, request).await;
+    // `dispatcher.py:121-127`: resolve the device route before routing and
+    // before the subtask turns RUNNING.
+    let resolved_device = resolve_device_route_id(state, request, device_id).await?;
+    let shell = routing::shell_type(request);
+    let chat_shell_mode = routing::chat_shell_mode();
+    let chat_shell = chat_shell_url();
+    let executor_manager = executor_manager_url();
+    let target = routing::route(&RouteInputs {
+        shell_type: &shell,
+        chat_shell_mode: &chat_shell_mode,
+        chat_shell_url: &chat_shell,
+        executor_manager_url: &executor_manager,
+        device_id: resolved_device.as_deref(),
+        model_is_video: request
+            .model_config
+            .get("modelType")
+            .and_then(Value::as_str)
+            == Some("video"),
+        model_protocol: request.model_config.get("protocol").and_then(Value::as_str),
+    });
+    mark_subtask_running(state, request.subtask_id).await;
+    if target.mode == routing::CommunicationMode::Websocket {
+        let Some(route) = resolved_device.as_deref() else {
+            tracing::error!(task_id = request.task_id, "device dispatch has no route");
+            return Err(FastApiError::internal());
+        };
+        return dispatch_device_turn(state, request, created_task, route).await;
+    }
+    if target.mode == routing::CommunicationMode::Polling {
+        return crate::background_jobs::video::create::dispatch(state, request)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, task_id = request.task_id, "chat:send polling dispatch failed");
+                FastApiError::internal()
+            });
+    }
+    let Some(url) = target.url.as_deref() else {
+        tracing::warn!(
+            task_id = request.task_id,
+            subtask_id = request.subtask_id,
+            mode = ?target.mode,
+            "chat:send dispatch has no execution target URL"
+        );
+        return Err(FastApiError::internal());
+    };
+    if routing::supports_streaming(&target) || target.mode == routing::CommunicationMode::Inprocess
+    {
+        let mut start_data = serde_json::Map::new();
+        start_data.insert("shell_type".into(), Value::String(shell.clone()));
+        if !request.bot_name.trim().is_empty() {
+            start_data.insert("bot_name".into(), Value::String(request.bot_name.clone()));
+        }
+        let job = crate::responses::dispatch::ChatShellJob {
+            task_id: request.task_id,
+            subtask_id: request.subtask_id,
+            consumer: crate::responses::dispatch::ConsumerState::from_app(state),
+            target_url: url.to_string(),
+            request: request.clone(),
+            request_id: request_id.to_string(),
+            forward: true,
+            start_data: Value::Object(start_data),
+            created_task,
+        };
+        state
+            .responses_dispatch
+            .submit(crate::responses::dispatch::DefaultDispatchJob::ChatShell(
+                Box::new(job),
+            ));
+    } else {
+        enqueue_executor_dispatch(state, url, request, created_task);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

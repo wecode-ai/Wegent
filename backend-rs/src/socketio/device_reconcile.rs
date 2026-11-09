@@ -363,7 +363,7 @@ fn is_capacity_status(status: Option<&str>) -> bool {
 }
 
 /// `reconcile_runtime_snapshot`'s branch selection and transitions.
-async fn apply_snapshot<T: MysqlTransaction>(
+pub(super) async fn apply_snapshot<T: MysqlTransaction>(
     transaction: &mut T,
     row: &ExecutionRow,
     runtime_status: &str,

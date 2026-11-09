@@ -1432,7 +1432,8 @@ fn queued_snapshot(
 }
 
 #[path = "wework_models.rs"]
-mod models;
+pub(super) mod models;
+pub(crate) use models::reasoning_from_model_options;
 #[path = "wework_runtime.rs"]
 mod runtime;
 #[cfg(test)]

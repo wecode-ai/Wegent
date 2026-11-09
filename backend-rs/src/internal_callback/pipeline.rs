@@ -139,6 +139,8 @@ async fn dispatch_execution(
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
+            web_runtime_guidance: false,
+            subtask_bot_resolved: false,
         },
     )
     .await?;
@@ -202,6 +204,9 @@ async fn dispatch_execution(
             target_url: url.to_string(),
             request: execution,
             request_id,
+            forward: false,
+            start_data: serde_json::Value::Null,
+            created_task: None,
         };
         state
             .responses_dispatch
@@ -217,7 +222,7 @@ async fn dispatch_execution(
                 start: state
                     .redis
                     .clone()
-                    .map(|redis| crate::responses::dispatch::start_event(redis, &execution)),
+                    .map(|redis| crate::responses::dispatch::start_event(redis, &execution, None)),
             });
     }
     Ok(())

@@ -91,11 +91,20 @@ pub(crate) struct ChatShellJob<M: Mysql, R: Redis> {
     pub(crate) target_url: String,
     pub(crate) request: ExecutionRequest,
     pub(crate) request_id: String,
+    /// `/chat` dispatch: forward every parsed event to Socket.IO (the
+    /// `WebSocketResultEmitter` half) instead of persisting only.
+    pub(crate) forward: bool,
+    /// `_build_start_event_data(request)`: the START frame's `shell_type` and
+    /// optional `bot_name`.
+    pub(crate) start_data: Value,
+    /// The START frame's `task:created` identity.
+    pub(crate) created_task: Option<crate::internal_callback::emitter::CreatedTask>,
 }
 
 /// The `chat:start` frame the dispatcher emits after the executor
 /// acknowledgement (`dispatcher.py:730-747` ->
-/// `webpage_websocket_chat_emitter.py:88-99`).
+/// `webpage_websocket_chat_emitter.py:88-99`), plus the `task:created` frame
+/// the same emitter's START branch emits for the creator.
 pub(crate) struct ExecutorStart<R: Redis> {
     pub(crate) redis: R,
     pub(crate) task_id: i64,
@@ -103,11 +112,16 @@ pub(crate) struct ExecutorStart<R: Redis> {
     pub(crate) bot_name: Value,
     pub(crate) shell_type: String,
     pub(crate) message_id: Option<i64>,
+    pub(crate) created_task: Option<crate::internal_callback::emitter::CreatedTask>,
 }
 
 /// `_build_start_event_data` + `_get_bot_name` (`dispatcher.py:468-493`): the
 /// START event's shell type and first bot name.
-pub(crate) fn start_event<R: Redis>(redis: R, request: &ExecutionRequest) -> ExecutorStart<R> {
+pub(crate) fn start_event<R: Redis>(
+    redis: R,
+    request: &ExecutionRequest,
+    created_task: Option<crate::internal_callback::emitter::CreatedTask>,
+) -> ExecutorStart<R> {
     let bot_name = request
         .bot
         .as_array()
@@ -123,6 +137,7 @@ pub(crate) fn start_event<R: Redis>(redis: R, request: &ExecutionRequest) -> Exe
         bot_name,
         shell_type: crate::responses::create::routing::shell_type(request),
         message_id: request.message_id,
+        created_task,
     }
 }
 
@@ -360,10 +375,13 @@ where
                 Ok(response) => {
                     tracing::info!(%url, status = %response.status(), "executor dispatch acknowledged");
                     // `dispatcher.py:747`: the acknowledgement is followed by
-                    // the START emit; a rejected dispatch raises before it.
+                    // the START emit; a rejected dispatch raises before it. The
+                    // same `WebSocketResultEmitter` emits `chat:start` and then
+                    // `task:created` (for a task this handler created).
                     if response.status().is_success()
                         && let Some(start) = start
-                        && let Err(error) = crate::internal_callback::publish_chat_start(
+                    {
+                        if let Err(error) = crate::internal_callback::publish_chat_start(
                             &start.redis,
                             start.task_id,
                             start.subtask_id,
@@ -372,8 +390,19 @@ where
                             start.message_id,
                         )
                         .await
-                    {
-                        tracing::warn!(%error, "chat:start emit failed (fire-and-forget)");
+                        {
+                            tracing::warn!(%error, "chat:start emit failed (fire-and-forget)");
+                        }
+                        if let Some(created) = &start.created_task
+                            && let Err(error) = crate::internal_callback::publish_task_created(
+                                &start.redis,
+                                start.task_id,
+                                created,
+                            )
+                            .await
+                        {
+                            tracing::warn!(%error, "task:created emit failed (fire-and-forget)");
+                        }
                     }
                 }
                 Err(error) => {
@@ -411,6 +440,10 @@ where
         tables: job.consumer.tables,
         executor_manager: &job.consumer.executor_manager,
         app: app.as_deref(),
+        forward: job.forward,
+        start_data: job.start_data.clone(),
+        created_task: job.created_task.clone(),
+        owner_user_id: job.forward.then_some(job.request.user_id),
     };
     let result = sse_sync::collect(
         &consumer,

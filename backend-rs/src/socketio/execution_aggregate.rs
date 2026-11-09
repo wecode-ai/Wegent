@@ -110,6 +110,12 @@ impl ExecutionRow {
     pub(super) fn is_terminal(&self) -> bool {
         TERMINAL_RUN_STATUSES.contains(&self.status_or_empty())
     }
+
+    pub(super) fn observed_start(&self, now: NaiveDateTime) -> NaiveDateTime {
+        self.started_at
+            .filter(|start| !crate::background_jobs::robot::model::unset(Some(*start)))
+            .unwrap_or(now)
+    }
 }
 
 /// `db.get(LoopItemExecution, execution_id)`: one current read by primary key
@@ -210,7 +216,7 @@ pub(super) async fn accept_observation<T: MysqlTransaction>(
     } else {
         "running"
     };
-    let started_at = row.started_at.unwrap_or(now);
+    let started_at = row.observed_start(now);
     let lease_expires_at = now + chrono::Duration::seconds(DEFAULT_LEASE_SECONDS);
     let execution = transaction
         .execute(

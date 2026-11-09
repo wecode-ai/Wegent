@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use brz_socket_io::EmitterError;
+use brz_socket_io::{AckError, EmitterError, SocketError};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -26,9 +26,10 @@ use crate::plugins_installed::{
     CapabilityDispatch, DispatchOutcome, prepare_plugins_for_registered_device,
     record_registration_sync_result, sync_registration_capabilities,
 };
+use crate::shutdown_state::ShutdownState;
 use crate::state::AppState;
 
-use super::runtime::{CallbackIds, DeviceJob, RuntimeRpcCall, SocketEmitters};
+use super::runtime::{CallbackIds, DeviceJob, RuntimeCallEvent, RuntimeRpcCall, SocketEmitters};
 
 /// `SYNC_EVENT`.
 const SYNC_EVENT: &str = "device:sync_capabilities";
@@ -37,38 +38,94 @@ const SYNC_NAMESPACE: &str = "/local-executor";
 
 /// The worker loop. Runs until the queue closes or the process shuts down.
 pub(crate) async fn run_worker(
+    jobs: mpsc::Receiver<DeviceJob>,
+    state: Arc<AppState>,
+    emitters: Arc<SocketEmitters>,
+    callbacks: Arc<CallbackIds>,
+) {
+    run_jobs(jobs, state, emitters, callbacks).await;
+}
+
+/// The heartbeat's `sync_pending_plugin_removals` drain.
+///
+/// Source `device_namespace.py:2191` schedules it with
+/// `_schedule_background_task`, independently of the registration capability
+/// sync scheduled at `:1815`; a registration parked on the device's remote ACK
+/// must not delay its `plugin_device_installations` scan. The dedicated queue
+/// keeps the two classes independent, and each job still runs as its own
+/// bounded in-flight task like the source's background task.
+pub(crate) async fn run_plugin_removal_worker(
+    jobs: mpsc::Receiver<DeviceJob>,
+    state: Arc<AppState>,
+    emitters: Arc<SocketEmitters>,
+    callbacks: Arc<CallbackIds>,
+) {
+    run_jobs(jobs, state, emitters, callbacks).await;
+}
+
+/// The most jobs one queue keeps in flight at once. A registration sync can
+/// wait out the source's 120 s callback deadline, so independent devices must
+/// not queue behind it; the bound keeps the worker's memory and shutdown
+/// latency finite.
+const MAX_IN_FLIGHT_JOBS: usize = 64;
+
+/// One job consumer. Each queue carries one job class; every job runs as its
+/// own in-flight task, matching the source's `_schedule_background_task` per
+/// event, with bounded admission. Dropping the `JoinSet` on shutdown cancels
+/// every remaining task.
+async fn run_jobs(
     mut jobs: mpsc::Receiver<DeviceJob>,
     state: Arc<AppState>,
     emitters: Arc<SocketEmitters>,
     callbacks: Arc<CallbackIds>,
 ) {
+    let mut in_flight: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     loop {
         let job = tokio::select! {
-            job = jobs.recv() => job,
+            // A full set must not pull another item: the receive branch stays
+            // disabled until a task finishes, so the completion and shutdown
+            // branches are always reachable.
+            job = jobs.recv(), if in_flight.len() < MAX_IN_FLIGHT_JOBS => job,
+            finished = in_flight.join_next(), if !in_flight.is_empty() => {
+                if let Some(Err(error)) = finished
+                    && !error.is_cancelled()
+                {
+                    tracing::warn!(%error, "device background job failed");
+                }
+                continue;
+            }
             () = tokio::time::sleep(Duration::from_secs(1)) => {
                 if state.shutdown.is_shutting_down() {
+                    in_flight.shutdown().await;
                     return;
                 }
                 continue;
             }
         };
         let Some(job) = job else {
+            in_flight.shutdown().await;
             return;
         };
         if state.shutdown.is_shutting_down() {
+            in_flight.shutdown().await;
             return;
         }
-        match job {
-            DeviceJob::RegisterSync { user_id, device_id } => {
-                sync_after_register(&state, &emitters, &callbacks, user_id, device_id).await;
+        let state = Arc::clone(&state);
+        let emitters = Arc::clone(&emitters);
+        let callbacks = Arc::clone(&callbacks);
+        in_flight.spawn(async move {
+            match job {
+                DeviceJob::RegisterSync { user_id, device_id } => {
+                    sync_after_register(&state, &emitters, &callbacks, user_id, device_id).await;
+                }
+                DeviceJob::PluginRemoval { user_id, device_id } => {
+                    crate::plugins_installed::removal_sync::run_pending_removals(
+                        &state, user_id, &device_id,
+                    )
+                    .await;
+                }
             }
-            DeviceJob::PluginRemoval { user_id, device_id } => {
-                crate::plugins_installed::removal_sync::run_pending_removals(
-                    &state, user_id, &device_id,
-                )
-                .await;
-            }
-        }
+        });
     }
 }
 
@@ -128,14 +185,76 @@ impl CapabilityDispatch for LocalDispatch<'_> {
         if !publish_sync_call(self.state, socket_id, callback_id, payload).await {
             return DispatchOutcome::Failure("Socket.IO Redis adapter is unavailable");
         }
+        // `sio.call(..., timeout=120)` starts its callback waiter before the
+        // emit and keeps it until the configured deadline, even when the
+        // socket is already closed or this process has no local receiver.
+        let deadline = tokio::time::Instant::now() + timeout;
+        // The adapter frame above is the only send when the client has already
+        // left: the source has no local receiver, so nothing is delivered to
+        // the socket and the call merely awaits its remote callback.
+        if !self.emitters.has_local_executor_socket(socket_id) {
+            return match wait_for_deadline(deadline, &self.state.shutdown).await {
+                DeadlineWait::Expired => DispatchOutcome::Failure(""),
+                DeadlineWait::Cancelled => DispatchOutcome::Cancelled,
+            };
+        }
         match self
             .emitters
             .call_sync_capabilities(socket_id, payload, timeout)
             .await
         {
             Ok(args) => DispatchOutcome::Ack(args),
+            // socketioxide reports `Timeout`/`SocketClosed` immediately when
+            // the waiter disappears; the source still waits out its deadline.
+            Err(error) if missing_ack(&error) => {
+                match wait_for_deadline(deadline, &self.state.shutdown).await {
+                    // A real expiry keeps the source's failure/persistence.
+                    DeadlineWait::Expired => DispatchOutcome::Failure(emitter_error_text(&error)),
+                    // Shutdown cancels the pending call: the source never
+                    // produces a result, so nothing may be persisted.
+                    DeadlineWait::Cancelled => DispatchOutcome::Cancelled,
+                }
+            }
             Err(error) => DispatchOutcome::Failure(emitter_error_text(&error)),
         }
+    }
+}
+
+/// Why the pending callback wait ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeadlineWait {
+    /// The source's configured ACK timeout expired.
+    Expired,
+    /// The process began shutting down; the source's task was cancelled.
+    Cancelled,
+}
+
+/// An ACK result that means the source would keep waiting rather than fail
+/// immediately: a closed socket or a missing local ACK waiter.
+fn missing_ack(error: &EmitterError) -> bool {
+    matches!(
+        error,
+        EmitterError::Ack(AckError::Timeout)
+            | EmitterError::Ack(AckError::Socket(SocketError::Closed))
+    )
+}
+
+/// Wait out the source's ACK deadline, polling the shutdown flag at most once
+/// per second so a graceful stop is not blocked for the full timeout.
+async fn wait_for_deadline(
+    deadline: tokio::time::Instant,
+    shutdown: &ShutdownState,
+) -> DeadlineWait {
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return DeadlineWait::Expired;
+        }
+        if shutdown.is_shutting_down() {
+            return DeadlineWait::Cancelled;
+        }
+        let step = (deadline - now).min(Duration::from_secs(1));
+        tokio::time::sleep(step).await;
     }
 }
 
@@ -171,9 +290,21 @@ async fn publish_sync_call(
 }
 
 /// `str(exc)` for the mapped dispatch failure, matching the Redis-RPC path.
+///
+/// A socket that closed while the capability sync was still pending has no
+/// recorded Source exception text: the recording's loaded
+/// `plugin_device_installations.error_message` is the empty string and the
+/// failure UPDATE omits the column, which only happens when SQLAlchemy's dirty
+/// flush sees an assigned value equal to the loaded one. The inference is
+/// therefore that Source's `str(exc)` for that disconnect was empty, not a
+/// directly observed value. Only [`SocketError::Closed`] takes that mapping;
+/// every other acknowledgement error keeps its current text.
 fn emitter_error_text(error: &EmitterError) -> &'static str {
     match error {
         EmitterError::Ack(brz_socket_io::AckError::Timeout) => "",
+        EmitterError::Ack(brz_socket_io::AckError::Socket(brz_socket_io::SocketError::Closed)) => {
+            ""
+        }
         EmitterError::Namespace(_) => "namespace is unavailable",
         EmitterError::InvalidTimeout => "invalid timeout",
         EmitterError::Broadcast(_) | EmitterError::Publish(_) => {
@@ -198,19 +329,113 @@ mod tests {
             "invalid timeout"
         );
     }
+
+    /// A socket closed while the capability sync was pending leaves the
+    /// recorded `error_message` clean: Source's own text was empty, so the
+    /// failed desired-install update must not dirty the column.
+    #[test]
+    fn a_socket_closed_ack_has_no_error_text() {
+        assert_eq!(
+            emitter_error_text(&EmitterError::Ack(brz_socket_io::AckError::Socket(
+                brz_socket_io::SocketError::Closed
+            ))),
+            ""
+        );
+        assert_eq!(
+            emitter_error_text(&EmitterError::Ack(brz_socket_io::AckError::Timeout)),
+            ""
+        );
+    }
+
+    /// Only the closed-socket acknowledgement is flattened; the rest of the
+    /// acknowledgement class keeps its existing text.
+    #[test]
+    fn other_ack_errors_keep_their_text() {
+        assert_eq!(
+            emitter_error_text(&EmitterError::Ack(brz_socket_io::AckError::Socket(
+                brz_socket_io::SocketError::InternalChannelFull
+            ))),
+            "connection closed"
+        );
+    }
+
+    /// A closed socket and a missing local ACK waiter both keep the source's
+    /// callback waiter alive; every other error is classified immediately.
+    #[test]
+    fn only_closed_and_missing_acks_wait_for_the_deadline() {
+        assert!(missing_ack(&EmitterError::Ack(AckError::Timeout)));
+        assert!(missing_ack(&EmitterError::Ack(AckError::Socket(
+            SocketError::Closed
+        ))));
+        assert!(!missing_ack(&EmitterError::Ack(AckError::Socket(
+            SocketError::InternalChannelFull
+        ))));
+        assert!(!missing_ack(&EmitterError::Namespace("/local-executor")));
+        assert!(!missing_ack(&EmitterError::InvalidTimeout));
+    }
+
+    #[tokio::test]
+    async fn a_disconnected_socket_waits_out_its_short_deadline() {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(40);
+        let start = tokio::time::Instant::now();
+        assert_eq!(
+            wait_for_deadline(deadline, &ShutdownState::default()).await,
+            DeadlineWait::Expired
+        );
+        assert!(start.elapsed() >= Duration::from_millis(40));
+    }
+
+    #[tokio::test]
+    async fn an_already_elapsed_deadline_returns_immediately() {
+        let start = tokio::time::Instant::now();
+        assert_eq!(
+            wait_for_deadline(start, &ShutdownState::default()).await,
+            DeadlineWait::Expired
+        );
+        assert!(start.elapsed() < Duration::from_millis(20));
+    }
+
+    #[tokio::test]
+    async fn shutdown_releases_the_deadline_wait() {
+        let shutdown = ShutdownState::default();
+        shutdown.initiate();
+        let start = tokio::time::Instant::now();
+        assert_eq!(
+            wait_for_deadline(start + Duration::from_secs(60), &shutdown).await,
+            DeadlineWait::Cancelled
+        );
+        assert!(start.elapsed() < Duration::from_millis(20));
+    }
 }
 
-/// `socketio/async_pubsub_manager.py` inbound `emit`: only a `runtime:rpc`
-/// call addressed to one local session by the translated Target SID, with the
-/// original three-element callback identity, becomes a worker job.
+/// `socketio/async_pubsub_manager.py` inbound `emit`: an acknowledged
+/// executor call addressed to one local session by the
+/// translated Target SID, with the original three-element callback identity,
+/// becomes a worker job.
+///
+/// A capability-sync frame this process published is skipped: its local
+/// dispatcher already delivered it to the socket and published the frame only
+/// for other hosts, so processing the echo would deliver it twice and publish
+/// an unowned callback. `runtime:rpc` keeps accepting its own frame, because
+/// that echo is how this process's outbound `sio.call` reaches its own socket.
 pub(crate) fn inbound_rpc_job(message: Value) -> Option<RuntimeRpcCall> {
     if message.get("method").and_then(Value::as_str) != Some("emit") {
         return None;
     }
-    if message.get("event").and_then(Value::as_str) != Some("runtime:rpc") {
+    let event = match message.get("event").and_then(Value::as_str)? {
+        "runtime:rpc" => RuntimeCallEvent::RuntimeRpc,
+        "device:sync_capabilities" => RuntimeCallEvent::SyncCapabilities,
+        "device:execute_command" => RuntimeCallEvent::ExecuteCommand,
+        "device:start_terminal_session" => RuntimeCallEvent::StartTerminalSession,
+        "device:start_code_server_session" => RuntimeCallEvent::StartCodeServerSession,
+        _ => return None,
+    };
+    if message.get("namespace").and_then(Value::as_str) != Some("/local-executor") {
         return None;
     }
-    if message.get("namespace").and_then(Value::as_str) != Some("/local-executor") {
+    if event == RuntimeCallEvent::SyncCapabilities
+        && message.get("host_id").and_then(Value::as_str) == Some(crate::socketio_emit::host_id())
+    {
         return None;
     }
     let callback = message.get("callback")?.as_array()?;
@@ -220,10 +445,11 @@ pub(crate) fn inbound_rpc_job(message: Value) -> Option<RuntimeRpcCall> {
     let room = message.get("room")?.as_str()?;
     let host_id = message.get("host_id")?.as_str()?;
     let arg = message.get("data")?.as_array()?.first()?.clone();
-    if sid.as_str()? != room {
+    if sid.as_str()? != room || namespace.as_str()? != "/local-executor" {
         return None;
     }
     Some(RuntimeRpcCall {
+        event,
         room: room.to_owned(),
         namespace: namespace.as_str()?.to_owned(),
         host_id: host_id.to_owned(),
@@ -232,54 +458,79 @@ pub(crate) fn inbound_rpc_job(message: Value) -> Option<RuntimeRpcCall> {
     })
 }
 
-/// Deliver one inbound `runtime:rpc` call to the real session and publish the
-/// client's real acknowledgement as the source's `method: callback` message.
+/// Deliver one inbound `/local-executor` call to the real session and publish
+/// the client's real acknowledgement as the source's `method: callback`
+/// message.
 ///
 /// A timeout or closed socket publishes nothing: the source's `sio.call`
 /// failure path produces no callback, and an acknowledgement is never
 /// synthesized.
-async fn forward_runtime_rpc(state: &AppState, emitters: &SocketEmitters, call: RuntimeRpcCall) {
+async fn forward_runtime_rpc(
+    emitters: &SocketEmitters,
+    sequencer: &std::sync::Arc<super::callback_sequencer::CallbackSequencer>,
+    call: RuntimeRpcCall,
+) {
+    let timeout = call.ack_timeout();
     let RuntimeRpcCall {
+        event,
         room,
         namespace,
         host_id,
         id,
         arg,
     } = call;
-    let ack = match emitters.runtime_rpc(&room, &arg, RUNTIME_RPC_TIMEOUT).await {
+    let ack = match event {
+        RuntimeCallEvent::RuntimeRpc => emitters.runtime_rpc(&room, &arg, timeout).await,
+        RuntimeCallEvent::SyncCapabilities => {
+            emitters.call_sync_capabilities(&room, &arg, timeout).await
+        }
+        RuntimeCallEvent::ExecuteCommand => {
+            emitters.call_execute_command(&room, &arg, timeout).await
+        }
+        RuntimeCallEvent::StartTerminalSession | RuntimeCallEvent::StartCodeServerSession => {
+            emitters
+                .call_start_session(event, &room, &arg, timeout)
+                .await
+        }
+    };
+    let ack = match ack {
         Ok(ack) => ack,
         Err(error) => {
             tracing::warn!(
                 %error,
+                ?event,
                 room,
                 id,
-                "runtime:rpc call failed; no callback is published"
+                "inbound adapter call failed; no callback is published"
             );
             return;
         }
     };
-    let Some(redis) = state.redis.as_ref() else {
-        tracing::warn!(
-            room,
-            id,
-            "runtime:rpc Redis adapter is unavailable; no callback is published"
-        );
-        return;
+    let callback = super::callback_sequencer::SequencedCallback {
+        host_id,
+        room,
+        namespace,
+        id,
+        ack,
     };
-    use brz_redis::Redis as _;
-    let callback = callback_message(&host_id, &room, &namespace, id, ack);
-    let message = crate::json_compat::python_json_value(&callback);
-    if let Err(error) = redis
-        .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message)
-        .await
-    {
-        tracing::error!(%error, room, id, "runtime:rpc callback publish failed");
+    // Capability sync calls prepare independent packages on the same device.
+    // Return each result when ready, even if an earlier download is held.
+    if event == RuntimeCallEvent::SyncCapabilities {
+        sequencer.publish_unordered(callback).await;
+    } else {
+        sequencer.submit(callback);
     }
 }
 
 /// The source's `_return_callback` message: the original remote identity is
 /// echoed and the client's acknowledgement is the single result item.
-fn callback_message(host_id: &str, sid: &str, namespace: &str, id: u64, ack: Value) -> Value {
+pub(crate) fn callback_message(
+    host_id: &str,
+    sid: &str,
+    namespace: &str,
+    id: u64,
+    ack: Value,
+) -> Value {
     json!({
         "method": "callback",
         "host_id": host_id,
@@ -293,8 +544,8 @@ fn callback_message(host_id: &str, sid: &str, namespace: &str, id: u64, ack: Val
 /// Startup-owned consumer for inbound `runtime:rpc` calls.
 pub(crate) async fn run_rpc_worker(
     calls: Arc<tokio::sync::Mutex<mpsc::Receiver<RuntimeRpcCall>>>,
-    state: Arc<AppState>,
     emitters: Arc<SocketEmitters>,
+    sequencer: Arc<super::callback_sequencer::CallbackSequencer>,
 ) {
     loop {
         let call = {
@@ -304,7 +555,7 @@ pub(crate) async fn run_rpc_worker(
         let Some(call) = call else {
             return;
         };
-        forward_runtime_rpc(&state, &emitters, call).await;
+        forward_runtime_rpc(&emitters, &sequencer, call).await;
     }
 }
 
@@ -414,7 +665,7 @@ pub(crate) async fn run_adapter_emit_worker(
 }
 
 /// `sio.call`'s default acknowledgement timeout.
-const RUNTIME_RPC_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const RUNTIME_RPC_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[cfg(test)]
 mod runtime_rpc_tests {
@@ -439,12 +690,14 @@ mod runtime_rpc_tests {
         let job = inbound_rpc_job(frame("7xY2AeTaWTsb2AJ9", "7xY2AeTaWTsb2AJ9"))
             .expect("an addressed call");
         let RuntimeRpcCall {
+            event,
             room,
             namespace,
             host_id,
             id,
             arg,
         } = job;
+        assert_eq!(event, RuntimeCallEvent::RuntimeRpc);
         assert_eq!(room, "7xY2AeTaWTsb2AJ9");
         assert_eq!(namespace, "/local-executor");
         assert_eq!(host_id, "fefecc7979634ba187ec89eaaabf1233");
@@ -453,10 +706,77 @@ mod runtime_rpc_tests {
     }
 
     #[test]
+    fn a_remote_capability_sync_frame_becomes_a_job() {
+        let mut message = frame("7xY2AeTaWTsb2AJ9", "7xY2AeTaWTsb2AJ9");
+        message["event"] = json!("device:sync_capabilities");
+        message["data"] = json!([{"mode": "replace", "skills": [], "plugins": []}]);
+        let call = inbound_rpc_job(message).expect("a remote capability sync");
+        assert_eq!(call.event, RuntimeCallEvent::SyncCapabilities);
+        assert_eq!(call.room, "7xY2AeTaWTsb2AJ9");
+        assert_eq!(call.namespace, "/local-executor");
+        assert_eq!(call.host_id, "fefecc7979634ba187ec89eaaabf1233");
+        assert_eq!(call.id, 1);
+        assert_eq!(
+            call.arg,
+            json!({"mode": "replace", "skills": [], "plugins": []})
+        );
+    }
+
+    #[test]
+    fn a_device_command_echo_preserves_the_callback_identity() {
+        let mut message = frame("device-socket", "device-socket");
+        message["event"] = json!("device:execute_command");
+        message["host_id"] = json!(crate::socketio_emit::host_id());
+        message["data"] = json!([{"command": "pwd"}]);
+        let call = inbound_rpc_job(message).expect("an addressed device command");
+        assert_eq!(call.event, RuntimeCallEvent::ExecuteCommand);
+        assert_eq!(call.room, "device-socket");
+        assert_eq!(call.id, 1);
+        assert_eq!(call.arg, json!({"command": "pwd"}));
+    }
+
+    #[test]
+    fn session_start_calls_preserve_the_python_callback() {
+        for (name, event) in [
+            (
+                "device:start_terminal_session",
+                RuntimeCallEvent::StartTerminalSession,
+            ),
+            (
+                "device:start_code_server_session",
+                RuntimeCallEvent::StartCodeServerSession,
+            ),
+        ] {
+            let mut message = frame("device-socket", "device-socket");
+            message["event"] = json!(name);
+            message["data"] = json!([{"session_id": "session"}]);
+            let call = inbound_rpc_job(message).expect("an addressed session start call");
+            assert_eq!(call.event, event);
+            assert_eq!(call.room, "device-socket");
+            assert_eq!(call.id, 1);
+            assert_eq!(call.arg, json!({"session_id": "session"}));
+            assert_eq!(call.ack_timeout(), Duration::from_secs(15));
+        }
+    }
+
+    #[test]
+    fn a_capability_sync_self_echo_is_not_a_job() {
+        let mut message = frame("7xY2AeTaWTsb2AJ9", "7xY2AeTaWTsb2AJ9");
+        message["event"] = json!("device:sync_capabilities");
+        message["host_id"] = json!(crate::socketio_emit::host_id());
+        assert!(inbound_rpc_job(message).is_none());
+        // The runtime:rpc echo stays accepted: it is how this process's own
+        // outbound `sio.call` reaches its local socket.
+        let mut rpc = frame("7xY2AeTaWTsb2AJ9", "7xY2AeTaWTsb2AJ9");
+        rpc["host_id"] = json!(crate::socketio_emit::host_id());
+        assert!(inbound_rpc_job(rpc).is_some());
+    }
+
+    #[test]
     fn a_mismatched_or_unrelated_frame_is_ignored() {
         assert!(inbound_rpc_job(frame("room-1", "room-2")).is_none());
         let mut other = frame("room-1", "room-1");
-        other["event"] = json!("device:sync_capabilities");
+        other["event"] = json!("device:slot_update");
         assert!(inbound_rpc_job(other).is_none());
         let mut no_callback = frame("room-1", "room-1");
         no_callback["callback"] = Value::Null;

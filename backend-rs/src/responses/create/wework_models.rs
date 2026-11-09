@@ -157,7 +157,7 @@ pub(super) fn json_truthy(value: &Value) -> bool {
 
 /// `wework_model_config_options`: reasoning and request-policy fields derived
 /// from the Model CRD's `modelConfig`.
-pub(super) fn wework_model_config_options(
+pub(in crate::responses::create) fn wework_model_config_options(
     spec: &Value,
     upstream_api_format: &str,
 ) -> Result<Map<String, Value>, FastApiError> {
@@ -387,7 +387,7 @@ pub(super) async fn cloud_model_config(
 
 /// `_reasoning_from_model_options`: UI `reasoning`/`summary` options into the
 /// execution reasoning document.
-pub(super) fn reasoning_from_model_options(
+pub(crate) fn reasoning_from_model_options(
     options: &Map<String, Value>,
 ) -> Option<Map<String, Value>> {
     let reasoning = options.get("reasoning");

@@ -35,6 +35,7 @@ pub(super) async fn cancel(
     if !changed {
         return Ok(None);
     }
+    tracing::info!(execution_id = row.id, previous_status = %row.status, reason = note, "Robot execution cancellation recorded");
     Ok(state
         .mysql
         .fetch_optional(
@@ -44,7 +45,7 @@ pub(super) async fn cancel(
         .await?)
 }
 
-pub(super) async fn fail_preparation(state: &AppState, row: &Execution, error: &str) -> Result<()> {
+pub(crate) async fn fail_preparation(state: &AppState, row: &Execution, error: &str) -> Result<()> {
     let detail: String = error.chars().take(2000).collect();
     let messages=state.mysql.with_transaction(async|tx|{
         let now=Utc::now().naive_utc();
@@ -86,7 +87,7 @@ pub(super) async fn recover(state: &AppState) -> Result<(usize, usize)> {
 
 pub(super) async fn stalled(state: &AppState) -> Result<Vec<Execution>> {
     let threshold = Utc::now().naive_utc() - chrono::Duration::minutes(20);
-    let rows:Vec<Execution>=state.mysql.fetch_all(format!("SELECT {COLUMNS} FROM loop_item_executions WHERE status='running' AND started_at IS NOT NULL AND started_at<?"),(threshold,)).await?;
+    let rows:Vec<Execution>=state.mysql.fetch_all(format!("SELECT {COLUMNS} FROM loop_item_executions WHERE status='running' AND started_at>'1970-01-01 00:00:01' AND started_at<?"),(threshold,)).await?;
     let mut stalled = Vec::new();
     for row in rows {
         let Some(produced) = has_text(state, &row).await? else {
@@ -169,6 +170,15 @@ pub(super) async fn prepared_on(
     if result.rows_affected == 0 {
         return Ok(Effects::default());
     }
+    tracing::info!(
+        execution_id = row.id,
+        item_id = row.loop_item_id,
+        status,
+        environment,
+        device,
+        routed = payload["runtime_selection"]["runner_routing"].is_object(),
+        "Queued assignment prepared"
+    );
     let mut effects = Effects::default();
     if let Some(mut message) = projection::linked(tx, row).await? {
         if !message.metadata.0.is_object() {

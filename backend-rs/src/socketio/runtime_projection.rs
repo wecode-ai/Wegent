@@ -15,7 +15,8 @@ use serde_json::{Map, Value, json};
 
 use crate::background_jobs::project::completion::Message;
 use crate::device_identity::{
-    DeviceKindRow, KINDS_DEVICE_QUERY, record_id_from_route, unambiguous_device_identity_ids,
+    DeviceKindRow, KINDS_DEVICE_QUERY, device_identity_ids, is_app_device, record_id_from_route,
+    unambiguous_device_identity_ids,
 };
 use crate::loop_tasks::loop_repository::EXECUTION_COLUMNS;
 use crate::sql_support::StatementArg;
@@ -23,13 +24,20 @@ use crate::state::AppState;
 
 use super::execution_aggregate::{
     CAPACITY_STATUSES, ERROR_LIMIT, ExecutionRow, TERMINAL_RUN_STATUSES, accept_observation,
-    bind_activity_runtime_turn, finish_linked_activity, set_automation_run_status,
-    transition_terminal,
+    bind_activity_runtime_turn, set_automation_run_status, transition_terminal,
 };
 
 /// `loop_datetime_is_unset` for `project_chat_messages.deleted_at`.
 const UNSET_DELETED_AT: &str = "(project_chat_messages.deleted_at IS NULL OR project_chat_messages.deleted_at IN \
      ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))";
+/// `_streaming_activity_for_runtime`'s `metadata_json["kind"]` filter
+/// (`project_chat/service.py:1610-1614`): the stored kind is unset, or it is
+/// not `task_ai_subagent`. MySQL renders `as_string().is_(None)` through the
+/// `CASE ... WHEN 'null' THEN NULL` form, which keeps a JSON string `"null"`
+/// distinct from a stored JSON `null` while both count as unset. The recorded
+/// SQL keeps the escaped path quotes (`'$.\"kind\"'`), so the text matches the
+/// Source driver's render byte for byte.
+const STREAMING_METADATA_KIND: &str = r#"(CASE JSON_EXTRACT(project_chat_messages.metadata, '$.\"kind\"') WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(project_chat_messages.metadata, '$.\"kind\"')) END IS NULL OR CASE JSON_EXTRACT(project_chat_messages.metadata, '$.\"kind\"') WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(project_chat_messages.metadata, '$.\"kind\"')) END != 'task_ai_subagent')"#;
 /// `PROJECT_CHAT_COMPLETED_EVENTS`.
 const COMPLETED_EVENTS: [&str; 9] = [
     "response.completed",
@@ -195,35 +203,137 @@ impl<'a> RuntimeIdentity<'a> {
 }
 
 /// `loop_item_execution_service.execution_for_runtime` statement. Device ids
-/// and the task id are bound parameters; only the placeholder count is
+/// and the task ids are bound parameters; only the placeholder counts are
 /// structural.
-fn execution_statement(device_count: usize, owner: bool) -> String {
-    let placeholders = vec!["?"; device_count].join(", ");
+///
+/// Source always binds `runtime_task_id.in_(task_ids)` — a set, even for a
+/// single id — and drops the `LIMIT 1` only for the
+/// `include_initial_manager` variant, which reads every candidate with
+/// `query.all()` and picks the matching conversation identity in Rust
+/// (`app/services/loop_item_executions/service.py:1983-2003`).
+fn execution_statement(device_count: usize, task_count: usize, owner: bool, limit: bool) -> String {
+    let device_placeholders = vec!["?"; device_count].join(", ");
+    let task_placeholders = vec!["?"; task_count].join(", ");
     let owner = if owner {
         " AND loop_item_executions.executor_owner_user_id = ?"
     } else {
         ""
     };
+    let limit = if limit { " \n LIMIT 1" } else { "" };
     format!(
         "SELECT {EXECUTION_COLUMNS} \nFROM loop_item_executions \n\
-         WHERE loop_item_executions.runtime_device_id IN ({placeholders}) \
-         AND loop_item_executions.runtime_task_id = ? \
+         WHERE loop_item_executions.runtime_device_id IN ({device_placeholders}) \
+         AND loop_item_executions.runtime_task_id IN ({task_placeholders}) \
          AND loop_item_executions.status IN ({CAPACITY_STATUSES}){owner} \
-         ORDER BY loop_item_executions.id DESC \n LIMIT 1"
+         ORDER BY loop_item_executions.id DESC{limit}"
     )
 }
 
-fn execution_args(device_ids: &[String], task_id: &str, owner: Option<i64>) -> Vec<StatementArg> {
+fn execution_args(
+    device_ids: &[String],
+    task_ids: &[String],
+    owner: Option<i64>,
+) -> Vec<StatementArg> {
     let mut args = device_ids
         .iter()
         .cloned()
         .map(StatementArg::Str)
         .collect::<Vec<_>>();
-    args.push(StatementArg::Str(task_id.to_owned()));
+    args.extend(task_ids.iter().cloned().map(StatementArg::Str));
     if let Some(owner) = owner {
         args.push(StatementArg::Int(owner));
     }
     args
+}
+
+/// `LoopItemExecution.execution_intent`: the decoded intent envelope
+/// (`runtime_work_transcript_access` mirrors the same property).
+fn execution_intent(row: &ExecutionRow) -> Value {
+    let payload = row.execution_payload.as_deref().unwrap_or("");
+    if payload.is_empty() {
+        return Value::Object(Map::new());
+    }
+    serde_json::from_str::<Value>(payload)
+        .ok()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| Value::Object(Map::new()))
+}
+
+/// `LoopItemExecution.runtime_selection`.
+fn execution_runtime_selection(row: &ExecutionRow) -> Value {
+    let intent = execution_intent(row);
+    match intent.get("runtime_selection") {
+        Some(Value::Object(_)) => intent["runtime_selection"].clone(),
+        _ => intent,
+    }
+}
+
+/// `LoopItemExecution.executor_type`.
+fn execution_executor_type(row: &ExecutionRow) -> &'static str {
+    let selection = execution_runtime_selection(row);
+    if let Some(configured) = selection.get("executor_kind").and_then(Value::as_str)
+        && matches!(configured, "generic_robot" | "collaboration_group_dispatch")
+    {
+        return if configured == "collaboration_group_dispatch" {
+            "collaboration_group_dispatch"
+        } else {
+            "generic_robot"
+        };
+    }
+    let has_agent = row
+        .agent_id
+        .as_deref()
+        .is_some_and(|agent| !agent.is_empty());
+    if has_agent {
+        return "project_robot";
+    }
+    if row.team_id.is_some_and(|team| team != 0) {
+        "wegent_team"
+    } else {
+        "generic_robot"
+    }
+}
+
+/// `execution_runtime_task_id`.
+fn execution_runtime_task_id(row: &ExecutionRow) -> String {
+    let intent = execution_intent(row);
+    if let Some(continue_id) = intent
+        .get("origin_context")
+        .and_then(|context| context.get("comment_continue_task_id"))
+        .filter(|value| crate::json_compat::python_truthy(value))
+    {
+        return crate::json_compat::python_str(continue_id);
+    }
+    format!("codex-queue-{}", row.id)
+}
+
+/// `execution_conversation_task_id`.
+fn execution_conversation_task_id(row: &ExecutionRow) -> String {
+    let base = match row.runtime_task_id.as_deref() {
+        Some(task) if !task.is_empty() => task.to_owned(),
+        _ => execution_runtime_task_id(row),
+    };
+    if execution_executor_type(row) == "collaboration_group_dispatch" {
+        return format!("{base}-manager-initial");
+    }
+    base
+}
+
+/// `task_ids = {runtime_task_id}` plus the manager base id when the
+/// `include_initial_manager` variant sees a `-manager-initial` identity
+/// (`service.py:1980-1982`).
+fn runtime_task_ids(task_id: &str, include_initial_manager: bool) -> Vec<String> {
+    let mut task_ids = vec![task_id.to_owned()];
+    if include_initial_manager && let Some(base) = task_id.strip_suffix("-manager-initial") {
+        task_ids.push(base.to_owned());
+    }
+    task_ids
+}
+
+/// `request.local_task_id in {runtime_task_id, execution_conversation_task_id}`.
+fn execution_matches_runtime_task(row: &ExecutionRow, runtime_task_id: &str) -> bool {
+    row.runtime_task_id.as_deref() == Some(runtime_task_id)
+        || execution_conversation_task_id(row) == runtime_task_id
 }
 
 /// `ProjectChatService._streaming_activity_for_runtime`'s candidate lookup.
@@ -235,6 +345,7 @@ fn streaming_candidate_statement(device_count: usize) -> String {
          WHERE project_chat_messages.runtime_device_id IN ({placeholders}) \
          AND project_chat_messages.runtime_task_id = ? \
          AND project_chat_messages.sender_type = 'agent' \
+         AND {STREAMING_METADATA_KIND} \
          AND project_chat_messages.status IN ('pending', 'streaming') \
          AND {UNSET_DELETED_AT} \
          ORDER BY project_chat_messages.id DESC \n LIMIT 1"
@@ -248,38 +359,126 @@ const STREAMING_ROW_QUERY: &str = "SELECT * FROM project_chat_messages \
      ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) FOR UPDATE";
 
 /// `runtime_device_identity_ids(..., owner_user_id=<owner>)`.
-async fn owned_identity_ids<T: MysqlTransaction>(
+///
+/// Source resolves the device through `resolve_owned_device_alias`, which for
+/// an App record route appends `AND kinds.id = ?` to the owned-Device query
+/// (`app/services/device/identity.py:136`); only a legacy alias falls back to
+/// the full per-user scan. The resulting list is `[submitted, *aliases]` with
+/// first-occurrence order.
+pub(super) async fn owned_identity_ids<T: MysqlTransaction>(
     transaction: &mut T,
     user_id: i64,
     device_id: &str,
 ) -> MysqlResult<Vec<String>> {
+    let submitted = device_id.trim();
+    if submitted.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Some(record_id) = record_id_from_route(submitted) {
+        let sql = format!("{KINDS_DEVICE_QUERY} AND kinds.id = ?");
+        let row: Option<DeviceKindRow> = transaction
+            .fetch_optional(sql, (user_id, record_id))
+            .await?;
+        let device = row.filter(is_app_device);
+        let Some(device) = device else {
+            return Ok(vec![submitted.to_owned()]);
+        };
+        return Ok(record_route_aliases(&device, submitted));
+    }
     let devices: Vec<DeviceKindRow> = transaction
         .fetch_all(KINDS_DEVICE_QUERY, (user_id,))
         .await?;
-    Ok(unambiguous_device_identity_ids(&devices, device_id))
+    Ok(unambiguous_device_identity_ids(&devices, submitted))
 }
 
-async fn execution_for_runtime<T: MysqlTransaction>(
+/// `project_chat/service.py:1252-1262`'s identity resolution for a record
+/// route.
+///
+/// The chat projection resolves the owned device through
+/// `resolve_owned_device_alias` and uses `device_identity_ids(device)`; when
+/// the record row is missing the projection returns `None` before any
+/// streaming read. This is a different path from
+/// `runtime_device_identity_ids` ([`owned_identity_ids`]), which falls back to
+/// the submitted id for the execution helper and must not be merged with it.
+async fn project_runtime_identity_ids<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+    record_id: i64,
+) -> MysqlResult<Option<Vec<String>>> {
+    // `resolve_owned_device_alias`: `query.filter_by(id=record_id).one_or_none()`
+    // plus the App filter (`device/identity.py:136`).
+    let sql = format!("{KINDS_DEVICE_QUERY} AND kinds.id = ?");
+    let row: Option<DeviceKindRow> = transaction
+        .fetch_optional(sql, (user_id, record_id))
+        .await?;
+    let Some(device) = row.filter(is_app_device) else {
+        return Ok(None);
+    };
+    Ok(Some(device_identity_ids(&device)))
+}
+
+/// `runtime_device_identity_ids`'s resolved branch:
+/// `list(dict.fromkeys([submitted, *device_identity_ids(device)]))`.
+fn record_route_aliases(device: &DeviceKindRow, submitted: &str) -> Vec<String> {
+    let mut aliases = vec![submitted.to_owned()];
+    for alias in device_identity_ids(device) {
+        if !aliases.contains(&alias) {
+            aliases.push(alias);
+        }
+    }
+    aliases
+}
+
+pub(super) async fn execution_for_runtime<T: MysqlTransaction>(
     transaction: &mut T,
     device_ids: &[String],
     task_id: &str,
     owner: Option<i64>,
+    include_initial_manager: bool,
 ) -> MysqlResult<Option<ExecutionRow>> {
-    transaction
-        .fetch_optional(
-            execution_statement(device_ids.len(), owner.is_some()),
-            execution_args(device_ids, task_id, owner),
-        )
-        .await
+    let task_ids = runtime_task_ids(task_id, include_initial_manager);
+    let statement = execution_statement(
+        device_ids.len(),
+        task_ids.len(),
+        owner.is_some(),
+        !include_initial_manager,
+    );
+    let args = execution_args(device_ids, &task_ids, owner);
+    if !include_initial_manager {
+        return transaction.fetch_optional(statement, args).await;
+    }
+    // `include_initial_manager`: `query.all()` keeps every candidate and the
+    // Source picks the first row whose runtime or conversation identity is the
+    // requested task (`service.py:1995-2003`).
+    let rows: Vec<ExecutionRow> = transaction.fetch_all(statement, args).await?;
+    Ok(rows
+        .into_iter()
+        .find(|row| execution_matches_runtime_task(row, task_id)))
+}
+
+/// Thread metadata, Goal and lifecycle notifications never bind the execution
+/// aggregate (`service.py:3243-3248`).
+pub(super) fn non_binding_runtime_event(event_name: &str) -> bool {
+    event_name.starts_with("runtime.goal.")
+        || event_name.starts_with("thread/")
+        || event_name == "runtime.turn.updated"
 }
 
 /// `handle_runtime_event`: the execution aggregate's acceptance rules and
 /// transitions. Returns the elected row when the event was accepted.
-async fn handle_runtime_event<T: MysqlTransaction>(
+pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
     transaction: &mut T,
     row: ExecutionRow,
     identity: &RuntimeIdentity<'_>,
+    messages: &mut Vec<Message>,
 ) -> MysqlResult<Option<ExecutionRow>> {
+    // `handle_runtime_event`'s first rule (`service.py:3243-3248`): thread
+    // metadata, Goal and lifecycle notifications can retain the previous
+    // request's turn identity while a continuation starts, so they never bind
+    // the execution aggregate — even with a valid sequence.
+    if non_binding_runtime_event(identity.event_name) {
+        return Ok(None);
+    }
     let terminal = terminal_status(identity.event_name, identity.payload);
     let seq = event_seq(identity.payload);
     // The socket projection calls `handle_runtime_event` with
@@ -312,7 +511,7 @@ async fn handle_runtime_event<T: MysqlTransaction>(
             "runtime_succeeded",
             "succeeded",
         ),
-        Some("failed") => {
+        Some("failed") if row.status_or_empty() != "cancel_requested" => {
             let value = identity
                 .payload
                 .get("error")
@@ -342,6 +541,28 @@ async fn handle_runtime_event<T: MysqlTransaction>(
             )
         }
         None => {
+            let origin = activity::execution_origin_context(&row);
+            let answer = origin
+                .get("human_request_id")
+                .and_then(Value::as_str)
+                .zip(
+                    origin
+                        .get("comment_trigger_message_id")
+                        .and_then(Value::as_str),
+                )
+                .filter(|(_, message)| {
+                    activity::client_message_id(identity.payload) == Some(*message)
+                });
+            let locked_issue = if answer.is_some() {
+                if let Some(issue_id) = row.loop_item_id.as_deref() {
+                    crate::background_jobs::project::store::locked(transaction, "task", issue_id)
+                        .await?
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             let updated = accept_observation(transaction, &row, seq.unwrap_or(0), now).await?;
             if updated != 1 {
                 return Ok(None);
@@ -354,6 +575,19 @@ async fn handle_runtime_event<T: MysqlTransaction>(
                 .or_else(|| identity.payload.get("subtask_id"))
                 .and_then(Value::as_str);
             bind_activity_runtime_turn(transaction, &row, turn_id).await?;
+            if let Some((request, message)) = answer
+                && let Some(issue) = locked_issue.filter(|issue| {
+                    Some(issue.cloud_project_id.as_str()) == row.cloud_project_id.as_deref()
+                })
+            {
+                super::project_chat_comment::settle_human_reply(
+                    transaction,
+                    issue,
+                    request,
+                    message,
+                )
+                .await?;
+            }
             return Ok(Some(ExecutionRow {
                 status: Some(if row.status_or_empty() == "cancel_requested" {
                     "cancel_requested".to_owned()
@@ -362,11 +596,26 @@ async fn handle_runtime_event<T: MysqlTransaction>(
                 }),
                 version: row.version.map(|version| version + 1),
                 last_event_seq: seq,
-                started_at: Some(row.started_at.unwrap_or(now)),
+                started_at: Some(row.observed_start(now)),
                 ..row
             }));
         }
     };
+    let Some(locked) = reload_execution(transaction, row.id).await? else {
+        return Ok(None);
+    };
+    if locked.status != row.status
+        || locked.version != row.version
+        || locked.last_event_seq != row.last_event_seq
+    {
+        return Ok(None);
+    }
+    if activity::linked_activity(transaction, &row)
+        .await?
+        .is_none()
+    {
+        activity::open_runtime_activity(transaction, &row).await?;
+    }
     let updated = transition_terminal(
         transaction,
         &row,
@@ -389,23 +638,14 @@ async fn handle_runtime_event<T: MysqlTransaction>(
         _ => "cancelled",
     };
     set_automation_run_status(transaction, row.automation_run_id.as_deref(), run_status).await?;
-    finish_linked_activity(transaction, &row, status, note.as_deref().or(Some(&error))).await?;
-    // `notify_execution_lifecycle` is supplementary and best-effort in the
-    // source; the inbox notification domain has no Rust port yet.
-    tracing::warn!(
-        execution = row.id,
+    *messages = activity::finish_runtime_activity(
+        transaction,
+        &row,
         status,
-        "Execution lifecycle notification is not ported"
-    );
-    // `_publish_execution_item_change` broadcasts the loop item only when its
-    // version moved during the projection; the loop-item change publisher has
-    // no Rust port yet.
-    tracing::warn!(
-        execution = row.id,
-        loop_item = row.loop_item_id.as_deref(),
-        reason = "runtime_execution_status",
-        "Loop item change publication is not ported"
-    );
+        note.as_deref().unwrap_or(&error),
+        seq,
+    )
+    .await?;
     Ok(Some(ExecutionRow {
         status: Some(status.to_owned()),
         version: row.version.map(|version| version + 1),
@@ -418,6 +658,7 @@ async fn handle_runtime_event<T: MysqlTransaction>(
 pub(super) struct Projected {
     pub(super) message: Value,
     pub(super) delta: bool,
+    pub(super) terminal_activity: Option<Box<Message>>,
 }
 
 /// `project_runtime_event`: the streaming chat projection.
@@ -426,14 +667,43 @@ async fn project_runtime_event<T: MysqlTransaction>(
     user_id: i64,
     device_id: &str,
     identity: &RuntimeIdentity<'_>,
+    accepted_terminal: bool,
+    messages: &mut Vec<Message>,
 ) -> MysqlResult<Option<Projected>> {
     // `project_runtime_event` expands aliases only for an App record route;
     // every other transport identity queries the submitted id alone.
-    let device_ids = if record_id_from_route(device_id).is_some() {
-        owned_identity_ids(transaction, user_id, device_id).await?
-    } else {
-        vec![device_id.to_owned()]
+    let device_ids = match record_id_from_route(device_id) {
+        Some(record_id) => {
+            match project_runtime_identity_ids(transaction, user_id, record_id).await? {
+                Some(ids) => ids,
+                // `project_runtime_event` returns `None` when the record route
+                // resolves no owned App device; it never falls back to the
+                // submitted id the way the execution helper does
+                // (`project_chat/service.py:1257-1259`).
+                None => return Ok(None),
+            }
+        }
+        None => vec![device_id.to_owned()],
     };
+    // `project_runtime_event`'s completed-activity restore runs before the
+    // streaming read (`project_chat/service.py:1263-1385`); a discovered row
+    // settles the event there and never reaches the streaming fallback.
+    if identity.event_name == "response.completed" {
+        match activity::project_completed(
+            transaction,
+            user_id,
+            device_id,
+            &device_ids,
+            &identity.runtime_task_id,
+            identity,
+            accepted_terminal,
+        )
+        .await?
+        {
+            activity::Discovery::Found(projected) => return Ok(projected),
+            activity::Discovery::Absent => {}
+        }
+    }
     let candidate: Option<MysqlRow> = transaction
         .fetch_optional(streaming_candidate_statement(device_ids.len()), {
             let mut args = device_ids
@@ -445,26 +715,38 @@ async fn project_runtime_event<T: MysqlTransaction>(
             args
         })
         .await?;
-    let Some(candidate) = candidate else {
+    let mut candidate_id = candidate
+        .map(|row| row.get_required::<i64>("project_chat_messages_id"))
+        .transpose()?;
+    if candidate_id.is_none() {
         // No open activity: `project_runtime_event` falls back to
-        // `_open_activity_from_execution`, which re-reads the active execution
-        // by the submitted device identity with no owner filter. The read
-        // itself is part of the source's observable dependency graph.
-        let submitted = [device_id.to_owned()];
-        let unowned =
-            execution_for_runtime(transaction, &submitted, &identity.runtime_task_id, None).await?;
-        if unowned.is_some() {
-            // `open_execution_activity` (activity creation, profile compile,
-            // push) has no Rust port yet. The recorded traffic never reaches
-            // it because no active execution exists for the task.
-            tracing::warn!(
-                task = identity.runtime_task_id,
-                "Opening a missing activity from the execution fallback is not ported"
-            );
+        // `_open_activity_from_execution` (`project_chat/service.py:1637`).
+        // The socket call passes the current user as `owner_user_id`
+        // (`:1384`, `:987`), so the device aliases are expanded for that owner
+        // and the execution read carries the owner predicate — the recorded
+        // `include_initial_manager` queries bind the owner and every alias.
+        let owner_ids = owned_identity_ids(transaction, user_id, device_id).await?;
+        let fallback_execution = execution_for_runtime(
+            transaction,
+            &owner_ids,
+            &identity.runtime_task_id,
+            Some(user_id),
+            true,
+        )
+        .await?;
+        if let Some(execution) = fallback_execution
+            && let Some(opened) = activity::open_runtime_activity(transaction, &execution).await?
+            && matches!(opened.status.as_str(), "pending" | "streaming")
+            && opened.runtime_task_id == identity.runtime_task_id
+            && device_ids.contains(&opened.runtime_device_id)
+        {
+            candidate_id = Some(opened.id);
+            messages.push(opened);
         }
+    }
+    let Some(candidate_id) = candidate_id else {
         return Ok(None);
     };
-    let candidate_id: i64 = candidate.get_required("project_chat_messages_id")?;
     let message: Option<Message> = transaction
         .fetch_optional(STREAMING_ROW_QUERY, (candidate_id,))
         .await?;
@@ -500,25 +782,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
                 .any(|key| data.contains_key(key))
         });
     if has_subagent {
-        // Subagent activity creation belongs to the project-chat activity
-        // domain; the guard is kept so the parent projection never misapplies
-        // a child event to the parent message.
-        tracing::warn!(
-            event = identity.event_name,
-            "Subagent Runtime event projection is not ported"
-        );
-        return Ok(None);
-    }
-    if identity.event_name == "response.completed" {
-        // `ProjectChatService.project_runtime_event`'s completed-activity
-        // restore (`completed_activity_for_turn`, `can_restore_reconciled_completion`,
-        // `reconciled_activity_for_runtime`) repairs a turn whose activity was
-        // closed by a reconciliation; it is not ported yet and must not be
-        // approximated here.
-        tracing::warn!(
-            task = identity.runtime_task_id,
-            "response.completed activity restoration is not ported"
-        );
+        return subagent::project(transaction, &message, data, event_seq(identity.payload)).await;
     }
     let terminal = terminal_status(identity.event_name, identity.payload);
     let now = Utc::now().naive_utc();
@@ -556,6 +820,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
             return Ok(Some(Projected {
                 message: view,
                 delta: true,
+                terminal_activity: None,
             }));
         }
         "response.output_text.done" => {
@@ -621,6 +886,9 @@ async fn project_runtime_event<T: MysqlTransaction>(
     } {
         metadata.insert("run_status".into(), json!(run_status));
     }
+    if terminal == Some("completed") {
+        metadata.insert("activity_at".into(), json!(now.and_utc().to_rfc3339()));
+    }
     if status == "failed" {
         metadata.insert("error".into(), json!(content));
     }
@@ -645,24 +913,34 @@ async fn project_runtime_event<T: MysqlTransaction>(
     Ok(Some(Projected {
         message: projected_view(&message),
         delta: false,
+        terminal_activity: (terminal == Some("completed")).then(|| Box::new(message)),
     }))
 }
+
+/// `_execution_runtime_event_sync` (`device_namespace.py:1011`): project one
+/// `/local-executor` Responses event onto the matching robot execution.
+mod write_back;
+
+pub(super) use write_back::write_back_execution_event;
 
 /// `_project_chat_runtime_event_sync`: the execution projection then the chat
 /// projection, both inside the source's single request transaction.
 pub(super) async fn project(
     state: &AppState,
+    runtime: &super::runtime::SocketRuntime,
     user_id: i64,
     device_id: &str,
     identity: &RuntimeIdentity<'_>,
 ) -> MysqlResult<Option<Projected>> {
     let device_id = device_id.to_owned();
-    state
+    let (projected, effects) = state
         .mysql
         .with_transaction(async |transaction| {
             project_in_transaction(transaction, user_id, &device_id, identity).await
         })
-        .await
+        .await?;
+    effects.deliver(state, runtime).await;
+    Ok(projected)
 }
 
 /// The statement sequence `_project_chat_runtime_event_sync` issues inside its
@@ -672,279 +950,102 @@ async fn project_in_transaction<T: MysqlTransaction>(
     user_id: i64,
     device_id: &str,
     identity: &RuntimeIdentity<'_>,
-) -> MysqlResult<Option<Projected>> {
+) -> MysqlResult<(Option<Projected>, lifecycle::Effects)> {
     let task_id = identity.runtime_task_id.clone();
     let event_name = identity.event_name.to_owned();
     // `_project_chat_runtime_event_sync` resolves the execution itself before
     // handing the event to `handle_runtime_event`.
     let ids = owned_identity_ids(transaction, user_id, device_id).await?;
-    let execution = execution_for_runtime(transaction, &ids, &task_id, Some(user_id)).await?;
-    // `handle_runtime_event` re-resolves the device and re-reads the same
-    // execution; both reads are observable Source dependencies.
-    let handle_ids = owned_identity_ids(transaction, user_id, device_id).await?;
-    let handle_row =
-        execution_for_runtime(transaction, &handle_ids, &task_id, Some(user_id)).await?;
+    let execution =
+        execution_for_runtime(transaction, &ids, &task_id, Some(user_id), false).await?;
+    let previous_version = lifecycle::item_version(transaction, execution.as_ref()).await?;
+    // Source `handle_runtime_event` dismisses thread metadata, Goal and
+    // lifecycle notifications before it re-resolves the device and re-reads
+    // the execution (`service.py:3243-3248`). The first read above stays, the
+    // second pair is skipped entirely for those events.
+    let non_binding = non_binding_runtime_event(&event_name);
+    let handle_row = if non_binding {
+        None
+    } else {
+        // `handle_runtime_event` re-resolves the device and re-reads the same
+        // execution; both reads are observable Source dependencies.
+        let handle_ids = owned_identity_ids(transaction, user_id, device_id).await?;
+        execution_for_runtime(transaction, &handle_ids, &task_id, Some(user_id), false).await?
+    };
+    let mut messages = Vec::new();
     let matched = match handle_row {
-        Some(row) => handle_runtime_event(transaction, row, identity).await?,
+        Some(row) => handle_runtime_event(transaction, row, identity, &mut messages).await?,
         None => None,
     };
-    if execution.is_some() && matched.is_none() {
-        // Rejected by execution truth. `can_restore_reconciled_completion`
-        // only reopens an already elected terminal completion, which the
-        // projected activity already owns.
-        tracing::info!(
-            user_id,
-            device_id,
-            task_id,
-            event = event_name,
-            "Runtime event projection rejected by execution truth"
-        );
-        return Ok(None);
+    let projected =
+        if !non_binding && let (Some(execution), None) = (execution.as_ref(), matched.as_ref()) {
+            if event_name == "response.completed" {
+                activity::restore_reconciled_completion(transaction, execution, identity).await?
+            } else {
+                tracing::info!(
+                    user_id,
+                    device_id,
+                    task_id,
+                    event = event_name,
+                    "Runtime event projection rejected by execution truth"
+                );
+                None
+            }
+        } else {
+            let accepted_terminal = matched
+                .as_ref()
+                .is_some_and(|row| row.status_or_empty() == "completed");
+            project_runtime_event(
+                transaction,
+                user_id,
+                device_id,
+                identity,
+                accepted_terminal,
+                &mut messages,
+            )
+            .await?
+        };
+    if let Some(projected) = projected.as_ref().filter(|projected| !projected.delta) {
+        messages.retain(|message| projected.message["messageId"] != message.message_id);
     }
-    project_runtime_event(transaction, user_id, device_id, identity).await
+    let effects =
+        lifecycle_effects(transaction, matched, previous_version, identity, messages).await?;
+    Ok((projected, effects))
 }
+
+async fn lifecycle_effects(
+    tx: &mut impl MysqlTransaction,
+    matched: Option<ExecutionRow>,
+    previous_version: Option<i64>,
+    identity: &RuntimeIdentity<'_>,
+    messages: Vec<Message>,
+) -> MysqlResult<lifecycle::Effects> {
+    let changed = previous_version.is_some()
+        && lifecycle::item_version(tx, matched.as_ref())
+            .await?
+            .zip(previous_version)
+            .is_some_and(|(current, previous)| current != previous);
+    let detail = final_text(identity.payload)
+        .or_else(|| {
+            identity
+                .payload
+                .get("error")
+                .or_else(|| event_data(identity.payload)?.get("error"))
+                .map(error_text)
+        })
+        .unwrap_or_default();
+    Ok(lifecycle::Effects {
+        matched,
+        changed,
+        detail,
+        messages,
+    })
+}
+
+mod activity;
+mod lifecycle;
+mod subagent;
+pub(super) use activity::{open_accepted_activity, reload_execution};
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlError, MysqlExecution};
-
-    use super::*;
-
-    #[test]
-    fn statements_bind_every_value_instead_of_inlining_literals() {
-        let statement = execution_statement(2, true);
-        assert!(statement.contains("runtime_device_id IN (?, ?)"));
-        assert!(statement.contains("runtime_task_id = ?"));
-        assert!(statement.contains("executor_owner_user_id = ?"));
-        assert!(!statement.contains("'d30dc060"));
-        let streaming = streaming_candidate_statement(1);
-        assert!(streaming.contains("runtime_device_id IN (?)"));
-        assert!(streaming.contains("runtime_task_id = ?"));
-    }
-
-    #[test]
-    fn quoted_task_ids_cannot_reach_the_sql_text() {
-        let statement = execution_statement(1, false);
-        assert!(!statement.contains("runtime_task_id = '"));
-        let args = execution_args(&["a'b".to_owned()], "c'd", None);
-        assert_eq!(args.len(), 2);
-    }
-
-    #[test]
-    fn terminal_events_normalize_like_the_source() {
-        let completed = json!({"data": {"status": "completed"}});
-        assert_eq!(
-            terminal_status("response.created", &completed),
-            Some("completed")
-        );
-        // `cancel_requested` normalizes to `cancelrequested`, which is not a
-        // cancelled status, so the event family decides.
-        let cancel_requested = json!({"data": {"status": "cancel_requested"}});
-        assert_eq!(
-            terminal_status("response.incomplete", &cancel_requested),
-            Some("failed")
-        );
-        let cancelled = json!({"data": {"status": "cancelled"}});
-        assert_eq!(
-            terminal_status("response.incomplete", &cancelled),
-            Some("cancelled")
-        );
-        assert_eq!(
-            terminal_status("response.incomplete", &json!({})),
-            Some("failed")
-        );
-        assert_eq!(
-            terminal_status("response.completed", &json!({})),
-            Some("completed")
-        );
-        assert_eq!(
-            terminal_status("runtime.task.cancelled", &json!({})),
-            Some("cancelled")
-        );
-        assert_eq!(terminal_status("response.block.created", &json!({})), None);
-    }
-
-    #[test]
-    fn the_event_sequence_uses_python_int_coercion() {
-        assert_eq!(event_seq(&json!({"eventSeq": 3})), Some(3));
-        assert_eq!(event_seq(&json!({"eventSeq": "4"})), Some(4));
-        assert_eq!(event_seq(&json!({"eventSeq": 0})), None);
-        assert_eq!(event_seq(&json!({"eventSeq": true})), None);
-        assert_eq!(event_seq(&json!({})), None);
-    }
-
-    #[test]
-    fn the_final_text_prefers_the_runtime_value() {
-        let payload = json!({"data": {"value": "answer", "text": "other"}});
-        assert_eq!(final_text(&payload).as_deref(), Some("answer"));
-        let payload = json!({"data": {"response": {"output": []}}});
-        assert_eq!(final_text(&payload), None);
-    }
-
-    /// A transaction that records every read's collapsed SQL and argument count.
-    #[derive(Clone, Default)]
-    struct RecordingTransaction {
-        queries: Arc<Mutex<Vec<(String, usize)>>>,
-    }
-
-    impl RecordingTransaction {
-        fn queries(&self) -> Vec<(String, usize)> {
-            self.queries.lock().unwrap().clone()
-        }
-
-        fn record<S: AsRef<str>, A: MysqlArgs>(&mut self, sql: S, args: &A) {
-            let collapsed = sql
-                .as_ref()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            self.queries.lock().unwrap().push((collapsed, args.len()));
-        }
-    }
-
-    impl MysqlTransaction for RecordingTransaction {
-        async fn execute<S, A>(&mut self, _: S, _: A) -> MysqlResult<MysqlExecution>
-        where
-            S: AsRef<str> + Send,
-            A: MysqlArgs + Send,
-        {
-            Ok(MysqlExecution {
-                rows_affected: 0,
-                last_insert_id: 0,
-            })
-        }
-
-        async fn fetch_optional<S, A, T>(&mut self, sql: S, args: A) -> MysqlResult<Option<T>>
-        where
-            S: AsRef<str> + Send,
-            A: MysqlArgs + Send,
-            T: FromMysqlRow + Send,
-        {
-            self.record(sql, &args);
-            Ok(None)
-        }
-
-        async fn fetch_one<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<T>
-        where
-            S: AsRef<str> + Send,
-            A: MysqlArgs + Send,
-            T: FromMysqlRow + Send,
-        {
-            Err(MysqlError::RowNotFound)
-        }
-
-        fn fetch<'a, S, A, T>(
-            &'a mut self,
-            _: S,
-            _: A,
-        ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'a
-        where
-            S: AsRef<str> + Send + 'a,
-            A: MysqlArgs + Send + 'a,
-            T: FromMysqlRow + Send + 'a,
-        {
-            futures_util::stream::empty()
-        }
-
-        async fn fetch_all<S, A, T>(&mut self, sql: S, args: A) -> MysqlResult<Vec<T>>
-        where
-            S: AsRef<str> + Send,
-            A: MysqlArgs + Send,
-            T: FromMysqlRow + Send,
-        {
-            self.record(sql, &args);
-            Ok(Vec::new())
-        }
-    }
-
-    fn runtime_identity(payload: Value) -> RuntimeIdentity<'static> {
-        let payload = Box::leak(Box::new(payload));
-        RuntimeIdentity {
-            event_name: "response.block.created",
-            runtime_task_id: "runtime-958444342".to_owned(),
-            payload,
-        }
-    }
-
-    #[tokio::test]
-    async fn a_projection_reads_the_execution_twice_before_the_chat_projection() {
-        // The Source resolves the execution in `_project_chat_runtime_event_sync`
-        // and `handle_runtime_event` re-reads it. A missing streaming activity
-        // then falls back to `_open_activity_from_execution`'s unowned read.
-        // Every one of those reads is an observable dependency.
-        let recorder = RecordingTransaction::default();
-        let mut transaction = recorder.clone();
-        let identity = runtime_identity(json!({"taskId": "runtime-958444342"}));
-        let projected = project_in_transaction(
-            &mut transaction,
-            3246,
-            "d30dc060-a1e9-40d6-bbfe-9cecf790f04d",
-            &identity,
-        )
-        .await
-        .expect("the projection runs");
-        assert!(projected.is_none());
-
-        let queries = recorder.queries();
-        let statements = queries
-            .iter()
-            .map(|(sql, _)| sql.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(queries.len(), 6, "{statements:#?}");
-        // identity, owner-scoped execution, identity again, execution again.
-        assert!(statements[0].contains("FROM kinds"), "{}", statements[0]);
-        assert!(
-            statements[1].contains("FROM loop_item_executions"),
-            "{}",
-            statements[1]
-        );
-        assert!(
-            statements[1].contains("executor_owner_user_id = ?"),
-            "{}",
-            statements[1]
-        );
-        assert!(statements[2].contains("FROM kinds"), "{}", statements[2]);
-        assert_eq!(statements[1], statements[3]);
-        // streaming candidate, then the unowned execution fallback.
-        assert!(
-            statements[4].contains("FROM project_chat_messages"),
-            "{}",
-            statements[4]
-        );
-        assert!(
-            statements[5].contains("FROM loop_item_executions"),
-            "{}",
-            statements[5]
-        );
-        assert!(
-            !statements[5].contains("executor_owner_user_id = ?"),
-            "the fallback reads without an owner predicate: {}",
-            statements[5]
-        );
-        // identity (1), owner execution (3), identity (1), owner execution (3),
-        // candidate (2), unowned execution (2).
-        assert_eq!(
-            queries.iter().map(|(_, args)| *args).collect::<Vec<_>>(),
-            vec![1, 3, 1, 3, 2, 2]
-        );
-    }
-
-    #[tokio::test]
-    async fn an_app_record_route_expands_aliases_for_the_chat_projection() {
-        // `project_runtime_event` expands aliases only for an App record route,
-        // adding one owner-scoped identity read before the streaming lookup.
-        let recorder = RecordingTransaction::default();
-        let mut transaction = recorder.clone();
-        let identity = runtime_identity(json!({"taskId": "runtime-958444342"}));
-        let projected =
-            project_in_transaction(&mut transaction, 3246, "app-record-268663", &identity)
-                .await
-                .expect("the projection runs");
-        assert!(projected.is_none());
-        let queries = recorder.queries();
-        assert_eq!(queries.len(), 7, "{:?}", queries);
-        assert!(queries[4].0.contains("FROM kinds"), "{}", queries[4].0);
-    }
-}
+mod tests;

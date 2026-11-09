@@ -101,6 +101,199 @@ pub struct BuildExecutionRequestInput<'a> {
     /// `build_execution_request(knowledge_base_names=...)`: the legacy
     /// name-only fallback used only when `knowledge_base_refs` is empty.
     pub knowledge_base_names: &'a [super::schema::KbToolRef],
+    /// `web_runtime_guidance` (`request_preparation.py:751-755`): the
+    /// `/chat` entry point sets it when the payload's `client_origin` is the
+    /// frontend; the OpenAPI path passes `false`.
+    pub web_runtime_guidance: bool,
+    /// Whether the caller already performed `_get_bot_for_subtask` for this
+    /// request. Source resolves that Bot once inside `TaskRequestBuilder.build`
+    /// and reuses the row for the team-member lookup; a caller that resolved
+    /// the same first-`bot_ids` Bot itself (the `/chat` trigger) sets this so
+    /// the builder reuses [`Self::bot`] instead of issuing a second identical
+    /// `kinds` read.
+    pub subtask_bot_resolved: bool,
+}
+
+/// `WEB_RUNTIME_GUIDANCE_MARKER` / `WEB_RUNTIME_GUIDANCE_CLOSE`
+/// (`request_builder.py:71-72`).
+const WEB_RUNTIME_GUIDANCE_MARKER: &str = "<wegent_runtime_guidance>";
+const WEB_RUNTIME_GUIDANCE_CLOSE: &str = "</wegent_runtime_guidance>";
+
+/// `_append_web_runtime_guidance` (`request_builder.py:1023-1082`): inject the
+/// Wegent web UI runtime guidance into the system prompt.
+async fn with_web_runtime_guidance(
+    state: &AppState,
+    input: &BuildExecutionRequestInput<'_>,
+    shell_type: &str,
+    workspace: &Value,
+    system_prompt: String,
+) -> String {
+    if system_prompt.contains(WEB_RUNTIME_GUIDANCE_MARKER) {
+        return system_prompt;
+    }
+    let project_workspace = workspace.get("project").cloned().unwrap_or(Value::Null);
+    // `_extract_task_device_id(task) or project_workspace.get("device_id")`.
+    let task_device_id = input
+        .task_json
+        .pointer("/spec/device_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            project_workspace
+                .get("device_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        });
+    let device_type = match task_device_id.as_deref() {
+        Some(device_id) => web_runtime_device_type(state, input.user_id, device_id).await,
+        None => None,
+    };
+    let workspace_source = project_workspace
+        .get("workspace_source")
+        .and_then(Value::as_str);
+    let workspace_path = project_workspace
+        .get("project_workspace_path")
+        .and_then(Value::as_str);
+    let execution_target_type = project_workspace
+        .get("execution_target_type")
+        .and_then(Value::as_str);
+    web_runtime_guidance_text(
+        shell_type,
+        device_type.as_deref(),
+        task_device_id.is_some(),
+        execution_target_type,
+        workspace_source,
+        workspace_path,
+        &system_prompt,
+    )
+}
+
+/// The pure half of `_append_web_runtime_guidance`: the guidance block and its
+/// placement after the trimmed base prompt.
+fn web_runtime_guidance_text(
+    shell_type: &str,
+    device_type: Option<&str>,
+    has_device_id: bool,
+    execution_target_type: Option<&str>,
+    workspace_source: Option<&str>,
+    workspace_path: Option<&str>,
+    system_prompt: &str,
+) -> String {
+    if system_prompt.contains(WEB_RUNTIME_GUIDANCE_MARKER) {
+        return system_prompt.to_string();
+    }
+    let environment = web_runtime_environment(
+        shell_type,
+        device_type,
+        has_device_id,
+        execution_target_type,
+    );
+    let mut workspace_details = Vec::new();
+    if let Some(source) = workspace_source {
+        workspace_details.push(format!("- workspace source: {source}"));
+    }
+    if let Some(path) = workspace_path {
+        workspace_details.push(format!("- workspace path: {path}"));
+    }
+    let mut lines = vec![
+        WEB_RUNTIME_GUIDANCE_MARKER.to_string(),
+        "This request was started from the Wegent web UI.".to_string(),
+        "Runtime environment:".to_string(),
+        format!("- You are running in: {environment}."),
+    ];
+    lines.extend(workspace_details);
+    lines.extend(
+        [
+            "",
+            "User-facing file access:",
+            "- Do not assume the user can access local paths, container paths, \
+             terminal sessions, or files you create directly.",
+            "- For final user-facing deliverables, follow the runtime-provided \
+             artifact declaration or file-delivery instructions before your final \
+             response. Writing a file alone does not publish an artifact card.",
+            "- After successful delivery, mention the filename and direct the user \
+             to its artifact card in the conversation to preview or download it. \
+             Do not claim a downloadable artifact is available if delivery failed \
+             or was not performed.",
+            "- Use \"View the task files\" / \"查看任务文件\" only for browsing workspace \
+             files, such as source code or intermediate files, not as a substitute \
+             for delivering final user-facing files.",
+            "- Keep paths in your answer as useful context when relevant, but do \
+             not present a runtime path as the only way for the user to get a file.",
+            "",
+            "Interaction rules:",
+            "- Match Wegent's web interaction model instead of giving generic \
+             sandbox or local-terminal instructions.",
+            "- If the task runs on a selected device, remember that generated \
+             files remain on that device; the artifact card provides access after \
+             successful declaration, without uploading file contents to Backend.",
+            WEB_RUNTIME_GUIDANCE_CLOSE,
+        ]
+        .map(str::to_string),
+    );
+    let guidance = lines.join("\n");
+    let base_prompt = system_prompt.trim_end();
+    if base_prompt.is_empty() {
+        guidance
+    } else {
+        format!("{base_prompt}\n\n{guidance}")
+    }
+}
+
+/// `_describe_web_runtime_environment` (`request_builder.py:1084-1116`).
+fn web_runtime_environment(
+    shell_type: &str,
+    device_type: Option<&str>,
+    has_device_id: bool,
+    execution_target_type: Option<&str>,
+) -> &'static str {
+    if has_device_id {
+        return match device_type {
+            Some("local" | "app") => "local device selected in Wegent",
+            Some("cloud") => "cloud device or remote sandbox selected in Wegent",
+            _ => "selected Wegent device",
+        };
+    }
+    match execution_target_type {
+        Some("cloud") => return "Wegent-managed cloud sandbox",
+        Some("local") => return "local device configured for this workspace project",
+        _ => {}
+    }
+    match shell_type {
+        "ClaudeCode" | "Agno" | "Codex" => "Wegent-managed disposable execution sandbox",
+        "Dify" => "external service configured by the selected bot",
+        "Chat" => "Wegent web chat runtime",
+        _ => "Wegent-managed execution runtime",
+    }
+}
+
+/// `_get_device_type` (`request_builder.py:1127-1150`): resolve a Device CRD
+/// type; any failure leaves the environment label without a device.
+async fn web_runtime_device_type(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+) -> Option<String> {
+    match crate::device_upgrade::owned_active_device(state, user_id, device_id).await {
+        Ok(Some(device)) => device
+            .json
+            .get("spec")
+            .and_then(|spec| spec.get("deviceType"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        Ok(None) => None,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                device_id,
+                "failed to resolve device type for guidance"
+            );
+            None
+        }
+    }
 }
 
 /// `_get_base_system_prompt`: the bot's own Ghost prompt (last in the chain),
@@ -169,7 +362,7 @@ pub(super) fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
 /// `_resolve_model_for_bot`'s failures: a read failure is the create flow's
 /// dependency error; a task-override whitelist rejection is the source
 /// `ValueError`, which the endpoint renders as `400`.
-fn model_resolution_error(error: ModelResolutionError) -> FastApiError {
+pub(super) fn model_resolution_error(error: ModelResolutionError) -> FastApiError {
     match error {
         ModelResolutionError::Mysql(error) => dependency(error),
         ModelResolutionError::Disallowed(message) => {
@@ -183,7 +376,29 @@ pub async fn build_execution_request(
     state: &AppState,
     input: &BuildExecutionRequestInput<'_>,
 ) -> Result<ExecutionRequest, FastApiError> {
-    build_request(state, input, false, &[], true).await
+    build_request(state, input, false, &[], true, None).await
+}
+
+/// Socket.IO chat passes user-selected skills through the standard compiler,
+/// including the access checks and provider OAuth handling.
+pub(crate) async fn build_chat_execution_request(
+    state: &AppState,
+    input: &BuildExecutionRequestInput<'_>,
+    preload_skills: &[Value],
+    generation: Option<&Value>,
+    model_options: Option<&Value>,
+) -> Result<ExecutionRequest, FastApiError> {
+    let runtime_model = super::socket_runtime_model::resolve(state, input, model_options).await?;
+    build_request_with_runtime(
+        state,
+        input,
+        false,
+        preload_skills,
+        true,
+        generation,
+        runtime_model,
+    )
+    .await
 }
 
 /// Subscription-selected skills pass through the ordinary metadata and MCP
@@ -210,6 +425,28 @@ pub(super) async fn build_request(
     is_subscription: bool,
     preload_skills: &[Value],
     compile_coding_mcp: bool,
+    generation: Option<&Value>,
+) -> Result<ExecutionRequest, FastApiError> {
+    build_request_with_runtime(
+        state,
+        input,
+        is_subscription,
+        preload_skills,
+        compile_coding_mcp,
+        generation,
+        None,
+    )
+    .await
+}
+
+async fn build_request_with_runtime(
+    state: &AppState,
+    input: &BuildExecutionRequestInput<'_>,
+    is_subscription: bool,
+    preload_skills: &[Value],
+    compile_coding_mcp: bool,
+    generation: Option<&Value>,
+    runtime_model: Option<serde_json::Map<String, Value>>,
 ) -> Result<ExecutionRequest, FastApiError> {
     // `prepare_execution_request`'s generation-context enrichment
     // (`request_preparation.py:868-878`) runs before `builder.build`, so its
@@ -220,15 +457,22 @@ pub(super) async fn build_request(
         input.task_id,
         input.user_subtask_id,
         input.user_id,
+        generation,
     )
     .await?;
 
     // `_get_bot_for_subtask` (`request_builder.py:280`): the subtask's first
     // bot id is re-read as a Bot entity before the workspace and the model
-    // config; the team's first member is only the fallback.
-    let subtask_bot = super::subtask_bot::bot_by_id(&state.mysql, input.bot_ids.first().copied())
-        .await
-        .map_err(dependency)?;
+    // config; the team's first member is only the fallback. A caller that
+    // already resolved that same Bot (the `/chat` trigger, whose team-member
+    // lookup needs the row) passes it in and skips the second identical read.
+    let subtask_bot = if input.subtask_bot_resolved {
+        None
+    } else {
+        super::subtask_bot::bot_by_id(&state.mysql, input.bot_ids.first().copied())
+            .await
+            .map_err(dependency)?
+    };
     let input = &BuildExecutionRequestInput {
         bot: subtask_bot.as_ref().unwrap_or(input.bot),
         ..*input
@@ -301,7 +545,11 @@ pub(super) async fn build_request(
             map.insert(name.into(), value);
         }
     }
-    let user_info = build_user_metadata(&user_json);
+    let mut user_info = build_user_metadata(&user_json);
+    state
+        .user_info_extension
+        .decorate(input.user_preferences, &mut user_info)
+        .await;
 
     // Model config (`get_model_config_for_bot` + placeholder processing).
     // The source resolves this flat config in `_get_model_config`
@@ -311,42 +559,47 @@ pub(super) async fn build_request(
     // `_find_model_with_namespace` reads the caller's groups only after the
     // private and referenced Model reads miss, so the resolver owns that read.
     let agent_config = bot_spec.get("agent_config").cloned().unwrap_or(Value::Null);
-    let model_name = match resolve_model_name(&bot_spec, force_override, override_model_name) {
-        Some(name) => name,
-        // `get_model_config_for_bot`: `ValueError(f"Bot {bot.name} has no model
-        // configured")`.
-        None => return Err(flat_model_config_error(None, &input.bot.name)),
-    };
-    // `get_model_config_for_bot` owns the flat Chat Shell config: one
-    // `_resolve_model_for_bot` call.
-    let mut model_config = match resolve_model_for_bot_with_override(
-        &state.mysql,
-        &state.entity_resolvers,
-        state.redis.as_ref(),
-        input.user_id,
-        &model_name,
-        &bot_spec,
-        &input.bot.name,
-        override_model_name,
-    )
-    .await
-    .map_err(model_resolution_error)?
-    {
-        Some(model) => {
-            let spec = model.json.0.get("spec").cloned().unwrap_or(Value::Null);
-            let mut config = extract_model_config(&spec).map_err(|error| {
-                tracing::error!(%error, "failed to extract the model config");
-                FastApiError::internal()
-            })?;
-            config.insert("model_name".into(), Value::String(model.name.clone()));
-            config.insert(
-                "model_namespace".into(),
-                Value::String(model.namespace.clone()),
-            );
-            config
-        }
-        // `_resolve_model_for_bot` returned no Model for the bot's modelRef.
-        None => return Err(flat_model_config_error(Some(&model_name), &input.bot.name)),
+    let (mut model_config, model_name) = if let Some(config) = runtime_model.as_ref() {
+        (config.clone(), None)
+    } else {
+        let model_name = match resolve_model_name(&bot_spec, force_override, override_model_name) {
+            Some(name) => name,
+            // `get_model_config_for_bot`: `ValueError(f"Bot {bot.name} has no model
+            // configured")`.
+            None => return Err(flat_model_config_error(None, &input.bot.name)),
+        };
+        // `get_model_config_for_bot` owns the flat Chat Shell config: one
+        // `_resolve_model_for_bot` call.
+        let config = match resolve_model_for_bot_with_override(
+            &state.mysql,
+            &state.entity_resolvers,
+            state.redis.as_ref(),
+            input.user_id,
+            &model_name,
+            &bot_spec,
+            &input.bot.name,
+            override_model_name,
+        )
+        .await
+        .map_err(model_resolution_error)?
+        {
+            Some(model) => {
+                let spec = model.json.0.get("spec").cloned().unwrap_or(Value::Null);
+                let mut config = extract_model_config(&spec).map_err(|error| {
+                    tracing::error!(%error, "failed to extract the model config");
+                    FastApiError::internal()
+                })?;
+                config.insert("model_name".into(), Value::String(model.name.clone()));
+                config.insert(
+                    "model_namespace".into(),
+                    Value::String(model.namespace.clone()),
+                );
+                config
+            }
+            // `_resolve_model_for_bot` returned no Model for the bot's modelRef.
+            None => return Err(flat_model_config_error(Some(&model_name), &input.bot.name)),
+        };
+        (config, Some(model_name))
     };
     process_model_config_placeholders(
         &mut model_config,
@@ -432,6 +685,23 @@ pub(super) async fn build_request(
     };
     // `_apply_user_mcp_oauth_header` (`request_builder.py:2029-2036`).
     let tokens = crate::user_mcp_oauth::token_service(input.user_id, &state.mysql);
+    let user_default_target_id = format!("user:{}", input.user_id);
+    let mut binding_refs = super::skills::list_user_default_skill_refs(
+        &state.mysql,
+        input.user_id,
+        &user_default_target_id,
+        &binding_context,
+        Some(&skill_access),
+    )
+    .await
+    .map_err(dependency)?;
+    let early_shell = if super::skills::binding_refs_restrict_shell(&binding_refs) {
+        let resolved = resolve_shell_type(state, input).await?;
+        super::skills::retain_shell_compatible_bindings(&mut binding_refs, &resolved.0);
+        Some(resolved)
+    } else {
+        None
+    };
     let mut skills = get_bot_skills(
         &state.mysql,
         &merged,
@@ -440,10 +710,9 @@ pub(super) async fn build_request(
         input.user_preferences,
         &tokens,
         is_subscription,
-        &format!("user:{}", input.user_id),
-        &binding_context,
+        &user_default_target_id,
         Some(&skill_access),
-        true,
+        Some(binding_refs),
     )
     .await?;
     // `_inject_conditional_provider_skills` (`request_builder.py:2626`): the
@@ -480,8 +749,32 @@ pub(super) async fn build_request(
     // `team.user_id`, so resolving it earlier moves that owner's
     // `iter_user_groups_with_roles` block — including its ERP identity and
     // membership-cache reads — ahead of the Ghost/Skill reads
-    // (`request_builder.py:318-422`).
-    let (shell_type, base_image) = resolve_shell_type(state, input).await?;
+    // (`request_builder.py:318-422`). The only earlier call is the binding
+    // filter above, exactly where the Source's cached `_resolve_shell_info`
+    // runs when an automatic binding restricts its Shells; reuse that result
+    // so the Shell is read once.
+    let (shell_type, base_image) = match early_shell {
+        Some(resolved) => resolved,
+        None => resolve_shell_type(state, input).await?,
+    };
+    // `_filter_runtime_skills` (`request_builder.py:461`): a Skill whose
+    // declared `bind_shells` does not bind this bot's Shell is dropped from
+    // the turn's selection, while a required preload stays strict. Selection
+    // happens before the metadata projection so `skills`, `skill_names`,
+    // `skill_configs` and `skill_refs` all carry the same set — the runtime
+    // request advertises `skill_refs` verbatim, so a dropped Skill must not
+    // survive there (or in the derived `preload_skill_refs`).
+    let runtime_skill_names = super::skills::select_runtime_skill_names(&skills, &shell_type)?;
+    super::skills::retain_runtime_skills(&mut skills, &runtime_skill_names);
+
+    // `_append_web_runtime_guidance` (`request_builder.py:551-566`): the
+    // chat entry point injects the Wegent web runtime guidance into the
+    // system prompt after the shell, workspace and device are known.
+    let system_prompt = if input.web_runtime_guidance {
+        with_web_runtime_guidance(state, input, &shell_type, &workspace, system_prompt).await
+    } else {
+        system_prompt
+    };
 
     // Bot config entry (`build_agent_config_for_bot`). A bot whose inline
     // `agent_config.env` already carries `model` and `api_key` (and no forced
@@ -497,30 +790,36 @@ pub(super) async fn build_request(
     // ACL's membership checks. Keep that order: moving this after
     // `resolve_knowledge` shifts the `erp:no_profile` reads behind the
     // `erp:membership` reads and desynchronizes the recorded Redis lane.
-    let bot_model_spec =
-        if inline_agent_config_ready(&agent_config, force_override, override_model_name) {
-            None
-        } else {
-            resolve_model_for_bot_with_override(
-                &state.mysql,
-                &state.entity_resolvers,
-                state.redis.as_ref(),
-                input.user_id,
-                &model_name,
-                &bot_spec,
-                &input.bot.name,
-                override_model_name,
-            )
-            .await
-            .map_err(model_resolution_error)?
-            .map(|model| model.json.0.get("spec").cloned().unwrap_or(Value::Null))
-        };
-    let built_agent_config = build_agent_config(
-        &agent_config,
-        force_override,
-        override_model_name,
-        bot_model_spec.as_ref(),
-    );
+    let bot_model_spec = if let Some(model_name) = model_name
+        .as_deref()
+        .filter(|_| !inline_agent_config_ready(&agent_config, force_override, override_model_name))
+    {
+        resolve_model_for_bot_with_override(
+            &state.mysql,
+            &state.entity_resolvers,
+            state.redis.as_ref(),
+            input.user_id,
+            model_name,
+            &bot_spec,
+            &input.bot.name,
+            override_model_name,
+        )
+        .await
+        .map_err(model_resolution_error)?
+        .map(|model| model.json.0.get("spec").cloned().unwrap_or(Value::Null))
+    } else {
+        None
+    };
+    let built_agent_config = if let Some(runtime_model) = runtime_model {
+        serde_json::json!({"protocol": runtime_model["protocol"], "apiFormat": runtime_model["api_format"], "env": runtime_model})
+    } else {
+        build_agent_config(
+            &agent_config,
+            force_override,
+            override_model_name,
+            bot_model_spec.as_ref(),
+        )
+    };
     // `_build_runtime_system_prompt` (`request_builder.py:2312`):
     // `get_bot_system_prompt` re-reads the bot's own Ghost by
     // (owner, kind = 'Ghost', name, namespace) instead of reusing the chain the
@@ -611,6 +910,13 @@ pub(super) async fn build_request(
             .filter_map(|skill| skill.get("name").cloned())
             .collect(),
         skill_refs: Value::Object(skills.skill_refs.clone()),
+        // `list(merged.preload_skills) if ghost_skills else []`: the merged
+        // Ghost chain's preload skills; empty when the chain declares none.
+        preload_skills: if merged.skills.is_empty() {
+            Vec::new()
+        } else {
+            merged.preload_skills.clone()
+        },
         capability_mode,
         role: input.bot_role,
         base_image: base_image.as_deref(),
@@ -630,6 +936,10 @@ pub(super) async fn build_request(
         input.user_name,
         input.task_id,
         input.assistant_subtask_id,
+        // `_generate_skill_identity_token` (`request_builder.py:3410`): the
+        // assistant subtask's persisted `executor_name`, with the
+        // `task-…-subtask-…` fallback only when it is empty.
+        input.executor_name,
     )?;
 
     let collaboration = collaboration_model(team_json);
@@ -670,8 +980,22 @@ pub(super) async fn build_request(
         .map(contexts::executor_attachment_payload)
         .collect();
 
+    let prompt = contexts::attachment_prompt(
+        &attachment_contexts,
+        input.message,
+        input.task_id,
+        &shell_type,
+        &model_config,
+        state.internal_chat.attachment_inject_max_chars,
+    );
     let mut request = ExecutionRequest {
         task_id: input.task_id,
+        // `TaskRequestBuilder.build`'s `task_title=task.json.spec.title`.
+        task_title: input
+            .task_json
+            .pointer("/spec/title")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         subtask_id: input.assistant_subtask_id,
         user_subtask_id: Some(input.user_subtask_id),
         team_id: input.team.id,
@@ -689,7 +1013,7 @@ pub(super) async fn build_request(
         bot_namespace: input.bot.namespace.clone(),
         model_config: Value::Object(model_config),
         system_prompt,
-        prompt: Value::String(input.message.to_string()),
+        prompt,
         enable_tools: input.enable_tools,
         enable_web_search: input.enable_web_search,
         enable_deep_thinking: input.enable_deep_thinking,
@@ -710,18 +1034,7 @@ pub(super) async fn build_request(
             .map(|name| Value::String(name.clone()))
             .collect(),
         skill_refs: Value::Object(skills.skill_refs.clone()),
-        preload_skill_refs: Value::Object(
-            skills
-                .preload_skills
-                .iter()
-                .filter_map(|name| {
-                    skills
-                        .skill_refs
-                        .get(name)
-                        .map(|reference| (name.clone(), reference.clone()))
-                })
-                .collect(),
-        ),
+        preload_skill_refs: super::skills::preload_skill_refs(&skills),
         auth_token,
         skill_identity_token,
         backend_url: backend_url(),
@@ -750,6 +1063,11 @@ pub(super) async fn build_request(
         new_session: input.new_session,
         ..ExecutionRequest::default()
     };
+    // Device-dispatch contract values (`ExecutionRequest.to_dict`): the Task
+    // project and mode labels the device payload renders. `timezone` keeps the
+    // contract default; the chat builder has no user-timezone input.
+    request.device_project_id = input.task_project_id;
+    request.device_task_mode = task_mode.clone();
     apply_knowledge(&mut request, &knowledge);
     // `unified.py:367-391`: re-resolve the provider Skill context processing
     // appended after the initial build. The post-processing builder selects
@@ -768,7 +1086,6 @@ pub(super) async fn build_request(
         input.user_preferences,
         &tokens,
         is_subscription,
-        &binding_context,
         &skill_access,
         &input.team.namespace,
     )

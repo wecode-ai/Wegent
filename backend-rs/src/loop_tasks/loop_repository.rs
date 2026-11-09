@@ -252,6 +252,21 @@ impl TaskItemFullRow {
     }
 }
 
+/// One labeled `loop_items` point read with the raw metadata document.
+#[derive(Debug, FromMysqlRow)]
+pub struct RawLoopItemRow {
+    #[mysql(rename = "loop_items_id")]
+    pub id: String,
+    #[mysql(rename = "loop_items_cloud_project_id")]
+    pub cloud_project_id: String,
+    #[mysql(rename = "loop_items_created_by_user_id")]
+    pub created_by_user_id: Option<i64>,
+    #[mysql(rename = "loop_items_assignee_user_id")]
+    pub assignee_user_id: Option<i64>,
+    #[mysql(rename = "loop_items_metadata")]
+    pub metadata: Option<Json<serde_json::Value>>,
+}
+
 /// `db.query(LoopItemComment).filter(loop_item_id == ...)`: one comment row
 /// selected with the same labeled `loop_items` projection.
 #[allow(
@@ -533,6 +548,31 @@ pub(crate) fn visible_item_filter_sql(user_id: i32, default_security: &str) -> S
 }
 
 /// The five related-item branches share the current single-table schema.
+pub(crate) async fn is_related_item_on(
+    query: &mut impl crate::plugins_marketplace::query::PluginQuery,
+    item_id: &str,
+    user_id: i32,
+) -> MysqlResult<bool> {
+    #[derive(Debug, FromMysqlRow)]
+    struct ExistsRow {
+        #[mysql(rename = "loop_items_id")]
+        #[allow(dead_code, reason = "presence-only probe")]
+        id: String,
+    }
+    let row: Option<ExistsRow> = query
+        .fetch_optional(
+            &format!(
+                "SELECT loop_items.id AS loop_items_id FROM loop_items \
+                     WHERE loop_items.id = ? AND ({}) \
+                     AND loop_items.resource_type IN ('task') LIMIT 1",
+                related_item_predicate_sql(user_id),
+            ),
+            (item_id,),
+        )
+        .await?;
+    Ok(row.is_some())
+}
+
 fn related_item_predicate_sql(user_id: i32) -> String {
     format!(
         "loop_items.created_by_user_id = {user_id} \
@@ -652,6 +692,27 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
                     "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
                      WHERE loop_items.id = '{item_id}' \
                      AND loop_items.resource_type IN ('task')",
+                ),
+                (),
+            )
+            .await
+    }
+
+    /// The same labeled `loop_items` point read as
+    /// [`Self::get_task_item_full`], kept for the execution authority checks:
+    /// they read the raw `metadata` document (which the typed task row only
+    /// decodes into known fields) and can address any resource type.
+    pub async fn get_loop_item_raw(
+        &self,
+        item_id: &str,
+        resource_type: &str,
+    ) -> MysqlResult<Option<RawLoopItemRow>> {
+        self.mysql
+            .fetch_optional(
+                &format!(
+                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.id = '{item_id}' \
+                     AND loop_items.resource_type IN ('{resource_type}')",
                 ),
                 (),
             )
@@ -834,25 +895,8 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     /// through ownership, assignment, an active runtime-task binding, a
     /// collaborator row, or an owned project agent.
     pub async fn is_related_item(&self, item_id: &str, user_id: i32) -> MysqlResult<bool> {
-        #[derive(Debug, FromMysqlRow)]
-        struct ExistsRow {
-            #[mysql(rename = "loop_items_id")]
-            #[allow(dead_code, reason = "presence-only probe")]
-            id: String,
-        }
-        let row: Option<ExistsRow> = self
-            .mysql
-            .fetch_optional(
-                &format!(
-                    "SELECT loop_items.id AS loop_items_id FROM loop_items \
-                     WHERE loop_items.id = ? AND ({}) \
-                     AND loop_items.resource_type IN ('task') LIMIT 1",
-                    related_item_predicate_sql(user_id),
-                ),
-                (item_id,),
-            )
-            .await?;
-        Ok(row.is_some())
+        let mut query = self.mysql;
+        is_related_item_on(&mut query, item_id, user_id).await
     }
 
     /// `db.get(ProjectChatAgent, id)`: the chat-agent row when it exists. The

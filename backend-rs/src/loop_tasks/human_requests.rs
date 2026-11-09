@@ -339,7 +339,11 @@ async fn publish_changed(state: &AppState, issue: &Issue, actor: i32) {
         let revision: Revision = state.mysql.fetch_one("SELECT version FROM loop_items WHERE id=?",(issue.id.as_str(),)).await.map_err(internal)?;
         let payload = json!({"projectId":issue.cloud_project_id,"itemId":issue.id,"version":revision.version,"reason":"human_input"});
         for member in members {
-            let message = crate::socketio_emit::emit_message("wework:loop_item:changed",&serde_json::to_string(&json!([payload])).expect("JSON value"),"/wework-runtime",&format!("wework-runtime:user:{}",member.user_id));
+            let room = format!("wework-runtime:user:{}", member.user_id);
+            crate::socketio::runtime::deliver_local_emit(
+                "/wework-runtime", "wework:loop_item:changed", &room, None, &payload,
+            ).await;
+            let message = crate::socketio_emit::emit_message("wework:loop_item:changed",&serde_json::to_string(&json!([payload])).expect("JSON value"),"/wework-runtime",&room);
             redis.publish(crate::socketio_emit::SOCKETIO_CHANNEL,message).await.map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE,"Issue invalidation delivery failed"))?;
         }
         Ok(())
