@@ -37,6 +37,14 @@ messages missed during disconnection, so operations that already timed out must 
 
 ## Verify recovery
 
+Each Python Backend process sends a probe ACK through the Redis channel used
+by Socket.IO. After three consecutive failures, `/api/shutdown/status`
+returns 503. The next successful probe restores readiness. Each probe waits up
+to five seconds, with a 30-second interval between checks.
+
+With `LOG_LEVEL=DEBUG`, correlate `publish`, `receive` and `match` using
+the same `host_id`, `sid` and `callback_id`.
+
 Call the read-only `runtime.capacity.get` from a Backend instance other than the
 device's WebSocket owner and confirm the RPC acknowledgement arrives. Also check
 device commands and live updates after subscription recovery.

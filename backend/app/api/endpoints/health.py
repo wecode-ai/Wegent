@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.config import settings
 from app.core.shutdown import shutdown_manager
+from app.core.socketio import socketio_ack_ready
 
 router = APIRouter()
 probe_router = APIRouter()
@@ -138,7 +139,7 @@ async def initiate_shutdown():
 @router.get("/shutdown/status")
 def shutdown_status(response: Response):
     """
-    Get current shutdown status.
+    Report whether this instance can accept traffic.
 
     Returns:
         dict: Current shutdown state information
@@ -149,7 +150,10 @@ def shutdown_status(response: Response):
             "status": "shutting_down",
             "message": "Service is shutting down, not accepting new traffic",
         }
-    return {"is_shutting_down": shutdown_manager.is_shutting_down}
+    if not socketio_ack_ready():
+        response.status_code = 503
+        return {"status": "socketio_ack_unavailable", "is_shutting_down": False}
+    return {"is_shutting_down": False}
 
 
 @router.post("/shutdown/wait")

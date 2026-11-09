@@ -34,6 +34,13 @@ Backend 的 Socket.IO Redis manager 默认启用 TCP keepalive，并使用以下
 
 ## 验证恢复
 
+Python Backend 在每个进程内通过 Socket.IO 使用的 Redis channel 发送探测回执。
+连续三次探测失败后，`/api/shutdown/status` 返回 503，下一次成功后恢复就绪。
+探测间隔为 30 秒，每次最多等待 5 秒。
+
+用 `LOG_LEVEL=DEBUG` 采集回执日志时，可按 `host_id`、`sid` 和
+`callback_id` 对齐 `publish`、`receive` 和 `match` 三个阶段。
+
 从设备 WebSocket 所属实例以外的 Backend 调用只读 `runtime.capacity.get`，确认
 收到 RPC 回包。也应检查订阅恢复后的设备命令和实时推送。
 

@@ -9,11 +9,15 @@ This module provides the Socket.IO server instance with Redis adapter
 for multi-worker deployments.
 """
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 
 import socketio
 
 from app.core.config import settings
+from app.core.socketio_redis import ObservedRedisManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +43,7 @@ def create_socketio_server() -> socketio.AsyncServer:
 
     try:
         # A half-open subscription must time out so redis-py can resubscribe.
-        mgr = socketio.AsyncRedisManager(
+        mgr = ObservedRedisManager(
             redis_url,
             redis_options={
                 "socket_timeout": settings.SOCKETIO_REDIS_SOCKET_TIMEOUT,
@@ -111,3 +115,25 @@ def initialize_socketio_server() -> socketio.AsyncServer:
         sio.manager.initialize()
         logger.info("Socket.IO cross-worker callback listener started")
     return sio
+
+
+def socketio_ack_ready() -> bool:
+    """Read the most recent probe state without contacting Redis."""
+    manager = get_sio().manager
+    return not isinstance(manager, ObservedRedisManager) or manager.ack_ready
+
+
+@asynccontextmanager
+async def socketio_ack_probe_lifespan() -> AsyncIterator[None]:
+    """Own one background probe for the existing Socket.IO manager."""
+    manager = get_sio().manager
+    if not isinstance(manager, ObservedRedisManager):
+        yield
+        return
+    probe = asyncio.create_task(manager.run_ack_probe(), name="socketio-ack-probe")
+    try:
+        yield
+    finally:
+        probe.cancel()
+        with suppress(asyncio.CancelledError):
+            await probe
