@@ -24,6 +24,7 @@ import type { TurnFileChangesSummary, User } from '@/types/api'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import * as codexPlugins from './codexPlugins'
 import {
+  assignmentCloudExecutionFields,
   createAutomationApiFromIpc,
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
@@ -4589,6 +4590,38 @@ describe('createLocalAppServices', () => {
       })
     )
     expect(sendPayload.executionRequest.runtime_permission_profile).toBe(':danger-full-access')
+  })
+
+  test('builds execution fields from a saved cloud reference outside the catalog', () => {
+    expect(
+      assignmentCloudExecutionFields(null, {
+        runtime: 'codex',
+        source: 'cloud',
+        provider: 'openai-responses',
+        model_id: 'hidden-cloud-model',
+        cloud_model: {
+          name: 'hidden-cloud-model',
+          type: 'group',
+          namespace: 'team-a',
+          resource_user_id: 7,
+        },
+      })
+    ).toEqual({
+      modelId: 'hidden-cloud-model',
+      modelType: 'group',
+      modelOptions: {
+        weworkCloudModelNamespace: 'team-a',
+        weworkCloudModelResourceUserId: '7',
+      },
+    })
+    expect(
+      assignmentCloudExecutionFields(null, {
+        runtime: 'codex',
+        source: 'native',
+        provider: 'openai',
+        model_id: 'native-model',
+      })
+    ).toBeNull()
   })
 
   test('prepares model identity before fencing and keeps transport failures after the fence', async () => {
