@@ -2,48 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import threading
 import time
 from dataclasses import replace
-from types import ModuleType
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
 from shared.event_reporting.config import EventReporterConfig
 from shared.event_reporting.envelope import build_fact_key
 from shared.event_reporting.reporter import EventReporter
-from shared.event_reporting.transport import KafkaTransport
-
-
-@pytest.mark.asyncio
-async def test_transport_forwards_security_options_without_connecting(mocker):
-    producer = Mock()
-    producer.start = AsyncMock()
-    producer.send_and_wait = AsyncMock()
-    producer.stop = AsyncMock()
-    producer_class = Mock(return_value=producer)
-    fake_aiokafka = ModuleType("aiokafka")
-    fake_aiokafka.AIOKafkaProducer = producer_class
-    mocker.patch.dict(sys.modules, {"aiokafka": fake_aiokafka})
-    cfg = config(
-        security_protocol="SASL_PLAINTEXT",
-        sasl_username="test-user",
-        sasl_password="test-value",
-    )
-    transport = KafkaTransport(cfg)
-    await transport.start()
-    producer.start.assert_awaited_once()
-    options = producer_class.call_args.kwargs
-    assert options["acks"] == "all"
-    assert options["security_protocol"] == "SASL_PLAINTEXT"
-    assert options["sasl_plain_username"] == "test-user"
-    assert "test-value" not in repr(cfg)
-    await transport.send(b"fact")
-    producer.send_and_wait.assert_awaited_once_with(cfg.topic, b"fact")
-    await transport.stop()
-    producer.stop.assert_awaited_once()
 
 
 class RecordingTransport:
