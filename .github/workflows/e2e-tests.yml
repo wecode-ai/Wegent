@@ -1987,10 +1987,13 @@ jobs:
           E2E_DEVICE_ID: e2e-claudecode-device
           CI: true
         run: |
+          # Sandbox veth changes must not invalidate the browser's network stack.
           repository_name="${GITHUB_REPOSITORY##*/}"
           container_workspace="/__w/$repository_name/$repository_name"
           docker run --rm \
-            --network host \
+            --network bridge \
+            --add-host wegent-e2e-runner:host-gateway \
+            --entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh" \
             --ipc host \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --volume "$GITHUB_WORKSPACE:$container_workspace" \
@@ -2074,7 +2077,9 @@ jobs:
           repository_name="${GITHUB_REPOSITORY##*/}"
           container_workspace="/__w/$repository_name/$repository_name"
           docker run --rm \
-            --network host \
+            --network bridge \
+            --add-host wegent-e2e-runner:host-gateway \
+            --entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh" \
             --ipc host \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --volume "$GITHUB_WORKSPACE:$container_workspace" \
