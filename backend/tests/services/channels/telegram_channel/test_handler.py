@@ -1066,6 +1066,51 @@ class TestTelegramChannelHandler:
         resolve_pointer.assert_called_once_with(db, 1, pointer_kind, pointer_spec)
 
     @pytest.mark.asyncio
+    async def test_device_mode_keeps_a_hidden_pointer_model_over_the_default(
+        self, handler
+    ):
+        """A saved pointer model wins over a visible device default."""
+        user = SimpleNamespace(id=1, user_name="user")
+        db = MagicMock()
+        selection = SimpleNamespace(model_name="pointer-model", model_type="public")
+        pointer_kind = SimpleNamespace(name="pointer-model")
+        pointer_spec = {"modelConfig": {"bind_model": "target-model"}}
+        target_kind = SimpleNamespace(name="target-model")
+        target_spec = {"modelConfig": {"env": {"model": "claude"}}}
+        visible_default = {
+            "name": "visible-default",
+            "displayName": "Visible Default",
+            "provider": "claude",
+            "type": "public",
+        }
+        with (
+            patch(
+                "app.services.channels.handler.model_selection_manager.get_selection",
+                new=AsyncMock(return_value=selection),
+            ),
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=[visible_default],
+            ),
+            patch(
+                "app.core.config.settings.IM_CHANNEL_DEVICE_DEFAULT_MODEL",
+                "visible-default",
+            ),
+            patch(
+                "app.services.chat.config.model_resolver._find_model_with_namespace",
+                return_value=(pointer_kind, pointer_spec),
+            ),
+            patch(
+                "app.services.chat.config.model_resolver._resolve_bind_model_pointer",
+                return_value=(target_kind, target_spec),
+            ),
+        ):
+            result = await handler._get_device_mode_model_override(db, user)
+
+        assert result == ("pointer-model", "public")
+
+    @pytest.mark.asyncio
     async def test_broadcast_user_message_to_web_includes_display_metadata(
         self, handler
     ):

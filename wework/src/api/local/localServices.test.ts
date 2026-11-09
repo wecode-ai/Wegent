@@ -450,6 +450,143 @@ describe('createLocalAppServices', () => {
     ).toBeUndefined()
   })
 
+  test('resolves a hidden cloud assignment model for its execution fields', async () => {
+    const project = {
+      id: 'project-1',
+      resource_type: 'project',
+      cloud_project_id: null,
+      parent_id: null,
+      public_id: 'project-1',
+      project_key: 'LOCAL',
+      name: 'Local diagnostics',
+      title: null,
+      description: '',
+      created_by_user_id: 0,
+      sequence_number: null,
+      status: 'active',
+      priority: null,
+      sort_order: 0,
+      current_delivery_id: null,
+      metadata: {
+        task_provider: 'local',
+        tags: [],
+        collaboration_groups: [],
+        execution_environment: { devices: {} },
+      },
+      version: 1,
+      created_at: '2026-09-26T00:00:00Z',
+      updated_at: '2026-09-26T00:00:00Z',
+      completed_at: null,
+    }
+    const task = {
+      ...project,
+      id: 'LOCAL-1',
+      resource_type: 'task',
+      cloud_project_id: 'project-1',
+      public_id: null,
+      project_key: null,
+      name: null,
+      title: 'Inspect CPU',
+      description: 'Continue with the saved model.',
+      sequence_number: 1,
+      status: 'inbox',
+      priority: 'none',
+      metadata: { tags: [] },
+    }
+    const agent = {
+      id: 'worker',
+      project_id: 'project-1',
+      name: 'Worker',
+      display_name: 'Worker',
+      runtime: 'codex',
+      model: 'hidden-cloud-model',
+      model_type: 'public',
+      model_namespace: 'default',
+      allowed_models: [{ name: 'hidden-cloud-model', type: 'public', namespace: 'default' }],
+      system_prompt: 'Worker instructions',
+      additional_skills: [],
+      mcp_servers: {},
+      status: 'active',
+      execution_environment: 'local',
+      execution_mode: 'auto',
+      workspace_policy: 'project',
+      plugins: [],
+      execution_policy: { mode: 'fixed', environment_id: 'local-device' },
+      model_policy: {
+        mode: 'fixed',
+        model: {
+          runtime: 'codex',
+          provider: 'openai-responses',
+          model_id: 'hidden-cloud-model',
+          source: 'cloud',
+          cloud_model: {
+            name: 'hidden-cloud-model',
+            type: 'public',
+            namespace: 'default',
+            resource_user_id: 0,
+          },
+        },
+      },
+      version: 1,
+    }
+    const updates: Array<Record<string, unknown>> = []
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list') return [project]
+      if (method === 'todos.get') return task
+      if (method === 'runtime.runner.catalog') {
+        return { runtimes: ['codex'], models: [] }
+      }
+      if (method === 'chat_agents.list') {
+        return params?.project_id === 'project-1' ? [agent] : []
+      }
+      if (method === 'todos.update') {
+        updates.push(params?.todo as Record<string, unknown>)
+        return task
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+      user: AUTHENTICATED_CLOUD_USER,
+      listCloudModels: vi.fn().mockResolvedValue([]),
+      resolveCloudModel: vi.fn().mockResolvedValue({
+        name: 'hidden-cloud-model',
+        type: 'public',
+        namespace: 'default',
+        resourceUserId: 0,
+        config: { protocol: 'openai', apiFormat: 'chat/completions' },
+      }),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example/api/runtime-work/llm-responses-proxy',
+        apiKey: 'test-token',
+      },
+    })
+
+    await services.deliveryApi!.assignLoopItem('project-1', 'LOCAL-1', {
+      version: 1,
+      assigneeType: 'agent',
+      assigneeId: 'worker',
+    })
+
+    expect(updates[0]).toMatchObject({
+      execution_payload: {
+        executionRequest: {
+          model_config: expect.objectContaining({
+            model_id: 'hidden-cloud-model',
+            wework_model_kind: 'cloud',
+            upstream_api_format: 'openai-chat-completions',
+          }),
+        },
+      },
+    })
+  })
+
   test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {
     const wire = {
       taskId: 'side-task',

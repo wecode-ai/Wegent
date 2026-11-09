@@ -936,6 +936,19 @@ fn snapshot_terminal(snapshot: &Value) -> bool {
         .is_some_and(|status| matches!(status, "completed" | "failed" | "cancelled" | "incomplete"))
 }
 
+/// Render a recorded identity option for comparison.
+///
+/// Recorded options can store the resource owner as a JSON number while a
+/// resolved selection stores the same value as a string, so compare the text
+/// form. Missing or non-scalar values cannot identify a model row.
+fn recorded_option_text(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
 /// Whether a hidden fallback selection names the conversation's recorded model.
 ///
 /// A recorded selection that lacks the cloud namespace or owner cannot prove
@@ -956,7 +969,9 @@ fn recorded_selection_matches(previous: Option<&Value>, selection: &ModelSelecti
         "weworkCloudModelNamespace",
         "weworkCloudModelResourceUserId",
     ] {
-        if previous_options.get(key) != selection.options.get(key) {
+        if recorded_option_text(previous_options.get(key))
+            != recorded_option_text(selection.options.get(key))
+        {
             return false;
         }
     }

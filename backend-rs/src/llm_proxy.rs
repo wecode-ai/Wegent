@@ -366,6 +366,12 @@ pub(crate) async fn resolve_model_config_with_spec(
             "Cloud model not found",
         ));
     };
+    if !model_config::model_row_access_allowed(model_type, &row.json.0, &user.user_name) {
+        return Err(FastApiError::detail(
+            StatusCode::FORBIDDEN,
+            "Cloud model access denied",
+        ));
+    }
     let spec = row
         .json
         .0

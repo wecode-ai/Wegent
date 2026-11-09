@@ -346,6 +346,31 @@ fn hidden_fallback_must_match_the_conversation_model() {
         &selection
     ));
     assert!(
+        recorded_selection_matches(
+            Some(&json!({
+                "modelName": "hidden-model",
+                "modelType": "public",
+                "options": {
+                    "weworkCloudModelNamespace": "default",
+                    "weworkCloudModelResourceUserId": "0"
+                }
+            })),
+            &selection
+        ),
+        "a recorded string owner matches the numeric resolved owner"
+    );
+    assert!(
+        !recorded_selection_matches(
+            Some(&json!({
+                "modelName": "hidden-model",
+                "modelType": "public",
+                "options": {}
+            })),
+            &selection
+        ),
+        "a name-and-type-only record has no identity to compare"
+    );
+    assert!(
         !recorded_selection_matches(
             Some(&json!({
                 "modelName": "hidden-model",

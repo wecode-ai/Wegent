@@ -357,6 +357,8 @@ type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => 
 interface LocalAppServicesDeps {
   connectionDependencyPlugins?: ConnectionDependencyPluginApi
   listCloudModels?: () => Promise<UnifiedModel[]>
+  /** Resolve one saved cloud model even when it is hidden from the catalog. */
+  resolveCloudModel?: (modelName: string, modelType?: string) => Promise<UnifiedModel>
   listCloudInstalledPlugins?: (deviceId: string) => Promise<InstalledPlugin[]>
   available?: () => Promise<LocalExecutorStatus>
   ensure?: () => Promise<LocalExecutorStatus>
@@ -4272,7 +4274,19 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
             )
           )
         : null
-    const cloudFields = assignmentCloudExecutionFields(cloudModel, routing?.model)
+    // The discovery catalog hides models the admin took offline. Resolve the
+    // saved reference through the single-model endpoint so the execution
+    // fields (upstream protocol, token limits) come from the current row.
+    const resolveCloudModel = deps.resolveCloudModel
+    const savedCloudModel =
+      cloudModel ??
+      (routing?.model.source === 'cloud' && routing.model.cloud_model && resolveCloudModel
+        ? await resolveCloudModel(
+            routing.model.cloud_model.name,
+            routing.model.cloud_model.type
+          ).catch(() => null)
+        : null)
+    const cloudFields = assignmentCloudExecutionFields(savedCloudModel, routing?.model)
     const groupContext = group
       ? [
           `协作小组：${group.name}`,
