@@ -44,6 +44,8 @@ Credentials are shown only this time. Do not put their values in chat, documents
 
 ## Collaboration templates and configuration sharing
 
+<a id="collaboration-template-models"></a>
+
 When applying a template with Agents to an existing project or workspace, choose their model in **Confirm collaboration configuration**, then click **Apply template**. Each Agent runtime has its own model field; new Agents of the same runtime use that selection. An existing default is preselected and can be changed without changing device defaults. Applying is blocked until a model is selected. If no models are available, add one in Settings and **Refresh** the list in the dialog. Failed loads can be refreshed without losing team names or member choices.
 
 | Action                            | UI steps and result                                                                                                                                                             |
