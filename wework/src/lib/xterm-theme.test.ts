@@ -1,4 +1,5 @@
 import type { Terminal } from '@xterm/xterm'
+import { resolveUiThemeVariables } from '@wegent/collaboration/theme'
 import { afterEach, expect, test, vi } from 'vitest'
 import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from './xterm-theme'
 
@@ -6,6 +7,43 @@ afterEach(() => {
   document.documentElement.removeAttribute('style')
   document.documentElement.removeAttribute('data-theme')
 })
+
+test.each(['light', 'dark'] as const)(
+  'keeps zsh directory and Git prompt ANSI colors when switching %s themes',
+  async mode => {
+    document.documentElement.dataset.theme = mode
+    const terminal = { options: {} } as Terminal
+    const container = document.createElement('div')
+    const applyThemeVariables = (themeId: string) => {
+      Object.entries(resolveUiThemeVariables(mode, themeId)).forEach(([key, value]) => {
+        document.documentElement.style.setProperty(key, value)
+      })
+    }
+    applyThemeVariables('wework')
+    applyTerminalTheme(terminal, container)
+    const originalColors = {
+      brightCyan: 'rgb(52, 226, 226)',
+      brightBlue: 'rgb(114, 159, 207)',
+      brightGreen: 'rgb(138, 226, 52)',
+    }
+    expect(terminal.options.theme).toMatchObject(originalColors)
+
+    const disconnect = observeTerminalTheme(theme => applyTerminalTheme(terminal, container, theme))
+    try {
+      applyThemeVariables('catppuccin')
+      await new Promise<void>(resolve => queueMicrotask(resolve))
+      expect(terminal.options.theme?.brightCyan).toBe(
+        mode === 'light' ? 'rgb(45, 159, 168)' : 'rgb(107, 215, 202)'
+      )
+
+      applyThemeVariables('wework')
+      await new Promise<void>(resolve => queueMicrotask(resolve))
+      expect(terminal.options.theme).toMatchObject(originalColors)
+    } finally {
+      disconnect()
+    }
+  }
+)
 
 test('applies all ANSI colors and updates a mounted terminal without resetting it', async () => {
   const tokens = [

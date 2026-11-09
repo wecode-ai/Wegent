@@ -14,6 +14,11 @@ backgrounds with a `#2563eb` accent.
 The acceptance inventory is independent of application data to detect omissions. Tokyo Night uses
 `#1a1b26` for the background, `#a9b1d6` for text, and `#7aa2f7` for the accent.
 
+Terminal ANSI palettes are independent of syntax highlighting. Wework and themes without an
+authored terminal palette preserve the original 16 xterm colors; function, string, or operator
+colors must not replace ANSI blue, green, or cyan. Authored terminal palettes still follow their
+themes; switching back to Wework restores the original cyan and blue zsh directory and Git prompts.
+
 Themes cover Wework-owned chrome, tabs, sidebars, every settings page, authentication, plugins,
 applications, automations, interactions, projects, boards, Issues, project Agent editors, menus and
 dialogs. Detached windows, quick windows, Process Explorer, and system drag surfaces also consume
@@ -40,7 +45,7 @@ removes isolated files and processes.
 | Case                          | Preconditions and actions                                                                                    | Expected result and evidence                                                                                              |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `appearance-themes` inventory | Enumerate an independent list of 17 light and 29 dark options; select every option in the real UI            | All 30 names and 46 variants apply; individual screenshots, observed colors and JSON evidence                             |
-| Wework defaults and reset     | Confirm fresh light/dark defaults, inspect both original palettes, then click Reset after browsing themes     | Both choices return to Wework; original backgrounds, accent and sidebar opacity match; retain a reset screenshot           |
+| Wework defaults and reset     | Confirm fresh light/dark defaults, inspect both original palettes, then click Reset after browsing themes    | Both choices return to Wework; original backgrounds, accent and sidebar opacity match; retain a reset screenshot          |
 | Persistence                   | Select Proof and Tokyo Night independently; reload the renderer and restart Electron                         | Both choices survive; Tokyo Night matches three reference colors; light mode restores Proof                               |
 | Settings                      | Visit all 20 built-in and Git plugin settings routes in Tokyo Night                                          | Theme colors and readable titles, with a screenshot of each page                                                          |
 | Workspaces and portals        | Visit plugin marketplace/management, applications, automations, interactions, task home and settings menu    | Shared palette across real surfaces, including empty/unavailable states and portal screenshots                            |
