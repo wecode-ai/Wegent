@@ -30,7 +30,8 @@ async fn continuation_identity_rejects_archived_and_deleted_tasks() {
         if let Some(id) = deleted {
             handler
                 .store
-                .mark_deleted_archived_task_ids(vec![id.to_owned()]);
+                .mark_deleted_archived_task_ids(vec![id.to_owned()])
+                .unwrap();
         }
         let error = handler
             .dispatch(

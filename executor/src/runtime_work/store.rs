@@ -80,6 +80,7 @@ struct RuntimeWorkIndex {
     tasks: HashMap<String, RuntimeTaskLink>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
     issue_conversations: HashMap<String, String>,
+    deleted_issue_wakeups: HashMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -91,6 +92,7 @@ struct PersistedRuntimeWorkIndex {
     tasks: HashMap<String, PersistedRuntimeTask>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
     issue_conversations: HashMap<String, String>,
+    deleted_issue_wakeups: HashMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -373,48 +375,6 @@ struct IndexFileSignature {
 }
 
 impl RuntimeWorkStore {
-    pub(super) fn issue_conversation(&self, identity: &str) -> Option<String> {
-        self.refresh_index_from_disk_if_changed();
-        self.index
-            .lock()
-            .ok()?
-            .issue_conversations
-            .get(identity)
-            .cloned()
-    }
-
-    pub(super) fn bind_issue_conversation(&self, identity: &str, task: &str) -> io::Result<()> {
-        self.refresh_index_from_disk_if_changed();
-        let _guard = self
-            .write_lock
-            .lock()
-            .map_err(|_| io::Error::other("Runtime index lock is poisoned"))?;
-        let mut current = self
-            .index
-            .lock()
-            .map_err(|_| io::Error::other("Runtime index lock is poisoned"))?;
-        if let Some(existing) = current.issue_conversations.get(identity) {
-            return if existing == task {
-                Ok(())
-            } else {
-                Err(io::Error::other("Issue conversation is already bound"))
-            };
-        }
-        let mut next = current.clone();
-        next.issue_conversations
-            .insert(identity.into(), task.into());
-        let payload = serialize_index(&next)?;
-        atomic_write_file(&self.index_path, &payload)?;
-        *current = next;
-        drop(current);
-        *self
-            .last_written_payload
-            .lock()
-            .map_err(|_| io::Error::other("Runtime payload lock is poisoned"))? = Some(payload);
-        self.update_index_signature();
-        Ok(())
-    }
-
     pub(super) fn index_path(&self) -> &Path {
         &self.index_path
     }
@@ -541,20 +501,21 @@ impl RuntimeWorkStore {
         deleted
     }
 
-    pub fn mark_deleted_archived_task_ids(&self, task_ids: impl IntoIterator<Item = String>) {
-        self.refresh_index_from_disk_if_changed();
-        let Some(mut index) = self.index.lock().ok() else {
-            return;
-        };
+    pub fn mark_deleted_archived_task_ids(
+        &self,
+        task_ids: impl IntoIterator<Item = String>,
+    ) -> io::Result<()> {
         let now_ms = current_time_ms();
-        for task_id in task_ids {
-            if !task_id.trim().is_empty() {
-                index.deleted_archived_task_ids.insert(task_id, now_ms);
+        self.change_issue_index(|index| {
+            for task_id in task_ids {
+                if !task_id.trim().is_empty() {
+                    snapshot_deleted_issue_wakeups(index, &task_id);
+                    index.deleted_archived_task_ids.insert(task_id, now_ms);
+                }
             }
-        }
-        prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
-        drop(index);
-        self.persist_current_index();
+            prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
+            Ok(true)
+        })
     }
 
     pub fn unmark_deleted_archived_task_ids(&self, task_ids: &[String]) {
@@ -811,6 +772,7 @@ fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> Runtime
             .collect(),
         workspaces: persisted.workspaces,
         issue_conversations: persisted.issue_conversations,
+        deleted_issue_wakeups: persisted.deleted_issue_wakeups,
         deleted_archived_task_ids: persisted.deleted_archived_task_ids,
     }
 }
@@ -829,6 +791,7 @@ fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRun
     current.version = persisted.version;
     current.workspaces = persisted.workspaces;
     current.issue_conversations = persisted.issue_conversations;
+    current.deleted_issue_wakeups = persisted.deleted_issue_wakeups;
     current.deleted_archived_task_ids = persisted.deleted_archived_task_ids;
 }
 
@@ -844,6 +807,7 @@ fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Erro
             .collect(),
         workspaces: index.workspaces.clone(),
         issue_conversations: index.issue_conversations.clone(),
+        deleted_issue_wakeups: index.deleted_issue_wakeups.clone(),
         deleted_archived_task_ids,
     })
 }
@@ -1029,3 +993,6 @@ fn executor_home() -> PathBuf {
 
 #[cfg(test)]
 mod tests;
+
+mod issue_conversations;
+use issue_conversations::snapshot_deleted_issue_wakeups;

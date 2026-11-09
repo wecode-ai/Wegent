@@ -19,6 +19,7 @@ const MARKER = `ISSUE_ROOM_${process.pid}`
 const ACK = '收到，我会让子代理检查，完成后在这里回复。'
 const RESULT = '检查已完成，结果已核实。'
 const FOLLOWUP = '补充解释已完成，仍在同一个分身会话中。'
+const REOPENED = '已重新开始处理此 Issue。'
 const SUPPLEMENT = '补充信息已收到，会话历史保持连续。'
 const RAW_CHILD = 'ISSUE_ROOM_PRIVATE_CHILD_TRACE'
 const ROLE = 'issue-room-reviewer'
@@ -105,8 +106,13 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         heldChild = response
         return true
       }
-      if (!JSON.stringify(body.input).includes(MARKER)) return false
-      if (!spawned) {
+      const input = JSON.stringify(body.input)
+      if (!input.includes(MARKER)) return false
+      if (input.includes('删除会话后请继续处理')) {
+        reply(response, [assistantMessage(REOPENED)])
+      } else if (input.includes('automatic role flags')) {
+        reply(response, [assistantMessage('已完成本次指派。')])
+      } else if (!spawned) {
         spawned = true
         const acknowledgment = assistantMessage(ACK)
         acknowledgment.item.phase = 'commentary'
@@ -250,6 +256,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
               id: ROLE,
               name: '项目检查分身',
               enabled: true,
+              manual: true,
+              intakeRouted: true,
+              triggerCommentId: 'saved-role-is-not-a-trigger',
               prompt: MARKER,
               collaboration: {
                 enabled: true,
@@ -418,6 +427,64 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         'A follow-up must retain native history'
       )
       assert.equal((await request(`/v1/loop-items/${issue.id}/tasks`)).length, 1)
+      assert.equal((await rpc('runtime.tasks.archive', { taskId })).accepted, true)
+      const deleted = await rpc('runtime.archived_conversations.delete', { taskId })
+      assert.equal(deleted.deleted, true)
+      assert.equal((await rpc('runtime.tasks.get', { taskId })).code, 'task_not_found')
+      await request(`/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`, {
+        body: `${MARKER} 删除会话后请继续处理。`,
+        mentions: mention(),
+      })
+      const reopened = await until(
+        () => rpc('runtime.tasks.get', { taskId }),
+        value => value.task?.status === 'done' && value.task.threadId !== first.task.threadId,
+        'A new mention must create a new native thread after deletion'
+      )
+      assert.ok(reopened.task.threadId)
+      const reopenedComments = await until(
+        () => comments(issue),
+        rows => rows.filter(row => row.body === REOPENED).length === 1,
+        'The new conversation must publish exactly one new reply'
+      )
+      assert.equal(reopenedComments.filter(row => row.body === FOLLOWUP).length, 1)
+      const newReply = reopenedComments.find(row => row.body === REOPENED)
+      await control.command(
+        'waitFor',
+        `${activity} [data-testid="cloud-task-activity-message-${newReply.id}"]`
+      )
+      await revealMessage(control, activity, newReply.id)
+      await captureScreenshot(control, 'issue-room-06-new-mention-after-deletion.png')
+      const reopenedBindings = await request(`/v1/loop-items/${issue.id}/tasks`)
+      assert.equal(reopenedBindings.length, 1)
+      assert.equal(
+        reopenedBindings[0].task_id,
+        taskId,
+        'The canonical reservation must remain unique'
+      )
+
+      const assigned = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
+        title: `${MARKER} automatic role flags`,
+        tags: ['room'],
+        assignee_user_id: user.id,
+      })
+      const assignedBindings = await until(
+        () => request(`/v1/loop-items/${assigned.id}/tasks`),
+        rows => rows.length === 1,
+        'The eligible automatic assignment must dispatch'
+      )
+      const assignmentTask = assignedBindings[0].task_id
+      await until(
+        () => rpc('runtime.tasks.get', { taskId: assignmentTask }),
+        value => value.task?.status === 'done',
+        'The automatic assignment must finish with real native execution'
+      )
+      const transcript = await rpc('runtime.tasks.transcript', { taskId: assignmentTask, limit: 1 })
+      assert.equal(
+        transcript.origin.trigger,
+        'assignment',
+        'Saved manual flags must not mint manual authority'
+      )
+      assert.equal(transcript.origin.triggerCommentId, null)
       settings = await rpc('runtime.stand_in.personal.get', { userId: user.id })
       await rpc('runtime.stand_in.personal.save', {
         userId: user.id,

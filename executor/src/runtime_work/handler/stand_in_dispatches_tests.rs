@@ -255,7 +255,8 @@ async fn stand_in_dispatch_does_not_replay_accepted_or_deleted_work() {
     }
     handler
         .store
-        .mark_deleted_archived_task_ids(["stand-in-human-review".into()]);
+        .mark_deleted_archived_task_ids(["stand-in-human-review".into()])
+        .unwrap();
     handler.store.delete_task("stand-in-human-review");
     assert!(handler
         .queue_stand_in_dispatches(&[config], &issue)

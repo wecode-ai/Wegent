@@ -3605,7 +3605,7 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
             );
             link.status = "archived".to_owned();
             handler.upsert_local_task(link.clone());
-            handler.mark_archived_link_deleted(&link);
+            handler.mark_archived_link_deleted(&link).unwrap();
             event_tx
                 .send(json!({"event": "runtime.work.changed", "payload": {"taskId": "unrelated"}}))
                 .unwrap();

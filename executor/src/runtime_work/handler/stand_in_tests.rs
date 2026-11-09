@@ -32,7 +32,7 @@ async fn assignment_history_includes_archived_work_and_preserves_ownership() {
         };
         handler.upsert_local_task(link.clone());
         if id == "deleted" {
-            handler.mark_archived_link_deleted(&link);
+            handler.mark_archived_link_deleted(&link).unwrap();
         }
     }
     let payload = json!({"userId":7,"assignments":[{
