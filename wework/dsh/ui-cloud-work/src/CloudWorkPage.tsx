@@ -42,6 +42,7 @@ function getCloudProjectWorkspace(
   )
 }
 
+/** Keep remote device management separate from the desktop app's local recovery. */
 export function CloudWorkPage() {
   const { t } = useTranslation('common')
   const { logout } = useAuth()

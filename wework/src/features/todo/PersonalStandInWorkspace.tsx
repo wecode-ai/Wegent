@@ -45,6 +45,7 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   )
 }
 
+/** Scope binding, project errors and recovery actions to the connected account. */
 function AccountStandInWorkspace({
   services,
   user,
