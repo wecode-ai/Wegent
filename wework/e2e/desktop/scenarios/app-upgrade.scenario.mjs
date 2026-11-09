@@ -29,6 +29,12 @@ import {
   routeRunningUpgradeRequests,
 } from '../modules/upgrade-request-route.mjs'
 import { assertInstalledStartupWithStaleHistory } from '../modules/installed-startup-history.mjs'
+import {
+  armEmptyManifestUpgrade,
+  assertEmptyManifestBackups,
+  assertEmptyManifestRecovery,
+  restartUpgradedHost,
+} from '../modules/empty-capability-manifest-upgrade.mjs'
 import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
 import {
   installPreparedSource,
@@ -242,6 +248,8 @@ export async function createDesktopScenario(options) {
   })
   origin = `http://127.0.0.1:${server.address().port}`
   const root = join(electronUserDataDirectory, 'releases')
+  const capabilities = join(executorHome, 'capabilities')
+  const verifiesEmptyManifest = checkpoint === 'app-rollback'
   const sourceRuntimeRoot = join(electronUserDataDirectory, 'managed-runtimes/dsh')
   const appEnvironment = {}
   if (verifiesFailedActivation) appEnvironment.WEWORK_E2E_RELEASE_FAILURE_VERSION = pair.to.version
@@ -250,6 +258,17 @@ export async function createDesktopScenario(options) {
 
   const installedVersion = async () =>
     JSON.parse(await control.command('getInstalledAppVersion', 'body')).version
+  const runtimeDiagnostics = async () =>
+    JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
+  const assertDisabledPlugin = async message => {
+    const profileState = JSON.parse(
+      await readFile(
+        join(electronUserDataDirectory, 'dsh-core/profiles/wework-core/.wework-core-plugins.json'),
+        'utf8'
+      )
+    )
+    assert.ok(profileState.disabled.includes(OPTIONAL_PLUGIN), message)
+  }
   const compositions = []
   let macosIdentity
   const assertSelectedComposition = async version => {
@@ -620,6 +639,12 @@ export async function createDesktopScenario(options) {
         'before-update'
       )
       if (verifiesFailedActivation) await useVersionedMacosRecoveryBridge(root, pair.to.version)
+      if (verifiesEmptyManifest)
+        await armEmptyManifestUpgrade(control, inspectorPort, {
+          root,
+          capabilities,
+          targetVersion: pair.to.version,
+        })
       const readyCount = control.readyCount
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
@@ -681,19 +706,10 @@ export async function createDesktopScenario(options) {
         '[data-testid="new-chat-button"], [data-testid="settings-back-button"]',
         { timeoutMs: workbenchReadyTimeoutMs }
       )
-      const profileState = JSON.parse(
-        await readFile(
-          join(
-            electronUserDataDirectory,
-            'dsh-core/profiles/wework-core/.wework-core-plugins.json'
-          ),
-          'utf8'
-        )
-      )
-      assert.ok(
-        profileState.disabled.includes(OPTIONAL_PLUGIN),
-        'Upgrade lost the disabled plugin state'
-      )
+      const manifestRecovery = verifiesEmptyManifest
+        ? await assertEmptyManifestRecovery(capabilities)
+        : null
+      await assertDisabledPlugin('Upgrade lost the disabled plugin state')
       assert.equal(
         await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
         'before-update'
@@ -714,27 +730,45 @@ export async function createDesktopScenario(options) {
         'The restored task did not execute through the real runtime'
       )
       console.log('[upgrade-e2e] Persisted task continued through the real runtime')
-      if (process.platform === 'darwin' && checkpoint === 'app-rollback') {
-        await assertInstalledStartupWithStaleHistory({
-          root,
-          restartDesktopApp,
-          installedVersion,
-          expectedVersion: pair.to.version,
-          control,
-          timeoutMs: workbenchReadyTimeoutMs,
-        })
+      if (manifestRecovery) {
+        const beforeRestart = await runtimeDiagnostics()
+        assert.ok(beforeRestart.executorPid > 0)
+        const executorSha256 = await hashReleaseAsset(beforeRestart.release.executorPath)
+        if (process.platform === 'darwin') {
+          await assertInstalledStartupWithStaleHistory({
+            root,
+            restartDesktopApp,
+            installedVersion,
+            expectedVersion: pair.to.version,
+            control,
+            timeoutMs: workbenchReadyTimeoutMs,
+          })
+        } else {
+          await restartUpgradedHost(control, inspectorPort, workbenchReadyTimeoutMs)
+        }
+        assert.equal(await installedVersion(), pair.to.version)
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: ANSWER,
           timeoutMs: workbenchReadyTimeoutMs,
         })
+        assert.deepEqual(await assertEmptyManifestRecovery(capabilities), manifestRecovery)
+        await assertDisabledPlugin('Restart lost the disabled plugin state')
+        assert.equal(
+          await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
+          'before-update'
+        )
         const requestsBeforeRestartedTask = modelRequests
-        await send(`${PROMPT} continue after ordinary startup with old release history`)
+        await send(`${PROMPT} continue after restarting the upgraded package`)
         assert.ok(
           modelRequests > requestsBeforeRestartedTask,
-          'The installed package did not continue the task after stale-history startup'
+          'The restarted package did not continue the persisted task'
         )
+        const restarted = await runtimeDiagnostics()
+        assert.ok(restarted.executorPid > 0)
+        assert.notEqual(restarted.executorPid, beforeRestart.executorPid)
+        assert.equal(await hashReleaseAsset(restarted.release.executorPath), executorSha256)
         console.log(
-          '[upgrade-e2e] Installed target restarted with stale history and continued its task'
+          '[upgrade-e2e] Target restart preserved the recovered manifest and continued its task'
         )
       }
       if (
@@ -775,19 +809,7 @@ export async function createDesktopScenario(options) {
           '[data-testid="new-chat-button"], [data-testid="settings-back-button"]',
           { timeoutMs: workbenchReadyTimeoutMs }
         )
-        const restoredPlugins = JSON.parse(
-          await readFile(
-            join(
-              electronUserDataDirectory,
-              'dsh-core/profiles/wework-core/.wework-core-plugins.json'
-            ),
-            'utf8'
-          )
-        )
-        assert.ok(
-          restoredPlugins.disabled.includes(OPTIONAL_PLUGIN),
-          'Rollback lost the disabled plugin state'
-        )
+        await assertDisabledPlugin('Rollback lost the disabled plugin state')
         const restoreRequired = !pair.from.readableDataSchemas.includes(pair.to.dataSchema)
         assert.equal(
           await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
@@ -816,6 +838,13 @@ export async function createDesktopScenario(options) {
         await pruneWithRolledBackSource(root, resultDir, options.homePath)
         await send(`${PROMPT} continue after rollback`)
         await assertSelectedComposition(pair.from.version)
+        if (manifestRecovery) {
+          const { backup, historicalBackup } = manifestRecovery
+          assert.deepEqual(await assertEmptyManifestBackups(capabilities), {
+            backup,
+            historicalBackup,
+          })
+        }
         if (restoreRequired) {
           const { readdir } = await import('node:fs/promises')
           const preserved = await readdir(join(root, 'preserved-data'))
@@ -847,6 +876,9 @@ export async function createDesktopScenario(options) {
         target: pair.to.sha256,
         fromSourceSha: pair.from.sourceSha,
         toSourceSha: pair.to.sourceSha,
+        ...(manifestRecovery && {
+          manifestRecovery: { ...manifestRecovery, restarted: true, rolledBack: true },
+        }),
         upgrade: 'passed',
         rollback:
           verifiesUnstartedActivation ||
