@@ -716,8 +716,12 @@ fn compatibility_profiles_inherit_the_native_default_without_overwriting_user_in
         json!({"base_instructions":""}),
     ] {
         let mut model = explicit.clone();
+        let mut expected = explicit;
+        expected["include_skills_usage_instructions"] = json!(true);
+        expected["include_plugin_usage_instructions"] = json!(false);
+        expected["include_apps_usage_instructions"] = json!(false);
         inherit_native_instructions(&mut model, &native).unwrap();
-        assert_eq!(model, explicit);
+        assert_eq!(model, expected);
     }
     let mut edited = json!({
         "base_instructions":"User-edited base instructions",
@@ -756,6 +760,28 @@ fn native_default_selection_follows_picker_visibility_and_priority() {
     assert_eq!(native_default_model(&catalog).unwrap()["slug"], "hidden");
     assert!(native_default_model(&json!({"models":[]})).is_err());
     assert!(inherit_native_instructions(&mut json!({}), &json!({})).is_err());
+}
+
+#[test]
+fn native_usage_inheritance_replaces_null_without_overwriting_boolean_choices() {
+    let native = native_catalog_fixture()["models"][0].clone();
+    for base in [None, Some("User-authored instructions")] {
+        let mut model = json!({
+            "include_skills_usage_instructions":null,
+            "include_plugin_usage_instructions":true,
+            "include_apps_usage_instructions":false
+        });
+        if let Some(base) = base {
+            model["base_instructions"] = json!(base);
+        }
+        inherit_native_instructions(&mut model, &native).unwrap();
+        assert_eq!(model["include_skills_usage_instructions"], true);
+        assert_eq!(model["include_plugin_usage_instructions"], true);
+        assert_eq!(model["include_apps_usage_instructions"], false);
+        if let Some(base) = base {
+            assert_eq!(model["base_instructions"], base);
+        }
+    }
 }
 
 #[test]

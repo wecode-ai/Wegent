@@ -770,6 +770,17 @@ fn native_default_model(catalog: &Value) -> Result<&Value, String> {
 }
 
 fn inherit_native_instructions(model: &mut Value, native: &Value) -> Result<(), String> {
+    for key in [
+        "include_skills_usage_instructions",
+        "include_plugin_usage_instructions",
+        "include_apps_usage_instructions",
+    ] {
+        if model.get(key).and_then(Value::as_bool).is_none() {
+            if let Some(value) = native.get(key) {
+                model[key] = value.clone();
+            }
+        }
+    }
     let template = model["model_messages"]["instructions_template"].as_str();
     let base = model["base_instructions"].as_str();
     if template.is_some_and(is_legacy_base_instructions)
@@ -801,17 +812,6 @@ fn inherit_native_instructions(model: &mut Value, native: &Value) -> Result<(), 
     }
     messages.insert("instructions_template".into(), json!(instructions));
     model["model_messages"] = Value::Object(messages);
-    for key in [
-        "include_skills_usage_instructions",
-        "include_plugin_usage_instructions",
-        "include_apps_usage_instructions",
-    ] {
-        if model.get(key).is_none() {
-            if let Some(value) = native.get(key) {
-                model[key] = value.clone();
-            }
-        }
-    }
     Ok(())
 }
 
