@@ -447,7 +447,7 @@ path = "/api/resource-library/listings"
 methods = ["GET"]
 path = "/api/v1/collaboration-templates"
 [[routes]]
-methods = ["GET"]
+methods = ["GET", "DELETE"]
 path = "/api/v1/collaboration-templates/:template_id"
 [[routes]]
 methods = ["PUT"]

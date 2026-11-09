@@ -35,6 +35,10 @@ export const templateMessages = {
     import: '导入 YAML',
     export: '导出配置（YAML）',
     details: '查看模板',
+    delete: '删除模板',
+    deleteHint:
+      '删除“{name}”？此操作不可撤销，不会影响已创建的项目和协作小组。已同步的模板将同时从账号和本机移除。',
+    deleteConnectionRequired: '请连接云端后删除已同步的模板。',
     createFromTemplate: '从模板创建',
     clearSelection: '移除模板',
     use: '使用此模板',
@@ -152,6 +156,10 @@ export const templateMessages = {
     import: 'Import YAML',
     export: 'Export configuration (YAML)',
     details: 'View template',
+    delete: 'Delete template',
+    deleteHint:
+      'Delete “{name}”? This cannot be undone. Existing projects and collaboration groups are not affected. Synced templates will be removed from your account and this device.',
+    deleteConnectionRequired: 'Connect to delete a synced template.',
     createFromTemplate: 'Create from template',
     clearSelection: 'Remove template',
     use: 'Use template',

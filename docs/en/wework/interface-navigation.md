@@ -85,6 +85,7 @@ Model selection during template import: [Collaboration templates and configurati
 | Search terms                                                                      | Detailed steps                                                             |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls) |
+| Delete imported personal templates | [Collaboration templates and configuration sharing](./projects.md#template-controls) |
 | Collaboration → Devices → Delete offline device | [Offline device cleanup](./projects.md#offline-device-cleanup) |
 | Stand-in memory, source evidence, scope, editing, forgetting and forgetting rules | [Memory controls](./personal-stand-in.md#stand-in-memory-controls)         |
 | Experimental lead conversation, takeover, stop, publish to Issue                  | [Project lead controls](./personal-stand-in.md#project-lead-controls)      |
