@@ -480,6 +480,8 @@ async def _execute_scoped_retrieve(
     resolved_document_ids: list[int],
     runtime_context: DirectInjectionRuntimeContext | None,
     restricted_mode: bool,
+    read_user_id: int,
+    task_id: int | None,
 ) -> dict:
     """Execute retrieve grouped by per-KB scopes."""
     if resolved_document_ids:
@@ -516,7 +518,6 @@ async def _execute_scoped_retrieve(
     all_records: list[dict] = []
     modes: set[str] = set()
     total_estimated_tokens = 0
-    read_user_id, task_id = _resolve_read_identity(db, request)
     for kb_ids, group_document_ids in retrieve_groups:
         retrieval_scope = (
             RetrievalScope(document_ids=group_document_ids)
@@ -688,7 +689,12 @@ async def internal_retrieve(
     db: Session = Depends(get_db),
 ):
     """Record a request fact without constructing a statistical result wrapper."""
-    read_user_id, task_id = _resolve_read_identity(db, request)
+    try:
+        read_user_id, task_id = _resolve_read_identity(db, request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     requested_ids = request.knowledge_base_ids or []
     knowledge_base_ids = (
         _scope_kb_ids(request.knowledge_base_scopes)
@@ -800,6 +806,8 @@ async def _execute_internal_retrieve(
                 resolved_document_ids=resolved_document_ids,
                 runtime_context=runtime_context,
                 restricted_mode=restricted_mode,
+                read_user_id=read_user_id,
+                task_id=task_id,
             )
         else:
             runtime_spec = runtime_resolver.build_query_runtime_spec(

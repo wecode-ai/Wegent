@@ -13,6 +13,7 @@ Converter worker startup:
 
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 
 from knowledge_doc_converter.celery_app import celery_app
 from knowledge_doc_converter.config import settings
@@ -59,9 +60,11 @@ def _emit_attempt(
     result_status: str | None = None,
 ) -> None:
     # Every attempt in this task runs the MinerU conversion engine.
+    elapsed = max(0.0, time.monotonic() - started_at)
+    started_wall = datetime.now(timezone.utc) - timedelta(seconds=elapsed)
     data = {
         "file_extension": file_extension,
-        "started_at": started_at,
+        "started_at": started_wall.isoformat(),
         "generation": generation,
         "retry_scheduled": retry_scheduled,
         "converter": "mineru",
@@ -83,6 +86,7 @@ def _emit_attempt(
         operation_id=attempt_id,
         data=data,
         error_code=error_code,
+        duration_ms=round(elapsed * 1000) if status != "started" else None,
     )
 
 

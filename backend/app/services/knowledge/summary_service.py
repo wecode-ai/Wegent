@@ -350,6 +350,8 @@ class SummaryService:
             )
             return None
 
+        document_kind_id = document.kind_id
+
         # 2. Check if document is active
         if not document.is_active:
             logger.info(
@@ -360,6 +362,7 @@ class SummaryService:
 
             report_summary_state(
                 {"status": "skipped", "reason": "document_not_active"},
+                kb_id=document_kind_id,
                 document_id=document_id,
             )
             return None
@@ -382,6 +385,7 @@ class SummaryService:
 
             report_summary_state(
                 {"status": "skipped", "reason": "knowledge_base_not_found"},
+                kb_id=document_kind_id,
                 document_id=document_id,
             )
             return None
@@ -396,6 +400,7 @@ class SummaryService:
 
             report_summary_state(
                 {"status": "skipped", "reason": "summary_model_not_configured"},
+                kb_id=document_kind_id,
                 document_id=document_id,
             )
             return None
@@ -411,7 +416,6 @@ class SummaryService:
             model_config.get("model_namespace"),
             model_config.get("model_type"),
         )
-        document_kind_id = document.kind_id
         existing_summary = dict(document.summary or {})
 
         try:
@@ -424,6 +428,7 @@ class SummaryService:
 
                 report_summary_state(
                     {"status": "skipped", "reason": "document_deleted"},
+                    kb_id=document_kind_id,
                     document_id=document_id,
                 )
                 return None
@@ -499,6 +504,7 @@ class SummaryService:
 
                 report_summary_state(
                     {"status": "skipped", "reason": "document_deleted"},
+                    kb_id=document_kind_id,
                     document_id=document_id,
                 )
                 logger.info(
@@ -510,7 +516,9 @@ class SummaryService:
 
             from .summary_reporting import report_summary_state
 
-            report_summary_state(summary_data, document_id=document_id)
+            report_summary_state(
+                summary_data, kb_id=document_kind_id, document_id=document_id
+            )
 
             # 10. Check if knowledge base summary needs to be triggered
             if result.success:
@@ -538,7 +546,9 @@ class SummaryService:
                 if self._persist_document_summary(document_id, summary_data):
                     from .summary_reporting import report_summary_state
 
-                    report_summary_state(summary_data, document_id=document_id)
+                    report_summary_state(
+                        summary_data, kb_id=document_kind_id, document_id=document_id
+                    )
             except Exception as commit_error:
                 logger.warning(
                     f"[SummaryService] Failed to save error status: {commit_error}"

@@ -35,7 +35,7 @@ SYNC_CHECK_FAILED_CODE = "external_sync_check_failed"
 
 def _emit_copy_check(
     *,
-    context: "_CopyContext",
+    kb_id: int | None,
     document_id: int,
     generation: int,
     decision: str,
@@ -44,11 +44,7 @@ def _emit_copy_check(
 ) -> None:
     emit_external_event(
         "knowledge.external.document.checked",
-        kb_id=(
-            context.document.__dict__.get("kind_id")
-            if context.document is not None
-            else None
-        ),
+        kb_id=kb_id,
         document_id=document_id,
         status=status,
         operation_id=generation,
@@ -261,10 +257,11 @@ def refresh_dingtalk_copy(
     fetch stays the single owner of the imported content and its baseline.
     """
     context = _resolve_copy_context(db, document_id, expected_generation)
+    kb_id = context.document.kind_id if context.document is not None else None
     if not context.eligible:
         _log_skipped_copy(context, document_id, expected_generation, "precheck")
         _emit_copy_check(
-            context=context,
+            kb_id=kb_id,
             document_id=document_id,
             generation=expected_generation,
             decision=context.reason,
@@ -288,11 +285,12 @@ def refresh_dingtalk_copy(
     context = _resolve_copy_context(
         db, document_id, expected_generation, for_update=True
     )
+    kb_id = context.document.kind_id if context.document is not None else None
     if not context.eligible:
         db.rollback()
         _log_skipped_copy(context, document_id, expected_generation, "recheck")
         _emit_copy_check(
-            context=context,
+            kb_id=kb_id,
             document_id=document_id,
             generation=expected_generation,
             decision=context.reason,
@@ -312,7 +310,7 @@ def refresh_dingtalk_copy(
             probe_error,
         )
         _emit_copy_check(
-            context=context,
+            kb_id=kb_id,
             document_id=document_id,
             generation=expected_generation,
             decision="source_unavailable",
@@ -329,7 +327,7 @@ def refresh_dingtalk_copy(
             probe_error,
         )
         _emit_copy_check(
-            context=context,
+            kb_id=kb_id,
             document_id=document_id,
             generation=expected_generation,
             decision="check_failed",
@@ -350,7 +348,7 @@ def refresh_dingtalk_copy(
             update_time,
         )
         _emit_copy_check(
-            context=context,
+            kb_id=kb_id,
             document_id=document_id,
             generation=expected_generation,
             decision="unchanged",
@@ -359,7 +357,7 @@ def refresh_dingtalk_copy(
         return False
     queued = _queue_refresh(db, document, expected_generation)
     _emit_copy_check(
-        context=context,
+        kb_id=kb_id,
         document_id=document_id,
         generation=expected_generation,
         decision="refresh_queued" if queued else "dispatch_failed",

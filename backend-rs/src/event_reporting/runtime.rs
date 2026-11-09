@@ -249,18 +249,46 @@ async fn sender_loop(
     transport: Arc<dyn EventTransport>,
     mut shutdown: oneshot::Receiver<Instant>,
 ) {
+    const MAX_IN_FLIGHT: usize = 32;
+    let mut in_flight = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             deadline = &mut shutdown => {
-                drain(&inner, &mut receiver, transport.as_ref(), deadline.unwrap_or_else(|_| Instant::now())).await;
+                let deadline = deadline.unwrap_or_else(|_| Instant::now());
+                receiver.close();
+                while Instant::now() < deadline {
+                    while in_flight.len() < MAX_IN_FLIGHT {
+                        let Ok(payload) = receiver.try_recv() else { break };
+                        let task_inner = Arc::clone(&inner);
+                        let task_transport = Arc::clone(&transport);
+                        in_flight.spawn(async move { deliver(&task_inner, task_transport.as_ref(), payload).await });
+                    }
+                    if in_flight.is_empty() { break; }
+                    if tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), in_flight.join_next()).await.is_err() { break; }
+                }
+                inner.delivery_failed.fetch_add(in_flight.len() as u64, Ordering::Relaxed);
+                in_flight.abort_all();
+                while in_flight.join_next().await.is_some() {}
+                while receiver.try_recv().is_ok() { inner.dropped.fetch_add(1, Ordering::Relaxed); }
+                if transport.stop(deadline).await.is_ok() {
+                    inner.set_state(SenderState::Stopped);
+                } else {
+                    inner.set_state(SenderState::Failed);
+                }
                 return;
             }
-            payload = receiver.recv() => {
+            result = in_flight.join_next(), if !in_flight.is_empty() => {
+                if result.is_some_and(|r| r.is_err()) { inner.delivery_failed.fetch_add(1, Ordering::Relaxed); }
+            }
+            payload = receiver.recv(), if in_flight.len() < MAX_IN_FLIGHT => {
                 let Some(payload) = payload else {
+                    while in_flight.join_next().await.is_some() {}
                     inner.set_state(SenderState::Stopped);
                     return;
                 };
-                deliver(&inner, transport.as_ref(), payload).await;
+                let task_inner = Arc::clone(&inner);
+                let task_transport = Arc::clone(&transport);
+                in_flight.spawn(async move { deliver(&task_inner, task_transport.as_ref(), payload).await });
             }
         }
     }
@@ -283,33 +311,6 @@ async fn deliver(inner: &ReporterInner, transport: &dyn EventTransport, payload:
             inner.delivery_failed.fetch_add(1, Ordering::Relaxed);
             tracing::warn!("knowledge event delivery timed out");
         }
-    }
-}
-
-async fn drain(
-    inner: &ReporterInner,
-    receiver: &mut mpsc::Receiver<Bytes>,
-    transport: &dyn EventTransport,
-    deadline: Instant,
-) {
-    while Instant::now() < deadline {
-        let Ok(payload) = receiver.try_recv() else {
-            break;
-        };
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if tokio::time::timeout(remaining, transport.send(payload))
-            .await
-            .is_ok_and(|result| result.is_ok())
-        {
-            inner.acknowledged.fetch_add(1, Ordering::Relaxed);
-        } else {
-            inner.delivery_failed.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    if transport.stop(deadline).await.is_ok() {
-        inner.set_state(SenderState::Stopped);
-    } else {
-        inner.set_state(SenderState::Failed);
     }
 }
 
@@ -390,6 +391,43 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_slice(&transport.payloads.lock().unwrap()[0]).unwrap();
         assert_eq!(payload["event_type"], "knowledge.document.read.finished");
+        runtime
+            .shutdown(Instant::now() + Duration::from_secs(1))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn pending_delivery_does_not_block_the_next_event() {
+        struct PendingTransport {
+            started: std::sync::atomic::AtomicUsize,
+            release: tokio::sync::Notify,
+        }
+        #[async_trait]
+        impl EventTransport for PendingTransport {
+            async fn send(&self, _payload: Bytes) -> Result<(), TransportError> {
+                self.started.fetch_add(1, Ordering::Relaxed);
+                self.release.notified().await;
+                Ok(())
+            }
+            async fn stop(&self, _deadline: Instant) -> Result<(), TransportError> {
+                Ok(())
+            }
+        }
+        let transport = Arc::new(PendingTransport {
+            started: std::sync::atomic::AtomicUsize::new(0),
+            release: tokio::sync::Notify::new(),
+        });
+        let runtime = ReporterRuntime::for_test(config(true), transport.clone());
+        runtime.handle().emit_document_read(event());
+        runtime.handle().emit_document_read(event());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while transport.started.load(Ordering::Relaxed) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        transport.release.notify_waiters();
         runtime
             .shutdown(Instant::now() + Duration::from_secs(1))
             .await;

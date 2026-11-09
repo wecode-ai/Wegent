@@ -2491,6 +2491,8 @@ class KnowledgeOrchestrator:
             f"index_owner_user_id={index_owner_user_id}"
         )
 
+        event_kb_id = knowledge_base.id
+        event_document_id = document.id
         enqueue_decision = prepare_document_index_enqueue(
             db=db,
             document_id=document.id,
@@ -2534,6 +2536,7 @@ class KnowledgeOrchestrator:
             raise RuntimeError(message)
 
         dispatch_event_type = "knowledge.index.dispatch.finished"
+        pipeline = None
         try:
             from app.services.knowledge.multimodal_pipeline import conversion_pipeline
 
@@ -2724,8 +2727,8 @@ class KnowledgeOrchestrator:
             )
             emitter(
                 dispatch_event_type,
-                kb_id=loaded_scalar(knowledge_base, "id"),
-                document_id=loaded_scalar(document, "id"),
+                kb_id=event_kb_id,
+                document_id=event_document_id,
                 status="failure",
                 operation_id=generation,
                 data={
@@ -2752,8 +2755,8 @@ class KnowledgeOrchestrator:
         )
         emitter(
             dispatch_event_type,
-            kb_id=loaded_scalar(knowledge_base, "id"),
-            document_id=loaded_scalar(document, "id"),
+            kb_id=event_kb_id,
+            document_id=event_document_id,
             status="success",
             operation_id=async_result.id,
             data={

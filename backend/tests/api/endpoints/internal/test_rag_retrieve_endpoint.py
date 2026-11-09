@@ -461,6 +461,19 @@ def test_internal_retrieve_reports_resolved_task_identity(test_client):
     resolve_identity.assert_called_once()
 
 
+def test_internal_retrieve_identity_failure_preserves_error_detail(test_client):
+    payload = {"user_id": 7, "query": "test", "knowledge_base_ids": [1]}
+    with patch(
+        "app.api.endpoints.internal.rag._resolve_read_identity",
+        side_effect=RuntimeError("identity lookup failed"),
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve", json=payload, headers=_internal_headers()
+        )
+    assert response.status_code == 500
+    assert response.json()["detail"] == "identity lookup failed"
+
+
 def test_internal_retrieve_resolves_document_names_before_query(test_client):
     with (
         patch(

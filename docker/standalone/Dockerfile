@@ -166,7 +166,7 @@ WORKDIR /app
 
 # turbojpeg-sys builds libjpeg-turbo from source with CMake.
 RUN dnf install -y gcc gcc-c++ cmake make ca-certificates openssl-devel \
-        cyrus-sasl-devel pkgconf-pkg-config \
+        cyrus-sasl-devel libcurl-devel pkgconf-pkg-config \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable \
     && dnf clean all \
