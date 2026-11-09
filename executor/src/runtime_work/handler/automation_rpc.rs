@@ -111,6 +111,12 @@ impl RuntimeWorkRpcHandler {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
+                if let Err(error) = handler.ensure_memory_review_arrangements() {
+                    log_executor_event(
+                        "memory review provisioning failed",
+                        &[("code", error.code)],
+                    );
+                }
                 let due = match handler.automation_store.due(Utc::now()) {
                     Ok(due) => due,
                     Err(error) => {

@@ -360,7 +360,7 @@ export async function createDesktopScenario({
     const projectRow = `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     await control.command('waitFor', projectRow, { visible: true, timeoutMs: uiTimeoutMs })
     await control.command('click', projectRow, { visible: true })
-    await selectCollaborationProjectView(control, CONTENT, 'board')
+    await selectCollaborationProjectView(control, CONTENT, 'board', uiTimeoutMs)
     const card = `${CONTENT} [data-testid="cloud-todo-card-${testCase.issue.id}"]`
     await control.command('waitFor', card)
     await control.command('click', card)

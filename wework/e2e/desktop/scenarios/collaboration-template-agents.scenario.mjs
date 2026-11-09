@@ -138,7 +138,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, name)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await selectCollaborationProjectView(control, CONTENT, 'manage')
+      await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await control.command('click', selector('collaboration-project-settings-sharing'))
       await control.command('clickWhenEnabled', selector('project-template-import'))
       await control.command('click', selector('template-tab-available'))

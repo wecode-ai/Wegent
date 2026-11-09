@@ -133,6 +133,18 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
 
       const readmeSelector = await findTreeItem(control, 'README.md', uiTimeoutMs)
       await control.command('click', readmeSelector)
+      const lineTargetSelector =
+        '[data-testid="workspace-markdown-preview"] [data-source-line="1"][data-source-line-target="true"]'
+      await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
+        text: 'Desktop E2E workspace',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', lineTargetSelector)),
+        0,
+        'Opening a Markdown file without a line target incorrectly highlighted a rendered block'
+      )
+      await control.command('click', '[data-testid="workspace-file-markdown-mode-button"]')
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'Desktop E2E workspace',
         timeoutMs: uiTimeoutMs,

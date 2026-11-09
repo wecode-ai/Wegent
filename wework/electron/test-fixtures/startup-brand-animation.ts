@@ -102,10 +102,18 @@ export async function createAnimationFixture(
     basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
   const asset = (name: string) =>
     readFile(join(electronRoot, 'src', 'shell', 'startup-splash', name), 'utf8')
-  const [markScript, animationScript] = await Promise.all([
+  const [markScript, animationScript, styles] = await Promise.all([
     asset('brand-mark.js'),
     asset('brand-animation.js'),
+    asset('styles.css'),
   ])
+  const rootStyles = styles.match(/:root\s*\{([^}]+)\}/)![1]
+  const themeStyles =
+    options.theme === 'light' ? styles.match(/:root\[data-theme='light'\]\s*\{([^}]+)\}/)![1] : ''
+  const logoStyle = (name: string) =>
+    themeStyles.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1] ??
+    rootStyles.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1] ??
+    ''
   const brand = {
     classList: createClassList(),
     style: {
@@ -176,8 +184,7 @@ export async function createAnimationFixture(
     devicePixelRatio: options.pixelRatio ?? 1,
     getComputedStyle: () => ({
       backgroundPosition: '62% 50%',
-      getPropertyValue: (name: string) =>
-        name === '--startup-logo-angle' ? '110deg' : options.theme === 'light' ? '48%' : '47%',
+      getPropertyValue: logoStyle,
     }),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -237,6 +244,7 @@ export async function createAnimationFixture(
     footer,
     contours: runtime.WEWORK_STARTUP_BRAND_CONTOURS,
     markScript,
+    logoStyle,
     contexts,
     frames,
     media,

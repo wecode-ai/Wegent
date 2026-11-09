@@ -12,6 +12,8 @@ fn launch_context(
 ) -> wegent_claude_harness::claude_code::ClaudeLaunchContext<'static> {
     wegent_claude_harness::claude_code::ClaudeLaunchContext {
         task_identity_environment: super::task_identity::task_identity_env(request),
+        additional_instructions: crate::python_runtime::managed_python_bridge_configured()
+            .then_some(crate::plugin_python::INSTRUCTIONS),
         artifact_instructions: crate::artifact_cli::AGENT_INSTRUCTIONS,
         control_instructions: crate::workbench_control::ControlContext::from_request(request)
             .map(|_| crate::workbench_control::INSTRUCTIONS),

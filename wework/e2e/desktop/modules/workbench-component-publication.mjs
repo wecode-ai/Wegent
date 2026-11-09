@@ -2,8 +2,18 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
+
+export function occupiedPublicationEntry(root, source, target) {
+  if (!basename(source).startsWith('.content-')) return null
+  const parent = dirname(target)
+  if (parent === join(root, 'data', 'managed-components', 'composed', 'wework-core-plugins'))
+    return join('wework-app', 'client.js')
+  if (parent === join(root, 'runtimes')) return 'runtime.json'
+  return null
+}
 
 // Included in the Windows workbench-mode checkpoint using real packaged resources.
 export async function verifyWindowsComponentPublication({ resources, environment, root }) {
@@ -60,9 +70,10 @@ import { syncBuiltinESMExports } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const input = JSON.parse(process.argv[2])
+const { waitForNativeFileHolder } = await import(pathToFileURL(input.holderHelper).href)
+const occupiedPublicationEntry = ${occupiedPublicationEntry.toString()}
 app.setPath('userData', join(input.root, 'electron'))
 const originalSymlink = fs.symlink
-const compositionRoot = join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')
 const runtimeRoot = join(input.root, 'runtimes')
 let child
 let closed
@@ -80,30 +91,11 @@ async function holdFile(file, releaseAfterMs = 0) {
   })
   // Publication workers can fail before anyone awaits the eventual close receipt.
   closed.catch(() => {})
-  await new Promise((accept, reject) => {
-    let output = ''
-    const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
-    child.once('error', error => { clearTimeout(timer); reject(error) })
-    child.once('close', code => {
-      clearTimeout(timer)
-      reject(new Error('Native holder exited before release (' + code + '): ' + stderr))
-    })
-    child.stdout.on('data', data => {
-      output += data.toString()
-      if (!output.includes(String.fromCharCode(10))) return
-      clearTimeout(timer)
-      output.trim() === 'held' ? accept() : reject(new Error('Invalid native holder acknowledgement'))
-    })
-  })
+  await waitForNativeFileHolder(child)
 }
 fs.symlink = async (source, target, type) => {
-  const parent = dirname(target)
-  // Archive extraction also publishes immutable trees in parallel. This checkpoint
-  // occupies the composed plugin tree and the requested runtime, not those inputs.
-  if (basename(source).startsWith('.content-') &&
-      (parent === compositionRoot || parent === runtimeRoot)) {
-    const file = parent === compositionRoot
-      ? join('wework-app', 'client.js') : 'runtime.json'
+  const file = occupiedPublicationEntry(input.root, source, target)
+  if (file) {
     assert.equal((await fs.stat(join(source, file))).isFile(), true)
     await holdFile(source)
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
@@ -169,7 +161,15 @@ try {
   delete env.ELECTRON_RUN_AS_NODE
   const { stdout } = await promisify(execFile)(
     require('electron'),
-    [script, JSON.stringify({ root, resources, holder })],
+    [
+      script,
+      JSON.stringify({
+        root,
+        resources,
+        holder,
+        holderHelper: fileURLToPath(new URL('./native-file-holder.mjs', import.meta.url)),
+      }),
+    ],
     { env, timeout: 120000, maxBuffer: 1024 * 1024 }
   )
   const evidence = JSON.parse(stdout)

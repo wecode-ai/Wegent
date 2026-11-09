@@ -2,6 +2,7 @@
 
 import { afterEach, expect, test, vi } from 'vitest'
 import { Readable } from 'node:stream'
+import { normalize, posix, win32 } from 'node:path'
 import {
   createComposerDocument,
   serializeComposerDocument,
@@ -27,6 +28,11 @@ const SOURCE_SNAPSHOT = JSON.stringify({
     currentRuntimeTask: { deviceId: SOURCE_DEVICE.device_id, taskId: 'source-task' },
     devices: [SOURCE_DEVICE],
   },
+})
+
+vi.mock('node:path', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:path')>()
+  return { ...actual, normalize: vi.fn(actual.normalize) }
 })
 
 vi.mock('../../e2e/desktop/modules/cloud-environment.mjs', () => ({
@@ -56,6 +62,9 @@ vi.mock('../../e2e/desktop/modules/transport-fault-proxy.mjs', () => ({
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+  vi.mocked(normalize).mockImplementation(
+    process.platform === 'win32' ? win32.normalize : posix.normalize
+  )
 })
 
 async function prepareFixture({
@@ -260,6 +269,172 @@ test('control workflow uses the runner model-response budget instead of the UI-a
     await scenario.cleanup()
   }
 })
+
+test.each([
+  ...['ready', 'preparing', 'failed', 'cancelled', 'wrong-workspace', 'owner-unavailable'].map(
+    state => ({
+      name: state,
+      state,
+      paths: posix,
+      workspacePath: '/cloud-workspace',
+      ownerWorkspacePath: state === 'wrong-workspace' ? '/another-workspace' : '/cloud-workspace',
+    })
+  ),
+  {
+    name: 'Windows native owner path',
+    state: 'ready',
+    paths: win32,
+    workspacePath: 'D:/fixture/cloud-workspace',
+    ownerWorkspacePath: 'D:\\fixture\\cloud-workspace',
+  },
+  {
+    name: 'Windows native receipt path',
+    state: 'ready',
+    paths: win32,
+    workspacePath: 'D:\\fixture\\cloud-workspace',
+    ownerWorkspacePath: 'D:/fixture/cloud-workspace',
+  },
+  {
+    name: 'Windows different drive',
+    state: 'wrong-workspace',
+    paths: win32,
+    workspacePath: 'D:/fixture/cloud-workspace',
+    ownerWorkspacePath: 'E:\\fixture\\cloud-workspace',
+  },
+  {
+    name: 'Windows different directory',
+    state: 'wrong-workspace',
+    paths: win32,
+    workspacePath: 'D:/fixture/cloud-workspace',
+    ownerWorkspacePath: 'D:\\fixture\\other-workspace',
+  },
+  {
+    name: 'POSIX literal backslash',
+    state: 'wrong-workspace',
+    paths: posix,
+    workspacePath: '/fixture/cloud-workspace',
+    ownerWorkspacePath: '/fixture\\cloud-workspace',
+  },
+])(
+  'local APP conversation continuation waits for its owning Executor: $name',
+  async ({ state, paths, workspacePath, ownerWorkspacePath }) => {
+    vi.mocked(normalize).mockImplementation(paths.normalize)
+    const { scenario, waitForRuntimeTask } = await prepareFixture({})
+    const reachedWorkflow = new Error('Reached workflow wait')
+    let settled = state !== 'preparing'
+    const localRead = vi.fn(async () => {
+      if (state === 'owner-unavailable') throw new Error('Owning Executor is unavailable')
+      return JSON.stringify({
+        workspaces: [
+          {
+            workspacePath: ownerWorkspacePath,
+            tasks: [
+              {
+                taskId: 'cloud-task',
+                workspacePath: ownerWorkspacePath,
+                threadId: 'local-native-thread',
+                running: !settled,
+                status: ['failed', 'cancelled'].includes(state)
+                  ? state
+                  : settled
+                    ? 'done'
+                    : 'running',
+              },
+            ],
+          },
+        ],
+      })
+    })
+    await expect(
+      scenario.verify({
+        command: vi.fn(async (action: string, _selector: string, options?: { text?: string }) => {
+          if (action === 'getWorkbenchDebugSnapshot') return SOURCE_SNAPSHOT
+          if (action === 'getLocalRuntimeWork') return localRead()
+          if (options?.text === 'WEWORK_CONTROL_COMPLETE') throw reachedWorkflow
+        }),
+      })
+    ).rejects.toBe(reachedWorkflow)
+    const sourceId = `conv_${Buffer.from(JSON.stringify([SOURCE_DEVICE.device_id, 'source-task'])).toString('base64url')}`
+    const answers = [
+      { conversation_id: 'controller' },
+      { conversation_id: sourceId },
+      'WEWORK_CONTROL_SOURCE_E2E https://github.com/synthetic/control-e2e/pull/43',
+      {},
+      { resolution: 'unique' },
+      { operation: { delivery_status: 'accepted', operation_id: 'op' }, duplicate: false },
+      { duplicate: true },
+      { operation_id: 'op' },
+      { id: 'rule', name: 'Control CI every five minutes', enabled: false },
+      { id: 'rule' },
+      {},
+      { properties: { options: { properties: { initialGoal: {} } } } },
+      { accepted: true, conversation_id: 'created', taskId: 'created-task' },
+      {
+        conversation_id: 'created',
+        model_selection: {
+          options: { reasoning: 'high', permissionMode: 'read-only', collaborationMode: 'plan' },
+        },
+      },
+    ]
+    const respond = (stage: number, output: unknown) => {
+      const request = Object.assign(
+        Readable.from([
+          JSON.stringify({
+            tools: [{ type: 'function', name: 'mcp__wework_control__invoke_capability' }],
+            input: [
+              { role: 'user', content: 'WEWORK_CONTROL_CONTROLLER_E2E' },
+              {
+                type: 'function_call_output',
+                call_id: `control-step-${stage}`,
+                output: JSON.stringify(output),
+              },
+            ],
+          }),
+        ]),
+        { method: 'POST' }
+      )
+      const response = { writeHead: vi.fn(), end: vi.fn() }
+      return {
+        response,
+        done: scenario.handleHttp(request, response, new URL('http://model.test/responses')),
+      }
+    }
+    try {
+      for (const [index, answer] of answers.entries()) {
+        const call = respond(index, answer)
+        await call.done
+        expect(call.response.writeHead).toHaveBeenCalledWith(200, expect.any(Object))
+      }
+      waitForRuntimeTask.mockImplementationOnce(async () => {
+        throw new Error('Cloud runtime lists do not contain local APP tasks')
+      })
+      const call = respond(14, {
+        accepted: true,
+        conversation_id: 'cloud-created',
+        deviceId: SOURCE_DEVICE.device_id,
+        taskId: 'cloud-task',
+        workspacePath,
+      })
+      await vi.waitFor(() => expect(localRead).toHaveBeenCalled())
+      if (state === 'preparing') {
+        expect(call.response.end).not.toHaveBeenCalled()
+        settled = true
+      }
+      await call.done
+      expect(waitForRuntimeTask).toHaveBeenCalledTimes(1)
+      if (['failed', 'cancelled', 'wrong-workspace', 'owner-unavailable'].includes(state)) {
+        expect(call.response.writeHead).toHaveBeenCalledWith(500)
+        expect(call.response.end.mock.calls[0][0]).not.toContain('continue_conversation')
+      } else {
+        expect(call.response.writeHead).toHaveBeenCalledWith(200, expect.any(Object))
+        expect(call.response.end.mock.calls[0][0]).toContain('continue_conversation')
+        expect(call.response.end.mock.calls[0][0]).toContain('cloud-created')
+      }
+    } finally {
+      await scenario.cleanup()
+    }
+  }
+)
 
 test.each([
   ['remote device', [{ ...APP_DEVICE, device_type: 'remote' }]],

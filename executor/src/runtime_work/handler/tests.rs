@@ -18,6 +18,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.catalog",
         "runtime.connections.resources",
         "runtime.connections.dependencies.inventory",
+        "runtime.python.has_demand",
     ] {
         assert!(
             !should_resume_persisted_turns_before_rpc(method),

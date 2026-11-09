@@ -109,6 +109,7 @@ export function StandInConversation({
       initialAddress={address}
       sendEphemeral={false}
       showExecutionTools={false}
+      hideProcessing
       expanded
       active={active}
       placeholder={t(roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt')}

@@ -160,6 +160,7 @@ pub async fn run_with_shell_environment(
     crate::local::capabilities::initialize_default_manifest()
         .map_err(|error| AppError::Server(error.to_string()))?;
     recover_plugins_before_startup();
+    let python_prewarm = crate::python_runtime::prewarm::start();
     if plan
         .local_sidecar
         .as_ref()
@@ -181,6 +182,9 @@ pub async fn run_with_shell_environment(
     // outlive this executor, and release the blocking reads parked on their
     // stdio.
     crate::agents::terminate_agent_processes().await;
+    if let Some(task) = python_prewarm {
+        task.abort();
+    }
     outcome
 }
 

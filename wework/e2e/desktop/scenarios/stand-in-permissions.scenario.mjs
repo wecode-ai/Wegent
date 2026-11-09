@@ -1,12 +1,12 @@
-import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { editProjectSource, openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { expandCollaborationWorkspace, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
-  expandCollaborationWorkspace,
-  reloadMainWindow,
+  collaborationProjectViewSelector,
   selectCollaborationProjectView,
-} from '../modules/workspace-flows.mjs'
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 
@@ -71,6 +71,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       'clickWhenEnabled',
       `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     )
+    await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'))
     await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`)
   }
@@ -161,7 +162,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
           connect: true,
         })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', {
           value: `以 ${role} 继承权限处理新分配给我的任务`,
@@ -171,10 +171,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         const saved = await rpc(control, 'runtime.stand_in.get', settingsParams())
         assert.equal(saved.enabled, true)
         assert.ok(saved.prompt.includes(role))
-        await rpc(control, 'runtime.stand_in.save', {
-          ...settingsParams(),
-          settings: { ...saved, enabled: false },
+        // Reset the source; editing duties must not implicitly resume a paused identity.
+        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+          requirements: false,
         })
+        await editProjectSource(control, false)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-saved"]')
+        await control.command('click', '[data-testid="stand-in-cancel"]')
+        await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       }
 
       const executionProbe = await request(
@@ -208,7 +213,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         requirements: false,
       })
-      await control.command('waitFor', '[data-testid="stand-in-auto"]:not([disabled])')
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]:not([disabled])')
       await control.command('click', '[data-testid="stand-in-close"]')
 
       // Restricted projects stop ordinary inheritance, and restoring it restores access.

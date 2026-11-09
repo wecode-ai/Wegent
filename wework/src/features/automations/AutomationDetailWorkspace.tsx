@@ -58,6 +58,7 @@ interface AutomationDetailWorkspaceProps {
   inheritStandIn?: boolean
   calendarMode?: boolean
   compact?: boolean
+  dialogMode?: boolean
   automation: Automation | null
   runs: AutomationRun[]
   locale: string
@@ -88,6 +89,7 @@ export function AutomationDetailWorkspace({
   inheritStandIn = false,
   calendarMode = false,
   compact = false,
+  dialogMode = false,
   automation,
   runs,
   locale,
@@ -192,79 +194,81 @@ export function AutomationDetailWorkspace({
             autoFocus={!automation}
           />
         </div>
-        <div className="relative flex shrink-0 items-center gap-1">
-          {automation ? (
-            <>
-              <button
-                type="button"
-                data-testid={`automation-detail-actions-${automation.id}`}
-                onClick={() => setActionsOpen(open => !open)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
-                aria-label={t('todo.automation_actions', '自动化操作')}
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                data-testid={`automation-detail-toggle-${automation.id}`}
-                onClick={onToggle}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
-                aria-label={
-                  automation.enabled
-                    ? t('todo.automation_pause', '暂停')
-                    : t('todo.automation_resume', '恢复')
-                }
-              >
-                {automation.enabled ? (
-                  <CirclePause className="h-4 w-4" />
-                ) : (
-                  <CirclePlay className="h-4 w-4" />
-                )}
-              </button>
-              {actionsOpen ? (
-                <div className="absolute right-16 top-9 z-popover w-36 rounded-xl border border-border bg-background p-1 shadow-lg">
-                  <button
-                    type="button"
-                    data-testid="automation-run-now-button"
-                    onClick={() => {
-                      setActionsOpen(false)
-                      onRun()
-                    }}
-                    disabled={running}
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm hover:bg-surface disabled:opacity-50"
-                  >
-                    {running ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Play className="h-4 w-4" />
-                    )}
-                    {t('todo.automation_run_now', '立即运行')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActionsOpen(false)
-                      onDelete()
-                    }}
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm text-red-600 hover:bg-red-500/5"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    {t('workbench.delete', '删除')}
-                  </button>
-                </div>
-              ) : null}
-            </>
-          ) : null}
-          <button
-            type="button"
-            data-testid="automation-detail-close"
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
-            aria-label={t('workbench.close', '关闭')}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        {!dialogMode && (
+          <div className="relative flex shrink-0 items-center gap-1">
+            {automation ? (
+              <>
+                <button
+                  type="button"
+                  data-testid={`automation-detail-actions-${automation.id}`}
+                  onClick={() => setActionsOpen(open => !open)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
+                  aria-label={t('todo.automation_actions', '自动化操作')}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  data-testid={`automation-detail-toggle-${automation.id}`}
+                  onClick={onToggle}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
+                  aria-label={
+                    automation.enabled
+                      ? t('todo.automation_pause', '暂停')
+                      : t('todo.automation_resume', '恢复')
+                  }
+                >
+                  {automation.enabled ? (
+                    <CirclePause className="h-4 w-4" />
+                  ) : (
+                    <CirclePlay className="h-4 w-4" />
+                  )}
+                </button>
+                {actionsOpen ? (
+                  <div className="absolute right-16 top-9 z-popover w-36 rounded-xl border border-border bg-background p-1 shadow-lg">
+                    <button
+                      type="button"
+                      data-testid="automation-run-now-button"
+                      onClick={() => {
+                        setActionsOpen(false)
+                        onRun()
+                      }}
+                      disabled={running}
+                      className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm hover:bg-surface disabled:opacity-50"
+                    >
+                      {running ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                      {t('todo.automation_run_now', '立即运行')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActionsOpen(false)
+                        onDelete()
+                      }}
+                      className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm text-red-600 hover:bg-red-500/5"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {t('workbench.delete', '删除')}
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+            <button
+              type="button"
+              data-testid="automation-detail-close"
+              onClick={onClose}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
+              aria-label={t('workbench.close', '关闭')}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </header>
 
       <div className={`min-h-0 flex-1 overflow-y-auto ${compact ? 'pb-4' : 'px-6 pb-28 pt-3'}`}>
@@ -499,13 +503,26 @@ export function AutomationDetailWorkspace({
           </p>
         )}
 
-        {automation ? <RunHistory runs={runs} locale={locale} onOpenRun={onOpenRun} /> : null}
+        {automation && !dialogMode ? (
+          <RunHistory runs={runs} locale={locale} onOpenRun={onOpenRun} />
+        ) : null}
       </div>
 
-      {!automation || dirty ? (
+      {dialogMode || !automation || dirty ? (
         <footer
           className={`flex w-full min-w-0 justify-end gap-2 border-t border-border py-3 ${compact ? 'shrink-0 bg-background' : 'absolute bottom-0 right-0 bg-background/95 px-6 backdrop-blur'}`}
         >
+          {dialogMode && automation && (
+            <button
+              type="button"
+              data-testid={`automation-detail-toggle-${automation.id}`}
+              disabled={saving}
+              onClick={onToggle}
+              className="h-8 rounded-lg px-3 text-sm hover:bg-surface"
+            >
+              {t(automation.enabled ? 'todo.automation_pause' : 'todo.automation_resume')}
+            </button>
+          )}
           {!automation ? (
             <button
               type="button"
@@ -519,7 +536,7 @@ export function AutomationDetailWorkspace({
             type="button"
             data-testid="automation-save-button"
             onClick={onSave}
-            disabled={saving}
+            disabled={saving || (dialogMode && !dirty)}
             className="inline-flex h-8 items-center gap-2 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -587,6 +604,7 @@ function FrequencySettings({
     { value: 'weekly', label: t('todo.weekly', '每周') },
     { value: 'monthly', label: t('todo.automation_monthly', '每月') },
     { value: 'yearly', label: t('todo.automation_yearly', '每年') },
+    { value: 'cron', label: t('todo.automation_cron_expression') },
   ]
   const repeatValue = draft.scheduleType === 'one_time' ? 'one_time' : draft.cronPreset
   const intervalUnitLabel = {
@@ -595,6 +613,7 @@ function FrequencySettings({
     weekly: t('todo.automation_week_unit', '周'),
     monthly: t('todo.automation_month_unit', '月'),
     yearly: t('todo.automation_year_unit', '年'),
+    cron: '',
   }[draft.customFrequency]
 
   const setRepeat = (value: string) => {
@@ -639,19 +658,31 @@ function FrequencySettings({
               pill
             />
           </SettingsRow>
-          <SettingsRow label={t('todo.automation_every', '每隔')}>
-            <span className="flex items-center gap-2 text-sm">
+          {draft.customFrequency === 'cron' ? (
+            <SettingsRow label={t('todo.automation_cron_expression')}>
               <input
-                data-testid="automation-custom-interval"
-                type="number"
-                min="1"
-                value={draft.customInterval}
-                onChange={event => onChange('customInterval', event.target.value)}
-                className="w-10 bg-transparent text-right outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                data-testid="automation-cron-expression"
+                aria-label={t('todo.automation_cron_expression')}
+                value={draft.cronExpression}
+                onChange={event => onChange('cronExpression', event.target.value)}
+                className="w-40 bg-transparent text-right text-sm outline-none"
               />
-              <span className="text-text-secondary">{intervalUnitLabel}</span>
-            </span>
-          </SettingsRow>
+            </SettingsRow>
+          ) : (
+            <SettingsRow label={t('todo.automation_every', '每隔')}>
+              <span className="flex items-center gap-2 text-sm">
+                <input
+                  data-testid="automation-custom-interval"
+                  type="number"
+                  min="1"
+                  value={draft.customInterval}
+                  onChange={event => onChange('customInterval', event.target.value)}
+                  className="w-10 bg-transparent text-right outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+                <span className="text-text-secondary">{intervalUnitLabel}</span>
+              </span>
+            </SettingsRow>
+          )}
           {draft.customFrequency === 'weekly' ? (
             <SettingsRow label={t('todo.automation_on', '开启')}>
               <WeekdayMenu
@@ -674,7 +705,7 @@ function FrequencySettings({
         </SettingsRow>
       ) : null}
       {draft.scheduleType === 'cron' &&
-      !(draft.cronPreset === 'custom' && draft.customFrequency === 'hourly') ? (
+      !(draft.cronPreset === 'custom' && ['hourly', 'cron'].includes(draft.customFrequency)) ? (
         <SettingsRow label={t('todo.automation_time', '时间')}>
           <TimeMenu
             testId="automation-cron-time"

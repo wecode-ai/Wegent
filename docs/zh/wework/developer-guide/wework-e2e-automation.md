@@ -14,6 +14,8 @@ Linux `browser-toolbar-actions` 所在 CI 分片会显式启用只读文件缓�
 
 Wework 提供独立的 Playwright E2E 入口和测试专用前端自动化接口，用于在 CI 中稳定操作 Wework 的 Vite/React 前端。默认入口运行在浏览器模式，适合覆盖大多数前端交互；原生窗口与任务执行链路由下文的桌面端全链路 E2E 覆盖。
 
+插件 Python 运行时的 `python-runtime,plugin-development` 检查点复用已有的 Core 10 分片，不新增 runner。Linux 和 Windows 各保持十个 Core 分片，所有检查点及断言保留；实际分组以 `.github/scripts/classify-wework-desktop-e2e.sh --all` 的输出为准。
+
 ## 运行方式
 
 首次运行需要安装 Playwright 浏览器：

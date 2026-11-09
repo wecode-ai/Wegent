@@ -1,3 +1,8 @@
+import {
+  openStandInActivity,
+  openStandInDetails,
+  openStandInSettings,
+} from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -223,7 +228,8 @@ export function createDesktopScenario({
         'stand-in-settings-open',
         'stand-in-primary-connections-open',
       ])
-        await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+        if (target === 'stand-in-settings-open') await openStandInSettings(control)
+        else await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
       await openConnectionTypePicker(control)
       await control.command(
         'clickWhenEnabled',
@@ -283,6 +289,10 @@ export function createDesktopScenario({
       assert.equal(accounts.length, 1)
       assert.equal(accounts[0].password, undefined)
       const accountId = accounts[0].id
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-processing-settings-toggle"]'
+      )
       await control.command('click', `[data-testid="stand-in-email-policy-${accountId}"]`)
       await captureScreenshot(control, '03-account-verified-connection-pending-save.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
@@ -291,6 +301,7 @@ export function createDesktopScenario({
       assert.equal(saved.primary.connections[0].profile, accountId)
       assert.ok(!JSON.stringify(saved).includes(mail.config.password))
       mail.pauseImap()
+      await openStandInDetails(control)
       await control.command('waitFor', '[data-testid="stand-in-status-open"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
@@ -316,7 +327,8 @@ export function createDesktopScenario({
         'Restored IMAP transport must complete its scheduled retry before processing new mail',
         30000 + modelResponseTimeoutMs
       )
-      await control.command('waitFor', '[data-testid="stand-in-work-attention-count"]', {
+      await openStandInActivity(control)
+      await control.command('waitFor', '[data-testid^="stand-in-activity-task-"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
       const works = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
@@ -328,7 +340,7 @@ export function createDesktopScenario({
       )
       assert.equal(works.items.length, 1, 'Historical mail must not create work')
       const work = works.items[0]
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+      await openStandInActivity(control)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="stand-in-activity-task-${work.taskId}"]`
@@ -417,7 +429,8 @@ export function createDesktopScenario({
         'stand-in-primary-connections-open',
         `stand-in-add-${PROVIDER}-connection`,
       ])
-        await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+        if (target === 'stand-in-settings-open') await openStandInSettings(control)
+        else await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
       await control.command('waitFor', '[data-testid="stand-in-email-add"]', { visible: true })
       await captureScreenshot(control, '08-narrow-dark-mailbox-connections.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-email-add"]')

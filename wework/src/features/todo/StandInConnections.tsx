@@ -164,6 +164,7 @@ export function StandInConnections({
       </fieldset>
       <StandInProcessingSettings
         disabled={disabled}
+        sessionScope="issue"
         rows={[
           {
             key: 'default',
