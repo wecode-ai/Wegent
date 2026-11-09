@@ -60,6 +60,15 @@ export function useDeviceCatalog(
       ]),
     ).values(),
   ]
+  // A visible local placeholder does not establish the registration identity.
+  const localIdentityUnresolved =
+    sources?.local &&
+    (localItems.length === 0 ||
+      localItems.some(
+        device =>
+          device.local_identity_unresolved ||
+          !(device.app_device_id?.trim() || device.device_key?.trim()),
+      ))
   const registrationCounts = new Map<string, number>()
   for (const device of cloudItems) {
     const key = identity(device)
@@ -67,6 +76,9 @@ export function useDeviceCatalog(
   }
   const matchedLocal = new Set<CollaborationExecutionEnvironment>()
   const registered = cloudItems.map((device) => {
+    if (localIdentityUnresolved && device.kind === 'local_device') {
+      return { ...device, is_current_device_candidate: true }
+    }
     const key = identity(device)
     const siblingCount = registrationCounts.get(key) ?? 0
     const candidates = localItems.filter(
@@ -84,11 +96,10 @@ export function useDeviceCatalog(
       matchedLocal.add(current)
       return { ...device, is_current_device: true }
     }
-    // A failed local status read can retain the app ID without a runtime ID.
-    // Protect all matching registrations until the local runtime is known.
+    // An app match alone cannot distinguish sibling registrations.
     if (
       siblingCount > 1 &&
-      candidates.some((candidate) => !candidate.runtime_instance_id?.trim())
+      candidates.some((candidate) => !runtime || !candidate.runtime_instance_id?.trim())
     ) {
       return { ...device, is_current_device_candidate: true }
     }

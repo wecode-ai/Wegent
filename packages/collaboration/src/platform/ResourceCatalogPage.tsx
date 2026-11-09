@@ -839,11 +839,13 @@ export function ResourceCatalogPage({
       {deletingDevice && onDeleteDevice ? (
         <DeviceDeleteDialog
           device={deletingDevice}
-          protectedRegistration={environments.some(
-            (device) =>
-              device.id === deletingDevice.id &&
-              isDeviceDeletionProtected(device),
-          )}
+          protectedRegistration={
+            !environments.some(
+              (device) =>
+                device.id === deletingDevice.id &&
+                !isDeviceDeletionProtected(device),
+            )
+          }
           workspaceNames={
             deviceRows.find((row) => row.id === deletingDevice.id)
               ?.workspaceNames ?? []

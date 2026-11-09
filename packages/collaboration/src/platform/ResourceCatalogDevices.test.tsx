@@ -268,6 +268,7 @@ it.each(["online", "offline"] as const)(
               runtime_instance_id: "current-runtime",
               status,
             },
+            { ...device, id: "44", device_id: 44, app_device_id: "desktop" },
           ],
         },
       },
@@ -278,7 +279,7 @@ it.each(["online", "offline"] as const)(
       return <span>{items.length}</span>;
     }
     await act(async () => root.render(<Harness />));
-    expect(items.map((item) => item.id).sort()).toEqual(["42", "43"]);
+    expect(items.map((item) => item.id).sort()).toEqual(["42", "43", "44"]);
     expect(items.find((item) => item.id === "42")?.is_current_device).not.toBe(
       true,
     );
@@ -287,6 +288,9 @@ it.each(["online", "offline"] as const)(
     );
     expect(
       canDeleteOfflineDevice(items.find((item) => item.id === "43")!, 7),
+    ).toBe(false);
+    expect(
+      canDeleteOfflineDevice(items.find((item) => item.id === "44")!, 7),
     ).toBe(false);
   },
 );
@@ -359,15 +363,110 @@ it("protects same-app records while a local status failure hides runtime identit
   expect(deleteButton(44)).not.toBeNull();
 });
 
+it("shows the cloud list while initial identity is pending or unavailable and protects an open dialog on identity loss", async () => {
+  const { useDeviceCatalog } = await import("./useDeviceCatalog");
+  const current = {
+    ...device,
+    id: "43",
+    device_id: 43,
+    app_device_id: "desktop",
+    runtime_instance_id: "current-runtime",
+  };
+  const local = {
+    ...current,
+    id: "local",
+    device_id: 0,
+    is_current_device: true,
+  };
+  const placeholder = {
+    ...local,
+    device_key: "local-device",
+    app_device_id: undefined,
+    runtime_instance_id: undefined,
+    local_identity_unresolved: true,
+  };
+  const cloudHost = {
+    ...device,
+    id: "44",
+    device_id: 44,
+    kind: "cloud_host" as const,
+  };
+  let rejectLocal!: (error: Error) => void;
+  const pendingLocal = new Promise<CollaborationExecutionEnvironment[]>(
+    (_, reject) => {
+      rejectLocal = reject;
+    },
+  );
+  const listCloud = vi.fn(async () => [device, current, cloudHost]);
+  const api = {
+    resources: {
+      devices: {
+        local: vi
+          .fn()
+          .mockReturnValueOnce(pendingLocal)
+          .mockResolvedValueOnce([placeholder])
+          .mockResolvedValueOnce([local])
+          .mockResolvedValueOnce([placeholder])
+          .mockResolvedValue([local]),
+        cloud: listCloud,
+      },
+    },
+  } as SharedWorkspaceApi;
+  const remove = vi.fn(async () => {});
+  let refresh!: () => Promise<void>;
+  function Harness() {
+    const catalog = useDeviceCatalog(api, true);
+    refresh = catalog.refresh;
+    return deviceCatalogPage(catalog.items, remove);
+  }
+  const button = (id: string) =>
+    container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
+  const expectProtectedRows = () => {
+    for (const id of [42, 43]) {
+      expect(button(`collaboration-devices-row-${id}`)).not.toBeNull();
+      expect(button(`collaboration-devices-delete-${id}`)).toBeNull();
+    }
+    expect(button("collaboration-devices-delete-44")).not.toBeNull();
+  };
+
+  await act(async () => root.render(<Harness />));
+  expectProtectedRows();
+  await act(async () => rejectLocal(new Error("Device identity unavailable")));
+  expectProtectedRows();
+  await act(async () => refresh());
+  expectProtectedRows();
+
+  await act(async () => refresh());
+  expect(button("collaboration-devices-delete-42")).not.toBeNull();
+  expect(button("collaboration-devices-delete-43")).toBeNull();
+  await click("collaboration-devices-delete-42");
+
+  await act(async () => refresh());
+  expectProtectedRows();
+  expect(button("collaboration-delete-device-confirm")?.disabled).toBe(true);
+  await click("collaboration-delete-device-confirm");
+  expect(remove).not.toHaveBeenCalled();
+  await act(async () => refresh());
+  expect(button("collaboration-delete-device-confirm")?.disabled).toBe(false);
+
+  listCloud.mockResolvedValueOnce([current, cloudHost]);
+  await act(async () => refresh());
+  expect(button("collaboration-delete-device-confirm")?.disabled).toBe(true);
+});
+
 it("reports deletion conflicts immediately while both discovery sources have pending work and recovers independently", async () => {
   let finishLocal!: (items: CollaborationExecutionEnvironment[]) => void;
   let finishCloud!: (items: CollaborationExecutionEnvironment[]) => void;
-  const local = vi.fn(
-    () =>
-      new Promise<CollaborationExecutionEnvironment[]>((resolve) => {
-        finishLocal = resolve;
-      }),
-  );
+  const local = vi
+    .fn(
+      () =>
+        new Promise<CollaborationExecutionEnvironment[]>((resolve) => {
+          finishLocal = resolve;
+        }),
+    )
+    .mockResolvedValueOnce([
+      { ...device, id: "local", device_id: 0, device_key: "current" },
+    ]);
   const cloudRecovery = new Promise<CollaborationExecutionEnvironment[]>(
     (resolve) => {
       finishCloud = resolve;
@@ -375,6 +474,7 @@ it("reports deletion conflicts immediately while both discovery sources have pen
   );
   const cloud = vi
     .fn()
+    .mockResolvedValueOnce([device])
     .mockResolvedValueOnce([device])
     .mockImplementation(() => cloudRecovery);
   const removeDevice = vi.fn(async () => {
@@ -385,31 +485,35 @@ it("reports deletion conflicts immediately while both discovery sources have pen
     workspaces: { list: async () => [] },
     resources: { devices: { local, cloud }, removeDevice },
   } as unknown as SharedWorkspaceApi;
-  await act(async () =>
-    root.render(
-      <CollaborationPlatformApp
-        api={api}
-        locale="zh-CN"
-        host={{
-          accountScope: "device-conflict-pending-discovery",
-          currentUser: { id: 7, name: "Owner" },
-          cloudAccess: { authenticated: true, requestLogin: () => {} },
-          capabilities: { automation: false, dingtalkAitable: false },
-          location: {
-            rootView: "devices",
-            platformView: "spaces",
-            collaborationDomain: "cloud",
-            workspaceView: "home",
-            workspaceId: null,
-            projectId: null,
-            issueId: null,
-            projectView: "board",
-          },
-          navigate: () => {},
-        }}
-      />,
-    ),
-  );
+  const renderApp = (refreshKey: string) =>
+    act(async () =>
+      root.render(
+        <CollaborationPlatformApp
+          api={api}
+          refreshKey={refreshKey}
+          locale="zh-CN"
+          host={{
+            accountScope: "device-conflict-pending-discovery",
+            currentUser: { id: 7, name: "Owner" },
+            cloudAccess: { authenticated: true, requestLogin: () => {} },
+            capabilities: { automation: false, dingtalkAitable: false },
+            location: {
+              rootView: "devices",
+              platformView: "spaces",
+              collaborationDomain: "cloud",
+              workspaceView: "home",
+              workspaceId: null,
+              projectId: null,
+              issueId: null,
+              projectView: "board",
+            },
+            navigate: () => {},
+          }}
+        />,
+      ),
+    );
+  await renderApp("initial");
+  await renderApp("local-refresh");
   await click("collaboration-devices-delete-42");
   await click("collaboration-delete-device-confirm");
   expect(removeDevice).toHaveBeenCalledExactlyOnceWith(
@@ -425,8 +529,8 @@ it("reports deletion conflicts immediately while both discovery sources have pen
       ) as HTMLButtonElement
     ).disabled,
   ).toBe(false);
-  expect(local).toHaveBeenCalledTimes(1);
-  expect(cloud).toHaveBeenCalledTimes(2);
+  expect(local).toHaveBeenCalledTimes(2);
+  expect(cloud).toHaveBeenCalledTimes(3);
   await act(async () => finishCloud([{ ...device, status: "online" }]));
   await click("collaboration-delete-device-cancel");
   expect(

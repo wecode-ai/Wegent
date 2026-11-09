@@ -2141,6 +2141,7 @@ describe('createLocalAppServices', () => {
       runtime_instance_id: null,
       status: 'offline',
     })
+    expect(unavailable.local_identity_unresolved).toBeUndefined()
     expect(getLocalRuntimeSourceIdentity(unavailable)).toBeUndefined()
 
     available.mockResolvedValue({
@@ -2167,6 +2168,7 @@ describe('createLocalAppServices', () => {
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
+        local_identity_unresolved: true,
         name: 'Local Executor',
         status: 'offline',
         device_type: 'local',
