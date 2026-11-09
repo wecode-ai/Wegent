@@ -147,6 +147,8 @@ Reading a notification, dismissing a reminder, or marking it read does not resol
 
 Use **Stop stand-in** at the bottom left of settings and confirm to stop. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 
+Executor read timeouts during source collection retry automatically with backoff, without saving the connection again. Sources previously stopped by this timeout also resume from their original cursor. Automatic recovery applies only to reads, never replaying sends or other actions. Expired authentication, permission denials, and invalid responses still require correction before retrying.
+
 ## Issue human handoffs
 
 Issue cards right-align an icon and the actor's name in the existing reference/status row above the title, without adding a row. Icons distinguish agent handling, stand-in handling and waiting for a person. Waiting uses a person with a small clock and a “Waiting for [person]” tooltip; only the name is visible as text. Confirmed running executions show the agent or stand-in, while outstanding questions prioritize their recipients. Otherwise the assigned person handles the Issue; when no person is assigned, its creator takes responsibility. There is no third handling state such as awaiting assignment. Business states remain independent, and execution details retain queued, failed and offline progress.
@@ -180,6 +182,10 @@ Assigners and recipients can view the receipts, which refresh while details rema
 Refreshing an Issue's status or other properties preserves receipt icons and pending hover tooltips for the same assignment. Reassignment, including assigning the same person again, immediately hides old receipts until the new assignment's results arrive.
 
 Stand-ins save the recipient-owned device task binding and reception receipt before starting execution. Background handling records reception when the assignment enters its pending queue. Reception does not imply successful execution, and a later launch failure does not revoke it. Cloud acknowledgements still validate the active assignment, owned device and task binding; rejection diagnostics do not relax these checks.
+
+Cloud assignment dispatch intents persist on their owning Executor. Transient cloud request failures recover with backoff, including after restart. A binding without a local task resumes the same task without depending on a successful binding deletion. Recovery revalidates the backend, account, current assignment, role and device; reassigned or disconnected project work is not replayed. Locally accepted tasks are not executed again by startup reconciliation. Model failures still use the original task's retry action, and configuration errors require human correction.
+
+The desktop retries failed notification delivery with backoff until the Executor accepts it. When a restarted Executor reports missing cloud configuration, the desktop reapplies the current signed-in connection and connector authorization. Ordinary network disconnects remain owned by the Executor's existing reconnect loop.
 
 ## Calendar arrangements and project leaders
 

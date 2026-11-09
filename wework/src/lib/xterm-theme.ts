@@ -18,6 +18,25 @@ const DARK_TERMINAL_THEME: RequiredTerminalTheme = {
   selectionBackground: 'rgba(51, 156, 255, 0.28)',
 }
 
+const ANSI_COLORS = {
+  black: 'black',
+  red: 'red',
+  green: 'green',
+  yellow: 'yellow',
+  blue: 'blue',
+  magenta: 'magenta',
+  cyan: 'cyan',
+  white: 'white',
+  brightBlack: 'bright-black',
+  brightRed: 'bright-red',
+  brightGreen: 'bright-green',
+  brightYellow: 'bright-yellow',
+  brightBlue: 'bright-blue',
+  brightMagenta: 'bright-magenta',
+  brightCyan: 'bright-cyan',
+  brightWhite: 'bright-white',
+} as const
+
 function isDarkAppearance(): boolean {
   if (typeof document === 'undefined') return false
 
@@ -57,6 +76,12 @@ export function getTerminalTheme(transparentBackground = false): ITheme {
   const fallbackTheme = isDarkAppearance() ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME
 
   return {
+    ...Object.fromEntries(
+      Object.entries(ANSI_COLORS).flatMap(([key, token]) => {
+        const color = cssVariableColor(`--color-terminal-${token}`, '')
+        return color ? [[key, color]] : []
+      })
+    ),
     background: transparentBackground
       ? 'rgba(0, 0, 0, 0)'
       : cssVariableColor('--color-bg-base', fallbackTheme.background),
@@ -107,7 +132,7 @@ export function observeTerminalTheme(onChange: (theme: ITheme) => void): () => v
 
   observer.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['class', 'data-theme', 'style'],
+    attributeFilter: ['class', 'data-theme', 'data-appearance-theme', 'style'],
   })
 
   return () => observer.disconnect()

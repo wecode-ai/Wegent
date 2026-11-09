@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createWindowsMarkdownFileLinks } from '../modules/windows-markdown-file-links.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { createTextAttachmentPreview } from '../modules/text-attachment-preview.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -103,6 +104,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
     },
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
       const breadcrumbDirectory = join(workspacePath, 'breadcrumb-fixture')
       await mkdir(breadcrumbDirectory, { recursive: true })
@@ -177,6 +179,25 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         text: 'export const authenticated = true',
         timeoutMs: uiTimeoutMs,
       })
+      const keyword = '[data-content] span[style*="--diffs-token-keyword"]'
+      await control.command('waitFor', keyword)
+      assert.equal(
+        await control.command('getComputedStyleValue', keyword, { value: 'color' }),
+        'rgb(187, 154, 247)',
+        'The Pierre editor did not use Tokyo Night syntax colors'
+      )
+      for (const selector of [
+        '[data-testid="workspace-file-editor"]',
+        '[data-testid="workspace-file-preview-code-view"]',
+        '[data-code]',
+      ]) {
+        assert.equal(
+          await control.command('getComputedStyleValue', selector, { value: 'background-color' }),
+          'rgb(26, 27, 38)',
+          `The Pierre surface ${selector} reset the selected theme background`
+        )
+      }
+      await captureScreenshot(control, 'appearance-tokyo-pierre-editor.png', 'body')
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
         join(workspacePath, 'auth.ts').replaceAll('\\', '/'),

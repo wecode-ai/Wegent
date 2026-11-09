@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { requestExecutor } from './executor-rpc.mjs'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
+import { seedCollectionTimeout } from './stand-in-collection-timeout.mjs'
 import {
   openStandInActivity,
   verifyStandInProfileNavigation,
@@ -242,6 +243,12 @@ export function createDirectRecoveryVerification(options) {
             USER
           )
         assert.equal(changed.changes, 1)
+        const assertCollectionRecovered = await seedCollectionTimeout(
+          database,
+          USER,
+          PROVIDER,
+          options.modelResponseTimeoutMs
+        )
         await publish(1)
         const work = await storyUntil(
           () => rpc(control, 'runtime.stand_in.work.list', { userId: USER }),
@@ -262,6 +269,7 @@ export function createDirectRecoveryVerification(options) {
             'Direct work must complete through real Codex'
           )
         assert.equal(workCalls, 2, 'Each incoming source event executes exactly once')
+        assertCollectionRecovered()
         const status = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
         assert.equal(
           status.error.code,
