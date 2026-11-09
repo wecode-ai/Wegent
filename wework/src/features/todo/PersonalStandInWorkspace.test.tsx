@@ -9,21 +9,24 @@ import {
   CloudConnectionContext,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
-import '@/i18n'
+import i18n from '@/i18n'
 import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import * as migration from './migrateStandIn'
 import { newStandInRole } from '@/api/personalStandIn'
 
 const guard = vi.hoisted(() => vi.fn((action: () => void) => action()))
+const projectList = vi.hoisted(() => vi.fn(async () => []))
 afterEach(() => {
   cleanup()
   localStorage.clear()
   guard.mockReset()
   guard.mockImplementation(action => action())
+  projectList.mockReset()
+  projectList.mockResolvedValue([])
 })
 vi.mock('./weworkPlatformApi', () => ({
-  createWeworkPlatformApi: () => ({ projects: { list: async () => [] } }),
+  createWeworkPlatformApi: () => ({ projects: { list: projectList } }),
 }))
 vi.mock('./localWorkspaceApi', () => ({ createLocalWorkspaceApi: () => null }))
 vi.mock('./StandInOverviewPage', () => ({
@@ -237,6 +240,27 @@ it('honors an explicit project link only while establishing the first instance b
     backendUrl: '',
   })
 })
+
+it.each(['zh-CN', 'en'])(
+  'preserves the localized stop-before-rebinding guidance in %s',
+  async language => {
+    const originalLanguage = i18n.language
+    try {
+      await i18n.changeLanguage(language)
+      const f = fixture()
+      render(f.workspace())
+      await userEvent.click(await screen.findByTestId('legacy-change-device'))
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        i18n.t('common:standIn.instance.stop_before_rebind')
+      )
+      expect(screen.queryByTestId('stand-in-view-devices')).not.toBeInTheDocument()
+      expect(f.binding).toHaveBeenCalledOnce()
+    } finally {
+      cleanup()
+      await i18n.changeLanguage(originalLanguage)
+    }
+  }
+)
 
 it('never stops a different binding that changed while its confirmation was open', async () => {
   const f = fixture()
@@ -466,9 +490,72 @@ it('recovers initial binding discovery errors without opening another profile', 
   f.binding.mockRejectedValueOnce(new Error('Executor offline'))
   render(f.workspace())
   await screen.findByRole('alert')
+  expect(screen.queryByTestId('stand-in-view-devices')).not.toBeInTheDocument()
   expect(screen.queryByTestId('retained-role-draft')).not.toBeInTheDocument()
   await userEvent.click(screen.getByTestId('stand-in-project-catalog-retry'))
   expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+})
+
+it.each(['protocol_mismatch', 'unsupported_method'])(
+  'shows an error and offers device status for %s without automatically navigating',
+  async code => {
+    const f = fixture()
+    f.binding.mockRejectedValueOnce(Object.assign(new Error('private transport details'), { code }))
+    const location = window.location.href
+    try {
+      render(f.workspace())
+      const devices = await screen.findByTestId('stand-in-view-devices')
+      expect(window.location.href).toBe(location)
+      expect(screen.getByRole('alert')).toHaveTextContent('版本不兼容')
+      expect(screen.getByRole('alert')).toHaveTextContent('云端工作查看设备情况')
+      expect(screen.getByRole('alert')).not.toHaveTextContent('private transport details')
+      expect(devices).toHaveAccessibleName('查看设备情况')
+      await userEvent.click(devices)
+      expect(window.location.pathname).toBe('/cloud-work')
+      expect(f.binding).toHaveBeenCalledOnce()
+      expect(f.lifecycle).not.toHaveBeenCalled()
+    } finally {
+      window.history.replaceState({}, '', location)
+    }
+  }
+)
+
+it('preserves compatibility errors from project loading until a successful reload', async () => {
+  const f = fixture()
+  projectList.mockRejectedValueOnce({ code: 'protocol_mismatch', message: 'private error' })
+  render(f.workspace())
+  expect(await screen.findByTestId('stand-in-view-devices')).toBeVisible()
+  expect(screen.getByRole('alert')).not.toHaveTextContent('private error')
+  await userEvent.click(screen.getByTestId('stand-in-project-catalog-retry'))
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  expect(screen.queryByTestId('stand-in-view-devices')).not.toBeInTheDocument()
+})
+
+it('offers remote device management for an incompatible bound executor and clears recovery after reload', async () => {
+  const f = fixture({ version: 0, status: 'unbound', target: null })
+  f.personalGet.mockImplementation(async userId => ({
+    userId,
+    executionDeviceId: 'mac',
+    version: 0,
+    roles: [],
+  }))
+  f.lifecycle.mockRejectedValueOnce(
+    Object.assign(new Error('unsupported RPC'), { code: 'unsupported_method' })
+  )
+  const location = window.location.href
+  try {
+    render(f.workspace())
+    const devices = await screen.findByTestId('stand-in-view-devices')
+    expect(window.location.href).toBe(location)
+    await userEvent.click(devices)
+    expect(window.location.pathname).toBe('/cloud-work')
+    expect(f.lifecycle).toHaveBeenCalledOnce()
+    await userEvent.click(screen.getByTestId('stand-in-project-catalog-retry'))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(screen.queryByTestId('stand-in-view-devices')).not.toBeInTheDocument()
+  } finally {
+    window.history.replaceState({}, '', location)
+  }
 })
 
 it.each([7, 8])(

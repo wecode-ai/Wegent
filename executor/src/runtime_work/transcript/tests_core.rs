@@ -766,7 +766,33 @@ fn transcript_keeps_unphased_text_in_processing_until_turn_completes() {
 }
 
 #[test]
-fn transcript_keeps_unphased_text_before_tools_in_processing() {
+fn transcript_preserves_completed_unphased_reply_before_late_command_update() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "status": "completed",
+            "items": [
+                {"id": "user-1", "type": "userMessage", "content": [
+                    {"type": "inputText", "text": "Read the large command output"}
+                ]},
+                {"id": "answer-1", "type": "agentMessage", "text": "LARGE_SOURCE_CONVERSATION_COMPLETE"},
+                {"id": "exec-1", "type": "commandExecution", "command": "large-output",
+                 "status": "completed", "aggregatedOutput": "x".repeat(64 * 1024), "exitCode": 0}
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let assistant = messages.last().unwrap();
+    assert_eq!(assistant["status"], "done");
+    assert_eq!(assistant["content"], "LARGE_SOURCE_CONVERSATION_COMPLETE");
+    assert_eq!(assistant["blocks"][0]["type"], "tool");
+}
+
+#[test]
+fn transcript_keeps_unphased_progress_before_tools_and_later_reply_in_processing() {
     let thread = json!({
         "id": "thread-1",
         "cwd": "/tmp/project",
@@ -823,6 +849,65 @@ fn transcript_keeps_unphased_text_before_tools_in_processing() {
     );
     assert_eq!(messages[1]["blocks"][1]["type"], "tool");
     assert_eq!(messages[1]["blocks"][1]["tool_name"], "exec_command");
+}
+
+#[test]
+fn transcript_distinguishes_legacy_progress_even_with_late_tool_updates() {
+    let thread = json!({"id":"thread-1", "turns":[{
+        "id":"turn-1", "status":"completed", "items":[
+            {"id":"progress", "type":"agentMessage", "text":"Inspecting"},
+            {"id":"first-tool", "type":"commandExecution", "command":"inspect"},
+            {"id":"reply", "type":"agentMessage", "text":"Done"},
+            {"id":"late-tool", "type":"commandExecution", "command":"late snapshot"}
+        ]
+    }]});
+    let messages = transcript_messages(&thread, "device-1");
+    let assistant = messages.last().unwrap();
+    assert_eq!(assistant["content"], "Done");
+    assert_eq!(assistant["blocks"][0]["content"], "Inspecting");
+    assert_eq!(assistant["blocks"][1]["type"], "tool");
+    assert_eq!(assistant["blocks"][2]["type"], "tool");
+}
+
+#[test]
+fn transcript_keeps_adjacent_unphased_reply_fragments_without_process_boundary() {
+    let thread = json!({"id":"thread-1", "turns":[{
+        "id":"turn-1", "status":"completed", "items":[
+            {"id":"reply-1", "type":"agentMessage", "text":"First part"},
+            {"id":"reply-2", "type":"agentMessage", "text":"Second part"}
+        ]
+    }]});
+    let messages = transcript_messages(&thread, "device-1");
+    assert_eq!(
+        messages.last().unwrap()["content"],
+        "First part\n\nSecond part"
+    );
+}
+
+#[test]
+fn transcript_preserves_progress_boundaries_for_unknown_provider_tools() {
+    for tool in [
+        json!({"id":"tool", "type":"providerAction", "call_id":"call-1", "name":"inspect"}),
+        json!({"id":"tool", "type":"providerAction", "callId":"call-1", "output":"done"}),
+    ] {
+        let mut thread = json!({"id":"thread-1", "turns":[{
+            "id":"turn-1", "status":"completed", "items":[
+                {"id":"progress", "type":"agentMessage", "text":"Inspecting"},
+                tool,
+                {"id":"reply", "type":"agentMessage", "text":"Done"}
+            ]
+        }]});
+        let messages = transcript_messages(&thread, "device-1");
+        let assistant = messages.last().unwrap();
+        assert_eq!(assistant["content"], "Done");
+        assert_eq!(assistant["blocks"][0]["content"], "Inspecting");
+        assert_eq!(assistant["blocks"][1]["type"], "tool");
+        let items = thread["turns"][0]["items"].as_array_mut().unwrap();
+        items.remove(0);
+        items.swap(0, 1);
+        let messages = transcript_messages(&thread, "device-1");
+        assert_eq!(messages.last().unwrap()["content"], "Done");
+    }
 }
 
 #[test]

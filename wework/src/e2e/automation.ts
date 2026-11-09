@@ -9,6 +9,7 @@ import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
+import { selectDesktopControlFile } from './select-file'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { readElementVisibility } from './element-visibility'
@@ -2947,6 +2948,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return endDesktopControlDrag(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
+    case 'selectFile':
+      return selectDesktopControlFile(findDesktopControlElements(command.selector)[0], command)
     case 'dropPaths':
       return dispatchDesktopControlPaths(command, 'drop')
     case 'pasteFile':

@@ -226,7 +226,7 @@ export function createWeeklyUserStory(options) {
         )
         await openConnectionTypePicker(control)
         await control.command('click', '[data-testid="stand-in-time-connections"]')
-        await control.command('click', `[data-testid="automation-open-${schedule.id}"]`)
+        await control.command('clickWhenEnabled', `[data-testid="automation-open-${schedule.id}"]`)
         await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
         await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
           text: '已暂停',

@@ -23,7 +23,7 @@ afterEach(async () => {
 })
 
 describe('validateSmartAppArtifacts', () => {
-  test.each(['electron', 'node'])(
+  test.each(['electron', 'current'])(
     'rejects a broken Host with a configured %s runtime regardless of parent mode',
     async kind => {
       const root = await copiedFixture('valid-client')
@@ -32,7 +32,10 @@ describe('validateSmartAppArtifacts', () => {
         'WEWORK_NODE_PATH',
         kind === 'electron' ? createRequire(import.meta.url)('electron') : process.execPath
       )
-      vi.stubEnv('WEWORK_NODE_RUNTIME_KIND', kind)
+      vi.stubEnv(
+        'WEWORK_NODE_RUNTIME_KIND',
+        kind === 'electron' || process.versions.electron ? 'electron' : 'node'
+      )
       vi.stubEnv('WEWORK_RUNTIME_BIN', '')
       vi.stubEnv('ELECTRON_RUN_AS_NODE', '0')
 

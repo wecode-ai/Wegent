@@ -96,7 +96,7 @@ import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
 import { IssueAssignmentHistoryDisclosure } from "./issue-detail/IssueAssignmentHistoryDisclosure";
 import { IssueSaveButton } from "./issue-detail/IssueSaveButton";
-import { localizeStandardStatuses } from "./i18n";
+import { localizeStandardStatuses, localizeStandardStatusName } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 import { useCollaborationPortalTheme } from "./theme";
 import { useIssueAssigneeResources } from "./issue-detail/useIssueAssigneeResources";
@@ -2917,12 +2917,16 @@ export function TodoEditor(props: TodoEditorProps) {
                 <div className="task-detail-id-row">
                   <span>{item.id}</span>
                   <span>·</span>
-                  <span>创建于 {item.created_at.slice(5, 10)}</span>
+                  <span>
+                    {t("todo.created_at_short", undefined, {
+                      date: item.created_at.slice(5, 10),
+                    })}
+                  </span>
                   {item.automation ? (
                     <>
                       <span>·</span>
                       <span data-testid="cloud-todo-automation-source">
-                        自动化 ·{" "}
+                        {t("todo.automation_source")} ·{" "}
                         {item.automation.trigger === "manual"
                           ? t("todo.manual_trigger", "手动触发")
                           : t("todo.scheduled_trigger", "定时触发")}
@@ -3340,7 +3344,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           workspacePanel && "task-detail-desc-hint",
                         )}
                       >
-                        支持 Markdown，可拖拽文件到编辑器添加附件
+                        {t("todo.issue_markdown_hint")}
                       </p>
                       {workspacePanel && editingContent ? (
                         <span
@@ -3557,6 +3561,8 @@ export function TodoEditor(props: TodoEditorProps) {
                                     "todo.status_history_initial",
                                     "初始状态",
                                   ),
+                                  statusName: (id, name) =>
+                                    localizeStandardStatusName(id, name, t),
                                   accept: t(
                                     "todo.status_action_accept",
                                     "验收",

@@ -71,7 +71,7 @@ export function DesktopSidebarTaskViewControl({
           onClick={onRun}
           aria-pressed={action === 'collapse-read' ? undefined : active}
           className={cn(
-            'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-l-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500',
+            'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-l-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-focus',
             active && 'bg-[rgb(var(--color-sidebar-active))]'
           )}
           aria-label={
@@ -132,7 +132,7 @@ export function DesktopSidebarTaskViewControl({
               ]
             : []),
         ]}
-        triggerClassName="flex h-7 w-4 shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500 [&_svg]:h-2.5 [&_svg]:w-2.5"
+        triggerClassName="flex h-7 w-4 shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-focus [&_svg]:h-2.5 [&_svg]:w-2.5"
       />
     </span>
   )

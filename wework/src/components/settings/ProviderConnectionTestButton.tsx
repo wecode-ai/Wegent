@@ -83,7 +83,7 @@ export function ProviderConnectionTestButton({
         <details
           role="alert"
           data-testid={`${testId}-result`}
-          className="group min-w-0 text-xs text-red-500"
+          className="group min-w-0 text-xs text-destructive"
         >
           <summary
             data-testid={`${testId}-error-details`}

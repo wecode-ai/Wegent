@@ -326,6 +326,8 @@ describe('DesktopSidebar', () => {
         'style',
         'data-theme',
         'data-appearance-mode',
+        'data-appearance-theme',
+        'data-ui-theme-id',
         'data-sidebar-translucent',
         'class',
       ].map(name => [name, root.getAttribute(name)] as const)
@@ -340,7 +342,13 @@ describe('DesktopSidebar', () => {
           ['#fff', '255 255 255'],
           [defaultAppearance.accentColor, '37 99 235'],
         ]) {
-          applyAppearance({ ...defaultAppearance, accentColor }, theme)
+          applyAppearance(
+            {
+              ...defaultAppearance,
+              themeOverrides: { ...defaultAppearance.themeOverrides, [theme]: { accentColor } },
+            },
+            theme
+          )
           expect(root.style.getPropertyValue('--color-primary')).toBe(expectedAccent)
           if (theme === 'light' && accentColor === defaultAppearance.accentColor) {
             expect(root.style.getPropertyValue('--color-sidebar-attention')).toBe(expectedAccent)
@@ -892,10 +900,8 @@ describe('DesktopSidebar', () => {
   })
 
   test('does not open add-device guidance while cloud work checks are failing', async () => {
-    const onGetRemoteDeviceStartupCommand = vi.fn()
     renderSidebar({
       devices: [localDevice()],
-      onGetRemoteDeviceStartupCommand,
       cloudWorkStatus: cloudWorkStatus({
         availability: 'unavailable',
         checks: { devices: 'unavailable' },
@@ -909,37 +915,11 @@ describe('DesktopSidebar', () => {
       '云端设备: request timed out'
     )
     expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
-    expect(onGetRemoteDeviceStartupCommand).not.toHaveBeenCalled()
   })
 
   test('treats an empty cloud device list as an add-device state instead of an error', async () => {
-    const onGetRemoteDeviceStartupCommand = vi.fn().mockResolvedValue({
-      device_id: 'remote-device',
-      name: 'alice-remote-device',
-      image: 'ghcr.io/wecode-ai/wegent-device:latest',
-      env: {},
-      command:
-        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
-      commands: [
-        {
-          kind: 'docker',
-          label: 'Docker',
-          description: 'Run in Docker.',
-          command:
-            'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
-        },
-        {
-          kind: 'process',
-          label: '宿主机启动',
-          description: 'Run as a local process.',
-          command:
-            'DEVICE_TYPE=remote EXECUTOR_MODE=local WEGENT_BACKEND_URL=http://backend wegent-executor',
-        },
-      ],
-    })
     renderSidebar({
       devices: [localDevice()],
-      onGetRemoteDeviceStartupCommand,
       cloudWorkStatus: cloudWorkStatus({
         availability: 'empty',
         checks: { devices: 'empty' },
@@ -951,50 +931,17 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('sidebar-cloud-connection-button'))
 
-    expect(screen.getByTestId('standalone-folder-project-dialog')).toHaveTextContent('添加新设备')
-    await waitFor(() => expect(onGetRemoteDeviceStartupCommand).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toHaveTextContent('添加设备')
+    expect(screen.getByTestId('add-device-panel')).toBeInTheDocument()
   })
 
-  test('shows Docker and process startup scripts when no cloud device is available', async () => {
-    const onGetRemoteDeviceStartupCommand = vi.fn().mockResolvedValue({
-      device_id: 'remote-device',
-      name: 'alice-remote-device',
-      image: 'ghcr.io/wecode-ai/wegent-device:latest',
-      env: {},
-      command:
-        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
-      commands: [
-        {
-          kind: 'docker',
-          label: 'Docker',
-          description: 'Run in Docker.',
-          command:
-            'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
-        },
-        {
-          kind: 'process',
-          label: '宿主机启动',
-          description: 'Run as a local process.',
-          command:
-            'DEVICE_TYPE=remote EXECUTOR_MODE=local WEGENT_BACKEND_URL=http://backend wegent-executor',
-        },
-      ],
-    })
-    renderSidebar({ onGetRemoteDeviceStartupCommand })
-
+  test('shows managed cloud and remote Docker choices without a host script', async () => {
+    renderSidebar()
     await userEvent.click(screen.getByTestId('sidebar-cloud-connection-button'))
-
-    expect(screen.getByTestId('standalone-folder-project-dialog')).toHaveTextContent('添加新设备')
-    await waitFor(() => expect(onGetRemoteDeviceStartupCommand).toHaveBeenCalledTimes(1))
-    expect(await screen.findByTestId('remote-device-startup-command')).toHaveTextContent(
-      'docker run'
-    )
-    expect(screen.getByTestId('remote-device-startup-tab-docker')).toBeInTheDocument()
-    expect(screen.getByTestId('remote-device-startup-tab-process')).toHaveTextContent('宿主机启动')
-
-    await userEvent.click(screen.getByTestId('remote-device-startup-tab-process'))
-
-    expect(screen.getByTestId('remote-device-startup-command')).toHaveTextContent('wegent-executor')
+    expect(screen.getByTestId('add-device-panel')).toHaveTextContent('云设备')
+    expect(screen.getByTestId('add-device-panel')).toHaveTextContent('远程 Docker 设备')
+    expect(screen.queryByTestId('remote-device-startup-tab-process')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('remote-docker-command')).not.toBeInTheDocument()
   })
 
   test('opens the path contributed by the plugin-center sidebar item', async () => {

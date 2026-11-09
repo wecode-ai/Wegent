@@ -519,6 +519,48 @@ describe('Process explorer capabilities', () => {
   })
 })
 
+describe('inline visualization window targeting', () => {
+  test.each([undefined, 'workspace-visualization'])(
+    'inspects the frame in the requested window: %s',
+    async windowLabel => {
+      const original = {
+        VITE_WEWORK_E2E: process.env.VITE_WEWORK_E2E,
+        WEWORK_E2E_CONTROL_URL: process.env.WEWORK_E2E_CONTROL_URL,
+      }
+      try {
+        process.env.VITE_WEWORK_E2E = 'true'
+        process.env.WEWORK_E2E_CONTROL_URL = 'http://127.0.0.1:1234'
+        const url = 'blob:http://127.0.0.1/visualization'
+        const frame = { url, executeJavaScript: vi.fn(async () => '249.32') }
+        const captureTarget = vi.fn(
+          () =>
+            ({
+              isDestroyed: () => false,
+              mainFrame: { executeJavaScript: vi.fn(async () => true), frames: [frame] },
+            }) as unknown as WebContents
+        )
+        const { router } = createIsolatedClipboardRouter(true, { captureTarget })
+
+        await expect(
+          router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.inlineVisualizationFrame', {
+            url,
+            action: 'text',
+            selector: '#interest',
+            ...(windowLabel ? { windowLabel } : {}),
+          })
+        ).resolves.toBe('249.32')
+        expect(captureTarget).toHaveBeenCalledExactlyOnceWith(windowLabel ?? 'main')
+        expect(frame.executeJavaScript).toHaveBeenCalledOnce()
+      } finally {
+        for (const [key, value] of Object.entries(original)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    }
+  )
+})
+
 describe('renderer heap debugger ownership', () => {
   test('releases its heap lease without detaching another active consumer', async () => {
     const { contents, debuggerSession } = createWebContents({})

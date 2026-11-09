@@ -114,7 +114,7 @@ function TextInputDialogContent({
           }}
           className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/20"
         />
-        {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"

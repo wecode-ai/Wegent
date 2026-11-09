@@ -150,7 +150,6 @@ import type {
   UnifiedModel,
   User as UserProfile,
 } from '@/types/api'
-import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { CloudWorkStatus, RuntimeWorkLoadState } from '@/types/workbench'
 import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
 import type {
@@ -298,7 +297,6 @@ interface DesktopSidebarProps {
     name: string
   }) => Promise<void>
   onSelectStandaloneDevice?: (deviceId: string | null) => void
-  onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onUpdateLocalRuntimeProject?: (data: {
     deviceId: string
@@ -653,7 +651,7 @@ function ArchiveConversationsConfirmDialog({
             data-testid={`${testId}-confirm-button`}
             onClick={() => void onConfirm()}
             disabled={submitting}
-            className="inline-flex h-8 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-red-500/15 px-4 text-sm font-semibold text-red-500 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-8 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-destructive/15 px-4 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}
@@ -1155,7 +1153,7 @@ function SidebarReleaseNotesCard({
         type="button"
         data-testid="sidebar-release-notes-open"
         onClick={onOpen}
-        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
+        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus"
       >
         <span className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
@@ -1220,7 +1218,7 @@ function ProjectDeviceInlineStatus({
           'h-2 w-2 shrink-0 rounded-full',
           !online && 'bg-[rgb(var(--color-sidebar-text-muted))] opacity-55'
         )}
-        style={online ? { backgroundColor: '#1FD660' } : undefined}
+        style={online ? { backgroundColor: 'rgb(var(--color-success))' } : undefined}
       />
     </span>
   )
@@ -2968,7 +2966,6 @@ export function DesktopSidebar({
   onOpenStandaloneWorkspace,
   onCreatePermanentWorktree,
   onSelectStandaloneDevice,
-  onGetRemoteDeviceStartupCommand,
   onUpdateProjectName,
   onUpdateLocalRuntimeProject,
   onRemoveProject,
@@ -4028,7 +4025,7 @@ export function DesktopSidebar({
       onPointerLeave={onPointerLeave}
       className={cn(
         'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
-        !collapsed && 'border-r border-black/[0.08] dark:border-white/[0.08]',
+        !collapsed && 'border-r border-border/70',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
@@ -4086,7 +4083,7 @@ export function DesktopSidebar({
                       type="button"
                       data-testid="runtime-search-button"
                       onClick={onOpenSearch}
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-focus"
                       aria-label={t('workbench.search')}
                     >
                       <Search className="h-4 w-4" />
@@ -4635,7 +4632,7 @@ export function DesktopSidebar({
                               {operation.status !== 'failed' ? (
                                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                               ) : (
-                                <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                                <span className="h-2 w-2 shrink-0 rounded-full bg-destructive" />
                               )}
                               <span className="min-w-0 flex-1 truncate">{operation.name}</span>
                               <span className="shrink-0 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
@@ -4968,7 +4965,6 @@ export function DesktopSidebar({
             onCloneGitRepository={onCloneGitRepository}
             onStartGitCloneProject={onStartGitCloneProject}
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-            onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
             onRefreshDevices={onRefreshDevices}
           />
           <ArchiveConversationsConfirmDialog

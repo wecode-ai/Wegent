@@ -23,5 +23,6 @@
   "runtime_features": null,
   "cloud_config": null,
   "remote_config": null,
-  "bind_shell": "claudecode"
+  "bind_shell": "claudecode",
+  "last_seen_at": null
 }

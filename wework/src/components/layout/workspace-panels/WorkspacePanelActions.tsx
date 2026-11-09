@@ -524,7 +524,7 @@ function CodeServerErrorDialog({ message, onClose }: { message: string; onClose:
         onClick={event => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-red-500/10 text-red-500">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive">
             <AlertCircle className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">

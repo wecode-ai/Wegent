@@ -58,6 +58,7 @@ const quote = value => `'${value.replaceAll("'", "'\\''")}'`
 export async function createDesktopScenario({
   homePath,
   resultDir,
+  releaseAssetToken,
   workspacePath,
   workbenchReadyTimeoutMs,
   captureScreenshot,
@@ -144,10 +145,12 @@ export async function createDesktopScenario({
       root,
       userHome: userHomeFor(release),
       directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
     })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
-      join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version)
+      join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
+      releaseAssetToken
     )
     evidence.push({
       phase: 'delivered-plugin-package',
@@ -402,7 +405,8 @@ export async function createDesktopScenario({
       pluginTools = await prepareHistoricalPluginTools(join(resultDir, 'historical-plugin-tools'))
       const delivered = await historicalPluginPackages(
         HISTORICAL_PLUGIN_UPDATE,
-        join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_UPDATE.version)
+        join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_UPDATE.version),
+        releaseAssetToken
       )
       updatePackages = delivered.packages
       evidence.push({ phase: 'delivered-plugin-update', ...delivered.evidence })
