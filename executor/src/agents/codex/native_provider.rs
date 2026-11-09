@@ -41,6 +41,11 @@ pub(super) fn with_headers(
     cwd: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let config = read_config(home)?;
+    if !is_builtin_codex_provider(provider) && !config["model_providers"][provider].is_object() {
+        return Err(format!(
+            "Selected Codex provider is not configured in its native Home: {provider}"
+        ));
+    }
     let mut selected = defaults(provider);
     if let Some(configured) = config["model_providers"][provider].as_object() {
         // Match native built-in merging. Aliasing must not activate fields that
@@ -302,10 +307,9 @@ auth={command="native-credential-helper",args=["--scope","test"]}
         assert_eq!(config["auth"]["command"], "native-credential-helper");
         assert_eq!(config["requires_openai_auth"], false);
         let other = tempfile::tempdir().unwrap();
-        assert!(!overrides(other.path(), "custom")
-            .unwrap()
-            .iter()
-            .any(|s| s.contains("credential-helper")));
+        assert!(overrides(other.path(), "custom")
+            .unwrap_err()
+            .contains("not configured in its native Home"));
     }
 
     #[test]

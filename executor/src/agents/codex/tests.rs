@@ -2870,6 +2870,18 @@ fn header_overrides_do_not_redefine_builtin_codex_providers() {
 #[test]
 fn header_overrides_preserve_custom_provider_headers() {
     let _environment = environment::LaunchEnvironment::new();
+    fs::create_dir_all(wework_codex_home()).unwrap();
+    fs::write(
+        wework_codex_home().join("config.toml"),
+        r#"
+[model_providers.openai-custom]
+name="Custom header fixture"
+base_url="https://synthetic.invalid/v1"
+auth={command="synthetic-credential-helper"}
+http_headers={X-Existing="preserved"}
+"#,
+    )
+    .unwrap();
     let request = ExecutionRequest {
         task_id: "task-1".into(),
         model_config: json!({"model_provider":"openai-custom","default_headers":{"X-Wegent-Test":"test-value"}}),
@@ -2878,6 +2890,7 @@ fn header_overrides_preserve_custom_provider_headers() {
     };
     let launch = build_codex_launch_config(&request).unwrap();
     let profile = native_provider::profile_for_test(&launch.config_overrides);
+    assert_eq!(profile["http_headers"]["X-Existing"], "preserved");
     assert_eq!(profile["http_headers"]["X-Wegent-Test"], "test-value");
     assert_eq!(profile["http_headers"]["wecode-project"], "42");
     assert_eq!(profile["http_headers"]["wecode-session-id"], "task-1");

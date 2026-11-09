@@ -397,6 +397,38 @@ describe('DesktopRuntime lifecycle generation', () => {
     await runtime.stop()
   })
 
+  test('shutdown cancels migration and waits for its writer before allowing another start', async () => {
+    const entered = deferred<AbortSignal>()
+    const exited = deferred<void>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    vi.mocked(migrateCodexProviderState).mockImplementationOnce(async (_options, signal) => {
+      entered.resolve(signal!)
+      await exited.promise
+      throw new Error('migration cancelled')
+    })
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { createExecutor }
+    )
+    const started = runtime.start()
+    const rejected = expect(started).rejects.toThrow('migration cancelled')
+    const signal = await entered.promise
+    let stopped = false
+    const stopping = runtime.stop().then(() => {
+      stopped = true
+    })
+    await flush()
+    expect(signal.aborted).toBe(true)
+    expect(stopped).toBe(false)
+    expect(createExecutor).not.toHaveBeenCalled()
+    exited.resolve()
+    await Promise.all([stopping, rejected])
+    expect(stopped).toBe(true)
+    await runtime.start()
+    expect(createExecutor).toHaveBeenCalledTimes(1)
+    await runtime.stop()
+  })
+
   test('a restart continuation cannot publish a runtime after shutdown', async () => {
     const runtime = createRuntime(EXTERNAL_DSH)
     await runtime.start()

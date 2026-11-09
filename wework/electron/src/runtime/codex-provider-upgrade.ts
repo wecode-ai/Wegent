@@ -12,7 +12,8 @@ const execute = promisify(execFile)
 
 /** Target-owned upgrade/recovery step. Run before any executor or Goal recovery starts. */
 export async function migrateCodexProviderState(
-  options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>
+  options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>,
+  signal?: AbortSignal
 ): Promise<void> {
   const { environment } = options
   const command = environment.WEWORK_EXECUTOR_PATH?.trim()
@@ -22,7 +23,7 @@ export async function migrateCodexProviderState(
     throw new Error('Codex session upgrade requires the selected executor and Workbench Homes')
   let result: unknown
   try {
-    const { stdout } = await execute(
+    const execution = execute(
       command,
       [
         '--workbench-codex-providers-migrate',
@@ -37,14 +38,23 @@ export async function migrateCodexProviderState(
           SystemRoot: environment.SystemRoot,
           WINDIR: environment.WINDIR,
         },
-        timeout: 120_000,
-        killSignal: 'SIGKILL',
+        // Work is proportional to history bytes; only lifecycle shutdown may
+        // interrupt it, never a fixed deadline that prevents eventual progress.
+        timeout: 0,
+        signal,
         maxBuffer: 16 * 1024,
         windowsHide: true,
         encoding: 'utf8',
       }
     )
-    result = JSON.parse(stdout)
+    const closed = new Promise<void>(resolve => execution.child.once('close', () => resolve()))
+    try {
+      const { stdout } = await execution
+      result = JSON.parse(stdout)
+    } finally {
+      // Abort rejects before exit. Do not admit another owner until leases close.
+      await closed
+    }
   } catch {
     // Child output can contain private session details; never forward it to the UI.
     throw new Error(

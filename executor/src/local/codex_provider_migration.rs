@@ -93,29 +93,41 @@ fn has_codex_history(home: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
-fn acquire_execution(home: &Path) -> Result<Option<FileLease>, String> {
+fn acquire_execution(home: &Path) -> Result<FileLease, String> {
     let path = home.join(".execution.lock");
     let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Ok(metadata) => Some(metadata),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.to_string()),
     };
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+    if metadata.is_some_and(|metadata| !metadata.is_file() || metadata.file_type().is_symlink()) {
         return Err("Invalid native Home execution lease".into());
     }
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
+        .create(true)
+        .truncate(false)
         .open(path)
         .map_err(|e| e.to_string())?;
     file.try_lock_exclusive()
         .map_err(|_| "Codex migration is waiting for an active Agent execution")?;
-    Ok(Some(FileLease(file)))
+    Ok(FileLease(file))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_execution_lock_is_created_and_held_until_migration_exits() {
+        let root = tempfile::tempdir().unwrap();
+        let lease = acquire_execution(root.path()).unwrap();
+        assert!(root.path().join(".execution.lock").is_file());
+        assert!(acquire_execution(root.path()).is_err());
+        drop(lease);
+        acquire_execution(root.path()).unwrap();
+    }
 
     #[test]
     fn fresh_install_and_claude_only_homes_do_not_create_codex_state() {

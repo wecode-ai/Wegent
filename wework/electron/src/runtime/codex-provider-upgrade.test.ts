@@ -96,3 +96,18 @@ test('an interrupted offline command can complete on the next start', async () =
   )
   await expect(migrateCodexProviderState(options)).resolves.toBeUndefined()
 })
+
+test('lifecycle cancellation waits for the real offline child to close', async () => {
+  const { command, options } = await fixture()
+  await writeFile(command, 'setInterval(() => {}, 1000)')
+  const controller = new AbortController()
+  const execution = migrateCodexProviderState(options, controller.signal)
+  const rejected = expect(execution).rejects.toThrow('journal will resume')
+  controller.abort()
+  await rejected
+  await writeFile(
+    command,
+    'process.stdout.write(JSON.stringify({codex_provider_migration:1,complete:true}))'
+  )
+  await expect(migrateCodexProviderState(options)).resolves.toBeUndefined()
+})

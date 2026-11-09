@@ -16,21 +16,25 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::file_lease::FileLease;
 
 const JOURNAL: &str = ".wework-provider-migration.json";
 const ROUTER: &str = super::codex_model_catalog::PROVIDER_ID;
-const JOURNAL_VERSION: u32 = 2;
+const JOURNAL_VERSION: u32 = 3;
 
 #[derive(Deserialize)]
 struct RawEnvelope<'a> {
+    #[serde(rename = "type")]
+    kind: String,
     #[serde(borrow)]
     payload: &'a RawValue,
 }
 
 #[derive(Deserialize)]
 struct RawMetadata<'a> {
+    id: String,
     #[serde(borrow)]
     model_provider: &'a RawValue,
 }
@@ -52,9 +56,40 @@ struct Entry {
     path: PathBuf,
     thread_id: String,
     provider: String,
-    before: String,
-    after: String,
+    provider_raw: String,
+    before_sha256: String,
+    after_sha256: String,
 }
+
+fn metadata_hash(header: &str) -> String {
+    format!("{:x}", Sha256::digest(header.as_bytes()))
+}
+
+fn parse_metadata(header: &str) -> Result<RawMetadata<'_>, String> {
+    let envelope: RawEnvelope<'_> = serde_json::from_str(header).map_err(error)?;
+    if envelope.kind != "session_meta" {
+        return Err("Invalid Codex migration metadata identity".into());
+    }
+    serde_json::from_str(envelope.payload.get()).map_err(error)
+}
+
+fn plan_entry(path: PathBuf, before: &str) -> Result<Entry, String> {
+    let metadata = parse_metadata(before)?;
+    let raw = metadata.model_provider.get();
+    let entry = Entry {
+        path,
+        thread_id: metadata.id,
+        provider: serde_json::from_str(raw).map_err(error)?,
+        provider_raw: raw.to_owned(),
+        before_sha256: metadata_hash(before),
+        after_sha256: metadata_hash(&rewrite_metadata(before)?),
+    };
+    validate_entry(&entry)?;
+    Ok(entry)
+}
+
+#[path = "provider_migration_journal.rs"]
+mod journal;
 
 /// Must be held until publication completes. This is Codex's own coordination
 /// namespace, so both native writers and its compression publisher are excluded.
@@ -110,16 +145,13 @@ fn migrate_with_checkpoint(
     let _writers = acquire_writers(home)?;
     let journal_path = home.join(JOURNAL);
     reject_link(&journal_path)?;
-    let mut journal = match fs::read(&journal_path) {
-        Ok(bytes) => serde_json::from_slice::<Journal>(&bytes).map_err(error)?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Journal {
-            version: JOURNAL_VERSION,
-            ..Journal::default()
-        },
-        Err(e) => return Err(error(e)),
-    };
+    let (mut journal, compacted) = journal::load(&journal_path)?;
     if journal.version != JOURNAL_VERSION {
         return Err("Unsupported Codex provider migration journal version".into());
+    }
+    if compacted {
+        save(&journal_path, &journal)?;
+        checkpoint(Phase::JournalPublished)?;
     }
     if !journal.complete {
         let pending = journal
@@ -140,6 +172,12 @@ fn migrate_with_checkpoint(
     let mut present_threads = BTreeSet::new();
     for path in paths {
         let mut reader = reader(&path)?;
+        // An unpublished empty rollout has no provider or history to convert.
+        // Keep native metadata-readiness recovery responsible for it. Pending
+        // journal entries still require their exact header in apply().
+        if reader.fill_buf().map_err(error)?.is_empty() {
+            continue;
+        }
         let before = first_line(&mut reader)?;
         let meta: Value = serde_json::from_str(&before).map_err(error)?;
         if meta["type"] != "session_meta" {
@@ -169,14 +207,10 @@ fn migrate_with_checkpoint(
         {
             return Err("Previously migrated Codex rollout changed provider unexpectedly".into());
         }
-        let after = rewrite_metadata(&before)?;
-        additions.push(Entry {
-            path: path.strip_prefix(home).map_err(error)?.into(),
-            thread_id,
-            provider,
-            before,
-            after,
-        });
+        additions.push(plan_entry(
+            path.strip_prefix(home).map_err(error)?.into(),
+            &before,
+        )?);
     }
     if !additions.is_empty() {
         journal.pending_from = journal.entries.len();
@@ -236,6 +270,11 @@ fn apply(
     if entries.is_empty() {
         return Ok(());
     }
+    for entry in entries {
+        let path = checked_path(home, &entry.path)?;
+        let current = first_line(&mut reader(&path)?)?;
+        checked_rewrite(entry, &current)?;
+    }
     let mut databases = databases(home)?;
     let transactions = databases
         .iter_mut()
@@ -249,14 +288,10 @@ fn apply(
         let path = checked_path(home, &entry.path)?;
         let mut input = reader(&path)?;
         let current = first_line(&mut input)?;
-        if current == entry.after {
-            continue;
+        if let Some(after) = checked_rewrite(entry, &current)? {
+            replace_metadata(&path, &after, input)?;
+            checkpoint(Phase::RolloutPublished(index))?;
         }
-        if current != entry.before {
-            return Err("Codex rollout changed during provider migration".into());
-        }
-        replace_metadata(&path, &entry.after, input)?;
-        checkpoint(Phase::RolloutPublished(index))?;
     }
     for (index, transaction) in transactions.into_iter().enumerate() {
         for thread_id in &threads {
@@ -283,18 +318,15 @@ fn affected_threads(entries: &[Entry]) -> Result<BTreeSet<String>, String> {
 }
 
 fn validate_entry(entry: &Entry) -> Result<(), String> {
-    let before: Value = serde_json::from_str(&entry.before).map_err(error)?;
-    if before["type"] != "session_meta" || before["payload"]["id"] != entry.thread_id {
-        return Err("Invalid Codex migration metadata identity".into());
-    }
-    let provider = before["payload"]["model_provider"]
-        .as_str()
-        .unwrap_or("openai");
-    if provider != entry.provider {
+    uuid::Uuid::parse_str(&entry.thread_id).map_err(error)?;
+    let provider: String = serde_json::from_str(&entry.provider_raw).map_err(error)?;
+    if provider.is_empty() || provider != entry.provider {
         return Err("Invalid Codex migration original provider".into());
     }
-    if entry.after != rewrite_metadata(&entry.before)? {
-        return Err("Codex migration may only change the provider identity".into());
+    for hash in [&entry.before_sha256, &entry.after_sha256] {
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Invalid Codex migration metadata digest".into());
+        }
     }
     let mut components = entry.path.components();
     if !components.next().is_some_and(|part| {
@@ -315,13 +347,53 @@ fn validate_entry(entry: &Entry) -> Result<(), String> {
     Ok(())
 }
 
+fn checked_rewrite(entry: &Entry, current: &str) -> Result<Option<String>, String> {
+    let metadata = parse_metadata(current)?;
+    if metadata.id != entry.thread_id {
+        return Err("Invalid Codex migration metadata identity".into());
+    }
+    let hash = metadata_hash(current);
+    let raw = metadata.model_provider.get();
+    if hash == entry.before_sha256 && raw == entry.provider_raw {
+        let after = rewrite_metadata(current)?;
+        if metadata_hash(&after) == entry.after_sha256 {
+            return Ok(Some(after));
+        }
+    } else if hash == entry.after_sha256 && raw == serde_json::to_string(ROUTER).map_err(error)? {
+        let start = (raw.as_ptr() as usize)
+            .checked_sub(current.as_ptr() as usize)
+            .ok_or("Invalid Codex provider metadata span")?;
+        let end = start
+            .checked_add(entry.provider_raw.len())
+            .ok_or("Invalid Codex metadata range")?;
+        let padding = entry
+            .provider_raw
+            .len()
+            .checked_sub(raw.len())
+            .ok_or("Invalid Codex provider metadata padding")?;
+        if current.get(start..end) == Some(format!("{raw}{}", " ".repeat(padding)).as_str()) {
+            let original = format!(
+                "{}{}{}",
+                &current[..start],
+                entry.provider_raw,
+                &current[end..]
+            );
+            if metadata_hash(&original) == entry.before_sha256 {
+                return Ok(None);
+            }
+        }
+    } else {
+        return Err("Codex rollout changed during provider migration".into());
+    }
+    Err("Codex migration may only change the provider identity".into())
+}
+
 /// Preserve every byte position, including cursors into inherited/compacted
 /// history. Only the raw provider value is replaced; unused bytes become JSON
 /// whitespace. Re-serializing the rest could also change unknown numeric or
 /// Unicode encodings, so the original envelope is retained verbatim.
 fn rewrite_metadata(before: &str) -> Result<String, String> {
-    let envelope: RawEnvelope<'_> = serde_json::from_str(before).map_err(error)?;
-    let metadata: RawMetadata<'_> = serde_json::from_str(envelope.payload.get()).map_err(error)?;
+    let metadata = parse_metadata(before)?;
     let raw = metadata.model_provider.get();
     let original: String = serde_json::from_str(raw).map_err(error)?;
     if original.is_empty() {

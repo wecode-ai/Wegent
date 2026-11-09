@@ -7,6 +7,42 @@ use serde_json::json;
 const ID: &str = "00000000-0000-4000-8000-000000000001";
 const CHILD: &str = "00000000-0000-4000-8000-000000000002";
 
+#[test]
+fn unpublished_empty_rollouts_keep_native_readiness_recovery_and_are_migrated_once_ready() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, tail) = fixture(home.path(), ID, false);
+    let original = fs::read(&path).unwrap();
+    fs::write(&path, "").unwrap();
+    migrate(home.path()).unwrap();
+    assert!(fs::read(&path).unwrap().is_empty());
+    fs::write(&path, original).unwrap();
+    migrate(home.path()).unwrap();
+    assert_eq!(content(&path).split_once('\n').unwrap().1, tail);
+    assert_eq!(
+        serde_json::from_str::<Value>(content(&path).split_once('\n').unwrap().0).unwrap()
+            ["payload"]["model_provider"],
+        ROUTER
+    );
+}
+
+#[test]
+fn truncated_headers_and_empty_pending_journal_entries_still_fail_closed() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, _) = fixture(home.path(), ID, false);
+    let original = fs::read(&path).unwrap();
+    fs::write(&path, "{\"type\":\"session_meta\"").unwrap();
+    assert!(migrate(home.path()).unwrap_err().contains("Incomplete"));
+    assert!(!home.path().join(JOURNAL).exists());
+    fs::write(&path, original).unwrap();
+    assert!(migrate_with_checkpoint(home.path(), &mut |_| Err("interrupted".into())).is_err());
+    fs::write(&path, "").unwrap();
+    assert!(migrate(home.path()).unwrap_err().contains("Incomplete"));
+    let journal: Journal =
+        serde_json::from_slice(&fs::read(home.path().join(JOURNAL)).unwrap()).unwrap();
+    assert!(!journal.complete);
+    assert_eq!(journal.entries.len(), 1);
+}
+
 fn fixture(home: &Path, id: &str, compressed: bool) -> (PathBuf, String) {
     let root = home.join("sessions/2026/11/09");
     fs::create_dir_all(&root).unwrap();
@@ -435,18 +471,84 @@ fn upgrading_again_after_legacy_resume_reconciles_the_index_without_restoring_st
 #[test]
 fn migration_journal_cannot_change_permissions_or_account_identity() {
     let home = tempfile::tempdir().unwrap();
-    fixture(home.path(), ID, false);
+    let (path, _) = fixture(home.path(), ID, false);
+    let db = database(home.path());
     migrate(home.path()).unwrap();
     let mut journal: Journal =
         serde_json::from_slice(&fs::read(home.path().join(JOURNAL)).unwrap()).unwrap();
     journal.complete = false;
-    let mut forged: Value = serde_json::from_str(&journal.entries[0].after).unwrap();
+    let current = content(&path);
+    let (header, tail) = current.split_once('\n').unwrap();
+    let mut forged: Value = serde_json::from_str(header).unwrap();
     forged["payload"]["creator_account_id"] = json!("another-account");
-    journal.entries[0].after = format!("{forged}\n");
+    let forged = rewrite_metadata(&format!("{forged}\n").replace("\"~\"", "\"legacy\"")).unwrap();
+    journal.entries[0].after_sha256 = metadata_hash(&forged);
+    fs::write(&path, format!("{forged}{tail}")).unwrap();
     save(&home.path().join(JOURNAL), &journal).unwrap();
     assert!(migrate(home.path())
         .unwrap_err()
         .contains("only change the provider"));
+    assert_eq!(content(&path), format!("{forged}{tail}"));
+    assert_eq!(
+        db.query_row("SELECT tokens FROM goals", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        2345
+    );
+}
+
+#[test]
+fn migration_journal_does_not_duplicate_base_instructions() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, tail) = fixture(home.path(), ID, false);
+    let mut header: Value =
+        serde_json::from_str(content(&path).split_once('\n').unwrap().0).unwrap();
+    header["payload"]["base_instructions"] = json!("private-instruction-sentinel".repeat(4096));
+    fs::write(&path, format!("{header}\n{tail}")).unwrap();
+    migrate(home.path()).unwrap();
+    let journal = fs::read_to_string(home.path().join(JOURNAL)).unwrap();
+    assert!(journal.len() < 2048);
+    assert!(!journal.contains("private-instruction-sentinel"));
+    assert!(content(&path).contains("private-instruction-sentinel"));
+}
+
+#[test]
+fn legacy_snapshot_journal_compacts_and_recovers_after_publication_interruption() {
+    for already_published in [false, true] {
+        let home = tempfile::tempdir().unwrap();
+        let (path, tail) = fixture(home.path(), ID, false);
+        let before = first_line(&mut reader(&path).unwrap()).unwrap();
+        let after = rewrite_metadata(&before).unwrap();
+        let legacy = json!({"version":2,"complete":false,"pending_from":0,"entries":[{
+            "path":path.strip_prefix(home.path()).unwrap(), "thread_id":ID,
+            "provider":"legacy", "before":before, "after":after
+        }]});
+        fs::write(
+            home.path().join(JOURNAL),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        if already_published {
+            fs::write(&path, format!("{after}{tail}")).unwrap();
+        }
+        let db = database(home.path());
+        assert!(migrate_with_checkpoint(home.path(), &mut |phase| {
+            assert_eq!(phase, Phase::JournalPublished);
+            Err("interrupted compaction".into())
+        })
+        .unwrap_err()
+        .contains("interrupted compaction"));
+        let journal: Value =
+            serde_json::from_slice(&fs::read(home.path().join(JOURNAL)).unwrap()).unwrap();
+        assert_eq!(journal["version"], JOURNAL_VERSION);
+        assert!(journal["entries"][0].get("before").is_none());
+        migrate(home.path()).unwrap();
+        assert_eq!(content(&path), format!("{after}{tail}"));
+        assert_eq!(
+            db.query_row("SELECT tokens FROM goals", [], |r| r.get::<_, u32>(0))
+                .unwrap(),
+            2345
+        );
+    }
 }
 
 #[test]

@@ -235,5 +235,8 @@ wire_api = "responses"
         assert_eq!(upstream.api_key, "selected-home-token");
         fs::remove_file(selected.join("config.toml")).unwrap();
         assert!(request_upstream(&request).unwrap().is_none());
+        assert!(build_codex_launch_config(&request)
+            .unwrap_err()
+            .contains("not configured in its native Home"));
     }
 }

@@ -24,6 +24,21 @@ retains original providers and index provenance. Conversation bodies, compressio
 references, permissions, creator accounts, Goal state/budgets and recoverable user commands
 are not regenerated. Authentication files, repositories and cloud data are excluded.
 
+Journal v3 stores the original provider's exact JSON value and SHA-256 digests of both header
+states, not base instructions or complete header snapshots. Release each header buffer after
+processing it. Recovery reconstructs the original provider value and verifies its digest so
+permissions, accounts and all other fields cannot change. Validate existing v2 entries one at
+a time and atomically compact them to v3 without loading every session header simultaneously.
+Interruption during compaction still resumes from durable progress.
+Leave empty rollouts without published metadata unchanged and retain native metadata-readiness
+recovery. A nonempty truncated header, or a missing header already recorded in the pending
+journal, still blocks completion. Auxiliary named-Home readers share native process lifetime
+leases rather than migrating while a writer is live; they never inherit another Home's auth.
+The offline command has no fixed kill deadline. Shutdown cancels it and waits for process exit
+before releasing writer ownership. This does not remove an older independent launcher's
+activation health budget. Verify the stopped-writer preparation phase and any required bridge
+release separately; recoverable migration alone does not certify arbitrary legacy upgrade edges.
+
 Persist intent before mutation; publish rollout files atomically and update indexes in
 transactions. Re-entering preparation after interruption must converge, not treat an exception
 as completion. Compatible older clients may rewrite the index provider or materialize compressed

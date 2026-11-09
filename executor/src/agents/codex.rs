@@ -4090,12 +4090,9 @@ fn spawn_codex_app_server(
         .map(PathBuf::from)
         .unwrap_or_else(wework_codex_home);
     let auth_lease = if launch_config.env.contains_key(CODEX_HOME_ENV) {
-        fs::create_dir_all(&codex_home)
-            .map_err(|error| format!("create agent Codex Home: {error}"))?;
-        // A named Home may import an older task after the application upgrade.
-        // The task owns its Home execution lease; native writers are not started yet.
-        provider_migration::migrate(&codex_home)?;
-        None
+        // First ownership migrates offline. Auxiliary readers share the lifetime
+        // lease instead of trying to rewrite a Home with an active native writer.
+        Some(home::acquire_named_home(&codex_home)?)
     } else {
         Some(home::acquire_shared_auth(&codex_home, auth_mode)?)
     };
