@@ -407,10 +407,20 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
     )
     post = _patch_remote_request(mocker)
 
+    from app.services.rag.reporting import index_execution_context
+
     task_kwargs = {
-        key: value for key, value in rebuild_task.items() if key != "index_generation"
+        key: value
+        for key, value in rebuild_task.items()
+        if key not in {"index_generation", "trigger"}
     }
-    result = run_document_indexing(**task_kwargs, db=test_db)
+    with index_execution_context(
+        trigger=rebuild_task["trigger"],
+        generation=rebuild_task["index_generation"],
+        attempt=0,
+        retry_scheduled=False,
+    ):
+        result = run_document_indexing(**task_kwargs, db=test_db)
 
     assert result["status"] == "success"
     index_calls = [
