@@ -8,7 +8,12 @@ import type { CollaborationLocale } from '../i18n'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import type { CollaborationTemplate, TemplateRoleAssignments as Bindings } from './types'
 import { bindTemplate } from './document'
-import { templateAgentBindings, templateAgentId, templateAgentReferences } from './agents'
+import {
+  templateAgentBindings,
+  templateAgentId,
+  templateAgentReferences,
+  templateRoutingResolver,
+} from './agents'
 import { TemplateModelSelection, type TemplateModelConfiguration } from './TemplateModelSelection'
 import type { RunnerModelIdentity } from '../agent-form/runnerRouting'
 import type { TemplateRoutingResolver } from './types'
@@ -354,13 +359,15 @@ export function TemplateBindingsDialog({
               try {
                 const args = [selection.drafts, selection.document] as const
                 if (runtimes.length && modelConfiguration) {
-                  await onApply(...args, runtime =>
-                    modelConfiguration.host.resolveTemplateAgentRouting!(
-                      runtime,
+                  await onApply(
+                    ...args,
+                    templateRoutingResolver(
+                      modelConfiguration.host,
                       modelConfiguration.location,
                       modelConfiguration.projectId,
+                      locale,
                       modelConfiguration.environmentId,
-                      models[runtime]
+                      models
                     )
                   )
                 } else {
