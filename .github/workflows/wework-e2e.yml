@@ -446,15 +446,7 @@ jobs:
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         run: |
-          for attempt in 1 2 3; do
-            if pnpm --dir wework prepare:electron; then
-              break
-            fi
-            if [ "$attempt" = 3 ]; then
-              exit 1
-            fi
-            sleep $((attempt * 10))
-          done
+          pnpm --dir wework prepare:electron
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Set up real object storage for collaboration E2E
@@ -829,15 +821,7 @@ jobs:
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         run: |
-          for attempt in 1 2 3; do
-            if pnpm --dir wework prepare:electron; then
-              break
-            fi
-            if [ "$attempt" = 3 ]; then
-              exit 1
-            fi
-            sleep $((attempt * 10))
-          done
+          pnpm --dir wework prepare:electron
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Prepare DingTalk protocol fixture for the standard account
