@@ -1,6 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { useGitCloneProject } from './useGitCloneProject'
+import { createDeviceApi } from '@/api/devices'
+import { ApiError } from '@/api/http'
 import type { DeviceInfo } from '@/types/api'
 import '@/i18n'
 
@@ -67,6 +69,31 @@ describe('Git clone operation recovery', () => {
     await waitFor(() =>
       expect(open).toHaveBeenCalledWith(device.device_id, input.targetPath, 'repo')
     )
+    expect(mocks.summary).not.toHaveBeenCalled()
+    expect(mocks.sync).not.toHaveBeenCalled()
+  })
+
+  test('offers device recovery when a cached online device disappears from the backend', async () => {
+    const api = createDeviceApi({
+      post: vi.fn().mockRejectedValue(new ApiError('Device not found or access denied', 404)),
+    } as never)
+    const clone = vi.fn(async (deviceId: string) => api.createDirectory(deviceId, '/original'))
+    const open = vi.fn()
+    const { result } = renderHook(() => useGitCloneProject({ device, clone, open }))
+
+    await act(async () => {
+      expect(await result.current.submit(input)).toBe(false)
+    })
+
+    expect(result.current.deviceRecovery).toBe(true)
+    expect(result.current.operation).toMatchObject({
+      ...input,
+      deviceId: device.device_id,
+      status: 'failed',
+      failureReason: 'executor-not-found',
+      error: `executor-not-found:${device.device_id}`,
+    })
+    expect(open).not.toHaveBeenCalled()
     expect(mocks.summary).not.toHaveBeenCalled()
     expect(mocks.sync).not.toHaveBeenCalled()
   })
