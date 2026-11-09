@@ -49,7 +49,7 @@ projectTest(
   async ({ page, scheduledProject: { path } }) => {
     await page.goto(`${path}?view=milestones`)
     await expect(page.getByTestId('collaboration-board')).toBeVisible()
-    await expect(page).toHaveURL(`${path}?view=board`)
+    await expect(page).toHaveURL(path)
     await expect(page.getByTestId('collaboration-milestones-tab')).toHaveCount(0)
     await expect(
       page.getByTestId('collaboration-project-view-select').locator('option[value="milestones"]')
