@@ -100,6 +100,10 @@ Choose **Local project** to open the system folder picker. Select an already reg
 
 In local mode, choose **Local project** and select one or more folders in the system directory picker. This entry always uses the local execution device, even when cloud or remote devices are connected. To use another device, choose **Cloud project**, then open an existing directory, create a blank project, or enter a Git repository URL to clone on the target device. Git projects use the repository name as the directory name by default and allow an optional branch and target parent directory. After submission, the dialog closes immediately and the project list shows clone progress; failed clones can be retried or dismissed there.
 
+<a id="add-device-from-project"></a>
+
+After choosing **Cloud project**, select **Add device** beside the remote host picker. If no device is available, the dialog opens the add-device flow directly. The choices match **Settings → Personal → Cloud connection → Add device**. You can create a cloud device managed by Wegent or generate a startup command for a remote Docker device you manage. When the new device is online and version compatible, the project dialog selects it so you can open or create a directory.
+
 In the cloud-project creation dialog, **Use existing folder** and **Create**
 also open the system directory picker when the selected execution device is
 the current Wework machine. Cloud and remote devices continue to use the

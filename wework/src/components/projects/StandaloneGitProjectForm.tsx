@@ -47,7 +47,10 @@ export function StandaloneGitProjectForm({
   const [branch, setBranch] = useState('')
   const deviceId = device?.device_id ?? ''
   const [directory, setDirectory] = useState({ deviceId, path: '' })
-  const [pickerOpen, setPickerOpen] = useState(false)
+  const [picker, setPicker] = useState({ deviceId, open: false })
+  if (picker.deviceId !== deviceId) setPicker({ deviceId, open: false })
+  const pickerOpen = picker.deviceId === deviceId && picker.open
+  const setPickerOpen = (open: boolean) => setPicker({ deviceId, open })
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [validationError, setValidationError] = useState<{
     deviceId: string

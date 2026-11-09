@@ -1119,7 +1119,6 @@ function OwnedWorkbenchProvider({
     updateLocalRuntimeTaskPinned,
     rollbackLocalRuntimeTaskPinned,
     updateLocalRuntimeTaskTitle,
-    getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
     user: workbenchIdentity,
     ownershipKey,
@@ -2374,7 +2373,6 @@ function OwnedWorkbenchProvider({
     unsubscribeRuntimeTaskNotifications
   )
   const stableRefreshDevices = useStableEvent(refreshDevices)
-  const stableGetRemoteDeviceStartupCommand = useStableEvent(getRemoteDeviceStartupCommand)
   const stableUpgradeDevice = useStableEvent(upgradeDevice)
   const stableCreateProject = useStableEvent(projectActions.createProject)
   const stableCreateLocalRuntimeProject = useStableEvent(projectActions.createLocalRuntimeProject)
@@ -2925,7 +2923,6 @@ function OwnedWorkbenchProvider({
       unsubscribeRuntimeTaskNotifications: stableUnsubscribeRuntimeTaskNotifications,
       refreshWorkLists: stableRefreshWorkLists,
       refreshDevices: stableRefreshDevices,
-      getRemoteDeviceStartupCommand: stableGetRemoteDeviceStartupCommand,
       upgradeDevice: stableUpgradeDevice,
       createProject: stableCreateProject,
       createLocalRuntimeProject: stableCreateLocalRuntimeProject,
@@ -3006,7 +3003,6 @@ function OwnedWorkbenchProvider({
       stableGetRuntimeGoal,
       stableGetImNotificationSettings,
       stableGetProjectWorkspaceRoot,
-      stableGetRemoteDeviceStartupCommand,
       stableListDeviceDirectories,
       stableListEnvironmentBranches,
       stableListGitBranches,

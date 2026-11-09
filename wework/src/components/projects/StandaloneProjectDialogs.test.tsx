@@ -11,7 +11,26 @@ vi.mock('@/features/dsh-runtime/useDshSlotAvailable', () => ({
 }))
 vi.mock('./StandaloneGitProjectForm', () => ({
   StandaloneGitProjectForm: ({ device }: { device: DeviceInfo | null }) => (
-    <div data-testid="git-target">{device?.device_id ?? 'none'}</div>
+    <div>
+      <div data-testid="git-target">{device?.device_id ?? 'none'}</div>
+      <input data-testid="fixture-git-url" defaultValue="" />
+    </div>
+  ),
+}))
+vi.mock('@/components/devices/AddDevicePanel', () => ({
+  AddDevicePanel: ({
+    onConnected,
+  }: {
+    onConnected: (devices: DeviceInfo[], device: DeviceInfo) => Promise<void>
+  }) => (
+    <button
+      data-testid="fixture-connect-device"
+      onClick={() =>
+        void onConnected([], { ...device, id: 2, device_id: 'new-device', name: 'New device' })
+      }
+    >
+      Connect
+    </button>
   ),
 }))
 
@@ -75,6 +94,39 @@ describe('standalone project device identity', () => {
     fireEvent.change(screen.getByTestId('standalone-remote-device-select'), {
       target: { value: 'replacement' },
     })
+    expect(screen.getByTestId('git-target')).toHaveTextContent('replacement')
+  })
+
+  it('retains the Git form while adding a device and binds the discovered device', async () => {
+    const input = { ...props(), devices: [device], onRefreshDevices: vi.fn() }
+    render(<StandaloneFolderProjectDialog {...input} />)
+    fireEvent.click(screen.getByTestId('remote-project-source-git'))
+    const urlInput = screen.getByTestId('fixture-git-url')
+    fireEvent.change(urlInput, { target: { value: 'https://git.example.test/team/repo.git' } })
+
+    fireEvent.click(screen.getByTestId('remote-project-add-device'))
+    expect(urlInput).not.toBeVisible()
+    fireEvent.click(screen.getByTestId('remote-project-cancel-add-device'))
+    expect(screen.getByTestId('fixture-git-url')).toBe(urlInput)
+    expect(urlInput).toBeVisible()
+
+    fireEvent.click(screen.getByTestId('remote-project-add-device'))
+    fireEvent.click(screen.getByTestId('fixture-connect-device'))
+    await waitFor(() => expect(screen.getByTestId('git-target')).toHaveTextContent('new-device'))
+    expect(screen.getByTestId('fixture-git-url')).toBe(urlInput)
+    expect(urlInput).toHaveValue('https://git.example.test/team/repo.git')
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('new-device')
+    expect(input.onRefreshDevices).toHaveBeenCalledOnce()
+  })
+
+  it('selects the current device when reopening after the previous device was removed', () => {
+    const input = { ...props(), devices: [device] }
+    const { rerender } = render(<StandaloneFolderProjectDialog {...input} />)
+    fireEvent.click(screen.getByTestId('remote-project-source-git'))
+    rerender(<StandaloneFolderProjectDialog {...input} open={false} />)
+    const replacement = { ...device, id: 2, device_id: 'replacement', name: 'Replacement' }
+    rerender(<StandaloneFolderProjectDialog {...input} devices={[replacement]} />)
+    fireEvent.click(screen.getByTestId('remote-project-source-git'))
     expect(screen.getByTestId('git-target')).toHaveTextContent('replacement')
   })
 })

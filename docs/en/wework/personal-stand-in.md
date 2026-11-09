@@ -45,11 +45,13 @@ Click **Board** in the Tasks sidebar, or select **Board** from its task view men
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.
 
+<a id="conversational-configuration"></a>
+
 ## Manual and conversational configuration
 
 Edit responsibilities and shared preferences in the primary profile, and role responsibilities and sources in the role profile. Preferences can be edited or deleted. Changes take effect only after saving.
 
-You can also describe a role or configuration change in conversation. After AI creates a proposal, open **Pending settings** in the **Stand-in details** popover to review the affected roles, source scopes, and handling policies. Explicitly confirm before applying. Closing the dialog only collapses the proposal; it neither accepts nor rejects it. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
+You can also describe a role or configuration change in conversation. The confirmation card appears directly in that conversation with the affected roles, source scopes, and handling policies. Choose **Confirm and apply** to save and activate the changes. After success, the conversation shows **Settings applied** and the actual changes; failure retains the card and an error. A group's addition to a role updates that role's connections, not the primary identity's source scope; switch to that role's settings to inspect it. **Stand-in details → Pending settings** opens the same proposal. Closing that dialog neither accepts nor rejects it, and the conversation card remains available. Continue discussing to revise it, or choose **Dismiss**. A stale proposal cannot overwrite newer settings.
 
 The main surface keeps the conversation, composer, identity switcher and adjacent **＋**, with **Stand-in details** at the top right. Connection or processing issues appear as one compact status entry; open **Connection and processing status** for complete records and retry. The question-mark icon at the top right of the details popover opens **Usage examples**; the arrow beside Recent activity opens all activity. Settings show **Memory** directly, without those extra entries. Stopping is separate at the bottom left of the settings panel. Settings, Connections and source details have explicit entry and parent-return controls; clickable **Settings navigation** paths return to Settings or Connections without bypassing unsaved-change confirmation. Proactive background updates retain their own marker.
 

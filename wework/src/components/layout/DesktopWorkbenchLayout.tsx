@@ -195,7 +195,6 @@ export function DesktopWorkbenchLayout({
     archiveChatConversations: onArchiveChatConversations,
     cancelRuntimeTask: onCancelRuntimeTask,
     refreshDevices: onRefreshDevices,
-    getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
     createLocalRuntimeProject: onCreateLocalRuntimeProject,
@@ -978,7 +977,6 @@ export function DesktopWorkbenchLayout({
       onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
       onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
-      onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onRefreshDevices={onRefreshDevices}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
@@ -1423,7 +1421,6 @@ export function DesktopWorkbenchLayout({
           })
           scopedRequest.onCreated?.(createdProject)
         }}
-        onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
         onRefreshDevices={onRefreshDevices}
       />
       <ProjectCreateDialog
