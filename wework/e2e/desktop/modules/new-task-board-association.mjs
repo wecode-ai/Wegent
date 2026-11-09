@@ -129,7 +129,9 @@ export async function waitForViewedIssueRead(control, projectName, issueTitle) {
     issue = items.find(row => row.title === issueTitle)
     assert.ok(issue, 'The previously viewed Issue must still exist')
     if (issue.metadata.is_unread !== true) {
-      console.log(`[e2e] Viewed Issue read confirmed before leaving detail: ${issue.id}`)
+      console.log(
+        `[e2e] Viewed Issue read confirmed before draft baseline: ${issue.id}, version=${issue.version}`
+      )
       return
     }
     await new Promise(resolve => setTimeout(resolve, 100))

@@ -1,7 +1,31 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 
 import { waitForViewedIssueRead } from '../e2e/desktop/modules/new-task-board-association.mjs'
+
+test('the read prerequisite belongs to the final associated Issue, not the earlier moved Issue', async () => {
+  const source = await readFile(
+    new URL('../e2e/desktop/modules/workspace-flows.mjs', import.meta.url),
+    'utf8'
+  )
+  const linked = source.indexOf("'workspace-10-existing-card-linked.png'")
+  const read = source.indexOf(
+    'await waitForViewedIssueRead(control, targetProjectName, existingTargetTitle)'
+  )
+  const draft = source.indexOf(
+    'await verifyNewTaskBoardAssociation(control, targetProjectName, existingTargetTitle)'
+  )
+  assert.ok(linked >= 0 && read > linked && draft > read)
+  assert.ok(
+    source.slice(linked, read).includes("snapshot.testIds.includes('cloud-task-activity-list')")
+  )
+  assert.ok(
+    !source.includes(
+      "waitForViewedIssueRead(control, targetProjectName, 'WEWORK_DESKTOP_E2E_TASK')"
+    )
+  )
+})
 
 function fixture(loadItems) {
   const calls = []
