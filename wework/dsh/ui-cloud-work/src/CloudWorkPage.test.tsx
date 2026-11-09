@@ -227,6 +227,21 @@ describe('CloudWorkPage', () => {
     expect(screen.getByTestId('cloud-device-section')).not.toHaveTextContent('local-device')
   })
 
+  test('lets desktop users return to their stand-in from the real sidebar', async () => {
+    runtimeMock.desktop = true
+    sidebarMock.renderReal = true
+    const { navigateTo } = await import('@/lib/navigation')
+    render(
+      <RuntimeTaskLifecycleProvider
+        store={new RuntimeTaskLifecycleStore('cloud-work-stand-in-return')}
+      >
+        <CloudWorkPage />
+      </RuntimeTaskLifecycleProvider>
+    )
+    await userEvent.click(await screen.findByTestId('personal-stand-in-button'))
+    expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/stand-in')
+  })
+
   test('does not offer local Wework recovery in a web browser', () => {
     render(<CloudWorkPage />)
     expect(screen.queryByTestId('cloud-work-local-device-guidance')).not.toBeInTheDocument()

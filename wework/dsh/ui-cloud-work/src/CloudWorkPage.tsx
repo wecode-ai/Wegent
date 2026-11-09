@@ -166,6 +166,7 @@ export function CloudWorkPage() {
             collapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onNewChat={handleNewChat}
+            onOpenStandIn={isDesktop ? () => navigateTo('/stand-in') : undefined}
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSearch={() => setSearchOpen(true)}
             onSelectProject={handleSelectProject}

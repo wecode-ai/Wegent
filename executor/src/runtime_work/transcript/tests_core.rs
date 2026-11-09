@@ -766,7 +766,33 @@ fn transcript_keeps_unphased_text_in_processing_until_turn_completes() {
 }
 
 #[test]
-fn transcript_keeps_unphased_text_before_tools_in_processing() {
+fn transcript_preserves_completed_unphased_reply_before_late_command_update() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "status": "completed",
+            "items": [
+                {"id": "user-1", "type": "userMessage", "content": [
+                    {"type": "inputText", "text": "Read the large command output"}
+                ]},
+                {"id": "answer-1", "type": "agentMessage", "text": "LARGE_SOURCE_CONVERSATION_COMPLETE"},
+                {"id": "exec-1", "type": "commandExecution", "command": "large-output",
+                 "status": "completed", "aggregatedOutput": "x".repeat(64 * 1024), "exitCode": 0}
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let assistant = messages.last().unwrap();
+    assert_eq!(assistant["status"], "done");
+    assert_eq!(assistant["content"], "LARGE_SOURCE_CONVERSATION_COMPLETE");
+    assert_eq!(assistant["blocks"][0]["type"], "tool");
+}
+
+#[test]
+fn transcript_keeps_explicit_commentary_before_tools_in_processing() {
     let thread = json!({
         "id": "thread-1",
         "cwd": "/tmp/project",
@@ -786,6 +812,7 @@ fn transcript_keeps_unphased_text_before_tools_in_processing() {
                     "id": "process-1",
                     "type": "agentMessage",
                     "role": "assistant",
+                    "phase": "commentary",
                     "text": "I will inspect the runtime."
                 },
                 {

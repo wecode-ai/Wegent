@@ -650,12 +650,12 @@ pub(super) fn collect_assistant_message(
     item: &Value,
     fallback_timestamp: i64,
     fold_commentary: bool,
-    unphased_is_process: bool,
+    turn_running: bool,
     assistant: &mut AssistantTurnAccumulation,
     options: TranscriptBuildOptions,
 ) {
     if let Some(content) = extract_text(item) {
-        match assistant_message_phase(item, fold_commentary, unphased_is_process) {
+        match assistant_message_phase(item, fold_commentary, turn_running) {
             AssistantMessagePhase::Process => {
                 assistant.blocks.push(process_text_block(
                     item,
@@ -710,13 +710,14 @@ enum AssistantMessagePhase {
 fn assistant_message_phase(
     item: &Value,
     fold_commentary: bool,
-    unphased_is_process: bool,
+    turn_running: bool,
 ) -> AssistantMessagePhase {
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
-        // A completed item can precede a tool while its turn is still active.
-        None if unphased_is_process
+        // Tool snapshots can be persisted after the final reply. Item order
+        // therefore cannot classify an unphased message as process text.
+        None if turn_running
             || string_field(item, "status")
                 .is_some_and(|status| normalized_phase_or_status(status) == "inprogress") =>
         {
