@@ -52,7 +52,7 @@ async function serve(target, resultDir) {
     if (request.method === 'POST') {
       const body = await readRequestBody(request)
       // Never persist authentication headers; only synthetic E2E model payloads are evidence.
-      await appendFile(join(resultDir, 'requests.jsonl'), JSON.stringify(body) + '\n')
+      await appendFile(join(resultDir, 'model-requests.jsonl'), JSON.stringify(body) + '\n')
       payload = Buffer.from(JSON.stringify(body))
     }
     const headers = { ...request.headers }

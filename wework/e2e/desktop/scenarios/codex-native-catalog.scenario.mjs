@@ -27,7 +27,7 @@ export function createDesktopScenario(options) {
   let overridePath
   let capture
   let unusedSkillBodies
-  const captureDirectory = join(options.resultDir, 'native-model-request-audit')
+  const captureDirectory = options.resultDir
 
   return {
     modelProviderId: 'openai',
@@ -181,7 +181,7 @@ export function createDesktopScenario(options) {
       assert.deepEqual(JSON.parse(await readFile(overridePath, 'utf8')), [])
       await context.verify(control, baseline.display_name)
       await context.verifyActiveRestartProtection(control)
-      const requests = (await readFile(join(captureDirectory, 'requests.jsonl'), 'utf8'))
+      const requests = (await readFile(join(captureDirectory, 'model-requests.jsonl'), 'utf8'))
         .trim()
         .split('\n')
         .map(JSON.parse)
@@ -194,7 +194,7 @@ export function createDesktopScenario(options) {
         assertNativeModelContext(body, baseline.base_instructions, unusedSkillBodies)
       )
       await writeFile(
-        join(captureDirectory, 'audit.json'),
+        join(captureDirectory, 'model-context-audit.json'),
         JSON.stringify(
           { model: MODEL_ID, mockProcessId: capture.pid, requests: requests.length, audits },
           null,

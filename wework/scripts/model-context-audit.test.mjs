@@ -66,7 +66,7 @@ describe('actual model context audit', () => {
       })
       expect(await response.json()).toEqual({ ok: true })
       expect(received).toEqual(body)
-      const evidence = await readFile(join(directory, 'requests.jsonl'), 'utf8')
+      const evidence = await readFile(join(directory, 'model-requests.jsonl'), 'utf8')
       expect(JSON.parse(evidence)).toEqual(body)
       expect(evidence).not.toContain('synthetic-header-not-for-evidence')
       expect(() => assertNativeModelContext(JSON.parse(evidence), native)).not.toThrow()
