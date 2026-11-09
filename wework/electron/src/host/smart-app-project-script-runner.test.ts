@@ -1,7 +1,10 @@
+import * as childProcess from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { testNodeRuntime } from '../runtime/test-helpers.js'
 import {
@@ -10,12 +13,16 @@ import {
   type SmartAppScriptCommandRunner,
 } from './smart-app-project-script-runner.js'
 
+vi.mock('node:child_process', { spy: true })
+
 const roots: string[] = []
 const cleanups: Array<() => Promise<void>> = []
 
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map(cleanup => cleanup()))
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('runSmartAppProjectScripts', () => {
@@ -121,11 +128,14 @@ setInterval(() => {}, 1000)
         await rejected
       })
       let pids: number[] = []
-      await vi.waitFor(async () => {
-        pids = JSON.parse(await readFile(pidPath, 'utf8'))
-        expect(pids).toHaveLength(2)
-        for (const pid of pids) expect(pid).toBeGreaterThan(0)
-      })
+      await vi.waitFor(
+        async () => {
+          pids = JSON.parse(await readFile(pidPath, 'utf8'))
+          expect(pids).toHaveLength(2)
+          for (const pid of pids) expect(pid).toBeGreaterThan(0)
+        },
+        { timeout: 4_000 }
+      )
 
       controller.abort(new Error('cancel fixture'))
       await rejected
@@ -135,6 +145,60 @@ setInterval(() => {}, 1000)
           expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
         }
       })
+    },
+    10_000
+  )
+
+  test.each(['closed', 'inherited'] as const)(
+    'finishes an exited script with %s output pipes and retains its logs',
+    async pipes => {
+      const root = await projectRoot()
+      vi.useFakeTimers()
+      const stdout = new PassThrough()
+      const stderr = new PassThrough()
+      const child = Object.assign(new EventEmitter(), { stdout, stderr })
+      const spawn = vi
+        .spyOn(childProcess, 'spawn')
+        .mockClear()
+        .mockReturnValueOnce(child as ReturnType<typeof childProcess.spawn>)
+      let settled = false
+      const running = runSmartAppRuntimeProbe({
+        ...options(root),
+        script: 'probe',
+        baseUrl: 'http://127.0.0.1/',
+      }).then(result => {
+        settled = true
+        return result
+      })
+      cleanups.push(async () => {
+        child.emit('close', 0)
+        stdout.destroy()
+        stderr.destroy()
+        await running
+      })
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+      stdout.write('script output\n')
+      child.emit('exit', 0)
+      stderr.write('output draining after exit\n')
+
+      if (pipes === 'closed') {
+        child.emit('close', 0)
+      } else {
+        await vi.advanceTimersByTimeAsync(999)
+        expect(settled).toBe(false)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(stdout.destroyed).toBe(true)
+        expect(stderr.destroyed).toBe(true)
+      }
+
+      await expect(running).resolves.toEqual({ issues: [] })
+      expect(vi.getTimerCount()).toBe(0)
+      const log = await readFile(
+        join(root, 'test-results', 'smart-app', 'logs', 'runtime-probe.log'),
+        'utf8'
+      )
+      expect(log).toContain('script output\n')
+      expect(log).toContain('output draining after exit\n')
     }
   )
 

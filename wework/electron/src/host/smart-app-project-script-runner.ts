@@ -12,6 +12,7 @@ import { terminateProcessTree } from '../runtime/runtime-supervisor.js'
 
 const SCRIPT_NAME = /^[A-Za-z0-9:_-]+$/
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
+const OUTPUT_DRAIN_TIMEOUT_MS = 1_000
 const SCRIPT_ORDER = ['typecheck', 'test', 'build'] as const
 const PROJECT_RUN_ARGS = ['--config.verify-deps-before-run=false', 'run']
 const SAFE_ENVIRONMENT_KEYS = new Set([
@@ -245,6 +246,11 @@ function readCommandOutput(
   return new Promise(resolvePromise => {
     let stdout = ''
     let stderr = ''
+    let drainTimeout: NodeJS.Timeout | undefined
+    const finish = (exitCode: number | null) => {
+      clearTimeout(drainTimeout)
+      resolvePromise({ exitCode, stdout, stderr })
+    }
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', chunk => {
@@ -254,9 +260,18 @@ function readCommandOutput(
       stderr = appendLimited(stderr, String(chunk))
     })
     child.once('error', error => {
-      resolvePromise({ exitCode: null, stdout, stderr: appendLimited(stderr, error.message) })
+      stderr = appendLimited(stderr, error.message)
+      finish(null)
     })
-    child.once('close', exitCode => resolvePromise({ exitCode, stdout, stderr }))
+    child.once('exit', exitCode => {
+      // Background descendants can inherit these pipes after the script has exited.
+      drainTimeout = setTimeout(() => {
+        child.stdout.destroy()
+        child.stderr.destroy()
+        finish(exitCode)
+      }, OUTPUT_DRAIN_TIMEOUT_MS)
+    })
+    child.once('close', finish)
   })
 }
 
