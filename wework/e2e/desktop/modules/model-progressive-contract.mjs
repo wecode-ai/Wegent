@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import {
+  MATRIX_PROVIDER_INSTRUCTIONS,
+  MATRIX_LEGACY_INSTRUCTIONS,
+} from './model-native-catalog.mjs'
 import { dirname, join, resolve } from 'node:path'
 import {
   assertCodeModeOutput,
@@ -74,8 +78,14 @@ export function assertProgressiveHi(body, model, budget = countModelRequest(body
       `complete request uses ${budget.tokens} ${budget.encoding} tokens (must be < ${INITIAL_CONTEXT_TOKEN_LIMIT})`
     )
   const text = strings(body).join('\n')
-  if (!text.includes('You are Codex,'))
+  if (model.source === 'codex') {
+    if (text.split(MATRIX_PROVIDER_INSTRUCTIONS).length - 1 !== 1)
+      failures.push('Provider canonical instructions must appear exactly once')
+    if (text.includes(MATRIX_LEGACY_INSTRUCTIONS))
+      failures.push('Legacy instructions replaced the provider canonical template')
+  } else if (!text.includes('You are Codex,')) {
     failures.push('The native Codex catalog instructions are missing')
+  }
   for (const marker of [
     MATRIX_SKILL_CANARY,
     MATRIX_UNUSED_SKILL_CANARY,

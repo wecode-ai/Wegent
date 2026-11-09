@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest'
 import {
+  MATRIX_PROVIDER_INSTRUCTIONS,
+  MATRIX_LEGACY_INSTRUCTIONS,
+} from '../e2e/desktop/modules/model-native-catalog.mjs'
+import {
   assertProgressiveHi,
   assertRequiredToolInventory,
   MATRIX_REQUIRED_TOOLS,
@@ -25,23 +29,23 @@ const wrapper = {
   parameters: { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] },
 }
 
-function request(protocol) {
+function request(protocol, instructions = baseInstructions) {
   if (protocol === 'chat')
     return {
       messages: [
-        { role: 'system', content: baseInstructions },
+        { role: 'system', content: instructions },
         { role: 'user', content: 'hi' },
       ],
       tools: [{ type: 'function', function: wrapper }],
     }
   if (protocol === 'anthropic')
     return {
-      system: baseInstructions,
+      system: instructions,
       messages: [{ role: 'user', content: 'hi' }],
       tools: [{ ...wrapper, input_schema: wrapper.parameters }],
     }
   return {
-    instructions: baseInstructions,
+    instructions,
     input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
     tools: [{ ...exec }],
   }
@@ -80,6 +84,22 @@ function output(protocol, callId = result.callId, input = script) {
 
 for (const protocol of ['responses', 'chat', 'anthropic']) {
   describe(`${protocol} model-side acceptance oracle`, () => {
+    test('preserves the upstream canonical template instead of requiring a Wework replacement', () => {
+      const body = request(protocol, MATRIX_PROVIDER_INSTRUCTIONS)
+      expect(() => assertProgressiveHi(body, { protocol, source: 'codex' }, budget)).not.toThrow()
+      const legacy = request(protocol, MATRIX_LEGACY_INSTRUCTIONS)
+      expect(() => assertProgressiveHi(legacy, { protocol, source: 'codex' }, budget)).toThrow(
+        'canonical'
+      )
+      const duplicate = request(
+        protocol,
+        MATRIX_PROVIDER_INSTRUCTIONS + '\n' + MATRIX_PROVIDER_INSTRUCTIONS
+      )
+      expect(() => assertProgressiveHi(duplicate, { protocol, source: 'codex' }, budget)).toThrow(
+        'exactly once'
+      )
+    })
+
     test('accepts the bootstrap without expanding undiscovered tools', () => {
       const body = request(protocol)
       expect(assertProgressiveHi(body, { protocol }, budget)).toEqual(budget)
