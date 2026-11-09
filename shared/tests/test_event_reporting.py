@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import threading
 import time
 from dataclasses import replace
-from unittest.mock import Mock
+from types import ModuleType
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -17,7 +19,14 @@ from shared.event_reporting.transport import KafkaTransport
 
 @pytest.mark.asyncio
 async def test_transport_forwards_security_options_without_connecting(mocker):
-    producer_class = mocker.patch("aiokafka.AIOKafkaProducer", autospec=True)
+    producer = Mock()
+    producer.start = AsyncMock()
+    producer.send_and_wait = AsyncMock()
+    producer.stop = AsyncMock()
+    producer_class = Mock(return_value=producer)
+    fake_aiokafka = ModuleType("aiokafka")
+    fake_aiokafka.AIOKafkaProducer = producer_class
+    mocker.patch.dict(sys.modules, {"aiokafka": fake_aiokafka})
     cfg = config(
         security_protocol="SASL_PLAINTEXT",
         sasl_username="test-user",
@@ -25,7 +34,6 @@ async def test_transport_forwards_security_options_without_connecting(mocker):
     )
     transport = KafkaTransport(cfg)
     await transport.start()
-    producer = producer_class.return_value
     producer.start.assert_awaited_once()
     options = producer_class.call_args.kwargs
     assert options["acks"] == "all"
