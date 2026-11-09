@@ -124,23 +124,40 @@ export function createDesktopScenario({
       value => value.questions === expectedQuestions && value.projects === expectedProjects,
       'Question and project sources must both finish refreshing their exact expected pending rows'
     )
-    const rowCount = Number(
-      await control.command('getElementCount', scoped('interaction-list-item'))
-    )
-    let selector = scoped('interaction-list-item')
-    while (JSON.parse(await control.command('getElementMetrics', selector)).length) {
-      const id = await control.command('getAttribute', selector, { value: 'data-interaction-id' })
-      assert.ok(id, 'Each pending row must expose its stable interaction identity')
-      const exact = `${scoped('interaction-list-item')}[data-interaction-id=${JSON.stringify(id)}]`
-      rows.push({
-        id,
-        projectIssue: await control.command('getAttribute', selector, {
-          value: 'data-project-issue',
-        }),
-        text: await control.command('getText', exact),
-      })
-      selector += `:not([data-interaction-id=${JSON.stringify(id)}])`
+    // Native and canonical sources refresh independently, so a count read can
+    // land between two renders and disagree with the rows we enumerate. Only
+    // trust the snapshot once the enumerated rows and the live count agree.
+    const readRows = async () => {
+      const enumerated = []
+      let selector = scoped('interaction-list-item')
+      while (JSON.parse(await control.command('getElementMetrics', selector)).length) {
+        const id = await control.command('getAttribute', selector, {
+          value: 'data-interaction-id',
+        })
+        assert.ok(id, 'Each pending row must expose its stable interaction identity')
+        const exact = `${scoped('interaction-list-item')}[data-interaction-id=${JSON.stringify(id)}]`
+        enumerated.push({
+          id,
+          projectIssue: await control.command('getAttribute', selector, {
+            value: 'data-project-issue',
+          }),
+          text: await control.command('getText', exact),
+        })
+        selector += `:not([data-interaction-id=${JSON.stringify(id)}])`
+      }
+      return {
+        rows: enumerated,
+        count: Number(await control.command('getElementCount', scoped('interaction-list-item'))),
+      }
     }
+    const settleDeadline = Date.now() + 10_000
+    let snapshot = await readRows()
+    while (snapshot.rows.length !== snapshot.count && Date.now() <= settleDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      snapshot = await readRows()
+    }
+    rows.push(...snapshot.rows)
+    const rowCount = snapshot.count
     await writeFile(
       join(resultDir, `issue-handoff-${phase}-rows.json`),
       JSON.stringify(rows, null, 2)
