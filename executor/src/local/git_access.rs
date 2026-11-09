@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -169,12 +169,14 @@ pub fn classify_failure(domain: &str, result: &CommandResult) -> GitAccessFailur
 
 pub async fn preflight(
     url: &str,
+    cwd: Option<&Path>,
     env: &HashMap<String, String>,
     timeout_seconds: f64,
 ) -> Result<(), GitAccessFailure> {
     let domain = repository_domain(url)?;
     let result = run(
         &["ls-remote".into(), "--".into(), url.into(), "HEAD".into()],
+        cwd,
         env,
         timeout_seconds.clamp(0.001, 30.0),
         16 * 1024,
@@ -190,6 +192,7 @@ pub async fn preflight(
 /// Native dispatch shared by local IPC and the Backend device command channel.
 pub async fn execute_clone(
     args: &[String],
+    cwd: Option<&Path>,
     env: &HashMap<String, String>,
     timeout_seconds: f64,
     max_output_bytes: usize,
@@ -208,7 +211,7 @@ pub async fn execute_clone(
     if target.is_empty() {
         return CommandResult::error("Git target path is required".into(), 0.0, false);
     }
-    if let Err(error) = preflight(url, env, timeout_seconds).await {
+    if let Err(error) = preflight(url, cwd, env, timeout_seconds).await {
         return CommandResult::error(error.wire_error(), 0.0, false);
     }
     let mut argv = vec!["clone".into()];
@@ -216,6 +219,7 @@ pub async fn execute_clone(
     argv.extend(["--".into(), url.clone(), target.clone()]);
     let mut result = run(
         &argv,
+        cwd,
         env,
         (timeout_seconds - started.elapsed().as_secs_f64()).max(0.001),
         max_output_bytes,
@@ -239,6 +243,7 @@ pub async fn execute_clone(
 
 async fn run(
     args: &[String],
+    cwd: Option<&Path>,
     env: &HashMap<String, String>,
     timeout_seconds: f64,
     max_output_bytes: usize,
@@ -246,7 +251,7 @@ async fn run(
     let env = noninteractive_environment(&build_env(env));
     match super::native_git::run_git_capture(
         args,
-        None,
+        cwd,
         &env,
         std::time::Duration::from_secs_f64(timeout_seconds.max(0.001)),
         max_output_bytes,
@@ -409,7 +414,7 @@ mod tests {
         let config = root.path().join("native.gitconfig");
         std::fs::write(&config, "").unwrap();
         let env = HashMap::from([("GIT_CONFIG_GLOBAL".into(), config.display().to_string())]);
-        let failure = preflight(&url, &env, 5.0).await.unwrap_err();
+        let failure = preflight(&url, None, &env, 5.0).await.unwrap_err();
         assert_eq!(failure.code, "credentials-required");
         assert_eq!(failure.domain, address.to_string());
         std::fs::write(
@@ -417,10 +422,10 @@ mod tests {
             "[http]\nextraHeader = Authorization: Basic synthetic\n",
         )
         .unwrap();
-        assert!(preflight(&url, &env, 5.0).await.is_ok());
+        assert!(preflight(&url, None, &env, 5.0).await.is_ok());
         let target = root.path().join("checkout");
         assert!(
-            execute_clone(&[url, target.display().to_string()], &env, 5.0, 4096)
+            execute_clone(&[url, target.display().to_string()], None, &env, 5.0, 4096)
                 .await
                 .success
         );
@@ -439,14 +444,17 @@ mod tests {
             .unwrap()
             .status;
         assert!(status.success());
-        assert!(preflight(repo.to_str().unwrap(), &HashMap::new(), 5.0)
-            .await
-            .is_ok());
+        assert!(
+            preflight(repo.to_str().unwrap(), None, &HashMap::new(), 5.0)
+                .await
+                .is_ok()
+        );
         let result = execute_clone(
             &[
                 root.path().join("missing").display().to_string(),
                 root.path().join("checkout").display().to_string(),
             ],
+            None,
             &HashMap::new(),
             5.0,
             4096,

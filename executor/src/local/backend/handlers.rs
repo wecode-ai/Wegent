@@ -145,6 +145,7 @@ where
                         let request = CommandRequest::from_value(payload);
                         let result = crate::local::git_access::execute_clone(
                             &args,
+                            request.cwd.as_deref().map(std::path::Path::new),
                             &request.env,
                             request.timeout_seconds,
                             request.max_output_bytes,

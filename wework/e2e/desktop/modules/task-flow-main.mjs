@@ -1475,6 +1475,10 @@ async function main() {
     ]) {
       delete appEnvironment[key]
     }
+    if (shouldRunDesktopCheckpoint('cloud-project-creation')) {
+      // New Backend clone coverage shares the fixture's existing native root.
+      appEnvironment.WEGENT_EXECUTOR_PROJECTS_DIR = appEnvironment.WORKSPACE_ROOT
+    }
     if (electronCoreRuntimeRoot) {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }

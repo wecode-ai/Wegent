@@ -445,6 +445,7 @@ async fn clone_repo(
     );
     crate::local::git_access::preflight(
         git_url,
+        None,
         &auth_environment,
         git_clone_timeout_seconds() as f64,
     )

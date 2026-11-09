@@ -11,6 +11,7 @@ import {
   writeFile,
 } from './shared.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { verifyBackendGitProjectCreation } from './backend-git-project-creation.mjs'
 
 const ACCOUNT_ID = 'desktop-git-recovery'
 const TOKEN = 'desktop-git-recovery-synthetic-token'
@@ -89,6 +90,7 @@ async function createPrivateRepository() {
   return {
     domain,
     cert,
+    source,
     url: `https://${domain}/private.git`,
     async close() {
       await new Promise(resolve => {
@@ -209,6 +211,7 @@ export async function verifyGitCloneRecovery(control, cloud, setPhase) {
       fixture.url,
       'Recovery must clone the original repository on the original device'
     )
+    await verifyBackendGitProjectCreation(control, cloud, fixture, setPhase)
   } catch (error) {
     testError = error
     throw error

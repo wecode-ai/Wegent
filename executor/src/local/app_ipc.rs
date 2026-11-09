@@ -1532,6 +1532,7 @@ impl AppIpcServer {
             "git_clone" => Some(
                 super::git_access::execute_clone(
                     &native_args,
+                    native_path.as_deref().map(Path::new),
                     &native_env,
                     native_timeout,
                     native_max_output,

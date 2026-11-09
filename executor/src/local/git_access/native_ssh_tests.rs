@@ -140,6 +140,7 @@ fn core_ssh_command_is_used_by_standalone_and_task_clones() {
         let standalone = root.path().join("standalone");
         let result = super::execute_clone(
             &[url.into(), standalone.display().to_string()],
+            None,
             &HashMap::from([("GIT_CONFIG_GLOBAL".into(), config.display().to_string())]),
             10.0,
             4096,
