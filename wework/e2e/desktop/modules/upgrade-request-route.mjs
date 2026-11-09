@@ -1,9 +1,14 @@
-import { inspectBeforeStart } from './inspect-before-start.mjs'
+import { inspectBeforeStart, inspectRunningApp } from './inspect-before-start.mjs'
 import { appendFileSync } from 'node:fs'
 
 const publishedBase = 'https://github.com/wecode-ai/Wegent/releases/download/wework-updater/'
 
-export async function routeUpgradeRequests(child, origin, logPath) {
+export async function routeUpgradeRequests(
+  child,
+  origin,
+  logPath,
+  { followHandoffs = false } = {}
+) {
   const target = new URL(origin)
   if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || target.pathname !== '/')
     throw new Error('The upgrade test transport must use its own loopback HTTP server')
@@ -20,15 +25,35 @@ export async function routeUpgradeRequests(child, origin, logPath) {
       console.error('[desktop-e2e-inspector] Cannot retain transport diagnostics:', error.code)
     }
   }
-  await inspectBeforeStart(child, upgradeTransportScript(origin, pauseArgument), log)
+  const socketUrl = await inspectBeforeStart(
+    child,
+    url => upgradeTransportScript(origin, pauseArgument, followHandoffs ? new URL(url).port : null),
+    log
+  )
+  return new URL(socketUrl).port
 }
 
-export function upgradeTransportScript(origin, pauseArgument) {
+export async function routeRunningUpgradeRequests(port, control, origin) {
+  // A normal installed startup need not refresh the launcher's active-pid file.
+  // Bind the inspector to the host serving the connected workbench instead.
+  const { applicationPid } = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+  if (!Number.isSafeInteger(applicationPid) || applicationPid <= 0)
+    throw new Error('The connected workbench has no valid application process ID')
+  await inspectRunningApp(port, applicationPid, upgradeTransportScript(origin, null, port))
+}
+
+export function upgradeTransportScript(origin, pauseArgument, inspectorPort = null) {
   return `(() => {
     const require = process.getBuiltinModule('module').createRequire(process.execPath)
     const {app, session, dialog} = require('electron')
     const pauseArgument = ${JSON.stringify(pauseArgument)}
-    const launchArguments = process.argv.slice(1).filter(argument => argument !== pauseArgument)
+    const inspectorArgument = ${JSON.stringify(inspectorPort ? `--inspect=127.0.0.1:${inspectorPort}` : null)}
+    const forwarded = args => [
+      ...args.filter(argument => argument !== pauseArgument &&
+        (!inspectorArgument || !argument.startsWith('--inspect='))),
+      ...(inspectorArgument ? [inspectorArgument] : [])
+    ]
+    const launchArguments = forwarded(process.argv.slice(1))
     process.argv = [process.argv[0], ...launchArguments]
     process.execArgv = process.execArgv.filter(argument => argument !== pauseArgument)
     app.commandLine.removeSwitch('inspect-brk')
@@ -44,7 +69,7 @@ export function upgradeTransportScript(origin, pauseArgument) {
       }
       return relaunch({
         ...options,
-        args: (options?.args ?? launchArguments).filter(argument => argument !== pauseArgument)
+        args: forwarded(options?.args ?? launchArguments)
       })
     }
     if (${Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {

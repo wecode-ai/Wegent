@@ -5,7 +5,6 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   reloadMainWindow,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -19,6 +18,7 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const USER = 9001
 const LOCAL_OWNER = 0

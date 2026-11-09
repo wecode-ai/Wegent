@@ -65,7 +65,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "shared right workspace panel selects plugin development and temporary chat" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals,plugin-development"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals"},{"id":"core-10","name":"Core / shard 10","segments":"plugin-development"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx"
@@ -94,6 +94,42 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/electron/src/host/startup-splash.ts" \
   "wework/electron/src/shell/startup-splash/styles.css"
+
+for theme_infrastructure_path in \
+  wework/electron/src/host/appearance-theme.ts \
+  wework/electron/src/host/appearance-theme-contract.ts \
+  wework/src/lib/code-theme.ts \
+  wework/src/lib/xterm-theme.ts \
+  wework/src/components/code/PierreCodeProvider.tsx; do
+  assert_desktop_case "theme infrastructure selects its theme checkpoint: $theme_infrastructure_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"appearance-themes"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$theme_infrastructure_path"
+done
+
+for theme_foundation_path in \
+  wework/src/features/appearance/presets.ts \
+  wework/src/styles/globals.css \
+  wework/e2e/desktop/modules/appearance-theme.mjs; do
+  assert_desktop_case "theme foundations select all theme consumers: $theme_foundation_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-5","name":"Core / shard 5","segments":"application-menu"},{"id":"core-6","name":"Core / shard 6","segments":"local-file-preview,appearance-themes,office-file-preview"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals,collaboration-first-use"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$theme_foundation_path"
+done
+
+assert_desktop_case "visualization theme selects gallery and rendered content coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-6","name":"Core / shard 6","segments":"appearance-themes"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/lib/visualization-theme.ts"
 
 assert_desktop_case "Wework documentation skips desktop E2E" \
   'wework_desktop_e2e=false

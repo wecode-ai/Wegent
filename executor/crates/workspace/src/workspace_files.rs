@@ -4,7 +4,6 @@
 
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
     time::{Instant, SystemTime},
 };
@@ -14,6 +13,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use wegent_execution_contracts::command::CommandResult;
+use wegent_filesystem::atomic_file::{write_atomic_file, WriteStage};
 
 const MAX_TEXT_FILE_BYTES: usize = 256 * 1024;
 const MAX_BINARY_CHUNK_BYTES: usize = 512 * 1024;
@@ -164,25 +164,16 @@ fn write_text_file(root: &Path, args: &[String], stdin: Option<&str>) -> Result<
     if sha256_revision(&current) != args[1] {
         return Err("Workspace file has changed on disk".to_owned());
     }
-    let metadata =
-        fs::metadata(&target).map_err(|error| format!("Failed to read file metadata: {error}"))?;
-    let parent = target
-        .parent()
-        .ok_or_else(|| "File parent directory is missing".to_owned())?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("Failed to create temporary file: {error}"))?;
-    temporary
-        .write_all(content.as_bytes())
-        .map_err(|error| format!("Failed to write file: {error}"))?;
-    temporary
-        .as_file_mut()
-        .sync_all()
-        .map_err(|error| format!("Failed to flush file: {error}"))?;
-    fs::set_permissions(temporary.path(), metadata.permissions())
-        .map_err(|error| format!("Failed to preserve file permissions: {error}"))?;
-    temporary
-        .persist(&target)
-        .map_err(|error| format!("Failed to replace file: {}", error.error))?;
+    write_atomic_file(&target, content.as_bytes()).map_err(|error| {
+        let operation = match error.stage {
+            WriteStage::CreateTemporary => "create temporary file",
+            WriteStage::Write => "write file",
+            WriteStage::Sync => "flush file",
+            WriteStage::PreservePermissions => "preserve file permissions",
+            WriteStage::Publish => "replace file",
+        };
+        format!("Failed to {operation}: {}", error.source)
+    })?;
     let saved_metadata = fs::metadata(&target)
         .map_err(|error| format!("Failed to read saved file metadata: {error}"))?;
     Ok(json!({
@@ -367,6 +358,31 @@ mod tests {
         assert_eq!(saved["content"], "updated");
         assert_eq!(saved["editable"], true);
         assert_eq!(saved["revision"], sha256_revision(b"updated"));
+    }
+
+    #[test]
+    fn write_text_file_preserves_an_open_reader() {
+        use std::io::Read;
+
+        let directory = tempfile::tempdir().expect("create workspace");
+        let target = directory.path().join("auth.ts");
+        fs::write(&target, "before").expect("seed file");
+        let mut reader = fs::File::open(&target).expect("open existing file");
+
+        let saved = execute_blocking(
+            "workspace_write_text_file",
+            directory.path().to_str(),
+            &["auth.ts".to_owned(), sha256_revision(b"before")],
+            Some("after"),
+        )
+        .expect("save while a reader holds the previous file");
+
+        let mut original = String::new();
+        reader.read_to_string(&mut original).expect("read old file");
+        assert_eq!(original, "before");
+        assert_eq!(fs::read_to_string(target).unwrap(), "after");
+        assert_eq!(saved["revision"], sha256_revision(b"after"));
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[test]

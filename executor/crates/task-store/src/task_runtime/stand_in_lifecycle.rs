@@ -137,6 +137,10 @@ impl LocalTaskStore {
         let mut settings = previous.clone();
         match operation {
             "stop" => {
+                transaction.execute(
+                    "DELETE FROM loop_items WHERE resource_type='stand_in_dispatch' AND json_extract(metadata,'$.userId')=?1",
+                    [user],
+                )?;
                 if settings["lifecycle"]["status"].is_null() {
                     settings["lifecycle"] = json!({
                         "status":"stopping",

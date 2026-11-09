@@ -1,6 +1,56 @@
 use super::*;
 
 #[test]
+fn runtime_collection_timeout_recovers_legacy_latches_and_backs_off_new_failures() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"account","kind":"direct","id":"own"});
+    let version = json!(19);
+    let legacy = json!({"version":version,"checkpoint":{"after":"2026-11-08T22:57:19.411Z","cursor":"0"},"error":{"code":"request_timeout","message":"Executor request runtime.connections.cli timed out"}});
+    store.save_stand_in_source(7, &source, &legacy).unwrap();
+    let state = store.stand_in_source(7, &source).unwrap();
+    assert!(!collection_error_latched(&state, &version));
+    let before = chrono::Utc::now().timestamp_millis();
+    save_collection_result(
+        &store,
+        7,
+        &source,
+        &version,
+        &state,
+        Err(AppIpcError::new(
+            "request_timeout",
+            "Runtime read timed out",
+        )),
+    )
+    .unwrap();
+    let failed = store.stand_in_source(7, &source).unwrap();
+    assert_eq!(failed["checkpoint"], legacy["checkpoint"]);
+    assert_eq!(failed["version"], version);
+    assert_eq!(failed["error"]["retryable"], true);
+    assert!(failed["retryAt"].as_i64().unwrap() >= before + 30_000);
+    assert!(collection_error_latched(&failed, &version));
+    let mut due = failed.clone();
+    due["retryAt"] = json!(before - 1);
+    assert!(!collection_error_latched(&due, &version));
+    let recovered = json!({"checkpoint":{"after":"2026-11-09T00:00:00Z","cursor":"0"}});
+    save_collection_result(&store, 7, &source, &version, &due, Ok(recovered.clone())).unwrap();
+    let resumed = store.stand_in_source(7, &source).unwrap();
+    assert_eq!(resumed["checkpoint"], recovered["checkpoint"]);
+    assert!(resumed["error"].is_null());
+    assert!(resumed["retryAt"].is_null());
+    assert!(resumed["failures"].is_null());
+    for code in [
+        "connector_auth_required",
+        "forbidden",
+        "dingtalk_response_invalid",
+    ] {
+        let mut permanent = legacy.clone();
+        permanent["error"]["code"] = json!(code);
+        assert!(collection_error_latched(&permanent, &version));
+    }
+}
+
+#[test]
 fn declared_cli_read_process_failure_retries_from_the_original_cursor_then_clears_error() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
@@ -422,7 +472,7 @@ fn stand_in_collection_uses_the_stored_settings_version_without_role_selection_m
 }
 
 #[test]
-fn failed_grouping_is_durable_manual_work_without_blocking_other_roles() {
+fn independent_manual_intake_needs_no_model_and_preserves_each_roles_boundary() {
     let _lock = crate::test_env::lock();
     let environment = tempfile::tempdir().unwrap();
     let _env: Vec<_> = [
@@ -444,7 +494,7 @@ fn failed_grouping_is_durable_manual_work_without_blocking_other_roles() {
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-        let source = json!({"id":"group","kind":"group","profile":"account","enabledAfter":"2026-01-01T00:00:00Z"});
+        let source = json!({"id":"group","kind":"group","profile":"account","enabledAfter":"2026-01-01T00:00:00Z","policy":{"automatic":false,"askBeforeAct":true,"sessionStrategy":"independent"}});
         let roles = ["broken", "good"]
             .map(|id| json!({"id":id,"enabled":true,"connections":[source.clone()]}));
         store
@@ -478,14 +528,12 @@ fn failed_grouping_is_durable_manual_work_without_blocking_other_roles() {
             .known_stand_in_message(7, "broken", &source, "first")
             .unwrap()
             .unwrap();
-        assert_eq!(known["dispatchStatus"], "needs_grouping");
+        assert_eq!(known["dispatchStatus"], "pending");
         let manual = store
             .stand_in_work(7, known["workId"].as_str().unwrap())
             .unwrap();
-        assert_eq!(manual["status"], "needs_grouping");
-        assert!(manual["error"]
-            .as_str()
-            .is_some_and(|error| !error.is_empty()));
+        assert_eq!(manual["status"], "pending");
+        assert!(manual["error"].is_null());
         let second =
             json!({"id":"second","text":"Next page","topicId":"new","at":"2026-10-25T00:01:00Z"});
         let next = handler
@@ -500,18 +548,20 @@ fn failed_grouping_is_durable_manual_work_without_blocking_other_roles() {
             .unwrap();
         assert_eq!(next["cursor"], "page3");
         let good = store.list_stand_in_work(7, Some("good")).unwrap();
-        assert_eq!(good.len(), 1);
-        assert_eq!(good[0]["messageCount"], 2);
+        assert_eq!(good.len(), 2);
+        assert!(good.iter().all(|work| work["messageCount"] == 1));
         assert_eq!(
             store.list_stand_in_work(7, Some("broken")).unwrap().len(),
-            2
+            3
         );
         assert_eq!(
             store
                 .stand_in_work(7, known["workId"].as_str().unwrap())
                 .unwrap()["status"],
-            "needs_grouping"
+            "pending"
         );
+        let second = store.known_stand_in_message(7, "broken", &source, "second").unwrap().unwrap();
+        assert_ne!(second["workId"], known["workId"], "A matching topic must not override independent sessions");
         let mut reconnected = roles;
         reconnected[0]["connections"][0]["enabledAfter"] = json!("2026-10-26T00:00:00Z");
         let old = json!({"id":"old-after-reconnect","text":"Prior message","topicId":"new","at":"2026-10-25T00:02:00Z"});

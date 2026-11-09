@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { chmod, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,6 +10,7 @@ import {
   prepareSharedElectronZip,
   resolveSharedElectronZipDirectory,
 } from './electron-zip-cache.mjs'
+import { primeElectronInstallerCache } from './electron-installer-cache.mjs'
 
 const roots = []
 
@@ -36,6 +37,37 @@ afterEach(async () => {
 })
 
 describe('shared Electron ZIP cache', () => {
+  test('primes the official installer offline from a checksum-verified shared ZIP', async () => {
+    const root = await temporaryRoot()
+    const packageRoot = join(root, 'electron')
+    const shared = join(root, 'shared')
+    const artifact = Buffer.from('verified Electron archive')
+    await writeElectronPackage(packageRoot, artifact)
+    await mkdir(shared)
+    await writeFile(join(shared, 'electron-v43.4.1-darwin-arm64.zip'), artifact)
+    const installedCache = join(root, 'installer.zip')
+    const downloadArtifact = vi.fn(async options => {
+      if (!options.downloader) throw new Error('Unexpected network download')
+      expect(options.checksums['electron-v43.4.1-darwin-arm64.zip']).toBeTruthy()
+      expect(options.cacheRoot).toBe(join(root, 'installer-cache'))
+      await options.downloader.download('https://unused.invalid/electron.zip', installedCache)
+      return installedCache
+    })
+    expect(
+      await primeElectronInstallerCache({
+        electronPackageRoot: packageRoot,
+        environment: {
+          WEWORK_ELECTRON_ZIP_DIR: shared,
+          electron_config_cache: join(root, 'installer-cache'),
+        },
+        runtime: { arch: 'arm64', platform: 'darwin' },
+        downloadArtifact,
+      })
+    ).toBe(installedCache)
+    expect(await readFile(installedCache)).toEqual(artifact)
+    expect(downloadArtifact).toHaveBeenCalledOnce()
+  })
+
   test('uses a machine-level cache directory by default', () => {
     expect(
       resolveSharedElectronZipDirectory(

@@ -110,3 +110,16 @@ it('describes a legacy connection with the generic default scope', () => {
     '修改前：默认范围 → 修改后：Selected item #3'
   )
 })
+
+it('shows the saved result without actions or unrelated version-only role changes', () => {
+  const props = fixture()
+  const unchanged = { ...newStandInRole('mac', 'unchanged'), name: 'Unchanged role', version: 1 }
+  props.current.roles.push(unchanged)
+  props.proposal.settings.roles.push({ ...unchanged, version: 2 })
+  render(<StandInProposalCard {...props} result="accepted" />)
+  expect(screen.getByTestId('stand-in-proposal-result')).toHaveTextContent('配置已应用')
+  expect(screen.getByText('新建角色：Reply role')).toBeInTheDocument()
+  expect(screen.queryByText(/Unchanged role/)).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-proposal-accept')).not.toBeInTheDocument()
+  expect(props.onResolve).not.toHaveBeenCalled()
+})

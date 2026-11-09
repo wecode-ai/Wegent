@@ -635,6 +635,52 @@ describe('startup edge rendering', () => {
 })
 
 describe('startup sweep onset', () => {
+  test.each(
+    (['light', 'dark'] as const).flatMap(theme =>
+      [
+        { width: 1200, height: 680, pixelRatio: 1 },
+        { width: 900, height: 520, pixelRatio: 2 },
+        { width: 320, height: 900, pixelRatio: 1.5 },
+      ].map(dimensions => ({ theme, ...dimensions }))
+    )
+  )(
+    'clears the whole light band at both loop ends in $theme at $width × $height',
+    async options => {
+      const { animation, brand, canvas, contexts, paths, logoStyle } = await createAnimationFixture(
+        true,
+        options,
+        options
+      )
+      const angle = (parseFloat(logoStyle('--startup-logo-angle')) * Math.PI) / 180
+      const bandStart = parseFloat(logoStyle('--startup-logo-band-start')) / 100
+      const bandEnd = parseFloat(logoStyle('--startup-logo-band-end')) / 100
+      const [fit, , , , offsetX, offsetY] = contexts[0].setTransform.mock.calls.at(-1)!
+      const length = 2 * canvas.width * Math.sin(angle) + canvas.height * Math.abs(Math.cos(angle))
+      const position = (edge: string) =>
+        parseFloat(
+          brand.style.setProperty.mock.calls.findLast(
+            ([name]) => name === `--startup-logo-sweep-${edge}`
+          )![1]
+        )
+      expect(position('start')).toBeGreaterThan(position('end'))
+      for (const edge of ['start', 'end']) {
+        // CSS percentage positioning uses (container width - image width) * percentage.
+        const imageCenterX = canvas.width * (1 - position(edge) / 100)
+        for (const point of paths[0].points) {
+          const x = (point.x + 600) * fit + offsetX
+          const y = (point.y + 340) * fit + offsetY
+          const stop =
+            0.5 +
+            ((x - imageCenterX) * Math.sin(angle) - (y - canvas.height / 2) * Math.cos(angle)) /
+              length
+          if (edge === 'start') expect(stop).toBeGreaterThanOrEqual(bandEnd - 1e-10)
+          else expect(stop).toBeLessThanOrEqual(bandStart + 1e-10)
+        }
+      }
+      animation.destroy()
+    }
+  )
+
   test('starts sweeping as soon as the logo is formed while the remaining strands finish', async () => {
     const { animation, brand, contexts, frames, step } = await createAnimationFixture()
     step(0)
@@ -644,19 +690,6 @@ describe('startup sweep onset', () => {
     expect(contexts[0].logoOpacity).toBe(1)
     expect(brand.classList.contains('is-waiting-gradient')).toBe(true)
     expect(frames.size).toBe(1)
-    const start = parseFloat(
-      brand.style.setProperty.mock.calls.findLast(
-        ([name]) => name === '--startup-logo-sweep-start'
-      )![1]
-    )
-    const end = parseFloat(
-      brand.style.setProperty.mock.calls.findLast(
-        ([name]) => name === '--startup-logo-sweep-end'
-      )![1]
-    )
-    expect(start).toBeLessThan(100)
-    expect(start).toBeGreaterThan(end)
-    expect(end).toBeGreaterThan(0)
     step(5_600)
     expect(frames.size).toBe(0)
     animation.destroy()

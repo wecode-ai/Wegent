@@ -70,6 +70,8 @@ import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-mana
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
+import { DesktopAppearanceController } from './host/appearance-theme.js'
+import { normalizeAppearanceThemeSnapshot } from './host/appearance-theme-contract.js'
 import {
   DesktopPreferencesController,
   resolvePopoutShortcut,
@@ -79,7 +81,8 @@ import {
   initializeWorkbenchModePreference,
   normalizeWorkbenchMode,
 } from './runtime/workbench-mode.js'
-import { RendererStorageStore } from './host/renderer-storage-store.js'
+import type { RendererStorageStore } from './host/renderer-storage-store.js'
+import { createDesktopRendererStorage } from './host/desktop-renderer-storage.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
   EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR,
@@ -145,6 +148,7 @@ import { AppUpdateService } from './host/app-update-service.js'
 import { ReleaseStore } from './runtime/release-store.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
+import { cloudFetch } from './host/cloud-http.js'
 import {
   cleanupStaleTemporaryImages,
   createNativeContextMenuActions,
@@ -162,6 +166,13 @@ import {
   resolveConfiguredNodePath,
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
+import { PythonRuntimeManager } from './runtime/python-runtime.js'
+import { desktopInstanceMayStart } from './runtime/plugin-development-command.js'
+import {
+  fetchPythonRuntimeDownloads,
+  fetchParentPythonRuntimeDownloads,
+  PythonRuntimeLoginRequiredError,
+} from './runtime/python-runtime-downloads.js'
 import type { BrandRuntimeMetadata } from './runtime/brand-runtime-environment.js'
 import {
   prepareWorkbenchEnvironment,
@@ -253,6 +264,7 @@ const applicationId =
 const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
 const startupStartedAt = performance.now()
 const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
+const pythonRuntimeEnabled = process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP !== '1'
 const pluginDevelopmentCommand = commandLineValue(
   process.argv,
   '--wework-plugin-development-command'
@@ -343,6 +355,12 @@ if (desktopDataPaths) {
   if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 }
 
+hasSingleInstanceLock = desktopInstanceMayStart(
+  app,
+  hasSingleInstanceLock,
+  pluginDevelopmentCommand
+)
+
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
 await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log')).catch(error => {
@@ -372,6 +390,10 @@ let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
 let popoutWindowMode: PopoutWindowMode = 'composer'
 let processExplorerWindow: BrowserWindow | null = null
+const desktopAppearance = new DesktopAppearanceController({
+  nativeTheme,
+  windows: () => [mainWindow, processExplorerWindow, ...workspaceWindows.values()],
+})
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let pendingSystemDrops: Array<{
@@ -384,6 +406,7 @@ let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
 let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
+let pythonRuntimeManagerPromise: Promise<PythonRuntimeManager> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
@@ -425,6 +448,9 @@ const pluginDevelopmentChildRuntime =
         openDevTools: () =>
           mainWindow?.webContents.openDevTools({ mode: 'detach', activate: true }),
         restartCoreDsh: restartPrimaryCoreDsh,
+        resumePythonAfterLogin: async () => {
+          await pythonRuntimeManagerPromise?.then(runtime => runtime.resumeAfterLogin())
+        },
         requestStop: () => requestApplicationShutdown(() => app.quit()),
         getCoreDshPid: () => desktopRuntime?.diagnostics().coreDshPid ?? null,
         isShuttingDown: () => quitting || !desktopRuntime,
@@ -1132,7 +1158,7 @@ async function openWorkspaceWindow(input: {
     width: 1280,
     height: 800,
     title: input.title,
-    backgroundColor: '#181818',
+    backgroundColor: desktopAppearance.current().backgroundColor,
     show: false,
     webPreferences: {
       backgroundThrottling: workbenchBackgroundThrottling(process.platform),
@@ -1332,7 +1358,7 @@ async function openProcessExplorerWindow(): Promise<void> {
     minHeight: 360,
     title: 'Process Explorer',
     autoHideMenuBar: true,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#fafafa',
+    backgroundColor: desktopAppearance.current().backgroundColor,
     show: false,
     webPreferences: {
       backgroundThrottling: workbenchBackgroundThrottling(process.platform),
@@ -1428,7 +1454,16 @@ async function updateDesktopPreferences(
   patch: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   if (!desktopPreferences) throw new Error('Desktop preferences are unavailable')
-  return desktopPreferences.update(patch)
+  if (Object.hasOwn(patch, 'appearanceThemeSnapshot') && patch.appearanceThemeSnapshot !== null) {
+    const snapshot = normalizeAppearanceThemeSnapshot(patch.appearanceThemeSnapshot)
+    if (!snapshot) throw new Error('appearanceThemeSnapshot is invalid')
+    patch = { ...patch, appearanceThemeSnapshot: snapshot }
+  }
+  const updated = await desktopPreferences.update(patch)
+  if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
+    desktopAppearance.update(updated)
+  }
+  return updated
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
@@ -2079,7 +2114,10 @@ function installIpc(): void {
     await startDesktopRuntime()
   })
   ipcMain.handle('runtime:list-execution-environments', async () => {
-    const runtime = await electronNodeRuntime()
+    const [runtime, pythonStatus] = await Promise.all([
+      electronNodeRuntime(),
+      managedPythonRuntime().then(python => python.status()),
+    ])
     const configuredPath = await configuredNodePath()
     return [
       {
@@ -2088,7 +2126,15 @@ function installIpc(): void {
         restartRequired:
           configuredPath !== (runtime.status.source === 'configured' ? runtime.status.path : null),
       },
+      pythonStatus,
     ]
+  })
+  ipcMain.handle('runtime:ensure-python', async () => {
+    const pythonRuntime = await managedPythonRuntime()
+    if (!pythonRuntimeEnabled) {
+      return pythonRuntime.status()
+    }
+    return pythonRuntime.ensure({ manual: true })
   })
   ipcMain.handle('runtime:choose-node-executable', async () => {
     const options: OpenDialogOptions = {
@@ -2323,15 +2369,40 @@ async function configureDesktopRuntime(): Promise<void> {
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
     smartApps: () => smartApps,
+    ensurePython: pythonRuntimeEnabled
+      ? async () => (await managedPythonRuntime()).ensure()
+      : undefined,
+    pythonDownloads: pythonRuntimeEnabled ? pythonRuntimeDownloads : undefined,
+    pythonStatus: pythonRuntimeEnabled
+      ? async () => (await managedPythonRuntime()).status()
+      : undefined,
+    resolvePython: pythonRuntimeEnabled
+      ? async (pluginRoot, allowSystemFallback, prepare) =>
+          (await managedPythonRuntime()).resolvePluginPython(
+            pluginRoot,
+            allowSystemFallback,
+            prepare
+          )
+      : undefined,
+    prewarmPython: pythonRuntimeEnabled
+      ? async () => (await managedPythonRuntime()).prewarm()
+      : undefined,
     ...(process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
       ? { devtools: new VerificationDevtools(() => webContents.getAllWebContents()) }
       : {}),
   })
   logStartupStep('desktop-control-bridge', 'started')
-  startStartupMaintenance('desktop control bridge', async () => {
-    await desktopControlBridge!.start()
+  if (pythonRuntimeEnabled) {
+    // Executors inherit the Python capability only after its listener is ready.
+    await desktopControlBridge.start()
+    Object.assign(environment, desktopControlBridge.environment())
     logStartupStep('desktop-control-bridge', 'completed')
-  })
+  } else {
+    startStartupMaintenance('desktop control bridge', async () => {
+      await desktopControlBridge!.start()
+      logStartupStep('desktop-control-bridge', 'completed')
+    })
+  }
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
@@ -2805,7 +2876,12 @@ if (hasSingleInstanceLock) {
           await performanceRecorder.setEnabled(enabled)
         },
       })
-      rendererStorage = new RendererStorageStore(app.getPath('userData'))
+      rendererStorage = createDesktopRendererStorage(app.getPath('userData'), {
+        enabled: pythonRuntimeEnabled,
+        isShuttingDown: () => quitting,
+        python: () => pythonRuntimeManagerPromise,
+        development: () => pluginDevelopment,
+      })
       logStartupStep('desktop-stores-create', 'completed')
       if (!pluginDevelopmentInstance) {
         popoutShortcut = new GlobalShortcutController(globalShortcut, togglePopoutWindow, error =>
@@ -2889,6 +2965,8 @@ if (hasSingleInstanceLock) {
         }
       }
       const startupPreferences = await preferences.read()
+      desktopAppearance.update(startupPreferences)
+      nativeTheme.on('updated', () => desktopAppearance.update())
       logStartupStep('startup-preferences-read', 'completed')
       try {
         popoutShortcut?.configure(resolvePopoutShortcut(startupPreferences))
@@ -3003,6 +3081,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   logStartupStep('node-runtime-prepare', 'started')
   const nodeRuntime = await electronNodeRuntime()
   logStartupStep('node-runtime-prepare', 'completed')
+  const pythonRuntime = await managedPythonRuntime()
+  console.info('[python-runtime]', {
+    event: 'python-runtime-bootstrap-configured',
+    enabled: pythonRuntimeEnabled,
+    platform: process.platform,
+    arch: process.arch,
+  })
   const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
   const nodeCommand =
     nodeRuntime.status.source === 'electron' && process.platform === 'darwin'
@@ -3048,11 +3133,18 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
+  const runtimeEnvironment = pythonRuntimeEnabled
+    ? pythonRuntime.environment()
+    : { ...nodeRuntime.environment }
+  if (pythonRuntimeEnabled)
+    runtimeEnvironment.PATH = [cliBin, runtimeEnvironment.PATH?.trim()]
+      .filter(Boolean)
+      .join(delimiter)
   startupProgress.report('workspace')
   logStartupStep('workbench-environment', 'started')
   const environment = await prepareWorkbenchEnvironment({
     environment: {
-      ...nodeRuntime.environment,
+      ...runtimeEnvironment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
       WEWORK_HARNESS_RESOURCE_ROOT:
         components?.coreDsh ?? join(componentResourcesRoot, 'harness-runtime'),
@@ -3143,6 +3235,64 @@ function electronNodeRuntime(): Promise<ElectronNodeRuntime> {
     return runtime
   })()
   return electronNodeRuntimePromise
+}
+
+async function pythonRuntimeDownloads() {
+  if (process.env.WEWORK_PARENT_PYTHON_DOWNLOADS_URL) {
+    return fetchParentPythonRuntimeDownloads(process.env, cloudFetch)
+  }
+  return fetchPythonRuntimeDownloads({
+    connection: () => {
+      if (!rendererStorage) throw new PythonRuntimeLoginRequiredError()
+      return readCloudConnection(rendererStorage)
+    },
+    accessToken: async (api, connection) => {
+      if (
+        connection.credentialMode !== 'desktop_refresh' &&
+        typeof connection.token === 'string' &&
+        connection.token
+      )
+        return connection.token
+      try {
+        return (
+          await requiredCloudCredentials().refreshAccessToken(
+            api,
+            requireCloudCredentialOwner(connection, api)
+          )
+        ).accessToken
+      } catch (error) {
+        if (
+          error instanceof CloudCredentialError &&
+          ['credentials_unavailable', 'cloud_auth_expired'].includes(error.code)
+        )
+          throw new PythonRuntimeLoginRequiredError()
+        throw error
+      }
+    },
+    fetch: cloudFetch,
+  })
+}
+
+function managedPythonRuntime(): Promise<PythonRuntimeManager> {
+  pythonRuntimeManagerPromise ??= electronNodeRuntime().then(nodeRuntime => {
+    return new PythonRuntimeManager({
+      dataDirectory: app.getPath('userData'),
+      environment: nodeRuntime.environment,
+      resolveDownloads: pythonRuntimeDownloads,
+      hasPluginDemand: async () => {
+        if (!desktopRuntime || quitting) return false
+        const result = await desktopRuntime.requestExecutor<{ demanded: boolean }>(
+          'runtime.python.has_demand'
+        )
+        return result.demanded === true
+      },
+      fetch: cloudFetch,
+      resolveProxy: targetUrl => resolveSystemProxy(session.defaultSession, targetUrl),
+      log: event => console.info('[python-runtime]', event),
+      onStatusChange: status => desktopHostEvents.publish('python-runtime-status', { ...status }),
+    })
+  })
+  return pythonRuntimeManagerPromise
 }
 
 async function configuredNodePath(): Promise<string | null> {

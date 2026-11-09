@@ -47,6 +47,11 @@ fn cached_transcript_response(
         turn_navigation,
     });
     response["historyUnavailable"] = Value::Bool(history_unavailable);
+    // Non-provider runtimes own their complete message text locally. Paging
+    // limits message count, not text completeness. Native caches are not proof.
+    if !runtime_has_provider_transcript_reader(&link.runtime) && !link.ephemeral {
+        response["fullItemContent"] = json!(true);
+    }
     response["threadId"] = json!(link.thread_id);
     response["supersededTurnIds"] = json!(superseded_transcript_turn_ids(&link.runtime_handle));
     if link.runtime == "claude_code" && link.status == "interrupted" && !running {
@@ -907,47 +912,6 @@ fn runtime_handle_json(link: &RuntimeTaskLink) -> Value {
             .unwrap_or(Value::Null),
     );
     Value::Object(object)
-}
-
-fn set_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Value) {
-    if let Some(selection) = payload
-        .get("modelSelection")
-        .or_else(|| payload.get("model_selection"))
-        .filter(|value| value.is_object())
-    {
-        let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
-        object.insert("modelSelection".to_owned(), selection.clone());
-        *runtime_handle = Value::Object(object);
-        return;
-    }
-
-    let Some(model_name) =
-        string_field(payload, "modelId").or_else(|| string_field(payload, "model_id"))
-    else {
-        return;
-    };
-    let mut selection = Map::new();
-    selection.insert("modelName".to_owned(), Value::String(model_name));
-    selection.insert(
-        "modelType".to_owned(),
-        string_field(payload, "modelType")
-            .or_else(|| string_field(payload, "model_type"))
-            .map(Value::String)
-            .unwrap_or(Value::Null),
-    );
-    selection.insert(
-        "options".to_owned(),
-        payload
-            .get("modelOptions")
-            .or_else(|| payload.get("model_options"))
-            .filter(|value| value.is_object())
-            .cloned()
-            .unwrap_or_else(|| json!({})),
-    );
-
-    let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
-    object.insert("modelSelection".to_owned(), Value::Object(selection));
-    *runtime_handle = Value::Object(object);
 }
 
 fn merge_completed_transcript_message(existing: &mut Value, mut completed: Value) {

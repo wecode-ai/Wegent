@@ -1,4 +1,6 @@
 import { selectedToolCall } from './model-tool-calls.mjs'
+import { completeCommandOnProcessExit } from './process-exit-command.mjs'
+import { processIsAlive } from '../process-lifecycle.mjs'
 import { nativeMatrixCatalogModel } from './model-native-catalog.mjs'
 import { wireDeclarations } from './model-wire-contract.mjs'
 import {
@@ -1255,6 +1257,16 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
+    const { expectClientReplacement = false, exitProcessId, ...commandOptions } = options
+    assert.ok(
+      !expectClientReplacement || action === 'click',
+      'Only clicks may expect client replacement'
+    )
+    if (exitProcessId !== undefined) {
+      assert.equal(action, 'quitApp', 'Process exit completion is only valid for quitting')
+      assert.ok(Number.isSafeInteger(exitProcessId) && exitProcessId > 0)
+      assert.ok(processIsAlive(exitProcessId), 'The host must be running before the quit command')
+    }
     const observesElectronState = ELECTRON_OBSERVATION_ACTIONS.has(action)
     const availableAt = observesElectronState
       ? 0
@@ -1272,7 +1284,7 @@ class DesktopE2EServer {
       id,
       action,
       selector,
-      ...options,
+      ...commandOptions,
       timeoutMs: options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
     }
     let resolveDelivery
@@ -1290,6 +1302,7 @@ class DesktopE2EServer {
         reject,
         resolveDelivery,
         started: false,
+        expectClientReplacement,
       })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery })
@@ -1300,11 +1313,19 @@ class DesktopE2EServer {
         DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
         `Timed out delivering UI action ${action} for ${selector}`
       )
-      return await withTimeout(
-        this.guard(result),
+      const completion = await withTimeout(
+        this.guard(
+          exitProcessId === undefined
+            ? result
+            : completeCommandOnProcessExit(result, exitProcessId, command.timeoutMs)
+        ),
         command.timeoutMs + DESKTOP_CONTROL_RESULT_GRACE_MS,
         `Timed out running UI action ${action} for ${selector}`
       )
+      if (exitProcessId !== undefined) {
+        this.recordControlTransport('process-exited', clientId, { commandId: id, exitProcessId })
+      }
+      return completion
     } catch (error) {
       const diagnostic = this.commandHistory.find(command => command.id === id)
       if (diagnostic) {
@@ -1321,8 +1342,9 @@ class DesktopE2EServer {
         })
       }
       this.commandQueue = this.commandQueue.filter(item => item.command.id !== id)
-      this.commandResults.delete(id)
       throw error
+    } finally {
+      this.commandResults.delete(id)
     }
   }
 
@@ -1419,14 +1441,17 @@ class DesktopE2EServer {
       if (
         this.desktopScenario &&
         request.method === 'POST' &&
-        ['/responses', '/v1/responses'].includes(url.pathname) &&
-        (await this.writeNativeApprovalReview(
-          response,
-          await readRequestBody(request),
-          'responses'
-        ))
-      )
-        return
+        ['/responses', '/v1/responses'].includes(url.pathname)
+      ) {
+        const body = await readRequestBody(request)
+        if (await this.writeNativeApprovalReview(response, body, 'responses')) return
+        // Prediction history carries the task's ordinary markers. Route its
+        // model request before scenario counters and held task responses.
+        if (isReplyPredictionRequest(body) && !this.desktopScenario.handlesReplyPredictions) {
+          await this.handleModelResponse(request, response, 'responses')
+          return
+        }
+      }
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
     } catch (error) {
       console.error(
@@ -2112,7 +2137,9 @@ class DesktopE2EServer {
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
           this.commandResults.delete(id)
-          pending.reject(replacementError)
+          // A started refresh click may replace its renderer before reporting its result.
+          if (pending.expectClientReplacement && pending.started) pending.resolve('')
+          else pending.reject(replacementError)
         }
       }
       this.ready = ready

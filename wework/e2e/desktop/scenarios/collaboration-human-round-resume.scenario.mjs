@@ -21,9 +21,12 @@ import {
   openProjectAgentCreator,
   selectCloudAgentModel,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -221,7 +224,9 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
     uiTimeoutMs
   )
   assert.equal(project.task_provider, 'local', '端上创建的项目没有使用本地看板数据源')
-  await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
+  await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'manage'), {
+    timeoutMs: uiTimeoutMs,
+  })
   return { project }
 }
 

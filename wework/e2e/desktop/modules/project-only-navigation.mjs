@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { expandCollaborationWorkspace, selectCollaborationProjectView } from './workspace-flows.mjs'
+import { expandCollaborationWorkspace } from './workspace-flows.mjs'
+import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 import { verifyBoardPreferenceIsolation } from './collaboration-board-preferences.mjs'
 import {
   createReadOnlyBoardIssues,
@@ -226,7 +227,7 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
           timeoutMs: uiTimeoutMs,
         })
         await assertParent()
-        await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+        await selectCollaborationProjectView(control, scoped('').trim(), 'board', uiTimeoutMs)
         const readerRequest = (pathname, options) => request(readerToken, pathname, options)
         if (project.id === projects[0].id) {
           await verifyReadOnlyBoardDrag(control, {

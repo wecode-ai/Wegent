@@ -1,3 +1,4 @@
+import { openStandInExamples } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
 import { readStoryTaskEvidence } from './stand-in-private-story-evidence.mjs'
@@ -166,7 +167,7 @@ export function createMeetingUserStory(options) {
           'Record real meeting material'
         )
         await openStoryPrimary(control)
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')
+        await openStandInExamples(control)
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-onboarding-example-meeting_prep"]'

@@ -25,13 +25,16 @@
   --startup-progress-filter: drop-shadow(0 0 3px rgb(94 186 255 / 65%));
   --startup-logo-angle: 110deg;
   --startup-logo-highlight: 47%;
+  --startup-logo-band-start: 36%;
+  --startup-logo-band-end: 58%;
+  --startup-logo-base: #1764bd;
   --startup-logo-gradient: linear-gradient(
     var(--startup-logo-angle),
-    #1764bd 0%,
-    #187ad0 36%,
+    var(--startup-logo-base) var(--startup-logo-band-start),
+    #187ad0 41%,
     #459fe8 var(--startup-logo-highlight),
-    #187ad0 58%,
-    #1764bd 100%
+    #187ad0 53%,
+    var(--startup-logo-base) var(--startup-logo-band-end)
   );
   font-family:
     ui-sans-serif,
@@ -63,13 +66,16 @@
   --startup-progress-end: #1456b8;
   --startup-progress-filter: none;
   --startup-logo-highlight: 48%;
+  --startup-logo-band-start: 43%;
+  --startup-logo-band-end: 53%;
+  --startup-logo-base: #165bb8;
   --startup-logo-gradient: linear-gradient(
     var(--startup-logo-angle),
-    #165bb8 0%,
-    #1962bf 43%,
+    var(--startup-logo-base) var(--startup-logo-band-start),
+    #1962bf 46%,
     #2e8fe3 var(--startup-logo-highlight),
-    #1962bf 53%,
-    #165bb8 100%
+    #1962bf 50%,
+    var(--startup-logo-base) var(--startup-logo-band-end)
   );
 }
 
@@ -140,7 +146,9 @@ body {
   content: '';
   pointer-events: none;
   opacity: var(--startup-logo-opacity, 0);
-  background: var(--startup-logo-gradient);
+  background-color: var(--startup-logo-base);
+  background-image: var(--startup-logo-gradient);
+  background-repeat: no-repeat;
   background-position: var(--startup-logo-position, var(--startup-logo-sweep-start));
   background-size: 200% 100%;
   mask-image: var(--startup-logo-mask);
@@ -453,6 +461,7 @@ body {
     background-position: var(--startup-logo-sweep-start);
   }
 
+  90%,
   to {
     background-position: var(--startup-logo-sweep-end);
   }

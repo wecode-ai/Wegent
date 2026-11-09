@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   ManagedExecutorRuntime,
+  executorRequestTimeoutMs,
   managedExecutorLogPath,
   prepareManagedExecutorEnvironment,
   requestExecutor,
@@ -13,6 +14,19 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
+  test('allows Python provisioning before auth operations without extending ordinary requests', () => {
+    for (const method of [
+      'executor.plugin_auth.migrate',
+      'executor.plugin_auth.run',
+      'runtime.connections.cli',
+      'runtime.local_connector_auth.start',
+      'runtime.local_connector_auth.health',
+    ]) {
+      expect(executorRequestTimeoutMs(method)).toBe(21 * 60_000 + 5_000)
+    }
+    expect(executorRequestTimeoutMs('executor.health')).toBe(75_000)
+  })
+
   test('binds verification ownership to the native-created auth entry without exposing auth', async () => {
     const directory = await temporaryDirectory('managed-auth-ownership-')
     try {

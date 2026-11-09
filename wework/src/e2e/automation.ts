@@ -94,6 +94,7 @@ import {
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
+import { cloudIdentityFailure } from './cloud-identity-diagnostics'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
   getAppPreferences,
@@ -138,10 +139,134 @@ import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
+  E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
+
+type E2ERuntimeEvent = { event: string; payload: Record<string, unknown> }
+
+const runtimeCleanupEvents = new Map<string, Record<string, unknown>>()
+const runtimeCleanupTaskIds = new Set<string>()
+const runtimeCleanupWaiters = new Set<{
+  taskIds: string[]
+  resolve: (value: string) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof globalThis.setTimeout>
+}>()
+let runtimeCleanupListenerSet: Set<(event: E2ERuntimeEvent) => void> | null = null
+let runtimeCleanupRecorder: ((event: E2ERuntimeEvent) => void) | null = null
+
+function runtimeCleanupPayload(taskIds: string[]) {
+  return {
+    cleanupByTaskId: Object.fromEntries(
+      taskIds
+        .filter(taskId => runtimeCleanupEvents.has(taskId))
+        .map(taskId => [taskId, runtimeCleanupEvents.get(taskId)])
+    ),
+  }
+}
+
+function resolveRuntimeCleanupWaiters() {
+  for (const waiter of [...runtimeCleanupWaiters]) {
+    if (!waiter.taskIds.every(taskId => runtimeCleanupEvents.has(taskId))) continue
+    globalThis.clearTimeout(waiter.timer)
+    runtimeCleanupWaiters.delete(waiter)
+    waiter.resolve(JSON.stringify(runtimeCleanupPayload(waiter.taskIds)))
+  }
+}
+
+function ensureRuntimeCleanupRecorder(): void {
+  const root = globalThis as typeof globalThis & {
+    [E2E_RUNTIME_EVENT_LISTENERS_KEY]?: Set<(event: E2ERuntimeEvent) => void>
+  }
+  const listeners = (root[E2E_RUNTIME_EVENT_LISTENERS_KEY] ??= new Set())
+  if (!runtimeCleanupRecorder) {
+    runtimeCleanupRecorder = (event: E2ERuntimeEvent) => {
+      if (event.event !== 'runtime.work.changed') return
+      const taskId = typeof event.payload.taskId === 'string' ? event.payload.taskId.trim() : ''
+      if (!runtimeCleanupTaskIds.has(taskId)) return
+      const data = event.payload.data
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return
+      const cleanup = (data as Record<string, unknown>).archiveCleanup
+      if (!cleanup || typeof cleanup !== 'object' || Array.isArray(cleanup)) return
+      runtimeCleanupEvents.set(taskId, cleanup as Record<string, unknown>)
+      resolveRuntimeCleanupWaiters()
+    }
+  }
+  if (runtimeCleanupListenerSet !== listeners) {
+    runtimeCleanupListenerSet?.delete(runtimeCleanupRecorder)
+    listeners.add(runtimeCleanupRecorder)
+    runtimeCleanupListenerSet = listeners
+  }
+}
+
+function runtimeCleanupTaskIdList(command: DesktopControlCommand): string[] {
+  const request = JSON.parse(command.value ?? '{}') as {
+    taskIds?: unknown
+  }
+  const taskIds = Array.isArray(request.taskIds)
+    ? [
+        ...new Set(
+          request.taskIds.filter(
+            (taskId): taskId is string => typeof taskId === 'string' && taskId.trim() !== ''
+          )
+        ),
+      ]
+    : []
+  if (taskIds.length === 0) {
+    throw new Error('Runtime cleanup event tracking requires at least one taskId')
+  }
+  return taskIds
+}
+
+function startRuntimeCleanupRecorder(command: DesktopControlCommand): string {
+  const taskIds = runtimeCleanupTaskIdList(command)
+  for (const taskId of taskIds) {
+    runtimeCleanupTaskIds.add(taskId)
+    runtimeCleanupEvents.delete(taskId)
+  }
+  ensureRuntimeCleanupRecorder()
+  return JSON.stringify({ started: true, taskIds })
+}
+
+function waitForRuntimeCleanupEvents(command: DesktopControlCommand): Promise<string> {
+  const taskIds = runtimeCleanupTaskIdList(command)
+  const request = JSON.parse(command.value ?? '{}') as {
+    timeoutMs?: unknown
+  }
+  const timeoutMs = Number(request.timeoutMs ?? command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS)
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('waitForRuntimeCleanupEvents requires a positive timeout')
+  }
+  for (const taskId of taskIds) runtimeCleanupTaskIds.add(taskId)
+  ensureRuntimeCleanupRecorder()
+  if (taskIds.every(taskId => runtimeCleanupEvents.has(taskId))) {
+    return Promise.resolve(JSON.stringify(runtimeCleanupPayload(taskIds)))
+  }
+
+  return new Promise((resolve, reject) => {
+    const waiter = {
+      taskIds,
+      resolve,
+      reject,
+      timer: globalThis.setTimeout(() => {
+        runtimeCleanupWaiters.delete(waiter)
+        const missing = taskIds.filter(taskId => !runtimeCleanupEvents.has(taskId))
+        reject(
+          new Error(
+            `Runtime cleanup did not finish for ${missing.join(', ')}; received=${JSON.stringify(
+              runtimeCleanupPayload(taskIds)
+            )}`
+          )
+        )
+      }, timeoutMs),
+    }
+    runtimeCleanupWaiters.add(waiter)
+    resolveRuntimeCleanupWaiters()
+  })
+}
 
 function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sourceReads']) {
   return Object.fromEntries(
@@ -594,7 +719,7 @@ async function seedDesktopE2ECloudConnection(
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10000),
   })
-  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+  if (!response.ok) throw await cloudIdentityFailure(response, `${config.apiBaseUrl}/users/me`)
   const user = await response.json()
   const connection = {
     ...config,
@@ -1660,6 +1785,8 @@ async function waitForDesktopControlElement(
       dataPresentation: element.dataset.presentation ?? null,
       hidden: element.hidden,
       ariaHidden: element.getAttribute('aria-hidden'),
+      enabled: desktopControlElementEnabled(element),
+      state: { ...element.dataset },
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
       rect: element.getBoundingClientRect().toJSON(),
@@ -2344,6 +2471,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
+    case 'waitForRuntimeCleanupEvents':
+      return waitForRuntimeCleanupEvents(command)
+    case 'startRuntimeCleanupRecorder':
+      return startRuntimeCleanupRecorder(command)
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''

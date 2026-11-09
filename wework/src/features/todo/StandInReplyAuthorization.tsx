@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { StandInHandlingPolicy } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { SettingsSwitch } from '@/components/settings/settings-ui'
+import { SettingsRow, SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function StandInReplyAuthorization({
@@ -21,22 +21,23 @@ export function StandInReplyAuthorization({
   const [confirming, setConfirming] = useState(false)
   return (
     <>
-      <div className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
-        <span>{t('standIn.authorization.confirm_each')}</span>
-        <SettingsSwitch
-          data-testid={`${testId}-confirm-replies`}
-          disabled={disabled}
-          aria-label={t('standIn.authorization.for_source', { name })}
-          checked={policy.askBeforeAct}
-          onCheckedChange={confirm => {
-            if (confirm) onChange({ ...policy, askBeforeAct: true })
-            else setConfirming(true)
-          }}
-        />
-        {!policy.askBeforeAct && (
-          <span className="text-xs text-text-muted">{t('standIn.authorization.continuous')}</span>
-        )}
-      </div>
+      <SettingsRow
+        className="px-0"
+        label={t('standIn.authorization.confirm_each')}
+        description={!policy.askBeforeAct ? t('standIn.authorization.continuous') : undefined}
+        control={
+          <SettingsSwitch
+            data-testid={`${testId}-confirm-replies`}
+            disabled={disabled}
+            aria-label={t('standIn.authorization.for_source', { name })}
+            checked={policy.askBeforeAct}
+            onCheckedChange={confirm => {
+              if (confirm) onChange({ ...policy, askBeforeAct: true })
+              else setConfirming(true)
+            }}
+          />
+        }
+      />
       <ConfirmDialog
         open={confirming}
         title={t('standIn.authorization.allow_title')}

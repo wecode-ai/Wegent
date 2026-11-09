@@ -4744,8 +4744,8 @@ describe('DesktopWorkbenchLayout', () => {
       'h-[18px]',
       'w-[18px]',
       'rounded-full',
-      'hover:bg-black/70',
-      'hover:text-white'
+      'hover:bg-text-primary/70',
+      'hover:text-background'
     )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
@@ -5341,8 +5341,8 @@ describe('DesktopWorkbenchLayout', () => {
       'h-[18px]',
       'w-[18px]',
       'rounded-full',
-      'hover:bg-black/70',
-      'hover:text-white'
+      'hover:bg-text-primary/70',
+      'hover:text-background'
     )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
@@ -6262,7 +6262,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('workspace file panel directly edits and autosaves a writable text file', async () => {
+  test('workspace file panel previews markdown before editing and autosaves it', async () => {
     const user = userEvent.setup()
     const listWorkspaceEntries = vi.fn().mockResolvedValue({
       path: '/workspace/project',
@@ -6315,6 +6315,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('hello')
+    expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('workspace-file-markdown-mode-button'))
     const editor = await screen.findByTestId('workspace-file-editor')
     expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
@@ -6413,6 +6416,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
+    await user.click(screen.getByTestId('workspace-file-markdown-mode-button'))
     await replaceWorkspaceEditorText(
       await screen.findByTestId('workspace-file-editor'),
       'hello world'

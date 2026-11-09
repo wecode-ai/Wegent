@@ -1037,7 +1037,10 @@ export function createElectronCapabilityRouter(
     return mcpDiscoveryFault.configure(params.enabled)
   })
   router.register('e2e.inlineVisualizationFrame', params =>
-    controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
+    controlInlineVisualizationFrame(
+      e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main'),
+      params
+    )
   )
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
@@ -1433,7 +1436,7 @@ export function registerAppUpdateCapabilities(
   // appUpdate.downloadProgress until it reports a terminal phase.
   router.register('appUpdate.download', params => {
     void requiredAppUpdates(appUpdates)
-      .download(updateChannelParam(params))
+      .download(updateChannelParam(params), optionalStringParam(params, 'retryToken'))
       .catch(() => undefined)
     return null
   })

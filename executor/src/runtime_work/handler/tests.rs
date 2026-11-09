@@ -18,6 +18,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.catalog",
         "runtime.connections.resources",
         "runtime.connections.dependencies.inventory",
+        "runtime.python.has_demand",
     ] {
         assert!(
             !should_resume_persisted_turns_before_rpc(method),
@@ -3606,7 +3607,9 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 .send(json!({"event": "runtime.work.changed", "payload": {"taskId": "unrelated"}}))
                 .unwrap();
 
-            handler.delete_archived_link_background(link.clone()).await;
+            handler
+                .delete_archived_link_background(link.clone(), false)
+                .await;
 
             assert!(path.exists());
             assert!(handler.local_task_link("task-1").is_some());
@@ -3621,7 +3624,7 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 .is_empty());
 
             fs::write(path.join(".git"), marker).unwrap();
-            handler.delete_archived_link_background(link).await;
+            handler.delete_archived_link_background(link, false).await;
             assert!(!path.exists());
             assert!(handler.local_task_link("task-1").is_none());
             assert!(handler.worktrees.snapshot_source_for(path).is_none());

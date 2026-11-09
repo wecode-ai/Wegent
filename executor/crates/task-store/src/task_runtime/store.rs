@@ -19,6 +19,7 @@ mod assignment_receipts;
 mod code_projects;
 pub mod execution_workspace;
 mod human_requests;
+mod stand_in_dispatches;
 pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
@@ -84,6 +85,8 @@ mod stand_in_proposals;
 
 #[path = "stand_in_memories.rs"]
 mod stand_in_memories;
+#[path = "stand_in_memory_progress.rs"]
+mod stand_in_memory_progress;
 
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
@@ -118,6 +121,8 @@ pub enum TaskRuntimeError {
     TaskNotFound,
     #[error("task changed")]
     VersionConflict,
+    #[error("This fact or its evidence was forgotten or corrected; do not reconstruct it")]
+    MemorySuppressed,
     #[error("task provider '{0}' is not implemented yet")]
     UnsupportedProvider(String),
     #[error("task provider request failed: {0}")]

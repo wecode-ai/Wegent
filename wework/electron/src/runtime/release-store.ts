@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative } from 'node:path'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, relative } from 'node:path'
 import { removePhysicalRelease } from './physical-release-files.js'
-import { macosInstallationStage } from './macos-installation-paths.js'
 import { serializePathOperation } from './path-operation-queue.js'
+import { parseRollbackHistory, type ReleaseRollbackRecord } from './release-update-history.js'
+import { planReleaseCleanup } from './release-cleanup.js'
+
+export type ReleasePruneResult = { status: 'completed' } | { status: 'skipped'; reason: string }
 
 export interface DesktopRelease {
   schemaVersion: 1
@@ -16,6 +19,7 @@ export interface DesktopRelease {
   profileRoot: string
   dataSchema: number
   readableDataSchemas: number[]
+  packageSha256?: string
   retainedRelease?: string
   macosInstallation?: {
     payloadExecutable: string
@@ -79,6 +83,7 @@ export class ReleaseStore {
       !Number.isSafeInteger(value.dataSchema) ||
       !Array.isArray(value.readableDataSchemas) ||
       !value.readableDataSchemas.every(Number.isSafeInteger) ||
+      (value.packageSha256 !== undefined && !/^[a-f0-9]{64}$/.test(value.packageSha256)) ||
       (value.retainedRelease !== undefined &&
         (typeof value.retainedRelease !== 'string' || releaseId(value.retainedRelease) === id)) ||
       (installation !== undefined &&
@@ -130,6 +135,37 @@ export class ReleaseStore {
   async active(): Promise<DesktopRelease | null> {
     const id = await optionalText(join(this.root, 'active'))
     return id ? this.read(id) : null
+  }
+
+  async rollbackHistory(): Promise<ReleaseRollbackRecord[]> {
+    return parseRollbackHistory(
+      await optionalText(join(this.root, 'update-rollback-history.json')),
+      await optionalText(join(this.root, 'rolled-back-versions.json'))
+    )
+  }
+
+  /** Preserve unreadable consent records without blocking health or recovery. */
+  private async updateRollbackHistory(
+    update: (history: ReleaseRollbackRecord[]) => ReleaseRollbackRecord[]
+  ): Promise<void> {
+    let history: ReleaseRollbackRecord[]
+    try {
+      history = await this.rollbackHistory()
+    } catch {
+      // Retry checks still use the strict reader and reject until history is repaired.
+      return
+    }
+    const records = update(history)
+    await atomicReleaseWrite(
+      join(this.root, 'update-rollback-history.json'),
+      JSON.stringify(records)
+    )
+    // A retained older host still reads this file after rollback. New hosts
+    // interpret it as a request for consent, never as a server revocation.
+    await atomicReleaseWrite(
+      join(this.root, 'rolled-back-versions.json'),
+      JSON.stringify([...new Set(records.map(record => record.version))])
+    )
   }
 
   async activation(): Promise<ReleaseActivation | null> {
@@ -238,6 +274,9 @@ export class ReleaseStore {
     await atomicReleaseWrite(join(this.root, 'previousHealthy'), activation.from)
     await atomicReleaseWrite(join(this.root, 'last-activation.json'), JSON.stringify(activation))
     const healthy = await this.read(id)
+    await this.updateRollbackHistory(history =>
+      history.filter(record => record.version !== healthy.version)
+    )
     // Full target health supersedes a handoff left by an older source launcher.
     if (healthy.macosInstallation) await rm(join(this.root, 'macos-rollback'), { force: true })
     await atomicReleaseWrite(
@@ -294,14 +333,21 @@ export class ReleaseStore {
     if (!activation) throw new Error('No release activation to roll back')
     const previous = await this.read(activation.from)
     const rejected = await this.read(activation.to)
-    const saved = await optionalText(join(this.root, 'rolled-back-versions.json'))
-    const versions: unknown = saved ? JSON.parse(saved) : []
-    if (!Array.isArray(versions) || versions.some(version => typeof version !== 'string'))
-      throw new Error('Invalid rollback quarantine')
-    await atomicReleaseWrite(
-      join(this.root, 'rolled-back-versions.json'),
-      JSON.stringify([...new Set([...versions, rejected.version])])
-    )
+    const attempted = await optionalText(join(this.root, 'attempted'))
+    if (activation.rollbackRequested || attempted === activation.token) {
+      const record: ReleaseRollbackRecord = {
+        token: activation.token,
+        version: rejected.version,
+        fromVersion: previous.version,
+        packageSha256: rejected.packageSha256,
+        reason: activation.rollbackRequested ? 'rolled-back' : 'startup-failed',
+        occurredAt: new Date().toISOString(),
+      }
+      await this.updateRollbackHistory(history => [
+        ...history.filter(item => item.version !== record.version),
+        record,
+      ])
+    }
     if (
       activation.restoreRequired &&
       (await optionalText(join(this.root, 'data-opened'))) === activation.token
@@ -349,83 +395,25 @@ export class ReleaseStore {
     return activation
   }
 
-  async prune(): Promise<void> {
+  async prune(): Promise<ReleasePruneResult> {
     return this.serial(() => this.pruneReleases())
   }
 
-  private async pruneReleases(): Promise<void> {
-    const active = await this.active()
-    if (!active) return
-    const previous = await optionalText(join(this.root, 'previousHealthy'))
-    const activation = await this.activation()
-    const retained = new Set([active.id, previous, activation?.from, activation?.to])
-    const bridge = await optionalText(join(this.root, 'bridge'))
-    if (bridge) {
-      const path = relative(join(this.root, 'slots'), bridge)
-      const location = path.split(/[\\/]/)
-      if (!isAbsolute(path) && location.length > 1 && location[0] !== '..')
-        retained.add(releaseId(location[0]))
-    }
-    for (const id of retained) {
-      if (!id) continue
-      const source = await this.read(id)
-      if (source.retainedRelease) retained.add(source.retainedRelease)
-    }
-    const entries = await readdir(join(this.root, 'slots'), { withFileTypes: true })
-    const installation = await optionalText(join(this.root, 'macos-application'))
-    const physicalRoot = installation ? await realpath(this.root) : null
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const marker = join(this.slot(entry.name), 'preserved-data-snapshot')
-      const value = await optionalText(marker)
-      if (!value?.startsWith('{')) continue
-      let owner
-      try {
-        owner = JSON.parse(value)
-      } catch {
-        continue
-      }
-      if (owner.kind === 'macos-source-owner' && !retained.has(owner.owner))
-        await rm(marker, { force: true })
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory() || retained.has(entry.name)) continue
-      if (await optionalText(join(this.slot(entry.name), 'preserved-data-snapshot'))) continue
-      if (installation) {
-        const executable = join(
-          installation,
-          'Contents',
-          'MacOS',
-          active.executable.split(/[\\/]/).at(-1)!
-        )
-        const stage = dirname(macosInstallationStage(executable, releaseId(entry.name)))
-        const value = await optionalText(join(stage, 'release-owner.json'))
-        if (value) {
-          const owner = JSON.parse(value)
-          if (
-            owner.schemaVersion === 1 &&
-            owner.storeRoot === physicalRoot &&
-            owner.releaseId === entry.name
-          )
-            await removePhysicalRelease(stage)
-        }
-      }
-      await removePhysicalRelease(this.slot(entry.name))
-    }
-    const last = await optionalText(join(this.root, 'last-activation.json'))
-    const lastSnapshot = last ? (JSON.parse(last) as ReleaseActivation).snapshot : undefined
-    const snapshotRoot = join(this.root, 'snapshots')
-    let snapshots
+  private async pruneReleases(): Promise<ReleasePruneResult> {
+    let plan
     try {
-      snapshots = await readdir(snapshotRoot, { withFileTypes: true })
+      plan = await planReleaseCleanup(this)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-      throw error
+      // Cleanup is optional. An incomplete ownership graph must never permit partial deletion.
+      return {
+        status: 'skipped',
+        reason: error instanceof Error ? error.message : 'Release ownership is unavailable',
+      }
     }
-    for (const entry of snapshots) {
-      if (entry.isDirectory() && entry.name !== lastSnapshot && entry.name !== activation?.snapshot)
-        await rm(join(snapshotRoot, entry.name), { recursive: true, force: true })
-    }
+    for (const marker of plan.markers) await rm(marker, { force: true })
+    for (const release of plan.releases) await removePhysicalRelease(release)
+    for (const snapshot of plan.snapshots) await rm(snapshot, { recursive: true, force: true })
+    return { status: 'completed' }
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {

@@ -4,11 +4,8 @@ import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity
 import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import {
-  createLocalCollaborationProject,
-  reloadMainWindow,
-  selectCollaborationProjectView,
-} from '../modules/workspace-flows.mjs'
+import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = '负责人分配动态验收'

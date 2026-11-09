@@ -9,6 +9,10 @@ sidebar_position: 5
 <!-- ui-source: src/pages/WorkbenchPage.tsx -->
 <!-- ui-source: src/pages/PopoutWorkbenchPage.tsx -->
 
+## Startup animation
+
+The startup logo has a left-to-right light sweep. The light band fully exits before a brief pause and the next pass, keeping the same base color across the loop boundary. The sweep is disabled when the system's reduced-motion preference is enabled.
+
 ## Application menu
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
@@ -69,7 +73,7 @@ Lanes follow actual execution state: a task that is explicitly queued but has no
 
 Hover anywhere on a board card to open a task-progress panel at a stable position in the viewport's upper-right corner; moving across cards does not make the panel jump with each anchor. Its header shows the current issue title. When the runtime exposes one, the preview shows the current conversation goal. It directly reuses the task conversation component and always starts at the latest message instead of restoring the Task page's saved scroll position. While the current turn is active but has not produced new response text, the preview does not present the previous turn's final response as the latest progress. When a runtime task is associated with a board item, both local and cloud task bindings must persist that conversation's model selection. The preview restores the model from the binding instead of falling back to the global default for new conversations. Message loading, live updates, continuation, and attachments behave exactly as they do on the task page, with the composer collapsed by default. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Clicking the card's task-progress area, the pin action in the panel header, or the composer pins the same panel in place instead of opening a separate side conversation. While pinned, hovering other cards does not replace its content; clicking another card's task-progress area switches the pinned panel in the same position. Use the top-right close button or press `Esc` to leave the pinned state and restore normal hover previews.
 
-The work-item control above the composer shows the current project or linked issue and provides actions to view its details or board. Opening the linked board focuses the work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
+The work-item summary above the composer shows the current project or linked Issue. Click its title to open the current work-item details; when no Issue-details action is available, it opens the matching board. The details icon opens Issue details, and the board icon focuses the current work item in its project-space board. Opening the board preserves the original Task tab and reuses an already-open board tab for the same project instead of loading a duplicate. Reference chips in the composer and sent messages open a conversation or Issue according to their type; see [Working with AI](./tasks.md).
 
 When changing the composer's project-space association, filter by owning space on the left. Each project on the right shows its name, key, and owning space to distinguish duplicate names. Search combines project names, space names, and project keys. Projects default to ascending name order, with descending order also available. In the search field, use the arrow keys to select, `Enter` to confirm, and `Esc` to close. **Do not add to another project space** removes the extra association.
 
@@ -128,7 +132,7 @@ Open **top tab bar → + → Needs your input**, or choose **Needs your input** 
 
 List entries and detail headers show a timestamp: the request time for pending questions and the recorded handling time for handled entries. Today's entries show hours and minutes; other dates show month and day, including the year for a different year. Hover over the timestamp for the complete date and time in your local timezone. Missing or invalid timestamps are omitted.
 
-When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
+When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. The reminder shows the question's creation time below the task name: hours and minutes for today, or a date for older questions. Hover over it for the complete date and time. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
 
 To leave an ordinary conversation question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally. Persistent Issue handoffs and ordinary project work do not offer this button: local archiving cannot replace an answer or a transfer.
 
@@ -212,9 +216,9 @@ The titlebar's **Open workspace location** and neighboring IDE dropdown open the
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
-Selecting a writable text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
+Selecting a writable non-Markdown text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 
-Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
+Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
 Codex file citations appear as clickable filenames for presentations, spreadsheets, PDFs, documents, and code. Source citations appear under **Sources**, while deliverables appear under **Outputs**. Code line references open at the requested lines. Page numbers, slide numbers, worksheet ranges, and object labels appear beside the filename; clicking opens the file but does not yet navigate to an Office artifact's internal location. Legacy `【F:path†Lstart-Lend】` references also support code line navigation.
 
