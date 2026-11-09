@@ -469,6 +469,7 @@ jobs:
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_RELEASE_ASSET_TOKEN: ${{ contains(matrix.segments, 'harness-app-') && github.token || '' }}
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
@@ -974,6 +975,7 @@ jobs:
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
+          WEWORK_E2E_RELEASE_ASSET_TOKEN: ${{ contains(matrix.segments, 'plugin-legacy-upgrade') && github.token || '' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
         run: |

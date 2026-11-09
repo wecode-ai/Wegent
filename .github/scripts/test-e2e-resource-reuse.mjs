@@ -14,6 +14,45 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
+import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
+
+test("historical fixtures use the exact GitHub release asset by ID", async () => {
+  const requests = [];
+  const response = await fetchGithubReleaseAsset({
+    repository: "wecode-ai/Wegent",
+    tag: "wework-updater",
+    name: "pinned.tar.gz",
+    redirect: "manual",
+    token: "fixture-token",
+    fetchImpl: async (url, options) => {
+      requests.push({ url, ...options });
+      if (requests.length === 1) {
+        return Response.json({
+          assets: [
+            { name: "other-pinned.tar.gz", id: 1 },
+            { name: "pinned.tar.gz", id: 2 },
+          ],
+        });
+      }
+      return new Response(null, { status: 302 });
+    },
+  });
+  assert.equal(response.status, 302);
+  assert.equal(
+    requests[0].url,
+    "https://api.github.com/repos/wecode-ai/Wegent/releases/tags/wework-updater",
+  );
+  assert.equal(
+    requests[1].url,
+    "https://api.github.com/repos/wecode-ai/Wegent/releases/assets/2?download=1",
+  );
+  assert.deepEqual(requests[1].headers, {
+    authorization: "Bearer fixture-token",
+    accept: "application/octet-stream",
+  });
+  assert.equal(requests[1].redirect, "manual");
+  assert.equal(requests[1].signal, requests[0].signal);
+});
 
 test("isolated browsers route localhost to real runner services without retaining a loopback alias", () => {
   const hosts = [
