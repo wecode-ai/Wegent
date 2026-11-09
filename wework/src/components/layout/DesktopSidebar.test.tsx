@@ -326,6 +326,8 @@ describe('DesktopSidebar', () => {
         'style',
         'data-theme',
         'data-appearance-mode',
+        'data-appearance-theme',
+        'data-ui-theme-id',
         'data-sidebar-translucent',
         'class',
       ].map(name => [name, root.getAttribute(name)] as const)
@@ -340,7 +342,13 @@ describe('DesktopSidebar', () => {
           ['#fff', '255 255 255'],
           [defaultAppearance.accentColor, '37 99 235'],
         ]) {
-          applyAppearance({ ...defaultAppearance, accentColor }, theme)
+          applyAppearance(
+            {
+              ...defaultAppearance,
+              themeOverrides: { ...defaultAppearance.themeOverrides, [theme]: { accentColor } },
+            },
+            theme
+          )
           expect(root.style.getPropertyValue('--color-primary')).toBe(expectedAccent)
           if (theme === 'light' && accentColor === defaultAppearance.accentColor) {
             expect(root.style.getPropertyValue('--color-sidebar-attention')).toBe(expectedAccent)

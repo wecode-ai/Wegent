@@ -1,6 +1,56 @@
 use super::*;
 
 #[test]
+fn runtime_collection_timeout_recovers_legacy_latches_and_backs_off_new_failures() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"account","kind":"direct","id":"own"});
+    let version = json!(19);
+    let legacy = json!({"version":version,"checkpoint":{"after":"2026-11-08T22:57:19.411Z","cursor":"0"},"error":{"code":"request_timeout","message":"Executor request runtime.connections.cli timed out"}});
+    store.save_stand_in_source(7, &source, &legacy).unwrap();
+    let state = store.stand_in_source(7, &source).unwrap();
+    assert!(!collection_error_latched(&state, &version));
+    let before = chrono::Utc::now().timestamp_millis();
+    save_collection_result(
+        &store,
+        7,
+        &source,
+        &version,
+        &state,
+        Err(AppIpcError::new(
+            "request_timeout",
+            "Runtime read timed out",
+        )),
+    )
+    .unwrap();
+    let failed = store.stand_in_source(7, &source).unwrap();
+    assert_eq!(failed["checkpoint"], legacy["checkpoint"]);
+    assert_eq!(failed["version"], version);
+    assert_eq!(failed["error"]["retryable"], true);
+    assert!(failed["retryAt"].as_i64().unwrap() >= before + 30_000);
+    assert!(collection_error_latched(&failed, &version));
+    let mut due = failed.clone();
+    due["retryAt"] = json!(before - 1);
+    assert!(!collection_error_latched(&due, &version));
+    let recovered = json!({"checkpoint":{"after":"2026-11-09T00:00:00Z","cursor":"0"}});
+    save_collection_result(&store, 7, &source, &version, &due, Ok(recovered.clone())).unwrap();
+    let resumed = store.stand_in_source(7, &source).unwrap();
+    assert_eq!(resumed["checkpoint"], recovered["checkpoint"]);
+    assert!(resumed["error"].is_null());
+    assert!(resumed["retryAt"].is_null());
+    assert!(resumed["failures"].is_null());
+    for code in [
+        "connector_auth_required",
+        "forbidden",
+        "dingtalk_response_invalid",
+    ] {
+        let mut permanent = legacy.clone();
+        permanent["error"]["code"] = json!(code);
+        assert!(collection_error_latched(&permanent, &version));
+    }
+}
+
+#[test]
 fn declared_cli_read_process_failure_retries_from_the_original_cursor_then_clears_error() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();

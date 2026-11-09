@@ -1,6 +1,7 @@
 import { WorkerPoolContextProvider } from '@pierre/diffs/react'
 import DiffWorker from '@pierre/diffs/worker/worker.js?worker'
 import type { ReactNode } from 'react'
+import { WEWORK_CODE_THEME } from '@/lib/code-theme'
 
 const poolOptions = {
   workerFactory: () => new DiffWorker(),
@@ -10,7 +11,7 @@ const poolOptions = {
 
 const highlighterOptions = {
   preferredHighlighter: 'highlights' as const,
-  theme: { dark: 'pierre-dark', light: 'pierre-light' },
+  theme: WEWORK_CODE_THEME,
   useTokenTransformer: true,
   langs: ['typescript', 'javascript', 'css', 'html', 'python'],
   lineDiffType: 'word-alt' as const,

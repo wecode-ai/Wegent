@@ -58,9 +58,9 @@ const badgeIcons = {
 }
 const badgeTones = {
   neutral: 'text-text-secondary',
-  success: 'text-green-600',
-  warning: 'text-amber-600',
-  danger: 'text-red-600',
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-destructive',
 }
 
 function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {

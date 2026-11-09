@@ -542,6 +542,17 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     grep -F 'docker run --rm' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--network bridge' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--add-host wegent-e2e-runner:host-gateway' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- \
+      '--entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh"' \
+      >/dev/null ||
+  sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--network host' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |

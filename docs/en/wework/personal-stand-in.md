@@ -145,6 +145,8 @@ Reading a notification, dismissing a reminder, or marking it read does not resol
 
 Use **Stop stand-in** at the bottom left of settings and confirm to stop. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 
+Executor read timeouts during source collection retry automatically with backoff, without saving the connection again. Sources previously stopped by this timeout also resume from their original cursor. Automatic recovery applies only to reads, never replaying sends or other actions. Expired authentication, permission denials, and invalid responses still require correction before retrying.
+
 ## Issue human handoffs
 
 Issue cards right-align an icon and the actor's name in the existing reference/status row above the title, without adding a row. Icons distinguish agent handling, stand-in handling and waiting for a person. Waiting uses a person with a small clock and a “Waiting for [person]” tooltip; only the name is visible as text. Confirmed running executions show the agent or stand-in, while outstanding questions prioritize their recipients. Otherwise the assigned person handles the Issue; when no person is assigned, its creator takes responsibility. There is no third handling state such as awaiting assignment. Business states remain independent, and execution details retain queued, failed and offline progress.
