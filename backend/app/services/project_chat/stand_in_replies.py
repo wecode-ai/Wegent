@@ -13,6 +13,7 @@ from app.schemas.issue_activity_comment import StandInPublicReply
 from app.schemas.project_chat import ProjectChatMessageView
 from app.services.collaboration_human_assignments import human_task_bindings
 from app.services.device.identity import resolve_owned_device_alias
+from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_chat.service import project_chat_service
 from shared.telemetry.decorators import trace_sync
@@ -129,7 +130,10 @@ def publish_stand_in_reply(
         thread_root_message_id=message_id,
     )
     db.add(row)
-    db.commit()
+    item.metadata_json = advance_content_revision(item.metadata_json)
+    item.version += 1
+    project_chat_service._queue_loop_item_change(db, item)
+    project_chat_service._commit(db)
     db.refresh(row)
     return project_chat_service.to_view(row, db=db)
 

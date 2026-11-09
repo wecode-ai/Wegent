@@ -333,6 +333,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         heldChild && !childReleased,
         'The child must still be running when the follow-up is accepted'
       )
+      await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+      await request(`/v1/loop-items/${issue.id}/read`, {})
+      assert.equal((await request(`/v1/loop-items/${issue.id}`)).is_unread, false)
       childReleased = true
       reply(heldChild, [assistantMessage(RAW_CHILD)])
       heldChild = null
@@ -350,6 +353,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         !JSON.stringify(completed).includes(RAW_CHILD),
         'Raw child output must remain private'
       )
+      assert.equal(
+        (await request(`/v1/loop-items/${issue.id}`)).is_unread,
+        true,
+        'A public stand-in result must make an already-read Issue unread again'
+      )
+      await control.command('openWeworkScheme', 'body', {
+        value: `wework://boards/${project.id}/issues/${issue.id}`,
+      })
       await control.command('waitFor', activity, { text: RESULT })
       await revealMessage(control, activity, completed.find(row => row.body === RESULT).id)
       await captureScreenshot(control, 'issue-room-04-result-separate-message.png')

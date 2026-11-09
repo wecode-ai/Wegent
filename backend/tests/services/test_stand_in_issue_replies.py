@@ -15,6 +15,11 @@ from app.schemas.delivery import LoopItemTaskBind
 from app.schemas.issue_activity_comment import StandInPublicReply
 from app.schemas.project_chat import LoopItemAssign, ProjectChatMention, ProjectChatSend
 from app.services.collaboration_human_assignments import human_task_bindings
+from app.services.loop_item_unread import (
+    content_revision,
+    initialize_content_revision,
+    is_unread,
+)
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
 from app.services.project_chat.stand_in_replies import publish_stand_in_reply
@@ -109,6 +114,25 @@ def test_public_messages_are_separate_and_redelivery_is_idempotent(
     with pytest.raises(HTTPException) as error:
         publish(test_db, test_user, scope, text="Changed content")
     assert error.value.status_code == 409
+
+
+def test_public_reply_advances_issue_unread_once_without_marking_its_owner_read(
+    test_db, test_user, scope
+):
+    issue = scope[1]
+    issue.metadata_json = initialize_content_revision(issue.metadata_json, test_user.id)
+    test_db.commit()
+    assert not is_unread(issue.metadata_json, test_user.id)
+    before = content_revision(issue.metadata_json)
+    first = publish(test_db, test_user, scope)
+    test_db.refresh(issue)
+    assert content_revision(issue.metadata_json) == before + 1
+    assert is_unread(issue.metadata_json, test_user.id)
+    version = issue.version
+    assert publish(test_db, test_user, scope).message_id == first.message_id
+    test_db.refresh(issue)
+    assert content_revision(issue.metadata_json) == before + 1
+    assert issue.version == version
 
 
 @pytest.mark.parametrize(
