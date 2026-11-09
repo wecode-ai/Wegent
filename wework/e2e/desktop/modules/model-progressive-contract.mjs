@@ -116,9 +116,7 @@ export function captureMatrixRequest(control, model, body) {
     control.matrixEvidenceDirectory,
     'The matrix must retain final model-side request evidence'
   )
-  const caseId = [model.execution, model.source, model.protocol, model.requestMode ?? 'auto'].join(
-    '-'
-  )
+  const caseId = `${matrixCaseId(model)}${model.requestMode ? '' : '-auto'}`
   const directory = control.matrixEvidenceDirectory
   mkdirSync(directory, { recursive: true })
   const sequence = control.matrixState.requests.length
