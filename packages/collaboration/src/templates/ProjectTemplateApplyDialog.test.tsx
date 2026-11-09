@@ -106,7 +106,7 @@ it('requires a visible model choice and persists it for every imported Agent wit
   }))
   const host: ProjectAgentConfigurationHost = {
     renderDialog: () => null,
-    listTemplateAgentModels: vi.fn(async () => [selectableModel]),
+    listTemplateAgentModels: vi.fn(async () => ({ models: [selectableModel] })),
     resolveTemplateAgentRouting,
   }
   const { api, render } = fixture(host)
@@ -144,8 +144,8 @@ it('shows a recoverable catalog failure and keeps import blocked until models lo
   const list = vi
     .fn<NonNullable<ProjectAgentConfigurationHost['listTemplateAgentModels']>>()
     .mockRejectedValueOnce(new Error('internal failure'))
-    .mockResolvedValueOnce([])
-    .mockResolvedValueOnce([selectableModel])
+    .mockResolvedValueOnce({ models: [] })
+    .mockResolvedValueOnce({ models: [selectableModel] })
   const { api, render } = fixture({ renderDialog: () => null, listTemplateAgentModels: list })
   await render()
   expect(container.textContent).toContain('模型列表加载失败')
@@ -160,6 +160,53 @@ it('shows a recoverable catalog failure and keeps import blocked until models lo
     container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-apply"]')!.disabled
   ).toBe(true)
   expect(api.agents.create).not.toHaveBeenCalled()
+})
+
+it.each([{ models: [] }, { models: [selectableModel] }])(
+  'reports partial cloud failures without presenting them as an empty catalog',
+  async ({ models }) => {
+    const { render } = fixture({
+      renderDialog: () => null,
+      listTemplateAgentModels: async () => ({ models, cloudModelsUnavailable: true }),
+    })
+    await render()
+    expect(container.textContent).toContain('云端模型暂时无法加载')
+    expect(container.textContent).not.toContain('暂无可用模型')
+    expect(
+      container.querySelector<HTMLSelectElement>('[data-testid="template-model-codex"]')!.options
+        .length
+    ).toBe(models.length + 1)
+  }
+)
+
+it('retains the displayed choice on refresh failure but blocks applying until recovery', async () => {
+  const list = vi
+    .fn<NonNullable<ProjectAgentConfigurationHost['listTemplateAgentModels']>>()
+    .mockResolvedValueOnce({ models: [selectableModel] })
+    .mockRejectedValueOnce(new Error('Network unavailable'))
+    .mockResolvedValueOnce({ models: [selectableModel] })
+  const { render, api } = fixture({ renderDialog: () => null, listTemplateAgentModels: list })
+  await render()
+  const select = container.querySelector<HTMLSelectElement>('[data-testid="template-model-codex"]')!
+  const apply = container.querySelector<HTMLButtonElement>(
+    '[data-testid="template-bindings-apply"]'
+  )!
+  await act(async () => {
+    select.value = runnerModelKey(selectableModel)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  expect(apply.disabled).toBe(false)
+  const refresh = container.querySelector<HTMLButtonElement>(
+    '[data-testid="template-model-refresh-codex"]'
+  )!
+  await act(async () => refresh.click())
+  expect(select.value).toBe(runnerModelKey(selectableModel))
+  expect(select.disabled).toBe(true)
+  expect(apply.disabled).toBe(true)
+  expect(api.agents.create).not.toHaveBeenCalled()
+  await act(async () => refresh.click())
+  expect(select.disabled).toBe(false)
+  expect(apply.disabled).toBe(false)
 })
 
 it('loads only the chosen project and persists groups, routing and board after confirmation', async () => {

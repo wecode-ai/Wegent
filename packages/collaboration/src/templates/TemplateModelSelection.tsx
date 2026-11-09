@@ -33,6 +33,7 @@ export function TemplateModelSelection({
   const m = templateMessages[locale]
   const [catalog, setCatalog] = useState<RunnerModel[] | null>(null)
   const [error, setError] = useState(false)
+  const [cloudUnavailable, setCloudUnavailable] = useState(false)
   const [loading, setLoading] = useState(true)
   const [revision, setRevision] = useState(0)
   const [selected, setSelected] = useState('')
@@ -48,9 +49,10 @@ export function TemplateModelSelection({
     setError(false)
     change.current(undefined)
     void host.listTemplateAgentModels!(runtime, projectId).then(
-      models => {
+      ({ models, cloudModelsUnavailable }) => {
         if (!active) return
         setCatalog(models)
+        setCloudUnavailable(Boolean(cloudModelsUnavailable))
         const defaults = models.filter(model => model.is_default)
         const initial =
           models.find(model => runnerModelKey(model) === selection.current) ??
@@ -99,8 +101,9 @@ export function TemplateModelSelection({
         </select>
       </label>
       {loading && <p role="status">{m.loading}</p>}
-      {!loading && !error && catalog?.length === 0 && <p>{m.noModels}</p>}
+      {!loading && !error && !cloudUnavailable && catalog?.length === 0 && <p>{m.noModels}</p>}
       {error && <p role="alert">{m.modelLoadFailed}</p>}
+      {!error && !loading && cloudUnavailable && <p role="status">{m.cloudModelsUnavailable}</p>}
       <button
         type="button"
         data-testid={`template-model-refresh-${runtime}`}

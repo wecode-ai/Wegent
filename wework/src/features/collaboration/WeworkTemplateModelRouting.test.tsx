@@ -34,7 +34,10 @@ function fixture() {
 
 it('lists non-default models and uses the explicit selection without a device default', async () => {
   const { host } = fixture()
-  expect(await host.listTemplateAgentModels!('codex')).toEqual([model])
+  expect(await host.listTemplateAgentModels!('codex')).toEqual({
+    models: [model],
+    cloudModelsUnavailable: false,
+  })
   expect(
     await host.resolveTemplateAgentRouting!('codex', 'local', 'project', undefined, model)
   ).toEqual({
@@ -76,7 +79,7 @@ it('lists compatible cloud models and rejects a cloud model removed after select
     config: { protocol: 'openai', modelConfig: { model_id: 'upstream' } },
   }
   local.listModels.mockResolvedValue([cloud] as never)
-  const models = await host.listTemplateAgentModels!('codex')
+  const { models } = await host.listTemplateAgentModels!('codex')
   const selected = models.find(item => item.source === 'cloud')
   expect(selected).toBeDefined()
   expect(new Set(models.map(runnerModelKey)).size).toBe(models.length)
@@ -91,4 +94,13 @@ it('lists compatible cloud models and rejects a cloud model removed after select
   await expect(
     host.resolveTemplateAgentRouting!('codex', 'local', undefined, undefined, selected)
   ).rejects.toThrow('template_model_unavailable')
+})
+
+it('preserves native model choices and reports a cloud catalog failure explicitly', async () => {
+  const { host, local } = fixture()
+  local.listModels.mockRejectedValue(new Error('Cloud connection unavailable'))
+  expect(await host.listTemplateAgentModels!('codex')).toEqual({
+    models: [model],
+    cloudModelsUnavailable: true,
+  })
 })

@@ -23,7 +23,10 @@ export interface ProjectAgentConfigurationHost {
   listTemplateAgentModels?(
     runtime: 'codex' | 'claude_code',
     projectId?: string,
-  ): Promise<import('../agent-form/runnerRouting').RunnerModel[]>;
+  ): Promise<{
+    models: import('../agent-form/runnerRouting').RunnerModel[];
+    cloudModelsUnavailable?: boolean;
+  }>;
   listTemplateAgentEnvironments?(
     projectId: string,
   ): Promise<import("../types").CollaborationExecutionEnvironment[]>;

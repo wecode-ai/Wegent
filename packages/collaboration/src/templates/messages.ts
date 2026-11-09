@@ -91,6 +91,7 @@ export const templateMessages = {
     modelUnavailable: '所选模型已不可用，请刷新模型列表并重新选择。',
     noModels: '暂无可用模型。请在设置中添加模型，然后刷新此列表。',
     modelLoadFailed: '模型列表加载失败，请刷新后重试。',
+    cloudModelsUnavailable: '云端模型暂时无法加载。你仍可选择本机模型，或刷新后重试。',
     defaultModelRequired: '请先为当前执行环境设置默认模型，再应用此模板。',
     destinationEnvironmentRequired:
       '项目没有可用的已授权执行设备，请在项目的执行环境设置中检查设备状态与授权。',
@@ -207,6 +208,8 @@ export const templateMessages = {
       'The selected model is no longer available. Refresh the model list and choose again.',
     noModels: 'No models available. Add a model in Settings, then refresh this list.',
     modelLoadFailed: 'Could not load models. Refresh to try again.',
+    cloudModelsUnavailable:
+      'Cloud models could not be loaded. Choose a local model or refresh to try again.',
     defaultModelRequired:
       'Configure a default model in the current execution environment before applying this template.',
     destinationEnvironmentRequired:

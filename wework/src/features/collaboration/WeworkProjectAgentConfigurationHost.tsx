@@ -33,17 +33,25 @@ export function createWeworkProjectAgentConfigurationHost(
     ...(localAgentApi
       ? {
           async listTemplateAgentModels(runtime) {
-            const [environments, models] = await Promise.all([
+            const [environments, cloud] = await Promise.all([
               localAgentApi.listRunnerEnvironments(),
-              localAgentApi.listModels(),
+              localAgentApi.listModels().then(
+                models => ({ models, unavailable: false }),
+                () => ({ models: [], unavailable: true })
+              ),
             ])
             const current = environments.length === 1 ? environments[0] : undefined
             if (!current) throw new Error('template_environment_unavailable')
             const available = [
-              ...cloudRunnerModels(models).filter(model => runnerSupportsModel(current, model)),
+              ...cloudRunnerModels(cloud.models).filter(model =>
+                runnerSupportsModel(current, model)
+              ),
               ...current.models,
             ].filter(model => model.runtime === runtime)
-            return [...new Map(available.map(model => [runnerModelKey(model), model])).values()]
+            return {
+              models: [...new Map(available.map(model => [runnerModelKey(model), model])).values()],
+              cloudModelsUnavailable: cloud.unavailable,
+            }
           },
           async resolveTemplateAgentRouting(
             runtime,
