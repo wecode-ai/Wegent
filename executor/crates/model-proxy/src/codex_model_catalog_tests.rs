@@ -15,16 +15,20 @@ fn native_catalog_fixture() -> Value {
     }]})
 }
 
-#[test]
-fn rejects_malformed_catalog_without_replacing_it_with_base_models() {
+#[tokio::test]
+async fn rejects_malformed_catalog_without_replacing_it_with_base_models() {
     let mut catalog = json!({ "data": [] });
     let original = catalog.clone();
-    assert!(merge_base_models(&mut catalog, &native_catalog_fixture()).is_err());
+    assert!(
+        merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+            .await
+            .is_err()
+    );
     assert_eq!(catalog, original);
 }
 
-#[test]
-fn rejects_uneditable_model_entries_before_merging() {
+#[tokio::test]
+async fn rejects_uneditable_model_entries_before_merging() {
     for model in [
         Value::Null,
         json!({}),
@@ -33,7 +37,11 @@ fn rejects_uneditable_model_entries_before_merging() {
     ] {
         let mut catalog = json!({"models": [model]});
         let original = catalog.clone();
-        assert!(merge_base_models(&mut catalog, &native_catalog_fixture()).is_err());
+        assert!(
+            merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+                .await
+                .is_err()
+        );
         assert_eq!(catalog, original);
     }
     assert!(validate_catalog(&json!({"models": []})).is_ok());
@@ -51,8 +59,8 @@ fn catalog() -> Value {
     catalog
 }
 
-#[test]
-fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_auth() {
+#[tokio::test]
+async fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_auth() {
     let official = json!({
         "slug": "gpt-6.1-sol",
         "tool_mode": "code_mode_only",
@@ -60,7 +68,9 @@ fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_aut
         "max_context_window": 872_000,
     });
     let mut catalog = json!({"models": [official.clone()]});
-    merge_base_models(&mut catalog, &native_catalog_fixture()).unwrap();
+    merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+        .await
+        .unwrap();
     let models = catalog["models"].as_array().unwrap();
     assert_eq!(models[0], official);
     for slug in [
@@ -149,7 +159,9 @@ async fn bundled_catalog_preserves_native_models_and_supports_overrides() {
     let mut catalog = export_bundled_catalog(&binary, home.path())
         .await
         .expect("native bundled catalog");
-    merge_base_models(&mut catalog, &native_catalog_fixture()).unwrap();
+    merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+        .await
+        .unwrap();
     let models = catalog["models"].as_array().expect("models");
     assert_eq!(
         models
@@ -392,8 +404,8 @@ fn vision_derivation_adds_text_to_an_image_only_profile() {
     assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
 }
 
-#[test]
-fn merge_derives_vision_from_the_effective_upstream_base_profile() {
+#[tokio::test]
+async fn merge_derives_vision_from_the_effective_upstream_base_profile() {
     let mut catalog = json!({
         "models": [{
             "slug": GPT_56_SOL_MODEL,
@@ -405,7 +417,9 @@ fn merge_derives_vision_from_the_effective_upstream_base_profile() {
         }]
     });
 
-    merge_base_models(&mut catalog, &native_catalog_fixture()).unwrap();
+    merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+        .await
+        .unwrap();
     apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
     append_catalog_vision_sidecars(&mut catalog);
 
@@ -625,12 +639,14 @@ fn invalidates_models_cache_and_accepts_missing_cache() {
     invalidate_models_cache_at(&path).expect("missing cache should be accepted");
 }
 
-#[test]
-fn native_defaults_preserve_the_canonical_template_permissions_and_metadata() {
+#[tokio::test]
+async fn native_defaults_preserve_the_canonical_template_permissions_and_metadata() {
     let permissions = json!({"danger_full_access":"native permission guidance"});
     let mut catalog = json!({"models":[{"slug":"native-template-fixture", "base_instructions":"legacy provider prompt", "model_messages":{"instructions_template":"canonical provider prompt", "permissions":permissions.clone()}, "context_window":500000}]});
     let original = catalog["models"][0].clone();
-    merge_base_models(&mut catalog, &native_catalog_fixture()).unwrap();
+    merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+        .await
+        .unwrap();
     let model = &catalog["models"][0];
     assert_eq!(*model, original);
     assert_eq!(model["base_instructions"], "legacy provider prompt");
@@ -640,6 +656,16 @@ fn native_defaults_preserve_the_canonical_template_permissions_and_metadata() {
     );
     assert_eq!(model["model_messages"]["permissions"], permissions);
     assert_eq!(model["context_window"], 500000);
+}
+
+#[tokio::test]
+async fn complete_upstream_catalog_does_not_require_a_bundled_default() {
+    let mut upstream = catalog();
+    let original = upstream.clone();
+    merge_base_models(&mut upstream, Some(&json!({"models":[]})))
+        .await
+        .expect("complete upstream does not need native inheritance");
+    assert_eq!(upstream, original);
 }
 
 #[test]

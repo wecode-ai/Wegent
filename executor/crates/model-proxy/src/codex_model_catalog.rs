@@ -675,19 +675,18 @@ fn configured_catalog_upstream() -> Option<(String, String)> {
 }
 
 async fn load_baseline_catalog(client_version: Option<&str>) -> Result<Value, String> {
-    let bundled = bundled_catalog().await?;
     let mut catalog = match upstream_catalog(client_version).await {
         Ok(Some(catalog)) => catalog,
-        Ok(None) => bundled.clone(),
+        Ok(None) => bundled_catalog().await?.clone(),
         Err(error) => {
             log_executor_event(
                 "codex router upstream model catalog unavailable",
                 &[("error", error)],
             );
-            bundled.clone()
+            bundled_catalog().await?.clone()
         }
     };
-    merge_base_models(&mut catalog, bundled)?;
+    merge_base_models(&mut catalog, None).await?;
     Ok(catalog)
 }
 
@@ -816,21 +815,31 @@ fn inherit_native_instructions(model: &mut Value, native: &Value) -> Result<(), 
     Ok(())
 }
 
-fn merge_base_models(catalog: &mut Value, bundled: &Value) -> Result<(), String> {
+async fn merge_base_models(catalog: &mut Value, bundled: Option<&Value>) -> Result<(), String> {
     validate_catalog(catalog)?;
     let upstream_models = catalog
         .get_mut("models")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| "Codex model catalog must contain a models array".to_owned())?;
-    for mut capability_model in base_models() {
-        let slug = capability_model.get("slug").and_then(Value::as_str);
-        if !upstream_models
-            .iter()
-            .any(|model| model.get("slug").and_then(Value::as_str) == slug)
-        {
-            inherit_native_instructions(&mut capability_model, native_default_model(bundled)?)?;
-            upstream_models.push(capability_model);
-        }
+    let missing: Vec<_> = base_models()
+        .into_iter()
+        .filter(|capability| {
+            !upstream_models
+                .iter()
+                .any(|model| model["slug"] == capability["slug"])
+        })
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let bundled = match bundled {
+        Some(catalog) => catalog,
+        None => bundled_catalog().await?,
+    };
+    let native = native_default_model(bundled)?;
+    for mut capability_model in missing {
+        inherit_native_instructions(&mut capability_model, native)?;
+        upstream_models.push(capability_model);
     }
     Ok(())
 }
