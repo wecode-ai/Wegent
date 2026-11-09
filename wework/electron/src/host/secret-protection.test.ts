@@ -2,36 +2,37 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { systemSecretProtection } from './secret-protection.js'
 
 const storage = vi.hoisted(() => ({
-  isEncryptionAvailable: vi.fn(() => true),
+  isAsyncEncryptionAvailable: vi.fn(async () => true),
   getSelectedStorageBackend: vi.fn(() => 'gnome_libsecret'),
-  encryptString: vi.fn((value: string) => Buffer.from(`protected:${value}`)),
-  decryptString: vi.fn((value: Buffer) => value.toString().slice('protected:'.length)),
+  encryptStringAsync: vi.fn(async (value: string) => Buffer.from(`protected:${value}`)),
+  decryptStringAsync: vi.fn(async (value: Buffer) => ({
+    result: value.toString().slice('protected:'.length),
+    shouldReEncrypt: false,
+  })),
 }))
 vi.mock('electron', () => ({ safeStorage: storage }))
 afterEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
   vi.unstubAllGlobals()
-  storage.isEncryptionAvailable.mockReturnValue(true)
-  storage.getSelectedStorageBackend.mockReturnValue('gnome_libsecret')
 })
 
 test('delegates secret protection to the native credential service', async () => {
   const encrypted = await systemSecretProtection.encrypt('private-value')
-  expect(storage.encryptString).toHaveBeenCalledWith('private-value')
+  expect(storage.encryptStringAsync).toHaveBeenCalledWith('private-value')
   await expect(systemSecretProtection.decrypt(encrypted)).resolves.toBe('private-value')
-  expect(storage.decryptString).toHaveBeenCalledWith(Buffer.from('protected:private-value'))
+  expect(storage.decryptStringAsync).toHaveBeenCalledWith(Buffer.from('protected:private-value'))
 })
 
 test('fails without writing a plaintext substitute when OS encryption is unavailable', async () => {
-  storage.isEncryptionAvailable.mockReturnValue(false)
+  storage.isAsyncEncryptionAvailable.mockResolvedValue(false)
   await expect(systemSecretProtection.encrypt('private-value')).rejects.toMatchObject({
     code: 'secure_storage_unavailable',
   })
   await expect(systemSecretProtection.decrypt('ciphertext')).rejects.toMatchObject({
     code: 'secure_storage_unavailable',
   })
-  expect(storage.encryptString).not.toHaveBeenCalled()
-  expect(storage.decryptString).not.toHaveBeenCalled()
+  expect(storage.encryptStringAsync).not.toHaveBeenCalled()
+  expect(storage.decryptStringAsync).not.toHaveBeenCalled()
 })
 
 test('rejects the Linux basic_text backend', async () => {
@@ -40,5 +41,27 @@ test('rejects the Linux basic_text backend', async () => {
   await expect(systemSecretProtection.encrypt('private-value')).rejects.toMatchObject({
     code: 'secure_storage_unavailable',
   })
-  expect(storage.encryptString).not.toHaveBeenCalled()
+  expect(storage.encryptStringAsync).not.toHaveBeenCalled()
+})
+
+test('keeps the event loop responsive while native authorization is pending', async () => {
+  let authorize!: (available: boolean) => void
+  storage.isAsyncEncryptionAvailable.mockReturnValue(
+    new Promise(resolve => {
+      authorize = resolve
+    })
+  )
+  const encryption = systemSecretProtection.encrypt('private-value')
+  await new Promise<void>(resolve => setImmediate(resolve))
+  expect(storage.encryptStringAsync).not.toHaveBeenCalled()
+  authorize(true)
+  await expect(encryption).resolves.toBe(Buffer.from('protected:private-value').toString('base64'))
+})
+
+test('propagates native protection failures without substituting a weaker format', async () => {
+  const error = new Error('Native credential service unavailable')
+  storage.encryptStringAsync.mockRejectedValueOnce(error)
+  await expect(systemSecretProtection.encrypt('private-value')).rejects.toBe(error)
+  storage.decryptStringAsync.mockRejectedValueOnce(error)
+  await expect(systemSecretProtection.decrypt('ciphertext')).rejects.toBe(error)
 })
