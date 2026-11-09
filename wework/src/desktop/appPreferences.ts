@@ -21,6 +21,11 @@ import {
 } from '@/lib/local-harness'
 
 import { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
+import {
+  normalizeAppearanceThemeSnapshot,
+  type AppearanceThemeSnapshot,
+} from '../../electron/src/host/appearance-theme-contract'
+export type { AppearanceThemeSnapshot } from '../../electron/src/host/appearance-theme-contract'
 export { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
 export const CONTEXT_COMPACTION_THRESHOLD_MAX = 100
@@ -35,6 +40,7 @@ export function clampContextCompactionThreshold(value: number): number {
 export interface AppPreferences {
   workbenchMode: WorkbenchMode
   appearanceMode: AppearanceModePreference
+  appearanceThemeSnapshot: AppearanceThemeSnapshot | null
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
   fixedWorkspaceTabs: FixedWorkspaceTabPreference[]
@@ -119,6 +125,7 @@ export interface FixedWorkspaceTabPreference {
 export interface AppPreferencesPatch {
   workbenchMode?: WorkbenchMode
   appearanceMode?: AppearanceModePreference
+  appearanceThemeSnapshot?: AppearanceThemeSnapshot | null
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
   fixedWorkspaceTabs?: FixedWorkspaceTabPreference[]
@@ -163,6 +170,7 @@ export interface AppPreferencesPatch {
 export const defaultAppPreferences: AppPreferences = {
   workbenchMode: 'developer',
   appearanceMode: 'system',
+  appearanceThemeSnapshot: null,
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -292,6 +300,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       supportedAppearanceModes.has(record.appearanceMode as AppearanceModePreference)
         ? (record.appearanceMode as AppearanceModePreference)
         : defaultAppPreferences.appearanceMode,
+    appearanceThemeSnapshot: normalizeAppearanceThemeSnapshot(record.appearanceThemeSnapshot),
     closeToTrayEnabled:
       typeof record.closeToTrayEnabled === 'boolean'
         ? record.closeToTrayEnabled

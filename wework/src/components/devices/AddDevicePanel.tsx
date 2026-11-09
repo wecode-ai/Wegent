@@ -32,7 +32,7 @@ function DeviceOnboardingPanel(props: DeviceOnboardingProps) {
   return (
     <div data-testid="add-device-panel" className="space-y-3">
       {error && (
-        <p role="alert" className="text-sm text-red-500">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}

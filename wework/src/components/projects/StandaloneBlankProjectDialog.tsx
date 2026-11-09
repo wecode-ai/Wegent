@@ -149,7 +149,7 @@ export function StandaloneBlankProjectDialog({
           }}
           className="mt-5 h-12 w-full rounded-xl border border-border bg-transparent px-4 text-base text-text-primary outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/10 disabled:opacity-50"
         />
-        {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+        {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
         <div className="mt-5 flex justify-end gap-3">
           <button
             type="button"

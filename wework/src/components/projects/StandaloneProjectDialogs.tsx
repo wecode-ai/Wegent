@@ -470,7 +470,7 @@ function StandaloneFolderProjectDialogContent({
               <h2 className="text-lg font-semibold">
                 {t('workbench.use_existing_folder_title', '使用现有文件夹')}
               </h2>
-              <p className="mt-2 text-sm leading-5 text-red-500">{nativePickerError}</p>
+              <p className="mt-2 text-sm leading-5 text-destructive">{nativePickerError}</p>
             </div>
             <button
               type="button"
@@ -890,7 +890,10 @@ function StandaloneFolderProjectDialogContent({
                   </label>
                 )}
                 {gitError && (
-                  <p data-testid="remote-project-git-error" className="mt-3 text-sm text-red-500">
+                  <p
+                    data-testid="remote-project-git-error"
+                    className="mt-3 text-sm text-destructive"
+                  >
                     {gitError}
                   </p>
                 )}
