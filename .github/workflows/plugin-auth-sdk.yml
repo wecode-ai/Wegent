@@ -54,6 +54,10 @@ jobs:
         with:
           python-version: "3.12"
         continue-on-error: true
+      - name: Wait before retrying uv setup
+        if: steps.setup-uv.outcome == 'failure'
+        shell: bash
+        run: sleep 45
       - name: Retry uv setup after a transient download failure
         if: steps.setup-uv.outcome == 'failure'
         uses: astral-sh/setup-uv@v6
@@ -90,6 +94,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
         continue-on-error: true
+      - name: Wait before retrying uv setup
+        if: steps.setup-uv.outcome == 'failure'
+        shell: bash
+        run: sleep 45
       - name: Retry uv setup after a transient download failure
         if: steps.setup-uv.outcome == 'failure'
         uses: astral-sh/setup-uv@v6
@@ -116,6 +124,10 @@ jobs:
         with:
           python-version: "3.12"
         continue-on-error: true
+      - name: Wait before retrying uv setup
+        if: steps.setup-uv.outcome == 'failure'
+        shell: bash
+        run: sleep 45
       - name: Retry uv setup after a transient download failure
         if: steps.setup-uv.outcome == 'failure'
         uses: astral-sh/setup-uv@v6
