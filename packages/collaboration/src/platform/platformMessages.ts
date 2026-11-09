@@ -52,6 +52,21 @@ export const platformMessages = {
     cloudResourcesHint: "可跨设备和空间复用。",
     resourceSettings: "设置",
     deleteAgent: "删除智能体",
+    deleteDevice: "删除离线设备",
+    deleteDeviceConfirm:
+      "移除此设备的注册记录，保留本机文件和任务历史。设备重新连接后可能再次出现。",
+    deviceDeleteConflict:
+      "设备已上线或仍有任务，无法删除。请刷新设备状态后重试。",
+    deviceDeleteMissing: "此设备记录已被移除。请刷新列表。",
+    deviceDeleteIdentityUnresolved:
+      "此记录可能属于当前设备。请确认本机状态后再试。",
+    deviceDeleteFailed: "无法删除设备。请检查连接后重试。",
+    deviceIdentifier: "设备标识",
+    lastSeen: "最近在线",
+    lastSeenUnknown: "暂无记录",
+    currentlyOnline: "当前在线",
+    justNow: "刚刚",
+    otherSpaceCount: "其他 {{count}} 个空间",
     deleteAgentConfirm: "删除后无法恢复，也会从引用它的空间中移除。",
     deleteTeam: "删除协作小组",
     deleteTeamConfirm: "删除后无法恢复，也将无法再把任务分配给该小组。",
@@ -265,6 +280,23 @@ export const platformMessages = {
     cloudResourcesHint: "Reusable across devices and spaces.",
     resourceSettings: "Settings",
     deleteAgent: "Delete agent",
+    deleteDevice: "Delete offline device",
+    deleteDeviceConfirm:
+      "Remove this device registration while keeping local files and task history. The device may reappear when it reconnects.",
+    deviceDeleteConflict:
+      "The device is online or still has tasks. Refresh its status before trying again.",
+    deviceDeleteMissing:
+      "This device registration has already been removed. Refresh the list.",
+    deviceDeleteIdentityUnresolved:
+      "This registration may belong to the current device. Check the local device status before trying again.",
+    deviceDeleteFailed:
+      "Could not delete the device. Check your connection and try again.",
+    deviceIdentifier: "Device ID",
+    lastSeen: "Last online",
+    lastSeenUnknown: "No record",
+    currentlyOnline: "Online now",
+    justNow: "Just now",
+    otherSpaceCount: "{{count}} other spaces",
     deleteAgentConfirm:
       "This cannot be undone. The agent will also be removed from spaces that reference it.",
     deleteTeam: "Delete team",

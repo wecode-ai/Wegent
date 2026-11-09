@@ -18,7 +18,11 @@ test.each(['interrupted', 'bad-hash', 'bad-cache'])(
     const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform]
     const hash = release.archives[`${platform}-${process.arch}`]
     const asset = `WeworkComponent_executor_${hash}_${platform}_${process.arch}.tar.gz`
-    const fetch = vi.fn(async () => {
+    const metadataUrl = `https://api.github.com/repos/wecode-ai/Wegent/releases/tags/wework-v${release.version}`
+    const assetUrl = 'https://api.github.com/repos/wecode-ai/Wegent/releases/assets/123?download=1'
+    const fetch = vi.fn(async url => {
+      if (url === metadataUrl) return Response.json({ assets: [{ name: asset, id: 123 }] })
+      assert.equal(url, assetUrl)
       if (failure === 'interrupted') {
         return new Response(
           new ReadableStream({
@@ -39,7 +43,10 @@ test.each(['interrupted', 'bad-hash', 'bad-cache'])(
         failure === 'interrupted' ? /interrupted download/ : /Historical component bytes changed/
       )
       assert.deepEqual(await readdir(directory), failure === 'bad-cache' ? [asset] : [])
-      assert.equal(fetch.mock.calls.length, failure === 'bad-cache' ? 0 : 1)
+      assert.deepEqual(
+        fetch.mock.calls.map(([url]) => url),
+        failure === 'bad-cache' ? [] : [metadataUrl, assetUrl]
+      )
       if (failure === 'bad-cache')
         assert.equal(await readFile(join(directory, asset), 'utf8'), 'preserve invalid cache')
     } finally {

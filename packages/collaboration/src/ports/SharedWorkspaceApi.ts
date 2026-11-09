@@ -646,6 +646,7 @@ export interface SharedCollaborationResourcesApi {
     cloud?(): Promise<CollaborationExecutionEnvironment[]>;
   };
   removeAgent?(agent: CollaborationOwnedAgent): Promise<void>;
+  removeDevice?(device: CollaborationExecutionEnvironment): Promise<void>;
 }
 
 /**

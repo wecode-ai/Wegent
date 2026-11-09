@@ -83,6 +83,7 @@ sidebar_position: 2
 | 功能关键词                                           | 具体操作说明                                                    |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | 空间成员、全局智能体/小组/设备、Runner、模板、里程碑 | [协作空间及资源操作](./projects.md#workspace-resource-controls) |
+| 协作 → 设备 → 删除离线设备 | [清理离线设备注册](./projects.md#offline-device-cleanup) |
 | 分身记忆、来源证据、作用域、编辑、遗忘和遗忘规则     | [记忆操作](./personal-stand-in.md#stand-in-memory-controls)     |
 | 实验性负责人对话、接管、停止、发布到 Issue           | [负责人对话](./personal-stand-in.md#project-lead-controls)      |
 | 站点 PV/UV、访问日期、查看统计                       | [站点访问数据](./plugins-and-skills.md#site-analytics-controls) |
