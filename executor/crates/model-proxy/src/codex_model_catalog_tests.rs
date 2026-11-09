@@ -628,7 +628,8 @@ fn progressive_defaults_update_the_native_canonical_template_and_preserve_permis
 
 #[test]
 fn legacy_default_identity_preserves_user_edits() {
-    let workflow = include_str!("../../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/coding/workflow.md");
+    // Reconstruct the published LF template regardless of checkout line endings.
+    let workflow = include_str!("../../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/coding/workflow.md").replace("\r\n", "\n");
     let legacy = workflow.replacen(
         "You are Codex, a coding agent.",
         "You are Codex, an agent based on GPT-5.",
@@ -638,7 +639,7 @@ fn legacy_default_identity_preserves_user_edits() {
     assert!(!is_legacy_base_instructions(&format!(
         "{legacy}\nUser edit"
     )));
-    assert!(!is_legacy_base_instructions(workflow));
+    assert!(!is_legacy_base_instructions(&workflow));
     assert!(!is_legacy_base_instructions(&default_base_instructions()));
 }
 

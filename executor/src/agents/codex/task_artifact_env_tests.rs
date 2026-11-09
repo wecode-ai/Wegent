@@ -13,6 +13,7 @@ const LOCAL_DELIVERY_KEYS: &[&str] = &[
 #[test]
 fn external_work_receives_only_local_delivery_metadata() {
     let _environment = super::tests::environment::LaunchEnvironment::new();
+    let workspace = tempfile::tempdir().unwrap();
     for kind in [
         None,
         Some("stand_in_task"),
@@ -23,7 +24,7 @@ fn external_work_receives_only_local_delivery_metadata() {
         for ask in [false, true] {
             let mut request: ExecutionRequest = serde_json::from_value(json!({
                 "task_id":"123",
-                "project_workspace_path":"/isolated/workspace",
+                "project_workspace_path":workspace.path(),
                 "auth_token":"private-task-credential",
                 "runtime_auth_token":"private-runtime-credential",
                 "skill_identity_token":"private-skill-credential",
@@ -67,8 +68,12 @@ fn external_work_receives_only_local_delivery_metadata() {
                     "local-delegated-task"
                 );
                 assert_eq!(
-                    config["shell_environment_policy.set.WEGENT_TASK_WORKSPACE"],
-                    "/isolated/workspace"
+                    Path::new(
+                        config["shell_environment_policy.set.WEGENT_TASK_WORKSPACE"]
+                            .as_str()
+                            .unwrap()
+                    ),
+                    workspace.path()
                 );
                 assert_eq!(
                     config["shell_environment_policy.set.WEGENT_EXECUTOR_BINARY"],

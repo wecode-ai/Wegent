@@ -102,11 +102,8 @@ async fn stand_in_review_reads_more_than_fifty_messages_through_native_paginatio
         assert_eq!(handler.read_stand_in_conversations(&identity,"read_task",&json!({"taskId":"task-1","messageContentCursor":saved_cursor})).await.unwrap_err().code,"permission_denied");
         Ok::<_, AppIpcError>(())
     }.await;
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    drop(store);
+    stop_native_history(&handler).await;
     fs::remove_dir_all(root).unwrap();
     result.unwrap();
 }
@@ -203,11 +200,8 @@ async fn stand_in_general_read_task_uses_native_backward_pages_and_optional_time
         assert_eq!(requests.iter().map(|request|request["params"]["cursor"].clone()).collect::<Vec<_>>(),vec![Value::Null,Value::Null,json!("native-before"),json!("native-before")]);
         Ok::<_,AppIpcError>(())
     }.await;
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    drop(store);
+    stop_native_history(&handler).await;
     fs::remove_dir_all(root).unwrap();
     result.unwrap();
 }

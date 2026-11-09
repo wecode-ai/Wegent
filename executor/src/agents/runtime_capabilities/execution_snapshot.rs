@@ -38,9 +38,18 @@ mod tests {
                 .display()
                 .to_string()
         );
-        assert!(!next.to_string().contains(first.to_str().unwrap()));
-        assert!(fs::read_to_string(first.join("settings.json"))
-            .unwrap()
-            .contains(first.to_str().unwrap()));
+        let original: Value =
+            serde_json::from_slice(&fs::read(first.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(
+            original["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            first
+                .join("defer-interactive-mcp-hook.sh")
+                .display()
+                .to_string()
+        );
+        assert_ne!(
+            managed["hooks"][0]["command"],
+            original["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        );
     }
 }

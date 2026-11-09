@@ -37,12 +37,7 @@ impl GlobalCapabilityStore {
         }
         for (path, _) in &pending {
             self.ensure_runtime_path(path, true)?;
-            if manifest
-                .get("plugin_runtime_owners")
-                .and_then(|owners| owners.get(path.to_string_lossy().as_ref()))
-                .and_then(Value::as_str)
-                .is_some_and(|owner| owner != spec.key)
-            {
+            if shared_packages::has_conflicting_runtime_owner(manifest, &spec.key, path) {
                 return Err(CapabilitySyncError::invalid_payload(
                     "Plugin runtime belongs to another managed install",
                 ));

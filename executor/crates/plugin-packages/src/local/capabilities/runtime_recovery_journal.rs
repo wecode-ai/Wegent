@@ -127,7 +127,7 @@ impl RecoveryJournal {
             let name = format!("expected-{index}");
             let file = staging.path().join(&name);
             fs::write(&file, bytes)?;
-            fs::File::open(file)?.sync_all()?;
+            fs::OpenOptions::new().write(true).open(file)?.sync_all()?;
             expected_files.insert(target, PathBuf::from(name));
         }
         remove_existing_path(&staging.path().join("planned"))?;
@@ -135,7 +135,10 @@ impl RecoveryJournal {
             &staging.path().join("journal.json"),
             &json!({"key":spec.key,"transaction_id":transaction_id,"timestamp":timestamp,"expected_files":expected_files,"snapshots":snapshots}),
         )?;
-        fs::File::open(staging.path().join("journal.json"))?.sync_all()?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(staging.path().join("journal.json"))?
+            .sync_all()?;
         fs::rename(staging.path(), path)?;
         Self::load(store, path, spec)
     }
@@ -352,7 +355,10 @@ fn copy_entry(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
         copy_dir_recursive(source, target)?;
     } else {
         fs::copy(source, target)?;
-        fs::File::open(target)?.sync_all()?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(target)?
+            .sync_all()?;
     }
     Ok(())
 }

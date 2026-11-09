@@ -24,6 +24,25 @@ impl LocalTaskStore {
             .try_exists()
             .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?
         {
+            // Windows reports a missing path when an ancestor is a regular file.
+            // Preserve unavailable storage as an error instead of a false hint.
+            for parent in path
+                .ancestors()
+                .skip(1)
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                match std::fs::metadata(parent) {
+                    Ok(metadata) if metadata.is_dir() => return Ok(false),
+                    Ok(_) => {
+                        return Err(TaskRuntimeError::Invalid(format!(
+                            "Task store parent is not a directory: {}",
+                            parent.display()
+                        )))
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(TaskRuntimeError::Invalid(error.to_string())),
+                }
+            }
             return Ok(false);
         }
         let connection =
@@ -557,6 +576,13 @@ mod tests {
         let path = directory.path().join("tasks.sqlite");
         assert!(!LocalTaskStore::pending_issue_human_requests_at(&path, &[0]).unwrap());
         assert!(!path.exists());
+        let blocked = directory.path().join("not-a-directory");
+        std::fs::write(&blocked, "blocked").unwrap();
+        assert!(LocalTaskStore::pending_issue_human_requests_at(
+            &blocked.join("nested/tasks.sqlite"),
+            &[0]
+        )
+        .is_err());
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "user_version", 17).unwrap();
         drop(connection);

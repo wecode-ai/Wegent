@@ -328,7 +328,14 @@ mod tests {
 
     #[test]
     fn workspace_response_does_not_assign_standalone_chats_to_an_ancestor_project() {
-        let chat_path = "/srv/work/Documents/Codex/chat";
+        let temp = tempfile::tempdir().unwrap();
+        let chat_path = temp
+            .path()
+            .join("work")
+            .join("Documents")
+            .join("Codex")
+            .join("chat");
+        let chat_path = chat_path.to_string_lossy().into_owned();
         let mut standalone = task("standalone", None);
         standalone.workspace_path = chat_path.to_owned();
         let mut assigned = task("assigned", Some("project"));

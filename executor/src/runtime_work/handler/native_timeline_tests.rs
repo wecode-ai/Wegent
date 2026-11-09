@@ -120,11 +120,7 @@ async fn read_and_stop(handler: &mut RuntimeWorkRpcHandler) -> Result<Value, App
             "method":"runtime.tasks.transcript", "payload":{"taskId":"task-1"}
         }))
         .await;
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    stop_native_history(handler).await;
     result
 }
 
@@ -219,11 +215,7 @@ async fn native_timeline_only_restores_user_presentations_on_their_own_page() {
         Ok::<_, AppIpcError>((latest, earlier))
     }
     .await;
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    stop_native_history(&handler).await;
     let (latest, earlier) = responses.unwrap();
     assert_eq!(latest["turns"][0]["items"].as_array().unwrap().len(), 1);
     assert_eq!(latest["turns"][0]["items"][0]["type"], "assistant_text");
@@ -257,11 +249,7 @@ async fn protocol_two_rejects_a_provider_page_that_ignores_the_requested_item_li
             "taskId":"task-1","transcriptProtocolVersion":2
         }}))
         .await;
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    stop_native_history(&handler).await;
     let error = response.unwrap_err();
     assert_eq!(error.code, "codex_error");
     assert!(error.message.contains("item budget"));
@@ -380,11 +368,7 @@ async fn bounded_native_history_never_copies_unrelated_cached_bodies() {
         "reconcileClientUserMessageIds":["client-user","other-user","not-accepted"]
         }))
         .await;
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    stop_native_history(&handler).await;
     let response = result.unwrap();
     assert_eq!(handler.store.full_task_read_count(), reads);
     let bytes = base64::engine::general_purpose::STANDARD

@@ -104,11 +104,7 @@ async fn canonical_native_transcript_repairs_cold_terminal_metadata_durably() {
     let result = handler
         .transcript(json!({"taskId":"task-1","limit":10}))
         .await;
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    stop_native_history(&handler).await;
     let response = result.unwrap();
     assert_eq!(response["running"], false);
     let restored = RuntimeWorkStore::new(handler.store.index_path().to_path_buf())

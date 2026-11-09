@@ -37,7 +37,7 @@ pub fn create(source: &Path, link: &Path) -> io::Result<()> {
     } else {
         link.parent().unwrap_or_else(|| Path::new(".")).join(source)
     };
-    let buffer = junction_buffer(&fs::canonicalize(source)?)?;
+    let buffer = junction_buffer(&source)?;
     fs::create_dir(link)?;
     let result = (|| {
         let handle = fs::OpenOptions::new()
@@ -73,15 +73,7 @@ pub fn create(source: &Path, link: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 fn junction_buffer(source: &Path) -> io::Result<Vec<u8>> {
-    use std::os::windows::ffi::OsStrExt;
-    let mut name: Vec<u16> = source.as_os_str().encode_wide().collect();
-    if !name.starts_with(&[92, 92, 63, 92]) {
-        return Err(io::Error::other(
-            "Junction target requires a canonical Windows path",
-        ));
-    }
-    // Convert the canonical Win32 prefix to the NT substitute-name prefix.
-    name[..4].copy_from_slice(&[92, 63, 63, 92]);
+    let name = junction_target_name(source)?;
     let length = name.len() * 2;
     let data_length = 8 + length + 4;
     if data_length + 8 > 16 * 1024 {
@@ -108,10 +100,92 @@ fn junction_buffer(source: &Path) -> io::Result<Vec<u8>> {
     Ok(buffer)
 }
 
+#[cfg(windows)]
+fn junction_target_name(source: &Path) -> io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetFullPathNameW;
+    if source.as_os_str().encode_wide().any(|unit| unit == 0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Junction target contains NUL",
+        ));
+    }
+    let source: Vec<u16> = source
+        .as_os_str()
+        .encode_wide()
+        .map(|unit| if unit == 47 { 92 } else { unit })
+        .chain([0])
+        .collect();
+    // Resolve lexically: recovery must preserve links whose targets have moved.
+    // SAFETY: source is NUL-terminated and the first call only queries capacity.
+    let capacity = unsafe {
+        GetFullPathNameW(
+            source.as_ptr(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if capacity == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut absolute = vec![0; capacity as usize];
+    // SAFETY: the output buffer holds capacity UTF-16 code units.
+    let length = unsafe {
+        GetFullPathNameW(
+            source.as_ptr(),
+            capacity,
+            absolute.as_mut_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+    if length == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length >= capacity {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Junction target changed while resolving its absolute path",
+        ));
+    }
+    absolute.truncate(length as usize);
+    let mut name = vec![92, 63, 63, 92];
+    if absolute.starts_with(&[92, 92, 63, 92]) {
+        name.extend_from_slice(&absolute[4..]);
+    } else if absolute.starts_with(&[92, 92]) {
+        name.extend("UNC\\".encode_utf16());
+        name.extend_from_slice(&absolute[2..]);
+    } else {
+        name.extend(absolute);
+    }
+    Ok(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn preserves_a_link_after_its_target_was_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("package");
+        let original = root.path().join("original");
+        let snapshot = root.path().join("snapshot");
+        fs::create_dir(&target).unwrap();
+        create(&target, &original).unwrap();
+        fs::remove_dir(&target).unwrap();
+
+        create(&fs::read_link(&original).unwrap(), &snapshot).unwrap();
+
+        assert_eq!(
+            fs::read_link(&snapshot).unwrap(),
+            fs::read_link(&original).unwrap()
+        );
+        remove(&original).unwrap();
+        remove(&snapshot).unwrap();
+        assert!(!target.exists());
+    }
 
     #[test]
     fn publishes_and_removes_a_directory_link_without_changing_its_target() {

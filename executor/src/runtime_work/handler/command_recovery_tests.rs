@@ -66,11 +66,7 @@ async fn synthetic_interruption_never_becomes_a_durable_cancel_receipt() {
             }
         );
         assert_eq!(response["requiresUserReview"], !completed);
-        handler
-            .codex_app_server
-            .request("test/stop", json!({}))
-            .await
-            .unwrap();
+        stop_native_history(&handler).await;
         fs::remove_dir_all(root).unwrap();
     }
 }
@@ -134,11 +130,7 @@ async fn queued_history_keeps_command_unconfirmed_when_processing_admission_clos
         serde_json::from_str::<Value>(request).unwrap()["method"] != "turn/start"
     }));
     drop(permits);
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    stop_native_history(&handler).await;
     fs::remove_dir_all(root).unwrap();
 }
 

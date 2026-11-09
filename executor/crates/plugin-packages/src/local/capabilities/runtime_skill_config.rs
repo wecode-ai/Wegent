@@ -79,7 +79,6 @@ pub(super) fn apply_plugin_skill_states(
                 None => continue,
             },
         };
-        let path = path.to_string_lossy().into_owned();
         if state.is_some() {
             explicit.insert(path.clone());
         }
@@ -98,8 +97,8 @@ pub(super) fn apply_plugin_skill_states(
 
 fn update_skill_rules(
     document: &mut DocumentMut,
-    updates: &BTreeMap<String, bool>,
-    explicit: &BTreeSet<String>,
+    updates: &BTreeMap<PathBuf, bool>,
+    explicit: &BTreeSet<PathBuf>,
 ) -> Result<(), CapabilitySyncError> {
     if !document.contains_key("skills") {
         document["skills"] = Item::Table(Table::new());
@@ -118,7 +117,7 @@ fn update_skill_rules(
         }
         for path in explicit.difference(&seen) {
             let mut entry = Table::new();
-            entry["path"] = value(path.as_str());
+            entry["path"] = value(path.to_string_lossy().as_ref());
             entry["enabled"] = value(updates[path]);
             tables.push(entry);
         }
@@ -131,7 +130,7 @@ fn update_skill_rules(
         }
         for path in explicit.difference(&seen) {
             let mut entry = InlineTable::new();
-            entry.insert("path", path.as_str().into());
+            entry.insert("path", path.to_string_lossy().as_ref().into());
             entry.insert("enabled", updates[path].into());
             array.push(entry);
         }
@@ -145,10 +144,10 @@ fn update_skill_rules(
 
 fn update_skill_rule(
     entry: &mut dyn TableLike,
-    updates: &BTreeMap<String, bool>,
-    seen: &mut BTreeSet<String>,
+    updates: &BTreeMap<PathBuf, bool>,
+    seen: &mut BTreeSet<PathBuf>,
 ) {
-    let Some(path) = entry.get("path").and_then(Item::as_str).map(str::to_owned) else {
+    let Some(path) = entry.get("path").and_then(Item::as_str).map(PathBuf::from) else {
         return;
     };
     let Some(enabled) = updates.get(&path) else {
@@ -176,7 +175,7 @@ pub(super) fn relocate_plugin_skill_config(
     if let Some(tables) = config.as_array_of_tables_mut() {
         let mut targets = tables
             .iter()
-            .filter_map(|entry| entry.get("path").and_then(Item::as_str).map(str::to_owned))
+            .filter_map(|entry| entry.get("path").and_then(Item::as_str).map(PathBuf::from))
             .collect::<BTreeSet<_>>();
         let mut redundant = Vec::new();
         for (index, entry) in tables.iter_mut().enumerate() {
@@ -186,7 +185,7 @@ pub(super) fn relocate_plugin_skill_config(
             let Some(target) = relocated_skill_path(path, spec, current_runtime)? else {
                 continue;
             };
-            if targets.insert(target.clone()) {
+            if targets.insert(PathBuf::from(&target)) {
                 entry["path"] = value(target);
             } else {
                 redundant.push(index);
@@ -203,7 +202,7 @@ pub(super) fn relocate_plugin_skill_config(
                     .as_inline_table()
                     .and_then(|entry| entry.get("path"))
                     .and_then(toml_edit::Value::as_str)
-                    .map(str::to_owned)
+                    .map(PathBuf::from)
             })
             .collect::<BTreeSet<_>>();
         let mut redundant = Vec::new();
@@ -217,7 +216,7 @@ pub(super) fn relocate_plugin_skill_config(
             let Some(target) = relocated_skill_path(path, spec, current_runtime)? else {
                 continue;
             };
-            if targets.insert(target.clone()) {
+            if targets.insert(PathBuf::from(&target)) {
                 entry.insert("path", target.into());
             } else {
                 redundant.push(index);
@@ -341,7 +340,8 @@ mod tests {
                     &rules.as_array().unwrap()[..2],
                     unrelated.as_array().unwrap()
                 );
-                assert_eq!(rules[2], json!({"path":current,"enabled":enabled}));
+                assert_eq!(Path::new(rules[2]["path"].as_str().unwrap()), current);
+                assert_eq!(rules[2], json!({"path":rules[2]["path"],"enabled":enabled}));
                 let saved = document.to_string();
                 apply_plugin_skill_states(&mut document, &spec, &runtime, &spec.component_states)
                     .unwrap();
@@ -387,8 +387,8 @@ mod tests {
             assert_eq!(document.to_string(), before);
             assert_eq!(skill_rules(&document)[0]["enabled"], false);
             assert_eq!(
-                skill_rules(&document)[0]["path"],
-                json!(runtime.join("skills/feature/SKILL.md"))
+                Path::new(skill_rules(&document)[0]["path"].as_str().unwrap()),
+                runtime.join("skills/feature/SKILL.md")
             );
         }
     }
@@ -412,14 +412,52 @@ mod tests {
                 apply_plugin_skill_states(&mut document, &spec, &runtime, &previous_states)
                     .unwrap();
 
+                let rules = skill_rules(&document);
                 assert_eq!(
-                    skill_rules(&document),
-                    json!([{"path":runtime.join("skills/feature/SKILL.md"),"enabled":enabled}]),
+                    Path::new(rules[0]["path"].as_str().unwrap()),
+                    runtime.join("skills/feature/SKILL.md")
+                );
+                assert_eq!(
+                    rules,
+                    json!([{"path":rules[0]["path"],"enabled":enabled}]),
                     "name={name} enabled={enabled}"
                 );
             }
             let paths = plugin_skill_paths(&runtime).unwrap();
             assert_eq!(paths.keys().collect::<Vec<_>>(), vec!["cloud-feature"]);
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn existing_windows_skill_selectors_match_both_separator_forms() {
+        for inline in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let (mut spec, runtime, _) = fixture(temp.path());
+            let path = runtime
+                .join("skills/feature/SKILL.md")
+                .to_string_lossy()
+                .replace('\\', "/");
+            let input = if inline {
+                format!("[skills]\nconfig=[{{path={},enabled=true}}]\n", json!(path))
+            } else {
+                format!("[[skills.config]]\npath={}\nenabled=true\n", json!(path))
+            };
+            let mut document = input.parse::<DocumentMut>().unwrap();
+            for enabled in [false, true] {
+                let previous_states = spec.component_states.clone();
+                spec.component_states = json!({"skill:feature":enabled});
+                apply_plugin_skill_states(&mut document, &spec, &runtime, &previous_states)
+                    .unwrap();
+                assert_eq!(
+                    skill_rules(&document),
+                    json!([{"path":path,"enabled":enabled}])
+                );
+                let saved = document.to_string();
+                apply_plugin_skill_states(&mut document, &spec, &runtime, &spec.component_states)
+                    .unwrap();
+                assert_eq!(document.to_string(), saved);
+            }
         }
     }
 
@@ -559,7 +597,10 @@ mod tests {
                 .unwrap()
                 .get(0)
                 .unwrap();
-            assert_eq!(entry["path"].as_str(), current.to_str());
+            assert_eq!(
+                entry["path"].as_str().map(Path::new),
+                Some(current.as_path())
+            );
             assert_eq!(entry["enabled"].as_bool(), Some(false));
             assert!(!temp.path().join("removed").exists());
         }

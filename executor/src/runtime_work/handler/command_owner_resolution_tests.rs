@@ -1,6 +1,8 @@
 //! Owner resolution preserves uncertainty, durability and original execution identity.
 use super::*;
-use crate::runtime_work::handler::tests::{install_native_history, isolated_runtime_work_handler};
+use crate::runtime_work::handler::tests::{
+    install_native_history, isolated_runtime_work_handler, stop_native_history,
+};
 
 fn fixture(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, SpawnTurnRequest, Value) {
     let (mut handler, root) = isolated_runtime_work_handler(label);
@@ -56,11 +58,7 @@ fn fixture(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, SpawnTurnRequest, Va
 }
 
 async fn cleanup(handler: &RuntimeWorkRpcHandler, root: PathBuf) {
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    stop_native_history(handler).await;
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -333,6 +331,7 @@ async fn abandoned_receipt_retires_only_original_assessment_after_restart_withou
         .retire_abandoned_stand_in_assessment(7, "device-1", &original.id, foreign)
         .is_err());
     assert_eq!(store.stand_in_actions(7).unwrap(), retired);
+    drop(store);
     cleanup(&handler, root).await;
 }
 

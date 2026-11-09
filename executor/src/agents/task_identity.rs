@@ -106,9 +106,15 @@ mod tests {
 
     #[test]
     fn uses_materialized_workspace_path_for_task_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp
+            .path()
+            .join("runtime")
+            .join("workspaces")
+            .join("task-1");
         let mut request = ExecutionRequest {
             task_id: "task-1".to_owned(),
-            project_workspace_path: Some("/runtime/workspaces/task-1".to_owned()),
+            project_workspace_path: Some(workspace.to_string_lossy().into_owned()),
             backend_url: Some("https://backend.example.com".to_owned()),
             ..ExecutionRequest::default()
         };
@@ -122,7 +128,7 @@ mod tests {
         assert_eq!(env.get("WEGENT_TASK_ID"), Some(&"task-1".to_owned()));
         assert_eq!(
             env.get("WEGENT_TASK_WORKSPACE"),
-            Some(&"/runtime/workspaces/task-1".to_owned())
+            Some(&workspace.to_string_lossy().into_owned())
         );
         assert_eq!(
             env.get("WEWORK_PARENT_TITLE"),

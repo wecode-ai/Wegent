@@ -121,12 +121,25 @@ pub(super) fn remember_plugin_runtime_owner(manifest: &mut Value, key: &str, plu
 }
 
 pub(super) fn owns_retained_plugin_runtime(manifest: &Value, key: &str, path: &Path) -> bool {
+    !has_conflicting_runtime_owner(manifest, key, path)
+        && manifest
+            .get("plugin_runtime_owners")
+            .and_then(Value::as_object)
+            .is_some_and(|owners| {
+                owners.iter().any(|(owned_path, owner)| {
+                    owner.as_str() == Some(key) && same_entry(Path::new(owned_path), path)
+                })
+            })
+}
+
+pub(super) fn has_conflicting_runtime_owner(manifest: &Value, key: &str, path: &Path) -> bool {
     manifest
         .get("plugin_runtime_owners")
         .and_then(Value::as_object)
         .is_some_and(|owners| {
             owners.iter().any(|(owned_path, owner)| {
-                owner.as_str() == Some(key) && same_entry(Path::new(owned_path), path)
+                owner.as_str().is_some_and(|owner| owner != key)
+                    && same_entry(Path::new(owned_path), path)
             })
         })
 }

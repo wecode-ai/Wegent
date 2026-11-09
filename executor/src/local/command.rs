@@ -244,7 +244,7 @@ async fn directory_command_output(path: &str) -> std::io::Result<String> {
 }
 
 pub(crate) use wegent_runtime_config::home::configured_home_dir;
-#[cfg(any(windows, test))]
+#[cfg(test)]
 use wegent_runtime_config::home::normalize_windows_home_path;
 
 #[cfg(windows)]

@@ -558,6 +558,19 @@ impl AgentEngine for AgentProcessEngine {
     }
 }
 
+/// Reload active Codex sessions after publishing a skill-only capability change.
+pub struct CodexSkillConfigurationReloader;
+
+impl wegent_plugin_packages::SkillConfigurationReloader for CodexSkillConfigurationReloader {
+    fn reload<'a>(
+        &'a self,
+        home: &'a std::path::Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize, String>> + Send + 'a>>
+    {
+        Box::pin(reload_skill_configuration(home))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -652,19 +665,6 @@ mod tests {
                 }
             );
         }
-    }
-}
-
-/// Reload active Codex sessions after publishing a skill-only capability change.
-pub struct CodexSkillConfigurationReloader;
-
-impl wegent_plugin_packages::SkillConfigurationReloader for CodexSkillConfigurationReloader {
-    fn reload<'a>(
-        &'a self,
-        home: &'a std::path::Path,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize, String>> + Send + 'a>>
-    {
-        Box::pin(reload_skill_configuration(home))
     }
 }
 

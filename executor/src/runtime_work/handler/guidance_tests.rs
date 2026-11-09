@@ -72,11 +72,7 @@ async fn guidance_uses_native_continuation_after_local_request_finishes() {
         handler.local_task_link("task-1").unwrap().execution_state,
         before
     );
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    stop_native_history(&handler).await;
     fs::remove_dir_all(root).unwrap();
 }
 

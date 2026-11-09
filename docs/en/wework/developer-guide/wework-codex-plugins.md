@@ -35,6 +35,8 @@ When Wework is connected to Wegent cloud, the plugin page also displays the Back
 
 Cloud synchronization commits the package replacement, both runtime caches, registries, and configuration files as one local transaction. Extraction, parsing, or write failures restore the pre-sync state so an update cannot leave a new package paired with old runtime metadata, and removal cannot stop halfway. Connector `localAuth` remains a separate Wework step after package synchronization and is not bypassed by local materialization.
 
+Windows migration and recovery compare directory paths by components, preserve separator formatting in metadata, and reject ownership by another installation at the same path. Recovery journals flush through writable handles. Directory-link snapshots preserve targets that have moved or are temporarily missing, and link removal leaves the target untouched. Authorization and history subprocesses in tests must also exit before their directories are cleaned up.
+
 ### Pure Skill Plugin Hot Updates
 
 After the local transaction commits an installation or removal of a managed pure skill plugin, the Executor reuses `config/batchWrite` with empty `edits` and `reloadUserConfig: true` for already running Codex app-server processes in the matching Home. Success leaves the process invalidation revision unchanged, preserving the PID and existing conversations. The new catalog applies on an existing conversation's next turn; removed skills disappear from that turn's available catalog. Cold processes read the committed state at their first startup.

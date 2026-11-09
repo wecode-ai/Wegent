@@ -2083,7 +2083,11 @@ fn prepare_wework_codex_home_removes_browser_only_developer_instructions() {
         codex_home.join("config.toml"),
         format!(
             "developer_instructions = {instructions:?}\n",
-            instructions = host_skills::BROWSER.split_once("\n\n").unwrap().1
+            instructions = host_skills::BROWSER
+                .replace("\r\n", "\n")
+                .split_once("\n\n")
+                .unwrap()
+                .1
         ),
     )
     .expect("legacy config should be written");

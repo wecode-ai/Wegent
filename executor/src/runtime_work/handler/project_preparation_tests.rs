@@ -6,6 +6,14 @@ use super::super::project_preparation::{configure, DEFERRED_ENVIRONMENT};
 use super::*;
 use crate::local::environment_prepare::prepare_environment;
 
+fn setup_command(unix: &'static str, windows: &'static str) -> &'static str {
+    if cfg!(windows) {
+        windows
+    } else {
+        unix
+    }
+}
+
 fn turn_with_setup(id: &str, command: &str) -> SpawnTurnRequest {
     let mut request = ExecutionRequest {
         task_id: id.into(),
@@ -43,7 +51,13 @@ fn project_preparation_is_shared_and_serialized_by_configuration() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let turn = turn_with_setup("first", "printf ready >> prepared.txt");
+        let turn = turn_with_setup(
+            "first",
+            setup_command(
+                "printf ready >> prepared.txt",
+                r#"<nul set /p "=ready">>prepared.txt&exit /b 0"#,
+            ),
+        );
         let definition = &turn.request.extra[DEFERRED_ENVIRONMENT];
         let (first, second) = tokio::join!(
             prepare_environment(definition),
@@ -55,7 +69,13 @@ fn project_preparation_is_shared_and_serialized_by_configuration() {
             fs::read_to_string(Path::new(first.cwd().unwrap()).join("prepared.txt")).unwrap(),
             "ready"
         );
-        let changed = turn_with_setup("next", "printf changed >> prepared.txt");
+        let changed = turn_with_setup(
+            "next",
+            setup_command(
+                "printf changed >> prepared.txt",
+                r#"<nul set /p "=changed">>prepared.txt&exit /b 0"#,
+            ),
+        );
         assert_ne!(changed.request.cwd(), first.cwd());
     });
 }
@@ -71,7 +91,10 @@ fn project_preparation_failure_keeps_snapshot_and_retry_succeeds() {
         .unwrap();
     runtime.block_on(async {
         let (handler, root) = isolated_runtime_work_handler("project-preparation-retry");
-        let turn = turn_with_setup("retry", "test -f fixed && printf ready > result.txt");
+        let turn = turn_with_setup("retry", setup_command(
+            "test -f fixed && printf ready > result.txt",
+            r#"if not exist fixed (exit /b 1) else (<nul set /p "=ready">result.txt&exit /b 0)"#,
+        ));
         let path = PathBuf::from(turn.request.cwd().unwrap());
         let mut link = RuntimeTaskLink::new_pending(
             "retry".into(),
@@ -228,7 +251,10 @@ fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
         let payload = json!({"runtime":"codex", "taskId":"cancel-preparation", "message":"test",
             "executionRequest": {"task_id":"cancel-preparation", "subtask_id":"first", "prompt":"test"},
             "execution":{"environment":{"environmentId":"cancel-project", "repositories":[],
-                "setupSteps":[{"command":"printf started > started; while :; do sleep 1; done", "workingDirectory":""}]}}
+                "setupSteps":[{"command":setup_command(
+                    "printf started > started; while :; do sleep 1; done",
+                    "echo started>started&for /L %n in (0,0,1) do @rem"
+                ), "workingDirectory":""}]}}
         });
         let response = tokio::time::timeout(Duration::from_secs(5), handler.create_task(payload)).await.unwrap().unwrap();
         assert_eq!(response["accepted"], true);
@@ -278,7 +304,11 @@ fn project_preparation_runs_for_restored_and_force_started_turns() {
             } else {
                 "forced-preparation"
             });
-            let mut turn = turn_with_setup("pending", "printf attempted > attempted; false");
+            let command = setup_command(
+                "printf attempted > attempted; false",
+                r#"<nul set /p "=attempted">attempted&exit /b 1"#,
+            );
+            let mut turn = turn_with_setup("pending", command);
             let path = PathBuf::from(turn.request.cwd().unwrap());
             let mut link = RuntimeTaskLink::new_pending(
                 "pending".into(),

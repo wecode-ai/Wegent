@@ -249,7 +249,11 @@ async fn known_plugin_skill_toggles_reload_without_process_invalidation() {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .find(|entry| entry["path"] == json!(codex_runtime(&store).join(skill_path)))
+                    .find(|entry| {
+                        entry["path"].as_str().is_some_and(|path| {
+                            Path::new(path) == codex_runtime(&store).join(skill_path)
+                        })
+                    })
                     .unwrap_or_else(|| panic!("{context}: native skill selector is missing"));
                 assert_eq!(skill["enabled"], expected, "{context}");
                 next_generation(&mut payload, generation + 1);
@@ -291,8 +295,12 @@ async fn cleared_plugin_skill_states_restore_defaults_and_remain_idempotent() {
                 toml_edit::de::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
             let path = codex_runtime(&store).join(skill_path);
             assert_eq!(
+                Path::new(config["skills"]["config"][0]["path"].as_str().unwrap()),
+                path
+            );
+            assert_eq!(
                 config["skills"]["config"],
-                json!([{"path":path,"enabled":false}])
+                json!([{"path":config["skills"]["config"][0]["path"],"enabled":false}])
             );
             if let Some(states) = &cleared {
                 payload["plugins"][0]["component_states"] = states.clone();
@@ -314,8 +322,12 @@ async fn cleared_plugin_skill_states_restore_defaults_and_remain_idempotent() {
             let restored = fs::read_to_string(&config_path).unwrap();
             let config: Value = toml_edit::de::from_str(&restored).unwrap();
             assert_eq!(
+                Path::new(config["skills"]["config"][0]["path"].as_str().unwrap()),
+                path
+            );
+            assert_eq!(
                 config["skills"]["config"],
-                json!([{"path":path,"enabled":true}])
+                json!([{"path":config["skills"]["config"][0]["path"],"enabled":true}])
             );
             assert_eq!(
                 store.manifest.load().unwrap()["plugins"]["demo@wegent"].get("component_states"),
@@ -367,8 +379,12 @@ async fn skill_frontmatter_separator_whitespace_preserves_hot_toggle_identity() 
         )
         .unwrap();
         assert_eq!(
+            Path::new(config["skills"]["config"][0]["path"].as_str().unwrap()),
+            codex_runtime(&store).join(skill_path)
+        );
+        assert_eq!(
             config["skills"]["config"],
-            json!([{"path":codex_runtime(&store).join(skill_path),"enabled":enabled}])
+            json!([{"path":config["skills"]["config"][0]["path"],"enabled":enabled}])
         );
         next_generation(&mut payload, generation + 1);
         let repeated = sync(&handler, payload.clone(), true, false).await;

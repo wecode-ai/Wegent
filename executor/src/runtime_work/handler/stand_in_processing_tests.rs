@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime_work::handler::tests::stop_native_history;
 
 fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
@@ -987,10 +988,7 @@ async fn authorized_inventory_survives_read_capacity_and_conversations_are_read_
             .code,
         "permission_denied"
     );
-    handler
-        .codex_app_server
-        .request("test/stop", json!({}))
-        .await
-        .unwrap();
+    drop(store);
+    stop_native_history(&handler).await;
     fs::remove_dir_all(root).unwrap();
 }

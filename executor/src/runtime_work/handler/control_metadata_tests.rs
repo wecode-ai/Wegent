@@ -131,11 +131,7 @@ async fn control_metadata_preserves_native_authority_while_history_workers_are_s
         assert_eq!(snapshot.is_idle(), idle, "{label}");
         assert_eq!(snapshot.active_turn_id.as_deref(), interrupt_id, "{label}");
         assert_eq!(snapshot.terminal_task_status(), terminal, "{label}");
-        handler
-            .codex_app_server
-            .request("test/stop", json!({}))
-            .await
-            .unwrap();
+        stop_native_history(&handler).await;
         let calls = fs::read_to_string(root.join("requests.jsonl"))
             .unwrap()
             .lines()
@@ -213,11 +209,7 @@ async fn control_metadata_keeps_native_transitions_and_active_goal_continuation_
         assert!(!snapshot.is_idle(), "{phase:?}");
         assert_eq!(snapshot.terminal_task_status(), None, "{phase:?}");
         assert_eq!(snapshot.active_turn_id, None, "{phase:?}");
-        handler
-            .codex_app_server
-            .request("test/stop", json!({}))
-            .await
-            .unwrap();
+        stop_native_history(&handler).await;
         fs::remove_dir_all(root).unwrap();
     }
 }

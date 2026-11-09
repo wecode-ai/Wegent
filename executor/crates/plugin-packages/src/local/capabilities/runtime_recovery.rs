@@ -144,12 +144,7 @@ impl GlobalCapabilityStore {
             if next == old {
                 continue;
             }
-            if manifest
-                .get("plugin_runtime_owners")
-                .and_then(|owners| owners.get(&next))
-                .and_then(Value::as_str)
-                .is_some_and(|other| other != key)
-            {
+            if shared_packages::has_conflicting_runtime_owner(manifest, key, &target) {
                 report.failed.insert(
                     key.to_owned(),
                     "Conflicting retained runtime ownership; preserving both records".into(),
@@ -315,7 +310,11 @@ impl GlobalCapabilityStore {
     ) -> Result<bool, CapabilitySyncError> {
         // An unchanged private installation does not need a shared publication.
         // Its next online installation can publish the archive through the normal flow.
-        let store_current = old.get("store_path") == next.get("store_path")
+        let store_current = old.get("store_path").and_then(Value::as_str).map(Path::new)
+            == next
+                .get("store_path")
+                .and_then(Value::as_str)
+                .map(Path::new)
             || self.current_recorded_store_path(old)?.is_some();
         Ok(old.get("runtime") == next.get("runtime")
             && store_current
@@ -545,11 +544,9 @@ impl GlobalCapabilityStore {
                     // the source only when this exact cache still belongs to its key.
                     let retained = self.shared_packages
                         && linked.parent() == runtime.parent()
-                        && manifest
-                            .get("plugin_runtime_owners")
-                            .and_then(|owners| owners.get(linked.to_string_lossy().as_ref()))
-                            .and_then(Value::as_str)
-                            == Some(spec.key.as_str())
+                        && shared_packages::owns_retained_plugin_runtime(
+                            manifest, &spec.key, &linked,
+                        )
                         && self.ensure_runtime_path(&linked, false).is_ok();
                     linked == runtime
                         || (spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE

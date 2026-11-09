@@ -3,6 +3,15 @@
 
 use super::*;
 
+pub(in crate::runtime_work::handler) async fn stop_native_history(handler: &RuntimeWorkRpcHandler) {
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    handler.codex_app_server.restart().await;
+}
+
 pub(in crate::runtime_work::handler) fn install_native_history(
     handler: &mut RuntimeWorkRpcHandler,
     root: &std::path::Path,

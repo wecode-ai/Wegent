@@ -600,10 +600,10 @@ mod tests {
             .unwrap()
             .unwrap();
         let target = handler.local_task_link("target").unwrap();
-        let file = std::fs::File::open(
-            directory(&handler, &target).join(format!("{}.native.gz", decoded.snapshot)),
-        )
-        .unwrap();
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(directory(&handler, &target).join(format!("{}.native.gz", decoded.snapshot)))
+            .unwrap();
         file.set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
             .unwrap();
         assert_eq!(

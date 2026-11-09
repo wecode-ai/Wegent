@@ -461,7 +461,7 @@ pub(super) fn remove_runtime_link_from_value(
 
 pub(super) fn remove_managed_runtime_path(path: &Path) -> Result<(), CapabilitySyncError> {
     if path.is_symlink() || path.is_file() {
-        match fs::remove_file(path) {
+        match crate::directory_link::remove(path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),

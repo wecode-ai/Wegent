@@ -208,9 +208,23 @@ fn map_path(value: &str, mappings: &[(PathBuf, PathBuf)]) -> Option<String> {
         return None;
     }
     mappings.iter().find_map(|(planned, real)| {
-        path.strip_prefix(planned)
-            .ok()
-            .map(|relative| real.join(relative).to_string_lossy().into_owned())
+        path.strip_prefix(planned).ok().map(|relative| {
+            if relative.as_os_str().is_empty() {
+                return real.to_string_lossy().into_owned();
+            }
+            // Preserve the separator at the mapped boundary so planning
+            // and real publication produce identical metadata bytes.
+            let relative = relative.to_string_lossy();
+            let boundary = value
+                .rfind(relative.as_ref())
+                .expect("relative path is a suffix of the source path");
+            format!(
+                "{}{}",
+                real.to_string_lossy()
+                    .trim_end_matches(std::path::is_separator),
+                &value[boundary - 1..]
+            )
+        })
     })
 }
 
@@ -274,5 +288,32 @@ fn map_toml_value(value: &mut toml_edit::Value, mappings: &[(PathBuf, PathBuf)])
             }
         }
         _ => (),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_path_mapping_preserves_separator_style_on_round_trip() {
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        let planned = temp.path().join("planned");
+        for separator in ['/', std::path::MAIN_SEPARATOR] {
+            for suffix in [
+                format!("plugins{separator}cache"),
+                format!("插件{separator}cache{separator}"),
+            ] {
+                let original = format!("{}{separator}{suffix}", real.display());
+                let mapped = map_path(&original, &[(real.clone(), planned.clone())]).unwrap();
+                assert_eq!(mapped, format!("{}{separator}{suffix}", planned.display()));
+                assert_eq!(
+                    map_path(&mapped, &[(planned.clone(), real.clone())]),
+                    Some(original)
+                );
+            }
+        }
+        assert!(map_path("unrelated", &[(real, planned)]).is_none());
     }
 }
