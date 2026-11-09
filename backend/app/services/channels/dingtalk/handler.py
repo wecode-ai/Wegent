@@ -462,8 +462,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
                     streaming_emitter=streaming_emitter,
                     message_context=message_context,
                     error=(
-                        "聊天卡片创建失败，任务可能仍在运行，"
-                        "请稍后在 Wework 查看。"
+                        "聊天卡片创建失败，任务可能仍在运行，" "请稍后在 Wework 查看。"
                     ),
                 )
                 return
