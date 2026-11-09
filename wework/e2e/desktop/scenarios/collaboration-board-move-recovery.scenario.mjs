@@ -3,11 +3,11 @@ import assert from 'node:assert/strict'
 import { dragBoardCard, waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import { reloadMainWindow, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
 import {
-  reloadMainWindow,
-  selectCollaborationDomain,
+  collaborationProjectViewSelector,
   selectCollaborationProjectView,
-} from '../modules/workspace-flows.mjs'
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -75,7 +75,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     )
   async function openBoard(control) {
     await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
-    await selectCollaborationProjectView(control, CONTENT, 'board', workbenchReadyTimeoutMs)
+    await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'), {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('waitFor', scoped(card(issues[2].id)), { timeoutMs: uiTimeoutMs })
   }
   async function patch(id, values) {

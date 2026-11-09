@@ -6,6 +6,17 @@ import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import {
+  assertManagedPythonReady,
+  assertPathMissing,
+  waitForPythonRuntimeEvent,
+  inspectManagedPython,
+  managedPythonPath,
+} from '../modules/managed-python.mjs'
+
+import { createPluginPythonChat } from '../modules/plugin-python-chat.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { disconnectDesktopCloud, signInDesktopCloud } from '../modules/desktop-cloud-login.mjs'
 
 const STATUS = '[data-testid="wework-plugin-development-sidebar-status"]'
 const execFileAsync = promisify(execFile)
@@ -35,6 +46,30 @@ async function waitForStatus(control, expected, timeoutMs) {
   })
   const status = await control.commandForWindow('main', 'getText', STATUS, { visible: true })
   assert.ok(status.includes(expected), `Unexpected plugin development status: ${status}`)
+}
+
+export async function openPluginDevelopmentPanel(control) {
+  const panel = '[data-testid="wework-plugin-development-sidebar"]'
+  const visible = async selector =>
+    Number(await control.command('getElementCount', selector, { visible: true })) > 0
+  if (await visible(panel)) return
+  const shell = '[data-testid="right-workspace-panel-shell"]'
+  await control.command('waitFor', shell)
+  if ((await control.command('getAttribute', shell, { value: 'aria-hidden' })) === 'true') {
+    await control.command('clickWhenEnabled', '[data-testid="toggle-right-workspace-panel-button"]')
+  }
+  await control.command('waitFor', `${shell}[aria-hidden="false"]`)
+  const tab = '[data-testid="right-workspace-extension-tab-wework-plugin-developer.debug"]'
+  const option = '[data-testid="right-workspace-extension-option-wework-plugin-developer.debug"]'
+  if (await visible(tab)) {
+    await control.command('clickWhenEnabled', tab)
+  } else {
+    if (!(await visible(option))) {
+      await control.command('clickWhenEnabled', '[data-testid="right-workspace-new-tab-button"]')
+    }
+    await control.command('clickWhenEnabled', option)
+  }
+  await control.command('waitFor', panel, { visible: true })
 }
 
 async function waitForFile(path, timeoutMs) {
@@ -104,15 +139,36 @@ export async function createDesktopScenario({
   assert.ok(websiteAddress && typeof websiteAddress !== 'string')
   const websiteUrl = `http://127.0.0.1:${websiteAddress.port}/`
 
+  let cloudEnvironment
+  const appEnvironment = {
+    WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
+    WEWORK_E2E_CLOUD_TOKEN: '',
+    VITE_WEWORK_E2E_CLOUD_TOKEN: '',
+    WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
+    WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+    WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: controlRegistry,
+  }
+
   return {
+    requiresCloudEnvironment: true,
+    setCloudEnvironment(cloud) {
+      cloudEnvironment = cloud
+    },
+    requiresRemoteExecutor: false,
+    requiresPackagedHarnessRuntime: true,
+    async prepareCloud({ backendUrl }) {
+      appEnvironment.WEWORK_BACKEND_URL = backendUrl
+    },
     async prepareApp() {
       await upgradeFixture.prepare()
+      await createPluginPythonChat({
+        resultDir,
+        workspacePath: pluginRoot,
+        electronUserDataDirectory,
+        uiTimeoutMs,
+      }).prepare()
     },
-    appEnvironment: {
-      WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
-      WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
-      WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: controlRegistry,
-    },
+    appEnvironment,
 
     async verify(control) {
       const mainAssets = join(
@@ -266,6 +322,123 @@ export async function createDesktopScenario({
       )
       const isolatedWindowLabel = isolatedReady.windowLabel
       const isolatedInstanceId = isolatedWindowLabel.slice('plugin-development-'.length)
+      const isolatedUserData = join(
+        electronUserDataDirectory,
+        'plugin-development',
+        isolatedInstanceId,
+        'user-data'
+      )
+      await assertPathMissing(
+        managedPythonPath(isolatedUserData),
+        'Starting plugin development installed Python before use'
+      )
+      const mainControl = { command: (...args) => control.commandForWindow('main', ...args) }
+      const childControl = {
+        command: (...args) => control.commandForWindow(isolatedWindowLabel, ...args),
+      }
+      assert.deepEqual(
+        await requestExecutor(childControl, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: false,
+        }
+      )
+      const focusSnapshot = JSON.parse(await mainControl.command('getWindowFocusSnapshot', 'body'))
+      assert.equal(
+        focusSnapshot.mainFocused,
+        false,
+        'Starting plugin debugging did not focus the isolated Wework instance'
+      )
+
+      const installedPythonPlugin = await requestExecutor(
+        childControl,
+        'runtime.codex.plugin.install_local_first',
+        {
+          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.equal(
+        installedPythonPlugin.localCommitted,
+        true,
+        'The child Python demand must come from a real enabled plugin'
+      )
+      assert.deepEqual(
+        await requestExecutor(childControl, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: true,
+        }
+      )
+      await waitForPythonRuntimeEvent(
+        join(dirname(isolatedUserData), 'logs', 'wework-plugin-development.log'),
+        'python-runtime-waiting-for-login'
+      )
+      await assertPathMissing(
+        managedPythonPath(isolatedUserData),
+        'The child installed Python before parent login'
+      )
+      await requestExecutor(
+        childControl,
+        'runtime.codex.plugin.uninstall_local',
+        {
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.deepEqual(
+        await requestExecutor(childControl, 'runtime.python.has_demand', {}, uiTimeoutMs),
+        {
+          demanded: false,
+        }
+      )
+      await signInDesktopCloud(mainControl, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await childControl.command('navigate', 'body', { value: '/settings/execution-environments' })
+      await childControl.command('waitFor', '[data-testid="execution-environment-python-status"]', {
+        text: '未安装',
+        stableMs: 1_000,
+      })
+      assert.ok(
+        !(
+          await readFile(
+            join(dirname(isolatedUserData), 'logs', 'wework-plugin-development.log'),
+            'utf8'
+          )
+        ).includes('python-runtime-uv-download-started'),
+        'Parent login downloaded Python after the child demand was removed'
+      )
+      await disconnectDesktopCloud(mainControl)
+      const restoredPythonPlugin = await requestExecutor(
+        childControl,
+        'runtime.codex.plugin.install_local_first',
+        {
+          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.equal(restoredPythonPlugin.localCommitted, true)
+      await signInDesktopCloud(mainControl, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await assertPathMissing(
+        managedPythonPath(electronUserDataDirectory),
+        'Child demand caused an installation in the parent'
+      )
+      await assertManagedPythonReady(control, {
+        userDataDirectory: isolatedUserData,
+        windowLabel: isolatedWindowLabel,
+        logPath: join(dirname(isolatedUserData), 'logs', 'wework-plugin-development.log'),
+        diagnosticPath: join(resultDir, 'plugin-development-python-startup-failure.json'),
+      })
+      const isolatedPython = await inspectManagedPython(isolatedUserData, pluginRoot)
+      assert.notEqual(
+        isolatedPython.executable,
+        managedPythonPath(electronUserDataDirectory),
+        'The development instance reused its parent Python launcher'
+      )
+      await writeFile(
+        join(resultDir, 'plugin-development-python.json'),
+        JSON.stringify(isolatedPython, null, 2)
+      )
+      await control.commandForWindow(isolatedWindowLabel, 'navigate', 'body', { value: '/' })
       assert.deepEqual(
         (await readdir(sharedAssets)).sort(),
         originalAssets,
@@ -318,13 +491,8 @@ export async function createDesktopScenario({
         'The general Wework CLI did not discover the isolated plugin development instance'
       )
       control.activateWindow('main')
+      await openPluginDevelopmentPanel(mainControl)
       await waitForStatus(control, '运行中 · HMR 0', workbenchReadyTimeoutMs)
-      const focusSnapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
-      assert.equal(
-        focusSnapshot.mainFocused,
-        false,
-        'Starting plugin debugging did not focus the isolated Wework instance'
-      )
       await control.command('focusMainWindow', 'body')
       await control.command('waitFor', '[data-testid="wework-plugin-development-live-status"]', {
         text: '实时状态',
@@ -575,6 +743,24 @@ export async function createDesktopScenario({
       )
       await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
       await captureScreenshot(control, 'plugin-development-10-debug-stopped-after-hmr.png', 'body')
+      const readyCountAfterStop = control.readyCount
+      await signInDesktopCloud(mainControl, cloudEnvironment, { timeoutMs: uiTimeoutMs })
+      await openPluginDevelopmentPanel(mainControl)
+      await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
+      assert.equal(
+        control.readyCount,
+        readyCountAfterStop,
+        'Login started a stopped development instance'
+      )
+      const stoppedInstances = JSON.parse(
+        await runWeworkCli(['instances'], pluginRoot, controlRegistry)
+      )
+      assert.ok(
+        !stoppedInstances.some(
+          instance => instance.instanceId === `plugin-development-${isolatedInstanceId}`
+        ),
+        'The stopped development instance was registered again after login'
+      )
     },
 
     async cleanup() {

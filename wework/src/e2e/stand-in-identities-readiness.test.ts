@@ -68,6 +68,8 @@ test('waits for role settings to load before opening source connections', async 
   })
   const reachedConnections = new Error('Source connections are ready')
   const command = vi.fn(async (action: string, selector: string) => {
+    if (action === 'getText') return '收到，我来拟定评审角色。'
+    if (action === 'getElementCount') return '0'
     if (selector === '[data-testid="stand-in-connections-open"]') {
       expect(action).toBe('clickWhenEnabled')
       waitingStarted()
@@ -75,14 +77,19 @@ test('waits for role settings to load before opening source connections', async 
     }
     if (selector === '[data-testid="stand-in-connection-type-picker"]') throw reachedConnections
   })
-  const verified = expect(scenario.verify({ command })).rejects.toBe(reachedConnections)
+  const verified = scenario.verify({ command }).catch((error: unknown) => error)
 
-  await waiting
+  await Promise.race([
+    waiting,
+    verified.then((error: unknown) => {
+      throw error
+    }),
+  ])
   expect(command).not.toHaveBeenCalledWith(
     'waitFor',
     '[data-testid="stand-in-connection-type-picker"]'
   )
   settingsLoaded()
-  await verified
+  expect(await verified).toBe(reachedConnections)
   expect(command).toHaveBeenCalledWith('waitFor', '[data-testid="stand-in-connection-type-picker"]')
 })

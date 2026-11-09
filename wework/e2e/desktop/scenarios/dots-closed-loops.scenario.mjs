@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
@@ -10,6 +11,7 @@ import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
 import { DEFAULT_MODEL_ID } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readStoryTaskEvidence } from '../modules/stand-in-private-story-evidence.mjs'
+import { assertMarkdownPreviewAndSource } from '../modules/markdown-file-preview.mjs'
 import {
   STORY_CHAT,
   STORY_PRIMARY,
@@ -43,6 +45,7 @@ import {
   createDotsCheckedCommand,
   cartProgram,
   comparableDotsPath,
+  dotsFileLink,
   followupProgram,
   launchProgram,
   launchReadProgram,
@@ -232,12 +235,12 @@ export function createDesktopScenario(options) {
     const text =
       phase === 3 && story === 'REVENUE'
         ? 'Validation error: Invalid amount: not-a-number. Previous report preserved; fix the CSV and continue.'
-        : `Verified real files and command results. [${file}](<${encodeURI(join(root, file))}>)`
+        : `Verified real files and command results. ${dotsFileLink(file, join(root, file))}`
     const extra =
       story === 'CART'
-        ? `\n[cart.mjs](<${encodeURI(join(root, 'cart-fixture/cart.mjs'))}>)`
+        ? `\n${dotsFileLink('cart.mjs', join(root, 'cart-fixture/cart.mjs'))}`
         : story === 'REVENUE' && phase === 2
-          ? `\n[followup-plan.md](<${encodeURI(join(root, 'revenue-fixture/followup-plan.md'))}>)`
+          ? `\n${dotsFileLink('followup-plan.md', join(root, 'revenue-fixture/followup-plan.md'))}`
           : ''
     return [assistantMessage(`${RESULT(story, phase)}: ${text}${extra}`)]
   }
@@ -341,7 +344,7 @@ export function createDesktopScenario(options) {
 
   async function answer(control, title, answerText) {
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+    await openStandInActivity(control)
     const card = `[data-testid="stand-in-activity-task-${tasks.get(story)}"]`
     await control.command('waitFor', card, { timeoutMs: options.modelResponseTimeoutMs })
     await control.command('click', card)
@@ -380,7 +383,7 @@ export function createDesktopScenario(options) {
       'No successful delivery may precede the required business answer'
     )
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+    await openStandInActivity(control)
     await control.command('click', card)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
     await control.command('waitFor', INPUT_CARD, { text: title, visible: true })
@@ -445,10 +448,14 @@ export function createDesktopScenario(options) {
       options.uiTimeoutMs,
       'The visible preview must resolve the exact canonical file path'
     )
-    await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-      text,
-      visible: true,
-    })
+    if (relative.endsWith('.md')) {
+      await assertMarkdownPreviewAndSource(control, text, { visible: true })
+    } else {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        text,
+        visible: true,
+      })
+    }
   }
 
   async function persisted(control, marker) {

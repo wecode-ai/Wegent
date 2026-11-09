@@ -63,6 +63,7 @@ import {
 import {
   isLocalBrowserConnector,
   isLocalConnector,
+  isPythonRuntimeUnavailableError,
   localConnectorAuthHealth,
   localConnectorAuthLogout,
   LocalConnectorAuthLogoutError,
@@ -712,9 +713,14 @@ export function PluginsWorkspace({
         const items = snapshot.marketplaceItems
         installedPluginsRef.current = next
         setInstalledPlugins(previous => (sameInstalledPlugins(previous, next) ? previous : next))
-        setPluginMarketplaceState(previous =>
-          sameMarketplaceItems(previous.items, items) ? previous : { ...previous, items }
-        )
+        setPluginMarketplaceState(previous => {
+          // A newer inventory publication can invalidate every pending catalog read.
+          // Once it paints rows, those stale reads must not leave first-load busy latched.
+          const isLoading = previous.isLoading && items.length === 0
+          return sameMarketplaceItems(previous.items, items) && previous.isLoading === isLoading
+            ? previous
+            : { ...previous, items, isLoading }
+        })
       }),
     [marketplaceCacheKeyValue, knownExecutorDeviceId]
   )
@@ -3119,6 +3125,7 @@ export function PluginsWorkspace({
         if (health.status === 'ok') continue
       } catch (error) {
         if (!isCurrent()) return
+        if (isPythonRuntimeUnavailableError(error)) return
         if (error instanceof LocalConnectorPluginSyncTimeoutError) throw error
         // Fall through to local login when health or tool discovery fails.
       }
@@ -3198,7 +3205,10 @@ export function PluginsWorkspace({
       // A displayed logout action must not depend on a remote health probe.
       if (action !== 'logout') {
         try {
-          const health = await localConnectorAuthHealth(target, { bypassCache: true })
+          const health = await localConnectorAuthHealth(target, {
+            bypassCache: true,
+            prepareRuntime: true,
+          })
           if (!detailIsCurrent()) return
           if (githubCli && !['ok', 'need_login'].includes(health.status)) {
             reportDetailError(
@@ -3215,6 +3225,10 @@ export function PluginsWorkspace({
           }))
         } catch (error) {
           if (!detailIsCurrent()) return
+          if (isPythonRuntimeUnavailableError(error)) {
+            reportDetailError(t('workbench.plugin_python_failed'))
+            return
+          }
           if (githubCli) {
             reportDetailError(getErrorMessage(error, t('workbench.gh_health_failed')))
             return
@@ -6134,6 +6148,10 @@ export function PluginsWorkspace({
                 type="button"
                 data-testid="plugins-refresh-button"
                 data-reconciling={isReconcilingPlugins}
+                data-catalog-loading={pluginMarketplaceState.isLoading}
+                data-marketplace-refreshing={isMarketplaceRefreshing}
+                data-official-catalog-loading={openAiCatalog.loading}
+                data-official-catalog-view={isOfficialCatalogView}
                 data-reconciliation-revision={reconciliationRevision}
                 aria-label={t('workbench.plugins_refresh_marketplace', '刷新插件市场')}
                 disabled={isCatalogRefreshBusy}

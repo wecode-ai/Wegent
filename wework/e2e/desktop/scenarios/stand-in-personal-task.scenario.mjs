@@ -5,7 +5,6 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   expandCollaborationWorkspace,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -20,6 +19,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPLETE = 'PERSONAL_STAND_IN_COMPLETE'
@@ -281,7 +281,6 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('click', scoped('ai-chat-modal-close'))
       await control.command('click', scoped('cloud-todo-detail-close'))
       await openProjectStandIn(control, scoped('stand-in-open'), { connect: true })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
         value: 'Review my assigned Issues, post the result and return them to the project owner.',
       })

@@ -125,6 +125,7 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
       stage,
       elapsedMs: Date.now() - preparationStarted,
       at: new Date().toISOString(),
+      ...(child ? { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode } : {}),
       ...(error ? { error: error.stack ?? String(error), cause: String(error.cause ?? '') } : {}),
     })
     await writeFile(

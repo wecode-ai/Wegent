@@ -1,8 +1,20 @@
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+  type ReactNode,
+} from 'react'
 import { dequal } from 'dequal'
-import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
+import {
+  connectionChangeEnablesIdentity,
+  newStandInRole,
+  type PersonalStandInSettings,
+} from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { CollaborationProject } from '@wegent/collaboration'
 import {
@@ -12,8 +24,7 @@ import {
 import {
   StandInSettingsHeader,
   StandInSettingsActions,
-  StandInReceiveWork,
-  StandInConnectionEntry,
+  StandInSettingsEntry,
 } from './StandInSettingsLayout'
 import { StandInComposer } from './StandInComposer'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
@@ -41,6 +52,8 @@ export function StandInPrimaryProfile({
   initialCalendar = false,
   onCalendarViewChange,
   onReload,
+  management,
+  footerLeading,
 }: {
   settings: PersonalStandInSettings
   saving: boolean
@@ -57,6 +70,8 @@ export function StandInPrimaryProfile({
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
+  management?: ReactNode
+  footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
@@ -83,6 +98,7 @@ export function StandInPrimaryProfile({
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
+  const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
   const calendarViewChanged = useCallback(
     (open: boolean) => {
       setCalendarOpen(open)
@@ -141,6 +157,34 @@ export function StandInPrimaryProfile({
       data-testid="stand-in-primary-profile"
     >
       <StandInSettingsHeader
+        path={[
+          {
+            label: t('standIn.workspace.primary_profile'),
+            testId: 'stand-in-path-settings',
+            onClick: connections
+              ? () => {
+                  const back = () => {
+                    setCalendarEntry(false)
+                    setConnections(false)
+                  }
+                  if (connectionRef.current) connectionRef.current.requestLeave(back)
+                  else back()
+                }
+              : undefined,
+          },
+          ...(connections
+            ? [
+                {
+                  label: t('standIn.workspace.connections'),
+                  testId: 'stand-in-path-connections',
+                  onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
+                },
+              ]
+            : []),
+          ...(connections && connectionTitle
+            ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
+            : []),
+        ]}
         title={t(
           connections ? 'standIn.workspace.connections' : 'standIn.workspace.primary_profile'
         )}
@@ -160,20 +204,12 @@ export function StandInPrimaryProfile({
                   setConnections(false)
                 },
               }
-            : undefined
+            : { testId: 'stand-in-primary-back', onClick: close }
         }
         close={{ testId: 'stand-in-primary-profile-close', onClick: close }}
       />
       {!connections && (
         <>
-          <div className="mb-5">
-            <StandInReceiveWork
-              enabled={draft.enabled}
-              disabled={saving}
-              testId="stand-in-primary-enabled"
-              onChange={enabled => setDraft({ ...draft, enabled })}
-            />
-          </div>
           <label className="grid gap-2">
             <span>{t('standIn.workspace.profile_instructions')}</span>
             <div className="rounded-lg border border-solid border-border bg-background focus-within:border-text-tertiary focus-within:ring-1 focus-within:ring-focus/20">
@@ -192,7 +228,9 @@ export function StandInPrimaryProfile({
             </span>
           </label>
           <div className="mt-6">
-            <StandInConnectionEntry
+            <StandInSettingsEntry
+              label={t('standIn.workspace.connections')}
+              description={t('standIn.workspace.connections_help')}
               testId="stand-in-primary-connections-open"
               disabled={saving}
               onClick={() => setConnections(true)}
@@ -209,6 +247,7 @@ export function StandInPrimaryProfile({
             initialCalendar={calendarEntry}
             onCalendarViewChange={calendarViewChanged}
             onDetailViewChange={setConnectionDetailOpen}
+            onDetailTitleChange={setConnectionTitle}
             role={role}
             savedConfiguration={{
               connections: original.connections,
@@ -225,6 +264,7 @@ export function StandInPrimaryProfile({
             onChange={value =>
               setDraft({
                 ...draft,
+                enabled: original.enabled || connectionChangeEnablesIdentity(original, value),
                 collaboration: value.collaboration,
                 calendar: value.calendar,
                 connections: value.connections ?? [],
@@ -308,9 +348,11 @@ export function StandInPrimaryProfile({
           navigation.confirmLeave(onClose)
         }}
       />
+      {!connections && management}
       {!scheduleDirty && (
         <StandInSettingsActions
           prefix="stand-in-primary"
+          leading={footerLeading}
           disabled={saving}
           saveDisabled={saving || !dirty || scheduleDirty}
           onCancel={close}

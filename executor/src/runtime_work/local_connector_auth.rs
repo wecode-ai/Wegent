@@ -30,6 +30,7 @@ pub(crate) use connection_tools::{
 mod github_cli;
 pub(crate) mod gitlab_cli;
 mod logout;
+mod python;
 mod tools;
 
 #[derive(Debug, Clone)]
@@ -71,6 +72,18 @@ pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
     // A source that still owns its credential remains usable without the cloud.
     let local = async {
         let tool = resolve_auth_tool(spec.tool.as_ref(), false).await?;
+        if payload["prepareRuntime"] != true
+            && crate::python_runtime::managed_python_bridge_configured()
+            && python::command_uses_python(&plugin_root, &spec.health, tool.as_deref())?
+            && !crate::python_runtime::managed_python_ready()
+                .await
+                .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?
+        {
+            return Err(AppIpcError::new(
+                "python_runtime_unavailable",
+                "Python will be prepared when this plugin is used",
+            ));
+        }
         let result = run_plugin_command(
             &plugin_root,
             &spec.health,
@@ -790,8 +803,20 @@ async fn run_plugin_command(
     timeout_seconds: u64,
 ) -> Result<Value, AppIpcError> {
     let mut invocation = diagnostics::Invocation::new(plugin_root);
-    let result =
-        run_plugin_command_inner(plugin_root, args, tool, timeout_seconds, &invocation).await;
+    let result = async {
+        let (requires_python, selected) = python::prepare_command(plugin_root, args, tool).await?;
+        run_plugin_command_inner(
+            plugin_root,
+            args,
+            tool,
+            timeout_seconds,
+            requires_python,
+            selected.as_ref(),
+            &invocation,
+        )
+        .await
+    }
+    .await;
     invocation.finish(result.as_ref().err().map(|error| error.code.as_str()));
     result
 }
@@ -801,6 +826,8 @@ async fn run_plugin_command_inner(
     args: &[String],
     tool: Option<&Path>,
     timeout_seconds: u64,
+    requires_python: bool,
+    selected: Option<&crate::python_runtime::PluginPythonInterpreter>,
     invocation: &diagnostics::Invocation,
 ) -> Result<Value, AppIpcError> {
     if args.is_empty() {
@@ -811,7 +838,23 @@ async fn run_plugin_command_inner(
     }
     let program = resolve_program(plugin_root, &args[0])?;
     let rest = &args[1..];
-    let mut command = plugin_command(&program, rest)?;
+    let direct = crate::python_runtime::is_python_program(&args[0]);
+    let mut command = if let Some(selected) = selected.filter(|_| direct) {
+        let mut command = Command::new(&selected.path);
+        selected
+            .configure(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+        if program
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
+        {
+            command.arg(&program);
+        }
+        command.args(rest);
+        command
+    } else {
+        plugin_command(&program, rest)?
+    };
     command
         .current_dir(plugin_root)
         .envs(crate::plugin_account_auth::broker::environment())
@@ -819,6 +862,16 @@ async fn run_plugin_command_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if requires_python {
+        let result = if let Some(selected) = selected.filter(|_| !direct) {
+            selected.configure(&mut command)
+        } else if selected.is_some() {
+            Ok(())
+        } else {
+            crate::python_runtime::isolate_python_environment(&mut command)
+        };
+        result.map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+    }
     if let Some(tool) = tool {
         command.env("WEGENT_LOCAL_AUTH_TOOL", tool);
     }

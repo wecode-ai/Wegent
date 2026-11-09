@@ -286,6 +286,11 @@ pub(super) enum CodexNativeRequest {
 }
 
 impl CodexAppServerSharedState {
+    pub(super) fn protected_turn_count(&self) -> usize {
+        // Preparation owns the shared process before a native thread can be tracked.
+        self.active_threads_snapshot().values().sum::<usize>() + self.preparing_turns.count()
+    }
+
     pub(super) fn active_threads_snapshot(&self) -> HashMap<String, usize> {
         let mut active = self.active_threads.clone();
         if let Some(process) = &self.process {

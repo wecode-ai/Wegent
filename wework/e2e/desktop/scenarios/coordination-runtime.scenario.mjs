@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInActivity, openStandInDetails } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
@@ -159,7 +160,7 @@ export function createDesktopScenario({
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
-        await control.command('waitFor', '[data-testid="stand-in-settings-open"]:not(:disabled)')
+        await control.command('waitFor', '[data-testid="stand-in-details-open"]:not(:disabled)')
         await captureScreenshot(control, 'router-01-existing-stand-in-entry.png')
         const issue = await rpc(control, 'todos.create', {
           project_id: project.id,
@@ -178,8 +179,10 @@ export function createDesktopScenario({
         )
         assert.equal(workTurns, 1)
         assert.equal(assessments, 0, 'One eligible role requires no coordination model call')
+        await openStandInActivity(control)
         await control.command('waitFor', `[data-testid="stand-in-activity-task-${taskId}"]`)
         await captureScreenshot(control, 'router-02-one-concrete-work.png')
+        await control.command('click', '[data-testid="stand-in-work-dialog-close"]')
         const pending = await until(
           () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
           state => state.pendingCount > 0 && Date.parse(state.nextCheckAt) > Date.now() + 240000,
@@ -209,6 +212,7 @@ export function createDesktopScenario({
           userId: USER,
         })
         assert.equal(failedReceipt.state, 'failed')
+        await openStandInDetails(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-status-open"]')
         await control.command('waitFor', '[data-testid="stand-in-status-dialog"]')
         await control.command('waitFor', '[data-testid="stand-in-processing-check"]', {
@@ -276,6 +280,7 @@ export function createDesktopScenario({
         assert.equal((await rpc(control, 'todos.bindings', { task_id: issue.id })).length, 1)
         const listed = await rpc(control, 'runtime.tasks.list', { preferCached: true })
         assert.ok(!JSON.stringify(listed).includes(`stand-in-coordinator-${USER}`))
+        await openStandInActivity(control)
         await control.command('click', `[data-testid="stand-in-activity-task-${taskId}"]`)
         await control.command('click', '[data-testid="stand-in-preview-open"]')
         await control.command('waitFor', '[data-testid="message-assistant"]', {

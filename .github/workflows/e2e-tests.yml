@@ -883,6 +883,7 @@ jobs:
 
       - name: Start backend server
         env:
+          PYTHONPATH: ..:.:tests/e2e
           EXTERNAL_KNOWLEDGE_MCP_ENABLED: "true"
           EMBEDDED_CELERY_ENABLED: "false"
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -895,6 +896,7 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
+          WEGENT_PYTHON_APP: mcp_marketplace_app:app
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           KNOWLEDGE_CONVERSION_ENABLED: "true"
           KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"

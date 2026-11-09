@@ -505,7 +505,7 @@ impl GlobalCapabilityStore {
             || self.matches_verified_legacy_contents(spec, target, package)?)
     }
 
-    fn validate_marketplace_occupancy(
+    pub(super) fn validate_marketplace_occupancy(
         &self,
         spec: &PluginSyncSpec,
         entry: &Value,

@@ -132,11 +132,11 @@ Incompatible restoration retains the rejected slot so subsequent cleanup cannot 
 
 ## Maintain three verification layers
 
-| Layer                        | Inputs                                                 | Purpose                                                                                  | Authorizes a production edge                           |
-| ---------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Policy and transaction tests | Small manifests and temporary directories              | Floors, routing, revocation, journals, snapshot boundaries                               | No                                                     |
-| Mechanism E2E                | Prebuilt real package pairs | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No; fault-injection results cannot authorize production edges |
-| Release-pair E2E             | Immutable delivered source and target archives         | A specific real upgrade and rollback                                                     | Only for the tested platform, architecture, and hashes |
+| Layer                        | Inputs                                         | Purpose                                                                                  | Authorizes a production edge                                  |
+| ---------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Policy and transaction tests | Small manifests and temporary directories      | Floors, routing, revocation, journals, snapshot boundaries                               | No                                                            |
+| Mechanism E2E                | Prebuilt real package pairs                    | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No; fault-injection results cannot authorize production edges |
+| Release-pair E2E             | Immutable delivered source and target archives | A specific real upgrade and rollback                                                     | Only for the tested platform, architecture, and hashes        |
 
 Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, interrupted-rollback recovery, and failed-activation recovery each establish their own fixtures. Suite v10 requires prebuilt pairs: the runner fails immediately when artifacts are missing and never compiles, packages, or signs. Reuse the release candidate archive and download immutable historical releases, checking versions, source revisions, and SHA-256. Versions are test data, not branches selecting assertions.
 
@@ -174,7 +174,11 @@ Formal pair verification reuses runtime files by their complete descriptors, inc
 
 The target's own preparation entry publishes immutable programs to `.prepared`, addressed by fingerprint, version, delivered archive SHA-256, and size. Later slots verify their delivered archive before linking the same programs. This store never publishes future versions into the source runtime catalog; slots keep private role catalogs and profiles. CI shares this immutable program store between serial checkpoints within one source shard. First preparation and final cleanup both count toward total execution; no extra target prewarming occurs.
 
-CI freezes every selected source before sharding by platform, channel, and source, with at most eight runners. Immutable source runtime caches finish before checkpoint workers start. Warm reads still verify delivered archives without rewriting shared catalogs. Checkpoints stay serial within each pair. Windows shares native legacy application-data paths and Electron singleton identity despite isolated HOME; macOS replaces the shared application bundle. Stable targets verify Stable and Beta; Beta targets verify only Beta. Aggregation requires all selected sources and rejects missing, duplicate, or mismatched evidence. Complete execution must stay below ten minutes, including resolution, downloads, preparation, every scenario, cleanup, uploads, and aggregation. External runner queues are excluded; additional waves under the eight-runner limit still count. Builds and signing are timed separately. Publication rechecks actual completed results. Diagnostics cannot generate edges or certify the complete budget.
+CI freezes every selected source before sharding by platform, channel, and source, with at most eight runners. Immutable source runtime caches finish before checkpoint workers start. Warm reads still verify delivered archives without rewriting shared catalogs. Checkpoints stay serial within each pair. Windows shares native legacy application-data paths and Electron singleton identity despite isolated HOME; macOS replaces the shared application bundle. Stable targets verify Stable and Beta; Beta targets verify only Beta. Aggregation requires all selected sources and rejects missing, duplicate, or mismatched evidence. Complete execution targets less than ten minutes, including resolution, downloads, preparation, every scenario, cleanup, uploads, and aggregation. External runner queues are excluded; additional waves under the eight-runner limit still count. Builds and signing are timed separately. Publication rechecks actual completed results. Diagnostics cannot generate edges or certify the complete budget.
+
+Timing reports do not replace exact-package functional verification. When GitHub omits execution-step timestamps, the report marks duration as unknown and lists affected jobs rather than substituting queue time or zero, without blocking actual upgrade tests. Publication still requires successful builds, source shards, and evidence aggregation; missing, failed, or unfinished verification cannot publish.
+
+When upgrade tests quit an installed host, they first confirm command execution started and then require the actual host PID to exit. Quitting closes the renderer that sends control results, so a post-exit renderer acknowledgement is not required; an acknowledgement with a still-running host cannot pass either. Explicit command errors and exit timeouts still fail verification, and scenarios must not force-kill the host to satisfy the exit assertion.
 
 When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
 
@@ -223,11 +227,25 @@ assertion budget.
 
 CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
 
-| Fixed baseline X                                 | Previous release | Publication decision                                                        |
-| ------------------------------------------------ | ---------------- | --------------------------------------------------------------------------- |
-| Passes                                           | Passes           | Retain X and publish both verified edges                                    |
-| Fails or is not a registered verification source | Passes           | Raise the minimum to the previous release and publish only successful edges |
-| Any result                                       | Fails            | Block publication without advancing rolling manifests                       |
+| Fixed baseline X                        | Previous release | Publication decision                                                                       |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------ |
+| Passes                                  | Passes           | Retain X and publish both verified edges                                                   |
+| Fails                                   | Passes           | Require human approval to exclude it, raise the minimum, and publish only successful edges |
+| Is not a registered verification source | Passes           | Raise the minimum to the previous release and publish only successful edges                |
+| Any result                              | Fails            | Block publication without advancing rolling manifests                                      |
+
+Shards distinguish incompatibility from missing proof. A real-package checkpoint that exits
+with a nonzero status produces `status=failed`, `evidence=null` and retained diagnostics, never
+successful evidence or an upgrade edge. Aggregation still validates every frozen source result,
+package hash, source revision, suite version and CI run. Missing results and signal interruptions
+are not compatibility decisions. Only an optional historical baseline may be excluded; previous
+release and `requiredDirectUpgrades` failures cannot be overridden.
+After reviewing diagnostics and accepting that the old version cannot upgrade directly, set the
+`Wework App` input `approved_baseline_exclusions` to comma-separated exact
+`platform/arch/channel/version` identifiers, for example `macos/arm64/stable/0.6.2`.
+It defaults to empty; aggregation reports unapproved exclusions and blocks promotion. Approval
+excludes only the matching failed source, never skips tests, converts failure to success, or
+removes existing historical edges and intermediate packages. The CI summary records approved exclusions.
 
 Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
 

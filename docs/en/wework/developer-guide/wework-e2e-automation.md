@@ -219,6 +219,41 @@ Linux sets `CORE_RUNNER_SCALE=1.5` and redistributes a full selection across
 matrix, bounded by assignable checkpoints; selections without the history checkpoint
 retain their original matrix. The two Core benchmarks keep dedicated runners.
 Cloud uses 8 shards.
+
+Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
+Refresh existing weights as scenarios evolve, not only unknown entries. In run
+42411289396, Core 2 and 6 reached the step deadline after all completed checkpoints
+passed; profile-settings and plugin-bridge had been underestimated for three runs.
+Ordinary-shard weights use medians of successful scheduler start/end durations,
+rounded up, from the three latest evidenced runs. Unobserved weights and exclusive
+benchmarks remain unchanged. Budget checks also include the largest measured
+successful runner overhead of 125 seconds for standard-user startup, orchestration
+gaps and cleanup. An immutable fixture preserves the original ten-shard matrix and 168 checkpoints'
+successful timings, then-current weights for unfinished cases and source links,
+not raw logs. Every historical case requires a duration and exactly-once replay
+coverage. Later catalog additions explicitly have no historical prediction,
+rather than a zero cost in a complete budget. Old weights fail the historical
+replay; the complete current scenario set still requires real Windows CI.
+In run `42400229326`, Core 4 and 8 exhausted their step budgets while still
+executing checkpoints normally, whereas Core 3 finished after only its previously
+unmeasured Dots checkpoint. Recording successful `dots-closed-loops` (178 seconds)
+and `idle-executor-requests` (39 seconds) samples lets both shards participate in
+full balancing again, without changing tests or budgets. Never record unfinished
+or step-timeout-interrupted checkpoints as successful duration samples.
+
+Current-package startup and component-update scenarios declare
+`usesColdPackageStartup` and reuse phase-bounded cold-start waiting. Each phase
+keeps the existing startup budget; stalls, phase regression, native failure and
+phase timeouts remain failures, and real controller readiness is still required.
+Do not combine serial materialization and runtime startup into one phase budget.
+`usesReleasePackageRuntimeAssets` only selects asset ownership, not this mode:
+historical upgrade sources may lack complete phase logs. Ordinary startup keeps
+its original total budget.
+Codex idle-only restarts and configuration mutations must also protect turn
+preparation: thread resume and MCP authority reload own the shared process before
+native thread admission. Background model-catalog refresh must defer restarting
+during this window, not terminate the process or bypass Native teardown barriers.
+
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
 within a runner. The two Core benchmark shards and three Cloud account-auth and
@@ -325,6 +360,8 @@ worker stacks with exit code `0xC00000FD`. Regressions enforce Clippy's
 [16 KiB large-future boundary](https://doc.rust-lang.org/stable/clippy/lint_configuration.html#future-size-threshold)
 for manual, assignment, and scheduler entry points; existing
 real desktop scenarios cover the complete execution flow.
+
+The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Linux and Windows each retain ten Core shards, with every checkpoint and assertion preserved; `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated
@@ -372,6 +409,17 @@ after tests finish. Records include CPU utilization, load average, memory, avail
 space, Linux CPU/memory/I/O pressure, and cgroup CPU limits, memory peaks, and OOM
 counters. Unreadable kernel metrics report `unavailable`. CPU utilization is the
 average between samples; its initial value is `null`.
+`RUNNER_RESOURCE_SAMPLE_INTERVAL_MS` selects a sampling interval from 100 to
+2147483647ms; the default remains 15 seconds. Periodic `schedulingDelayMs` records the
+sampler's own scheduling delay, not the tested process's delay. Intervals below
+one second collect process lists only at startup and completion to avoid
+frequently spawning `ps`. The streaming-activity Redis CI step uses 100ms
+resource samples and server command arrival times without arguments or values.
+Its 200ms test timeout and assertions remain unchanged; successful samples do
+not prove that a historical timeout has been fixed.
+MONITOR readiness has a separate five-second bound. Capture continues until the
+test exits and the filtering pipe drains. The initial `OK` indicates readiness
+only; a successful test must also have captured actual commands.
 `[desktop-e2e-schedule]` logs list active checkpoints and actual concurrency on
 each start and completion, making overlap visible independently of the configured
 worker limit. Compare shard durations and these metrics after increasing

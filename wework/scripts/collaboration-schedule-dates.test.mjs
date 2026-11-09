@@ -10,6 +10,7 @@ import {
   collaborationScheduleDates,
   verifyCollaborationScheduleViews,
 } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
 
 afterEach(() => vi.useRealTimers())
 
@@ -73,6 +74,21 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     const control = {
       async command(action, selector, options = {}) {
         calls.push({ action, selector, options })
+        if (action === 'chooseWhenEnabled') {
+          const tabs = {
+            calendar: 'collaboration-calendar-tab',
+            gantt: 'collaboration-gantt-tab',
+            table: 'collaboration-tab-table',
+          }
+          assert.ok(tabs[options.value], 'The scenario must select a real schedule view')
+          assert.equal(
+            selector.trim().replace(/\s+/g, ' '),
+            `[data-testid="collaboration-project-view-select"], [data-testid="${tabs[options.value]}"]`
+          )
+          assert.equal(options.visible, true)
+          assert.equal(options.timeoutMs, DEFAULT_STEP_TIMEOUT_MS)
+          return
+        }
         if (action === 'getElementCount') {
           const day = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)?.[1]
           assert.ok(day, `Unexpected calendar day selector: ${selector}`)
@@ -85,17 +101,6 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
           return 'ascending'
         }
         if (action === 'getValue') return 'status'
-        if (action === 'chooseWhenEnabled') {
-          assert.ok(['calendar', 'gantt', 'table'].includes(options.value))
-          assert.deepEqual(
-            selector.split(',').map(part => part.trim()),
-            [
-              '[data-testid="collaboration-project-view-select"]',
-              `[data-testid="collaboration-tab-${options.value}"]`,
-            ]
-          )
-          return
-        }
         if (action === 'getComputedStyleValue') return 'ew-resize'
         if (action === 'getText') return '开始时间 结束时间'
         if (action === 'drag') {
@@ -146,6 +151,10 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     assert.equal(calls.filter(call => call.action === 'drag').length, 2)
     assert.equal(calls.filter(call => call.action === 'dragBy').length, 1)
     assert.equal(captures.length, 3)
+    assert.deepEqual(
+      calls.filter(call => call.action === 'chooseWhenEnabled').map(call => call.options.value),
+      ['calendar', 'gantt', 'table']
+    )
     const dayWaits = calls.filter(
       call => call.action === 'waitFor' && /collaboration-calendar-day-\d{4}/.test(call.selector)
     )

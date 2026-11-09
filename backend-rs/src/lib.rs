@@ -325,6 +325,7 @@ mod web_scraper_create_document;
 use wegent_identity::wework_auth_tokens;
 mod wework_notification_preferences;
 mod wework_notifications;
+mod wework_runtime_downloads;
 mod wework_transcript_archive_storage;
 mod wework_transcript_encryption;
 mod wework_transcript_lease_release;

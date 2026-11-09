@@ -1,3 +1,4 @@
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -235,7 +236,7 @@ export function createDesktopScenario(options) {
       assert.ok(!JSON.stringify(catalog).includes(MODEL_API_KEY))
       assert.ok(!JSON.stringify(model).includes('modelConfig'))
       try {
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await openStandInSettings(control)
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-profile"] [data-testid="model-selector-button"]'
