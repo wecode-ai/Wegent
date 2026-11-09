@@ -25,7 +25,8 @@ classify_path() {
       executor/src/plugin_account_auth/* | \
       executor/src/local/plugin_creator.rs | \
       executor/src/process/mod.rs | \
-      executor/tests/plugin_account_auth_contract.rs)
+      executor/tests/plugin_account_auth_contract.rs | \
+      executor/tests/plugin_account_runtime_isolation.rs)
       plugin_auth_sdk=true
       ;;
   esac

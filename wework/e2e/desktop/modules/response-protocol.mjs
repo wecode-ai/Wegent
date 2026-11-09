@@ -772,7 +772,7 @@ function selectToolSearch(request, query) {
   assert.equal(
     searchTools.length,
     1,
-    `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')}`
+    `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')} (request_kind=${codexRequestKind(request) ?? 'unknown'})`
   )
   assert.equal(
     tools.some(

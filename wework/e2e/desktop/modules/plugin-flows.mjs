@@ -13,6 +13,10 @@ import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
+  PLUGIN_REMOTE_CATALOG_TIMEOUT_MS,
+  withHeldComposerAppCatalog,
+} from './composer-network-isolation.mjs'
+import {
   assertOfflinePluginCodexStayedStopped,
   readCodexStartCount,
   stopCodexForOfflinePluginProbe,
@@ -401,20 +405,6 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   })
 }
 
-async function waitForBlockedChatGptRequest(blockingNetworkProxy, requestCount) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const request = blockingNetworkProxy.requests
-      .slice(requestCount)
-      .find(candidate => candidate.toLowerCase().includes('chatgpt.com'))
-    if (request) return request
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  throw new Error(
-    `Codex app/list did not reach the blocking proxy; requests: ${JSON.stringify(blockingNetworkProxy.requests.slice(requestCount))}`
-  )
-}
-
 function syntheticChatGptAuth() {
   const claims = Buffer.from(
     JSON.stringify({
@@ -493,7 +483,6 @@ async function verifyComposerPluginNetworkIsolation({
   })
 
   blockingNetworkProxy.block()
-  const blockedRequestCount = blockingNetworkProxy.requests.length
   await writeFile(
     join(codexHome, 'auth.json'),
     `${JSON.stringify(syntheticChatGptAuth(), null, 2)}\n`,
@@ -501,8 +490,6 @@ async function verifyComposerPluginNetworkIsolation({
   )
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
 
-  let directoryRequest
-  let directorySettled = false
   try {
     // Restart to clear the renderer's in-memory plugin inventory. The installed
     // package remains in the isolated real Codex home, while every external
@@ -512,62 +499,46 @@ async function verifyComposerPluginNetworkIsolation({
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    // Opening the local picker does not discover global apps. Hold a real
-    // discovery request explicitly before checking the primary composer's
-    // local inventory; addressed sidebar catalogs have a separate owner.
-    directoryRequest = requestExecutor(
-      control,
-      'codex.app_server_request',
-      { method: 'app/list', params: { cursor: null, limit: 100, forceRefetch: true } },
-      45_000
-    ).then(
-      () => {
-        directorySettled = true
-      },
-      () => {
-        directorySettled = true
-      }
-    )
-    const blockedRequest = await waitForBlockedChatGptRequest(
-      blockingNetworkProxy,
-      blockedRequestCount
-    )
-    assert.match(
-      blockedRequest,
-      /chatgpt\.com/i,
-      'The held external request was not the ChatGPT app directory request'
-    )
-
-    await openComposerPluginPicker(control)
     const pluginName = 'composer-network-isolation-plugin'
-    const itemTestId = `composer-plugin-picker-item-plugin:${pluginName}`
-    try {
-      await waitForSnapshot(
+    // Runtime-owned composer catalogs no longer initiate remote app/list reads.
+    // Hold that real RPC explicitly before opening the local inventory.
+    await withHeldComposerAppCatalog(control, blockingNetworkProxy, async blockedRequest => {
+      await openComposerPluginPicker(control)
+      assert.match(
+        blockedRequest,
+        /chatgpt\.com/i,
+        'The held external request was not the ChatGPT app directory request'
+      )
+
+      const itemTestId = `composer-plugin-picker-item-plugin:${pluginName}`
+      try {
+        await waitForSnapshot(
+          control,
+          snapshot => snapshot.testIds.includes(itemTestId),
+          'A pending ChatGPT app/list request blocked the installed composer plugin inventory',
+          30_000,
+          '[data-testid="composer-plugin-picker"]'
+        )
+      } catch (error) {
+        const diagnostics = JSON.parse(
+          await control.command('getComposerPluginInventoryDiagnostics', 'body', {
+            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          })
+        )
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}`
+        )
+      }
+      await assertPrimaryComposerPlugin(control, pluginName)
+      await captureVerificationScreenshot(
         control,
-        snapshot => snapshot.testIds.includes(itemTestId),
-        'A pending ChatGPT app/list request blocked the installed composer plugin inventory',
-        30_000,
+        'plugins-00-composer-network-isolation.png',
         '[data-testid="composer-plugin-picker"]'
       )
-    } catch (error) {
-      const diagnostics = JSON.parse(
-        await control.command('getComposerPluginInventoryDiagnostics', 'body', {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-      )
-      throw new Error(
-        `${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}`
-      )
-    }
-    assert.equal(directorySettled, false, 'Local plugins must render while discovery is pending')
-    await assertPrimaryComposerPlugin(control, pluginName)
-    await captureVerificationScreenshot(
-      control,
-      'plugins-00-composer-network-isolation.png',
-      '[data-testid="composer-plugin-picker"]'
-    )
+    })
+    blockingNetworkProxy.block()
 
-    // Exercise the real remote catalog under the same held network, without
+    // Exercise the real remote catalog under the held network, without
     // replacing the catalog API or local inventory with frontend mocks.
     await closeComposerPluginPicker(control)
     await control.command('click', '[data-testid="plugins-button"]')
@@ -575,7 +546,7 @@ async function verifyComposerPluginNetworkIsolation({
     await control.command('click', '[data-testid="plugins-distribution-tab-official"]')
     await control.command('waitFor', '[data-testid="plugins-openai-catalog-error"]', {
       // The remote request is deliberately held until its 30-second UI deadline.
-      timeoutMs: 40_000,
+      timeoutMs: PLUGIN_REMOTE_CATALOG_TIMEOUT_MS,
     })
     assert.match(
       await control.command('getText', '[data-testid="plugins-openai-catalog-error"]'),
@@ -601,12 +572,12 @@ async function verifyComposerPluginNetworkIsolation({
       'waitFor',
       '[data-testid="plugins-openai-catalog-retry"]:not(:disabled)',
       {
-        timeoutMs: 40_000,
+        timeoutMs: PLUGIN_REMOTE_CATALOG_TIMEOUT_MS,
       }
     )
     await control.command('waitFor', '[data-testid="plugins-refresh-button"]:not(:disabled)')
     await control.command('waitFor', '[data-testid="plugins-openai-catalog-error"]', {
-      timeoutMs: 40_000,
+      timeoutMs: PLUGIN_REMOTE_CATALOG_TIMEOUT_MS,
     })
     const catalogError = await control.command(
       'getText',
@@ -618,11 +589,13 @@ async function verifyComposerPluginNetworkIsolation({
     await control.command('navigate', 'body', { value: '/' })
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
     await openComposerPluginPicker(control)
-    await control.command('waitFor', `[data-testid="${itemTestId}"]`)
+    await control.command(
+      'waitFor',
+      `[data-testid="composer-plugin-picker-item-plugin:${pluginName}"]`
+    )
     await closeComposerPluginPicker(control)
   } finally {
     blockingNetworkProxy.release()
-    await directoryRequest
     await control.command('setLocalProxyUrl', 'body', { value: '' })
     await rm(join(codexHome, 'auth.json'), { force: true })
     await control.command('deleteLocalPluginPackage', 'body', {

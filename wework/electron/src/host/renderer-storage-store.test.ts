@@ -17,6 +17,27 @@ async function createStore(): Promise<{ root: string; store: RendererStorageStor
 }
 
 describe('RendererStorageStore', () => {
+  it('notifies login observers after persistence without allowing them to fail storage updates', async () => {
+    const { root } = await createStore()
+    const onUpdate = vi.fn(() => {
+      throw new Error('observer unavailable')
+    })
+    const store = new RendererStorageStore(root, onUpdate)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await expect(
+        store.initialize({ 'wework.cloudConnection': 'synthetic-session' })
+      ).resolves.toEqual({ 'wework.cloudConnection': 'synthetic-session' })
+      await expect(
+        store.update({ clear: false, changes: { 'wework.cloudConnection': 'updated-session' } })
+      ).resolves.toBeUndefined()
+      expect(onUpdate).toHaveBeenCalledTimes(2)
+      expect(await store.read()).toEqual({ 'wework.cloudConnection': 'updated-session' })
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('drains accepted writes and closes the renderer persistence boundary before snapshots', async () => {
     const { root, store } = await createStore()
     const first = store.update({ clear: false, changes: { marker: 'before' } })

@@ -5,8 +5,11 @@ import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   selectCloudAgentModel,
-  selectCollaborationProjectView,
 } from './workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from './collaboration-project-navigation.mjs'
 
 export async function waitForValue(load, predicate, message, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -70,7 +73,9 @@ export async function createWorkspaceAndProject(
     visible: false,
     timeoutMs,
   })
-  await selectCollaborationProjectView(control, contentSelector, 'board', timeoutMs)
+  await control.command('waitFor', collaborationProjectViewSelector(contentSelector, 'board'), {
+    timeoutMs,
+  })
   return project
 }
 

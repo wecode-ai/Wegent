@@ -1,3 +1,8 @@
+import {
+  openStandInSettings,
+  openStandInActivity,
+  openStandInDetails,
+} from '../modules/stand-in-profile-navigation.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
@@ -8,6 +13,7 @@ import { selectE2EModel } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
+  codexRequestKind,
   createSse,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
@@ -43,7 +49,11 @@ export function createDesktopScenario({
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
-      if (isReplyPredictionRequest(body)) return false
+      if (
+        isReplyPredictionRequest(body) ||
+        ['prewarm', 'compaction'].includes(codexRequestKind(body))
+      )
+        return false
       const input = JSON.stringify(body.input ?? [])
       if (!input.includes(PROPOSE) && !input.includes(FOLLOWUP)) return false
       requests.push(input.includes(FOLLOWUP) ? 'followup' : 'proposal')
@@ -65,6 +75,13 @@ export function createDesktopScenario({
           toolCallId: 'identity-proposal',
         })
         events = tool.events
+        if (requests.length === 1) {
+          const receipt = assistantMessage('收到，我来拟定评审角色。')
+          receipt.item.phase = 'commentary'
+          const progress = assistantMessage('IDENTITY_INTERNAL_PROGRESS_MUST_STAY_HIDDEN')
+          progress.item.phase = 'commentary'
+          events = [receipt, progress, ...events]
+        }
         if (tool.mode === 'direct') sentProposal = true
       }
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
@@ -96,7 +113,7 @@ export function createDesktopScenario({
         0
       )
       await captureScreenshot(control, '01-primary-conversation.png', ROOT)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('fill', '[data-testid="stand-in-preferences"]', {
         value: '回复简洁；需要决策时先问我。',
       })
@@ -137,9 +154,18 @@ export function createDesktopScenario({
       await selectE2EModel(control, undefined, undefined, CHAT)
       await control.command('fill', INPUT, { value: PROPOSE })
       await control.command('press', INPUT, { key: 'Enter' })
+      await openStandInDetails(control)
       await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
+        text: '收到，我来拟定评审角色。',
+      })
+      assert.ok(
+        !(await control.command('getText', CHAT)).includes(
+          'IDENTITY_INTERNAL_PROGRESS_MUST_STAY_HIDDEN'
+        )
+      )
       assert.equal(
         (
           await requestExecutor(
@@ -166,12 +192,13 @@ export function createDesktopScenario({
       })
       await captureScreenshot(control, '05-persistent-follow-up.png', ROOT)
       await control.command('click', `[data-testid="stand-in-overview-role-${ROLE}"]`)
+      await openStandInActivity(control)
       await control.command('waitFor', '[data-testid="stand-in-activity"]')
       await captureScreenshot(control, '06-role-work-list.png', ROOT)
-      await control.command('click', '[data-testid="stand-in-role-chat"]')
+      await control.command('click', '[data-testid="stand-in-work-dialog-close"]')
       await control.command('waitFor', CHAT)
       await captureScreenshot(control, '07-role-conversation.png', ROOT)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')

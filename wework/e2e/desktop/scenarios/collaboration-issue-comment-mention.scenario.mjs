@@ -4,8 +4,8 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const PROJECT_NAME = '评论提及成员回归'
 const ISSUE_NAME = '评论 @ 成员必须弹出成员列表'
@@ -85,7 +85,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await configureFirstProjectExecutionEnvironment(control, ACTIVE_CONTENT, uiTimeoutMs)
-      await selectCollaborationProjectView(control, ACTIVE_CONTENT, 'board')
+      await selectCollaborationProjectView(control, ACTIVE_BOARD, 'board')
 
       await control.command(
         'clickWhenEnabled',
@@ -107,6 +107,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', board('[data-testid="cloud-todo-detail"]'), {
         text: ISSUE_NAME,
         visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', board('[data-testid="cloud-todo-detail-title"]'), {
+        value: ISSUE_NAME,
         timeoutMs: uiTimeoutMs,
       })
 

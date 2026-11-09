@@ -227,11 +227,25 @@ assertion budget.
 
 CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
 
-| Fixed baseline X                                 | Previous release | Publication decision                                                        |
-| ------------------------------------------------ | ---------------- | --------------------------------------------------------------------------- |
-| Passes                                           | Passes           | Retain X and publish both verified edges                                    |
-| Fails or is not a registered verification source | Passes           | Raise the minimum to the previous release and publish only successful edges |
-| Any result                                       | Fails            | Block publication without advancing rolling manifests                       |
+| Fixed baseline X                        | Previous release | Publication decision                                                                       |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------ |
+| Passes                                  | Passes           | Retain X and publish both verified edges                                                   |
+| Fails                                   | Passes           | Require human approval to exclude it, raise the minimum, and publish only successful edges |
+| Is not a registered verification source | Passes           | Raise the minimum to the previous release and publish only successful edges                |
+| Any result                              | Fails            | Block publication without advancing rolling manifests                                      |
+
+Shards distinguish incompatibility from missing proof. A real-package checkpoint that exits
+with a nonzero status produces `status=failed`, `evidence=null` and retained diagnostics, never
+successful evidence or an upgrade edge. Aggregation still validates every frozen source result,
+package hash, source revision, suite version and CI run. Missing results and signal interruptions
+are not compatibility decisions. Only an optional historical baseline may be excluded; previous
+release and `requiredDirectUpgrades` failures cannot be overridden.
+After reviewing diagnostics and accepting that the old version cannot upgrade directly, set the
+`Wework App` input `approved_baseline_exclusions` to comma-separated exact
+`platform/arch/channel/version` identifiers, for example `macos/arm64/stable/0.6.2`.
+It defaults to empty; aggregation reports unapproved exclusions and blocks promotion. Approval
+excludes only the matching failed source, never skips tests, converts failure to success, or
+removes existing historical edges and intermediate packages. The CI summary records approved exclusions.
 
 Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
 

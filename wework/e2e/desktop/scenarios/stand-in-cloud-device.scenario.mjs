@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -77,7 +78,7 @@ export function createDesktopScenario({
   }
   async function chat(control, role, message) {
     await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${role}`))
-    await control.command('clickWhenEnabled', testId('stand-in-role-chat'))
+    await control.command('waitFor', testId('stand-in-conversation'))
     const selector = testId('stand-in-conversation')
     await selectE2EModel(control, undefined, undefined, selector)
     await control.command('fill', `${selector} [data-testid="chat-message-input"]`, {
@@ -303,7 +304,7 @@ export function createDesktopScenario({
       )
       await bind(control, 0, localDevice)
       await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${localRole.id}`))
-      await control.command('clickWhenEnabled', testId('stand-in-role-chat'))
+      await control.command('waitFor', testId('stand-in-conversation'))
       await control.command('waitFor', localChat, { text: LOCAL_COMPLETE })
       assert.ok(
         (await rpc(control, 'runtime.stand_in.memory.list', { userId: 0 })).items.some(
@@ -328,6 +329,7 @@ export function createDesktopScenario({
       await stopProcessGroup(cloud.remoteExecutor)
       await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
       await observeDevice(control, CLOUD_DEVICE_ID, '离线')
+      await openStandInSettings(control)
       await control.command('clickWhenEnabled', testId('stand-in-instance-stop'))
       await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
       await control.command('waitFor', testId('stand-in-instance-stop') + ':not(:disabled)')

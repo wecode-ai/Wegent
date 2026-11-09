@@ -278,6 +278,20 @@ describe('startup splash renderer', () => {
     expect(styles).toContain('.is-waiting-gradient')
     expect(styles).toContain('6s')
     expect(styles).toContain('@keyframes startup-brand-gradient')
+    const sweepStyles = styles.match(
+      /\.startup-brand\.is-waiting-gradient::after\s*\{([^}]+)\}/
+    )?.[1]
+    expect(sweepStyles).toContain('animation: startup-brand-gradient 6s linear infinite;')
+    expect(styles).toContain('background-color: var(--startup-logo-base);')
+    expect(styles).toContain('background-repeat: no-repeat;')
+    for (const edge of ['start', 'end']) {
+      expect(
+        styles.match(
+          new RegExp(`var\\(--startup-logo-base\\) var\\(--startup-logo-band-${edge}\\)`, 'g')
+        )
+      ).toHaveLength(2)
+    }
+    expect(styles).toMatch(/90%,\s*to\s*\{\s*background-position: var\(--startup-logo-sweep-end\)/)
     expect(styles).toContain('.startup-brand.is-paused::after')
     expect(styles).toContain('animation-play-state: paused')
     expect(styles).toContain('.startup-progress-fill')

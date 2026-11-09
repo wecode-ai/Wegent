@@ -1,28 +1,24 @@
 import { execFile } from 'node:child_process'
-import { readFile, symlink, writeFile } from 'node:fs/promises'
-import { dirname, posix, win32 } from 'node:path'
+import { access, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { join, posix, resolve, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
-export async function createLocalHarnessCliAlias(
-  executablePath,
-  aliasPath,
-  platform = process.platform
-) {
-  if (platform !== 'win32') {
-    await symlink(executablePath, aliasPath)
-    return
+export async function createClaudeCliAlias(binDirectory, resultDir, platform = process.platform) {
+  const alias = join(resultDir, platform === 'win32' ? 'local-claude.cmd' : 'local-claude')
+  await rm(alias, { force: true })
+  if (platform === 'win32') {
+    // The executor unwraps native shims; nesting another batch file prevents that.
+    const packageRoot = resolve(binDirectory, '../@anthropic-ai/claude-code')
+    const metadata = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
+    const native = resolve(packageRoot, metadata.bin.claude)
+    await access(native)
+    await writeFile(alias, `@echo off\r\n"${native}" %*\r\n`, 'utf8')
+  } else {
+    await symlink(localHarnessCliPath(binDirectory, 'claude', platform), alias)
   }
-  // Preserve the npm launcher shape so the executor can unwrap its native target.
-  // Chaining another .cmd through CALL rejects multiline agent arguments.
-  const directory = `${dirname(executablePath)}\\`
-  const launcher = await readFile(executablePath, 'utf8')
-  await writeFile(
-    aliasPath,
-    launcher.replaceAll('%~dp0', directory).replaceAll('%dp0%', directory),
-    'utf8'
-  )
+  return alias
 }
 
 export function localHarnessCliPath(binDirectory, name, platform = process.platform) {

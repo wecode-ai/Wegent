@@ -24,6 +24,7 @@ import {
 } from './shared.mjs'
 import { waitForTestIdByText } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
+import { signInDesktopCloud } from './desktop-cloud-login.mjs'
 
 const clientBundle = process.env.WEWORK_E2E_SOCKET_IO_CLIENT
 const { decompressFromUTF16 } = createRequire(import.meta.url)(
@@ -235,75 +236,8 @@ export async function verifyPluginScopeBoundaries({
     }
   }
 
-  async function authSessionKeys() {
-    const output = await commandOutputAsync('redis-cli', [
-      '-p',
-      String(cloud.redisPort),
-      '--raw',
-      '--scan',
-      '--pattern',
-      '*wework_auth_session:*',
-    ])
-    return output.split('\n').filter(Boolean)
-  }
-
   async function authorizeAccount(user, token) {
-    await control.command('navigate', 'body', { value: '/settings/connections' })
-    await control.command(
-      'waitFor',
-      `${testId('settings-cloud-disconnect-button')}, ${testId('settings-cloud-connect-button')}`,
-      { visible: true, enabled: true, stableMs: 250 }
-    )
-    if (
-      Number(
-        await control.command('getElementCount', testId('settings-cloud-disconnect-button'), {
-          visible: true,
-        })
-      )
-    ) {
-      await control.command('click', testId('settings-cloud-disconnect-button'), { visible: true })
-    }
-    await control.command('waitFor', testId('settings-cloud-connect-button'), {
-      visible: true,
-      enabled: true,
-      stableMs: 250,
-    })
-    const before = new Set(await authSessionKeys())
-    await control.command('click', testId('settings-cloud-connect-button'))
-    await control.command('waitFor', testId('cloud-backend-url-input'))
-    await control.command('fill', testId('cloud-backend-url-input'), { value: apiProxy.url })
-    await control.command('clickWhenEnabled', testId('cloud-authorization-submit-button'))
-    const key = await until(
-      authSessionKeys,
-      keys => keys.some(value => !before.has(value)),
-      'Real cloud authorization did not create a new Redis session'
-    )
-    const created = key.filter(value => !before.has(value))
-    assert.equal(created.length, 1, 'The account switch created ambiguous authorization sessions')
-    const sessionId = created[0].split('wework_auth_session:').at(-1)
-    assert.match(sessionId, /^[a-f0-9-]{36}$/)
-    const approved = await request(`/auth/wework/sessions/${sessionId}/approve`, {
-      token,
-      method: 'POST',
-    })
-    assert.equal(approved.status, 'approved')
-    await control.command('waitFor', testId('cloud-connection-status-card'), {
-      text: user.user_name,
-      visible: true,
-      timeoutMs,
-    })
-    const connectedCard = await control.command('getText', testId('cloud-connection-status-card'), {
-      visible: true,
-    })
-    assert.ok(
-      connectedCard.includes(user.user_name),
-      'The real connection card has the wrong account'
-    )
-    await control.command('click', testId('settings-back-button'), { visible: true })
-    await control.command('waitFor', testId('desktop-sidebar-account'), {
-      text: user.user_name,
-      visible: true,
-    })
+    await signInDesktopCloud(control, cloud, { backendUrl: apiProxy.url, token, user, timeoutMs })
     if (activeCase) {
       activeCase.lastAuthorizedAccount = {
         id: user.id,

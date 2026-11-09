@@ -9,6 +9,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
   initialAddress: undefined as RuntimeTaskAddress | null | undefined,
+  hideProcessing: false,
   createTask: undefined as
     | undefined
     | ((message: string, options: RuntimeTaskComposerCreateOptions) => Promise<unknown>),
@@ -17,9 +18,11 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: (props: {
     createTask: typeof mocks.createTask
     initialAddress?: RuntimeTaskAddress | null
+    hideProcessing?: boolean
   }) => {
     mocks.createTask = props.createTask
     mocks.initialAddress = props.initialAddress
+    mocks.hideProcessing = props.hideProcessing ?? false
     return <div data-testid="conversation-pane" />
   },
 }))
@@ -39,6 +42,7 @@ it('retains the persisted owner workspace when reopening the primary conversatio
   render(<StandInConversation api={api} userId={7} deviceId="device" />)
   await screen.findByTestId('conversation-pane')
   expect(mocks.initialAddress).toEqual({ deviceId: 'device', ...task })
+  expect(mocks.hideProcessing).toBe(true)
 })
 
 it('returns failure to the pane rollback path and permits retrying the same conversation', async () => {

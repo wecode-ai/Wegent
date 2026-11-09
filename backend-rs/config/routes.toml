@@ -1113,6 +1113,11 @@ path = "/api/v1/deliveries/:delivery_id"
 methods = ["POST"]
 path = "/api/internal/callback"
 
+# Authenticated, platform-specific Wework runtime artifact descriptors.
+[[routes]]
+methods = ["POST"]
+path = "/api/wework/runtime-downloads"
+
 # Responses creation is implemented and selected in Rust.
 [[routes]]
 methods = ["POST"]

@@ -4,39 +4,38 @@ import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createDingTalkReplyStory } from '../e2e/desktop/modules/stand-in-dingtalk-reply-story.mjs'
 
-const roots = []
-afterEach(async () => {
-  vi.unstubAllEnvs()
-  await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })))
-})
+afterEach(() => vi.unstubAllEnvs())
 
-test('uses the prepared reply binary with scenario-local protocol state and no compiler', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-dingtalk-reply-'))
-  roots.push(root)
-  const prepared = join(root, 'prepared.exe')
-  const bytes = Buffer.from('prepared native reply fixture')
-  await writeFile(prepared, bytes)
-  vi.stubEnv('WEWORK_E2E_DWS_REPLY_FIXTURE_BIN', prepared)
-  vi.stubEnv('PATH', '')
-  const story = createDingTalkReplyStory({ resultDir: root })
-  const context = { appEnvironment: {} }
-  const baseline = {
-    async prepareApp(value) {
-      value.appEnvironment.DWS_BINARY_PATH = 'original-dws-binary'
-    },
+test('reply story reuses the prepared binary without a compiler in the standard user PATH', async () => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'dingtalk-reply-'))
+  try {
+    const prepared = join(resultDir, 'prepared-story.exe')
+    await writeFile(prepared, 'precompiled protocol fixture')
+    vi.stubEnv('WEWORK_E2E_DWS_REPLY_FIXTURE_BIN', prepared)
+    vi.stubEnv('PATH', '')
+    const context = { appEnvironment: {} }
+    const baseline = {
+      prepareApp: vi.fn(async value => {
+        value.appEnvironment.DWS_BINARY_PATH = '/prepared/baseline'
+      }),
+    }
+    await createDingTalkReplyStory({ resultDir }).prepareApp(context, baseline)
+    expect(baseline.prepareApp).toHaveBeenCalledExactlyOnceWith(context)
+    expect(context.appEnvironment.DWS_BINARY_PATH).toBe(
+      join(resultDir, process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws')
+    )
+    expect(await readFile(context.appEnvironment.DWS_BINARY_PATH, 'utf8')).toBe(
+      'precompiled protocol fixture'
+    )
+    expect(await readFile(join(resultDir, 'dingtalk-story/baseline-path.txt'), 'utf8')).toBe(
+      '/prepared/baseline'
+    )
+    expect(await readFile(join(resultDir, 'dingtalk-story/replies.jsonl'), 'utf8')).toBe('')
+    expect(await readFile(prepared, 'utf8')).toBe('precompiled protocol fixture')
+    expect(
+      JSON.parse(await readFile(join(resultDir, 'dingtalk-story/mentions.json'), 'utf8'))
+    ).toMatchObject({ success: true, result: { conversationMessagesList: [] } })
+  } finally {
+    await rm(resultDir, { recursive: true, force: true })
   }
-
-  await story.prepareApp(context, baseline)
-
-  const binary = join(
-    root,
-    process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
-  )
-  expect(context.appEnvironment.DWS_BINARY_PATH).toBe(binary)
-  expect(await readFile(binary)).toEqual(bytes)
-  expect(await readFile(join(root, 'dingtalk-story/baseline-path.txt'), 'utf8')).toBe(
-    'original-dws-binary'
-  )
-  expect(await readFile(join(root, 'dingtalk-story/replies.jsonl'), 'utf8')).toBe('')
-  expect(await readFile(prepared)).toEqual(bytes)
 })

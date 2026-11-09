@@ -184,6 +184,8 @@ mod stand_in_history;
 mod stand_in_ingress;
 mod stand_in_lifecycle;
 mod stand_in_memory;
+mod stand_in_memory_progress;
+mod stand_in_memory_review;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
@@ -1214,6 +1216,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.python.has_demand"
             | "runtime.stand_in.assignment_tasks"
             | "runtime.tasks.get"
             | "runtime.composer.catalog.read"

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
-  createLocalHarnessCliAlias,
+  createClaudeCliAlias,
   localHarnessCliPath,
   localHarnessCliVersion,
 } from '../modules/local-harness-cli.mjs'
@@ -347,13 +347,8 @@ export async function createDesktopScenario({
 }) {
   await access(CLAUDE_BINARY, constants.X_OK)
   const claudeVersion = await localHarnessCliVersion(CLAUDE_BINARY)
-  const localClaudeAlias = join(
-    resultDir,
-    process.platform === 'win32' ? 'local-claude.cmd' : 'local-claude'
-  )
+  const localClaudeAlias = await createClaudeCliAlias(dirname(CLAUDE_BINARY), resultDir)
   const remoteWorkspacePath = join(resultDir, 'claude-remote-workspace')
-  await rm(localClaudeAlias, { force: true })
-  await createLocalHarnessCliAlias(CLAUDE_BINARY, localClaudeAlias)
   await mkdir(remoteWorkspacePath, { recursive: true })
   await writeFile(join(remoteWorkspacePath, 'README.md'), '# Claude remote E2E\n', 'utf8')
 

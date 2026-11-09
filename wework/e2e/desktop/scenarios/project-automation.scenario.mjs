@@ -6,7 +6,6 @@ import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
@@ -17,6 +16,10 @@ import {
   verifyCloudSaveDuringNativeFaults,
   verifyLocalBasicDefaultSave,
 } from '../modules/agent-catalog-regressions.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作组验收空间'
@@ -302,12 +305,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
           { timeoutMs: uiTimeoutMs }
         )
-        await selectCollaborationProjectView(
-          control,
-          ACTIVE_WORKBENCH_SELECTOR,
-          'manage',
-          uiTimeoutMs
+        await control.command(
+          'waitFor',
+          collaborationProjectViewSelector(ACTIVE_WORKBENCH_SELECTOR, 'manage'),
+          {
+            timeoutMs: uiTimeoutMs,
+          }
         )
+        await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
         await control.command(
           'waitFor',
           scoped('[data-testid="project-settings-shell-group-ai-team"]'),

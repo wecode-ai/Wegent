@@ -29,6 +29,8 @@ NODE_TEST
 
 assert_invalid_catalog_shard_rejected core local-file-preview \
   'Core segment missing from core_shards: local-file-preview'
+assert_invalid_catalog_shard_rejected core python-runtime \
+  'Core segment missing from core_shards: python-runtime'
 assert_invalid_catalog_shard_rejected cloud plugin-auto-update \
   'Cloud segment missing from cloud_shards: plugin-auto-update'
 

@@ -360,6 +360,8 @@ worker stacks with exit code `0xC00000FD`. Regressions enforce Clippy's
 [16 KiB large-future boundary](https://doc.rust-lang.org/stable/clippy/lint_configuration.html#future-size-threshold)
 for manual, assignment, and scheduler entry points; existing
 real desktop scenarios cover the complete execution flow.
+
+The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Linux and Windows each retain ten Core shards, with every checkpoint and assertion preserved; `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated

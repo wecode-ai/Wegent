@@ -50,6 +50,9 @@ impl CodexAppServerClient {
             ..CodexLaunchConfig::default()
         };
         configure_task_mcp(request, &mut launch)?;
+        if super::memory_review::applies(request) {
+            super::memory_review::configure(&mut launch)?;
+        }
         // Cold resume may immediately continue an active Goal. Its MCP pool must
         // be task-scoped before resume, without replacing persisted model settings.
         append_thread_launch_params(&mut params, &launch);

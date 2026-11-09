@@ -100,6 +100,9 @@ impl RuntimeWorkRpcHandler {
             .await;
         match result {
             Ok(changed) => {
+                if changed {
+                    crate::services::capability_activation::notify_changed();
+                }
                 log_executor_event(
                     "bundled plugin cache synchronized",
                     &[("plugin", name), ("changed", changed.to_string())],
@@ -129,6 +132,7 @@ impl RuntimeWorkRpcHandler {
                 )
             })?
             .map_err(|error| AppIpcError::new("local_plugin_install_failed", error))?;
+        crate::services::capability_activation::notify_changed();
         log_executor_event(
             "local plugin install committed",
             &[

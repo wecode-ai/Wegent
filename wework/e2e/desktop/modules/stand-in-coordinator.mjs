@@ -1,3 +1,5 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
+import { verifyStandInScheduleActivity } from './stand-in-schedule-activity.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -74,13 +76,11 @@ export function createStandInCoordinatorVerification({
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       await control.command('click', '[data-testid="stand-in-primary-open"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-      await control.command('click', '[data-testid="stand-in-primary-enabled"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
-        visible: false,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      assert.equal(
+        (await rpc('runtime.stand_in.personal.get', { userId: USER })).primary.enabled,
+        true
+      )
+      await openStandInSettings(control)
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
@@ -89,12 +89,16 @@ export function createStandInCoordinatorVerification({
         await control.command('getElementCount', '[data-testid="stand-in-work-view-scheduled"]'),
         '0'
       )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-processing-settings-toggle"]'
+      )
       await control.command('click', '[data-testid="stand-in-calendar-policy"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
         visible: false,
       })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
@@ -174,9 +178,10 @@ export function createStandInCoordinatorVerification({
         timeoutMs: modelResponseTimeoutMs,
       })
       await captureScreenshot(control, '24b-calendar-result-in-original-work.png')
+      await verifyStandInScheduleActivity(control, rpc, schedule, captureScreenshot)
 
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       const preferences = await control.command('getValue', '[data-testid="stand-in-preferences"]')
       await control.command('fill', '[data-testid="stand-in-preferences"]', {
         value: `${preferences}\n保留这份说明草稿`,
@@ -220,11 +225,15 @@ export function createStandInCoordinatorVerification({
       await control.command('waitFor', 'html[data-theme="dark"]')
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('click', `[data-testid="stand-in-overview-role-${role.id}"]`)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-processing-settings-toggle"]'
+      )
       await control.command('waitFor', '[data-testid="stand-in-calendar-policy"]')
       await control.command('waitFor', '[data-testid="stand-in-save"]')
       const previousWindowSize = JSON.parse(

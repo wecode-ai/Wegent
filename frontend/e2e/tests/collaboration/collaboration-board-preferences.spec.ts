@@ -182,7 +182,10 @@ async function dragCard(page: Page, source: Locator, target: Locator): Promise<v
   try {
     await page.mouse.move(sourceBox!.x + 30, sourceBox!.y + 20)
     await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
-    await target.scrollIntoViewIfNeeded()
+    // Center the drop target after the drag starts. Dnd-kit auto-scrolls a
+    // horizontally overflowing board while the pointer approaches an edge, so
+    // a minimally scrolled target can shift under a cached bounding box.
+    await target.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }))
     const targetBox = await target.boundingBox()
     expect(targetBox).not.toBeNull()
     await page.mouse.move(
