@@ -130,3 +130,30 @@ async def test_failed_card_registration_closes_emitter(monkeypatch):
         await handler._register_streaming_emitter(101, emitter, object())
 
     emitter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_card_registration_failure_finishes_card(monkeypatch):
+    """Runtime cards must not remain loading after their binding cannot be saved."""
+    handler = DingTalkChannelHandler(channel_id=77)
+    monkeypatch.setattr(
+        handler,
+        "_bind_chat_card",
+        AsyncMock(side_effect=RuntimeError("binding failed")),
+    )
+    monkeypatch.setattr(
+        handler,
+        "_fail_private_im_runtime_continuation",
+        AsyncMock(),
+    )
+    emitter = SimpleNamespace(chat_card=object(), subtask_id=42, close=AsyncMock())
+
+    with pytest.raises(RuntimeError, match="binding failed"):
+        await handler._register_streaming_emitter(
+            "runtime:device-1:task-1", emitter, object()
+        )
+
+    handler._fail_private_im_runtime_continuation.assert_awaited_once()
+    kwargs = handler._fail_private_im_runtime_continuation.await_args.kwargs
+    assert kwargs["callback_key"] == "runtime:device-1:task-1"
+    assert "任务可能仍在运行" in kwargs["error"]

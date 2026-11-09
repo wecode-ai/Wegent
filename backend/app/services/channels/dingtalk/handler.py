@@ -420,22 +420,61 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             try:
                 await self._bind_chat_card(task_id, streaming_emitter, message_context)
             except Exception:
-                try:
-                    await self._fail_unstarted_card_task(
-                        task_id, streaming_emitter.subtask_id, message_context
-                    )
-                    await self.send_text_reply(
-                        message_context, "聊天卡片创建失败，请检查模板配置后重试。"
-                    )
-                finally:
-                    await streaming_emitter.close()
+                await self._fail_unstarted_card_streaming_emitter(
+                    task_id=task_id,
+                    streaming_emitter=streaming_emitter,
+                    message_context=message_context,
+                )
                 raise
-        await super()._register_streaming_emitter(
-            task_id,
-            streaming_emitter,
-            message_context,
-            persist_without_emitter=persist_without_emitter,
-        )
+            try:
+                await super()._register_streaming_emitter(
+                    task_id,
+                    streaming_emitter,
+                    message_context,
+                    persist_without_emitter=persist_without_emitter,
+                )
+            except Exception:
+                await self._fail_unstarted_card_streaming_emitter(
+                    task_id=task_id,
+                    streaming_emitter=streaming_emitter,
+                    message_context=message_context,
+                )
+                raise
+        else:
+            await super()._register_streaming_emitter(
+                task_id,
+                streaming_emitter,
+                message_context,
+                persist_without_emitter=persist_without_emitter,
+            )
+
+    async def _fail_unstarted_card_streaming_emitter(
+        self,
+        *,
+        task_id: int | str,
+        streaming_emitter: ResultEmitter,
+        message_context: MessageContext,
+    ) -> None:
+        try:
+            if isinstance(task_id, str):
+                await self._fail_private_im_runtime_continuation(
+                    callback_key=task_id,
+                    streaming_emitter=streaming_emitter,
+                    message_context=message_context,
+                    error=(
+                        "聊天卡片创建失败，任务可能仍在运行，"
+                        "请稍后在 Wework 查看。"
+                    ),
+                )
+                return
+            await self._fail_unstarted_card_task(
+                task_id, streaming_emitter.subtask_id, message_context
+            )
+            await self.send_text_reply(
+                message_context, "聊天卡片创建失败，请检查模板配置后重试。"
+            )
+        finally:
+            await streaming_emitter.close()
 
     async def _bind_chat_card(
         self,

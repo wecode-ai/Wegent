@@ -649,6 +649,11 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             )
             # Clean up on error
             await self._remove_emitter(task_id)
+            if getattr(emitter, "terminal_delivery_succeeded", False):
+                # The provider accepted the terminal card update. A failed local
+                # marker write must not leave a stale callback blocking recovery.
+                await self.delete_callback_info(task_id)
+                return True
             return False
 
 

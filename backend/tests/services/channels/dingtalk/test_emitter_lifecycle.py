@@ -83,6 +83,34 @@ async def test_callback_keeps_registration_and_recoverable_state_on_failure(
 
 
 @pytest.mark.asyncio
+async def test_terminal_delivery_removes_callback_when_marker_persistence_fails(
+    monkeypatch, card_factory
+):
+    cache = FakeCache()
+    monkeypatch.setattr(emitter_module, "cache_manager", cache)
+    monkeypatch.setattr("app.services.channels.callback.cache_manager", cache)
+    emitter = StreamingResponseEmitter(object(), object(), "card-1")
+    emitter.set_shared_content_key("channel:streaming_content:1")
+    emitter.MIN_UPDATE_INTERVAL = 3600
+    await emitter.emit_start(1, 2)
+    service = FakeCallbackService(emitter)
+    service._active_emitters[1] = emitter
+    service.get_callback_info = AsyncMock(return_value=object())
+    service.delete_callback_info = AsyncMock()
+
+    async def fail_terminal_marker(**_kwargs):
+        raise RuntimeError("terminal marker unavailable")
+
+    monkeypatch.setattr(emitter, "_mark_finished", fail_terminal_marker)
+
+    sent = await service.send_task_result(1, 2, content="")
+
+    assert sent is True
+    service.delete_callback_info.assert_awaited_once_with(1)
+    assert emitter.terminal_delivery_succeeded is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("event", ["chunk", "thinking"])
 async def test_close_rejects_event_that_was_waiting_for_initialization(
     card_factory, event
