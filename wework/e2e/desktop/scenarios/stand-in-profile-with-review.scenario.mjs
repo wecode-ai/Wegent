@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { createDesktopScenario as createProfile } from './stand-in-profile.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesDisabled } from '../modules/preferences-automation-flows.mjs'
-import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
+import { openConnectionTypePicker, openStandInArrangement } from '../modules/stand-in-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
 import { waitForElementWidth } from '../modules/layout-metrics.mjs'
@@ -425,7 +425,7 @@ export function createDesktopScenario(options) {
         item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
       )
       assert.ok(recreated)
-      await control.command('click', `[data-testid="automation-open-${recreated.id}"]`)
+      await openStandInArrangement(control, recreated.id)
       await control.command('click', `[data-testid="automation-detail-actions-${recreated.id}"]`)
       await control.command('click', '[data-testid="automation-run-now-button"]')
       await control.command('waitFor', '[data-testid="automation-run-history"]', {

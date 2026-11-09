@@ -8,9 +8,52 @@ import { test } from 'vitest'
 import {
   openCollaborationNotifications,
   openProjectStandIn,
+  openStandInArrangement,
 } from '../e2e/desktop/modules/stand-in-flows.mjs'
 
 const entry = '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-open"]'
+
+test('calendar entry waits for the requested arrangement before opening its details', async () => {
+  const calls = []
+  let mountArrangement
+  const arrangementReady = new Promise(resolve => {
+    mountArrangement = resolve
+  })
+  let clicked = false
+  const control = {
+    async command(action, selector) {
+      calls.push([action, selector])
+      if (selector === '[data-testid="automation-open-weekly"]') {
+        if (action !== 'clickWhenEnabled') throw new Error('Arrangement list is still loading')
+        await arrangementReady
+        clicked = true
+      }
+    },
+  }
+
+  const opened = openStandInArrangement(control, 'weekly')
+  assert.equal(clicked, false)
+  mountArrangement()
+  await opened
+  assert.equal(clicked, true)
+  assert.deepEqual(calls, [
+    ['clickWhenEnabled', '[data-testid="automation-open-weekly"]'],
+    ['waitFor', '[data-testid="automation-detail-panel"]'],
+  ])
+})
+
+test('an unavailable calendar arrangement fails without replaying the interaction', async () => {
+  const calls = []
+  const failure = new Error('The arrangement never loaded')
+  const control = {
+    async command(action, selector) {
+      calls.push([action, selector])
+      throw failure
+    },
+  }
+  await assert.rejects(openStandInArrangement(control, 'missing'), error => error === failure)
+  assert.deepEqual(calls, [['clickWhenEnabled', '[data-testid="automation-open-missing"]']])
+})
 
 test.each(['cli', 'mcp'])(
   '%s capability scenario uses the startup budget only for cold catalog bootstrap',
