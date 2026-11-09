@@ -21,6 +21,7 @@ from app.models.delivery import (
     LoopItem,
     LoopItemActiveAssignment,
     LoopItemComment,
+    LoopNode,
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
@@ -76,6 +77,42 @@ def test_assignment_history_query_does_not_require_a_named_mysql_index(
     assert "loop_items.loop_item_id IN ('issue-with-history')" in statement
     assert ("FOR UPDATE" in statement) is for_update
     assert query.load_options._populate_existing is for_update
+    if for_update:
+        where_clause = statement.split("WHERE ", 1)[1].split(" ORDER BY", 1)[0]
+        assert where_clause == "loop_items.loop_item_id IN ('issue-with-history')"
+
+
+@pytest.mark.parametrize(
+    "deleted_at", [None, datetime(1970, 1, 1), datetime(1970, 1, 1, 0, 0, 1)]
+)
+def test_locking_assignment_history_filters_issue_nodes(
+    deleted_at: datetime | None,
+) -> None:
+    assignment = LoopItemComment(
+        id="assignment",
+        deleted_at=deleted_at,
+        metadata_json={"event_type": "assignment"},
+    )
+    nodes = [
+        LoopNode(
+            id="attachment",
+            resource_type="attachment",
+            metadata_json={"event_type": "assignment"},
+        ),
+        LoopItemComment(id="normal-comment", metadata_json={"event_type": "comment"}),
+        LoopItemComment(id="no-metadata", metadata_json=None),
+        LoopItemComment(id="invalid-metadata", metadata_json=[]),
+        LoopItemComment(
+            id="deleted",
+            deleted_at=datetime(2026, 11, 9),
+            metadata_json={"event_type": "assignment"},
+        ),
+        assignment,
+    ]
+    with Session() as db, patch("sqlalchemy.orm.Query.all", return_value=nodes):
+        assert issue_assignment_service._assignment_comments(
+            db, ["issue-with-history"], for_update=True
+        ) == [assignment]
 
 
 def _make_project(db: Session, user: User) -> CloudProject:
