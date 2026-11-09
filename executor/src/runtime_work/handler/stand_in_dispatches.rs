@@ -2,6 +2,17 @@
 use super::stand_in::settings_error;
 use super::*;
 
+fn retryable_dispatch_error(error: &AppIpcError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "cloud_unavailable"
+            | "cloud_request_failed"
+            | "cloud_response_invalid"
+            | "permission_denied"
+            | "stand_in_settings"
+    )
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn queue_stand_in_dispatches(
         &self,
@@ -63,15 +74,9 @@ impl RuntimeWorkRpcHandler {
                 LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
             for id in ids {
                 match error {
-                    Some(error)
-                        if matches!(
-                            error.code.as_str(),
-                            "cloud_unavailable"
-                                | "cloud_request_failed"
-                                | "cloud_response_invalid"
-                                | "permission_denied"
-                        ) =>
-                    {
+                    // An initial call may fan out. Its first failure does not
+                    // describe the other roles, so retain every unresolved intent.
+                    Some(error) => {
                         store
                             .defer_stand_in_dispatch(id, &error.code)
                             .map_err(settings_error)?;
@@ -129,7 +134,14 @@ impl RuntimeWorkRpcHandler {
                     ),
                 ],
             );
-            self.settle_stand_in_dispatches(&[id], result.as_ref().err());
+            // This attempt owns one intent and can retire a permanent rejection.
+            self.settle_stand_in_dispatches(
+                &[id],
+                result
+                    .as_ref()
+                    .err()
+                    .filter(|error| retryable_dispatch_error(error)),
+            );
         }
         Ok(())
     }

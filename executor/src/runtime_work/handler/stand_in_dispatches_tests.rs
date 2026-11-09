@@ -3,6 +3,37 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[test]
+fn initial_fanout_failure_does_not_discard_other_roles_dispatch_intents() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let ids = ["misconfigured", "temporarily-offline"].map(|role| {
+        store
+            .queue_stand_in_dispatch(&json!({"userId":7,"roleId":role}))
+            .unwrap()
+    });
+    handler.settle_stand_in_dispatches(
+        &ids,
+        Some(&AppIpcError::new(
+            "workspace_unavailable",
+            "First role needs configuration",
+        )),
+    );
+    let pending = store.pending_stand_in_dispatches().unwrap();
+    assert_eq!(pending.len(), 2);
+    assert!(pending.iter().all(|(_, intent)| intent["retryCount"] == 1));
+    assert!(retryable_dispatch_error(&AppIpcError::new(
+        "stand_in_settings",
+        "Storage is temporarily unavailable"
+    )));
+    assert!(!retryable_dispatch_error(&AppIpcError::new(
+        "invalid_assignment",
+        "Reassigned"
+    )));
+}
+
+#[test]
 fn settlement_failure_preserves_intent_until_storage_recovers() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
