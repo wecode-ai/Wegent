@@ -151,6 +151,7 @@ export default function GitHubIntegration() {
   const [modalType, setModalType] = useState<'add' | 'edit'>('add')
   const [currentEditInfo, setCurrentEditInfo] = useState<GitInfo | null>(null)
   const [modalUserId, setModalUserId] = useState<number | null>(null)
+  const [modalInitialDomain, setModalInitialDomain] = useState('')
   const requestedDomain = useSearchParams().get('gitDomain') ?? ''
   const handledDomain = useRef('')
   const sensors = useSensors(
@@ -175,6 +176,7 @@ export default function GitHubIntegration() {
     setModalType(account ? 'edit' : 'add')
     setCurrentEditInfo(account ?? null)
     setModalUserId(user.id)
+    setModalInitialDomain(requestedDomain)
     setShowModal(true)
   }, [gitInfo, isLoading, requestedDomain, user])
 
@@ -201,6 +203,7 @@ export default function GitHubIntegration() {
     setModalType('edit')
     setCurrentEditInfo(info)
     setModalUserId(user.id)
+    setModalInitialDomain('')
     setShowModal(true)
   }
 
@@ -210,6 +213,7 @@ export default function GitHubIntegration() {
     setModalType('add')
     setCurrentEditInfo(null)
     setModalUserId(user.id)
+    setModalInitialDomain('')
     setShowModal(true)
   }
 
@@ -322,7 +326,7 @@ export default function GitHubIntegration() {
         onClose={() => setShowModal(false)}
         mode={modalType}
         editInfo={currentEditInfo}
-        initialDomain={requestedDomain}
+        initialDomain={modalInitialDomain}
       />
     </div>
   )

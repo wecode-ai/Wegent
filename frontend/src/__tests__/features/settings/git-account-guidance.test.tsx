@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration'
 
 const mockContext = {
@@ -30,10 +30,14 @@ jest.mock('@/features/settings/components/GitHubEdit', () => ({
     initialDomain?: string
     mode: string
     editInfo?: { id?: string }
+    onClose: () => void
   }) =>
     props.isOpen ? (
       <div data-testid="targeted-git-form" data-mode={props.mode} data-account={props.editInfo?.id}>
         {props.initialDomain}
+        <button data-testid="close-targeted-git-form" onClick={props.onClose}>
+          Close
+        </button>
       </div>
     ) : null,
 }))
@@ -109,5 +113,14 @@ describe('targeted Git account configuration', () => {
     await waitFor(() =>
       expect(screen.getByTestId('targeted-git-form')).toHaveAttribute('data-account', 'owner-b')
     )
+  })
+
+  test('does not reuse the recovery domain when manually adding another account', async () => {
+    render(<GitHubIntegration />)
+    expect(await screen.findByTestId('targeted-git-form')).toHaveTextContent('git.example:8443')
+    fireEvent.click(screen.getByTestId('close-targeted-git-form'))
+    fireEvent.click(screen.getByTestId('add-git-token-button'))
+    expect(screen.getByTestId('targeted-git-form')).toHaveAttribute('data-mode', 'add')
+    expect(screen.getByTestId('targeted-git-form')).not.toHaveTextContent('git.example:8443')
   })
 })
