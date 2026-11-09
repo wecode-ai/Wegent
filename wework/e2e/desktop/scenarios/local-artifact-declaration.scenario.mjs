@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { waitForRuntimePaneReadyToSend } from '../modules/streaming-text-fixture.mjs'
+import { assertMarkdownPreviewAndSource } from '../modules/markdown-file-preview.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -39,9 +40,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
     await control.command('waitFor', '[data-testid="workspace-file-path"]', {
       text: artifact.local_path,
     })
-    await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-      text: 'Generated without a Backend Task.',
-    })
+    await assertMarkdownPreviewAndSource(control, 'Generated without a Backend Task.')
   }
 
   return {
@@ -133,9 +132,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       await control.command('waitFor', '[data-testid="workspace-file-path"]', {
         text: artifact.local_path,
       })
-      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        text: 'Generated without a Backend Task.',
-      })
+      await assertMarkdownPreviewAndSource(control, 'Generated without a Backend Task.')
       await verifyPreview(control)
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')

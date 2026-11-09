@@ -159,6 +159,7 @@ mod tests {
             project: None,
             ask_before_act: true,
             review: false,
+            memory_review: false,
             readonly_worker: false,
             coordinator_batch: None,
         };

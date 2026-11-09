@@ -43,4 +43,6 @@ const userResponse = await fetch(`${apiBaseUrl}/users/me`, {
 assert.equal(userResponse.ok, true, 'The native fixture must validate the authorized owner')
 const user = await userResponse.json()
 await credentials.commitAuthorization(prepared.authorizationId, user.id)
+const refreshed = await credentials.refreshAccessToken(apiBaseUrl, user.id)
+assert.ok(refreshed.accessToken, 'The real Backend must refresh the claimed native credential')
 process.stdout.write('authorized')

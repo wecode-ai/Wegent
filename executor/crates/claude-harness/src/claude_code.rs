@@ -26,6 +26,7 @@ use crate::{
 /// Trusted launch inputs supplied by the application before command planning.
 pub struct ClaudeLaunchContext<'a> {
     pub task_identity_environment: BTreeMap<String, String>,
+    pub additional_instructions: Option<&'a str>,
     pub artifact_instructions: &'a str,
     pub control_instructions: Option<&'a str>,
 }
@@ -259,6 +260,7 @@ pub fn execution_system_prompt(
     Some(
         [
             base_prompt,
+            launch.additional_instructions,
             Some(launch.artifact_instructions),
             launch.control_instructions,
         ]
@@ -267,6 +269,40 @@ pub fn execution_system_prompt(
         .collect::<Vec<_>>()
         .join("\n\n"),
     )
+}
+
+#[cfg(test)]
+mod instruction_tests {
+    use super::*;
+
+    #[test]
+    fn application_instructions_follow_native_tool_eligibility() {
+        for additional_instructions in [None, Some("Application-owned plugin routing")] {
+            let launch = ClaudeLaunchContext {
+                task_identity_environment: BTreeMap::new(),
+                additional_instructions,
+                artifact_instructions: "Artifact routing",
+                control_instructions: Some("Personal control routing"),
+            };
+            let mut request = ExecutionRequest {
+                system_prompt: "Task rules".into(),
+                ..Default::default()
+            };
+            let expected = match additional_instructions {
+                Some(instructions) => format!(
+                    "Task rules\n\n{instructions}\n\nArtifact routing\n\nPersonal control routing"
+                ),
+                None => "Task rules\n\nArtifact routing\n\nPersonal control routing".into(),
+            };
+            assert_eq!(execution_system_prompt(&request, &launch), Some(expected));
+
+            request.extra.insert("enable_tools".into(), json!(false));
+            assert_eq!(
+                execution_system_prompt(&request, &launch),
+                Some("Task rules".into())
+            );
+        }
+    }
 }
 
 pub fn model_id(request: &ExecutionRequest) -> Option<String> {

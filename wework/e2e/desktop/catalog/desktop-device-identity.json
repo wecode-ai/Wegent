@@ -5,7 +5,8 @@
   "paths": [
     "wework/electron/src/runtime/desktop-device-id*",
     "wework/electron/src/runtime/desktop-runtime*",
-    "wework/electron/src/runtime/managed-executor-runtime*"
+    "wework/electron/src/runtime/managed-executor-runtime*",
+    "executor/crates/config/src/device.rs"
   ],
   "ci": {
     "core": {

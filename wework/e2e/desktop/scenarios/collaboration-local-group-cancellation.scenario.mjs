@@ -14,9 +14,9 @@ import {
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
-  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `本地协作取消-${process.pid}`

@@ -1,3 +1,7 @@
+import {
+  openStandInExamples,
+  openStandInSettings,
+} from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createProfile } from './stand-in-profile.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -20,6 +24,24 @@ import {
 
 const USER = 9001
 const GUIDE = '[data-testid="stand-in-onboarding"]'
+
+export function onboardingArrangementIds(items) {
+  const memoryId = `stand-in-memory-review-${USER}`
+  const memory = items.filter(item => item.id === memoryId)
+  assert.ok(memory.length <= 1, 'The scheduler must not duplicate the default memory review')
+  if (memory.length) {
+    assert.deepEqual(memory[0].taskRequest?.standInOwner, { userId: USER, roleId: '@primary' })
+    assert.equal(memory[0].taskRequest?.standInCalendar?.template, 'memory_review')
+    assert.equal(memory[0].conversationMode, 'independent')
+    assert.equal(memory[0].notificationPolicy, 'attention_only')
+  }
+  // The native scheduler provisions this default independently of guide actions.
+  // Every other arrangement remains part of the exact no-side-effects assertion.
+  return items
+    .filter(item => item.id !== memoryId)
+    .map(item => item.id)
+    .sort()
+}
 
 /** Checks first-use connection setup separately from the existing help examples. */
 async function verifyGuideExamples(control, completed = false) {
@@ -71,7 +93,7 @@ async function verifyGuideExamples(control, completed = false) {
 }
 
 async function openCalendarReviewTemplate(control) {
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  await openStandInSettings(control)
   await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
   await openConnectionTypePicker(control)
   await control.command('click', '[data-testid="stand-in-time-connections"]')
@@ -171,9 +193,9 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
-      const initialScheduleIds = (await rpc('runtime.automations.list', {})).items
-        .map(item => item.id)
-        .sort()
+      const arrangementIds = async () =>
+        onboardingArrangementIds((await rpc('runtime.automations.list', {})).items)
+      const initialScheduleIds = await arrangementIds()
       await ensureExperimentalFeaturesDisabled(control)
       await control.command('waitFor', '[data-testid="personal-stand-in-beta"]', { text: 'Beta' })
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
@@ -217,9 +239,9 @@ export function createDesktopScenario(options) {
         false
       )
       assert.deepEqual(
-        (await rpc('runtime.automations.list', {})).items.map(item => item.id).sort(),
+        await arrangementIds(),
         initialScheduleIds,
-        'Closing the introduction must not create any arrangement'
+        'Closing the introduction must not create any arrangement beyond the native memory default'
       )
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await verifyGuideExamples(control)
@@ -274,7 +296,7 @@ export function createDesktopScenario(options) {
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
       await control.command('waitFor', GUIDE, { visible: false })
-      await control.command('waitFor', '[data-testid="stand-in-settings-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-details-open"]')
       const afterSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
       assert.equal(
         afterSetup.primary.enabled,
@@ -294,12 +316,12 @@ export function createDesktopScenario(options) {
         true
       )
       assert.deepEqual(
-        (await rpc('runtime.automations.list', {})).items.map(item => item.id).sort(),
+        await arrangementIds(),
         initialScheduleIds,
-        'Completing the guide must not create any arrangement'
+        'Completing the guide must not create any arrangement beyond the native memory default'
       )
       // Connecting later reuses the same settings UI without repeating setup.
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-source-collaboration"]')
@@ -311,7 +333,7 @@ export function createDesktopScenario(options) {
       assert.equal(connectedLater.primary.enabled, true)
       assert.equal(connectedLater.primary.collaboration.enabled, true)
       assert.equal(connectedLater.primary.collaboration.policy.immediate, false)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')
+      await openStandInExamples(control)
       await verifyGuideExamples(control, true)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-close"]')
       await control.command('waitFor', GUIDE, { visible: false })
@@ -321,11 +343,11 @@ export function createDesktopScenario(options) {
         'Closing usage examples must preserve completed onboarding'
       )
       assert.deepEqual(
-        (await rpc('runtime.automations.list', {})).items.map(item => item.id).sort(),
+        await arrangementIds(),
         initialScheduleIds,
-        'Closing usage examples must not create any arrangement'
+        'Closing usage examples must not create any arrangement beyond the native memory default'
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')
+      await openStandInExamples(control)
       await verifyGuideExamples(control, true)
       await control.command(
         'nativePress',
@@ -343,7 +365,7 @@ export function createDesktopScenario(options) {
         }
       )
       assert.deepEqual(
-        (await rpc('runtime.automations.list', {})).items.map(item => item.id).sort(),
+        await arrangementIds(),
         initialScheduleIds,
         'Choosing a review example must fill a draft without scheduling it'
       )

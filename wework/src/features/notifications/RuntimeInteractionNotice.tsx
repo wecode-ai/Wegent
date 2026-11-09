@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Bot, X } from 'lucide-react'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { RuntimeInteractionReply } from './RuntimeInteractionReply'
+import { InteractionTime } from './InteractionTime'
 import { canReplyToInteraction } from './runtimeInteractions'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,7 @@ function InteractionNotice() {
           className="min-w-0 flex-1 text-left"
         >
           <span className="block truncate text-sm text-text-secondary">{item.task.task.title}</span>
+          <InteractionTime timestamp={item.createdAt} testId="interaction-notice-time" />
           <span className="mt-2 block text-base font-medium">{item.question}</span>
         </button>
         <button

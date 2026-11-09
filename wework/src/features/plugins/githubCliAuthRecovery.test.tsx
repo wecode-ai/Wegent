@@ -100,7 +100,10 @@ test('GitLab recovery preserves its instance and starts native login only after 
   const onSend = vi.fn()
   render(<Conversation onSend={onSend} messages={[message]} />)
   expect(await screen.findByTestId('gitlab-cli-login')).toBeInTheDocument()
-  expect(mocks.health).toHaveBeenCalledExactlyOnceWith(target, { bypassCache: true })
+  expect(mocks.health).toHaveBeenCalledExactlyOnceWith(target, {
+    bypassCache: true,
+    prepareRuntime: true,
+  })
   expect(mocks.start).not.toHaveBeenCalled()
   expect(onSend).not.toHaveBeenCalled()
   fireEvent.click(screen.getByTestId('gitlab-cli-login'))
@@ -144,7 +147,10 @@ test.each(['plain', 'markdown'])(
     const { rerender } = render(<Conversation onSend={onSend} messages={[message]} />)
 
     expect(await screen.findByTestId('github-cli-login')).toBeInTheDocument()
-    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(GITHUB_CLI_TARGET, { bypassCache: true })
+    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(GITHUB_CLI_TARGET, {
+      bypassCache: true,
+      prepareRuntime: true,
+    })
     expect(mocks.start).not.toHaveBeenCalled()
     expect(onSend).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('github-cli-login'))
@@ -259,7 +265,7 @@ test('an unrelated cloud GitHub connector failure does not launch gh login', asy
   await waitFor(() => expect(onError).toHaveBeenCalledOnce())
   expect(mocks.health).toHaveBeenCalledExactlyOnceWith(
     { pluginKey: 'github', connectorSlug: 'github' },
-    { bypassCache: true }
+    { bypassCache: true, prepareRuntime: true }
   )
   expect(screen.queryByTestId('connector-auth-card')).not.toBeInTheDocument()
   expect(mocks.start).not.toHaveBeenCalled()

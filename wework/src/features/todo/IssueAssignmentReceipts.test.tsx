@@ -34,6 +34,51 @@ function setup(user = 8, rows = [receipt], assignee: number | null = 7) {
 afterEach(() => vi.useRealTimers())
 
 describe('Issue reception receipts', () => {
+  it('preserves a hovered receipt while an unrelated issue revision is refreshed', async () => {
+    vi.useFakeTimers()
+    const rows = [{ ...receipt, stand_in_received_at: '2026-11-07T16:54:00Z' }]
+    const api = {
+      getLoopItem: vi.fn().mockResolvedValue({ id: 'issue' }),
+      getIssueAssignmentReceipts: vi.fn().mockResolvedValue(rows),
+      acknowledgeIssueAssignment: vi.fn(),
+    }
+    const view = (version: number, assigneeUserId = 7, issueId = 'issue') => (
+      <IssueAssignmentReceipts
+        api={api as never}
+        issueId={issueId}
+        version={version}
+        assignmentRevision="assignment-1"
+        currentUserId={8}
+        assigneeUserId={assigneeUserId}
+      />
+    )
+    const { rerender } = render(view(1))
+    await act(async () => {})
+    const icon = screen.getByTitle(/^分身已接收/)
+    fireEvent.pointerOver(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(600))
+
+    let resolveRefresh!: (rows: IssueAssignmentReceipt[]) => void
+    api.getIssueAssignmentReceipts.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveRefresh = resolve
+      })
+    )
+    rerender(view(2))
+    expect(screen.getByTitle(/^分身已接收/)).toBe(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(100))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    await act(async () => resolveRefresh(rows))
+    expect(screen.getByTitle(/^分身已接收/)).toBe(icon)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+
+    rerender(view(3, 9))
+    expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    rerender(view(4, 7, 'another-issue'))
+    expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
+  })
+
   it('identifies an assignment independently of history ordering and display names', () => {
     const entry = {
       at: '2026-11-07T18:35:58Z',
@@ -116,6 +161,22 @@ describe('Issue reception receipts', () => {
     expect(api.acknowledgeIssueAssignment).not.toHaveBeenCalled()
     await act(async () => vi.advanceTimersByTimeAsync(5000))
     expect(api.acknowledgeIssueAssignment).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { issueId: 'other-issue', assigneeUserId: 7 },
+    { issueId: 'issue', assigneeUserId: 8 },
+  ])('clears receipts when their scope changes: %o', async scope => {
+    const { api, rerender } = setup(8, [
+      { ...receipt, stand_in_received_at: '2026-11-07T19:09:38Z' },
+    ])
+    await act(async () => {})
+    expect(screen.getByTitle(/分身已接收/)).toBeInTheDocument()
+    api.getIssueAssignmentReceipts.mockReturnValueOnce(new Promise(() => {}))
+    rerender(
+      <IssueAssignmentReceipts api={api as never} {...scope} version={2} currentUserId={8} />
+    )
+    expect(screen.queryByTitle(/分身已接收/)).not.toBeInTheDocument()
   })
 
   it('does not acknowledge a detail kept mounted in an inactive workspace tab', async () => {

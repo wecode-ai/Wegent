@@ -1,13 +1,38 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { createWriteStream } from 'node:fs'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { recordBrowserStartup } from './external-browser-diagnostics.mjs'
+import { preReadBrowserRuntime } from './external-browser-preread.mjs'
 
 const CHROME_BINARY = process.env.WEWORK_E2E_EXTERNAL_CHROME_BIN || '/opt/google/chrome/chrome'
 const CHROMEDRIVER_BINARY =
   process.env.WEWORK_E2E_EXTERNAL_CHROMEDRIVER_BIN || '/opt/wegent-e2e/chromedriver/chromedriver'
+
+export async function requestExternalBrowser(baseUrl, path, body, budgetMs, fetcher = fetch) {
+  const method = body === undefined ? 'GET' : 'POST'
+  const started = Date.now()
+  try {
+    const response = await fetcher(baseUrl + path, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(budgetMs),
+    })
+    const { value } = await response.json()
+    assert.ok(response.ok && !value?.error, `ChromeDriver ${path}: ${JSON.stringify(value)}`)
+    return value
+  } catch (cause) {
+    const route = path.replace(/\/session\/[^/]+/, '/session/:id')
+    throw new Error(
+      `ChromeDriver ${method} ${route} failed after ${Date.now() - started}ms (budget ${budgetMs}ms)`,
+      { cause }
+    )
+  }
+}
 
 function driverPort(child, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -43,6 +68,16 @@ function driverPort(child, timeoutMs) {
 export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
   assert.equal(process.platform, 'linux')
   await Promise.all([access(CHROME_BINARY), access(CHROMEDRIVER_BINARY)])
+  const preRead = await preReadBrowserRuntime(
+    process.env.WEWORK_E2E_EXTERNAL_BROWSER_PREREAD === '1'
+  )
+  if (preRead) {
+    await writeFile(
+      join(resultDir, 'external-browser-preread.json'),
+      JSON.stringify(preRead, null, 2)
+    )
+    console.log(`[desktop-e2e] browser runtime preparation ${JSON.stringify(preRead)}`)
+  }
   const root = await mkdtemp(join(tmpdir(), 'wework-external-browser-'))
   const profile = join(root, 'profile')
   const config = join(root, 'config')
@@ -84,23 +119,22 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
   let sessionId
   let disposed = false
   const preparation = []
+  const preparationStarted = Date.now()
   async function record(stage, error) {
-    preparation.push({ stage, ...(error ? { error: error.stack ?? String(error) } : {}) })
+    preparation.push({
+      stage,
+      elapsedMs: Date.now() - preparationStarted,
+      at: new Date().toISOString(),
+      ...(child ? { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode } : {}),
+      ...(error ? { error: error.stack ?? String(error), cause: String(error.cause ?? '') } : {}),
+    })
     await writeFile(
       join(resultDir, 'external-browser-preparation.json'),
       JSON.stringify(preparation, null, 2)
     )
   }
   async function request(path, body, budgetMs = timeoutMs) {
-    const response = await fetch(baseUrl + path, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: { 'content-type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(budgetMs),
-    })
-    const { value } = await response.json()
-    assert.ok(response.ok && !value?.error, `ChromeDriver ${path}: ${JSON.stringify(value)}`)
-    return value
+    return requestExternalBrowser(baseUrl, path, body, budgetMs)
   }
   async function dispose() {
     if (disposed) return
@@ -135,13 +169,30 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
     appEnvironment,
     dispose,
     async start() {
+      let stopDiagnostics
       try {
         await record('start-chromedriver')
-        child = spawn(CHROMEDRIVER_BINARY, ['--port=0'], {
-          detached: true,
-          env: { ...process.env, ...appEnvironment },
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
+        child = spawn(
+          CHROMEDRIVER_BINARY,
+          [
+            '--port=0',
+            '--verbose',
+            `--log-path=${join(resultDir, 'external-browser-chromedriver.log')}`,
+          ],
+          {
+            detached: true,
+            env: { ...process.env, ...appEnvironment },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }
+        )
+        const output = createWriteStream(join(resultDir, 'external-browser-process.log'))
+        output.on('error', error =>
+          console.error('External browser diagnostic write failed', error)
+        )
+        child.stdout.pipe(output, { end: false })
+        child.stderr.pipe(output, { end: false })
+        child.once('close', () => output.end())
+        stopDiagnostics = recordBrowserStartup(child.pid, resultDir)
         baseUrl = `http://127.0.0.1:${await driverPort(child, timeoutMs)}`
         await record('create-browser-session')
         const session = await request('/session', {
@@ -158,6 +209,8 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
                   '--disable-dev-shm-usage',
                   '--no-first-run',
                   '--no-default-browser-check',
+                  '--enable-logging=stderr',
+                  '--v=1',
                 ],
               },
             },
@@ -169,6 +222,10 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
       } catch (error) {
         await record('setup-failed', error)
         throw error
+      } finally {
+        await stopDiagnostics?.().catch(error =>
+          console.error('External browser scheduling diagnostic write failed', error)
+        )
       }
     },
     async waitForPage(expectedUrl, expectedText) {

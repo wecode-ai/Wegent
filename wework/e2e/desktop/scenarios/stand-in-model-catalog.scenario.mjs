@@ -1,3 +1,4 @@
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -117,7 +118,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         await bindStoppedStandIn(control, userId, initial.executionDeviceId, uiTimeoutMs)
         await finishStandInOnboarding(control)
         for (const model of models) {
-          await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+          await openStandInSettings(control)
           await control.command('waitFor', PANEL)
           const key = JSON.stringify(['codex', 'cloud', 'public', 'default', 0, model.name])
           const optionId = `model-option-${key}`

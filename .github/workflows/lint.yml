@@ -171,7 +171,7 @@ jobs:
         run: node --test wework/scripts/wework-navigation-docs.test.mjs wework/scripts/bundled-wework-docs.test.mjs
 
       - name: Test Wework release gates
-        run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs .github/scripts/pnpm-install-report.test.mjs
+        run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs .github/scripts/verify-wework-upgrade-duration.test.mjs .github/scripts/pnpm-install-report.test.mjs
 
       - name: Test E2E resource cleanup
         run: node --test .github/scripts/test-e2e-resource-reuse.mjs .github/scripts/backend-delivery-image.test.mjs
@@ -186,7 +186,7 @@ jobs:
         run: bash .github/scripts/test-wework-core-e2e-runtimes.sh
 
       - name: Test CI resource logging
-        run: node --test .github/scripts/run-with-resource-logging.test.mjs
+        run: node --test .github/scripts/run-with-resource-logging.test.mjs .github/scripts/redis-monitor.test.mjs
 
       - name: Test AI push gate
         run: scripts/hooks/test-ai-push-gate.sh

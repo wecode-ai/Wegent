@@ -942,7 +942,12 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(appUpdates.check).toHaveBeenCalledWith('stable')
     expect(appUpdates.download).toHaveBeenCalledOnce()
-    expect(appUpdates.download).toHaveBeenCalledWith('stable')
+    expect(appUpdates.download).toHaveBeenCalledWith('stable', undefined)
+    await handlers.get('appUpdate.download')?.(
+      { channel: 'stable', retryToken: 'confirmed-attempt' },
+      context
+    )
+    expect(appUpdates.download).toHaveBeenLastCalledWith('stable', 'confirmed-attempt')
     expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledWith('0.2.7')

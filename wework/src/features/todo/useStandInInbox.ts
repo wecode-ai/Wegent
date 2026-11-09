@@ -8,7 +8,8 @@ export function inboxRuntimeItem(
   deviceId: string,
   runtimeItem?: RuntimeTaskReminderItem
 ): RuntimeTaskReminderItem {
-  const task = runtimeItem?.task ??
+  // Archived inbox state must not be overwritten by a stale active-work snapshot.
+  const task = (work.task?.status === 'archived' ? work.task : runtimeItem?.task) ??
     work.task ?? {
       taskId: work.taskId,
       title: work.title,

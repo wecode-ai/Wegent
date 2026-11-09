@@ -975,6 +975,10 @@ async function verifyCloudCheckpoint({
         restartDesktopApp,
         workspacePath,
       })
+      // Reuse the real Cloud Issue fixture for the shared conversation scenario.
+      assert.ok(desktopScenario, 'conversation-state requires its desktop scenario module')
+      setPhase('cloud-conversation-mention')
+      await desktopScenario.verify(control)
       return
     }
     case 'workspace-attachments': {

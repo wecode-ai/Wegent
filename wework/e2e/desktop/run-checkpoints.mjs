@@ -156,6 +156,7 @@ function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification' ||
     checkpoint === 'stand-in-profile-settings' ||
+    checkpoint === 'stand-in-git' ||
     checkpoint.startsWith('human-interactions')
   ) {
     // Native windows and keyboard input need foreground activation.

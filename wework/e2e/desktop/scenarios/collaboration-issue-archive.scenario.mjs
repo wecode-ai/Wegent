@@ -7,8 +7,8 @@ import {
   captureVerificationScreenshot,
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `协作任务归档-${process.pid}`

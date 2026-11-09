@@ -72,7 +72,10 @@ describe('authorization after plugin use', () => {
       },
     ])
     await waitFor(() => expect(result.current.pending?.target).toEqual(gitlab))
-    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(gitlab, { bypassCache: true })
+    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(gitlab, {
+      bypassCache: true,
+      prepareRuntime: true,
+    })
   })
 
   test('does not offer a card when native health rejects the instance binding', async () => {
@@ -122,7 +125,10 @@ describe('authorization after plugin use', () => {
     const { result } = renderRecovery()
 
     await waitFor(() => expect(result.current.pending?.target).toEqual(target))
-    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(target, { bypassCache: true })
+    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(target, {
+      bypassCache: true,
+      prepareRuntime: true,
+    })
     expect(result.current.pending?.title).toBeUndefined()
   })
 
