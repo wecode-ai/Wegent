@@ -11,6 +11,7 @@ import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 import type { CollaborationExecutionEnvironment } from '../types'
 import { runnerModelKey, type RunnerModel } from '../agent-form/runnerRouting'
+import { TemplateModelSelection } from './TemplateModelSelection'
 
 let root: Root
 let container: HTMLDivElement
@@ -68,7 +69,7 @@ function fixture(host?: ProjectAgentConfigurationHost) {
     automations: { list: vi.fn(async () => []), create: vi.fn() },
   }
   const applied = vi.fn()
-  const render = () =>
+  const render = (agentConfiguration = host) =>
     act(async () =>
       root.render(
         <ProjectTemplateApplyDialog
@@ -77,7 +78,7 @@ function fixture(host?: ProjectAgentConfigurationHost) {
           document={document}
           locale="zh-CN"
           currentUserId={7}
-          agentConfiguration={host}
+          agentConfiguration={agentConfiguration}
           onClose={() => {}}
           onApplied={applied}
         />
@@ -96,6 +97,61 @@ const selectableModel: RunnerModel = {
   local_model_id: 'chosen-model',
   is_default: false,
 }
+
+it('hides the previous account model catalog while a new host is still loading', async () => {
+  const first: ProjectAgentConfigurationHost = {
+    renderDialog: () => null,
+    listTemplateAgentModels: async () => ({ models: [selectableModel] }),
+  }
+  const second: ProjectAgentConfigurationHost = {
+    renderDialog: () => null,
+    listTemplateAgentModels: () => new Promise(() => {}),
+  }
+  const onChange = vi.fn()
+  const draw = (host: ProjectAgentConfigurationHost) =>
+    act(async () =>
+      root.render(
+        <TemplateModelSelection
+          runtime="codex"
+          configuration={{ host, location: 'local' }}
+          locale="zh-CN"
+          disabled={false}
+          onChange={onChange}
+        />
+      )
+    )
+  await draw(first)
+  expect(container.textContent).toContain('Company model')
+  await draw(second)
+  expect(container.textContent).not.toContain('Company model')
+  expect(
+    container.querySelector<HTMLSelectElement>('[data-testid="template-model-codex"]')!.disabled
+  ).toBe(true)
+})
+
+it('does not reuse a selected model after switching the import host', async () => {
+  const first: ProjectAgentConfigurationHost = {
+    renderDialog: () => null,
+    listTemplateAgentModels: async () => ({ models: [selectableModel] }),
+  }
+  const second: ProjectAgentConfigurationHost = {
+    renderDialog: () => null,
+    listTemplateAgentModels: () => new Promise(() => {}),
+  }
+  const { render } = fixture(first)
+  await render()
+  const select = container.querySelector<HTMLSelectElement>('[data-testid="template-model-codex"]')!
+  await act(async () => {
+    select.value = runnerModelKey(selectableModel)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  const apply = () =>
+    container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-apply"]')!
+  expect(apply().disabled).toBe(false)
+  await render(second)
+  expect(apply().disabled).toBe(true)
+  expect(container.textContent).not.toContain('Company model')
+})
 
 it('requires a visible model choice and persists it for every imported Agent without a default', async () => {
   const resolveTemplateAgentRouting = vi.fn<

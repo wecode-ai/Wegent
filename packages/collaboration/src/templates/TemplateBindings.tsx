@@ -14,7 +14,11 @@ import {
   templateAgentReferences,
   templateRoutingResolver,
 } from './agents'
-import { TemplateModelSelection, type TemplateModelConfiguration } from './TemplateModelSelection'
+import {
+  TemplateModelSelection,
+  sameTemplateModelScope,
+  type TemplateModelConfiguration,
+} from './TemplateModelSelection'
 import type { RunnerModelIdentity } from '../agent-form/runnerRouting'
 import type { TemplateRoutingResolver } from './types'
 import { templateFailureMessage, templateMessages } from './messages'
@@ -307,9 +311,14 @@ export function TemplateBindingsDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
-  const [models, setModels] = useState<
-    Partial<Record<RunnerModelIdentity['runtime'], RunnerModelIdentity>>
-  >({})
+  const [modelState, setModelState] = useState<{
+    configuration: TemplateModelConfiguration
+    models: Partial<Record<RunnerModelIdentity['runtime'], RunnerModelIdentity>>
+  } | null>(null)
+  const models =
+    modelState && sameTemplateModelScope(modelState.configuration, modelConfiguration)
+      ? modelState.models
+      : {}
   const references = selection ? templateAgentReferences(selection.drafts) : new Set<string>()
   const runtimes = modelConfiguration?.host.listTemplateAgentModels
     ? [
@@ -413,13 +422,28 @@ export function TemplateBindingsDialog({
       {renderConfiguration?.(busy || failed)}
       {runtimes.map(runtime => (
         <TemplateModelSelection
-          key={runtime}
+          key={JSON.stringify([
+            runtime,
+            modelConfiguration?.location,
+            modelConfiguration?.projectId,
+            modelConfiguration?.environmentId,
+          ])}
           runtime={runtime}
           showRuntime={runtimes.length > 1}
           configuration={modelConfiguration!}
           locale={locale}
           disabled={busy || failed}
-          onChange={model => setModels(current => ({ ...current, [runtime]: model }))}
+          onChange={model =>
+            setModelState(current => ({
+              configuration: modelConfiguration!,
+              models: {
+                ...(current && sameTemplateModelScope(current.configuration, modelConfiguration)
+                  ? current.models
+                  : {}),
+                [runtime]: model,
+              },
+            }))
+          }
         />
       ))}
       {error && (

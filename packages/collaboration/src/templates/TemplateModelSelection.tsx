@@ -1,18 +1,29 @@
-import { useEffect, useRef, useState } from 'react'
-import {
-  runnerModelKey,
-  type RunnerModel,
-  type RunnerModelIdentity,
-} from '../agent-form/runnerRouting'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { runnerModelKey, type RunnerModelIdentity } from '../agent-form/runnerRouting'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 import type { CollaborationLocale } from '../i18n'
 import { templateMessages } from './messages'
+import { usePanelData } from '../platform/usePanelData'
 
 export interface TemplateModelConfiguration {
   host: ProjectAgentConfigurationHost
   location: 'local' | 'cloud'
   projectId?: string
   environmentId?: string
+}
+
+export function sameTemplateModelScope(
+  first: TemplateModelConfiguration | undefined,
+  second: TemplateModelConfiguration | undefined
+) {
+  return Boolean(
+    first &&
+    second &&
+    first.host === second.host &&
+    first.location === second.location &&
+    first.projectId === second.projectId &&
+    first.environmentId === second.environmentId
+  )
 }
 
 export function TemplateModelSelection({
@@ -31,48 +42,41 @@ export function TemplateModelSelection({
   showRuntime?: boolean
 }) {
   const m = templateMessages[locale]
-  const [catalog, setCatalog] = useState<RunnerModel[] | null>(null)
-  const [error, setError] = useState(false)
-  const [cloudUnavailable, setCloudUnavailable] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [revision, setRevision] = useState(0)
   const [selected, setSelected] = useState('')
   const selection = useRef('')
   const { host, projectId } = configuration
+  const load = useCallback(
+    () => host.listTemplateAgentModels!(runtime, projectId),
+    [host, projectId, runtime]
+  )
+  const state = usePanelData(load)
+  const previousLoad = useRef(load)
+  const catalog = state.data?.models ?? []
+  const cloudUnavailable = state.data?.cloudModelsUnavailable
+  const error = state.error !== undefined
   const change = useRef(onChange)
   useEffect(() => {
     change.current = onChange
   }, [onChange])
   useEffect(() => {
-    let active = true
-    setLoading(true)
-    setError(false)
-    change.current(undefined)
-    void host.listTemplateAgentModels!(runtime, projectId).then(
-      ({ models, cloudModelsUnavailable }) => {
-        if (!active) return
-        setCatalog(models)
-        setCloudUnavailable(Boolean(cloudModelsUnavailable))
-        const defaults = models.filter(model => model.is_default)
-        const initial =
-          models.find(model => runnerModelKey(model) === selection.current) ??
-          (defaults.length === 1 ? defaults[0] : undefined)
-        setSelected(initial ? runnerModelKey(initial) : '')
-        selection.current = initial ? runnerModelKey(initial) : ''
-        change.current(initial)
-        setLoading(false)
-      },
-      () => {
-        if (active) {
-          setError(true)
-          setLoading(false)
-        }
-      }
-    )
-    return () => {
-      active = false
+    if (previousLoad.current !== load) {
+      previousLoad.current = load
+      selection.current = ''
+      setSelected('')
     }
-  }, [host, projectId, runtime, revision])
+    if (state.loading || error) {
+      change.current(undefined)
+      return
+    }
+    const models = state.data?.models ?? []
+    const defaults = models.filter(model => model.is_default)
+    const initial =
+      models.find(model => runnerModelKey(model) === selection.current) ??
+      (defaults.length === 1 ? defaults[0] : undefined)
+    selection.current = initial ? runnerModelKey(initial) : ''
+    setSelected(selection.current)
+    change.current(initial)
+  }, [load, state.data, state.loading, error])
   return (
     <section className="collaboration-template-create-section">
       <label className="collaboration-template-field">
@@ -83,16 +87,16 @@ export function TemplateModelSelection({
         </span>
         <select
           data-testid={`template-model-${runtime}`}
-          value={selected}
-          disabled={disabled || loading || error}
+          value={state.data ? selected : ''}
+          disabled={disabled || state.loading || error}
           onChange={event => {
             setSelected(event.target.value)
             selection.current = event.target.value
-            onChange(catalog?.find(model => runnerModelKey(model) === event.target.value))
+            onChange(catalog.find(model => runnerModelKey(model) === event.target.value))
           }}
         >
           <option value="">{m.chooseModel}</option>
-          {catalog?.map(model => (
+          {catalog.map(model => (
             <option key={runnerModelKey(model)} value={runnerModelKey(model)}>
               {model.label || model.model_id}
               {model.account_label ? ` · ${model.account_label}` : ''}
@@ -100,15 +104,17 @@ export function TemplateModelSelection({
           ))}
         </select>
       </label>
-      {loading && <p role="status">{m.loading}</p>}
-      {!loading && !error && !cloudUnavailable && catalog?.length === 0 && <p>{m.noModels}</p>}
+      {state.loading && <p role="status">{m.loading}</p>}
+      {!state.loading && !error && !cloudUnavailable && catalog.length === 0 && <p>{m.noModels}</p>}
       {error && <p role="alert">{m.modelLoadFailed}</p>}
-      {!error && !loading && cloudUnavailable && <p role="status">{m.cloudModelsUnavailable}</p>}
+      {!error && !state.loading && cloudUnavailable && (
+        <p role="status">{m.cloudModelsUnavailable}</p>
+      )}
       <button
         type="button"
         data-testid={`template-model-refresh-${runtime}`}
-        disabled={disabled || loading}
-        onClick={() => setRevision(value => value + 1)}
+        disabled={disabled || state.loading}
+        onClick={() => void state.refresh()}
       >
         {m.refresh}
       </button>
