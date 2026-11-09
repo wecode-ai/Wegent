@@ -9,6 +9,14 @@ const SECRET = 'wework-upgrade-synthetic-model-secret'
 const NEXT_SECRET = 'wework-rollback-synthetic-model-secret'
 const MODEL_PATH = '/upgrade-credential-model'
 
+/** Invoke each delivered host's native reader; historical packages predate authorization transactions. */
+export async function readCloudDevicePublicKey(credentials, apiBaseUrl) {
+  if (typeof credentials.prepareAuthorization === 'function')
+    return (await credentials.prepareAuthorization(apiBaseUrl)).publicKey
+  if (typeof credentials.devicePublicKey === 'function') return credentials.devicePublicKey()
+  throw new Error('The delivered host has no supported cloud credential reader')
+}
+
 /** Exercise shipped readers with synthetic credentials; never snapshot personal authentication. */
 export function upgradeCredentials() {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
@@ -99,8 +107,8 @@ export function credentialAssertionScript(input) {
     const response = await fetch(input.modelUrl, {headers: {Authorization: 'Bearer ' + secret}})
     assert.ok(response.ok && (await response.json()).authenticated, 'Stored model credential could not authenticate')
     const credentials = new CloudCredentialService(directory)
-    const prepared = await credentials.prepareAuthorization('https://upgrade-credential.invalid/api')
-    assert.ok(prepared.publicKey.x === input.expectedPublicKey.x && prepared.publicKey.y === input.expectedPublicKey.y,
+    const publicKey = await (${readCloudDevicePublicKey.toString()})(credentials, 'https://upgrade-credential.invalid/api')
+    assert.ok(publicKey.x === input.expectedPublicKey.x && publicKey.y === input.expectedPublicKey.y,
       'Cloud credential reader lost the authorized device identity')
     const cloudEnvelope = JSON.parse(await fs.readFile(path.join(directory, 'cloud-credentials.json'), 'utf8'))
     const cloud = cloudEnvelope.version === 3
