@@ -5653,6 +5653,8 @@
       "keep_editing": "继续编辑",
       "discard": "放弃修改",
       "proposal_title": "确认这次调整",
+      "proposal_accepted": "配置已应用",
+      "proposal_rejected": "配置未应用",
       "proposal_details": "查看具体改动",
       "proposal_stale": "配置已发生变化，请让分身基于最新设置重新整理。",
       "proposal_help": "这是一份草稿，确认后才会保存并生效。也可以继续对话调整。",

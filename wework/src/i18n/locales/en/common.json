@@ -5658,6 +5658,8 @@
       "keep_editing": "Keep editing",
       "discard": "Discard changes",
       "proposal_title": "Confirm these changes",
+      "proposal_accepted": "Settings applied",
+      "proposal_rejected": "Settings not applied",
       "proposal_details": "Review changes",
       "proposal_stale": "Settings have changed. Ask your stand-in to prepare an updated proposal.",
       "proposal_help": "This is a draft. Confirm to save and enable it, or continue discussing changes.",

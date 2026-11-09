@@ -11,33 +11,37 @@ export function StandInProposalCard({
   busy,
   onResolve,
   projects,
+  result,
 }: {
   proposal: StandInProposal
   current: PersonalStandInSettings
   busy: boolean
   projects: CollaborationProject[]
   onResolve(accept: boolean): Promise<void>
+  result?: 'accepted' | 'rejected'
 }) {
   const { t } = useTranslation('common')
   const changed = proposal.settings.roles.filter(
     role =>
       !dequal(
-        role,
-        current.roles.find(row => row.id === role.id)
+        { ...role, version: undefined },
+        { ...current.roles.find(row => row.id === role.id), version: undefined }
       )
   )
   const removed = current.roles.filter(
     role => !proposal.settings.roles.some(row => row.id === role.id)
   )
   const stale = proposal.settings.version !== current.version
+  const title = t(`standIn.workspace.${result ? `proposal_${result}` : 'proposal_title'}`)
   return (
     <section
-      aria-label={t('standIn.workspace.proposal_title')}
-      data-testid="stand-in-proposal"
+      aria-label={title}
+      data-testid={result ? 'stand-in-proposal-result' : 'stand-in-proposal'}
+      role={result ? 'status' : undefined}
       className="mb-3 flex max-h-[45vh] shrink-0 flex-col overflow-hidden rounded-lg border border-border"
     >
       <header className="shrink-0 border-b border-border px-4 py-3">
-        <h2 className="font-medium">{t('standIn.workspace.proposal_title')}</h2>
+        <h2 className="font-medium">{title}</h2>
         <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{proposal.summary}</p>
       </header>
       <div className="min-h-0 overflow-y-auto px-4" data-testid="stand-in-proposal-details">
@@ -76,31 +80,33 @@ export function StandInProposalCard({
           )}
         </div>
       </div>
-      <footer className="shrink-0 border-t border-border bg-background px-4 py-3">
-        <p className="mt-2 text-xs text-text-muted">
-          {t(stale ? 'standIn.workspace.proposal_stale' : 'standIn.workspace.proposal_help')}
-        </p>
-        <div className="mt-3 flex justify-end gap-2">
-          <button
-            type="button"
-            data-testid="stand-in-proposal-reject"
-            disabled={busy}
-            onClick={() => void onResolve(false)}
-            className="min-h-8 rounded-md px-3 text-sm hover:bg-muted"
-          >
-            {t('standIn.workspace.proposal_reject')}
-          </button>
-          <button
-            type="button"
-            data-testid="stand-in-proposal-accept"
-            disabled={busy || stale}
-            onClick={() => void onResolve(true)}
-            className="min-h-8 rounded-md bg-text-primary px-3 text-sm text-background disabled:opacity-50"
-          >
-            {t('standIn.workspace.proposal_accept')}
-          </button>
-        </div>
-      </footer>
+      {!result && (
+        <footer className="shrink-0 border-t border-border bg-background px-4 py-3">
+          <p className="mt-2 text-xs text-text-muted">
+            {t(stale ? 'standIn.workspace.proposal_stale' : 'standIn.workspace.proposal_help')}
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              data-testid="stand-in-proposal-reject"
+              disabled={busy}
+              onClick={() => void onResolve(false)}
+              className="min-h-8 rounded-md px-3 text-sm hover:bg-muted"
+            >
+              {t('standIn.workspace.proposal_reject')}
+            </button>
+            <button
+              type="button"
+              data-testid="stand-in-proposal-accept"
+              disabled={busy || stale}
+              onClick={() => void onResolve(true)}
+              className="min-h-8 rounded-md bg-text-primary px-3 text-sm text-background disabled:opacity-50"
+            >
+              {t('standIn.workspace.proposal_accept')}
+            </button>
+          </div>
+        </footer>
+      )}
     </section>
   )
 }
