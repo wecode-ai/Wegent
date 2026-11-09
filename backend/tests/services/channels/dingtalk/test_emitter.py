@@ -538,6 +538,50 @@ async def test_terminal_result_uses_consistent_length_limit(emitter, card_factor
 
 
 @pytest.mark.asyncio
+async def test_dingtalk_table_boundaries_do_not_render_empty_rows(
+    emitter, card_factory
+):
+    await emitter.emit_start(task_id=1, subtask_id=2)
+    value = (
+        "# 结论\n回答\n"
+        "<br/>\n\n# 关键证据\n"
+        "| 检查项 | 结果 |\n|---|---|\n| 日志 | 空 |"
+        "<br/>\n\n# 限制\n无法获取正文。"
+    )
+
+    await emitter.emit_done(task_id=1, subtask_id=2, result={"value": value})
+
+    final = card_factory[0].finished[-1]
+    assert "# 关键证据\n| 检查项 | 结果 |" in final
+    assert "| 日志 | 空 |\n# 限制" in final
+    assert "<br/>\n\n# 关键证据" not in final
+    assert "| 日志 | 空 |\n\n# 限制" not in final
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_normalization_preserves_fenced_code(emitter, card_factory):
+    await emitter.emit_start(task_id=1, subtask_id=2)
+    value = (
+        "# 示例\n"
+        "```html\n"
+        "<br/>\n"
+        "\n"
+        "\n"
+        "| 列 | 值 |\n"
+        "```\n"
+        "\n"
+        "# 说明\n"
+        "结束"
+    )
+
+    await emitter.emit_done(task_id=1, subtask_id=2, result={"value": value})
+
+    final = card_factory[0].finished[-1]
+    assert "```html\n<br/>\n\n\n| 列 | 值 |\n```" in final
+    assert "```\n\n# 说明" in final
+
+
+@pytest.mark.asyncio
 async def test_structured_terminal_output_does_not_replace_streamed_answer(
     emitter, card_factory
 ):
