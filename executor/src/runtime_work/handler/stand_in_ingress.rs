@@ -353,6 +353,15 @@ fn collection_error_latched(state: &Value, version: &Value) -> bool {
             .as_i64()
             .is_some_and(|at| at > chrono::Utc::now().timestamp_millis());
     }
+    // Previously persisted runtime timeouts must recover without changing settings
+    // or discarding the original collection checkpoint.
+    if super::super::connection_host::collection_runtime_retry_after_ms(
+        state["error"]["code"].as_str().unwrap_or_default(),
+    )
+    .is_some()
+    {
+        return false;
+    }
     true
 }
 
@@ -375,7 +384,9 @@ fn save_collection_result(
                 json!({})
             };
             next["error"] = json!({"code":error.code,"message":error.message});
-            if let Some(delay) = error.retry_after_ms {
+            if let Some(delay) = error.retry_after_ms.or_else(|| {
+                super::super::connection_host::collection_runtime_retry_after_ms(&error.code)
+            }) {
                 let failures = state["failures"]
                     .as_u64()
                     .unwrap_or(0)

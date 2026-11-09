@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 
 const APPEARANCE_KEY = 'wework.appearance'
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
-// The Wework defaults are owned by packages/collaboration/src/theme/presets.ts.
+// The original Wework defaults are owned by the named theme catalogue.
 // Core DSH owns body styles; inspect the Wework tokens and their actual consumers.
 const WEWORK_PALETTE = {
   light: { background: '255 255 255', text: '26 26 26' },

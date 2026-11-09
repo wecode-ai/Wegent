@@ -1,5 +1,9 @@
 import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -23,7 +27,7 @@ const MARKER = 'WEWORK_TASK_MODEL_DELETION'
 const SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
 const SEND = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 
-export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs }) {
+export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, resultDir }) {
   let cloud
   let deletedModelId
   let replyCount = 0
@@ -132,6 +136,76 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     )
   }
 
+  /** Inspect the real feedback preview for the owning task's allowlisted model identities. */
+  async function assertFeedbackModelSnapshot(control, identity, expectedModelName) {
+    await control.command('clickWhenEnabled', '[data-testid="task-feedback-button"]')
+    try {
+      await control.command('waitFor', '[data-testid="task-feedback-note"]', { visible: true })
+      await control.command('fill', '[data-testid="task-feedback-note"]', {
+        value: 'Inspect the saved and restored task model identities.',
+      })
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="task-feedback-group-full-task-checkbox"]'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="task-feedback-export-button"]')
+      await control.command('waitFor', '[data-testid="task-feedback-preview-list"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="task-feedback-preview-category-task"]'
+      )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="task-feedback-preview-entry-context/task.json"]'
+      )
+      await control.command('waitFor', '[data-testid="task-feedback-preview-content"]')
+      const context = JSON.parse(
+        await control.command('getText', '[data-testid="task-feedback-preview-content"]')
+      )
+      assert.equal(context.task.taskId, identity.taskId)
+      assert.equal(typeof context.modelSelection?.scopeFingerprint, 'number')
+      for (const source of ['configured', 'effective', 'selected']) {
+        assert.equal(
+          context.modelSelection[source]?.modelName,
+          expectedModelName,
+          `The feedback preview omitted the ${source} task model identity`
+        )
+        assert.equal(Object.hasOwn(context.modelSelection[source], 'options'), false)
+      }
+    } finally {
+      await control.command('clickWhenEnabled', '[data-testid="task-feedback-close-button"]')
+      await control.command('waitFor', '[data-testid="task-feedback-dialog-overlay"]', {
+        visible: false,
+      })
+    }
+  }
+
+  /** Check that actual task and transcript reads log the owning task's saved model identity. */
+  async function assertTaskReadModelDiagnostics(control, identity, expectedModelName) {
+    const address = { taskId: identity.taskId }
+    const saved = await requestExecutor(control, 'runtime.tasks.get', { address })
+    const selection = saved.task.runtimeHandle.modelSelection
+    assert.equal(selection.modelName, expectedModelName)
+    await requestExecutor(control, 'runtime.tasks.transcript', { address })
+    const events = ['runtime task get resolved link', 'runtime task transcript resolved link']
+    await until(
+      () => readFile(join(resultDir, 'executor.log'), 'utf8'),
+      log =>
+        events.every(event =>
+          log
+            .split('\n')
+            .some(
+              line =>
+                line.includes(event) &&
+                line.includes(`local_task_id=${identity.taskId} `) &&
+                line.includes(`model_selection_name=${expectedModelName} `) &&
+                line.includes(`model_selection_type=${selection.modelType}`)
+            )
+        ),
+      'Task reads did not log the saved model identity'
+    )
+  }
+
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
@@ -193,6 +267,8 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         const row = snapshot.testIds.find(id => id.startsWith('runtime-local-task-row-'))
         const taskSelector = `[data-testid="${row}"]`
         const identity = await conversationIdentity(control)
+        await assertFeedbackModelSnapshot(control, identity, `local-model:${localModelId}`)
+        await assertTaskReadModelDiagnostics(control, identity, `local-model:${localModelId}`)
 
         // Delete the local configuration through the actual settings UI and reopen the task.
         await control.command('navigate', 'body', { value: '/settings/personal/models' })

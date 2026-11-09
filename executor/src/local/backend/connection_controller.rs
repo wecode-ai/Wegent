@@ -45,6 +45,7 @@ pub struct LocalBackendConnectionController {
 
 #[derive(Default)]
 struct LocalBackendConnectionState {
+    explicitly_disconnected: bool,
     profile: Option<LocalBackendConnectionProfile>,
     transport: Option<SocketIoTransport>,
     task: Option<JoinHandle<()>>,
@@ -123,7 +124,7 @@ impl LocalBackendConnectionController {
             connection_status: Arc::new(AtomicBool::new(false)),
             device_route_id,
         };
-        controller.replace_connection(initial_profile).await;
+        controller.replace_connection(initial_profile, false).await;
         controller
     }
 
@@ -131,8 +132,13 @@ impl LocalBackendConnectionController {
         Arc::clone(&self.connection_snapshot)
     }
 
-    async fn replace_connection(&self, profile: Option<LocalBackendConnectionProfile>) -> bool {
+    async fn replace_connection(
+        &self,
+        profile: Option<LocalBackendConnectionProfile>,
+        explicitly_disconnected: bool,
+    ) -> bool {
         let mut state = self.state.lock().await;
+        state.explicitly_disconnected = explicitly_disconnected;
         if state.profile == profile {
             return false;
         }
@@ -304,7 +310,9 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         Box::pin(async move {
             let profile = connection_profile_from_params(&params)?;
-            let changed = self.replace_connection(profile.clone()).await;
+            let changed = self
+                .replace_connection(profile.clone(), profile.is_none())
+                .await;
             Ok(json!({
                 "changed": changed,
                 "connected": profile.is_some(),
@@ -322,6 +330,7 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
             let state = self.state.lock().await;
             Ok(json!({
                 "configured": state.profile.is_some(),
+                "explicitly_disconnected": state.explicitly_disconnected,
                 "connected": self.connection_status.load(Ordering::Acquire),
                 "backend_url": state.profile.as_ref().map(|value| &value.connection.backend_url),
                 "socket_url": state.profile.as_ref().map(|value| resolved_socket_url(&value.connection)),
@@ -498,6 +507,34 @@ mod tests {
     use axum::{http::HeaderMap, routing::get, Json, Router};
     use serde_json::json;
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn explicit_disconnect_is_distinct_from_a_fresh_executor_and_resets_on_connect() {
+        let controller = LocalBackendConnectionController::start(DeviceConfig::default()).await;
+        assert_eq!(
+            controller.backend_status().await.unwrap()["explicitly_disconnected"],
+            false
+        );
+        controller.configure_backend(json!({})).await.unwrap();
+        let status = controller.backend_status().await.unwrap();
+        assert_eq!(status["configured"], false);
+        assert_eq!(status["explicitly_disconnected"], true);
+        controller
+            .configure_backend(json!({
+                "backend_url":"http://127.0.0.1:9", "auth_token":"test-token"
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            controller.backend_status().await.unwrap()["explicitly_disconnected"],
+            false
+        );
+        let restarted = LocalBackendConnectionController::start(DeviceConfig::default()).await;
+        assert_eq!(
+            restarted.backend_status().await.unwrap()["explicitly_disconnected"],
+            false
+        );
+    }
 
     use super::{
         connection_profile_from_params, device_config_for_profile, normalized_connection,

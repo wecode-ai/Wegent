@@ -4,6 +4,7 @@ import {
   openStandInDetails,
 } from '../modules/stand-in-profile-navigation.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
+import { createStandInProposalRegression } from '../modules/stand-in-proposal-regression.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { stat } from 'node:fs/promises'
@@ -40,12 +41,18 @@ export function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const fixture = createStandInDingTalkFixture({ resultDir, uiTimeoutMs, workbenchReadyTimeoutMs })
+  const proposalRegression = createStandInProposalRegression({
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+    captureScreenshot,
+  })
   let draft
   let sentProposal = false
   const requests = []
   return {
     prepareApp: fixture.prepareApp,
     async handleHttp(req, response, url) {
+      if (await proposalRegression.handleHttp(req, response, url)) return true
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
@@ -285,6 +292,7 @@ export function createDesktopScenario({
       )
       assert.ok(presentation, 'The existing-link create path must preserve message identity')
       assert.equal(presentation.attachments[0].filename, 'README.md')
+      await proposalRegression.verify(control)
     },
     diagnostics() {
       return { sentProposal, requests }

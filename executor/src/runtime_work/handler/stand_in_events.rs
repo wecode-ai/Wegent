@@ -7,6 +7,25 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<(), AppIpcError> {
+        let connection = self.backend_connection_snapshot()?.ok_or_else(|| {
+            AppIpcError::new("cloud_unavailable", "Cloud connection is unavailable")
+        })?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let id = store
+            .queue_stand_in_dispatch(&json!({
+                "backendUrl":connection.backend_url,"deviceId":self.device_id,
+                "userId":payload["recipientUserId"],"notification":payload
+            }))
+            .map_err(settings_error)?;
+        let result = self.process_stand_in_assignment(payload).await;
+        self.settle_stand_in_dispatches(&[id], result.as_ref().err());
+        result
+    }
+
+    pub(super) async fn process_stand_in_assignment(
+        &self,
+        payload: Value,
+    ) -> Result<(), AppIpcError> {
         let (Some(project), Some(issue_id), Some(assignment)) = (
             payload["projectId"].as_str(),
             payload["itemId"].as_str(),

@@ -9,6 +9,7 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 const mergedDefaultPreferences = {
   workbenchMode: 'developer',
   appearanceMode: 'system',
+  appearanceThemeSnapshot: null,
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -113,6 +114,23 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual({
       ...mergedDefaultPreferences,
       showMainWindowOnLaunch: false,
+    })
+  })
+
+  test('round trips both appearance variants through desktop preferences', async () => {
+    const appearanceThemeSnapshot = {
+      light: { themeId: 'github', variables: { '--color-bg-base': '255 255 255' } },
+      dark: { themeId: 'tokyo-night', variables: { '--color-bg-base': '26 27 38' } },
+    }
+    invokeMock.mockResolvedValue({ appearanceMode: 'system', appearanceThemeSnapshot })
+    const { getAppPreferences, updateAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toMatchObject({ appearanceThemeSnapshot })
+    await expect(updateAppPreferences({ appearanceThemeSnapshot })).resolves.toMatchObject({
+      appearanceThemeSnapshot,
+    })
+    expect(invokeMock).toHaveBeenLastCalledWith('preferences.update', {
+      patch: { appearanceThemeSnapshot },
     })
   })
 

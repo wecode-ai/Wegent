@@ -292,8 +292,8 @@ export function TaskBoardView({
       createStandardCloudBoardColumns({
         getDotClass: (nextGroupBy, value) =>
           nextGroupBy === 'status' || nextGroupBy === 'priority'
-            ? (columnDotClasses[value] ?? 'bg-zinc-400')
-            : 'bg-zinc-400',
+            ? (columnDotClasses[value] ?? 'bg-text-muted')
+            : 'bg-text-muted',
         groupBy,
         items,
         labels: {
@@ -742,7 +742,7 @@ export function TaskBoardView({
                 data-testid="task-board-batch-archive-completed-confirm"
                 disabled={batchArchiveBusy}
                 onClick={() => void archiveCompletedTasks(batchArchiveItems)}
-                className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50"
               >
                 {batchArchiveBusy
                   ? t('todo.archiving', '归档中…')

@@ -55,7 +55,7 @@ export function SubagentEnvironmentSummary({ blocks, onOpen }: SubagentEnvironme
         aria-label={t('subagent.open_panel', { count: blocks.length })}
         onClick={onOpen}
       >
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-violet-400">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
           <Bot className="h-4 w-4" aria-hidden="true" />
         </span>
         <span className="min-w-0 flex-1 truncate">{summary}</span>
@@ -238,7 +238,7 @@ export function SubagentConversationPanel({
 
           {transcriptError && !shouldUseLoadedTranscript && children.length === 0 ? (
             <div
-              className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-500"
+              className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
               data-testid="subagent-conversation-error"
             >
               {transcriptError}

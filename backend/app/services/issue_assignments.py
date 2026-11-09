@@ -18,8 +18,10 @@ from app.models.delivery import (
     LoopItem,
     LoopItemActiveAssignment,
     LoopItemComment,
+    LoopNode,
     ProjectChatAgent,
     loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
 from app.models.user import User
@@ -441,30 +443,29 @@ class IssueAssignmentService:
     def _assignment_comments(
         db: Session, issue_ids: list[str], *, for_update: bool = False
     ) -> list[LoopItemComment]:
+        model = LoopNode if for_update else LoopItemComment
         query = (
-            db.query(LoopItemComment)
-            .filter(
-                LoopItemComment.loop_item_id.in_(issue_ids),
-                loop_datetime_is_unset(LoopItemComment.deleted_at),
-                LoopItemComment.metadata_json["event_type"].as_string()
-                == ASSIGNMENT_EVENT_TYPE,
-            )
-            .order_by(LoopItemComment.created_at, LoopItemComment.id)
+            db.query(model)
+            .filter(model.loop_item_id.in_(issue_ids))
+            .order_by(model.created_at, model.id)
         )
         if for_update:
-            # Resource-type/index-merge scans can wait on another Issue's
-            # uncommitted comments even at READ COMMITTED. Bound the locking
-            # scan to this Issue while retaining current reads and row locks.
-            query = (
-                query.with_hint(
-                    LoopItemComment,
-                    "FORCE INDEX (ix_loop_items_loop_item_id)",
-                    dialect_name="mysql",
-                )
-                .populate_existing()
-                .with_for_update()
-            )
-        return query.all()
+            # Lock by Issue identity alone: subtype/deletion indexes can scan
+            # another Issue's uncommitted rows before applying the Issue filter.
+            nodes = query.populate_existing().with_for_update().all()
+            return [
+                node
+                for node in nodes
+                if isinstance(node, LoopItemComment)
+                and loop_datetime_value_is_unset(node.deleted_at)
+                and isinstance(node.metadata_json, dict)
+                and node.metadata_json.get("event_type") == ASSIGNMENT_EVENT_TYPE
+            ]
+        return query.filter(
+            loop_datetime_is_unset(LoopItemComment.deleted_at),
+            LoopItemComment.metadata_json["event_type"].as_string()
+            == ASSIGNMENT_EVENT_TYPE,
+        ).all()
 
     def _reduce_events(
         self, comments: list[LoopItemComment]
