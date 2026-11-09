@@ -1,7 +1,0 @@
-name: Set up the pinned ORAS CLI
-description: Install ORAS 1.3.1 from verified, public OCI blobs.
-runs:
-  using: composite
-  steps:
-    - shell: bash
-      run: bash .github/actions/setup-ci-oras/install.sh

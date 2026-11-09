@@ -44,11 +44,6 @@ classify_path() {
       changed[platform_e2e]=true
       return
       ;;
-    .github/actions/setup-ci-oras/*)
-      changed[platform_e2e]=true
-      changed[wework_e2e]=true
-      return
-      ;;
     .github/actions/setup-node-workspace/*)
       changed[frontend]=true
       changed[wework]=true
