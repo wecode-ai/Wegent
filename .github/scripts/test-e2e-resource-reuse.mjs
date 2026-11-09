@@ -547,13 +547,15 @@ test("Linux native probes restore verified Electron downloads before the officia
       "-ryaml",
       "-rjson",
       "-e",
-      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'])",
+      "puts JSON.generate({core: YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'], unit: YAML.load_file(ARGV[1])['jobs']['test-wework']['steps'], action: YAML.load_file(ARGV[2])['runs']['steps']})",
       ".github/workflows/wework-e2e.yml",
+      ".github/workflows/test.yml",
+      ".github/actions/prepare-electron-installer-cache/action.yml",
     ],
     { encoding: "utf8" },
   );
   assert.equal(result.status, 0, result.stderr);
-  const steps = JSON.parse(result.stdout);
+  const { core: steps, unit, action } = JSON.parse(result.stdout);
   const primeIndex = steps.findIndex(
     (step) => step.name === "Restore verified Electron installer cache",
   );
@@ -565,12 +567,27 @@ test("Linux native probes restore verified Electron downloads before the officia
   assert(primeIndex >= 0 && primeIndex < installIndex);
   const prime = steps[primeIndex];
   assert.equal(prime.if, steps[installIndex].if);
-  assert(prime.run.includes(".github/scripts/restore-ci-downloads.sh"));
+  assert.equal(
+    prime.uses,
+    "./.github/actions/prepare-electron-installer-cache",
+  );
+  const unitPrime = unit.find((step) => step.name === prime.name);
+  assert.equal(unitPrime.uses, prime.uses);
+  assert.equal(unitPrime.if, "matrix.shard == 1");
   assert(
-    prime.run.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+    unit.indexOf(unitPrime) <
+      unit.findIndex(
+        (step) => step.name === "Prepare Wework Electron dependencies",
+      ),
+  );
+  const commands = action.map((step) => step.run).join("\n");
+  assert(commands.includes("find_missing_apt_packages skopeo umoci"));
+  assert(commands.includes(".github/scripts/restore-ci-downloads.sh"));
+  assert(
+    commands.includes("pnpm --dir wework/electron install --frozen-lockfile"),
   );
   assert(
-    prime.run.includes("primeElectronInstallerCache({electronPackageRoot:"),
+    commands.includes("primeElectronInstallerCache({electronPackageRoot:"),
   );
   assert(
     steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),

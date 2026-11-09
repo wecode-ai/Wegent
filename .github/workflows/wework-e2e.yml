@@ -444,10 +444,7 @@ jobs:
 
       - name: Restore verified Electron installer cache
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
-        run: |
-          .github/scripts/restore-ci-downloads.sh
-          pnpm --dir wework/electron install --frozen-lockfile
-          node --input-type=module -e 'import {primeElectronInstallerCache} from "./wework/scripts/lib/electron-installer-cache.mjs"; await primeElectronInstallerCache({electronPackageRoot:"wework/electron/node_modules/electron"})'
+        uses: ./.github/actions/prepare-electron-installer-cache
 
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
