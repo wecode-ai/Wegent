@@ -936,6 +936,34 @@ fn snapshot_terminal(snapshot: &Value) -> bool {
         .is_some_and(|status| matches!(status, "completed" | "failed" | "cancelled" | "incomplete"))
 }
 
+/// Whether a hidden fallback selection names the conversation's recorded model.
+fn recorded_selection_matches(previous: Option<&Value>, selection: &ModelSelection) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    if previous.get("modelName").and_then(Value::as_str) != Some(selection.model_name.as_str())
+        || previous.get("modelType").and_then(Value::as_str) != Some(selection.model_type.as_str())
+    {
+        return false;
+    }
+    let previous_options = previous.get("options").unwrap_or(&Value::Null);
+    for key in [
+        "weworkCloudModelNamespace",
+        "weworkCloudModelResourceUserId",
+    ] {
+        let Some(previous_value) = previous_options.get(key) else {
+            continue;
+        };
+        let Some(current_value) = selection.options.get(key) else {
+            continue;
+        };
+        if previous_value != current_value {
+            return false;
+        }
+    }
+    true
+}
+
 /// The existing-conversation branch: get, checks, send, live wait.
 async fn existing_conversation_response(
     state: &AppState,
@@ -973,6 +1001,12 @@ async fn existing_conversation_response(
         .runtime_handle
         .as_ref()
         .and_then(|handle| handle.get("modelSelection"));
+    if selection.from_persisted && !recorded_selection_matches(previous_selection, selection) {
+        return Err(FastApiError::detail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Hidden model does not match the conversation's recorded model",
+        ));
+    }
     let selection = merged_selection(previous_selection, selection);
     let message = body.input_text();
     let title = runtime_task_title(body);

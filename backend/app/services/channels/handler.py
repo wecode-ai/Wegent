@@ -829,7 +829,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 # The selection can be absent from the visible catalog after
                 # the model is hidden. Read its provider directly so the
                 # persisted channel choice is not silently replaced.
-                if self._is_claude_compatible_override(
+                if await self._is_claude_compatible_override(
                     db, user, model_selection.model_name
                 ):
                     return model_selection.model_name, model_selection.model_type

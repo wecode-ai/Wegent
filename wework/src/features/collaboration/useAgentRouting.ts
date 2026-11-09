@@ -4,6 +4,7 @@ import {
   policyModels,
   runnerModelKey,
   cloudRunnerModels,
+  runnerSupportsModel,
   type AgentExecutionPolicy,
   type AgentModelPolicy,
   type RunnerEnvironment,
@@ -248,6 +249,12 @@ export function useAgentRouting(
   const { modelMode, model } = initializedDraft
   const modelAvailable =
     model !== null && models.some(item => runnerModelKey(item) === runnerModelKey(model))
+  const persistedModelSupported =
+    draft.modelPersisted &&
+    model !== null &&
+    (executionPolicy?.mode === 'fixed'
+      ? Boolean(selectedEnvironment && runnerSupportsModel(selectedEnvironment, model))
+      : candidates.some(environment => runnerSupportsModel(environment, model)))
   const modelPolicy: AgentModelPolicy | null =
     modelMode === 'user_select' ? { mode: 'user_select' } : model ? { mode: 'fixed', model } : null
   const validEnvironment =
@@ -293,9 +300,11 @@ export function useAgentRouting(
     nativeLoading,
     error,
     modelAvailable,
+    persistedModelSupported,
     valid:
       (!activated && draft.unchanged && executionPolicy !== null && modelPolicy !== null) ||
-      (validEnvironment && (modelMode === 'user_select' || modelAvailable || draft.modelPersisted)),
+      (validEnvironment &&
+        (modelMode === 'user_select' || modelAvailable || persistedModelSupported)),
     load,
   }
 }

@@ -197,6 +197,7 @@ def resolve_named_generation_model(
 
 
 def _get_default_generation_model_name(model_type: str) -> str:
+    """Return the operator-configured default for a generation category."""
     if model_type == "image":
         return settings.DEFAULT_IMAGE_GENERATION_MODEL.strip()
     if model_type == "video":
@@ -212,6 +213,7 @@ def _build_request(
     override_model_name: str | None,
     force_override: bool,
 ) -> ExecutionRequest:
+    """Build the execution request for a generation tool's model selection."""
     user, task, subtask, team = context
     return TaskRequestBuilder(db).build(
         subtask=subtask,

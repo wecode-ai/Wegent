@@ -476,6 +476,7 @@ export function AutomationDetailWorkspace({
                       dataTestId="automation-model-select"
                       value={selectedModelValue}
                       onChange={value => {
+                        if (!catalogModel && selectedModel && value === selectedModelValue) return
                         const [modelType, ...modelIdParts] = value.split(':')
                         const modelId = modelIdParts.join(':')
                         const nextModel =

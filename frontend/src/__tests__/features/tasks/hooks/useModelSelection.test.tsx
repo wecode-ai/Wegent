@@ -19,7 +19,7 @@ import {
   getModelTypeFromConfig,
 } from '@/features/settings/services/bots'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
-import { getGlobalModelPreference } from '@/utils/modelPreferences'
+import { getGlobalModelPreference, saveGlobalModelPreference } from '@/utils/modelPreferences'
 
 const mockTranslate = (_key: string, fallback?: string) => fallback ?? _key
 
@@ -645,6 +645,79 @@ describe('useModelSelection', () => {
 
     expect(result.current.selectedModel?.displayName).toBe('hidden-public-model')
     expect(result.current.isModelRequired).toBe(false)
+  })
+
+  it('restores a recorded task model when the visible catalog is empty', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 100,
+        taskModelId: 'hidden-public-model',
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.selectedModel?.name).toBe('hidden-public-model')
+    })
+    expect(result.current.isModelRequired).toBe(false)
+  })
+
+  it('keeps a recorded task model when a refresh omits it from the catalog', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([mockModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 100,
+        taskModelId: 'hidden-public-model',
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+    await waitFor(() => expect(result.current.selectedModel?.name).toBe('hidden-public-model'))
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: [mockModel] })
+    await act(async () => {
+      await result.current.refreshModels()
+    })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.selectedModel?.name).toBe('hidden-public-model')
+  })
+
+  it('does not save a restored placeholder as the team model preference', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    ;(saveGlobalModelPreference as jest.Mock).mockClear()
+    const modelLoad = mockDeferredModelsLoad([mockModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 100,
+        taskModelId: 'hidden-public-model',
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+    await waitFor(() => expect(result.current.selectedModel).not.toBeNull())
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 120))
+    })
+    act(() => result.current.setForceOverride(false))
+
+    expect(saveGlobalModelPreference).not.toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ modelName: 'hidden-public-model' }),
+      expect.anything()
+    )
   })
 
   it('shows advanced models when every compatible model is advanced', async () => {

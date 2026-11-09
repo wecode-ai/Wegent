@@ -12,6 +12,7 @@ from app.services.model_aggregation_service import model_aggregation_service
 
 
 def cloud_model_catalog(db: Session, user_id: int) -> list[dict]:
+    """Return the visible authorized cloud models a runner may select."""
     user = db.get(User, user_id)
     if user is None:
         return []
@@ -160,6 +161,7 @@ def require_cloud_model(
 def execution_model_values(
     db: Session, user_id: int, device: Kind, model: ModelIdentity
 ) -> tuple[str, str, dict, str]:
+    """Resolve a persisted model identity into executor routing fields."""
     from app.services.runner_routing import matching_model, routing_error
 
     if model.source == "cloud":
