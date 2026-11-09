@@ -937,6 +937,11 @@ fn snapshot_terminal(snapshot: &Value) -> bool {
 }
 
 /// Whether a hidden fallback selection names the conversation's recorded model.
+///
+/// A recorded selection that lacks the cloud namespace or owner cannot prove
+/// which model row it used: the same name can exist in another namespace or
+/// belong to another account. Hidden continuations therefore require both
+/// sides to carry the same identity options instead of skipping absent keys.
 fn recorded_selection_matches(previous: Option<&Value>, selection: &ModelSelection) -> bool {
     let Some(previous) = previous else {
         return false;
@@ -951,13 +956,7 @@ fn recorded_selection_matches(previous: Option<&Value>, selection: &ModelSelecti
         "weworkCloudModelNamespace",
         "weworkCloudModelResourceUserId",
     ] {
-        let Some(previous_value) = previous_options.get(key) else {
-            continue;
-        };
-        let Some(current_value) = selection.options.get(key) else {
-            continue;
-        };
-        if previous_value != current_value {
+        if previous_options.get(key) != selection.options.get(key) {
             return false;
         }
     }

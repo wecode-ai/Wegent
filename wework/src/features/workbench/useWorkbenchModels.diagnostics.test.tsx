@@ -192,6 +192,38 @@ test('does not replace a persisted cloud model on a transient lookup failure', a
   expect(hook.result.current.selectedModel).toBeNull()
 })
 
+test('does not restore an unrelated selection when the configured model changed transiently', async () => {
+  const transientConfig: ModelSelectionConfig = {
+    modelName: 'hidden-model',
+    modelType: 'public',
+    options: {},
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: models }),
+    getModel: vi.fn().mockRejectedValue(new ApiError('offline', 503)),
+  }
+  const hook = renderHook(
+    ({ selectionConfig }: { selectionConfig: ModelSelectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey: scopeA,
+        selectionConfig,
+        persistSelection: false,
+        fallbackWhenConfiguredModelUnavailable: false,
+      }),
+    { initialProps: { selectionConfig: taskA } }
+  )
+  await waitFor(() => expect(hook.result.current.selectedModel?.name).toBe('model-a'))
+  expect(hook.result.current.isSelectionReady).toBe(true)
+
+  hook.rerender({ selectionConfig: transientConfig })
+  await waitFor(() => expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public'))
+  await waitFor(() => expect(hook.result.current.selectedModel).toBeNull())
+  expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+})
+
 test('rejects a same-named model from another group identity', async () => {
   const configuredTask: ModelSelectionConfig = {
     modelName: 'hidden-group-model',

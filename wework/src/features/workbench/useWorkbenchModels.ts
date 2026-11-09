@@ -71,6 +71,18 @@ function matchesConfiguredCloudIdentity(
   return true
 }
 
+/** Whether a previously selected model still satisfies the configured selection. */
+function matchesConfiguredSelection(
+  model: UnifiedModel,
+  config?: ModelSelectionConfig | null
+): boolean {
+  return (
+    model.name === config?.modelName &&
+    model.type === config?.modelType &&
+    matchesConfiguredCloudIdentity(model, config)
+  )
+}
+
 /** A 404/403 lookup is definitive; network and timeout failures are transient. */
 function isDefinitiveModelLookupError(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 404 || error.status === 403)
@@ -293,8 +305,24 @@ export function useWorkbenchModels({
             model = null
           } else {
             // Network errors and timeouts must not push a valid persisted model
-            // into the replacement flow. Keep the previous selection when one
-            // exists; otherwise wait for the next catalog refresh to retry.
+            // into the replacement flow. Reuse the previous selection only when
+            // it still names the configured model; a scope whose configured
+            // model changed must drop the stale choice and wait for the next
+            // catalog refresh instead of restoring an unrelated model.
+            const previous = selectedModelRef.current[scopeKey] ?? null
+            if (
+              nextSelectionConfig?.modelName &&
+              previous &&
+              !matchesConfiguredSelection(previous, nextSelectionConfig)
+            ) {
+              selectedModelRef.current[scopeKey] = null
+              selectedModelOptionsRef.current[scopeKey] = EMPTY_MODEL_OPTIONS
+              setSelectedModelByScope(current => ({ ...current, [scopeKey]: null }))
+              setSelectedModelOptionsByScope(current => ({
+                ...current,
+                [scopeKey]: EMPTY_MODEL_OPTIONS,
+              }))
+            }
             model = selectedModelRef.current[scopeKey] ?? null
             transientFailure = !model
           }
