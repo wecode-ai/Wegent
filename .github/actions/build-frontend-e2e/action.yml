@@ -23,17 +23,7 @@ runs:
         save-cache: ${{ inputs.save-cache }}
 
     - name: Set up ORAS
-      shell: bash
-      run: |
-        # ORAS 1.3.1, pinned to its official Linux amd64 image manifest.
-        image=ghcr.io/oras-project/oras@sha256:f485743a4f97b4c57b4dbf3433d9ee421df1690aaff1b43c37103d1c158d14ce
-        docker pull --platform linux/amd64 "$image"
-        container="$(docker create --platform linux/amd64 "$image")"
-        trap 'docker rm "$container" >/dev/null' EXIT
-        tool_directory="$(mktemp -d "$RUNNER_TEMP/oras.XXXXXX")"
-        docker cp "$container:/bin/oras" "$tool_directory/oras"
-        "$tool_directory/oras" version
-        printf '%s\n' "$tool_directory" >> "$GITHUB_PATH"
+      uses: ./.github/actions/setup-ci-oras
 
     - name: Identify complete frontend build inputs
       shell: bash
