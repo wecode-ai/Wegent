@@ -732,7 +732,7 @@ export function createDesktopScenario({
             sse([
               responseCreated(responseId),
               ...reasoningEvents('wework-reasoning-summary', REASONING_SUMMARY),
-              assistantMessage(TOOL_PREAMBLE),
+              assistantMessage(TOOL_PREAMBLE, 'commentary'),
               ...selectedToolCall('wework-tool-text-offset', tool),
               responseCompleted(responseId),
             ])
