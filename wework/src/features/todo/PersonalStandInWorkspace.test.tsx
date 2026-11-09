@@ -373,6 +373,26 @@ it('keeps rebinding available when an already stopped source cannot load migrati
   expect(screen.queryByTestId('stand-in-migration')).not.toBeInTheDocument()
 })
 
+it('does not let late stopped-profile metadata overwrite a completed rebind', async () => {
+  const f = fixture({ version: 3, status: 'stopped', target: { userId: 7, deviceId: 'mac' } })
+  let finish!: () => void
+  f.personalGet.mockImplementationOnce(
+    userId =>
+      new Promise(done => {
+        finish = () => done({ userId, executionDeviceId: 'mac', version: 1, roles: [] })
+      })
+  )
+  render(f.workspace())
+  await userEvent.click(await screen.findByTestId('stand-in-instance-bind-7-cloud-one'))
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute(
+    'data-device',
+    'cloud-one'
+  )
+  await act(async () => finish())
+  expect(screen.queryByTestId('stand-in-instance-stopped')).not.toBeInTheDocument()
+  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+})
+
 it('uses the existing unsaved-edit decision before stopping', async () => {
   const f = fixture()
   render(f.workspace())

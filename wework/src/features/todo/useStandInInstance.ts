@@ -25,6 +25,7 @@ export function useStandInInstance(
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const operation = useRef(false)
+  const cancelLoad = useRef<(() => void) | null>(null)
   const pageActive = useRef(active)
   useLayoutEffect(() => {
     pageActive.current = active
@@ -40,6 +41,10 @@ export function useStandInInstance(
   useEffect(() => {
     if (!active || operation.current) return
     let current = true
+    const cancel = () => {
+      current = false
+    }
+    cancelLoad.current = cancel
     void (async () => {
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity || !api) throw new Error('Executor identity is unavailable')
@@ -149,13 +154,15 @@ export function useStandInInstance(
       if (current) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
     })
     return () => {
-      current = false
+      cancel()
+      if (cancelLoad.current === cancel) cancelLoad.current = null
     }
   }, [api, services, userId, devices, connected, active, attempt, backendUrl, initialDeviceId])
 
   const run = async <T>(action: () => Promise<T>, propagate = false): Promise<T | undefined> => {
     if (operation.current) return
     operation.current = true
+    cancelLoad.current?.()
     setBusy(true)
     setError(null)
     try {
