@@ -26,7 +26,7 @@ describe('startup splash native drag layout', () => {
     expect(footer).toContain('width: 100%')
     expect(footer).not.toContain('max-width:')
     expect(footer).not.toContain('margin-inline:')
-    expect(footer).toContain('max(28px, calc((100% - 48rem) / 2 + 28px))')
+    expect(footer).toContain('padding: 12px 20px 16px')
     expect(css).toMatch(/\.startup-brand\s*\{[^}]*pointer-events:\s*none/)
     expect(css).toMatch(
       /\.startup-hero,\s*\.startup-brand\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/
