@@ -104,7 +104,7 @@ export function credentialAssertionScript(input) {
       'Cloud credential reader lost the authorized device identity')
     const cloudEnvelope = JSON.parse(await fs.readFile(path.join(directory, 'cloud-credentials.json'), 'utf8'))
     const cloud = cloudEnvelope.version === 3
-      ? JSON.parse(safeStorage.decryptString(Buffer.from(cloudEnvelope.ciphertext, 'base64'))) : cloudEnvelope
+      ? JSON.parse((await safeStorage.decryptStringAsync(Buffer.from(cloudEnvelope.ciphertext, 'base64'))).result) : cloudEnvelope
     assert.ok(cloud.refreshToken === 'synthetic-upgrade-refresh-token', 'Cloud refresh credential changed')
     const challenge = Buffer.from('credential-upgrade-device-proof')
     const signature = crypto.sign('sha256', challenge, cloud.privateKey)

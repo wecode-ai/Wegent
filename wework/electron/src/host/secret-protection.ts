@@ -9,7 +9,7 @@ export interface SecretProtection {
 async function nativeStorage() {
   const { safeStorage } = await import('electron')
   if (
-    !safeStorage.isEncryptionAvailable() ||
+    !(await safeStorage.isAsyncEncryptionAvailable()) ||
     (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
   ) {
     throw new HostCapabilityError(
@@ -22,9 +22,11 @@ async function nativeStorage() {
 
 export const systemSecretProtection: SecretProtection = {
   async encrypt(value) {
-    return (await nativeStorage()).encryptString(value).toString('base64')
+    const storage = await nativeStorage()
+    return (await storage.encryptStringAsync(value)).toString('base64')
   },
   async decrypt(value) {
-    return (await nativeStorage()).decryptString(Buffer.from(value, 'base64'))
+    const storage = await nativeStorage()
+    return (await storage.decryptStringAsync(Buffer.from(value, 'base64'))).result
   },
 }
