@@ -89,6 +89,13 @@ export const templateMessages = {
     embeddedAgents: '应用时自动创建模板智能体并绑定角色，模型和工具使用当前执行环境的配置。',
     agentsCount: '将创建 {count} 个智能体并绑定角色。',
     environmentHint: '模型和工具使用当前执行环境的配置。',
+    agentModel: '智能体使用的模型',
+    chooseModel: '请选择模型',
+    selectedModelHint: '请在下方确认智能体使用的模型，工具沿用当前设备的配置。',
+    modelUnavailable: '所选模型已不可用，请刷新模型列表并重新选择。',
+    noModels: '暂无可用模型。请在设置中添加模型，然后刷新此列表。',
+    modelLoadFailed: '模型列表加载失败，请刷新后重试。',
+    cloudModelsUnavailable: '云端模型暂时无法加载。你仍可选择本机模型，或刷新后重试。',
     defaultModelRequired: '请先为当前执行环境设置默认模型，再应用此模板。',
     destinationEnvironmentRequired:
       '项目没有可用的已授权执行设备，请在项目的执行环境设置中检查设备状态与授权。',
@@ -201,6 +208,16 @@ export const templateMessages = {
       'Template Agents are created and bound automatically. Models and tools follow the execution environment.',
     agentsCount: '{count} Agents will be created and bound to roles.',
     environmentHint: 'Models and tools follow the execution environment.',
+    agentModel: 'Model for Agents',
+    chooseModel: 'Choose a model',
+    selectedModelHint:
+      'Confirm the Agent models below. Tools follow the current device configuration.',
+    modelUnavailable:
+      'The selected model is no longer available. Refresh the model list and choose again.',
+    noModels: 'No models available. Add a model in Settings, then refresh this list.',
+    modelLoadFailed: 'Could not load models. Refresh to try again.',
+    cloudModelsUnavailable:
+      'Cloud models could not be loaded. Choose a local model or refresh to try again.',
     defaultModelRequired:
       'Configure a default model in the current execution environment before applying this template.',
     destinationEnvironmentRequired:
@@ -244,6 +261,7 @@ export function templateFailureMessage(error: unknown, locale: 'zh-CN' | 'en'): 
   const code = error instanceof Error ? error.message : ''
   const m = templateMessages[locale]
   if (code === 'template_model_default_unavailable') return m.defaultModelRequired
+  if (code === 'template_model_unavailable') return m.modelUnavailable
   if (code === 'template_environment_unavailable') return m.destinationEnvironmentRequired
   if (code === 'template_environment_ambiguous') return m.destinationEnvironmentAmbiguous
   if (code === 'template_agent_multi_bot' || code === 'template_agent_runtime_unsupported')

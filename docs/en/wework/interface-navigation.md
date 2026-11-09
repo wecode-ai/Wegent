@@ -80,6 +80,8 @@ Internal routes below support version maintenance and automated checks; they are
 
 ### Space and auxiliary feature links
 
+Model selection during template import: [Collaboration templates and configuration sharing](./projects.md#collaboration-template-models).
+
 | Search terms                                                                      | Detailed steps                                                             |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls) |

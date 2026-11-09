@@ -1716,7 +1716,7 @@ function RootTeamEditor({
           host.projectAgentConfiguration?.readTemplateAgent,
         );
       },
-      async createTemplateGroups(document, drafts) {
+      async createTemplateGroups(document, drafts, resolveRouting) {
         const created = await applyWorkspaceTemplate(
           api,
           workspace,
@@ -1729,6 +1729,7 @@ function RootTeamEditor({
           },
           templateMessages[locale].unsupportedPolicy,
           locale,
+          resolveRouting,
         );
         return created;
       },
@@ -1801,6 +1802,7 @@ function RootTeamEditor({
 
   const form = (
     <WorkspaceCollaborationGroupsConfiguration
+      agentConfiguration={host.projectAgentConfiguration}
       workspace={workspace}
       groups={groups}
       members={members}
