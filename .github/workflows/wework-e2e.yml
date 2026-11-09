@@ -398,7 +398,15 @@ jobs:
       - name: Prepare real mailbox server runtime
         if: contains(matrix.segments, 'stand-in-email')
         run: |
-          apt-get update
+          for attempt in 1 2 3; do
+            if apt-get update; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           apt-get install -y --no-install-recommends openjdk-21-jre-headless
           java -version
           keytool -help >/dev/null
