@@ -809,6 +809,8 @@ export async function createDesktopScenario(options) {
         if (checkpoint === 'app-rollback') {
           await reupgradeAfterRollback({
             control,
+            routeCurrentUpdateRequests: () =>
+              routeRunningUpgradeRequests(inspectorPort, control, origin),
             about,
             version: pair.to.version,
             installedVersion,

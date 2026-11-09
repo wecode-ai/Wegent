@@ -5,7 +5,37 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { inspectBeforeStart, inspectRunningApp } from './inspect-before-start.mjs'
+import {
+  inspectBeforeStart,
+  inspectRunningApp,
+  readConnectedApplicationPid,
+} from './inspect-before-start.mjs'
+
+test('reads historical native host identity without requiring an open process window', async () => {
+  assert.equal(
+    await readConnectedApplicationPid({
+      async command(name, selector) {
+        assert.equal(name, 'getProcessExplorerWindowSnapshot')
+        assert.equal(selector, 'body')
+        return JSON.stringify({ exists: false, visible: false, applicationPid: 42 })
+      },
+    }),
+    42
+  )
+})
+
+test('rejects missing, nonnumeric, or invalid native application process IDs', async () => {
+  for (const applicationPid of [undefined, null, '42', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(
+      readConnectedApplicationPid({
+        async command() {
+          return JSON.stringify({ applicationPid })
+        },
+      }),
+      /no valid application process ID/
+    )
+  }
+})
 
 test('awaits native asynchronous assertions only after startup and verifies the current host PID', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-running-inspector-'))

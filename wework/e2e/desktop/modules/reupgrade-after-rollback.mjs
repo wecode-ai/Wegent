@@ -4,6 +4,7 @@ import { waitForUpdatePreparation } from './update-preparation-progress.mjs'
 /** Reuse the delivered target after rollback and prove credentials written by the bridge survive. */
 export async function reupgradeAfterRollback({
   control,
+  routeCurrentUpdateRequests,
   about,
   version,
   installedVersion,
@@ -12,6 +13,7 @@ export async function reupgradeAfterRollback({
   verifyCredentials,
   timeoutMs,
 }) {
+  await routeCurrentUpdateRequests()
   await about()
   const button = '[data-testid="about-check-update-button"]'
   const available = (await control.command('clickWhenEnabled', button)).includes(version)

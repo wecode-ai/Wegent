@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createCipheriv, generateKeyPairSync, randomBytes } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { inspectRunningApp } from './inspect-before-start.mjs'
+import { inspectRunningApp, readConnectedApplicationPid } from './inspect-before-start.mjs'
 
 const KEY = 'upgrade-credential-fixture'
 const SECRET = 'wework-upgrade-synthetic-model-secret'
@@ -62,9 +62,7 @@ export function upgradeCredentials() {
       return true
     },
     async verify(control, port, stage, directories, { write = false } = {}) {
-      const { applicationPid } = JSON.parse(
-        await control.command('getOwnedProcessSnapshot', 'body')
-      )
+      const applicationPid = await readConnectedApplicationPid(control)
       const input = {
         directories,
         expectedPublicKey,
