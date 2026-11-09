@@ -299,7 +299,7 @@ function DeleteArchivedConversationDialog({
             data-testid={`${testId}-confirm-button`}
             onClick={onConfirm}
             disabled={submitting}
-            className="inline-flex h-10 min-w-[104px] items-center justify-center gap-2 rounded-xl bg-destructive/15 px-5 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-10 min-w-[104px] items-center justify-center gap-2 rounded-xl bg-destructive/15 px-5 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60 wework:bg-red-500/15 wework:text-red-500 wework:hover:bg-red-500/20"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}
@@ -702,7 +702,7 @@ export function ArchivedConversationsSettingsPage({
               data-testid="archived-bulk-delete-button"
               onClick={handleBulkDelete}
               disabled={bulkDeleteRunning}
-              className="flex h-8 items-center gap-1.5 rounded-md bg-destructive/10 px-2.5 text-sm text-destructive hover:bg-destructive/15 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11"
+              className="flex h-8 items-center gap-1.5 rounded-md bg-destructive/10 px-2.5 text-sm text-destructive hover:bg-destructive/15 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11 wework:bg-red-500/10 wework:text-red-500 wework:hover:bg-red-500/15"
             >
               {bulkDeleteRunning ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -778,7 +778,7 @@ export function ArchivedConversationsSettingsPage({
         <div
           data-testid="archived-operation-error"
           role="alert"
-          className="mt-4 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          className="mt-4 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-600"
         >
           {cleanupError && <div>{cleanupError}</div>}
           {operationError && <div>{operationError}</div>}
@@ -811,7 +811,7 @@ export function ArchivedConversationsSettingsPage({
         ) : error ? (
           <div
             data-testid="archived-error"
-            className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive wework:border-red-200 wework:bg-red-50 wework:text-red-600"
           >
             {error}
           </div>

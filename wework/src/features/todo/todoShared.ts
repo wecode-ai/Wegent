@@ -10,11 +10,11 @@ export const columns: Array<{ status: CloudLoopItem['status']; label: string }> 
 ]
 
 export const columnDotClasses: Record<string, string> = {
-  inbox: 'bg-text-muted',
-  pending: 'bg-info',
-  in_progress: 'bg-warning',
-  in_review: 'bg-primary',
-  completed: 'bg-success',
+  inbox: 'bg-text-muted wework:bg-zinc-400',
+  pending: 'bg-info wework:bg-indigo-500',
+  in_progress: 'bg-warning wework:bg-amber-500',
+  in_review: 'bg-primary wework:bg-violet-500',
+  completed: 'bg-success wework:bg-emerald-500',
 }
 
 export const boardStatusColorClasses: Record<string, string> = {

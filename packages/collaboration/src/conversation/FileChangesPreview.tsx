@@ -88,8 +88,12 @@ export function FileChangeRow({
                 data-testid="file-change-stats-label"
                 className="flex justify-end gap-2 group-hover/file-change-trigger:hidden group-focus-within/file-change-trigger:hidden"
               >
-                <span className="text-[rgb(var(--color-diff-added,22_163_74))]">+{file.additions}</span>
-                <span className="text-[rgb(var(--color-diff-removed,239_68_68))]">-{file.deletions}</span>
+                <span className="text-[rgb(var(--color-diff-added,22_163_74))] wework:text-green-600">
+                  +{file.additions}
+                </span>
+                <span className="text-[rgb(var(--color-diff-removed,239_68_68))] wework:text-red-500">
+                  -{file.deletions}
+                </span>
               </span>
               <span
                 data-testid="file-change-view-label"
@@ -186,8 +190,12 @@ export function FileChangeSummaryTrigger({
                 data-testid="file-change-stats-label"
                 className="flex items-center gap-2 group-hover/file-change-trigger:hidden group-focus-within/file-change-trigger:hidden"
               >
-                <span className="text-[rgb(var(--color-diff-added,22_163_74))]">+{summary.additions}</span>
-                <span className="text-[rgb(var(--color-diff-removed,239_68_68))]">-{summary.deletions}</span>
+                <span className="text-[rgb(var(--color-diff-added,22_163_74))] wework:text-green-600">
+                  +{summary.additions}
+                </span>
+                <span className="text-[rgb(var(--color-diff-removed,239_68_68))] wework:text-red-500">
+                  -{summary.deletions}
+                </span>
               </span>
               <span
                 data-testid="file-change-view-label"
@@ -265,8 +273,12 @@ export function FileChangesStats({
 }) {
   return (
     <span className="flex items-center gap-2 text-xs font-medium leading-5">
-      <span className="text-[rgb(var(--color-diff-added,22_163_74))]">+{additions}</span>
-      <span className="text-[rgb(var(--color-diff-removed,239_68_68))]">-{deletions}</span>
+      <span className="text-[rgb(var(--color-diff-added,22_163_74))] wework:text-green-600">
+        +{additions}
+      </span>
+      <span className="text-[rgb(var(--color-diff-removed,239_68_68))] wework:text-red-500">
+        -{deletions}
+      </span>
     </span>
   );
 }
@@ -420,10 +432,10 @@ function FileChangeDiffPreview({
         <span className="min-w-0 flex-1 truncate" title={preview.displayPath}>
           {preview.displayPath}
         </span>
-        <span className="shrink-0 font-medium text-[rgb(var(--color-diff-added,74_222_128))]">
+        <span className="shrink-0 font-medium text-[rgb(var(--color-diff-added,74_222_128))] wework:text-green-400">
           +{preview.additions}
         </span>
-        <span className="shrink-0 font-medium text-[rgb(var(--color-diff-removed,248_113_113))]">
+        <span className="shrink-0 font-medium text-[rgb(var(--color-diff-removed,248_113_113))] wework:text-red-400">
           -{preview.deletions}
         </span>
       </div>
@@ -437,9 +449,9 @@ function FileChangeDiffPreview({
               className={[
                 "grid min-w-full grid-cols-[3.5rem_max-content] overflow-visible",
                 line.type === "addition"
-                  ? "border-l-4 border-[rgb(var(--color-diff-added,74_222_128))] bg-[rgb(var(--color-diff-added,34_197_94)/0.1)]"
+                  ? "border-l-4 border-[rgb(var(--color-diff-added,74_222_128))] bg-[rgb(var(--color-diff-added,34_197_94)/0.1)] wework:border-green-400 wework:bg-green-500/10"
                   : line.type === "deletion"
-                    ? "border-l-4 border-[rgb(var(--color-diff-removed,248_113_113))] bg-[rgb(var(--color-diff-removed,239_68_68)/0.1)]"
+                    ? "border-l-4 border-[rgb(var(--color-diff-removed,248_113_113))] bg-[rgb(var(--color-diff-removed,239_68_68)/0.1)] wework:border-red-400 wework:bg-red-500/10"
                     : "border-l-4 border-transparent",
               ].join(" ")}
             >
@@ -447,9 +459,9 @@ function FileChangeDiffPreview({
                 className={[
                   "select-none px-3 text-right",
                   line.type === "addition"
-                    ? "text-[rgb(var(--color-diff-added,74_222_128))]"
+                    ? "text-[rgb(var(--color-diff-added,74_222_128))] wework:text-green-400"
                     : line.type === "deletion"
-                      ? "text-[rgb(var(--color-diff-removed,248_113_113))]"
+                      ? "text-[rgb(var(--color-diff-removed,248_113_113))] wework:text-red-400"
                       : "text-text-muted",
                 ].join(" ")}
               >
