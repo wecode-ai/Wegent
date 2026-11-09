@@ -65,7 +65,7 @@ export function ClearBrowserDataDialog({
             data-testid="browser-clear-data-confirm"
             disabled={loading}
             onClick={onConfirm}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-contrast hover:bg-destructive disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-contrast hover:bg-destructive disabled:opacity-50 wework:bg-red-500 wework:text-white wework:hover:bg-red-600"
           >
             {loading ? (
               <Loader2 className="h-4 w-4 animate-spin" />

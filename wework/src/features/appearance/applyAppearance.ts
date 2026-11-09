@@ -1,5 +1,6 @@
 import {
   contrastForegroundColor,
+  DEFAULT_UI_THEME_ID,
   getUiTheme,
   resolveThemeVariables,
   resolveUiThemeVariables,
@@ -106,6 +107,16 @@ export function resolveAppearanceThemeVariables(
   const accent = hexToRgbTriplet(accentColor)
   for (const name of ['focus', 'focus-ring', 'link', 'info'] as const) {
     variables[`--color-${name}`] = accent
+  }
+  if (themeId === DEFAULT_UI_THEME_ID) {
+    if (overrides.accentColor === undefined) {
+      for (const name of ['focus', 'focus-ring', 'link'] as const) {
+        variables[`--color-${name}`] = '51 156 255'
+      }
+    }
+    variables['--color-scrollbar-thumb'] = mode === 'light' ? '0 0 0 / 0.08' : '255 255 255 / 0.36'
+    variables['--color-scrollbar-thumb-hover'] =
+      mode === 'light' ? '0 0 0 / 0.12' : '255 255 255 / 0.5'
   }
   variables['--color-sidebar-attention'] = sidebarAttentionColor(variables)
   return variables

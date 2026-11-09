@@ -1479,7 +1479,7 @@ function WeworkDevInstanceBadge() {
               <button
                 type="button"
                 data-testid="collapse-wework-dev-instance-button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
                 title="Collapse to movable icon"
                 aria-label="Collapse development instance info"
                 onClick={() => setCollapsed(true)}
@@ -1504,7 +1504,7 @@ function WeworkDevInstanceBadge() {
                 <button
                   type="button"
                   data-testid={`copy-wework-dev-${row.key}-button`}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
                   title={`Copy ${row.label}`}
                   aria-label={`Copy ${row.label}`}
                   onClick={() => void copyValue(row.key, row.value)}

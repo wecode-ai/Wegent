@@ -363,7 +363,7 @@ export function ArchivedConversationGroups({
                       title={deleteLabel}
                       onClick={() => onDelete(item)}
                       disabled={busyKey !== null}
-                      className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11 max-md:w-11"
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11 max-md:w-11 wework:text-red-500 wework:hover:bg-red-500/10"
                     >
                       {busyKey === `delete:${item.id}` ? (
                         <Loader2 className="h-4 w-4 animate-spin" />

@@ -24,7 +24,7 @@ export async function installPierreEditorTestPlatform() {
   Element.prototype.scrollTo ??= vi.fn()
   await getSharedHighlighter({
     langs: ['typescript', 'text'],
-    themes: [WEWORK_CODE_THEME],
+    themes: [WEWORK_CODE_THEME, 'pierre-light', 'pierre-dark'],
     preferredHighlighter: 'highlights',
   })
 }

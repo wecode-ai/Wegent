@@ -597,7 +597,7 @@ export function AiChatModal({
         className="flex h-[80vh] max-h-[820px] w-[880px] max-w-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
       >
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-          <Bot className="h-4 w-4 shrink-0 text-primary" />
+          <Bot className="h-4 w-4 shrink-0 text-primary wework:text-violet-600" />
           <span className="text-sm font-semibold text-text-primary">
             {t('workbench.project_chat')}
           </span>
