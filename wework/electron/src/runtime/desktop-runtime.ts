@@ -15,7 +15,6 @@ import {
 import { DshRuntime, type DshRuntimeOptions } from './dsh-runtime.js'
 import {
   ManagedExecutorRuntime,
-  managedExecutorHome,
   type ManagedExecutorRuntimeOptions,
 } from './managed-executor-runtime.js'
 import {
@@ -32,6 +31,7 @@ const CORE_APP_PATH = '/'
 const CORE_DSH_START_TIMEOUT_MS = 120_000
 
 export interface DesktopRuntimeOptions {
+  applicationId: string
   environment: NodeJS.ProcessEnv
   dataDirectory: string
   logDirectory: string
@@ -176,15 +176,20 @@ export class DesktopRuntime {
   /** Rebuild the Executor's in-memory view from the native model configuration owner. */
   async syncLocalModels(): Promise<void> {
     const store = this.options.modelConfiguration
-    if (!store || !this.executor) return
+    const executor = this.executor
+    const generation = this.lifecycleGeneration
+    if (!store || !executor) return
+    const current = () => this.lifecycleGeneration === generation && this.executor === executor
     const sync = this.localModelSync
       .catch(() => {})
       .then(async () => {
+        if (!current()) return
         const snapshot = await store.read()
+        if (!current()) return
         const models = snapshot.error
           ? []
           : modelInterfaceRunnerModels((await store.runtime()).models)
-        await this.requestExecutor('runtime.runner.local_models.replace', { models })
+        if (current()) await executor.request('runtime.runner.local_models.replace', { models })
       })
     this.localModelSync = sync
     await sync
@@ -266,6 +271,7 @@ export class DesktopRuntime {
 
   async stop(): Promise<void> {
     this.lifecycleGeneration += 1
+    this.localModelSync = Promise.resolve()
     this.started = false
     const coreDsh = this.coreDsh
     const executor = this.executor
@@ -317,7 +323,9 @@ export class DesktopRuntime {
         if (this.executor === executor) this.executor = null
         return
       }
-      await this.syncLocalModels()
+      void this.syncLocalModels().catch(error => {
+        console.warn('[runtime] initial local model synchronization failed', error)
+      })
       this.startupStep('executor-start', 'completed')
     } catch (error) {
       if (this.executor === executor) this.executor = null
@@ -427,9 +435,9 @@ export class DesktopRuntime {
 
   private resolveDesktopDeviceId(): Promise<string> {
     this.desktopDeviceId ??= resolveDesktopDeviceId({
+      applicationId: this.options.applicationId,
       environment: this.options.environment,
       dataDirectory: this.options.dataDirectory,
-      executorHome: managedExecutorHome(this.options),
     })
     return this.desktopDeviceId
   }

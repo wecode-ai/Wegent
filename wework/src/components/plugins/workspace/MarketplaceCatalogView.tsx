@@ -1,6 +1,5 @@
-import { memo, useMemo, useRef, type ReactNode, type RefObject } from 'react'
+import { memo, useMemo, type ReactNode, type RefObject } from 'react'
 import { Boxes, RefreshCw } from 'lucide-react'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
 import {
@@ -18,162 +17,11 @@ import {
   type MarketplaceOption,
 } from './marketplaceWorkspaceHelpers'
 import { PluginMarketplaceLoadingSkeleton } from './PluginMarketplaceLoadingSkeleton'
-import {
-  PluginMarketplaceRow,
-  type PluginMarketplaceRowAction,
-  type PluginMarketplaceRowLabels,
-} from './PluginMarketplaceRow'
+import type { PluginMarketplaceRowAction, PluginMarketplaceRowLabels } from './PluginMarketplaceRow'
 import { PluginMarketplaceRevealButton } from './PluginMarketplaceRevealButton'
+import { MarketplaceCardGrid } from './MarketplaceCardGrid'
 import { Button } from '@/components/ui/button'
 import type { remoteCatalogErrorKind } from '@/features/plugins/remotePluginError'
-
-const SEARCH_VIRTUALIZE_THRESHOLD = 40
-const SEARCH_ROW_ESTIMATE_PX = 78
-const SEARCH_GRID_BREAKPOINT_PX = 1050
-
-function VirtualizedSearchGrid({
-  items,
-  isLoggedIn,
-  isReconciling,
-  installingMarketplacePluginIds,
-  uninstallingPluginIds,
-  allowPendingRetry,
-  showPendingAsSyncing,
-  rowLabels,
-  onAction,
-}: {
-  items: PluginMarketplaceItem[]
-  isLoggedIn: boolean
-  isReconciling: boolean
-  installingMarketplacePluginIds: Set<string | number>
-  uninstallingPluginIds: Set<string | number>
-  allowPendingRetry: boolean
-  showPendingAsSyncing: boolean
-  rowLabels: PluginMarketplaceRowLabels
-  onAction: (action: PluginMarketplaceRowAction, item: PluginMarketplaceItem) => void
-}) {
-  const listRef = useRef<HTMLDivElement>(null)
-  const columnCount =
-    typeof window === 'undefined' || window.innerWidth > SEARCH_GRID_BREAKPOINT_PX ? 2 : 1
-  const rowCount = Math.max(1, Math.ceil(items.length / columnCount))
-  const virtualizer = useVirtualizer({
-    count: rowCount,
-    getScrollElement: () => listRef.current,
-    estimateSize: () => SEARCH_ROW_ESTIMATE_PX,
-    overscan: 8,
-    observeElementRect: (instance, callback) => {
-      const element = instance.scrollElement
-      if (!element) return
-      const emit = () => {
-        const rect = element.getBoundingClientRect()
-        callback({
-          width: Math.max(rect.width, 720),
-          height: Math.max(rect.height, 560),
-        })
-      }
-      emit()
-      const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(emit)
-      observer?.observe(element)
-      window.addEventListener('resize', emit)
-      return () => {
-        observer?.disconnect()
-        window.removeEventListener('resize', emit)
-      }
-    },
-  })
-  const virtualRows = virtualizer.getVirtualItems()
-
-  return (
-    <div ref={listRef} className="relative min-h-[240px]">
-      <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-        {virtualRows.map(row => {
-          const rowItems = items.slice(
-            row.index * columnCount,
-            row.index * columnCount + columnCount
-          )
-          return (
-            <div
-              key={row.key}
-              className="plugin-market-card-grid absolute left-0 top-0 w-full"
-              style={{ transform: `translateY(${row.start}px)` }}
-            >
-              {rowItems.map(item => (
-                <PluginMarketplaceRow
-                  key={item.id}
-                  item={item}
-                  isLoggedIn={isLoggedIn}
-                  isReconciling={isReconciling}
-                  isInstalling={installingMarketplacePluginIds.has(item.id)}
-                  isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
-                  allowPendingRetry={allowPendingRetry}
-                  showPendingAsSyncing={showPendingAsSyncing}
-                  labels={rowLabels}
-                  onAction={onAction}
-                />
-              ))}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function MarketplaceCardGrid({
-  items,
-  isLoggedIn,
-  isReconciling,
-  installingMarketplacePluginIds,
-  uninstallingPluginIds,
-  allowPendingRetry,
-  showPendingAsSyncing,
-  rowLabels,
-  onAction,
-}: {
-  items: PluginMarketplaceItem[]
-  isLoggedIn: boolean
-  isReconciling: boolean
-  installingMarketplacePluginIds: Set<string | number>
-  uninstallingPluginIds: Set<string | number>
-  allowPendingRetry: boolean
-  showPendingAsSyncing: boolean
-  rowLabels: PluginMarketplaceRowLabels
-  onAction: (action: PluginMarketplaceRowAction, item: PluginMarketplaceItem) => void
-}) {
-  if (items.length > SEARCH_VIRTUALIZE_THRESHOLD) {
-    return (
-      <VirtualizedSearchGrid
-        items={items}
-        isLoggedIn={isLoggedIn}
-        isReconciling={isReconciling}
-        installingMarketplacePluginIds={installingMarketplacePluginIds}
-        uninstallingPluginIds={uninstallingPluginIds}
-        allowPendingRetry={allowPendingRetry}
-        showPendingAsSyncing={showPendingAsSyncing}
-        rowLabels={rowLabels}
-        onAction={onAction}
-      />
-    )
-  }
-  return (
-    <div className="plugin-market-card-grid">
-      {items.map(item => (
-        <PluginMarketplaceRow
-          key={item.id}
-          item={item}
-          isLoggedIn={isLoggedIn}
-          isReconciling={isReconciling}
-          isInstalling={installingMarketplacePluginIds.has(item.id)}
-          isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
-          allowPendingRetry={allowPendingRetry}
-          showPendingAsSyncing={showPendingAsSyncing}
-          labels={rowLabels}
-          onAction={onAction}
-        />
-      ))}
-    </div>
-  )
-}
 
 export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   hasMarketplace,
@@ -202,7 +50,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isLoggedIn,
   isReconciling,
   installingMarketplacePluginIds,
-  uninstallingPluginIds,
+  isLocallyUninstalling,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -244,7 +92,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isLoggedIn: boolean
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
-  uninstallingPluginIds: Set<string | number>
+  isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
   allowPendingRetry: boolean
   showPendingAsSyncing: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -354,6 +202,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
 
       <div
         ref={scrollRef}
+        data-plugin-market-scroll-region=""
         data-testid="plugins-market-scroll-region"
         className="plugin-market-scroll-region min-h-0 flex-1 overflow-y-auto pb-14"
       >
@@ -543,10 +392,10 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                       isLoggedIn={isLoggedIn}
                       isReconciling={isReconciling}
                       installingMarketplacePluginIds={installingMarketplacePluginIds}
-                      uninstallingPluginIds={uninstallingPluginIds}
+                      isLocallyUninstalling={isLocallyUninstalling}
                       allowPendingRetry={allowPendingRetry}
                       showPendingAsSyncing={showPendingAsSyncing}
-                      rowLabels={rowLabels}
+                      labels={rowLabels}
                       onAction={onAction}
                     />
                     {rest.length > 0 && (

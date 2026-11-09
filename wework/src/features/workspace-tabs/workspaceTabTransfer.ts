@@ -3,6 +3,7 @@ import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 
 export interface WorkspaceTabTransferState {
   draftInputByScope: Record<string, string>
+  goalDraftActiveByScope?: Record<string, boolean>
 }
 
 const TRANSFER_STORAGE_PREFIX = 'wework.workspaceTabTransfer.v1:'
@@ -46,7 +47,12 @@ export function consumeWorkspaceTabTransfer(tabId: string): WorkspaceTabTransfer
       !parsed.draftInputByScope ||
       typeof parsed.draftInputByScope !== 'object' ||
       Array.isArray(parsed.draftInputByScope) ||
-      !Object.values(parsed.draftInputByScope).every(value => typeof value === 'string')
+      !Object.values(parsed.draftInputByScope).every(value => typeof value === 'string') ||
+      (parsed.goalDraftActiveByScope !== undefined &&
+        (!parsed.goalDraftActiveByScope ||
+          typeof parsed.goalDraftActiveByScope !== 'object' ||
+          Array.isArray(parsed.goalDraftActiveByScope) ||
+          !Object.values(parsed.goalDraftActiveByScope).every(value => typeof value === 'boolean')))
     )
       return null
     diagnoseTransfer('consume', tabId, parsed)

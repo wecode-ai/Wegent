@@ -1,3 +1,4 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
@@ -9,7 +10,7 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
   const original = await rpc(control, 'runtime.stand_in.personal.get', { userId: user })
   const prefix = `stand-in-connection-${providerId}`
   const open = async () => {
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+    await openStandInSettings(control)
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
     await openConnectionTypePicker(control)
     await control.command(
@@ -79,10 +80,11 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
     await reloadMainWindow(control, 'The restored personal settings did not reload')
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
     await control.command('waitFor', '[data-testid="stand-in-overview"]')
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+    await openStandInSettings(control)
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
     await openConnectionTypePicker(control)
     await control.command('click', '[data-testid="stand-in-time-connections"]')
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-processing-settings-toggle"]')
     await control.command(
       'waitFor',
       '[data-testid="stand-in-calendar-policy"][aria-checked="false"]'
@@ -92,7 +94,7 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
     await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', { visible: false })
     const policy = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
     assert.equal(policy.primary.calendar.policy.immediate, true)
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+    await openStandInSettings(control)
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
     await openConnectionTypePicker(control)
     await control.command('click', '[data-testid="stand-in-time-connections"]')
@@ -132,8 +134,11 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
     await control.command('click', '[data-testid="automation-button"]')
     await control.command('waitFor', '[data-testid="personal-stand-in-button"]')
     await control.command('waitFor', `[data-testid="automation-open-${ordinaryId}"]`)
+    // The retained, hidden calendar is not part of the visible ordinary schedule list.
     assert.equal(
-      await control.command('getElementCount', `[data-testid="automation-open-${id}"]`),
+      await control.command('getElementCount', `[data-testid="automation-open-${id}"]`, {
+        visible: true,
+      }),
       '0'
     )
     await control.command('click', `[data-testid="automation-open-${ordinaryId}"]`)

@@ -19,7 +19,7 @@ Tools are declared using @mcp_tool decorator which provides:
 - Parameter filtering (token_info is hidden from MCP schema)
 """
 
-from . import prompt_optimization, subscription
+from . import prompt_optimization, subscription, subscription_read
 from .decorator import (
     build_mcp_tools_dict,
     clear_tools_registry,
@@ -29,6 +29,7 @@ from .decorator import (
 from .knowledge import KNOWLEDGE_MCP_TOOLS
 from .silent_exit import silent_exit
 from .subscription import create_subscription, preview_subscription
+from .subscription_read import get_subscription, list_subscriptions
 
 __all__ = [
     "silent_exit",

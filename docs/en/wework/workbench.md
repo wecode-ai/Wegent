@@ -4,6 +4,15 @@ sidebar_position: 5
 
 # Coding workbench
 
+<a id="workspace-controls"></a>
+
+<!-- ui-source: src/pages/WorkbenchPage.tsx -->
+<!-- ui-source: src/pages/PopoutWorkbenchPage.tsx -->
+
+## Startup animation
+
+The startup logo has a left-to-right light sweep. The light band fully exits before a brief pause and the next pass, keeping the same base color across the loop boundary. The sweep is disabled when the system's reduced-motion preference is enabled.
+
 ## Application menu
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
@@ -24,7 +33,9 @@ Process attribution and collection have the following limits:
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
 
-When experimental features are enabled, the first main window shows three default tabs: Task, Workspaces, and Agent. When experimental features are off, the Workspaces tab is hidden. Every tab is an independent work instance. Two Task tabs retain separate conversations and unsent drafts, two Workspace tabs retain separate projects and routes, and two Agent tabs retain separate page state. Switching tabs does not synchronize content from another tab.
+The first main window restores **Settings → General → Fixed tabs** and activates its chosen startup item. Use top-bar **+** to add Tasks, Collaboration, Agent or other available tabs. Each tab independently retains conversations, drafts, projects and routes; switching does not synchronize another tab's content.
+
+Drag top tabs to reorder them. Right-click for **Pin/Unpin tab**, **Close other tabs** or a separate window. Manage fixed items and startup in General settings. Check unsent work and task state before closing other tabs; closing a page is not cancellation of a persistent goal.
 
 Task and Workspace tabs retain their mounted interface while they are in the background instead of recreating it whenever the user returns. Unsent drafts, the selected project, board routes, and panel state therefore restore immediately, and background tabs do not restart the workbench runtime. The first Task workbench centrally prewarms the Codex app catalog needed by composers; mounting a composer or switching tabs does not request the catalog again. A Workspace board loads task-composer model and skill catalogs on demand only when the user creates a runtime task from an issue, avoiding the complete Task-workbench startup cost during ordinary board browsing.
 
@@ -62,7 +73,7 @@ Lanes follow actual execution state: a task that is explicitly queued but has no
 
 Hover anywhere on a board card to open a task-progress panel at a stable position in the viewport's upper-right corner; moving across cards does not make the panel jump with each anchor. Its header shows the current issue title. When the runtime exposes one, the preview shows the current conversation goal. It directly reuses the task conversation component and always starts at the latest message instead of restoring the Task page's saved scroll position. While the current turn is active but has not produced new response text, the preview does not present the previous turn's final response as the latest progress. When a runtime task is associated with a board item, both local and cloud task bindings must persist that conversation's model selection. The preview restores the model from the binding instead of falling back to the global default for new conversations. Message loading, live updates, continuation, and attachments behave exactly as they do on the task page, with the composer collapsed by default. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Clicking the card's task-progress area, the pin action in the panel header, or the composer pins the same panel in place instead of opening a separate side conversation. While pinned, hovering other cards does not replace its content; clicking another card's task-progress area switches the pinned panel in the same position. Use the top-right close button or press `Esc` to leave the pinned state and restore normal hover previews.
 
-The work-item control above the composer shows the current project or linked issue and provides actions to view its details or board. Opening the linked board focuses the work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
+The work-item summary above the composer shows the current project or linked Issue. Click its title to open the current work-item details; when no Issue-details action is available, it opens the matching board. The details icon opens Issue details, and the board icon focuses the current work item in its project-space board. Opening the board preserves the original Task tab and reuses an already-open board tab for the same project instead of loading a duplicate. Reference chips in the composer and sent messages open a conversation or Issue according to their type; see [Working with AI](./tasks.md).
 
 When changing the composer's project-space association, filter by owning space on the left. Each project on the right shows its name, key, and owning space to distinguish duplicate names. Search combines project names, space names, and project keys. Projects default to ascending name order, with descending order also available. In the search field, use the arrow keys to select, `Enter` to confirm, and `Esc` to close. **Do not add to another project space** removes the extra association.
 
@@ -111,23 +122,59 @@ Select a project name to expand or collapse its runtime tasks. Collapsed project
 
 New tasks appear immediately at the top of their project's task list. Tasks with a saved drag order continue to follow that manual order; after a new task receives its persisted order, it remains stable within the same project ordering.
 
-## Handle AI questions
+<a id="ai-questions"></a>
 
-The top-level **Needs your input** tab collects structured questions from task conversations, projects, and your stand-in. Its left list groups questions under **Tasks, Projects, and Stand-in**, newest first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in.
+## Handle AI questions and project work
 
-When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
+<!-- ui-source: src/features/notifications/RuntimeInteractionsPage.tsx -->
 
-To leave a question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally.
+Open **top tab bar → + → Needs your input**, or choose **Needs your input** from the title-bar notification bell. The tab collects structured questions from task conversations, projects and your stand-in, plus ordinary Issues currently awaiting you in native local and cloud projects. Its left list groups entries under **Tasks, Projects, and Stand-in**, newest recorded time first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in, and an Issue with a question entry is not repeated as ordinary work.
+
+List entries and detail headers show a timestamp: the request time for pending questions and the recorded handling time for handled entries. Today's entries show hours and minutes; other dates show month and day, including the year for a different year. Hover over the timestamp for the complete date and time in your local timezone. Missing or invalid timestamps are omitted.
+
+When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. The reminder shows the question's creation time below the task name: hours and minutes for today, or a date for older questions. Hover over it for the complete date and time. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
+
+To leave an ordinary conversation question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally. Persistent Issue handoffs and ordinary project work do not offer this button: local archiving cannot replace an answer or a transfer.
+
+Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
+
+When you are unsure how to answer a business question, select **Talk it through** on its question card or in the question details in **Needs your input**. Wework opens a **Talk it through** tab in the original task's right sidebar, returning to that task when opened from Needs your input. Discussion sits alongside browser and file tabs instead of taking over the workbench's right side. Switching tasks shows only the destination task's sidebar; returning to the original task or switching sidebar tabs preserves the discussion and unsent message. Opening only prepares an editable question in the composer. Edit it and select Send to begin an independent discussion; opening alone never sends a message. The original question stays open.
+
+After discussing, select the text you want to use and choose **Fill answer** from the selection toolbar. For multiple questions, choose the target at the top of the sidebar first. Review and edit the selected text in the original answer before submitting. Filling a draft never sends an answer or approves an operation. Questions that were handled, cancelled, expired, or whose current state cannot be verified cannot receive a draft. Permission approvals and connector authorization retain their native confirmation flows.
+
+Async business-question replies use the destination task's model configuration and are not blocked by a model catalog still loading in the current view. Model resolution, device connectivity, and native runtime validation still apply. A question becomes handled only after its answer is accepted.
 
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
 
+A queued Issue answer does not clear the wait. After confirmed acceptance, local history retains settlement identity scoped to the original project, Issue, Runtime and question. This prevents a stale native snapshot from reappearing after a failed read, device-route alias change or offline restart. The record only reconciles the same question: it grants no reply or device access permission and cannot clear another Issue's question.
+
+<a id="project-pending-work"></a>
+
+### Project work and waiting time
+
+Selecting ordinary project work opens its original Issue details on the right, even without a running task; it never creates a placeholder task. Unassigned work belongs to its creator. Questions match their effective recipient or responsible participant first. Confirmed running agents and stand-ins do not count as ordinary human work, but questions assigned to you remain visible while independent AI steps continue. Opening this page does not expand project permissions.
+
+For one project, open **Collaboration → select project → board**, then select the toolbar's **Needs my action** button and count; select it again to clear. This temporary filter resets when switching projects and does not change saved views. Use **Only issues needing my input** in board view settings for a persistent view; it evaluates the current viewer. Local discovery includes native ownership and explicit assignments to the current verified sign-in identity, without globally merging matching names or IDs. Answers use the session's actual author. If a question still targets another identity, explicitly transfer it to the current name before answering; old recipients and historical authors are never silently rewritten. Cloud authorization always uses the server's current account.
+
+**With you for** measures elapsed calendar time since this handoff, not the record date or working time. Older work without reliable evidence shows **Handoff time not recorded**; an update timestamp never invents a wait. See [Issue human handoffs](./personal-stand-in.md#issue-human-handoffs) and [Waiting time and workflow analysis](./personal-stand-in.md#waiting-time-and-workflow-analysis) for transfer, acceptance, offline recovery and analysis limits. Ordinary work currently covers native projects; external-provider projects are not guaranteed to enumerate every Issue. Failed reads retain the last same-scope results and show a retry error, rather than reporting no pending work.
+
 ## Use IM notifications
 
-IM notifications are generally available and do not require **Experimental features**. Use the message-bubble entry in the sidebar account area to configure away-from-computer reminders. After opening a runtime task, select **Continue in private chat** in the title bar to bind that task to an available IM private chat.
+<a id="notification-controls"></a>
 
-The away-reminder panel shows the current delivery conversation. When cloud connectivity is available, **Change conversation** and the primary enable or disable action remain fully visible in the same action row, so either setting can be adjusted directly.
+Open **titlebar bell → Notification center**, not the obsolete account-area away-reminder bubble.
 
-After binding succeeds, Wework's switch confirmation uses the current task title instead of an internal `runtime-xxx` task identifier. Later task replies continue to be delivered to the selected private chat.
+| Action        | Steps and limits                                                                                                                                                                        |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browse        | Select task, stand-in, collaboration or general sources and open the original task/project; reading is not handling or approval                                                         |
+| Mark all read | Mark the aggregated notification set read; does not complete tasks or submit outstanding answers                                                                                        |
+| Refresh/more  | Refresh and load further records when available; inspect errors and retry without repeating business actions                                                                            |
+| Channels      | Center → Settings → configure in-app, system and IM per source. Task/stand-in IM requires the runtime API, not all their channels. Collaboration/general preferences require cloud APIs |
+| IM target     | Select the receiving conversation in settings and connect its account when prompted; selecting a channel is not app authorization                                                       |
+
+System notification permission also applies. The center differs from **Needs your input**, which retains business questions and their handling state.
+
+**Continue in private chat** in a runtime task's titlebar binds it to an available IM conversation after target review. Successful switch notices show the task title, and subsequent replies follow that binding. Channel preferences and per-task private-chat binding are separate.
 
 ## Split tasks by dragging
 
@@ -151,11 +198,27 @@ When no task is running, the Wework Popout Window uses a compact composer with a
 
 ## Files and terminals
 
+### File tree, path menu and IDE
+
+1. Open **Files** in the right workspace. Search names/paths in the tree toolbar, refresh the directory or retry a failed load.
+2. Select a file and right-click its path/path-toolbar region for supported actions.
+
+| Action                         | Result and conditions                                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Open with                      | Choose an available local application for the file/directory; requires a local target and application |
+| Open in GitHub/GitLab/Git host | Opens the repository location when repository/file mapping is available                               |
+| Save as                        | Save a local file elsewhere; not a directory action or Git commit                                     |
+| Copy path                      | Copies the file/directory path; check private-directory details before sharing                        |
+| Copy contents                  | Copies supported text; unavailable for binary or unreadable remote content                            |
+| Reveal location                | Locate the local file or directory in the system file manager                                         |
+
+The titlebar's **Open workspace location** and neighboring IDE dropdown open the working directory and select an available IDE, with a remembered preference. This differs from the device-oriented IDE entry under bottom-panel +; verify device and directory first.
+
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
-Selecting a writable text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
+Selecting a writable non-Markdown text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 
-Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
+Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
 Codex file citations appear as clickable filenames for presentations, spreadsheets, PDFs, documents, and code. Source citations appear under **Sources**, while deliverables appear under **Outputs**. Code line references open at the requested lines. Page numbers, slide numbers, worksheet ranges, and object labels appear beside the filename; clicking opens the file but does not yet navigate to an Office artifact's internal location. Legacy `【F:path†Lstart-Lend】` references also support code line navigation.
 
@@ -170,6 +233,10 @@ When diagnosing a terminal that does not repaint after a task switch, frontend l
 To diagnose `[Terminal connection failed]`, correlate `Local terminal start`, `Local terminal connection`, ` Electron local terminal attach`, and `Local terminal close` logs by session identifier. The logs include the host process, child process, task, workspace path, connection stage, and close reason so output-listener, exit-listener, native-attach, missing-session, and intentional-close cases can be distinguished. They never include terminal input, output, executed commands, or environment-variable contents.
 
 ## Expand the right workspace
+
+### Create a temporary chat directly
+
+Open **right workspace → new-tab menu → Temporary chat** to ask a separate question in the side panel. This appears when the workbench supports temporary chats and does not require selecting reply text first. It has its own composer, including while expanded. Review drafts before closing/switching panels; a side conversation is not automatically an instruction modifying the main task.
 
 With the right workspace open, select **Expand panel** in its title bar to let files, previews, or change reviews fill the main workspace. The task composer is hidden while a non-chat workspace is expanded; an expanded temporary chat keeps only its own composer. The expanded state is saved per conversation.
 
@@ -203,11 +270,17 @@ After restoring a conversation, you can answer an existing MCP form or another r
 
 ## Use selected response text
 
+Hover a message for its copy action. A user message shows an edit/pencil action only when editing is supported; change it in the editor and follow its submit/cancel controls. Not every historical or assistant message is editable. Quoting selected text differs from changing the original message.
+
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
 
 Process text shown above tool calls while a task is running is also selectable response content. Selecting it opens the same action menu and can add the text directly to the current task composer.
 
 ## Review and undo changes
+
+### Individual review-toolbar controls
+
+Open **Review** from an assistant reply's changes. Choose unified/split layout, toggle the file tree and word wrap. **Expand/collapse all hunks** changes presentation only. **Copy git apply command** copies a patch-application command without running it; inspect target repository and patch before executing it.
 
 Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the complete diff in the right workspace. Normal review mode keeps every file diff rendered. Selecting a file in the tree, or opening a specific changed file from an assistant message, scrolls the content to that file instead of hiding the other files. The original execution device must be online.
 

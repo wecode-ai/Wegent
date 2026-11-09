@@ -7,7 +7,6 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
-  writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { rm } from 'node:fs/promises'
@@ -16,6 +15,7 @@ import type { Socket } from 'node:net'
 import { isAbsolute, join, resolve } from 'node:path'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
+import { writeManagedAuthMarker } from './managed-auth-marker.js'
 
 export interface ManagedExecutorRuntimeOptions {
   command: string
@@ -43,6 +43,8 @@ export class ManagedExecutorRuntime {
       args: options.args,
       env: {
         ...environment,
+        DEVICE_ID: `device-${options.deviceId}`,
+        WEGENT_RUNTIME_INSTANCE_ID: `runtime-${options.deviceId}`,
         DEVICE_NAME: options.deviceName,
         WEGENT_APP_IPC_DEVICE_ID: options.deviceId,
         WEGENT_APP_IPC_ENDPOINT: this.endpoint,
@@ -92,7 +94,7 @@ export class ManagedExecutorRuntime {
   request<Result>(
     method: string,
     params: Record<string, unknown> = {},
-    signal = AbortSignal.timeout(75_000)
+    signal = AbortSignal.timeout(executorRequestTimeoutMs(method))
   ): Promise<Result> {
     return requestExecutor<Result>(this.endpoint, this.token, method, params, signal)
   }
@@ -105,6 +107,15 @@ export class ManagedExecutorRuntime {
       await rm(this.endpoint, { force: true })
     }
   }
+}
+
+export function executorRequestTimeoutMs(method: string): number {
+  const preparesPython =
+    method === 'executor.plugin_auth.migrate' ||
+    method === 'executor.plugin_auth.run' ||
+    method === 'runtime.connections.cli' ||
+    method.startsWith('runtime.local_connector_auth.')
+  return preparesPython ? 21 * 60_000 + 5_000 : 75_000
 }
 
 export function requestExecutor<Result>(
@@ -213,7 +224,7 @@ export function prepareManagedExecutorEnvironment(
   const nativeCodexHome = resolveNativeCodexHome(options.environment, codexHome)
   if (nativeCodexHome) {
     if (isCodexSubscriptionEnabled(options.environment)) {
-      prepareCodexAuth(nativeCodexHome, codexHome)
+      prepareCodexAuth(nativeCodexHome, codexHome, options.environment.WEWORK_AI_VERIFY_AUTH_OWNER)
     } else {
       removeCodexAuthLink(nativeCodexHome, codexHome)
     }
@@ -264,7 +275,11 @@ function isCodexSubscriptionEnabled(environment: NodeJS.ProcessEnv): boolean {
 // path can distinguish its own copy/link from a user-managed auth file.
 const MANAGED_AUTH_MARKER = '.wework-managed-auth'
 
-function prepareCodexAuth(nativeCodexHome: string, managedCodexHome: string): void {
+function prepareCodexAuth(
+  nativeCodexHome: string,
+  managedCodexHome: string,
+  ownerId?: string
+): void {
   const source = join(nativeCodexHome, 'auth.json')
   const target = join(managedCodexHome, 'auth.json')
   mkdirSync(managedCodexHome, { recursive: true, mode: 0o700 })
@@ -288,7 +303,7 @@ function prepareCodexAuth(nativeCodexHome: string, managedCodexHome: string): vo
   } else {
     symlinkSync(source, target)
   }
-  writeManagedAuthMarker(managedCodexHome)
+  writeManagedAuthMarker(managedCodexHome, ownerId)
 }
 
 // Removes a wework-managed Codex auth when the subscription is disabled. On
@@ -319,15 +334,6 @@ function removeCodexAuthLink(nativeCodexHome: string, managedCodexHome: string):
     }
   } catch {
     // Missing or unreadable target is expected when the subscription was never linked.
-  }
-}
-
-function writeManagedAuthMarker(managedCodexHome: string): void {
-  try {
-    writeFileSync(join(managedCodexHome, MANAGED_AUTH_MARKER), '', { mode: 0o600 })
-  } catch {
-    // The marker is best-effort; missing it only means a Windows copy is not
-    // auto-removed on disable, which the user can still clear manually.
   }
 }
 

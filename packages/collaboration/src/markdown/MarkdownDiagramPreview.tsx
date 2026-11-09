@@ -15,6 +15,7 @@ import type { DiagramArtifact } from './diagramArtifact'
 interface MarkdownDiagramPreviewProps {
   code: string
   language: string
+  sourceLine?: number
 }
 
 const FOCUSABLE_SELECTOR = [
@@ -26,7 +27,11 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ')
 
-export function MarkdownDiagramPreview({ code, language }: MarkdownDiagramPreviewProps) {
+export function MarkdownDiagramPreview({
+  code,
+  language,
+  sourceLine,
+}: MarkdownDiagramPreviewProps) {
   const portalTheme = useCollaborationPortalTheme()
   const documentTheme = useDocumentTheme()
   const { translate: t, theme, plantumlServerUrl } = useMarkdownServices()
@@ -115,6 +120,7 @@ export function MarkdownDiagramPreview({ code, language }: MarkdownDiagramPrevie
   const preview = (
     <section
       data-testid="assistant-diagram-preview"
+      data-source-line={sourceLine}
       data-language={diagramType}
       data-diagram-status={!renderViewer ? 'idle' : failed ? 'error' : ready ? 'ready' : 'loading'}
       data-scroll-anchor

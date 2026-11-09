@@ -155,10 +155,12 @@ function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification' ||
+    checkpoint === 'stand-in-profile-settings' ||
+    checkpoint === 'stand-in-git' ||
     checkpoint.startsWith('human-interactions')
   ) {
-    // These checks present native auxiliary windows and must observe them as
-    // visible. macOS background mode prohibits activation and hides the app.
+    // Native windows and keyboard input need foreground activation.
+    // macOS background mode prohibits activation and hides the app.
     // Assignment notification also verifies tag commits through native focus loss.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }

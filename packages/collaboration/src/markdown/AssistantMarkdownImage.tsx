@@ -9,9 +9,11 @@ import {
 export function AssistantMarkdownImage({
   src,
   alt,
+  sourceLine,
 }: {
   src?: string | Blob;
   alt?: string;
+  sourceLine?: number;
 }) {
   const { fetchAttachmentBlob, readLocalFile } = useMarkdownServices();
   const rawSrc = typeof src === "string" ? src.trim() : "";
@@ -123,6 +125,7 @@ export function AssistantMarkdownImage({
     <img
       data-testid="assistant-markdown-image"
       data-scroll-anchor
+      data-source-line={sourceLine}
       src={resolvedSrc}
       alt={alt || ""}
       className="my-2 block max-h-[360px] max-w-full rounded-xl border border-border bg-base object-contain"

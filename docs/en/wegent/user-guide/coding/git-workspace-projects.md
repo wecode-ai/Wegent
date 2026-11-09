@@ -89,6 +89,8 @@ While the task is queued, its task record contains the deterministic planned pat
 
 ## Reference Files, Folders, and Capabilities in the Composer
 
+After selecting **Set goal**, the goal-mode tag stays with the current conversation draft. Switching to another conversation and back within the same workspace tab restores the tag, even before any text is entered; other conversations do not inherit this selection. Moving the workspace tab to another window or returning it to the main window transfers goal mode together with the draft. Cancelling goal mode preserves the draft text, and returning to the conversation does not enable goal mode again.
+
 Type `@` in the Wework composer to open the add menu. The menu can set a goal, enable plan mode, or reference skills and apps available to the selected model. Continue typing after `@` to search files and folders in the current task workspace. Selecting a result turns it into a blue tag that preserves the original casing of its file name and path.
 
 Select **Files and folders** to open the native system picker. The macOS desktop app supports selecting multiple files and folders at once, and each selected path becomes its own blue tag. When the message is sent, Wework restores each tag to its real path for Codex, so the reference both identifies the intended context and lets Codex read the full content when needed. Removing a tag does not delete the file from disk.

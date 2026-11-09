@@ -335,10 +335,7 @@ async function removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs)
     timeoutMs: uiTimeoutMs,
   })
   await control.command('click', `[data-testid="smart-app-actions-${id}"]`)
-  await control.command('waitFor', `[data-testid="smart-app-remove-local-${id}"]`, {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('click', `[data-testid="smart-app-remove-local-${id}"]`)
+  await control.command('clickWhenEnabled', `[data-testid="smart-app-remove-local-${id}"]`)
   await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]', {
     timeoutMs: uiTimeoutMs,
   })

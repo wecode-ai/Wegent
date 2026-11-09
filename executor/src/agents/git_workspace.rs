@@ -432,8 +432,16 @@ async fn clone_repo(
         .wire_error());
     }
 
-    let auth_environment = crate::local::git_access::noninteractive_environment(
+    let mut auth_environment = crate::local::git_access::noninteractive_environment(
         &auth_environment.into_iter().collect(),
+    );
+    auth_environment.insert(
+        "GIT_HTTP_LOW_SPEED_LIMIT".into(),
+        git_http_low_speed_limit().to_string(),
+    );
+    auth_environment.insert(
+        "GIT_HTTP_LOW_SPEED_TIME".into(),
+        git_http_low_speed_time_seconds().to_string(),
     );
     crate::local::git_access::preflight(
         git_url,
@@ -458,15 +466,6 @@ async fn clone_repo(
     command.arg(git_url).arg(project_path);
     command.envs(auth_environment);
     command
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env(
-            "GIT_HTTP_LOW_SPEED_LIMIT",
-            git_http_low_speed_limit().to_string(),
-        )
-        .env(
-            "GIT_HTTP_LOW_SPEED_TIME",
-            git_http_low_speed_time_seconds().to_string(),
-        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);

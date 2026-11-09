@@ -31,7 +31,8 @@ export const conversationMessages: Record<
       "在下方输入问题、粘贴上下文或添加附件，WeWork 会在这里展示回复。",
     "conversation.workbench.loading_older_messages": "正在加载...",
     "conversation.workbench.load_older_messages": "加载更早记录",
-    "conversation.workbench.load_older_messages_failed": "加载更早记录失败，点击重试",
+    "conversation.workbench.load_older_messages_failed":
+      "加载更早记录失败，点击重试",
     "conversation.workbench.code_comment_count": "{{count}} 个评论",
     "conversation.workbench.goal_chip": "目标",
     "conversation.user_message.collapse": "收起",
@@ -285,6 +286,7 @@ export const conversationMessages: Record<
     "conversation.request_user_input.approval_title": "需要审批",
     "conversation.request_user_input.asked_count": "已询问 {{count}} 个问题",
     "conversation.request_user_input.custom_placeholder": "输入你的回答",
+    "conversation.request_user_input.collapse": "收起",
     "conversation.request_user_input.ignore": "取消",
     "conversation.request_user_input.submit": "提交",
     "conversation.subagent.active_count": "进行中 · {{count}}",
@@ -371,6 +373,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.wait_done": "等待工具结果",
     "conversation.tool_activity.wait_error": "等待工具结果失败",
     "conversation.tool_activity.wait_running": "等待工具结果",
+    "conversation.workbench.fill_selection_to_answer": "填入回答",
     "conversation.workbench.add_selection_to_conversation": "添加到对话",
     "conversation.workbench.ask_selection_in_sidebar": "在侧边栏中提问",
     "conversation.file_changes.editing_files": "正在编辑 {{count}} 个文件",
@@ -399,8 +402,6 @@ export const conversationMessages: Record<
     "conversation.file_changes.commit_label": "提交",
     "conversation.file_changes.branch_label": "分支",
     "conversation.file_changes.branch_unknown": "当前工作区",
-    "conversation.file_changes.large_diff_single_file_notice":
-      "此差异较大，每次仅显示一个文件",
     "conversation.file_changes.file_list_label": "变更文件",
     "conversation.file_changes.file_search_placeholder": "筛选文件...",
     "conversation.file_changes.file_search_empty": "没有匹配的文件",
@@ -440,7 +441,8 @@ export const conversationMessages: Record<
       "Ask a question, paste context, or add attachments below. WeWork responses will appear here.",
     "conversation.workbench.loading_older_messages": "Loading...",
     "conversation.workbench.load_older_messages": "Load older messages",
-    "conversation.workbench.load_older_messages_failed": "Could not load older messages. Retry",
+    "conversation.workbench.load_older_messages_failed":
+      "Could not load older messages. Retry",
     "conversation.workbench.code_comment_count": "{{count}} comments",
     "conversation.workbench.goal_chip": "Goal",
     "conversation.user_message.collapse": "Collapse",
@@ -711,6 +713,7 @@ export const conversationMessages: Record<
     "conversation.request_user_input.asked_count":
       "Asked {{count}} question(s)",
     "conversation.request_user_input.custom_placeholder": "Type your answer",
+    "conversation.request_user_input.collapse": "Collapse",
     "conversation.request_user_input.ignore": "Cancel",
     "conversation.request_user_input.submit": "Submit",
     "conversation.subagent.active_count": "Active · {{count}}",
@@ -806,6 +809,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.wait_done": "Waited for tool result",
     "conversation.tool_activity.wait_error": "Failed waiting for tool result",
     "conversation.tool_activity.wait_running": "Wait for tool result",
+    "conversation.workbench.fill_selection_to_answer": "Fill answer",
     "conversation.workbench.add_selection_to_conversation":
       "Add to conversation",
     "conversation.workbench.ask_selection_in_sidebar": "Ask in sidebar",
@@ -837,8 +841,6 @@ export const conversationMessages: Record<
     "conversation.file_changes.commit_label": "Commit",
     "conversation.file_changes.branch_label": "Branch",
     "conversation.file_changes.branch_unknown": "Current workspace",
-    "conversation.file_changes.large_diff_single_file_notice":
-      "This diff is large, so only one file is shown at a time",
     "conversation.file_changes.file_list_label": "Changed files",
     "conversation.file_changes.file_search_placeholder": "Filter files...",
     "conversation.file_changes.file_search_empty": "No matching files",

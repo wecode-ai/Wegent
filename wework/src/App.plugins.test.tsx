@@ -808,10 +808,14 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   },
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => workbenchValue,
-  useWorkbenchPaneContext: () => workbenchValue,
-}))
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/features/workbench/useWorkbench')>()
+  return {
+    ...actual,
+    useWorkbench: () => workbenchValue,
+    useWorkbenchPaneContext: () => workbenchValue,
+  }
+})
 
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: () => mockViewport.isMobile,

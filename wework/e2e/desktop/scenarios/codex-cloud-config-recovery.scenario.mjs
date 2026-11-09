@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
+import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -18,6 +19,34 @@ const OFFICIAL_MODEL = 'gpt-5.5'
 // Cold enterprise configuration retries and intentional desktop restarts are
 // slow operations; ordinary UI actions retain the shared ten-second timeout.
 const RECOVERY_TIMEOUT_MS = 60_000
+
+async function preparePluginSyncFixture(resultDir) {
+  const pluginName = 'cloud-config-auth-probe'
+  const root = join(resultDir, 'cloud-config-marketplace')
+  const manifestDirectory = join(root, '.agents', 'plugins')
+  const pluginDirectory = join(root, 'plugins', pluginName, '.codex-plugin')
+  await mkdir(manifestDirectory, { recursive: true })
+  await mkdir(pluginDirectory, { recursive: true })
+  const marketplacePath = join(manifestDirectory, 'marketplace.json')
+  await writeFile(
+    marketplacePath,
+    JSON.stringify({
+      name: 'wework-personal',
+      plugins: [
+        {
+          name: pluginName,
+          source: { source: 'local', path: `plugins/${pluginName}` },
+          policy: { installation: 'INSTALLED_BY_DEFAULT' },
+        },
+      ],
+    })
+  )
+  await writeFile(
+    join(pluginDirectory, 'plugin.json'),
+    JSON.stringify({ name: pluginName, version: '1.0.0' })
+  )
+  return { marketplacePath, pluginName }
+}
 
 export function createDesktopScenario({ resultDir, workspacePath }) {
   const model = createCloudConfigModelService()
@@ -141,20 +170,16 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         assert.equal(result.restarted, true, JSON.stringify(result))
         return { offset, failureCount }
       }
-      const assertDegraded = async ({ offset, failureCount }, expectedMethod) => {
+      const assertDegraded = async ({ offset, failureCount }, expected) => {
         const log = await waitForLogPattern(
           logPath,
           /codex auth degraded after cloud config failure/,
           { fromOffset: offset, timeoutMs: RECOVERY_TIMEOUT_MS }
         )
         assert.ok(model.diagnostics().bundleFailures > failureCount)
-        const entry = log
-          .slice(offset)
-          .split('\n')
-          .find(line => line.includes('codex auth degraded'))
-        assert.ok(entry?.includes(`method=${expectedMethod}`), entry)
+        const recoveryMethod = assertCloudConfigRecovery(log.slice(offset), expected)
         evidence.push({
-          recoveryMethod: expectedMethod,
+          recoveryMethod,
           bundleFailures: model.diagnostics().bundleFailures,
         })
       }
@@ -190,10 +215,19 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       })
       assert.equal(sent.accepted, true, JSON.stringify(sent))
       const continued = await completed(oldTask, `${PREFIX}_FOLLOWUP`)
-      await assertDegraded(resumeFault, 'thread/resume')
+      await assertDegraded(resumeFault, { method: 'thread/resume' })
       assert.equal((await task(oldTask)).threadId, oldThread)
       assert.ok(continued.turns.length > original.turns.length)
       assert.ok(JSON.stringify(continued.messages).includes(`${PREFIX}_OLD_COMPLETE`))
+
+      // A real bundled-plugin change must restart the idle process without
+      // restoring the subscription auth whose cloud configuration is still down.
+      const pluginSync = await rpc(
+        'runtime.codex.plugin.sync_bundled',
+        await preparePluginSyncFixture(resultDir)
+      )
+      assert.deepEqual(pluginSync, { status: 'ready', updated: true })
+      evidence.push({ pluginSync })
 
       model.plan(`${PREFIX}_NEW_OFFLINE`)
       const offlineTask = await create('NEW_OFFLINE')
@@ -248,14 +282,14 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       // Exercise the primary config/read and thread/start recovery entry points.
       const configFault = await startFault()
       assert.ok((await native('config/read', { includeLayers: true, cwd: null })).config)
-      await assertDegraded(configFault, 'config/read')
+      await assertDegraded(configFault, { method: 'config/read' })
       assert.ok((await rpc('runtime.codex.models.list', { includeHidden: true })).data.length > 0)
       await restoreOfficial('OFFICIAL_BEFORE_START')
       const startFaultState = await startFault()
       model.plan(`${PREFIX}_NEW_RECOVERED`)
       const newTask = await create('NEW_RECOVERED')
       await completed(newTask, `${PREFIX}_NEW_RECOVERED`)
-      await assertDegraded(startFaultState, 'thread/start')
+      await assertDegraded(startFaultState, { method: 'thread/start' })
 
       await restoreOfficial('OFFICIAL_BEFORE_GOAL')
       const goalMarker = `${PREFIX}_GOAL`
@@ -282,6 +316,8 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       )
       const beforeGoal = (await rpc('runtime.tasks.goal.get', { address: address(goalTask) })).goal
       assert.equal(beforeGoal.status, 'active')
+      const goalThread = (await task(goalTask)).threadId
+      assert.equal(typeof goalThread, 'string')
       const goalFailureCount = await model.failBundle()
       const goalOffset = (await readFile(logPath, 'utf8')).length
       assert.equal(typeof restartDesktopApp, 'function')
@@ -292,7 +328,13 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       assert.equal(afterGoal.status, 'complete')
       assert.equal(afterGoal.objective, beforeGoal.objective)
       assert.equal(afterGoal.createdAt, beforeGoal.createdAt)
-      await assertDegraded({ offset: goalOffset, failureCount: goalFailureCount }, 'thread/resume')
+      assert.equal((await task(goalTask)).threadId, goalThread)
+      // Startup config reads may recover auth before the persisted Goal resumes.
+      // Require both real degradation and the Goal's exact native thread recovery.
+      await assertDegraded(
+        { offset: goalOffset, failureCount: goalFailureCount },
+        { taskId: goalTask, threadId: goalThread }
+      )
 
       // A second complete desktop restart must reconstruct the final reply and
       // stopped Goal from disk without starting another model continuation.

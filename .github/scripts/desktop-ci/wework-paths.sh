@@ -76,6 +76,16 @@ classify_wework_path() {
   esac
 
   case "$path" in
+    wework/e2e/desktop/scenarios/python-runtime.scenario.mjs | \
+      wework/e2e/desktop/modules/managed-python.mjs | \
+      wework/electron/src/runtime/python-runtime* | \
+      wework/src/desktop/executionEnvironments* | \
+      wework/src/components/settings/ExecutionEnvironmentsSettingsPage*)
+      select_target "core:python-runtime"
+      select_target "core:plugin-development"
+      select_target "cloud:plugin-account-auth-password"
+      return
+      ;;
     wework/src/features/workbench/runtimeConversationCache* | \
       wework/src/components/layout/useWorkbenchPaneSession* | \
       wework/src/features/workbench/WorkbenchProvider* | \
@@ -101,6 +111,7 @@ classify_wework_path() {
       wework/src/desktop/systemProxy* | \
       wework/src/api/local/runtimeModelProxy* | \
       wework/src/api/local/codexProviderProxy* | \
+      wework/e2e/desktop/modules/codex-startup-history.mjs | \
       wework/e2e/desktop/scenarios/system-pac.scenario.mjs | \
       wework/e2e/desktop/scenarios/system-proxy.scenario.mjs)
       select_target "core:system-proxy"

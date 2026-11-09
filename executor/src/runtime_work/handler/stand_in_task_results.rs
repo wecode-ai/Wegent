@@ -22,11 +22,18 @@ impl RuntimeWorkRpcHandler {
                 && link.interaction_status.is_none()
                 && matches!(status, "done" | "failed" | "cancelled")
             {
+                let generation = completion_generation(&link.runtime_handle);
+                let recorded = &link.runtime_handle["standInResult"];
+                // Archive/cancel reconciliation can confirm the same terminal
+                // execution again. Its observation time is not a new result.
+                if recorded["generation"] == generation && recorded["status"] == status {
+                    return;
+                }
                 link.runtime_handle["standInResult"] = json!({
                     "status":status,"completedAt":link.completed_at.unwrap_or_else(now_ms),
                     "turnId":link.runtime_handle["lastTurnId"],
                     "errorCode":link.runtime_handle["lastErrorCode"],
-                    "generation":completion_generation(&link.runtime_handle)
+                    "generation":generation
                 });
             }
         });
@@ -85,6 +92,12 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn stand_in_result_delivery(&self, child: &RuntimeTaskLink) -> Option<Value> {
+        let origin = &child.runtime_handle["origin"];
+        // Review results remain in their original task. An ordinary parent turn
+        // would restore tools outside the unattended memory-review allowlist.
+        if origin["type"] == "stand_in_schedule" && origin["memoryReview"] == true {
+            return None;
+        }
         let mut recorded = child.clone();
         if let Some(status) = child.runtime_handle["standInResult"]["status"].as_str() {
             // Persisted completion belongs to one accepted execution. A newer
@@ -236,6 +249,69 @@ mod tests {
         (root, handler, path)
     }
 
+    #[tokio::test]
+    async fn memory_review_completion_never_starts_an_unrestricted_parent_turn() {
+        let (_root, mut handler, path) = completion_fixture();
+        for status in ["done", "failed", "cancelled"] {
+            handler.store.update_task("child", |child| {
+                child.status = status.into();
+                child.completed_at = Some(123);
+                child.runtime_handle["origin"] = json!({
+                    "type":"stand_in_schedule","deviceId":"mac","userId":7
+                });
+                child.runtime_handle["executionRequest"]["standInReportTo"] =
+                    json!({"userId":7,"taskId":"stand-in-chat-7-primary"});
+            });
+            handler.record_stand_in_completion_outbox("child", status);
+            let ordinary = handler.local_task_link("child").unwrap();
+            assert!(handler.stand_in_result_delivery(&ordinary).is_some());
+
+            handler.store.update_task("child", |child| {
+                child.runtime_handle["origin"]["memoryReview"] = json!(true);
+            });
+            handler.record_stand_in_completion_outbox("child", status);
+            handler.store = RuntimeWorkStore::new(path.clone());
+            let review = handler.local_task_link("child").unwrap();
+            assert_eq!(review.runtime_handle["standInResult"]["status"], status);
+            assert!(handler.stand_in_result_delivery(&review).is_none());
+            handler.flush_stand_in_task_results().await;
+            assert!(handler.command_journal.lock().unwrap().is_empty());
+            assert!(handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .queued_turns
+                .is_empty());
+            assert_eq!(handler.local_task_links(true).len(), 1);
+        }
+    }
+
+    #[test]
+    fn repeated_terminal_reconciliation_preserves_acknowledged_completion() {
+        for status in ["done", "failed", "cancelled"] {
+            let (_root, mut handler, path) = completion_fixture();
+            handler.store.update_task("child", |link| {
+                link.status = status.into();
+                link.completed_at = Some(123);
+                link.runtime_handle["lastTurnId"] = json!("same-native-turn");
+            });
+            handler.record_stand_in_completion_outbox("child", status);
+            let child = handler.local_task_link("child").unwrap();
+            let completion = child.runtime_handle["standInResult"].clone();
+            let receipt = handler.stand_in_result_delivery(&child).unwrap()["commandId"].clone();
+            handler.store.update_task("child", |link| {
+                link.runtime_handle["standInResultReceipt"] = receipt;
+                // Archiving reconciles the already terminal provider execution.
+                link.completed_at = Some(456);
+            });
+            handler.record_stand_in_completion_outbox("child", status);
+            handler.store = RuntimeWorkStore::new(path);
+            let reconciled = handler.local_task_link("child").unwrap();
+            assert_eq!(reconciled.runtime_handle["standInResult"], completion);
+            assert!(handler.stand_in_result_delivery(&reconciled).is_none());
+        }
+    }
+
     #[test]
     fn completion_outbox_retains_acknowledged_and_forced_cancellation_after_restart() {
         for forced in [false, true] {
@@ -300,6 +376,7 @@ mod tests {
             work: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
             ask_before_act: false,
             coordinator_batch: None,

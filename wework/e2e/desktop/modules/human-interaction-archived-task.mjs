@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import {
   assistantMessage,
@@ -27,7 +28,7 @@ export function handleArchivedTaskInteractionModel(body, response) {
           const tool = selectTool(body, 'request_user_input_async', {
             questions: [{ title: QUESTION }],
           })
-          return functionCall(PROMPT, tool.name, tool.arguments, 1)
+          return selectedToolCall(PROMPT, tool, 1)
         })()
       : [assistantMessage('问题已提出，等待归档测试。')]
   response.end(createSse([responseCreated(PROMPT), ...items, responseCompleted(PROMPT)]))
@@ -71,9 +72,7 @@ export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
   })
   await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
   // Archival changes the inventory signature and can already be refreshing this page.
-  await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-refresh"]`, {
-    timeoutMs,
-  })
+  await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-refresh"]`)
   await control.command('waitFor', `${PAGE} [data-testid="interactions-empty"]`, {
     visible: true,
     timeoutMs,

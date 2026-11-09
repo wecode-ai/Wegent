@@ -1,0 +1,26 @@
+[package]
+name = "wegent-claude-harness"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Claude native process execution, session resume, and stream interpretation"
+
+[dependencies]
+dirs = "6"
+wegent-hooks = { path = "../hooks" }
+wegent-plugin-packages = { path = "../plugin-packages" }
+wegent-multimodal = { path = "../multimodal" }
+wegent-protocol = { path = "../../../shared/rust/protocol" }
+wegent-execution-contracts = { path = "../execution-contracts" }
+wegent-execution-stream = { path = "../execution-stream" }
+wegent-runtime-logging = { path = "../logging" }
+wegent-subprocess = { path = "../subprocess" }
+wegent-native-home = { path = "../native-home" }
+wegent-mcp-runtime = { path = "../mcp-runtime" }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1.48", features = ["io-util", "process", "rt", "sync", "time", "macros"] }
+
+[dev-dependencies]
+wegent-executor-test-support = { path = "../test-support" }
+tempfile = "3.23"

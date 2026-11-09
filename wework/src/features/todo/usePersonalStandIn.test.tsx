@@ -22,9 +22,21 @@ function fixture() {
 }
 
 describe('personal stand-in Executor routing', () => {
+  it('reuses the instance identity without waiting for another runtime discovery', async () => {
+    const { personalGet, services } = fixture()
+    vi.mocked(services.getLocalRuntimeSidebarIdentity!).mockImplementation(
+      () => new Promise(() => {})
+    )
+    const { result } = renderHook(() => usePersonalStandIn(services, 7, 'selected-device', 'mac'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(personalGet).toHaveBeenCalledExactlyOnceWith(7, 'selected-device')
+    expect(services.getLocalRuntimeSidebarIdentity).not.toHaveBeenCalled()
+    expect(result.current.currentDeviceId).toBe('mac')
+  })
+
   it('saves to the Executor that was selected for loading, even with stale stored fields', async () => {
     const { settings, personalGet, personalSave, services } = fixture()
-    const { result } = renderHook(() => usePersonalStandIn(services, 7, 'selected-device', false))
+    const { result } = renderHook(() => usePersonalStandIn(services, 7, 'selected-device'))
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(personalGet).toHaveBeenCalledWith(7, 'selected-device')
     await act(async () => {
@@ -36,7 +48,7 @@ describe('personal stand-in Executor routing', () => {
   it('preserves the draft and reports the Executor rejection', async () => {
     const { personalSave, services } = fixture()
     personalSave.mockRejectedValueOnce(new Error('version conflict'))
-    const { result } = renderHook(() => usePersonalStandIn(services, 7, undefined, false))
+    const { result } = renderHook(() => usePersonalStandIn(services, 7))
     await waitFor(() => expect(result.current.loading).toBe(false))
     act(() => result.current.updateRole('default', role => ({ ...role, prompt: 'Review changes' })))
     await act(async () => {

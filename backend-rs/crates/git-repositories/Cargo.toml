@@ -1,0 +1,26 @@
+[package]
+name = "wegent-git-repositories"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Git provider discovery, cache, refresh workers, and authenticated routes"
+
+[dependencies]
+async-trait = "0.1"
+brz-http = { version = "=0.0.14", features = ["json"] }
+brz-http-server = { version = "=0.0.33", features = ["macros"] }
+brz-json = "=0.0.11"
+brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
+md-5 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+url = "2"
+tracing = "0.1"
+wegent-http-compat = { path = "../http-compat" }
+wegent-identity = { path = "../identity" }
+wegent-network-policy = { path = "../network-policy" }
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }

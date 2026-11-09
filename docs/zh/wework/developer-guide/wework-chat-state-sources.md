@@ -17,6 +17,47 @@ sidebar_position: 18
 侧栏优先级筛选中的显式 `interactionStatus` 也只读取生命周期 Store 的投影；
 任务列表旧快照不能在视图层重新覆盖已经接受的用户回复。
 
+## 单任务刷新与列表开销
+
+Goal 更新、清除和轮次结束后的状态确认只刷新对应执行：存在单任务查询能力时，
+`refreshRuntimeTask` 调用拥有者的 `runtime.tasks.get`，不能为每次事件读取整台设备的
+`runtime.tasks.list`。不存在的任务返回空，读取失败直接传播，不能再用全量列表重试。
+项目授权会话继续保留原有项目读取路径；标题、置顶和督导事件仍优先于请求期间返回的旧快照。
+单任务摘要必须保留已有的 `origin` 与 `changeRequests` 展示上下文，否则状态刷新会移除
+分身通知、处理记录或 PR 关联。执行配置和会话正文仍不得进入该摘要。
+点查询和列表查询复用同一工作区 Git 投影，保留当前分支与远端信息，避免状态刷新移除侧栏 PR 状态。
+
+本地项目 `todos.list` 批量解析历史 runner 绑定，不在逐行映射任务时重复扫描执行记录。
+显式绑定保持不变；单一历史设备补充绑定，多设备保留冲突信息。该读取不写入数据库，
+也不引入索引或数据迁移。`runner_history` 单元测试覆盖大任务集，桌面 `goal-state-sync`
+检查点验证连续 Goal 更新会获得对应任务的真实单任务查询响应。
+
+## 分身逻辑会话与执行会话
+
+主分身、角色聊天和后台统筹保留稳定的 Runtime task ID；原生 Codex
+`threadId` 只是当前执行会话。切换时，在同一个 Runtime 索引更新中保存旧线程的
+`conversationSessions` 边界和新的当前线程，不复制原生消息，也不创建第二份聊天数据库。
+没有分段信息的既有 task 按原线程直接读取，第一次切换时才登记历史分段。
+
+第一阶段不自动轮换、不生成摘要。显式调用已有 `runtime.tasks.send`，传入
+`startNewSession: true`、`expectedThreadId` 及新会话的首条消息；分身 conversation
+入口通过 `options` 传递这两个字段。请求仍使用现有发送锁、命令去重和串行调度。
+正在执行、排队、等待问题或审批、存在活动 Goal，以及当前线程已变化时拒绝切换。
+普通任务不支持这个分身专用选项。调用方负责提供新会话需要的业务上下文。
+
+`runtime.tasks.transcript` 和搜索仍是唯一历史入口。分页游标绑定逻辑 task、原生线程
+和方向，跨分段时继续调用同一个原生历史读取器。消息的 `sessionThreadId` 保留原执行
+归属，响应的 `threadId` 指向当前执行会话。旧分段读取不得恢复原生执行、合并当前
+缓冲区或改变当前生命周期；旧线程的迟到通知不得更新当前分段。已关闭分段不另列为任务。
+业务消息和工作结果始终投递到稳定 task，队列在执行时解析当前线程。
+
+审批和结构化问题保留现有原生线程、轮次与请求绑定，不迁移、不重建，也不能因切换
+获得新的权限。长期记忆仍沿用原有分域、修改和遗忘规则。`stand-in-sessions` 桌面
+检查点使用真实 Electron、Executor 和 Codex，仅模拟模型，覆盖待回答问题阻止切换、
+回答后新上下文、跨段历史与搜索、旧游标、工作结果回报、后续消息及应用重启。
+主分身技术操作沿用自动审查；人工操作审批继续由既有 `stand-in-action-confirmation`
+检查点验证，不为会话分段改写审批策略。
+
 ## 待处理事项的成员与错误清理
 
 归档操作成功后，必须通过共享生命周期 Store 移除任务，再清理发起视图的任务列表。
@@ -426,7 +467,7 @@ executor 的 `RuntimeTaskLink.running` 只存在于当前进程内存和 runtime
 
 Composer 的 `@` 菜单支持显式引用其他 Wework 会话。空查询展示当前 `runtimeWork` 中最近的 5 个会话；输入查询后按标题、项目和工作区路径过滤。当前会话始终排除，避免把正在编写的上下文递归注入自身。
 
-引用在草稿中序列化为 `[$标题](wework-conversation://<encoded RuntimeTaskAddress>)`。这是 Wework 内部 URI，composer 和已发送的用户消息都必须把它渲染为会话引用胶囊，而不是暴露原始 URI。发送前，`useWorkbenchPaneSession` 解析并去重所有引用，使用 `includeFullContent: true` 和 `refresh: true` 加载对应 transcript，并遵循以下边界：
+引用在草稿中序列化为 `[$标题](wework-conversation://<encoded RuntimeTaskAddress>)`。这是 Wework 内部 URI，composer 和已发送的用户消息都必须把它渲染为会话引用胶囊，而不是暴露原始 URI；点击该胶囊会在当前 workbench pane 中打开对应的 Runtime task 会话。Issue 引用（`wework-issue://`）同样可点击打开对应的项目空间条目，项目空间上下文胶囊的标题区域会打开当前 Issue 详情。发送前，`useWorkbenchPaneSession` 解析并去重所有引用，使用 `includeFullContent: true` 和 `refresh: true` 加载对应 transcript，并遵循以下边界：
 
 - 只提取用户消息和已经完成的 assistant 文本；不注入 system、developer、tool、thinking、流式中的 assistant 内容，也不单独读取附件二进制内容。
 - 将引用内容作为 `additionalContext` 中的 `referencedConversations` 应用上下文发送，并明确标注为“不可信背景上下文”。被引用会话中的指令、工具调用或权限声明只能作为数据，不能成为当前会话的可执行指令。
@@ -547,6 +588,7 @@ Electron 聊天中的 assistant Markdown 图片可以引用本机绝对路径或
 - 每条发送成功或进入乐观展示的 user message 都必须保存对应的持久化附件引用，包含首条消息、普通 follow-up 和队列发送。清空 composer 附件只清理当前输入状态，不能让已经发送的附件从消息列表消失；本地 `blob:` 预览地址必须转换为可恢复的本地路径。
 - 右侧工作区只打开一个临时聊天时，默认使用紧凑的 `420px` 面板宽度；打开其他工作区 tab 后恢复通用分栏默认值，用户手动调整的宽度仍然优先。
 - 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该标记控制任务可见性：任务不写入左侧任务列表，也不触发主 pane 导航。新建的多轮侧聊由 executor 在保存的执行请求中设置 `persist_runtime_thread`，使用正常持久化的 Codex 原生线程；任务隐藏与原生线程是否落盘必须分别判断。
+- 当 `sideSource` 没有缓存的会话文件路径时，executor 必须通过 `thread/read(includeTurns=false)` 按原会话 ID 查询元数据，再校验文件中的会话标识。不能扫描默认 `thread/list`：该列表按当前模型 provider 过滤且有数量上限，会把已经持久化的跨 provider 会话误判为尚未落盘。“先聊聊”与普通临时聊天共用这条路径。
 - 新建侧聊的后续消息使用 `thread/resume` 恢复同一个原生线程，因此能力变更导致 Codex app-server 重启后仍能续聊。旧版未持久化的侧聊继续使用 `direct_thread_id`，线程丢失时明确提示新建临时聊天，不能伪造历史或悄悄开启丢失上下文的新线程。正文仍从 executor 的侧聊缓存读取；executor 整体重启后的正文恢复不由此路径保证。
 - 回复预测仅对可恢复的源线程执行 resume/fork；旧版纯内存侧聊返回无建议。预测 fork 和一次性文本生成仍使用原生 ephemeral 线程，不能继承多轮侧聊的持久化标记。
 - 能力同步按实际生效内容判定变化。相同内容重复同步不能增加 capability revision；真实变更以及部分失败后已生效的变更必须使下一轮加载新能力，过期请求或成功回滚不能凭同步次数触发重启。
@@ -577,6 +619,23 @@ Electron 聊天中的 assistant Markdown 图片可以引用本机绝对路径或
 桌面工作台最多缓存 20 个普通 pane，使用户在并行任务之间切换时保留消息、输入草稿和局部 UI 状态。超出上限后按最近使用顺序淘汰非活跃 pane；正在运行的任务和已固定终端的 pane 不计入普通缓存上限，并保持挂载直到任务结束或终端解除固定。维护此边界时应继续复用 `CachedWorkbenchPaneStack` 的 LRU 与固定机制，不能在布局层增加第二套 pane 缓存。
 
 消息区按 `conversationKey` 保存每个任务的阅读位置。任务切换时，恢复流程会在布局稳定窗口内重复对齐已保存的消息锚点；这段时间由程序触发的 `scroll` 事件不能覆盖快照。用户主动滚轮或触摸滚动时则应立即退出恢复状态。修改这条链路时，必须覆盖“滚到长回复中部 → 切到另一任务 → 切回原任务”的真实桌面 E2E，并保留切换前、切换后和恢复后的截图。
+
+## 看板刷新边界
+
+“我的任务”和本地项目看板只按相关任务的执行状态签名刷新持久数据，不能依赖
+整个 `RuntimeTaskLifecycleStore` 的版本、快照对象或每次重建的任务集合。
+原生执行版本、Goal 用量、时间戳等元数据变化不等于 Issue 状态变化；无关任务
+也不能使当前项目重新读取看板。本地项目复用云端项目已有的项目范围状态签名。
+
+Runtime 清单变化导致的可见成员筛选属于展示派生逻辑，统一从完整看板快照与
+当前绑定计算，不能在读取阶段再过滤一次并把 Runtime 清单加入请求依赖。
+实际运行、结束、绑定变化和既有轮询仍沿用原有刷新与持久化链路。
+项目负责人显式发布评论成功后，必须通知所属项目刷新；不能依赖其私有会话的
+生命周期变化来偶然更新共享看板。发布失败或写入尚未完成时不能发送成功刷新通知。
+
+`runtime-task-queue` 桌面 E2E 使用真实 Runtime Goal 更新产生新原生版本，观察
+本地项目和“我的任务”没有额外 `todos.list`，再验证真实完成仍刷新并持久化到
+`in_review`。只模拟模型响应，不伪造 Runtime 事件或数据库状态。
 
 ## 项目任务状态同步
 

@@ -358,6 +358,7 @@ class ExternalLoopItemProvider:
                 assignee_id=agent.id,
                 assignee_name=agent.title or agent.name,
                 user_id=user_id,
+                automation_context=automation_context,
             )
             self._create_execution_for_agent(
                 db,
@@ -382,6 +383,7 @@ class ExternalLoopItemProvider:
                 assignee_id=str(team.id),
                 assignee_name=team.name,
                 user_id=user_id,
+                automation_context=automation_context,
             )
             loop_item_execution_service.create_for_team_assignment(
                 db,
@@ -410,6 +412,7 @@ class ExternalLoopItemProvider:
                 assignee_id=str(group["id"]),
                 assignee_name=str(group["name"]),
                 user_id=user_id,
+                automation_context=automation_context,
             )
             self._dispatch_collaboration_group(
                 db,
@@ -1462,6 +1465,7 @@ class ExternalLoopItemProvider:
             ),
             assignee_name=assignee_name,
             user_id=user_id,
+            automation_context=automation_context,
         )
         if group is not None:
             self._dispatch_collaboration_group(
@@ -1497,6 +1501,7 @@ class ExternalLoopItemProvider:
             workflow_step=values.workflow_step,
             notify=values.notify_assignee,
             trigger=values.trigger,
+            automation_context=automation_context,
         )
         if agent is not None and assignment_created:
             self._create_execution_for_agent(
@@ -1574,6 +1579,7 @@ class ExternalLoopItemProvider:
         assignee_id: str,
         assignee_name: str | None,
         user_id: int,
+        automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
         """Create or refresh the local index row of an assigned external task.
 
@@ -1602,7 +1608,12 @@ class ExternalLoopItemProvider:
             # Production MySQL stores unset user assignees as 0, not NULL.
             row.assignee_user_id = 0
             loop_item_service.record_assignment_change(
-                metadata, user_id, "agent", assignee_id, assignee_name
+                metadata,
+                user_id,
+                "agent",
+                assignee_id,
+                assignee_name,
+                automation_context=automation_context,
             )
         elif assignee_type == "team":
             metadata.pop("collaboration_group", None)
@@ -1611,7 +1622,12 @@ class ExternalLoopItemProvider:
             row.assignee_agent_id = ""
             row.assignee_team_id = int(assignee_id)
             loop_item_service.record_assignment_change(
-                metadata, user_id, "team", assignee_id, assignee_name
+                metadata,
+                user_id,
+                "team",
+                assignee_id,
+                assignee_name,
+                automation_context=automation_context,
             )
         elif assignee_type == "group":
             previous_group = metadata.get("collaboration_group")
@@ -1630,7 +1646,12 @@ class ExternalLoopItemProvider:
                 "name": assignee_name or "",
             }
             loop_item_service.record_assignment_change(
-                metadata, user_id, "group", assignee_id, assignee_name
+                metadata,
+                user_id,
+                "group",
+                assignee_id,
+                assignee_name,
+                automation_context=automation_context,
             )
         else:
             metadata.pop("collaboration_group", None)
@@ -1639,7 +1660,12 @@ class ExternalLoopItemProvider:
             row.assignee_agent_id = ""
             row.assignee_team_id = None
             loop_item_service.record_assignment_change(
-                metadata, user_id, "user", assignee_id or None, assignee_name
+                metadata,
+                user_id,
+                "user",
+                assignee_id or None,
+                assignee_name,
+                automation_context=automation_context,
             )
         row.metadata_json = metadata
         db.flush()

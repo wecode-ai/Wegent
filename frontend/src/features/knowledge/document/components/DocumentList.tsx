@@ -1127,7 +1127,7 @@ export function DocumentList({
   return (
     <div className={sourceWorkspace ? 'space-y-3' : 'space-y-4'}>
       {/* Header - Wegent style */}
-      <div className={`flex items-center gap-3 ${sourceWorkspace ? 'lg:pr-10' : ''}`}>
+      <div className={`flex flex-wrap items-center gap-3 ${sourceWorkspace ? 'lg:pr-10' : ''}`}>
         {onBack && (
           <button
             onClick={onBack}
@@ -1139,7 +1139,7 @@ export function DocumentList({
         {/* Type icon - based on current kb type */}
         <KnowledgeBaseIcon kbType={knowledgeBase.kb_type} className="w-5 h-5 flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {/* Group name prefix with click handler */}
             {groupInfo && (
               <>
@@ -1153,7 +1153,7 @@ export function DocumentList({
                 <span className="text-text-muted">/</span>
               </>
             )}
-            <h2 className="text-base font-medium text-text-primary truncate">
+            <h2 className="truncate text-base font-medium text-text-primary max-md:order-first max-md:w-full max-md:whitespace-normal max-md:break-words">
               {knowledgeBase.name}
             </h2>
             {/* Summary tooltip - keep visible when manual summary exists after AI failure */}
@@ -1246,7 +1246,7 @@ export function DocumentList({
             {isExpandAllView ? t('document.tree.layeredNav') : t('document.tree.expandAll')}
           </Button>
         )}
-        {headerActions}
+        {headerActions && <div className="w-full md:w-auto">{headerActions}</div>}
       </div>
       {canManageAllDocuments && !sourceWorkspace && (
         <EditKnowledgeBaseSummaryDialog {...editorDialogProps} />

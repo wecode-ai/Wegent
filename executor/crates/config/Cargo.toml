@@ -1,0 +1,22 @@
+[package]
+name = "wegent-runtime-config"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Device, Executor Home, and workspace ownership configuration"
+
+[dependencies]
+libc = "0.2"
+uuid = { version = "1", features = ["v4", "serde"] }
+dirs = "5"
+fs2 = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tempfile = "3.23"
+url = "2"
+wegent-filesystem = { path = "../../../shared/rust/filesystem" }
+
+[dev-dependencies]
+wegent-executor-test-support = { path = "../test-support" }

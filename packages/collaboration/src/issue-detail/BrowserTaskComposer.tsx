@@ -379,7 +379,7 @@ export function BrowserTaskComposer({
         renderToolbar={toolbarProps => (
           <ComposerToolbar
             translate={t}
-            renderFeatureMenus={() => (
+            renderFeatureMenus={(_compact, permissionSelector) => (
               <>
                 {runtime.quickPhrases ? (
                   <BrowserQuickPhraseMenu
@@ -413,6 +413,7 @@ export function BrowserTaskComposer({
                     }}
                   />
                 ) : null}
+                {permissionSelector}
                 {pluginCatalog && (
                   <PluginPickerMenu
                     key={`plugins:${address.deviceId}:${address.taskId}`}

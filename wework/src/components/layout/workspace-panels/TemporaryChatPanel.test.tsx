@@ -26,6 +26,11 @@ import type {
 } from '@/types/api'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import {
+  clearWorkbenchWorkspaceLaunch,
+  consumeWorkbenchWorkspaceLaunch,
+} from '@/features/workbench/workspaceLaunchRequest'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const attachment: Attachment = {
   id: -1,
@@ -57,6 +62,7 @@ const mocks = vi.hoisted(() => ({
       },
   catalogBindings: new Map<string, ComposerCatalogBinding>(),
   readCatalog: vi.fn(),
+  readTask: vi.fn(),
   mainListApps: vi.fn(),
   usageHandlers: [] as Array<{ onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }>,
   resetAttachments: vi.fn(),
@@ -136,7 +142,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     }>
     onRetryFailedMessage?: (message: unknown) => void
     onSwitchModelForFailedMessage?: (message: unknown) => void
-    onOpenWorkspaceFile?: (path: string) => void
+    onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
     onOpenFileChangesReview?: () => void
     onOpenAssistantPlan?: () => void
     onRequestUserInputSubmit?: (response: {
@@ -208,7 +214,9 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
         <button
           type="button"
           data-testid="mock-open-file"
-          onClick={() => onOpenWorkspaceFile('/tmp/workspace/file.ts')}
+          onClick={() =>
+            onOpenWorkspaceFile('cart-fixture/cart-review.md', { lineStart: 3, lineEnd: 7 })
+          }
         >
           打开文件
         </button>
@@ -369,6 +377,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     services: {
+      standInApi: { readTask: mocks.readTask },
       deviceApi: { readWorkspaceFileChunk: vi.fn() },
       composerCatalogApi: { readCatalog: mocks.readCatalog },
     },
@@ -511,11 +520,13 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 
 describe('TemporaryChatPanel', () => {
   beforeEach(() => {
+    clearWorkbenchWorkspaceLaunch()
     mocks.renderToolBlocks = false
     mocks.inputHost = undefined
     mocks.catalogBindings.clear()
     mocks.mainListApps.mockClear()
     mocks.readCatalog.mockReset()
+    mocks.readTask.mockReset()
     mocks.readCatalog.mockImplementation(async (target: RuntimeTaskAddress) => ({
       taskId: target.taskId,
       workspacePath: '/side',
@@ -567,6 +578,74 @@ describe('TemporaryChatPanel', () => {
       if (value) mocks.inputByScope[scope] = value
       else delete mocks.inputByScope[scope]
     })
+  })
+
+  it('preserves the first file action and line range while navigating to its owning task', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    const onOpenRuntimeTask = vi.fn(async () => {
+      expect(
+        consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, 'wrong-task')
+      ).toBeNull()
+      expect(
+        consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+      ).toEqual({
+        taskId: address.taskId,
+        openFile: {
+          path: 'cart-fixture/cart-review.md',
+          options: { lineStart: 3, lineEnd: 7 },
+        },
+      })
+    })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="primary-deliverable"
+        initialAddress={address}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+    await waitFor(() => expect(onOpenRuntimeTask).toHaveBeenCalledExactlyOnceWith(address))
+  })
+
+  it('does not guess a workspace or attach another task metadata when opening a file', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.readTask.mockResolvedValue({ success: true, task: { ...address, taskId: 'other' } })
+    const onOpenRuntimeTask = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="unresolved-deliverable"
+        initialAddress={{ deviceId: address.deviceId, taskId: address.taskId }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+    await waitFor(() =>
+      expect(mocks.readTask).toHaveBeenCalledWith(address.deviceId, address.taskId)
+    )
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(
+      consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+    ).toBeNull()
   })
 
   it('places contextual configuration decisions beside the composer and hides them when inactive', () => {
@@ -1340,7 +1419,8 @@ describe('TemporaryChatPanel', () => {
         address,
         message: RUNTIME_RETRY_CONTINUATION_PROMPT,
         modelId: 'gpt-5.6-codex',
-      })
+      }),
+      expect.any(Object)
     )
 
     await userEvent.click(screen.getByTestId('mock-submit-input'))
@@ -1402,9 +1482,95 @@ describe('TemporaryChatPanel', () => {
       'original-source'
     )
     await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
-    expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
-    expect(screen.queryByText('Older decision?')).not.toBeInTheDocument()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('request-user-input-expand')).toHaveTextContent('Older decision?')
+    expect(screen.getByTestId('request-user-input-custom-old')).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('request-user-input-expand'))
+    expect(screen.getByTestId('request-user-input-custom-old')).toBeVisible()
   })
+
+  it.each(['accepted', 'rejected', 'queued', 'pumped-queued'] as const)(
+    'retains a folded question until the side composer message is delivered (%s)',
+    async outcome => {
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      mocks.busy = outcome === 'pumped-queued'
+      const question = {
+        kind: 'request_user_input' as const,
+        itemId: 'held-question',
+        delivery: 'async',
+        questions: [{ id: 'audience', question: 'Who receives this?', is_other: true }],
+      }
+      mocks.conversationMessages = [
+        {
+          id: 'held-question-message',
+          role: 'assistant',
+          content: '',
+          status: 'done',
+          blocks: [
+            {
+              id: 'held-block',
+              type: 'tool',
+              toolName: 'request_user_input_async',
+              status: 'done',
+              renderPayload: question,
+            },
+          ],
+        },
+      ] as typeof mocks.conversationMessages
+      const panel = () => (
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          initialAddress={address}
+          instanceId="held-question"
+        />
+      )
+      const { rerender } = render(panel())
+      await userEvent.type(
+        screen.getByTestId('request-user-input-custom-audience'),
+        'Saved recipients'
+      )
+      await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+      let finish!: () => void
+      mocks.sendRuntimePaneMessage.mockImplementationOnce(
+        (...args: unknown[]) =>
+          new Promise<boolean>(resolve => {
+            const options = args[1] as { onQueued?: (response: { queuePosition: number }) => void }
+            finish = () => {
+              if (outcome === 'queued' || outcome === 'pumped-queued')
+                options.onQueued?.({ queuePosition: 1 })
+              resolve(outcome !== 'rejected')
+            }
+          })
+      )
+      expect(screen.getByTestId('mock-send')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('mock-send'))
+      if (outcome === 'pumped-queued') {
+        expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+        mocks.busy = false
+        mocks.lifecycleSnapshot = {
+          derived: { isRunning: false, isTurnActive: false },
+          turn: { id: null },
+        }
+        rerender(panel())
+      }
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('request-user-input-expand')).toBeVisible()
+      await act(async () => {
+        finish()
+      })
+      if (outcome === 'accepted') {
+        expect(screen.queryByTestId('request-user-input-expand')).not.toBeInTheDocument()
+      } else {
+        expect(screen.getByTestId('request-user-input-expand')).toBeVisible()
+        await userEvent.click(screen.getByTestId('request-user-input-expand'))
+        expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue(
+          'Saved recipients'
+        )
+      }
+      expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    }
+  )
 
   it('restores only the selected controlled question after notification revalidation', () => {
     mocks.renderToolBlocks = true

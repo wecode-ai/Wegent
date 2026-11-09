@@ -43,6 +43,7 @@ async function fixture(restart = vi.fn(async () => {})) {
     focus: async () => {},
     openDevTools: () => {},
     restartCoreDsh: restart,
+    resumePythonAfterLogin: async () => {},
     requestStop: () => {},
     getCoreDshPid: () => 123,
     isShuttingDown: () => false,

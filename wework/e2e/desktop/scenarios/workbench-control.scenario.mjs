@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { normalize } from 'node:path'
 
 import { verifyLocalExecutorUsesCloudSocketUrl } from '../modules/cloud-environment.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForScenarioProgress } from '../modules/scenario-progress.mjs'
+import {
+  findRuntimeWorkTask,
+  waitForCompletedRuntimeTaskThread,
+} from '../modules/runtime-task-evidence.mjs'
 import {
   assistantMessage,
   createSse,
@@ -70,6 +75,7 @@ function callResult(body, callId) {
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let active = false
+  let localControl
   let sourceId
   let sourceTaskId
   let sourceDeviceId
@@ -80,6 +86,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let createdTaskId
   let cloudCreatedId
   let cloudCreatedTaskId
+  let cloudCreatedReady = false
   let cloud
   let cloudEnvironment
   let httpProxy
@@ -241,12 +248,26 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         project_space: { space_id: String(cloudProject.id), store: 'cloud' },
         options: { attachmentIds: [attachment.id] },
       }),
-      value => {
+      async value => {
         const created = findValue(value, item => item.accepted === true && item.conversation_id)
         assert.ok(created)
         assert.equal(created.deviceId, sourceDeviceId)
+        await waitForCompletedRuntimeTaskThread(localControl, created.taskId, uiTimeoutMs)
+        const task = findRuntimeWorkTask(
+          JSON.parse(await localControl.command('getLocalRuntimeWork', 'body')),
+          created.taskId
+        )
+        assert.ok(task, 'The owning Executor must retain the created APP task')
+        assert.equal(normalize(task.workspacePath), normalize(created.workspacePath))
+        assert.ok(!['failed', 'cancelled'].includes(task.status))
         cloudCreatedId = created.conversation_id
         cloudCreatedTaskId = created.taskId
+        await waitForScenarioProgress(
+          progress,
+          () => ({ step: cloudCreatedReady ? 1 : 0, error: failure }),
+          1,
+          modelResponseTimeoutMs
+        )
       },
     ],
     [
@@ -258,7 +279,15 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       }),
       value => {
         const receipt = findValue(value, item => item.operation && item.duplicate === false)
-        assert.equal(receipt?.operation.delivery_status, 'accepted')
+        assert.equal(
+          receipt?.operation.delivery_status,
+          'accepted',
+          JSON.stringify({
+            code: receipt?.operation.result?.code,
+            accepted: receipt?.operation.result?.accepted,
+            success: receipt?.operation.result?.success,
+          })
+        )
         assert.equal(receipt.operation.device_id, sourceDeviceId)
         assert.equal(receipt.operation.task_id, cloudCreatedTaskId)
       },
@@ -562,6 +591,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
             'Owned attachment must reach the local turn'
           )
           events = [assistantMessage('WEWORK_CONTROL_CLOUD_READY'), responseCompleted(id)]
+          cloudCreatedReady = true
+          progress.emit('change')
         } else if (serialized.includes(CREATED)) {
           events = [assistantMessage('WEWORK_CONTROL_CREATED_READY'), responseCompleted(id)]
         } else if (serialized.includes(FOLLOW_UP)) {
@@ -584,6 +615,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     },
 
     async verify(control) {
+      localControl = control
       await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
       const { workspacePath } = cloudEnvironment
       assert.ok(typeof workspacePath === 'string' && workspacePath.length > 0)

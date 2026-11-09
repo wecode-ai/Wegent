@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent, type KeyboardEvent } from 'react'
-import { ArrowUp, LoaderCircle } from 'lucide-react'
+import { ArrowUp, ArrowUpRight, LoaderCircle } from 'lucide-react'
 import { isImeEnterEvent } from '@wegent/chat-core/ime'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -29,7 +29,8 @@ export function RuntimeInteractionReply({ item }: { item: RuntimeInteraction }) 
         variant="primary"
         onClick={() => openWeworkScheme(interactionOriginalScheme(item))}
       >
-        {t('interactions.handle_in_context')}
+        {t('interactions.open_original')}
+        <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
       </Button>
     )
   return (

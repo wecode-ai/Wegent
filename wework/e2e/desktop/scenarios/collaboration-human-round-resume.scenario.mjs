@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -20,9 +21,12 @@ import {
   openProjectAgentCreator,
   selectCloudAgentModel,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -220,7 +224,9 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
     uiTimeoutMs
   )
   assert.equal(project.task_provider, 'local', '端上创建的项目没有使用本地看板数据源')
-  await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
+  await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'manage'), {
+    timeoutMs: uiTimeoutMs,
+  })
   return { project }
 }
 
@@ -468,12 +474,7 @@ export function createDesktopScenario({
             delivery_id: humanDelivery.id,
             fulfillments: [],
           })
-          events = namespacedFunctionCall(
-            CALLS.humanFinalize,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          )
+          events = selectedToolCall(CALLS.humanFinalize, tool)
         } else if (requestContainsToolOutput(body, CALLS.humanCreate)) {
           humanDelivery = findDeliveryDraft(findToolOutput(body.input ?? [], CALLS.humanCreate))
           assert.ok(humanDelivery, '个人 Runtime Task 没有返回持久化的 Delivery 草稿')
@@ -491,12 +492,7 @@ export function createDesktopScenario({
           const tool = selectMcpTool(body, 'wework_space', 'create_delivery', {
             markdown: `# ${HUMAN_TASK}\n\n${MARKER} 人工证据已核对，结果可供负责人继续评估。`,
           })
-          events = namespacedFunctionCall(
-            CALLS.humanCreate,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          )
+          events = selectedToolCall(CALLS.humanCreate, tool)
         } else {
           events = mcpToolRequestEvents(body, {
             toolName: 'create_delivery',

@@ -300,6 +300,23 @@ export function DesktopWorkbenchLayout({
   const standInContentRoute =
     ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
   const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
+  const [standInRetention, setStandInRetention] = useState({
+    open: standInOpen,
+    visited: standInOpen,
+    contentRoute: standInContentRoute,
+    entryKey: 0,
+  })
+  if (
+    standInRetention.open !== standInOpen ||
+    (standInOpen && standInRetention.contentRoute !== standInContentRoute)
+  ) {
+    setStandInRetention({
+      open: standInOpen,
+      visited: standInRetention.visited || standInOpen,
+      contentRoute: standInOpen ? standInContentRoute : standInRetention.contentRoute,
+      entryKey: standInRetention.entryKey + (standInOpen ? 1 : 0),
+    })
+  }
   const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
@@ -1042,16 +1059,24 @@ export function DesktopWorkbenchLayout({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {standInOpen && (
-            <PersonalStandInWorkspace
-              contentRoute={standInContentRoute}
-              services={services}
-              user={state.user ?? LOCAL_USER}
-              devices={state.devices}
-              active={routeActive && !settingsOpen}
-              onClose={() => navigateTo('/')}
-              onOpenTask={openRuntimeTaskOutsideHarness}
-            />
+          {(standInOpen || standInRetention.visited) && (
+            <div
+              className="min-h-0 min-w-0 flex-1 flex-col"
+              style={{ display: standInOpen ? 'flex' : 'none' }}
+              aria-hidden={!standInOpen}
+              inert={!standInOpen}
+            >
+              <PersonalStandInWorkspace
+                contentRoute={standInRetention.contentRoute}
+                entryRequestKey={standInRetention.entryKey}
+                services={services}
+                user={state.user ?? LOCAL_USER}
+                devices={state.devices}
+                active={standInOpen && routeActive && !settingsOpen}
+                onClose={() => navigateTo('/')}
+                onOpenTask={openRuntimeTaskOutsideHarness}
+              />
+            </div>
           )}
           {taskBoardOpen && routeActive && !settingsOpen ? (
             <>

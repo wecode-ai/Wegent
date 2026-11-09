@@ -447,14 +447,17 @@ fn executor_request(
     body: &Value,
 ) -> Option<brz_http::RequestBuilder> {
     Some(
-        crate::responses::create::dispatch::apply_openai_client_headers(
+        crate::responses::create::openai_client::apply_openai_client_headers(
             http.post(url)
                 .ok()?
                 .header("content-type", "application/json")
-                .header("accept", crate::responses::create::dispatch::OPENAI_ACCEPT)
+                .header(
+                    "accept",
+                    crate::responses::create::openai_client::OPENAI_ACCEPT,
+                )
                 .header(
                     "authorization",
-                    crate::responses::create::dispatch::OPENAI_DUMMY_AUTHORIZATION,
+                    crate::responses::create::openai_client::OPENAI_DUMMY_AUTHORIZATION,
                 ),
         )
         .json(body),

@@ -551,6 +551,7 @@ const CLOUD_PUBLIC_MODEL_OPTIONS = {
   weworkCloudModelUpstreamApiFormat: 'openai-responses',
 }
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
+const CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION = '999.0.0'
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
@@ -775,8 +776,13 @@ function shouldStopAfterDesktopCheckpoint(checkpoint) {
 }
 
 function shouldConfigureToolDetailsMcp() {
-  if (TOOL_BLOCK_ORDER_ONLY) return true
-  return getActiveOnlyModes().length === 0 && shouldRunDesktopCheckpoint('rendering-extensions')
+  if (TOOL_BLOCK_ORDER_ONLY || MODEL_SWITCH_ONLY) return true
+  const selectedCheckpointNeedsTools =
+    shouldRunDesktopCheckpoint('rendering-extensions') ||
+    shouldRunDesktopCheckpoint('model-routing')
+  // Cloud model matrices use these tools; unrelated only modes never do.
+  if (CLOUD_ONLY) return selectedCheckpointNeedsTools
+  return getActiveOnlyModes().length === 0 && selectedCheckpointNeedsTools
 }
 
 function shouldRunPluginSegment(segment) {
@@ -1932,6 +1938,7 @@ export {
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_DEVICE_ID,
+  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   REMOTE_DOCKER_DEVICE_ID,
   FRESH_CHAT_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,

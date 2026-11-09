@@ -121,7 +121,10 @@ impl RuntimeWorkRpcHandler {
             None => &settings["primary"],
         };
         let coordinator = identity.coordinator_batch.is_some();
-        if identity.review {
+        if identity.memory_review && !settings["lifecycle"]["status"].is_null() {
+            return Err(denied());
+        }
+        if identity.review || identity.memory_review {
             if identity.work.is_some()
                 || coordinator
                 || identity.readonly_worker
@@ -129,14 +132,22 @@ impl RuntimeWorkRpcHandler {
             {
                 return Err(denied());
             }
-            let end = self.review_run_end(&actor, identity.user)?;
+            let end = if identity.memory_review {
+                self.scheduled_review_run_end(&actor, identity.user, true)?
+            } else {
+                self.review_run_end(&actor, identity.user)?
+            };
             return Ok(ReadScope {
                 source: None,
                 role: role.clone(),
                 coordinator_tasks: None,
                 can_orchestrate: false,
                 window: Some((
-                    (end - chrono::Duration::days(7)).timestamp_millis(),
+                    if identity.memory_review {
+                        0
+                    } else {
+                        (end - chrono::Duration::days(7)).timestamp_millis()
+                    },
                     end.timestamp_millis(),
                 )),
             });
@@ -303,7 +314,8 @@ impl RuntimeWorkRpcHandler {
         scope: &ReadScope,
         store: &LocalTaskStore,
     ) -> bool {
-        if (identity.review && link.local_task_id == identity.task_id)
+        if ((identity.review || identity.memory_review) && link.local_task_id == identity.task_id)
+            || (identity.memory_review && link.runtime_handle["origin"]["memoryReview"] == true)
             || !history_owned(link, identity.user)
             || self.archived_link_is_deleted(link)
         {
@@ -313,6 +325,10 @@ impl RuntimeWorkRpcHandler {
             link.runtime_handle["origin"]["type"] == "stand_in_identity"
                 || !tasks.contains(&link.local_task_id)
         }) {
+            return false;
+        }
+        if identity.memory_review && !self.memory_review_source_visible(link, identity.user, store)
+        {
             return false;
         }
         let Some(source) = &scope.source else {
@@ -337,6 +353,65 @@ impl RuntimeWorkRpcHandler {
             && self
                 .validate_history_source(store, identity.user, &scope.role, &work)
                 .is_ok()
+    }
+
+    pub(super) fn memory_review_source_visible(
+        &self,
+        link: &RuntimeTaskLink,
+        user: i64,
+        store: &LocalTaskStore,
+    ) -> bool {
+        use crate::task_runtime::personal_stand_in::{role_project_matches, stand_in_identities};
+        let Ok(settings) = store.personal_stand_in(user, &self.device_id) else {
+            return false;
+        };
+        let roles = stand_in_identities(&settings);
+        let origin = &link.runtime_handle["origin"];
+        if let Some(work_id) = origin["workId"].as_str() {
+            let Ok(work) = store.stand_in_work(user, work_id) else {
+                return false;
+            };
+            return roles.iter().any(|role| {
+                role["id"] == work["roleId"]
+                    && self
+                        .validate_history_source(store, user, role, &work)
+                        .is_ok()
+            });
+        }
+        if let Some(project) = origin["cloudProjectId"].as_str() {
+            return roles.iter().any(|role| {
+                role_project_matches(
+                    role,
+                    project,
+                    origin["projectStore"].as_str().unwrap_or_default(),
+                )
+            });
+        }
+        if matches!(
+            origin["type"].as_str(),
+            Some("connection_work" | "dingtalk_work" | "issue_dispatch")
+        ) {
+            return false;
+        }
+        true
+    }
+
+    pub(super) fn validate_history_delivery(
+        &self,
+        identity: &StandInMcpIdentity,
+        original: &RuntimeTaskLink,
+        store: &LocalTaskStore,
+    ) -> Result<(), AppIpcError> {
+        let scope = self.conversation_scope(identity, store)?;
+        let current = self
+            .local_task_link(&original.local_task_id)
+            .ok_or_else(denied)?;
+        if !self.conversation_visible(original, identity, &scope, store)
+            || !self.conversation_visible(&current, identity, &scope, store)
+        {
+            return Err(denied());
+        }
+        Ok(())
     }
 
     pub(super) async fn read_stand_in_conversations(
@@ -392,6 +467,9 @@ impl RuntimeWorkRpcHandler {
             let mut page = self
                 .read_bounded_history(identity, &link, args, limit, since, until)
                 .await?;
+            // Native history can await disk or provider I/O. Recheck the actor
+            // and both the original and current source before releasing text.
+            self.validate_history_delivery(identity, &link, &store)?;
             if let Some((start, end)) = scope.window {
                 page["windowStart"] = json!(
                     chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)
@@ -452,6 +530,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
         };
         handler.upsert_local_task(link(
@@ -550,6 +629,40 @@ mod tests {
             .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
             .await
             .is_err());
+    }
+
+    #[test]
+    fn history_delivery_rechecks_actor_and_source_after_a_read() {
+        let (_root, handler, identity) = fixture();
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let original = link("read-target", 7, json!({}));
+        handler.upsert_local_task(original.clone());
+        handler
+            .validate_history_delivery(&identity, &original, &store)
+            .unwrap();
+
+        let mut reassigned = original.clone();
+        reassigned.runtime_handle["executionRequest"]["user_id"] = json!(8);
+        handler.upsert_local_task(reassigned);
+        assert_eq!(
+            handler
+                .validate_history_delivery(&identity, &original, &store)
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+
+        handler.upsert_local_task(original.clone());
+        let mut actor = handler.local_task_link(&identity.task_id).unwrap();
+        actor.status = "archived".into();
+        handler.upsert_local_task(actor);
+        assert_eq!(
+            handler
+                .validate_history_delivery(&identity, &original, &store)
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
     }
 
     #[tokio::test]

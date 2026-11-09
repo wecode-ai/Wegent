@@ -91,6 +91,7 @@ export type ArchiveRuntimeTaskResult = {
 
 export type RefreshWorkLists = (options?: {
   syncCloud?: boolean
+  refreshDevices?: boolean
   unarchivedTasks?: RuntimeTaskAddress[]
 }) => Promise<void>
 
@@ -215,6 +216,8 @@ export interface WorkbenchContextValue {
   projectChat: {
     scopeKey: string
     inputByScope: Readonly<Record<string, string>>
+    goalDraftActiveByScope: Readonly<Record<string, boolean>>
+    setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null

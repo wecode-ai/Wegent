@@ -53,8 +53,11 @@ impl RuntimeWorkRpcHandler {
         let role_id = schedule["roleId"]
             .as_str()
             .ok_or("Missing arrangement identity")?;
+        let memory_review = role_id == "@primary"
+            && current.task_request["standInCalendar"]["template"]
+                == crate::runtime_work::automations::MEMORY_REVIEW_TEMPLATE;
         let enabled = if role_id == "@primary" {
-            settings["primary"]["enabled"] != false
+            settings["primary"]["enabled"] != false || memory_review
         } else {
             stand_in_identities(&settings)
                 .iter()
@@ -181,6 +184,7 @@ impl RuntimeWorkRpcHandler {
         self.create_automation(json!({"automation":{"id":id,"version":0,"name":required(args,"title")?,"prompt":required(args,"message")?,"schedule":schedule,"timezone":args["timezone"].as_str().unwrap_or("UTC"),"enabled":true,"conversationMode":"independent","notificationPolicy":"attention_only","taskRequest":request,"taskPayload":{"runtime":"codex"},"continuationPayload":null}})).await
     }
 
+    /// Revalidate the scheduled identity and prepare work from its current device-owned settings.
     pub(super) async fn prepare_stand_in_schedule(
         &self,
         automation: &Automation,
@@ -203,9 +207,12 @@ impl RuntimeWorkRpcHandler {
         if role_id == "@primary" && !settings["primary"].is_object() {
             identities.push(json!({"id":"@primary","enabled":true,"userId":user}));
         }
+        let memory_review = role_id == "@primary"
+            && automation.task_request["standInCalendar"]["template"]
+                == crate::runtime_work::automations::MEMORY_REVIEW_TEMPLATE;
         let mut config = identities
             .into_iter()
-            .find(|role| role["id"] == role_id && role["enabled"] == true)
+            .find(|role| role["id"] == role_id && (role["enabled"] == true || memory_review))
             .ok_or_else(|| {
                 AppIpcError::new(
                     "permission_denied",
@@ -213,16 +220,12 @@ impl RuntimeWorkRpcHandler {
                 )
             })?;
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
-        if config["agentProject"].is_object() {
-            config["projectId"] = config["agentProject"]["id"].clone();
-            config["projectStore"] = config["agentProject"]["store"].clone();
-        }
         if matches!(
             automation.conversation_mode,
             ConversationMode::ContinueThread
         ) {
             return self
-                .prepare_scheduled_continuation(payload, user, role_id, &config)
+                .prepare_scheduled_continuation(payload, user, role_id)
                 .await;
         }
         let mut payload = payload;
@@ -234,8 +237,11 @@ impl RuntimeWorkRpcHandler {
         if review {
             payload["origin"]["weeklyReview"] = json!(true);
         }
+        if memory_review {
+            payload["origin"]["memoryReview"] = json!(true);
+        }
         let mut prepared = self.prepare_stand_in_execution(payload, &config).await?;
-        if review {
+        if review || memory_review {
             let invalid = || AppIpcError::new("bad_request", "Invalid review execution context");
             let request = prepared["executionRequest"]
                 .as_object_mut()
@@ -245,7 +251,7 @@ impl RuntimeWorkRpcHandler {
                 .or_insert_with(|| json!({}));
             additional.as_object_mut().ok_or_else(invalid)?.insert(
                 "wework.stand-in-review".into(),
-                json!({"kind":"application","value":crate::runtime_work::automations::WEEKLY_REVIEW_INSTRUCTIONS}),
+                json!({"kind":"application","value":if memory_review {crate::runtime_work::automations::MEMORY_REVIEW_INSTRUCTIONS} else {crate::runtime_work::automations::WEEKLY_REVIEW_INSTRUCTIONS}}),
             );
         }
         let system = prepared["executionRequest"]["system_prompt"]
@@ -258,12 +264,12 @@ impl RuntimeWorkRpcHandler {
         Ok(prepared)
     }
 
+    /// Continue only owned, available Codex work without answering pending native interactions.
     async fn prepare_scheduled_continuation(
         &self,
         mut payload: Value,
         user: i64,
         role_id: &str,
-        config: &Value,
     ) -> Result<Value, AppIpcError> {
         let id = payload["taskId"].as_str().unwrap_or_default();
         let link = self.local_task_link(id).ok_or_else(|| {
@@ -310,8 +316,6 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         self.validate_primary_task_followup(user, &link).await?;
-        // Re-resolve the current agent and its execution policy before continuing.
-        self.stand_in_agent(config).await?;
         let mut request = link.runtime_handle["executionRequest"].clone();
         request["prompt"] = payload["message"].clone();
         request["standInDelegation"] =
@@ -340,6 +344,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
         };
         let args = json!({"requestId":"event","title":"Review","message":"Review outstanding items","at":"2099-01-01T00:00:00Z","timezone":"UTC"});
@@ -454,7 +459,6 @@ mod tests {
                     json!({"taskId":"work","message":"Follow progress"}),
                     7,
                     "@primary",
-                    &json!({}),
                 )
                 .await
                 .unwrap_err();

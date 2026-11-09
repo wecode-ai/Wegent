@@ -33,11 +33,11 @@ use chrono::{NaiveDateTime, Utc};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::attachments::s3_signing::hex_sha256;
 use crate::auth::UserRow;
 use crate::http_compat::FastApiError;
 use crate::sql_support::quote_sql_literal;
 use crate::state::AppState;
+use wegent_storage::s3_signing::hex_sha256;
 
 /// `app.models.api_key.KEY_TYPE_SERVICE`: resolved first; the response reports
 /// the key's own name.

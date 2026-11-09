@@ -7,7 +7,12 @@ import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { StandInOnboarding } from './StandInOnboarding'
 
 /** Builds account-scoped setup fixtures while retaining the real connection editor. */
-function setup(completed = false, guideOpen = false, primary?: PersonalStandInSettings['primary']) {
+function setup(
+  completed = false,
+  guideOpen = false,
+  primary?: PersonalStandInSettings['primary'],
+  pending?: Promise<{ state: { version: number; completed: boolean } }>
+) {
   const settings: PersonalStandInSettings = {
     userId: 7,
     executionDeviceId: 'mac',
@@ -16,7 +21,7 @@ function setup(completed = false, guideOpen = false, primary?: PersonalStandInSe
     primary,
   }
   const api = {
-    onboarding: vi.fn(async () => ({ state: { version: 1, completed } })),
+    onboarding: vi.fn(async () => pending ?? { state: { version: 1, completed } }),
     completeOnboarding: vi.fn(async () => ({ state: { version: 1, completed: true } })),
     connectionProviders: vi.fn(async () => ({ items: [] })),
   }
@@ -55,6 +60,50 @@ async function continueSetup(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('stand-in onboarding', () => {
+  it.each([true, false])(
+    'waits for completion state before opening automatic onboarding (%s)',
+    async completed => {
+      let finish!: (value: { state: { version: number; completed: boolean } }) => void
+      setup(
+        completed,
+        false,
+        undefined,
+        new Promise(resolve => {
+          finish = resolve
+        })
+      )
+      expect(screen.getByRole('status')).toHaveTextContent('正在读取分身功能设置')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.getByTestId('stand-in-onboarding-content')).not.toHaveAttribute('inert')
+
+      await act(async () => finish({ state: { version: 1, completed } }))
+
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      if (completed) {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+        expect(screen.getByText('Stand-in content')).toBeVisible()
+      } else {
+        expect(screen.getByRole('dialog')).toBeVisible()
+        expect(screen.getByTestId('stand-in-onboarding-content')).toHaveAttribute('inert')
+      }
+    }
+  )
+
+  it('shows loading failures and allows retrying the completion check', async () => {
+    const { api, user } = setup(false, false, undefined, Promise.reject(new Error('Read failed')))
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法完成此操作')
+    api.onboarding.mockResolvedValueOnce({ state: { version: 1, completed: true } })
+    await user.click(screen.getByTestId('stand-in-onboarding-retry'))
+    expect(await screen.findByText('Stand-in content')).toBeVisible()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('opens an explicitly requested guide while its settings are loading', () => {
+    setup(true, true, undefined, new Promise(() => {}))
+    expect(screen.getByRole('dialog')).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent('正在读取分身功能设置')
+  })
+
   it('uses the connection catalog first and allows continuing without selecting any apps', async () => {
     const { api, onSave, user } = setup()
     expect(await screen.findByTestId('stand-in-connection-type-picker')).toBeVisible()
@@ -195,7 +244,7 @@ describe('stand-in onboarding', () => {
     )
     await waitFor(() => expect(api.onboarding).toHaveBeenCalledWith(7, 'other', expect.any(String)))
     expect(screen.queryByText('Stand-in content')).not.toBeInTheDocument()
-    expect(screen.getByTestId('stand-in-onboarding-content')).toHaveAttribute('inert')
+    expect(screen.getByTestId('stand-in-onboarding-content')).not.toHaveAttribute('inert')
   })
   it('dismisses the modal with Escape without completing setup', async () => {
     const { api, user, onClose } = setup()

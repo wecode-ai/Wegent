@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
 import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
@@ -28,8 +29,11 @@ import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -253,7 +257,10 @@ async function createIssue(
   title = ISSUE,
   { notifyAssignee = true, beforeSave } = {}
 ) {
-  await selectCollaborationProjectView(control, CONTENT, 'board', uiTimeoutMs)
+  await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'), {
+    timeoutMs: uiTimeoutMs,
+  })
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -550,7 +557,7 @@ export function createDesktopScenario({
           delivery_id: delivery.id,
           fulfillments: [],
         })
-        events = namespacedFunctionCall(CALLS.finalize, tool.namespace, tool.name, tool.arguments)
+        events = selectedToolCall(CALLS.finalize, tool)
       } else if (requestContainsToolOutput(body, CALLS.create)) {
         delivery = findDeliveryDraft(findToolOutput(body.input ?? [], CALLS.create))
         assert.ok(delivery, 'create_delivery 没有返回持久化的 Delivery 草稿')
@@ -568,7 +575,7 @@ export function createDesktopScenario({
         const tool = selectMcpTool(body, 'wework_space', 'create_delivery', {
           markdown: `# ${ISSUE}\n\n${MARKER}：项目周报已经整理完成。`,
         })
-        events = namespacedFunctionCall(CALLS.create, tool.namespace, tool.name, tool.arguments)
+        events = selectedToolCall(CALLS.create, tool)
       } else {
         events = mcpToolRequestEvents(body, {
           toolName: 'create_delivery',
