@@ -26,6 +26,40 @@ async function legacyFixture(directory: string) {
 }
 
 describe('SecureValueStore', () => {
+  test('persists a new prototype-named key when reopening an existing store', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
+    try {
+      await new SecureValueStore(directory, protection).set('existing', 'preserved')
+      const reopened = new SecureValueStore(directory, protection)
+      await reopened.set('__proto__', 'prototype-value')
+      await expect(new SecureValueStore(directory, protection).get('__proto__')).resolves.toBe(
+        'prototype-value'
+      )
+      await expect(reopened.get('existing')).resolves.toBe('preserved')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('keeps an empty protected store so bridge rollback cannot downgrade future writes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
+    try {
+      const store = new SecureValueStore(directory, protection)
+      await store.set('last', 'secret')
+      await store.delete('last')
+      expect(JSON.parse(await readFile(join(directory, 'secure-values.json'), 'utf8'))).toEqual({
+        version: 3,
+        values: {},
+      })
+      await new SecureValueStore(directory, protection).set('next', 'next-secret')
+      await expect(readFile(join(directory, 'secure-values.key'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('migrates every legacy value before deleting the adjacent decryption key', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
     try {
@@ -92,6 +126,10 @@ describe('SecureValueStore', () => {
     await store.set('__proto__', 'prototype-key-value')
     await expect(store.get('__proto__')).resolves.toBe('prototype-key-value')
     await store.set('plugin.credential', 'secret-value')
+    await store.set('constructor', 'constructor-value')
+    await expect(new SecureValueStore(directory, protection).get('constructor')).resolves.toBe(
+      'constructor-value'
+    )
 
     await expect(store.get('plugin.credential')).resolves.toBe('secret-value')
     await expect(

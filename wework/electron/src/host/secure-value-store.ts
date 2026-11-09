@@ -43,10 +43,7 @@ export class SecureValueStore {
       const values = await this.read()
       if (!Object.hasOwn(values, key)) return
       delete values[key]
-      if (Object.keys(values).length === 0) {
-        await rm(this.path(), { force: true })
-        return
-      }
+      // Retain the protected format across clearing, rollback and subsequent writes.
       await this.write(values)
     })
   }
@@ -111,7 +108,7 @@ export class SecureValueStore {
     }
     // Reclaim a legacy key left behind by an interrupted successful migration.
     await rm(join(this.dataDirectory, 'secure-values.key'), { force: true })
-    return stored.values
+    return Object.assign(Object.create(null), stored.values)
   }
 
   private async write(values: Record<string, string>): Promise<void> {

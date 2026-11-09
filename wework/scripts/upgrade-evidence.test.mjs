@@ -381,6 +381,13 @@ function input() {
     channel: 'stable',
     upgrade: 'passed',
     rollback: 'passed',
+    reupgrade: 'passed',
+    credentials: ['source', 'upgraded', 'rolled-back', 're-upgraded'].map((stage, index) => ({
+      stage,
+      format: index === 0 ? 2 : 3,
+      modelAuthenticated: true,
+      cloudDeviceSignature: true,
+    })),
   }
   return {
     from,
@@ -399,6 +406,14 @@ test('only exact artifacts and a successful rollback grant a release edge', () =
   for (const change of [
     { kind: 'regression' },
     { rollback: 'not-run' },
+    { reupgrade: 'not-run' },
+    { credentials: [] },
+    {
+      credentials: input().evidence.credentials.map(entry => ({
+        ...entry,
+        cloudDeviceSignature: false,
+      })),
+    },
     { platform: 'macos' },
     { channel: 'beta' },
     { source: 'c'.repeat(64) },

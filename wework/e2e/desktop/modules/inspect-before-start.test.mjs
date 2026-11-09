@@ -5,7 +5,40 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { inspectBeforeStart } from './inspect-before-start.mjs'
+import { inspectBeforeStart, inspectRunningApp } from './inspect-before-start.mjs'
+
+test('awaits native asynchronous assertions only after startup and verifies the current host PID', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-running-inspector-'))
+  const entry = join(directory, 'running.cjs')
+  await writeFile(entry, "setInterval(() => {}, 1000); console.log('ready')")
+  const child = spawn(process.execPath, ['--inspect-brk=127.0.0.1:0', entry], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const exited = once(child, 'exit')
+  const ready = once(child.stdout, 'data', { signal: AbortSignal.timeout(10_000) })
+  try {
+    const socketUrl = await inspectBeforeStart(child, 'globalThis.started = true', () => {})
+    await ready
+    const port = new URL(socketUrl).port
+    assert.deepEqual(
+      await inspectRunningApp(
+        port,
+        child.pid,
+        'Promise.resolve({started: globalThis.started, authenticated: true})',
+        () => {}
+      ),
+      { started: true, authenticated: true }
+    )
+    await assert.rejects(
+      inspectRunningApp(port, child.pid + 1, 'process.exit(1)', () => {}),
+      /another release process/
+    )
+  } finally {
+    child.kill()
+    await exited
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 for (const moduleType of ['cjs', 'mjs']) {
   test(`initializes and disconnects before returning for ${moduleType} entry`, async () => {

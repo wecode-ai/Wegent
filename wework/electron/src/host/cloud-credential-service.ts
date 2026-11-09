@@ -185,7 +185,7 @@ export class CloudCredentialService {
       } else {
         this.candidate = null
         this.activeRevision += 1
-        await rm(this.path(), { force: true })
+        await this.removeCredential()
       }
     })
   }
@@ -256,7 +256,7 @@ export class CloudCredentialService {
     this.candidate = null
     this.activeRevision += 1
     return this.serial(async () => {
-      await rm(this.path(), { force: true })
+      await this.removeCredential()
     })
   }
 
@@ -275,10 +275,8 @@ export class CloudCredentialService {
 
   private async readCredential(): Promise<StoredCloudCredential | null> {
     try {
-      const envelope = JSON.parse(await readFile(this.path(), 'utf8')) as {
-        version?: number
-        ciphertext?: string
-      }
+      const envelope = await this.readEnvelope()
+      if (!envelope) return null
       const value =
         envelope.version === 3
           ? JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
@@ -295,7 +293,7 @@ export class CloudCredentialService {
   }
 
   private async writeCredential(
-    credential: StoredCloudCredential,
+    credential: StoredCloudCredential | null,
     beforeRename: () => void
   ): Promise<void> {
     const path = this.path()
@@ -308,6 +306,34 @@ export class CloudCredentialService {
       await rename(temporary, path)
     } finally {
       await rm(temporary, { force: true })
+    }
+  }
+
+  private async readEnvelope(): Promise<{ version?: number; ciphertext?: string } | null> {
+    try {
+      const envelope = JSON.parse(await readFile(this.path(), 'utf8'))
+      if (
+        !envelope ||
+        ![2, 3].includes(envelope.version) ||
+        (envelope.version === 3 && typeof envelope.ciphertext !== 'string')
+      ) {
+        throw new CloudCredentialError(
+          'credentials_unavailable',
+          'Cloud credential format is invalid'
+        )
+      }
+      return envelope
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+  }
+
+  private async removeCredential(): Promise<void> {
+    if ((await this.readEnvelope())?.version === 3) {
+      await this.writeCredential(null, () => {})
+    } else {
+      await rm(this.path(), { force: true })
     }
   }
 

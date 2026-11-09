@@ -18,6 +18,26 @@ afterEach(async () => {
 })
 
 describe('CloudCredentialService', () => {
+  test('keeps an encrypted empty record on sign-out for compatible bridge rollback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
+    roots.push(root)
+    const path = join(root, 'cloud-credentials.json')
+    await writeFile(
+      path,
+      JSON.stringify({ version: 3, ciphertext: await protection.encrypt('null') })
+    )
+    const service = new CloudCredentialService(root, vi.fn(), protection)
+    await service.clear()
+    const envelope = JSON.parse(await readFile(path, 'utf8'))
+    expect(envelope.version).toBe(3)
+    expect(JSON.parse(await protection.decrypt(envelope.ciphertext))).toBeNull()
+    await expect(
+      service.prepareAuthorization('https://cloud.example.com/api')
+    ).resolves.toMatchObject({
+      publicKey: { kty: 'EC', crv: 'P-256' },
+    })
+  })
+
   beforeEach(() => {
     electronMocks.netFetch.mockReset()
   })
