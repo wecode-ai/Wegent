@@ -5,6 +5,7 @@ import {
 } from '../modules/stand-in-profile-navigation.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { createStandInProposalRegression } from '../modules/stand-in-proposal-regression.mjs'
+import { verifyStandInLocalDeviceRecovery } from '../modules/stand-in-local-device-recovery.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { stat } from 'node:fs/promises'
@@ -102,6 +103,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', CHAT)
+      await verifyStandInLocalDeviceRecovery(control, CHAT)
       const initial = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',

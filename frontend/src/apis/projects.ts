@@ -61,9 +61,13 @@ export const projectApis = {
    * Get all projects for the current user
    * @param includeTasks - Whether to include tasks in the response
    */
-  getProjects: async (includeTasks: boolean = true): Promise<ProjectListResponse> => {
+  getProjects: async (
+    includeTasks = true,
+    options?: { includeTaskCount?: boolean }
+  ): Promise<ProjectListResponse> => {
     const query = new URLSearchParams()
     query.append('include_tasks', includeTasks.toString())
+    if (options?.includeTaskCount === false) query.set('include_task_count', 'false')
     return apiClient.get(`/projects?${query}`)
   },
 
@@ -80,11 +84,12 @@ export const projectApis = {
     projectId: number,
     limit: number = 50,
     cursor?: string,
-    title?: string
+    options?: { title?: string; includeTotal?: boolean }
   ): Promise<ProjectTaskListResponse> => {
     const query = new URLSearchParams({ limit: String(limit) })
     if (cursor) query.set('cursor', cursor)
-    if (title) query.set('title', title)
+    if (options?.title) query.set('title', options.title)
+    if (options?.includeTotal === false) query.set('include_total', 'false')
     return apiClient.get(`/projects/${projectId}/tasks?${query}`)
   },
 

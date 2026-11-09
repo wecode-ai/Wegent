@@ -39,7 +39,7 @@ For in-conversation model switching and continuity, see [Model settings](./user-
 | Check how long a workflow has waited for me             | Needs your input → select project work or a question                | Requires reliable evidence of this handoff. See [Waiting time and workflow analysis](./personal-stand-in.md#waiting-time-and-workflow-analysis)                                                                                                                                      |
 | Configure project devices, repositories, initialization | Project space → Project settings → Execution environment            | Not the global execution-environment settings; AI execution requires an initialized online device                                                                                                                                                                                    |
 | Project AI / project manager                            | Project settings → AI team / Automatic processing                   | See [Project AI manager](./project-ai-manager.md) for current equivalents; do not look for the old bottom-of-board button                                                                                                                                                            |
-| Personal stand-in                                       | Left sidebar → My Stand-in                                          | Beta feature. See [Personal stand-in](./personal-stand-in.md)                                                                                                                                                                                                                        |
+| Personal stand-in                                       | Left sidebar → My Stand-in                                          | Beta feature; incompatible versions offer device status in Cloud work from the error notice. See [Personal stand-in](./personal-stand-in.md)                                                                                                                                                                                                                        |
 | Confirm stand-in configuration | My stand-in → Confirmation card in the current conversation → Confirm and apply | Review affected roles and sources; the conversation shows actual changes after success. See [Conversational configuration](./personal-stand-in.md#conversational-configuration) |
 | Restore archived stand-in source work | My Stand-in → Stand-in details → arrow beside Recent activity → the work → Unarchive | Visible only for archived work; restoration does not execute it. See [Source session policy](./personal-stand-in.md#stand-in-source-session-policy) |
 | Stop stand-in / change binding | Left sidebar → My Stand-in → Stand-in details → Manage stand-in → Stop stand-in at the bottom left of settings | Rebinding choices appear only after stopping the entire stand-in and cancelling its tasks. See [Instance binding and stopping](./personal-stand-in.md#instance-binding-and-stopping) |
@@ -78,13 +78,16 @@ Internal routes below support version maintenance and automated checks; they are
 | Left sidebar → Scheduled    | View scheduled tasks                                                                                       | `/automations` |
 | Left sidebar → Plugins      | Find, install and manage plugins and app authorization. See [Plugins and Skills](./plugins-and-skills.md)  | `/plugins`     |
 | Left sidebar → Applications | Open the applications page                                                                                 | `/sites`       |
-| Left sidebar → Cloud work   | View devices and cloud projects; connect first if disconnected. See [Devices and cloud work](./devices.md) | `/cloud-work`  |
+| Left sidebar → Cloud work   | View devices and cloud projects; desktop apps also offer the local version. See [Devices and cloud work](./devices.md) | `/cloud-work`  |
 
 ### Space and auxiliary feature links
+
+Model selection during template import: [Collaboration templates and configuration sharing](./projects.md#collaboration-template-models).
 
 | Search terms                                                                      | Detailed steps                                                             |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls) |
+| Delete imported personal templates | [Collaboration templates and configuration sharing](./projects.md#template-controls) |
 | Collaboration → Devices → Delete offline device | [Offline device cleanup](./projects.md#offline-device-cleanup) |
 | Stand-in memory, source evidence, scope, editing, forgetting and forgetting rules | [Memory controls](./personal-stand-in.md#stand-in-memory-controls)         |
 | Experimental lead conversation, takeover, stop, publish to Issue                  | [Project lead controls](./personal-stand-in.md#project-lead-controls)      |
