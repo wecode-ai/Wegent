@@ -1,0 +1,10 @@
+{
+  "order": 28010,
+  "scenario": "./scenarios/template-model-selection.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 28010, "shard": 10, "position": 5010 } },
+  "paths": [
+    "packages/collaboration/src/templates/TemplateModelSelection.tsx",
+    "wework/src/features/collaboration/WeworkProjectAgentConfigurationHost.tsx"
+  ]
+}

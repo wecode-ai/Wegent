@@ -117,7 +117,7 @@ export function WorkspaceGroupsPanel({
           [group],
           agentConfiguration?.readTemplateAgent
         ),
-      createTemplateGroups: (document, drafts) =>
+      createTemplateGroups: (document, drafts, resolveRouting) =>
         applyWorkspaceTemplate(
           api,
           workspace,
@@ -127,7 +127,8 @@ export function WorkspaceGroupsPanel({
           templateMessages[locale].partial,
           group => setData(data => data && [...data, group]),
           templateMessages[locale].unsupportedPolicy,
-          locale
+          locale,
+          resolveRouting
         ),
       createCollaborationGroup: async input => {
         const group = await commands.createCollaborationGroup(input)
@@ -153,6 +154,7 @@ export function WorkspaceGroupsPanel({
       <PanelFeedback state={state} translate={translate} testId="workspace-groups" />
       {state.data && (
         <WorkspaceCollaborationGroupsConfiguration
+          agentConfiguration={agentConfiguration}
           workspace={workspace}
           groups={state.data}
           members={[]}

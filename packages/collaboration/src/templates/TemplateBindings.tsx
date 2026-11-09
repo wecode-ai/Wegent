@@ -8,7 +8,10 @@ import type { CollaborationLocale } from '../i18n'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import type { CollaborationTemplate, TemplateRoleAssignments as Bindings } from './types'
 import { bindTemplate } from './document'
-import { templateAgentBindings, templateAgentId } from './agents'
+import { templateAgentBindings, templateAgentId, templateAgentReferences } from './agents'
+import { TemplateModelSelection, type TemplateModelConfiguration } from './TemplateModelSelection'
+import type { RunnerModelIdentity } from '../agent-form/runnerRouting'
+import type { TemplateRoutingResolver } from './types'
 import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
 import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
@@ -24,12 +27,14 @@ export function TemplateBindings({
   currentUserId,
   disabled,
   onChange,
+  environmentHint,
 }: {
   document: CollaborationTemplate
   locale: CollaborationLocale
   candidates: TemplateParticipant[]
   currentUserId?: number
   disabled?: boolean
+  environmentHint?: string
   onChange(
     drafts: ProjectCreateCollaborationGroupDraft[] | null,
     document: CollaborationTemplate
@@ -148,7 +153,7 @@ export function TemplateBindings({
               )
             )}
           </strong>{' '}
-          {m.environmentHint}
+          {environmentHint ?? m.environmentHint}
         </p>
       )}
       {configured.spec.resources.collaboration.groups.map(group => (
@@ -273,6 +278,7 @@ export function TemplateBindingsDialog({
   onApply,
   onClose,
   renderConfiguration,
+  modelConfiguration,
 }: {
   document: CollaborationTemplate
   locale: CollaborationLocale
@@ -281,10 +287,12 @@ export function TemplateBindingsDialog({
   existingNames?: string[]
   onApply(
     drafts: ProjectCreateCollaborationGroupDraft[],
-    document: CollaborationTemplate
+    document: CollaborationTemplate,
+    resolveRouting?: TemplateRoutingResolver
   ): Promise<void>
   onClose(): void
   renderConfiguration?(disabled: boolean): ReactNode
+  modelConfiguration?: TemplateModelConfiguration
 }) {
   const m = templateMessages[locale]
   const [selection, setSelection] = useState<{
@@ -294,6 +302,19 @@ export function TemplateBindingsDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
+  const [models, setModels] = useState<
+    Partial<Record<RunnerModelIdentity['runtime'], RunnerModelIdentity>>
+  >({})
+  const references = selection ? templateAgentReferences(selection.drafts) : new Set<string>()
+  const runtimes = modelConfiguration?.host.listTemplateAgentModels
+    ? [
+        ...new Set(
+          (document.spec.resources.collaboration.agents ?? [])
+            .filter(agent => references.has(templateAgentId(agent.key)))
+            .map(agent => agent.runtime)
+        ),
+      ]
+    : []
   return (
     <TemplateDialog
       title={m.bindingsTitle}
@@ -315,7 +336,7 @@ export function TemplateBindingsDialog({
             type="button"
             className="collaboration-primary-button"
             data-testid="template-bindings-apply"
-            disabled={!selection || busy || failed}
+            disabled={!selection || busy || failed || runtimes.some(runtime => !models[runtime])}
             onClick={async () => {
               if (!selection) return
               if (
@@ -331,13 +352,27 @@ export function TemplateBindingsDialog({
               setBusy(true)
               setError(null)
               try {
-                await onApply(selection.drafts, selection.document)
+                const args = [selection.drafts, selection.document] as const
+                if (runtimes.length && modelConfiguration) {
+                  await onApply(...args, runtime =>
+                    modelConfiguration.host.resolveTemplateAgentRouting!(
+                      runtime,
+                      modelConfiguration.location,
+                      modelConfiguration.projectId,
+                      modelConfiguration.environmentId,
+                      models[runtime]
+                    )
+                  )
+                } else {
+                  await onApply(...args)
+                }
                 onClose()
               } catch (error) {
                 setFailed(error instanceof PartialTemplateApplyError)
                 setError(
                   [
                     'template_model_default_unavailable',
+                    'template_model_unavailable',
                     'template_environment_unavailable',
                   ].includes(error instanceof Error ? error.message : '')
                     ? templateFailureMessage(error, locale)
@@ -359,6 +394,9 @@ export function TemplateBindingsDialog({
       <TemplateBindings
         document={document}
         locale={locale}
+        environmentHint={
+          modelConfiguration?.host.listTemplateAgentModels ? m.selectedModelHint : undefined
+        }
         disabled={busy || failed}
         candidates={candidates}
         currentUserId={currentUserId}
@@ -366,6 +404,17 @@ export function TemplateBindingsDialog({
       />
       {!selection && <p className="collaboration-template-muted">{m.unbound}</p>}
       {renderConfiguration?.(busy || failed)}
+      {runtimes.map(runtime => (
+        <TemplateModelSelection
+          key={runtime}
+          runtime={runtime}
+          showRuntime={runtimes.length > 1}
+          configuration={modelConfiguration!}
+          locale={locale}
+          disabled={busy || failed}
+          onChange={model => setModels(current => ({ ...current, [runtime]: model }))}
+        />
+      ))}
       {error && (
         <p role="alert" className="collaboration-template-error">
           {error}

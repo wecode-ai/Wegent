@@ -1,4 +1,10 @@
-import { runnerModelIdentity, type ProjectAgentConfigurationHost } from '@wegent/collaboration'
+import {
+  cloudRunnerModels,
+  runnerModelIdentity,
+  runnerModelKey,
+  runnerSupportsModel,
+  type ProjectAgentConfigurationHost,
+} from '@wegent/collaboration'
 
 import type { createAgentResourceApi } from '@/api/agentResources'
 import type { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
@@ -26,7 +32,26 @@ export function createWeworkProjectAgentConfigurationHost(
     ...weworkProjectAgentConfigurationHost,
     ...(localAgentApi
       ? {
-          async resolveTemplateAgentRouting(runtime, location, projectId) {
+          async listTemplateAgentModels(runtime) {
+            const [environments, models] = await Promise.all([
+              localAgentApi.listRunnerEnvironments(),
+              localAgentApi.listModels(),
+            ])
+            const current = environments.length === 1 ? environments[0] : undefined
+            if (!current) throw new Error('template_environment_unavailable')
+            const available = [
+              ...cloudRunnerModels(models).filter(model => runnerSupportsModel(current, model)),
+              ...current.models,
+            ].filter(model => model.runtime === runtime)
+            return [...new Map(available.map(model => [runnerModelKey(model), model])).values()]
+          },
+          async resolveTemplateAgentRouting(
+            runtime,
+            location,
+            projectId,
+            _environmentId,
+            selectedModel
+          ) {
             const environments = await localAgentApi.listRunnerEnvironments(
               location === 'local' ? projectId : undefined
             )
@@ -35,7 +60,17 @@ export function createWeworkProjectAgentConfigurationHost(
             const defaults = current.models.filter(
               model => model.runtime === runtime && model.is_default
             )
-            if (defaults.length !== 1) throw new Error('template_model_default_unavailable')
+            const model = selectedModel ?? (defaults.length === 1 ? defaults[0] : undefined)
+            if (!model) throw new Error('template_model_default_unavailable')
+            if (model.runtime !== runtime || !runnerSupportsModel(current, model))
+              throw new Error('template_model_unavailable')
+            if (
+              selectedModel?.source === 'cloud' &&
+              !cloudRunnerModels(await localAgentApi.listModels()).some(
+                candidate => runnerModelKey(candidate) === runnerModelKey(selectedModel)
+              )
+            )
+              throw new Error('template_model_unavailable')
             let environmentId = current.id
             if (location === 'cloud') {
               if (!agentResourceApi) throw new Error('template_environment_unavailable')
@@ -55,7 +90,7 @@ export function createWeworkProjectAgentConfigurationHost(
             }
             return {
               executionPolicy: { mode: 'fixed', environment_id: environmentId },
-              modelPolicy: { mode: 'fixed', model: runnerModelIdentity(defaults[0]) },
+              modelPolicy: { mode: 'fixed', model: runnerModelIdentity(model) },
             }
           },
         }

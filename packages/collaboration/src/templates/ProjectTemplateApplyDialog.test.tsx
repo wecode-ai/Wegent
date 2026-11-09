@@ -10,6 +10,7 @@ import { builtinCollaborationTemplates } from './builtins'
 import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 import type { CollaborationExecutionEnvironment } from '../types'
+import { runnerModelKey, type RunnerModel } from '../agent-form/runnerRouting'
 
 let root: Root
 let container: HTMLDivElement
@@ -84,6 +85,82 @@ function fixture(host?: ProjectAgentConfigurationHost) {
     )
   return { api, render, applied, project }
 }
+
+const selectableModel: RunnerModel = {
+  runtime: 'codex',
+  provider: 'company',
+  model_id: 'chosen-model',
+  source: 'native',
+  label: 'Company model',
+  account_label: 'Company',
+  local_model_id: 'chosen-model',
+  is_default: false,
+}
+
+it('requires a visible model choice and persists it for every imported Agent without a default', async () => {
+  const resolveTemplateAgentRouting = vi.fn<
+    NonNullable<ProjectAgentConfigurationHost['resolveTemplateAgentRouting']>
+  >(async (_runtime, _location, _project, _environment, model) => ({
+    executionPolicy: { mode: 'fixed' as const, environment_id: 'destination' },
+    modelPolicy: { mode: 'fixed' as const, model: model! },
+  }))
+  const host: ProjectAgentConfigurationHost = {
+    renderDialog: () => null,
+    listTemplateAgentModels: vi.fn(async () => [selectableModel]),
+    resolveTemplateAgentRouting,
+  }
+  const { api, render } = fixture(host)
+  await render()
+  const apply = container.querySelector<HTMLButtonElement>(
+    '[data-testid="template-bindings-apply"]'
+  )!
+  expect(apply.disabled).toBe(true)
+  expect(container.textContent).toContain('智能体使用的模型')
+  expect(container.textContent).not.toContain('请先为当前执行环境设置默认模型')
+  const select = container.querySelector<HTMLSelectElement>('[data-testid="template-model-codex"]')!
+  await act(async () => {
+    select.value = runnerModelKey(selectableModel)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  expect(apply.disabled).toBe(false)
+  await act(async () => apply.click())
+  expect(resolveTemplateAgentRouting).toHaveBeenCalledWith(
+    'codex',
+    'cloud',
+    'project',
+    undefined,
+    selectableModel
+  )
+  expect(api.agents.create).toHaveBeenCalled()
+  for (const [, input] of api.agents.create.mock.calls as unknown as [
+    string,
+    Record<string, unknown>,
+  ][]) {
+    expect(input.modelPolicy).toEqual({ mode: 'fixed', model: selectableModel })
+  }
+})
+
+it('shows a recoverable catalog failure and keeps import blocked until models load and are selected', async () => {
+  const list = vi
+    .fn<NonNullable<ProjectAgentConfigurationHost['listTemplateAgentModels']>>()
+    .mockRejectedValueOnce(new Error('internal failure'))
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([selectableModel])
+  const { api, render } = fixture({ renderDialog: () => null, listTemplateAgentModels: list })
+  await render()
+  expect(container.textContent).toContain('模型列表加载失败')
+  expect(container.textContent).not.toContain('internal failure')
+  const refresh = () =>
+    container.querySelector<HTMLButtonElement>('[data-testid="template-model-refresh-codex"]')!
+  await act(async () => refresh().click())
+  expect(container.textContent).toContain('暂无可用模型')
+  await act(async () => refresh().click())
+  expect(container.textContent).toContain('Company model')
+  expect(
+    container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-apply"]')!.disabled
+  ).toBe(true)
+  expect(api.agents.create).not.toHaveBeenCalled()
+})
 
 it('loads only the chosen project and persists groups, routing and board after confirmation', async () => {
   const { api, render, applied, project } = fixture()
