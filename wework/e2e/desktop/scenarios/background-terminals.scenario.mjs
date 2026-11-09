@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 
 const PANE = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const PROMPT = 'WEWORK_DESKTOP_E2E_BACKGROUND_TERMINALS'
@@ -184,6 +185,7 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       active = true
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1280, height: 800 }),

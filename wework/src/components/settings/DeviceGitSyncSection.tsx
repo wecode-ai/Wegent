@@ -222,7 +222,7 @@ export function DeviceGitSyncSection({
           </div>
         ) : !syncSummary ? (
           syncError ? (
-            <p data-testid="git-device-sync-error" className="mt-4 text-xs text-red-500">
+            <p data-testid="git-device-sync-error" className="mt-4 text-xs text-destructive">
               {syncError}
             </p>
           ) : null
@@ -230,7 +230,7 @@ export function DeviceGitSyncSection({
           <div className="mt-4 space-y-4">
             <div data-testid="git-device-sync-accounts">
               <div className="flex items-center gap-2 text-xs font-medium text-text-primary">
-                <ShieldCheck className="h-4 w-4 text-green-500" />
+                <ShieldCheck className="h-4 w-4 text-success" />
                 {t('workbench.git_device_sync_account_count', {
                   count: syncSummary.effective_count,
                   defaultValue: `将同步 ${syncSummary.effective_count} 个域`,
@@ -257,7 +257,7 @@ export function DeviceGitSyncSection({
               {syncSummary.duplicate_count > 0 ? (
                 <p
                   data-testid="git-device-sync-duplicate-warning"
-                  className="mt-2 flex items-center gap-1.5 text-xs text-yellow-500"
+                  className="mt-2 flex items-center gap-1.5 text-xs text-warning"
                 >
                   <AlertTriangle className="h-3.5 w-3.5" />
                   {t(
@@ -326,8 +326,8 @@ export function DeviceGitSyncSection({
                 data-testid="git-device-sync-result"
                 className={`rounded-lg px-3 py-2 text-xs ${
                   syncResult.status === 'synced'
-                    ? 'bg-green-500/10 text-green-500'
-                    : 'bg-yellow-500/10 text-yellow-500'
+                    ? 'bg-success/10 text-success'
+                    : 'bg-warning/10 text-warning'
                 }`}
               >
                 <p>
@@ -385,7 +385,7 @@ export function DeviceGitSyncSection({
         )}
 
         {syncError && syncSummary ? (
-          <p data-testid="git-device-sync-error" className="mt-4 text-xs text-red-500">
+          <p data-testid="git-device-sync-error" className="mt-4 text-xs text-destructive">
             {syncError}
           </p>
         ) : null}
@@ -422,7 +422,7 @@ export function DeviceGitSyncSection({
                 type="button"
                 data-testid="git-device-sync-clear-confirm"
                 onClick={() => void performSync(true)}
-                className="h-8 rounded-lg bg-red-500 px-3 text-sm text-white hover:bg-red-600"
+                className="h-8 rounded-lg bg-destructive px-3 text-sm text-destructive-contrast hover:bg-destructive"
               >
                 {t('workbench.git_device_sync_clear_confirm', '确认清理')}
               </button>

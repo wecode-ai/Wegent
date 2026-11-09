@@ -318,7 +318,7 @@ export function PluginImportDialog({
           {savedExamplePath && (
             <div
               data-testid="plugin-import-example-saved"
-              className="mt-4 flex items-start gap-2 rounded-xl bg-green-500/8 px-3 py-3 text-sm text-green-700"
+              className="mt-4 flex items-start gap-2 rounded-xl bg-success/8 px-3 py-3 text-sm text-success"
             >
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
@@ -332,8 +332,11 @@ export function PluginImportDialog({
           {preview && !preview.valid && (
             <div data-testid="plugin-import-issues" className="mt-4 space-y-2">
               {preview.issues.map((issue, index) => (
-                <div key={`${issue.code}-${index}`} className="rounded-xl bg-red-500/8 px-3 py-3">
-                  <div className="flex items-start gap-2 text-sm font-medium text-red-600">
+                <div
+                  key={`${issue.code}-${index}`}
+                  className="rounded-xl bg-destructive/8 px-3 py-3"
+                >
+                  <div className="flex items-start gap-2 text-sm font-medium text-destructive">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>{issueGuidance(issue, t)}</span>
                   </div>
@@ -374,7 +377,7 @@ export function PluginImportDialog({
               </div>
 
               {preview.existing && (
-                <div className="rounded-xl bg-orange-500/8 px-3 py-3 text-sm text-orange-700">
+                <div className="rounded-xl bg-warning/8 px-3 py-3 text-sm text-warning">
                   {t(
                     'workbench.plugins_import_existing',
                     '个人市场中已有 {{name}}（{{version}}）。继续后将覆盖并重新安装。',
@@ -409,7 +412,7 @@ export function PluginImportDialog({
           {error && (
             <div
               role="alert"
-              className="mt-4 flex items-start gap-2 rounded-xl bg-red-500/8 px-3 py-3 text-sm text-red-600"
+              className="mt-4 flex items-start gap-2 rounded-xl bg-destructive/8 px-3 py-3 text-sm text-destructive"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>
