@@ -8,6 +8,10 @@ executor dispatcher is replaced with a deterministic in-process executor
 because this environment cannot start a Kubernetes cluster. The production
 TaskProcessor, TaskQueueConsumer, TaskQueueService, Redis state, and HTTP
 callback client are all exercised together.
+
+The dispatcher configuration test intentionally leaves the process without a
+Docker fallback so the real dispatcher raises a stable `executor_config`
+failure instead of using an injected executor instance.
 """
 
 import json
@@ -105,6 +109,40 @@ def callback_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[_CallbackServer
         server.shutdown()
         server_thread.join(timeout=5)
         server.server_close()
+
+
+@pytest.mark.integration
+def test_dispatcher_config_failure_reports_stable_error_code(
+    real_queue: TaskQueueService,
+    callback_server: _CallbackServer,
+) -> None:
+    """A real dispatcher configuration error reports its original code."""
+    consumer = TaskQueueConsumer(
+        service_pool=real_queue.service_pool,
+        queue_type=real_queue.queue_type,
+    )
+    ExecutorDispatcher._executors = {"custom": object()}
+
+    task = {"metadata": {"task_id": 101, "subtask_id": 102, "executor_type": "docker"}}
+    assert real_queue.enqueue_task(task)
+    consumer._process_task_with_retry(real_queue.dequeue_task(timeout=1))
+
+    assert callback_server.request_received.wait(timeout=5)
+    assert callback_server.requests == [
+        {
+            "event_type": ResponsesAPIStreamEvents.ERROR.value,
+            "task_id": 101,
+            "subtask_id": 102,
+            "data": {
+                "code": ExecutorErrorCode.EXECUTOR_CONFIG,
+                "message": "Default 'docker' executor not found",
+            },
+        }
+    ]
+    redis_client = real_queue.redis_client
+    assert redis_client.llen(real_queue.queue_key) == 0
+    assert redis_client.exists(PENDING_KEY_TEMPLATE.format(task_id=101)) == 0
+    assert redis_client.zscore(PENDING_INDEX_KEY, "101") is None
 
 
 @pytest.mark.integration
