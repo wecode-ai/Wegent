@@ -442,6 +442,10 @@ jobs:
           test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
           test "$(xdg-mime query filetype /tmp)" = inode/directory
 
+      - name: Restore verified Electron installer cache
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        uses: ./.github/actions/prepare-electron-installer-cache
+
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         run: |

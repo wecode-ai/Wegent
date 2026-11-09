@@ -21,6 +21,7 @@ import {
   standInRoleName,
   subscribePersonalStandIn,
   standInConversationTaskId,
+  type PersonalStandInSettings,
 } from '@/api/personalStandIn'
 import type { StandInProposal } from '@/api/standIn'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -115,11 +116,22 @@ export function StandInOverviewPage({
           : null
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
+  const [resolvedProposal, setResolvedProposal] = useState<{
+    proposal: StandInProposal
+    previous: PersonalStandInSettings
+    result: 'accepted' | 'rejected'
+  } | null>(null)
+  const settledProposalIds = useRef(new Set<string>())
+  const resolvingProposal = useRef(false)
   const [review, setReview] = useState<'proposal' | 'status' | 'work' | null>(null)
   const [guideOpen, setGuideOpen] = useState(false)
   const [exampleDraft, setExampleDraft] = useState<{ id: number; text: string }>()
   const exampleSequence = useRef(0)
   const [proposalError, setProposalError] = useState<string | null>(null)
+  const [proposalSaveError, setProposalSaveError] = useState<{
+    id: string
+    message: string
+  } | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
   useImperativeHandle(ref, () => ({
@@ -220,7 +232,7 @@ export function StandInOverviewPage({
       try {
         const next = await api.proposal(props.userId, deviceId, roleId)
         if (current) {
-          setProposal(next)
+          setProposal(next && !settledProposalIds.current.has(next.id) ? next : null)
           setProposalError(null)
         }
       } catch (cause) {
@@ -273,8 +285,70 @@ export function StandInOverviewPage({
       setDetailsAnchor(null)
       setProfile(null)
     })
-  const overviewError = (profile === 'primary' ? null : state.error) || proposalError || inbox.error
   const currentProposal = proposal && (proposal.roleId ?? undefined) === roleId ? proposal : null
+  const proposalFailureMessage =
+    (proposalSaveError?.id === currentProposal?.id ? proposalSaveError?.message : null) ||
+    proposalError
+  const overviewError =
+    (profile === 'primary' ? null : state.error) || proposalFailureMessage || inbox.error
+  const currentResult =
+    resolvedProposal &&
+    resolvedProposal.previous.userId === props.userId &&
+    resolvedProposal.previous.executionDeviceId === deviceId &&
+    (resolvedProposal.proposal.roleId ?? undefined) === roleId
+      ? resolvedProposal
+      : null
+  const resolveProposal = async (accept: boolean) => {
+    if (!api || !deviceId || !currentProposal || !saved || resolvingProposal.current) return
+    resolvingProposal.current = true
+    setResolving(true)
+    setProposalSaveError(null)
+    try {
+      const applied = await api.resolveProposal(props.userId, deviceId, currentProposal.id, accept)
+      settledProposalIds.current.add(currentProposal.id)
+      setResolvedProposal({
+        proposal: {
+          ...currentProposal,
+          settings: accept ? applied : currentProposal.settings,
+          status: accept ? 'accepted' : 'rejected',
+        },
+        previous: saved,
+        result: accept ? 'accepted' : 'rejected',
+      })
+      setProposal(null)
+      setReview(null)
+      reload()
+    } catch (cause) {
+      setProposalSaveError({ id: currentProposal.id, message: getStandInErrorMessage(cause) })
+    } finally {
+      resolvingProposal.current = false
+      setResolving(false)
+    }
+  }
+  const proposalCard =
+    currentProposal && saved ? (
+      <StandInProposalCard
+        proposal={currentProposal}
+        projects={props.projects}
+        current={saved}
+        busy={resolving}
+        onResolve={resolveProposal}
+      />
+    ) : currentResult ? (
+      <StandInProposalCard
+        proposal={currentResult.proposal}
+        projects={props.projects}
+        current={currentResult.previous}
+        result={currentResult.result}
+        busy={false}
+        onResolve={resolveProposal}
+      />
+    ) : null
+  const proposalFailure = proposalFailureMessage && (
+    <p role="alert" className="mb-3 text-sm text-error">
+      {proposalFailureMessage}
+    </p>
+  )
   const processingIssue = !!(
     processing.error ||
     processing.status?.error ||
@@ -414,6 +488,14 @@ export function StandInOverviewPage({
           <>
             {api && deviceId ? (
               <StandInConversation
+                contentFooter={
+                  review !== 'proposal' && (proposalCard || proposalFailure) ? (
+                    <>
+                      {proposalCard}
+                      {proposalFailure}
+                    </>
+                  ) : null
+                }
                 draftRequest={!roleId ? exampleDraft : undefined}
                 onDraftRequestConsumed={id =>
                   setExampleDraft(current => (current?.id === id ? undefined : current))
@@ -568,33 +650,8 @@ export function StandInOverviewPage({
             detailsTrigger.current?.focus()
           }}
         >
-          {currentProposal && state.saved && (
-            <StandInProposalCard
-              proposal={currentProposal}
-              projects={props.projects}
-              current={state.saved}
-              busy={resolving}
-              onResolve={async accept => {
-                if (!api || !deviceId) return
-                setResolving(true)
-                try {
-                  await api.resolveProposal(props.userId, deviceId, currentProposal.id, accept)
-                  setProposal(null)
-                  setReview(null)
-                  reload()
-                } catch (cause) {
-                  setProposalError(getStandInErrorMessage(cause))
-                } finally {
-                  setResolving(false)
-                }
-              }}
-            />
-          )}
-          {proposalError && (
-            <p role="alert" className="mt-3 text-sm text-error">
-              {proposalError}
-            </p>
-          )}
+          {proposalCard}
+          {proposalFailure}
         </StandInReviewDialog>
         <StandInReviewDialog
           open={active && review === 'status'}
