@@ -1332,7 +1332,8 @@ impl RuntimeWorkRpcHandler {
                     .as_ref()
                     .and_then(runtime_session_id_from_link)
             });
-        if thread_id.is_none() && !retrying_preparation {
+        let pending_native_session = thread_id.is_none() && !retrying_preparation;
+        if pending_native_session && !(was_busy && queue_if_busy && existing_link.is_some()) {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -1392,7 +1393,7 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id,
             initial_thread_goal,
         };
-        if was_busy && !completed_native_turn {
+        if was_busy && !completed_native_turn && !pending_native_session {
             self.queue_turn(turn).await?;
         } else {
             self.spawn_turn(turn).await?;

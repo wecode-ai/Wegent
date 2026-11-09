@@ -679,6 +679,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           waitForApiValue,
           timeoutMs: uiTimeoutMs,
         })
+        // The local save needs a complete workspace list after the cloud fault phase.
+        const navigationError = scoped('[data-testid="collaboration-navigation-error"]')
+        if (Number(await control.command('getElementCount', navigationError)) > 0) {
+          await control.command(
+            'clickWhenEnabled',
+            scoped('[data-testid="collaboration-navigation-retry"]'),
+            { timeoutMs: uiTimeoutMs }
+          )
+          await control.command('waitFor', navigationError, {
+            visible: false,
+            timeoutMs: uiTimeoutMs,
+          })
+        }
         await verifyLocalBasicDefaultSave(control, uiTimeoutMs, proxy)
 
         await verifyWorkspaceAgentDisplayNames(control, request, {

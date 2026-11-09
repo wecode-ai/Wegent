@@ -1,0 +1,32 @@
+name: CI Feature Labels
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/ci/features.json
+      - .github/scripts/sync-ci-feature-labels.mjs
+      - .github/workflows/ci-feature-labels.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ci-feature-labels
+  cancel-in-progress: false
+
+jobs:
+  labels:
+    name: Synchronize CI feature labels
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create or update registered labels
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/sync-ci-feature-labels.mjs

@@ -152,6 +152,7 @@ pub(super) mod lifecycle;
 mod mcp_approval_context;
 mod mcp_apps;
 mod notifications;
+mod pending_continuation;
 mod personal_stand_in;
 mod plugin_install;
 mod plugin_marketplace;

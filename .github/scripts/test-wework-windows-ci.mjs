@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { loadCatalog } from "./ci-feature-catalog.mjs";
+import { buildPlan } from "./ci-feature-plan.mjs";
 
 const workflow = readFileSync(
   new URL("../workflows/wework-e2e.yml", import.meta.url),
@@ -16,7 +18,17 @@ const evaluate = new Function(
   "contains",
   `return ${expression.replaceAll("labels.*.name", "labels")}`,
 );
-const steps = { classify: { outputs: { wework_desktop_core_e2e: "true" } } };
+assert.equal(expression, "steps.classify.outputs.windows_desktop_core_e2e");
+const catalog = await loadCatalog(process.cwd());
+const changesCondition = workflow
+  .split("  changes:\n")[1]
+  .match(/^    if: (.+)$/m)?.[1];
+assert(changesCondition);
+const shouldPlan = new Function(
+  "github",
+  "startsWith",
+  `return ${changesCondition}`,
+);
 for (const [name, eventName, action, labels, draft, label, expected] of [
   [
     "label applied",
@@ -56,6 +68,24 @@ for (const [name, eventName, action, labels, draft, label, expected] of [
   ],
   ["ordinary PR", "pull_request", "synchronize", [], false, undefined, false],
   [
+    "selected Windows feature",
+    "pull_request",
+    "labeled",
+    ["ci:chat", "ci:windows"],
+    false,
+    "ci:windows",
+    true,
+  ],
+  [
+    "removed Windows modifier",
+    "pull_request",
+    "unlabeled",
+    ["ci:chat"],
+    false,
+    "ci:windows",
+    false,
+  ],
+  [
     "draft PR",
     "pull_request",
     "synchronize",
@@ -72,8 +102,21 @@ for (const [name, eventName, action, labels, draft, label, expected] of [
     event_name: eventName,
     event: { action, label: { name: label }, pull_request: { labels, draft } },
   };
+  const { outputs } = buildPlan({
+    files: [],
+    labels,
+    draft,
+    event: eventName,
+    head: "head",
+    base: "base",
+    catalog,
+    legacyDesktop: catalog.all,
+  });
+  const steps = { classify: { outputs } };
   assert.equal(
-    evaluate(github, steps, (values, value) => values.includes(value)),
+    shouldPlan(github, (value, prefix) => value.startsWith(prefix)) &&
+      evaluate(github, steps, (values, value) => values.includes(value)) ===
+        "true",
     expected,
     name,
   );

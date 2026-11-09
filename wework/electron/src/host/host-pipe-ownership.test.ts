@@ -1,4 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { once } from 'node:events'
+import { createInterface } from 'node:readline'
 import { afterEach, describe, expect, test } from 'vitest'
 import { HostCapabilityRouter } from './capability-router.js'
 import { HostPipeServer } from './host-pipe.js'
@@ -32,6 +34,7 @@ function spawnResponder(server: HostPipeServer): ChildProcessWithoutNullStreams 
         if (line === 'ping') out.write(hello + '\\n')
         else process.stdout.write('pong\\n')
       })
+    process.stdout.write('ready\\n')
     setInterval(() => {}, 1000)
   `
   const child = spawn(process.execPath, ['-e', script], {
@@ -41,14 +44,6 @@ function spawnResponder(server: HostPipeServer): ChildProcessWithoutNullStreams 
   child.stdout.setEncoding('utf8')
   children.push(child)
   return child
-}
-
-function pongReader(child: ChildProcessWithoutNullStreams): () => number {
-  let buffer = ''
-  child.stdout.on('data', chunk => {
-    buffer += String(chunk)
-  })
-  return () => (buffer.match(/pong/g) ?? []).length
 }
 
 async function waitForPongIncrease(
@@ -76,7 +71,13 @@ describe('HostPipeServer session ownership', () => {
 
     server.attach(childA)
     server.attach(childB)
-    const pongs = pongReader(childB)
+    const output = createInterface({ input: childB.stdout })
+    let pongCount = 0
+    output.on('line', line => {
+      if (line === 'pong') pongCount++
+    })
+    expect(await once(output, 'line')).toEqual(['ready'])
+    const pongs = () => pongCount
 
     // A stale owner's cleanup must not detach the current session (B).
     server.detachChild(childA)

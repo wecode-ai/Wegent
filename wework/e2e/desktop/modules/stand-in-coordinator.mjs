@@ -7,6 +7,7 @@ import {
   createLocalCollaborationProject,
   selectAgentEnvironment,
   selectAgentFormTab,
+  selectCollaborationProjectView,
 } from './workspace-flows.mjs'
 import { selectE2EModel } from './shared.mjs'
 import { waitForElementWidth } from './layout-metrics.mjs'
@@ -347,10 +348,7 @@ export function createStandInCoordinatorVerification({
       assert.equal(group.leader.id, agent.id)
       assert.deepEqual(group.stages, [])
       await captureScreenshot(control, '25a-existing-leader-created-through-group-settings.png')
-      await control.command(
-        'clickWhenEnabled',
-        `${CONTENT} [data-testid="collaboration-tab-board"]`
-      )
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       const other = await rpc('projects.create', { name: '隔离项目' })
       for (const [scope, content] of [
         [{ kind: 'personal' }, 'PERSONAL_MEMORY_MUST_NOT_LEAK'],

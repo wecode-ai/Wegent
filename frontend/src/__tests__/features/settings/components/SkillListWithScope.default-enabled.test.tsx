@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { translations } from './SkillListWithScope.default-enabled.fixtures'
 import type { HTMLAttributes, ReactNode } from 'react'
 import {
   addSkillToMyDefault,
@@ -105,85 +106,6 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => {
 jest.mock('@/features/settings/components/skills/SkillReferenceConflictDialog', () => ({
   SkillReferenceConflictDialog: () => null,
 }))
-
-const translations: Record<string, string> = {
-  'actions.delete': '删除',
-  'actions.download': '下载',
-  'actions.edit': '编辑',
-  'resource-library:actions.edit_skill': '编辑技能',
-  'publication.published_to_library': '已发布到资源库',
-  'skills.defaultEnabled.title': '自动启用技能',
-  'skills.defaultEnabled.description':
-    '这些技能会在你的所有对话中自动生效；也可以为模式或智能体设置例外。',
-  'skills.defaultEnabled.add': '添加',
-  'skills.defaultEnabled.settings': '管理',
-  'skills.defaultEnabled.summaryCount': '{{count}} 个已启用',
-  'skills.defaultEnabled.overflowCount': '+{{count}}',
-  'skills.defaultEnabled.addDialogTitle': '添加自动启用技能',
-  'skills.defaultEnabled.addDialogDescription': '从你可用的所有技能中选择要自动启用的技能。',
-  'skills.defaultEnabled.noAvailableToAdd': '没有可添加的技能。',
-  'skills.defaultEnabled.emptyTitle': '还没有自动启用的技能',
-  'skills.defaultEnabled.emptyDescription':
-    '从技能库中把技能设为自动启用后，它会自动加入你的对话。',
-  'skills.libraryTitle': '技能库',
-  'skills.libraryDescription':
-    '上传、管理技能。技能可以设为自动启用，跟随你进入对话；也可以在智能体里添加技能，强化智能体的能力。',
-  'skills.myLibraryTitle': '我的技能',
-  'skills.myLibraryDescription': '管理你创建和已启用的技能。',
-  'skills.availability.inMyDefault': '自动启用',
-  'skills.availability.addToMyDefault': '设为自动启用',
-  'skills.availability.removeFromMyDefault': '取消自动启用',
-  'skills.availability.removeSuccess': '已取消自动启用',
-  'skills.availability.removeExternalSuccess': '已取消自动启用，可在“发现”中重新添加',
-  'skills.source.personal': '我的技能',
-  'skills.source.group': '团队技能',
-  'skills.source.system': '系统技能',
-  'skills.autoSettings.title': '自动启用设置',
-  'skills.autoSettings.description': '按技能管理自动启用的例外场景。',
-  'skills.autoSettings.back': '返回技能库',
-  'skills.autoSettings.allConversations': '所有对话自动启用',
-  'skills.autoSettings.exceptionCount': '有 {{count}} 个例外',
-  'skills.autoSettings.noExceptions': '没有例外',
-  'skills.autoSettings.skillColumn': '技能',
-  'skills.autoSettings.modeColumn': '启用模式',
-  'skills.autoSettings.agentColumn': '启用智能体',
-  'skills.autoSettings.exceptionColumn': '例外',
-  'skills.autoSettings.actionColumn': '操作',
-  'skills.autoSettings.configure': '配置',
-  'skills.autoSettings.configureSkill': '配置 {{name}}',
-  'skills.autoSettings.allModesEnabled': '全部模式',
-  'skills.autoSettings.enabledModeCount': '启用 {{enabled}}/{{total}} 个模式',
-  'skills.autoSettings.allAgentsEnabled': '全部智能体',
-  'skills.autoSettings.enabledAgentCount': '启用 {{enabled}}/{{total}} 个智能体',
-  'skills.autoSettings.noAgentsAvailable': '没有可用智能体',
-  'skills.autoSettings.modeExceptions': '启用的模式',
-  'skills.autoSettings.agentExceptions': '启用的智能体',
-  'skills.autoSettings.drawerDescription': '这些例外只影响你自己的自动启用设置。',
-  'skills.autoSettings.defaultScopeTitle': '默认自动启用',
-  'skills.autoSettings.defaultScopeDescription':
-    '默认对所有模式和智能体启用；取消勾选的项目会成为例外。',
-  'skills.autoSettings.forcePreload': '强制激活',
-  'skills.autoSettings.forcePreloadDescription':
-    '打开后，这个技能会直接进入上下文，不等待模型按需加载。',
-  'skills.autoSettings.forcePreloadDisabled': '按需加载',
-  'skills.autoSettings.modeEnableLabel': '启用{{mode}}模式',
-  'skills.autoSettings.agentEnableLabel': '启用 {{name}}',
-  'skills.autoSettings.agentGroupEnableLabel': '启用所有{{group}}',
-  'skills.autoSettings.agentGroups.personal': '我的智能体',
-  'skills.autoSettings.agentGroups.group': '团队智能体',
-  'skills.autoSettings.agentGroups.system': '系统智能体',
-  'skills.autoSettings.emptyAgentGroup': '没有智能体',
-  'skills.autoSettings.clearExceptions': '恢复全部启用',
-  'skills.autoSettings.save': '保存设置',
-  'skills.autoSettings.saveSuccess': '自动启用设置已保存',
-  'skills.autoSettings.saveFailed': '保存自动启用设置失败',
-  'skills.autoSettings.modes.chat': '聊天',
-  'skills.autoSettings.modes.code': '代码',
-  'skills.autoSettings.modes.knowledge': '知识库',
-  'skills.autoSettings.modes.task': '任务',
-  'skills.autoSettings.modes.video': '视频',
-  'skills.autoSettings.modes.image': '图片',
-}
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -369,32 +291,43 @@ describe('SkillListWithScope default enabled skills', () => {
   })
 
   it('keeps personal skills in the library with their auto-enable switch and configuration', async () => {
-    const user = userEvent.setup()
+    // Advance interaction timers without waiting for the host to schedule each event.
+    jest.useFakeTimers()
+    try {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
 
-    render(<SkillListWithScope scope="personal" compact />)
+      render(<SkillListWithScope scope="personal" compact />)
 
-    const librarySection = await screen.findByTestId('skill-library-section')
+      const librarySection = await screen.findByTestId('skill-library-section')
 
-    expect(within(librarySection).queryByRole('heading', { name: '我的技能' })).toBeNull()
-    expect(within(librarySection).queryByText('管理你创建和已启用的技能。')).toBeNull()
-    expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
-    expect(within(librarySection).getByText('Library Skill')).toBeInTheDocument()
-    const personalCard = within(librarySection).getByTestId('skill-library-item-1')
-    expect(within(personalCard).getByTestId('resource-icon')).toHaveAttribute(
-      'data-icon-source',
-      'initial'
-    )
-    expect(within(personalCard).getByRole('switch', { name: '取消自动启用' })).toBeInTheDocument()
+      expect(within(librarySection).queryByRole('heading', { name: '我的技能' })).toBeNull()
+      expect(within(librarySection).queryByText('管理你创建和已启用的技能。')).toBeNull()
+      expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
+      expect(within(librarySection).getByText('Library Skill')).toBeInTheDocument()
+      const personalCard = within(librarySection).getByTestId('skill-library-item-1')
+      expect(within(personalCard).getByTestId('resource-icon')).toHaveAttribute(
+        'data-icon-source',
+        'initial'
+      )
+      expect(within(personalCard).getByRole('switch', { name: '取消自动启用' })).toBeInTheDocument()
 
-    await user.click(within(personalCard).getByTestId('skill-card-more-button-1'))
-    await user.click(await screen.findByTestId('configure-personal-skill-1'))
-    expect(await screen.findByRole('dialog', { name: 'Default Enabled Skill' })).toBeInTheDocument()
-    await user.keyboard('{Escape}')
+      await user.click(within(personalCard).getByTestId('skill-card-more-button-1'))
+      await user.click(await screen.findByTestId('configure-personal-skill-1'))
+      expect(
+        await screen.findByRole('dialog', { name: 'Default Enabled Skill' })
+      ).toBeInTheDocument()
+      await user.keyboard('{Escape}')
 
-    await user.click(within(personalCard).getByTestId('remove-skill-default-button-1'))
+      await user.click(within(personalCard).getByTestId('remove-skill-default-button-1'))
 
-    expect(mockedRemoveSkillFromMyDefault).toHaveBeenCalledWith(1)
-    expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
+      expect(mockedRemoveSkillFromMyDefault).toHaveBeenCalledWith(1)
+      expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
+    } finally {
+      act(() => {
+        jest.runOnlyPendingTimers()
+      })
+      jest.useRealTimers()
+    }
   })
 
   it('keeps the skill list visible when default binding lookup fails', async () => {

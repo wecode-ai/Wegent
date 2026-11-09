@@ -256,7 +256,10 @@ test("independent runtime and delivery jobs retain their deadlines and required 
   const summary = jobs["platform-e2e-summary"];
   assert.ok(summary.needs.includes("build-backend-rs-e2e-runtime"));
   assert.ok(summary.needs.includes("verify-backend-delivery-image"));
-  const check = summary.steps[0];
+  const check = summary.steps.find(
+    (step) => step.name === "Check Platform E2E results",
+  );
+  assert.ok(check, "Platform summary must check the required job results");
   assert.equal(
     check.env.BACKEND_BUILD_RESULT,
     "${{ needs.build-backend-rs-e2e-runtime.result }}",
@@ -283,7 +286,7 @@ test("independent runtime and delivery jobs retain their deadlines and required 
       ["true", "true", "success", result, 1],
     ]),
   ]) {
-    const run = spawnSync("bash", ["-e", "-c", summary.steps[0].run], {
+    const run = spawnSync("bash", ["-e", "-c", check.run], {
       encoding: "utf8",
       env: {
         ...process.env,

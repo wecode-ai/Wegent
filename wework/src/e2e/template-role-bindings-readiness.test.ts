@@ -1,9 +1,77 @@
+// @vitest-environment node
+
 import { expect, test, vi } from 'vitest'
 
 import { fillTemplateRoleBindings } from '../../e2e/desktop/scenarios/collaboration-templates.scenario.mjs'
+import {
+  configureFirstProjectExecutionEnvironment,
+  selectCollaborationProjectView,
+} from '../../e2e/desktop/modules/workspace-flows.mjs'
 
 const role = (index: number) =>
   `[data-workspace-tab-content][aria-hidden="false"] [data-testid="template-role-main-role-${index}"]`
+
+test.each([
+  { view: 'board', tabId: 'collaboration-tab-board' },
+  { view: 'milestones', tabId: 'collaboration-milestones-tab' },
+])(
+  'waits for the rendered $view view before choosing its responsive control',
+  async ({ view, tabId }) => {
+    let releaseView!: () => void
+    const mounted = new Promise<void>(resolve => {
+      releaseView = resolve
+    })
+    const command = vi.fn(async (action: string) => {
+      if (action === 'waitFor') await mounted
+      return action === 'getElementCount' ? '1' : ''
+    })
+    const selecting = selectCollaborationProjectView({ command }, '#content', view, 1234)
+    expect(command).toHaveBeenCalledWith(
+      'waitFor',
+      `#content [data-testid="collaboration-project-view-select"], #content [data-testid="${tabId}"]`,
+      { visible: true, timeoutMs: 1234 }
+    )
+    expect(command).not.toHaveBeenCalledWith('getElementCount', expect.anything())
+    releaseView()
+    await selecting
+    expect(command).toHaveBeenCalledWith(
+      'select',
+      '#content [data-testid="collaboration-project-view-select"]',
+      { value: view }
+    )
+  }
+)
+
+test.each([true, false])(
+  'opens execution settings through the rendered project view switcher (compact=%s)',
+  async compact => {
+    const content = '[data-workspace-tab-content][aria-hidden="false"]'
+    const reachedSettings = new Error('Execution settings reached')
+    let selected = false
+    const command = vi.fn(
+      async (action: string, selector: string, options?: { value?: string }) => {
+        if (action === 'getElementCount') return compact ? '1' : '0'
+        if (selector === `${content} [data-testid="collaboration-tab-manage"]`) {
+          if (compact) throw new Error('Separate project tabs are absent in compact layouts')
+          if (action === 'click' || action === 'clickWhenEnabled') selected = true
+        }
+        if (action === 'select') {
+          expect(selector).toBe(`${content} [data-testid="collaboration-project-view-select"]`)
+          expect(options?.value).toBe('manage')
+          selected = true
+        }
+        if (selector.endsWith('[data-testid="collaboration-project-settings-environments"]')) {
+          expect(selected).toBe(true)
+          throw reachedSettings
+        }
+        return ''
+      }
+    )
+    await expect(
+      configureFirstProjectExecutionEnvironment({ command }, content, 1000)
+    ).rejects.toBe(reachedSettings)
+  }
+)
 
 test('waits for the first role catalog before reading or selecting its human coordinator', async () => {
   let ready = false

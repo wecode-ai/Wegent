@@ -164,6 +164,9 @@ jobs:
           chmod +x ./scripts/hooks/check-settings-config.sh
           ./scripts/hooks/check-settings-config.sh
 
+      - name: Test CI feature planning and coverage gates
+        run: node --test .github/scripts/ci-feature-plan.test.mjs
+
       - name: Test CI change classifier
         run: .github/scripts/test-classify-ci-changes.sh
 

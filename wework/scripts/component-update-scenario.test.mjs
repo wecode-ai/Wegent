@@ -52,6 +52,7 @@ for (const packageChannel of ['stable', 'beta']) {
       }
     }
     t.after(() => scenario.cleanup())
+    assert.equal(scenario.usesReleasePackageRuntimeAssets, true)
     const platform =
       process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
     const origin = scenario.appEnvironment.WEWORK_UPDATE_BASE_URL

@@ -35,7 +35,7 @@ vi.mock('../../e2e/desktop/modules/response-protocol.mjs', async importOriginal 
   mcpToolRequestEvents: vi.fn(() => ({ mode: 'direct', events: [] })),
 }))
 
-test('waits for role settings to load before opening source connections', async () => {
+async function readyIdentityScenario() {
   const scenario = createDesktopScenario({
     captureScreenshot: vi.fn(),
     uiTimeoutMs: 1000,
@@ -58,6 +58,11 @@ test('waits for role settings to load before opening source connections', async 
       executionDeviceId: 'device',
     }
   })
+  return scenario
+}
+
+test('waits for role settings to load before opening source connections', async () => {
+  const scenario = await readyIdentityScenario()
   let settingsLoaded!: () => void
   let waitingStarted!: () => void
   const loading = new Promise<void>(resolve => {
@@ -92,4 +97,33 @@ test('waits for role settings to load before opening source connections', async 
   settingsLoaded()
   expect(await verified).toBe(reachedConnections)
   expect(command).toHaveBeenCalledWith('waitFor', '[data-testid="stand-in-connection-type-picker"]')
+})
+
+test('waits for the asynchronous provider catalog before opening DingTalk connections', async () => {
+  const scenario = await readyIdentityScenario()
+  let catalogLoaded!: () => void
+  let providerRequested!: () => void
+  const loading = new Promise<void>(resolve => {
+    catalogLoaded = resolve
+  })
+  const waiting = new Promise<void>(resolve => {
+    providerRequested = resolve
+  })
+  const sourceEditor = '[data-testid="stand-in-dingtalk-scope-selected"]'
+  const reachedSourceEditor = new Error('The source editor is ready')
+  const command = vi.fn(async (action: string, selector: string) => {
+    if (selector === '[data-testid="stand-in-add-dingtalk-connection"]') {
+      providerRequested()
+      if (action === 'click') throw new Error('The provider catalog is still loading')
+      expect(action).toBe('clickWhenEnabled')
+      await loading
+    }
+    if (selector === sourceEditor) throw reachedSourceEditor
+  })
+  const verified = scenario.verify({ command }).catch((error: unknown) => error)
+
+  await waiting
+  expect(command).not.toHaveBeenCalledWith('click', sourceEditor)
+  catalogLoaded()
+  expect(await verified).toBe(reachedSourceEditor)
 })

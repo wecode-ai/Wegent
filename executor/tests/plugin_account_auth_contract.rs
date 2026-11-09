@@ -174,7 +174,9 @@ raise SystemExit(adapter.main(sys.argv[1:]))
     .unwrap();
     let adapter = NativeAdapter::load(root.path(), "mail", &declaration).unwrap();
     let started = std::time::Instant::now();
-    let exported = adapter.export(&python(), Duration::from_secs(10)).await;
+    // Match migration's export budget so cold interpreter imports exercise the
+    // environment isolation contract. Deadline behavior has separate tests.
+    let exported = adapter.export(&python(), Duration::from_secs(40)).await;
     // Keep sanitized bootstrap timings visible for successful CI runs too.
     let _ = writeln!(
         std::io::stderr(),

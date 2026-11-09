@@ -9,7 +9,9 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+      - converted_to_draft
       - labeled
+      - unlabeled
   merge_group:
     types:
       - checks_requested
@@ -18,10 +20,11 @@ on:
     - cron: "0 4 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && !startsWith(github.event.label.name, 'ci:')) && 'metadata' || 'code' }}
   cancel-in-progress: true
 
 permissions:
+  pull-requests: read
   actions: read
   contents: read
   packages: read
@@ -32,13 +35,17 @@ defaults:
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.action != 'unlabeled') || startsWith(github.event.label.name, 'ci:')
     name: Detect Wework E2E Changes
-    if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
     runs-on: ubuntu-latest
     permissions:
+      pull-requests: read
       contents: read
       packages: write
     outputs:
+      ci_feature_plan: ${{ steps.classify.outputs.ci_feature_plan }}
+      ci_feature_valid: ${{ steps.classify.outputs.ci_feature_valid }}
+      memory_suite: ${{ steps.classify.outputs.memory_suite }}
       browser_image: ${{ steps.image.outputs.browser-ref }}
       desktop_image: ${{ steps.image.outputs.desktop-ref }}
       executor_image: ${{ steps.runtime.outputs.executor-ref }}
@@ -46,7 +53,7 @@ jobs:
       wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
       wework_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e }}
-      windows_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+      windows_desktop_core_e2e: ${{ steps.classify.outputs.windows_desktop_core_e2e }}
       wework_desktop_core_e2e_matrix: ${{ steps.linux-matrix.outputs.matrix }}
       windows_desktop_core_e2e_matrix: ${{ steps.windows-matrix.outputs.matrix }}
       wework_desktop_cloud_e2e: ${{ steps.classify.outputs.wework_desktop_cloud_e2e }}
@@ -66,25 +73,8 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
-          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
-          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
-        run: |
-          if [[ "$FORCE_ALL" == "true" ]]; then
-            .github/scripts/classify-ci-changes.sh --all
-            .github/scripts/classify-wework-desktop-e2e.sh --all
-          else
-            changed_files="$(mktemp)"
-            git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
-            .github/scripts/classify-ci-changes.sh < "$changed_files"
-            if [[ "$GITHUB_EVENT_NAME" == "merge_group" ]]; then
-              desktop_changed_files="$(mktemp)"
-              grep -v '^\.github/' "$changed_files" > "$desktop_changed_files" || true
-              .github/scripts/classify-wework-desktop-e2e.sh < "$desktop_changed_files"
-            else
-              .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
-            fi
-          fi
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/ci-feature-plan.mjs
 
       - name: Balance Windows Core checkpoints by measured duration
         id: windows-matrix
@@ -111,7 +101,7 @@ jobs:
             >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false))
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
@@ -119,7 +109,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check Wework browser E2E image
-        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false))
         id: browser-image-check
         env:
           IMAGE: ${{ steps.image.outputs.browser-ref }}
@@ -131,7 +121,7 @@ jobs:
           fi
 
       - name: Check Wework desktop E2E image
-        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false))
         id: desktop-image-check
         env:
           IMAGE: ${{ steps.image.outputs.desktop-ref }}
@@ -194,7 +184,7 @@ jobs:
     name: Wework E2E
     needs:
       - changes
-    if: needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -244,7 +234,7 @@ jobs:
     name: Build Shared Wework Desktop E2E Artifact
     needs:
       - changes
-    if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false))
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -356,7 +346,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-core-e2e
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -893,7 +883,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-core-e2e
-    if: needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -1043,7 +1033,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-core-e2e
-    if: needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -1136,7 +1126,7 @@ jobs:
           compression-level: 6
 
   wework-e2e-summary:
-    name: Wework E2E Summary
+    name: ${{ (github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && !startsWith(github.event.label.name, 'ci:')) && 'Ignored label metadata (desktop)' || (github.event_name == 'pull_request' && github.event.pull_request.draft) && 'Draft feature plan (desktop)' || 'Wework E2E Summary' }}
     needs:
       - changes
       - wework-e2e
@@ -1147,18 +1137,33 @@ jobs:
       - wework-desktop-windows-core-e2e
       - wework-desktop-e2e
       - wework-desktop-memory-e2e
-    if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
+    if: always() && !cancelled() && (github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.action != 'unlabeled') || startsWith(github.event.label.name, 'ci:'))
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout current CI gate
+        if: needs.changes.result == 'success'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify current feature coverage
+        if: needs.changes.result == 'success'
+        env:
+          CI_FEATURE_PLAN: ${{ needs.changes.outputs.ci_feature_plan }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/scripts/check-ci-feature-plan.mjs
+
       - name: Check Wework E2E results
         env:
-          RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false)) }}
+          RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false)) }}
           RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.windows_desktop_core_e2e == 'true' }}
-          RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')))) }}
+          RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false)) }}
+          RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false)) }}
+          RUN_MACOS_INSPECTOR_E2E: ${{ needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
@@ -1236,7 +1241,7 @@ jobs:
   wework-desktop-memory-e2e:
     name: Wework Desktop macOS E2E
     needs: changes
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
+    if: needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: macos-15
     timeout-minutes: 45
     permissions:
@@ -1262,10 +1267,10 @@ jobs:
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           publish: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          prepare-script: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')) && '.github/scripts/prepare-macos-inspector-e2e.sh' || '' }}
+          prepare-script: .github/scripts/prepare-macos-inspector-e2e.sh
 
       - name: Run Wework desktop memory E2E
-        if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
+        if: needs.changes.outputs.memory_suite == 'true'
         env:
           CI: true
         run: |

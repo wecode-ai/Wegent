@@ -12,6 +12,7 @@ import {
   selectProjectRunnerModel,
   selectCollaborationIssueAgent,
   waitForTestIdByText,
+  selectCollaborationProjectView,
   reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
 import {
@@ -51,7 +52,7 @@ async function waitForTask(control, predicate, timeoutMs) {
 }
 
 async function configurePolicy(control, policy) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -74,7 +75,7 @@ async function configurePolicy(control, policy) {
 }
 
 async function createIssue(control, label) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: label })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -128,7 +129,7 @@ async function createTask(control, label, timeoutMs, executionMode = 'current_wo
 }
 
 async function addAgent(control, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
 
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)

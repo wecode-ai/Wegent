@@ -2,10 +2,68 @@ import { act, fireEvent, renderHook } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { useConversationScrollController } from '../../../../packages/collaboration/src/conversation/useConversationScrollController'
 import { getConversationScrollSnapshot } from '@/features/workbench/runtimeConversationCache'
+import { useConversationVirtualizer } from '@wegent/collaboration/conversation/useConversationVirtualizer'
+import { scrollToContentPosition } from '@wegent/collaboration/conversation/conversationViewportScroll'
 
 afterEach(() => {
   document.body.replaceChildren()
   vi.restoreAllMocks()
+})
+
+test('reads the completed search position before a row resize can compensate a stale offset', () => {
+  const viewport = document.createElement('div')
+  const list = document.createElement('div')
+  viewport.append(list)
+  document.body.append(viewport)
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 200 },
+    clientWidth: { value: 800 },
+    offsetHeight: { value: 200 },
+    offsetWidth: { value: 800 },
+    scrollHeight: { value: 3000 },
+  })
+  viewport.getBoundingClientRect = () => new DOMRect(0, 0, 800, 200)
+  list.getBoundingClientRect = () => new DOMRect(0, -viewport.scrollTop, 800, 3000)
+  viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    viewport.scrollTop = Number(top)
+  })
+  const scrollElementRef = { current: viewport }
+  const listRef = { current: list }
+  const hook = renderHook(() => {
+    const controller = useConversationScrollController({
+      conversationKey: 'search-offset-before-measurement',
+      externalScrollRef: scrollElementRef,
+      messages: [],
+      autoScrollSuspended: true,
+    })
+    const { virtualizer } = useConversationVirtualizer({
+      enabled: true,
+      count: 3,
+      estimateSize: () => 1000,
+      scrollElementRef,
+      listRef,
+      virtualizerRef: controller.virtualizerRef,
+      initialDistanceFromBottomPx: 0,
+      anchorTo: controller.virtualAnchor,
+      scrollEndThreshold: -1,
+    })
+    return { controller, virtualizer }
+  })
+  act(() => {
+    hook.result.current.controller.handleTurnNavigationScrollTargetChange('match')
+    hook.result.current.virtualizer.scrollToOffset(2500)
+    fireEvent.scroll(viewport)
+  })
+  expect(hook.result.current.virtualizer.scrollOffset).toBe(2500)
+  act(() => {
+    // Search uses the shared writer before its asynchronous native scroll event.
+    scrollToContentPosition(viewport, 87, 'auto')
+    hook.result.current.controller.handleTurnNavigationScrollTargetChange(null)
+  })
+  act(() => hook.result.current.virtualizer.resizeItem(1, 24))
+  expect(viewport.scrollTop).toBe(87)
+  expect(hook.result.current.virtualizer.scrollOffset).toBe(87)
+  hook.unmount()
 })
 
 test('saves actual follow position without remeasuring geometry after a scroll write', () => {

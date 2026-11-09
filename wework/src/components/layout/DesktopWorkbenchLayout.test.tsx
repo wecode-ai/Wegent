@@ -5102,6 +5102,7 @@ describe('DesktopWorkbenchLayout', () => {
   }, 30_000)
 
   test('editing a temporary chat queued message replaces draft attachments', async () => {
+    const user = userEvent.setup()
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-queued-attachments',
@@ -5114,13 +5115,14 @@ describe('DesktopWorkbenchLayout', () => {
     })
     renderWorkspacePanelLayout()
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.click(sideChatInput)
+    await user.paste('first message')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
     await waitFor(() =>
       expect(within(sideChat).getByTestId('user-message-content')).toHaveTextContent(
@@ -5128,18 +5130,19 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
 
-    await userEvent.upload(
+    await user.upload(
       within(sideChat).getByTestId('attachment-file-input'),
       new File(['queued attachment'], 'queued-attachment.txt', { type: 'text/plain' })
     )
     expect(
       await within(sideChat).findByTestId('attachment-document-preview-button')
     ).toHaveAccessibleName('queued-attachment.txt')
-    await userEvent.type(sideChatInput, 'queued follow-up')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.click(sideChatInput)
+    await user.paste('queued follow-up')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toBeInTheDocument()
 
-    await userEvent.upload(
+    await user.upload(
       within(sideChat).getByTestId('attachment-file-input'),
       new File(['draft attachment'], 'draft-attachment.txt', { type: 'text/plain' })
     )
@@ -5147,8 +5150,8 @@ describe('DesktopWorkbenchLayout', () => {
       await within(sideChat).findByTestId('attachment-document-preview-button')
     ).toHaveAccessibleName('draft-attachment.txt')
 
-    await userEvent.click(within(sideChat).getByTestId(/queue-more-button-/))
-    await userEvent.click(await screen.findByTestId(/queue-edit-button-/))
+    await user.click(within(sideChat).getByTestId(/queue-more-button-/))
+    await user.click(await screen.findByTestId(/queue-edit-button-/))
 
     await waitFor(() =>
       expect(within(sideChat).getByTestId('chat-message-input')).toHaveValue('queued follow-up')
@@ -5159,8 +5162,8 @@ describe('DesktopWorkbenchLayout', () => {
   }, 30_000)
 
   test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
-    // Queue semantics do not require timer-paced typing, which can outlive a timed-out test.
-    const user = userEvent.setup({ delay: null })
+    // Seed complete drafts so queue assertions do not render once per keystroke.
+    const user = userEvent.setup()
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-stale-busy',
@@ -5181,7 +5184,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await user.type(sideChatInput, 'first message')
+    await user.click(sideChatInput)
+    await user.paste('first message')
     await user.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
@@ -5190,7 +5194,8 @@ describe('DesktopWorkbenchLayout', () => {
       | undefined
     act(() => streamHandlers?.onAssistantStart?.())
 
-    await user.type(sideChatInput, 'follow-up during stale state')
+    await user.click(sideChatInput)
+    await user.paste('follow-up during stale state')
     await user.click(within(sideChat).getByTestId('send-message-button'))
 
     await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
@@ -5203,7 +5208,7 @@ describe('DesktopWorkbenchLayout', () => {
   }, 30_000)
 
   test('temporary chat marks a rejected queued send as failed', async () => {
-    // Queue semantics do not require timer-paced typing, which can outlive a timed-out test.
+    // Seed complete drafts so the queue test does not render once per keystroke.
     const user = userEvent.setup({ delay: null })
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
@@ -5223,11 +5228,13 @@ describe('DesktopWorkbenchLayout', () => {
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await user.type(sideChatInput, 'first message')
+    await user.click(sideChatInput)
+    await user.paste('first message')
     await user.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
-    await user.type(sideChatInput, 'queued follow-up')
+    await user.click(sideChatInput)
+    await user.paste('queued follow-up')
     await user.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
       'queued follow-up'
@@ -5673,6 +5680,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workspace-file-breadcrumb-/fixture/repo/backend/app/schemas')
     ).toHaveTextContent('schemas')
 
+    const fileTabs = () => within(screen.getByTestId('right-workspace-tabbar'))
     const clickPickerEntry = async (name: string) => {
       const tree = await screen.findByTestId('workspace-file-picker-tree')
       const row = await waitFor(() => {
@@ -5709,15 +5717,15 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getAllByRole('tab', { name: /quick_launch.py|admin.py/ })).toHaveLength(2)
 
-    await user.click(screen.getByRole('tab', { name: /admin.py/ }))
+    await user.click(fileTabs().getByRole('tab', { name: /admin.py/ }))
     await waitFor(() => expect(getWorkspaceCodeText()).toContain('admin = True'))
-    await user.click(screen.getByRole('tab', { name: /quick_launch.py/ }))
+    await user.click(fileTabs().getByRole('tab', { name: /quick_launch.py/ }))
     await waitFor(() =>
       expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent('quick_launch.py')
     )
     expect(screen.getByRole('tab', { name: /admin.py/ })).toHaveAttribute('aria-selected', 'false')
     await user.click(
-      within(screen.getByRole('tab', { name: /admin.py/ })).getByTestId(/-close-button$/)
+      within(fileTabs().getByRole('tab', { name: /admin.py/ })).getByTestId(/-close-button$/)
     )
     expect(screen.queryByRole('tab', { name: /admin.py/ })).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /quick_launch.py/ })).toHaveAttribute(

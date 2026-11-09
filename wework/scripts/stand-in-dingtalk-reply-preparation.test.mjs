@@ -30,6 +30,8 @@ test('reply story reuses the prepared binary without a compiler in the standard 
     expect(await readFile(join(resultDir, 'dingtalk-story/baseline-path.txt'), 'utf8')).toBe(
       '/prepared/baseline'
     )
+    expect(await readFile(join(resultDir, 'dingtalk-story/replies.jsonl'), 'utf8')).toBe('')
+    expect(await readFile(prepared, 'utf8')).toBe('precompiled protocol fixture')
     expect(
       JSON.parse(await readFile(join(resultDir, 'dingtalk-story/mentions.json'), 'utf8'))
     ).toMatchObject({ success: true, result: { conversationMessagesList: [] } })

@@ -1253,6 +1253,13 @@ impl RuntimeWorkRpcHandler {
                     turn.resume_thread_id = link.thread_id;
                 }
             }
+        }
+        let continuation_context = self.bind_pending_continuation(&mut turn);
+        if let Some(payload) = turn
+            .send_payload
+            .as_ref()
+            .filter(|_| continuation_context.is_ok())
+        {
             let thread_id = turn
                 .resume_thread_id
                 .as_deref()
@@ -1282,9 +1289,11 @@ impl RuntimeWorkRpcHandler {
             Value::String(turn.local_task_id.clone()),
         );
         self.apply_backend_connection(&mut turn.request);
-        let execution_context = self
-            .resolve_local_model_reference(&mut turn.request, &turn.local_task_id)
-            .map_err(|error| error.message)
+        let execution_context = continuation_context
+            .and_then(|_| {
+                self.resolve_local_model_reference(&mut turn.request, &turn.local_task_id)
+                    .map_err(|error| error.message)
+            })
             .and_then(|_| self.refresh_stand_in_context(&mut turn.request));
         crate::runtime_work::api_context::inject_current_session(
             &mut turn.request,

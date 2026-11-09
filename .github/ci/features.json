@@ -1,0 +1,674 @@
+{
+  "version": 1,
+  "features": {
+    "chat": {
+      "label": "ci:chat",
+      "desktop": [
+        "cloud:conversation-state",
+        "cloud:rendering-extensions",
+        "core:change-request-status",
+        "core:conversation-state",
+        "core:human-interactions",
+        "core:human-interactions-browser",
+        "core:human-interactions-hidden",
+        "core:human-interactions-issue",
+        "core:rendering-extensions",
+        "core:reply-predictions",
+        "core:runtime-input-answer-persistence",
+        "core:send-key-preference",
+        "core:streaming-content",
+        "core:streaming-conversation-switching",
+        "core:streaming-message-order",
+        "core:streaming-scroll",
+        "core:streaming-subagents",
+        "core:streaming-timers",
+        "core:streaming-tools",
+        "core:temporary-chat",
+        "core:voice-input"
+      ],
+      "specs": [
+        {
+          "file": "chat-task.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "integration/settings-chat-integration.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/provider-native-chat.spec.ts",
+          "project": "provider-native-chromium"
+        },
+        {
+          "file": "tasks/provider-native-dingtalk.spec.ts",
+          "project": "provider-native-chromium"
+        },
+        {
+          "file": "tasks/provider-native-state-and-contract.spec.ts",
+          "project": "provider-native-chromium"
+        }
+      ]
+    },
+    "agents": {
+      "label": "ci:agents",
+      "desktop": [
+        "cloud:cloud-model-presets",
+        "cloud:model-routing",
+        "cloud:task-model-deletion",
+        "core:codex-native-catalog",
+        "core:fork-provider-preservation",
+        "core:model-routing",
+        "core:model-settings",
+        "core:project-ai-settings",
+        "core:project-space-tool-discovery"
+      ],
+      "specs": [
+        {
+          "file": "admin/admin-public-models.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "api/admin-public-models-api.spec.ts",
+          "project": "api"
+        },
+        {
+          "file": "capability-center.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings-bot-shell-identity.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings-bot.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings-github.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings-model.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings-team-members.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings-team.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings/bots-crud.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings/settings-shell.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "skill-management-scope.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/team-mode-navigation.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/team-selection.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "team-catalog-pagination.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "team-share-scope.spec.ts",
+          "project": "chromium"
+        }
+      ]
+    },
+    "collaboration": {
+      "label": "ci:collaboration",
+      "desktop": [
+        "cloud:plugin-collaboration-composer-isolation",
+        "core:board-transcript-followup",
+        "core:cloud-space-mention",
+        "core:collaboration-app-queue-identity",
+        "core:collaboration-board-backlog",
+        "core:collaboration-board-move-recovery",
+        "core:collaboration-board-sorting",
+        "core:collaboration-deliveries",
+        "core:collaboration-delivery-editing",
+        "core:collaboration-first-use",
+        "core:collaboration-group-onboarding",
+        "core:collaboration-home-preload",
+        "core:collaboration-human-round-resume",
+        "core:collaboration-issue-archive",
+        "core:collaboration-issue-assignment-activity",
+        "core:collaboration-issue-attachment-preview",
+        "core:collaboration-issue-badges",
+        "core:collaboration-issue-comment-attachments",
+        "core:collaboration-issue-comment-mention",
+        "core:collaboration-issue-comment-notification",
+        "core:collaboration-issue-mcp-comments",
+        "core:collaboration-issue-task-discovery",
+        "core:collaboration-local-agent-dispatch",
+        "core:collaboration-local-group-cancellation",
+        "core:collaboration-local-group-coordinate",
+        "core:collaboration-milestones",
+        "core:collaboration-parent-board",
+        "core:collaboration-remote-agent-dispatch",
+        "core:collaboration-remote-group-coordinate",
+        "core:collaboration-remote-group-planning-details",
+        "core:collaboration-runtime-reconciliation",
+        "core:collaboration-shared-core",
+        "core:collaboration-template-agents",
+        "core:collaboration-template-app-device-routing",
+        "core:collaboration-template-lifecycle",
+        "core:collaboration-templates",
+        "core:collaboration-worktree-policy",
+        "core:dots-closed-loops",
+        "core:issue-human-handoff",
+        "core:issue-property-autosave",
+        "core:project-assignment-notification",
+        "core:project-member-overrides",
+        "core:question-discussion",
+        "core:task-board-association",
+        "core:task-board-bulk-actions"
+      ],
+      "specs": [
+        {
+          "file": "api/project-task-source-update.spec.ts",
+          "project": "api"
+        },
+        {
+          "file": "collaboration/collaboration-agent-execution.spec.ts",
+          "project": "executor-device-chromium"
+        },
+        {
+          "file": "collaboration/collaboration-board-preferences.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/collaboration-catalog-recovery.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/collaboration-cloud-capabilities.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/collaboration-home-style.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/collaboration-project-views.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/collaboration-status-automation.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/workspace-initialization.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/collaboration-tag-changes.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/collaboration.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/external-issue-mentions.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/issue-attachment-preview.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/issue-comment-links.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/issue-dispatch-executor.spec.ts",
+          "project": "executor-device-chromium"
+        },
+        {
+          "file": "collaboration/issue-dispatch.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/project-mentions.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/template-use.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/templates.spec.ts",
+          "project": "chromium"
+        }
+      ]
+    },
+    "workspace": {
+      "label": "ci:workspace",
+      "desktop": [
+        "cloud:cloud-project-creation",
+        "cloud:cloud-worktree-archive-restore",
+        "cloud:cloud-worktree-capability",
+        "cloud:cloud-worktree-create",
+        "cloud:cloud-worktree-queued-cancel",
+        "cloud:cloud-worktree-tools",
+        "cloud:priority-filter",
+        "cloud:workspace-attachments",
+        "cloud:workspace-tabs",
+        "core:archived-fork-cleanup",
+        "core:archived-worktree-cleanup",
+        "core:device-artifact-declaration",
+        "core:drawing-attachment",
+        "core:git-commit-generation",
+        "core:local-artifact-declaration",
+        "core:local-file-preview",
+        "core:office-file-preview",
+        "core:offline-local-project-space",
+        "core:priority-filter",
+        "core:split-workbench",
+        "core:task-attachments",
+        "core:workspace-attachments",
+        "core:workspace-tabs"
+      ],
+      "specs": [
+        {
+          "file": "api/chat-image-api.spec.ts",
+          "project": "api"
+        },
+        {
+          "file": "api/chat-image-e2e.spec.ts",
+          "project": "api"
+        },
+        {
+          "file": "api/personal-task-history.spec.ts",
+          "project": "api"
+        },
+        {
+          "file": "api/remote-workspace-physical-root.spec.ts",
+          "project": "api"
+        },
+        {
+          "file": "preview/docx-pagination.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/attachment-upload-regression.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/chat-image-browser-e2e.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/chat-image-upload.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/device-artifact-declaration.spec.ts",
+          "project": "executor-device-chromium"
+        },
+        {
+          "file": "tasks/file-upload.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/recent-team-history.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/remote-workspace.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/tasks-page.spec.ts",
+          "project": "chromium"
+        }
+      ]
+    },
+    "runtime": {
+      "label": "ci:runtime",
+      "desktop": [
+        "cloud:cloud-model-recovery",
+        "cloud:core-task-flow",
+        "cloud:goal-lifecycle",
+        "cloud:resilience",
+        "cloud:supervisor-lifecycle",
+        "core:background-terminals",
+        "core:change-request-status",
+        "core:claude-runtime",
+        "core:cloud-space-mention",
+        "core:codex-cloud-config-recovery",
+        "core:codex-invalid-launch-cwd",
+        "core:codex-notification-isolation",
+        "core:context-compaction",
+        "core:core-task-flow",
+        "core:executor-stream-recovery",
+        "core:follow-up-task-switch",
+        "core:goal-lifecycle",
+        "core:goal-state-sync",
+        "core:idle-executor-requests",
+        "core:latest-conversation-history",
+        "core:local-harness",
+        "core:model-overload-recovery",
+        "core:native-lifecycle",
+        "core:permission-modes",
+        "core:python-runtime",
+        "core:resilience",
+        "core:running-conversation-history",
+        "core:running-plan-history",
+        "core:running-sidebar-state",
+        "core:runtime-input-answer-persistence",
+        "core:runtime-policy",
+        "core:runtime-task-queue",
+        "core:sidebar-task-identity",
+        "core:supervisor-lifecycle",
+        "core:task-status-sync",
+        "core:transcript-sync",
+        "core:workbench-control",
+        "core:workbench-mode"
+      ],
+      "specs": [
+        {
+          "file": "code-task.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/agent-conversation-regression.spec.ts",
+          "project": "executor-device-chromium"
+        },
+        {
+          "file": "tasks/chat-stalled-execution.spec.ts",
+          "project": "executor-stalled-chromium"
+        },
+        {
+          "file": "tasks/claude-background-lifecycle.spec.ts",
+          "project": "executor-chromium"
+        },
+        {
+          "file": "tasks/claudecode-compaction.spec.ts",
+          "project": "executor-device-chromium"
+        },
+        {
+          "file": "tasks/code-page-enhanced.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/pipeline-session-archive.spec.ts",
+          "project": "executor-chromium"
+        },
+        {
+          "file": "tasks/provider-native-claudecode.spec.ts",
+          "project": "executor-chromium"
+        },
+        {
+          "file": "tasks/task-runtime-consistency.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/shell-reference-cancel.spec.ts",
+          "project": "executor-chromium"
+        }
+      ]
+    },
+    "devices": {
+      "label": "ci:devices",
+      "desktop": [
+        "cloud:cloud-device-lifecycle",
+        "core:cloud-context-resilience",
+        "core:cloud-login-proxy",
+        "core:desktop-device-identity",
+        "core:remote-device-onboarding"
+      ],
+      "specs": [
+        {
+          "file": "devices/advanced-device-visibility.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "devices/app-device-identity.spec.ts",
+          "project": "chromium"
+        }
+      ]
+    },
+    "plugins": {
+      "label": "ci:plugins",
+      "desktop": [
+        "cloud:plugin-account-auth-conversation",
+        "cloud:plugin-account-auth-coordination",
+        "cloud:plugin-account-auth-dws",
+        "cloud:plugin-account-auth-github",
+        "cloud:plugin-account-auth-oauth",
+        "cloud:plugin-account-auth-password",
+        "cloud:plugin-account-auth-transfer",
+        "cloud:plugin-auto-update",
+        "cloud:plugin-background-sync-isolation",
+        "cloud:plugin-collaboration-composer-isolation",
+        "cloud:plugin-composer-long-list",
+        "cloud:plugin-legacy-upgrade",
+        "cloud:plugin-periodic-reconcile",
+        "cloud:plugin-registration-coordination",
+        "cloud:plugin-runtime-path-recovery",
+        "cloud:plugin-runtime-route-refresh",
+        "cloud:plugin-toggle-persistence",
+        "cloud:plugin-uninstall-lost-response",
+        "cloud:plugin-uninstall-reinstall-race",
+        "cloud:plugin-uninstall-restart-recovery",
+        "cloud:plugin-uninstall-unknown-result",
+        "cloud:plugin-workspace-publication",
+        "cloud:plugin-write-coordination",
+        "core:core-dsh-plugin-management",
+        "core:external-content-import",
+        "core:mcp-apps",
+        "core:plugin-development",
+        "core:python-runtime",
+        "plugins:core-dsh-ui-plugin-composition",
+        "plugins:plugin-composer-network-isolation",
+        "plugins:plugin-lifecycle",
+        "plugins:plugin-marketplace-lifecycle",
+        "plugins:sites-plugin-auto-install",
+        "plugins:skill-mention-rendering"
+      ],
+      "specs": []
+    },
+    "knowledge": {
+      "label": "ci:knowledge",
+      "desktop": [],
+      "specs": [
+        {
+          "file": "knowledge/dingtalk-import.spec.ts",
+          "project": "provider-native-chromium"
+        },
+        {
+          "file": "knowledge/knowledge.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "knowledge/company-url-scope.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "knowledge/stable-id-navigation.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "knowledge/relationship-navigation.spec.ts",
+          "project": "chromium"
+        }
+      ]
+    },
+    "automation": {
+      "label": "ci:automation",
+      "desktop": [
+        "cloud:automation-lifecycle",
+        "cloud:project-automation",
+        "core:automation-lifecycle",
+        "core:project-automation"
+      ],
+      "specs": [
+        {
+          "file": "collaboration/automation-operation-attribution.spec.ts",
+          "project": "chromium"
+        }
+      ]
+    },
+    "stand-in": {
+      "label": "ci:stand-in",
+      "desktop": [
+        "cloud:stand-in-cloud-device",
+        "core:stand-in",
+        "core:stand-in-action-confirmation",
+        "core:stand-in-alternate-source",
+        "core:stand-in-assignment-notifications",
+        "core:stand-in-cli",
+        "core:stand-in-cloud",
+        "core:stand-in-connections",
+        "core:stand-in-controls",
+        "core:stand-in-email",
+        "core:stand-in-git",
+        "core:stand-in-identities",
+        "core:stand-in-list-confirmation",
+        "core:stand-in-mcp",
+        "core:stand-in-memory-learning",
+        "core:stand-in-memory-timer",
+        "core:stand-in-notifications",
+        "core:stand-in-permissions",
+        "core:stand-in-personal-task",
+        "core:stand-in-plugin-bridge",
+        "core:stand-in-profile",
+        "core:stand-in-project-enable",
+        "core:stand-in-sessions",
+        "core:stand-in-telemetry",
+        "core:stand-in-workspace"
+      ],
+      "specs": []
+    },
+    "browser": {
+      "label": "ci:browser",
+      "desktop": [
+        "cloud:browser-multi-tabs",
+        "cloud:embedded-browser",
+        "core:browser-annotation-anchors",
+        "core:browser-annotation-core",
+        "core:browser-annotation-design",
+        "core:browser-toolbar-actions",
+        "core:computer-use",
+        "core:embedded-browser",
+        "core:harness-app-development",
+        "core:harness-app-lifecycle",
+        "core:harness-app-models"
+      ],
+      "specs": []
+    },
+    "desktop": {
+      "label": "ci:desktop",
+      "desktop": [
+        "cloud:telemetry-consent",
+        "cloud:window-lifecycle",
+        "core:application-menu",
+        "core:devtools-performance",
+        "core:environment-panel-scroll",
+        "core:native-window-chrome",
+        "core:native-window-startup",
+        "core:notification-tab-navigation",
+        "core:renderer-crash-recovery",
+        "core:renderer-storage",
+        "core:startup-network-change",
+        "core:system-pac",
+        "core:system-proxy",
+        "core:tray-lifecycle",
+        "core:wework-docs",
+        "core:window-background-policy",
+        "core:window-lifecycle"
+      ],
+      "specs": [
+        {
+          "file": "examples/coverage-example.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "performance/page-load.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "visual/settings-visual.spec.ts",
+          "project": "chromium"
+        }
+      ]
+    },
+    "auth": {
+      "label": "ci:auth",
+      "desktop": [
+        "core:codex-account-login",
+        "core:dsh-owner-capture",
+        "core:permission-modes",
+        "core:project-member-overrides",
+        "core:reply-prediction-auth",
+        "core:stand-in-permissions"
+      ],
+      "specs": [
+        {
+          "file": "admin/admin-users.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "api/groups-api.spec.ts",
+          "project": "api"
+        },
+        {
+          "file": "api/task-member-access.spec.ts",
+          "project": "api"
+        },
+        {
+          "file": "auth.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "auth/login.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings/settings-groups.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "settings/shell-self-sharing.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "shared/shared-task.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/socket-user-room.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "tasks/task-sharing.spec.ts",
+          "project": "chromium"
+        }
+      ]
+    },
+    "release": {
+      "label": "ci:release",
+      "desktop": [
+        "core:component-update",
+        "core:release-package-startup"
+      ],
+      "specs": []
+    }
+  }
+}

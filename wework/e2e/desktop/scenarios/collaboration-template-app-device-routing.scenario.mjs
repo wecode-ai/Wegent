@@ -10,6 +10,49 @@ const PROJECT_NAME = `模板设备身份-${process.pid}`
 const WORKSPACE_NAME = `模板设备身份空间-${process.pid}`
 const TEMPLATE_DISPLAY_NAME = `模板设备身份模板-${process.pid}`
 
+export async function logTemplateRoutingFailure({
+  control,
+  request,
+  workspaceId,
+  projectName,
+  appDevice,
+}) {
+  try {
+    const [statusText, resources, projects] = await Promise.all([
+      control.command('getLocalExecutorStatus', 'body'),
+      request('/api/v1/resources?include_readiness=false'),
+      request(`/api/v1/workspaces/${workspaceId}/projects`),
+    ])
+    const status = JSON.parse(statusText)
+    const project = projects.items.find(item => item.name === projectName)
+    const grants = project
+      ? await request(`/api/v1/cloud-projects/${project.id}/execution-environments`)
+      : { items: [] }
+    const identity = value => ({
+      id: value.id,
+      device_id: value.device_id,
+      device_key: value.device_key,
+      app_device_id: value.app_device_id,
+      kind: value.kind,
+      status: value.status,
+      can_use: value.can_use,
+    })
+    console.error(
+      '[template-routing-diagnostics]',
+      JSON.stringify({
+        local: { deviceId: status.deviceId, running: status.running, ready: status.ready },
+        appDevice: identity(appDevice),
+        resources: resources.execution_environments.map(identity),
+        projectId: project?.id,
+        grants: grants.items.map(identity),
+      })
+    )
+  } catch (error) {
+    // Diagnostics must preserve the original assertion and never expose response bodies.
+    console.error('[template-routing-diagnostics]', JSON.stringify({ errorType: error?.name }))
+  }
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloud
   let environment
@@ -140,8 +183,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', `${header}, ${error}`, {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      const errorCount = Number(await control.command('getElementCount', error, { visible: true }))
+      if (errorCount) {
+        await logTemplateRoutingFailure({
+          control,
+          request,
+          workspaceId: workspace.id,
+          projectName: PROJECT_NAME,
+          appDevice,
+        })
+      }
       assert.equal(
-        Number(await control.command('getElementCount', error, { visible: true })),
+        errorCount,
         0,
         `Template creation failed: ${await control.command('getText', error)}`
       )

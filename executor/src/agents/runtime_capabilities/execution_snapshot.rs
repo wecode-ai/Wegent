@@ -8,6 +8,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn json_publication_creates_and_replaces_files_beyond_windows_max_path() {
+        let root = tempfile::tempdir().unwrap();
+        let mut parent = root.path().to_path_buf();
+        for _ in 0..5 {
+            parent.push("long-agent-home-directory-".repeat(3));
+        }
+        let path = parent.join("execution.json");
+        assert!(path.as_os_str().len() > 260);
+        for version in 1..=2 {
+            let value = json!({"version": version});
+            write_json_file(&path, &value).unwrap();
+            let saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved, value);
+            assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+        }
+    }
+
+    #[test]
     fn inherited_deferred_hook_is_rebound_without_accumulating_obsolete_snapshot_paths() {
         let root = tempfile::tempdir().unwrap();
         let first = root.path().join("first");

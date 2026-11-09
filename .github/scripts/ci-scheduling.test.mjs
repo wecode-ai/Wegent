@@ -17,7 +17,10 @@ const context = (action, label = '') => ({
   event: { action, label: { name: label }, pull_request: { number: 1 } },
 })
 const evaluate = (expression, github) => runInNewContext(expression, {
-  github, always: () => true, cancelled: () => false,
+  github,
+  always: () => true,
+  cancelled: () => false,
+  startsWith: (value, prefix) => value.startsWith(prefix),
 })
 const group = github => desktop.concurrency.group.replace(/\$\{\{(.*?)\}\}/g,
   (_, expression) => String(evaluate(expression, github)))

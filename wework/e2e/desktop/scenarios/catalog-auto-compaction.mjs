@@ -124,8 +124,9 @@ export function createCatalogAutoCompactionVerification({
     })
     return waitForWorkbenchDebugState(
       control,
-      snapshot => snapshot.pane?.status?.isBusy === false,
-      `${fixture.id} turn ${turn} did not settle`
+      snapshot =>
+        snapshot.pane?.status?.isBusy === false && Boolean(snapshot.workbench.activeTask?.threadId),
+      `${fixture.id} turn ${turn} did not settle with a Codex thread identity`
     )
   }
 
@@ -265,7 +266,10 @@ export function createCatalogAutoCompactionVerification({
           assert.equal(current.compactions, 0, 'The below-threshold turn auto-compacted')
           const after = await send(control, 3)
           const identity = snapshot => {
-            const { deviceId, taskId, threadId } = snapshot.workbench.currentRuntimeTask
+            const { currentRuntimeTask, activeTask } = snapshot.workbench
+            const { deviceId, taskId } = currentRuntimeTask
+            assert.equal(activeTask.taskId, taskId, 'The Codex thread belongs to another task')
+            const { threadId } = activeTask
             assert.ok(threadId, 'The conversation has no Codex thread identity')
             return { deviceId, taskId, threadId }
           }
