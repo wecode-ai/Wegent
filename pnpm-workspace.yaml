@@ -17,6 +17,10 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 packageExtensions:
+  # Streamdown exposes HAST 3 types but declares them only as a development dependency.
+  "streamdown@2.5.0":
+    dependencies:
+      "@types/hast": 3.0.5
   # Match JSDOM's parser instead of a hoisted legacy cssstyle version.
   "@acemir/cssom@0.9.31":
     dependencies:
