@@ -44,6 +44,21 @@ test('rejects the Linux basic_text backend', async () => {
   expect(storage.encryptStringAsync).not.toHaveBeenCalled()
 })
 
+test('rejects the Linux fixed-key provider when a selected secret service fails', async () => {
+  vi.stubGlobal('process', { ...process, platform: 'linux' })
+  const ciphertext = Buffer.from('v10-fixed-key-ciphertext')
+  storage.encryptStringAsync.mockResolvedValue(ciphertext)
+  await expect(systemSecretProtection.encrypt('private-value')).rejects.toMatchObject({
+    code: 'secure_storage_unavailable',
+  })
+  await expect(systemSecretProtection.decrypt(ciphertext.toString('base64'))).rejects.toMatchObject(
+    {
+      code: 'secure_storage_unavailable',
+    }
+  )
+  expect(storage.decryptStringAsync).not.toHaveBeenCalled()
+})
+
 test('keeps the event loop responsive while native authorization is pending', async () => {
   let authorize!: (available: boolean) => void
   storage.isAsyncEncryptionAvailable.mockReturnValue(
