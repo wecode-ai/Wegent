@@ -50,7 +50,7 @@ export function DeleteSiteDialog({
         onClick={event => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-red-500/10 text-red-500">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive">
             <Trash2 className="h-4 w-4" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
@@ -67,7 +67,7 @@ export function DeleteSiteDialog({
               })}
             </p>
             {error && (
-              <p className="mt-2 text-xs leading-5 text-red-500" role="alert">
+              <p className="mt-2 text-xs leading-5 text-destructive" role="alert">
                 {error}
               </p>
             )}
@@ -89,7 +89,7 @@ export function DeleteSiteDialog({
             data-testid="site-delete-confirm-button"
             onClick={onConfirm}
             disabled={loading}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-contrast transition-colors hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
             {loading ? t('deleting', '删除中') : t('confirm_delete', '删除')}

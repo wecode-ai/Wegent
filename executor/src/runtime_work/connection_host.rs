@@ -153,6 +153,11 @@ pub(crate) async fn call(
     Ok(body["result"].clone())
 }
 
+pub(super) fn collection_runtime_retry_after_ms(code: &str) -> Option<u64> {
+    // A runtime read timeout is not a provider rejection or an action outcome.
+    (code == "request_timeout").then_some(30_000)
+}
+
 fn response_error(method: &str, error: &Value) -> AppIpcError {
     let failure = AppIpcError::new(
         error["code"].as_str().unwrap_or("connection_failed"),
@@ -173,6 +178,7 @@ fn response_error(method: &str, error: &Value) -> AppIpcError {
         if let Some(delay) = error["retryAfterMs"]
             .as_u64()
             .filter(|delay| (1..=3_600_000).contains(delay))
+            .or_else(|| collection_runtime_retry_after_ms(&failure.code))
         {
             return failure.with_retry_after_ms(delay);
         }
@@ -229,6 +235,18 @@ mod tests {
             let mut invalid = error.clone();
             invalid["retryAfterMs"] = delay;
             assert_eq!(response_error("collect", &invalid).retry_after_ms, None);
+        }
+    }
+
+    #[test]
+    fn runtime_timeouts_retry_collection_only_without_provider_retry_metadata() {
+        let error = json!({"code":"request_timeout","message":"Executor read timed out"});
+        assert_eq!(
+            response_error("collect", &error).retry_after_ms,
+            Some(30_000)
+        );
+        for method in ["executeAction", "readSource", "initialize", "validate"] {
+            assert_eq!(response_error(method, &error).retry_after_ms, None);
         }
     }
 

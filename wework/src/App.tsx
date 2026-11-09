@@ -48,7 +48,6 @@ import { stripAppBasePath } from '@/config/runtime'
 import {
   AppearanceProvider,
   getWorkbenchBackground,
-  useAppearance,
   useOptionalAppearance,
 } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -834,14 +833,17 @@ export default function App() {
     isDesktopRuntime() && path === '/system-drag' ? (
       <SystemDragPanel />
     ) : isDesktopRuntime() && path === '/process-explorer' ? (
-      <AppEnvironment persistAppearance={false} syncAppearanceFromPreferences>
-        <ProcessExplorerPage />
-      </AppEnvironment>
+      <ProcessExplorerPage />
     ) : (
       <MainApp />
     )
   return (
-    <>
+    <AppEnvironment
+      persistAppearance={
+        !isDesktopRuntime() ||
+        (!['/system-drag', '/process-explorer'].includes(path) && !isPopoutWindowRuntime())
+      }
+    >
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
       <GlobalIconButtonTooltip />
@@ -853,7 +855,7 @@ export default function App() {
           slot={WEWORK_DSH_SLOTS.shellOverlay}
         />
       </div>
-    </>
+    </AppEnvironment>
   )
 }
 
@@ -863,50 +865,33 @@ function MainApp() {
   }, [])
 
   return (
-    <AppEnvironment>
-      <AppUpdateProvider>
-        <CloudConnectionProvider>
-          <AuthProvider>
-            <TelemetryBridge />
-            <TelemetryAgent />
-            <AppShell />
-          </AuthProvider>
-        </CloudConnectionProvider>
-      </AppUpdateProvider>
-    </AppEnvironment>
+    <AppUpdateProvider>
+      <CloudConnectionProvider>
+        <AuthProvider>
+          <TelemetryBridge />
+          <TelemetryAgent />
+          <AppShell />
+        </AuthProvider>
+      </CloudConnectionProvider>
+    </AppUpdateProvider>
   )
 }
 
 function AppEnvironment({
   children,
   persistAppearance = true,
-  syncAppearanceFromPreferences = false,
 }: {
   children: ReactNode
   persistAppearance?: boolean
-  syncAppearanceFromPreferences?: boolean
 }) {
   return (
     <AppearanceProvider persist={persistAppearance}>
       <AppPreferencesProvider>
-        {syncAppearanceFromPreferences ? <AppearancePreferenceSync /> : null}
         <LanguagePreferenceInitializer />
         {children}
       </AppPreferencesProvider>
     </AppearanceProvider>
   )
-}
-
-function AppearancePreferenceSync() {
-  const appPreferences = useAppPreferencesState()
-  const { setAppearance } = useAppearance()
-
-  useEffect(() => {
-    if (!appPreferences?.loaded) return
-    setAppearance({ mode: appPreferences.preferences.appearanceMode })
-  }, [appPreferences?.loaded, appPreferences?.preferences.appearanceMode, setAppearance])
-
-  return null
 }
 
 function LanguagePreferenceInitializer() {
@@ -1494,7 +1479,7 @@ function WeworkDevInstanceBadge() {
               <button
                 type="button"
                 data-testid="collapse-wework-dev-instance-button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
                 title="Collapse to movable icon"
                 aria-label="Collapse development instance info"
                 onClick={() => setCollapsed(true)}
@@ -1519,7 +1504,7 @@ function WeworkDevInstanceBadge() {
                 <button
                   type="button"
                   data-testid={`copy-wework-dev-${row.key}-button`}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
                   title={`Copy ${row.label}`}
                   aria-label={`Copy ${row.label}`}
                   onClick={() => void copyValue(row.key, row.value)}

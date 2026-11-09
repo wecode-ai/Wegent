@@ -710,7 +710,7 @@ export function PluginDetailView({
             <button
               type="button"
               data-testid={`plugin-detail-uninstall-${plugin.id}`}
-              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-destructive transition-colors hover:bg-destructive/10"
               onClick={() => {
                 setIsActionMenuOpen(false)
                 onUninstall()
@@ -726,7 +726,7 @@ export function PluginDetailView({
                 type="button"
                 disabled={deleteActionDisabled}
                 data-testid={`plugin-detail-delete-${plugin.id}`}
-                className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40"
+                className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
                 onClick={() => {
                   setIsActionMenuOpen(false)
                   onDeleteAction()
@@ -885,7 +885,7 @@ export function PluginDetailView({
             {submissionStatus === 'rejected' && (
               <p
                 data-testid="plugin-detail-submission-status"
-                className="mt-1 text-xs leading-4 text-red-600"
+                className="mt-1 text-xs leading-4 text-destructive"
               >
                 {t('workbench.plugins_publish_rejected_notice', {
                   note: submissionReviewNote || '-',
@@ -954,7 +954,7 @@ export function PluginDetailView({
               <div
                 role="alert"
                 data-testid="plugin-detail-action-error"
-                className="mt-4 rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm leading-5 text-red-600"
+                className="mt-4 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm leading-5 text-destructive"
               >
                 {actionError}
                 {onRetryAction && (
@@ -1056,13 +1056,14 @@ export function PluginDetailView({
                             data-testid={`plugin-component-toggle-${item.componentKey}`}
                             className={[
                               'relative h-[22px] w-[38px] rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
-                              enabled ? 'bg-emerald-500' : 'bg-border',
+                              enabled ? 'bg-primary' : 'bg-border',
                             ].join(' ')}
                             onClick={() => onComponentToggle(item.componentKey, !enabled)}
                           >
                             <span
                               className={[
-                                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full shadow-sm transition-transform',
+                                enabled ? 'bg-primary-contrast' : 'bg-background',
                                 enabled ? 'translate-x-4' : 'translate-x-0',
                               ].join(' ')}
                             />
@@ -1092,7 +1093,7 @@ export function PluginDetailView({
                           href={row.href}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                          className="inline-flex items-center gap-1 text-focus hover:underline"
                         >
                           {row.value}
                           <ExternalLink className="h-3.5 w-3.5" />
@@ -1112,7 +1113,7 @@ export function PluginDetailView({
                       <button
                         type="button"
                         data-testid="plugin-detail-open-origin-personal"
-                        className="inline-flex items-center gap-1 text-blue-600 hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
+                        className="inline-flex items-center gap-1 text-focus hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                         onClick={onOpenOriginPersonalPlugin}
                       >
                         {originPersonalActionLabel ||

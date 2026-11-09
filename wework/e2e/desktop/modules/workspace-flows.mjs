@@ -751,10 +751,19 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
     )
   }
   const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
-  if (screenshotMode === 'final' && !name.endsWith('04-task-completed-after-reopen.png')) {
+  const requiredAppearanceEvidence = name.startsWith('appearance-')
+  if (
+    !requiredAppearanceEvidence &&
+    screenshotMode === 'final' &&
+    !name.endsWith('04-task-completed-after-reopen.png')
+  ) {
     return null
   }
-  if (screenshotMode === 'harness-milestones' && !HARNESS_MILESTONE_SCREENSHOTS.has(name)) {
+  if (
+    !requiredAppearanceEvidence &&
+    screenshotMode === 'harness-milestones' &&
+    !HARNESS_MILESTONE_SCREENSHOTS.has(name)
+  ) {
     return null
   }
   const screenshotPath = join(resultDir, name)
