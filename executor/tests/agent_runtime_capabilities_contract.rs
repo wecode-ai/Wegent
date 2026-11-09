@@ -357,7 +357,7 @@ test ! -f "$CLAUDE_CONFIG_DIR/auth.json" || exit 81
         engine.run(request.clone()).await,
         ExecutionOutcome::Completed { .. }
     ));
-    let arguments = read_json(&log);
+    let arguments = read_arguments(&log);
     assert!(arguments
         .as_array()
         .unwrap()
@@ -430,7 +430,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
             content: "ok".to_owned()
         }
     );
-    let args = read_json(&log_path);
+    let args = read_arguments(&log_path);
     let args = args.as_array().unwrap();
     let mcp_flag_index = args
         .iter()
@@ -516,7 +516,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
             .await,
         outcome
     );
-    let latest_args = read_json(&log_path);
+    let latest_args = read_arguments(&log_path);
     let latest_args = latest_args.as_array().unwrap();
     assert!(latest_args.iter().any(|arg| arg == "--mcp-config"));
     assert_eq!(read_json(&log_path.with_extension("mcp")), merged);
@@ -541,7 +541,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
             .await,
         outcome
     );
-    let other_args = read_json(&log_path);
+    let other_args = read_arguments(&log_path);
     assert!(other_args
         .as_array()
         .unwrap()
@@ -1825,17 +1825,10 @@ STDIN_LOG_PATH='{}'
 if [ -n "$WEGENT_MCP_CONFIG_PATH" ]; then
   cp "$WEGENT_MCP_CONFIG_PATH" "${{LOG_PATH%.json}}.mcp"
 fi
-printf '[' > "$LOG_PATH"
-first=1
+: > "$LOG_PATH"
 for arg in "$@"; do
-  if [ "$first" = 0 ]; then
-    printf ',' >> "$LOG_PATH"
-  fi
-  first=0
-  escaped=$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g')
-  printf '"%s"' "$escaped" >> "$LOG_PATH"
+  printf '%s\000' "$arg" >> "$LOG_PATH"
 done
-printf ']\n' >> "$LOG_PATH"
 cat > "$STDIN_LOG_PATH"
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"ok"}}]}}}}'
 printf '%s\n' '{{"type":"result","is_error":false}}'
@@ -2163,6 +2156,41 @@ fn make_executable(_path: &Path) {
         permissions.set_mode(0o700);
         fs::set_permissions(_path, permissions).unwrap();
     }
+}
+
+fn read_arguments(path: &Path) -> Value {
+    let bytes = fs::read(path).unwrap();
+    if bytes.is_empty() {
+        return json!([]);
+    }
+    let arguments = bytes
+        .strip_suffix(&[0])
+        .expect("Argument log must end with a NUL delimiter")
+        .split(|byte| *byte == 0)
+        .map(|argument| std::str::from_utf8(argument).unwrap())
+        .collect::<Vec<_>>();
+    json!(arguments)
+}
+
+#[test]
+fn fake_claude_preserves_multiline_and_special_character_arguments() {
+    let root = tempfile::tempdir().unwrap();
+    let log = root.path().join("arguments");
+    let native = write_fake_claude(&log);
+    let arguments = [
+        "line one\nline two\n",
+        "tab\tcarriage\rreturn",
+        "quotes\"and\\slashes",
+        "",
+        "中文",
+    ];
+    let output = std::process::Command::new(native)
+        .args(arguments)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(read_arguments(&log), json!(arguments));
 }
 
 fn read_json(path: &Path) -> Value {

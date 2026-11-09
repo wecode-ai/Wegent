@@ -57,6 +57,12 @@ You can also describe a role or configuration change in conversation. The confir
 
 The main surface keeps the conversation, composer, identity switcher and adjacent **＋**, with **Stand-in details** at the top right. Connection or processing issues appear as one compact status entry; open **Connection and processing status** for complete records and retry. The question-mark icon at the top right of the details popover opens **Usage examples**; the arrow beside Recent activity opens all activity. Settings show **Memory** directly, without those extra entries. Stopping is separate at the bottom left of the settings panel. Settings, Connections and source details have explicit entry and parent-return controls; clickable **Settings navigation** paths return to Settings or Connections without bypassing unsaved-change confirmation. Proactive background updates retain their own marker.
 
+## Proactive background notifications
+
+All connected sources share the same notification policy: surface important information relevant to you, urgent matters, or evidence-backed possible progress anomalies, even when no user action is required. Explain what happened, why it matters now, its source and timing, distinguishing facts, inference and uncertainty. A possible anomaly need not be confirmed, but must have a concrete signal relative to known expectations. Missing updates, unknown current status of an old problem, or urgent wording alone do not justify a notification. Never resurface resolved or superseded problems as active risks; important new milestones or outcomes can still merit a finding.
+
+Assess related events together and consult recent notifications across batches; notify again only when new evidence changes significance, urgency, the progress assessment or the required response. Routine updates and redeliveries remain quiet; never broaden access or create verification tasks merely to manufacture a notification. Preserve account/source identity and source-provided topic identifiers for correlation; never invent missing identifiers, and use available evidence for semantic assessment. This is a model-driven policy, not an independent guarantee of live state verification. Explicitly requested reports, reminders, scheduled arrangements and authorized work execution retain their existing flows.
+
 ## Inspect, edit and forget stand-in memories
 
 <a id="stand-in-memory-controls"></a>
