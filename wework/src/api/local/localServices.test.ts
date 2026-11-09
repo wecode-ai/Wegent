@@ -29,6 +29,7 @@ import {
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
   resetLocalRuntimeChatStreamsForTests,
+  resolveAssignmentCloudModel,
 } from './localServices'
 import { getLocalUser, LOCAL_USER } from './localSession'
 
@@ -4759,6 +4760,44 @@ describe('createLocalAppServices', () => {
         model_id: 'native-model',
       })
     ).toBeNull()
+  })
+
+  test('validates the identity of a resolved hidden cloud model', async () => {
+    const reference = {
+      name: 'hidden-cloud-model',
+      type: 'group' as const,
+      namespace: 'team-a',
+      resource_user_id: 7,
+    }
+    const resolved = {
+      name: 'hidden-cloud-model',
+      type: 'group' as const,
+      namespace: 'team-a',
+      resourceUserId: 7,
+      config: { protocol: 'openai', apiFormat: 'chat/completions' },
+    }
+    await expect(
+      resolveAssignmentCloudModel(null, reference, vi.fn().mockResolvedValue(resolved))
+    ).resolves.toEqual(resolved)
+    await expect(
+      resolveAssignmentCloudModel(
+        null,
+        reference,
+        vi.fn().mockResolvedValue({ ...resolved, namespace: 'team-b' })
+      )
+    ).rejects.toThrow('RUNNER_MODEL_UNAVAILABLE')
+    await expect(
+      resolveAssignmentCloudModel(null, reference, vi.fn().mockRejectedValue(new Error('offline')))
+    ).rejects.toThrow('RUNNER_MODEL_UNAVAILABLE')
+    await expect(resolveAssignmentCloudModel(null, null)).resolves.toBeNull()
+    const catalogModel = { ...resolved, type: 'public' as const }
+    await expect(
+      resolveAssignmentCloudModel(
+        catalogModel,
+        null,
+        vi.fn().mockRejectedValue(new Error('unused'))
+      )
+    ).resolves.toEqual(catalogModel)
   })
 
   test('prepares model identity before fencing and keeps transport failures after the fence', async () => {

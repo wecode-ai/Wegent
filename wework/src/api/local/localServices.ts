@@ -1114,6 +1114,41 @@ export function assignmentCloudExecutionFields(
   }
 }
 
+/** Whether a resolved model still carries the saved cloud reference identity. */
+function matchesCloudReference(
+  model: UnifiedModel,
+  reference: NonNullable<RunnerModelIdentity['cloud_model']>
+): boolean {
+  return (
+    model.name === reference.name &&
+    model.type === reference.type &&
+    (model.namespace ?? 'default') === reference.namespace &&
+    model.resourceUserId === reference.resource_user_id
+  )
+}
+
+/**
+ * Resolve a saved cloud model that the discovery catalog no longer lists.
+ *
+ * The lookup is by name and type only, so the returned row can be a same-named
+ * model from another group. Only a row matching the saved identity provides
+ * trustworthy execution fields; an unresolved or mismatched lookup must not
+ * fall back to default protocol values.
+ */
+export async function resolveAssignmentCloudModel(
+  cloudModel: UnifiedModel | null | undefined,
+  reference: RunnerModelIdentity['cloud_model'] | null | undefined,
+  resolve?: (modelName: string, modelType?: string) => Promise<UnifiedModel>
+): Promise<UnifiedModel | null> {
+  if (cloudModel) return cloudModel
+  if (!reference) return null
+  const resolved = resolve ? await resolve(reference.name, reference.type).catch(() => null) : null
+  if (!resolved || !matchesCloudReference(resolved, reference)) {
+    throw new Error('RUNNER_MODEL_UNAVAILABLE: the saved cloud model could not be resolved')
+  }
+  return resolved
+}
+
 function localRuntimeModelConfig(
   runtime: string,
   requireCodexCatalog: boolean,
@@ -4277,15 +4312,11 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     // The discovery catalog hides models the admin took offline. Resolve the
     // saved reference through the single-model endpoint so the execution
     // fields (upstream protocol, token limits) come from the current row.
-    const resolveCloudModel = deps.resolveCloudModel
-    const savedCloudModel =
-      cloudModel ??
-      (routing?.model.source === 'cloud' && routing.model.cloud_model && resolveCloudModel
-        ? await resolveCloudModel(
-            routing.model.cloud_model.name,
-            routing.model.cloud_model.type
-          ).catch(() => null)
-        : null)
+    const savedCloudModel = await resolveAssignmentCloudModel(
+      cloudModel,
+      routing?.model.source === 'cloud' ? routing.model.cloud_model : null,
+      deps.resolveCloudModel
+    )
     const cloudFields = assignmentCloudExecutionFields(savedCloudModel, routing?.model)
     const groupContext = group
       ? [

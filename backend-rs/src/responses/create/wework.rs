@@ -969,9 +969,13 @@ fn recorded_selection_matches(previous: Option<&Value>, selection: &ModelSelecti
         "weworkCloudModelNamespace",
         "weworkCloudModelResourceUserId",
     ] {
-        if recorded_option_text(previous_options.get(key))
-            != recorded_option_text(selection.options.get(key))
-        {
+        let Some(previous_value) = recorded_option_text(previous_options.get(key)) else {
+            return false;
+        };
+        let Some(current_value) = recorded_option_text(selection.options.get(key)) else {
+            return false;
+        };
+        if previous_value != current_value {
             return false;
         }
     }
