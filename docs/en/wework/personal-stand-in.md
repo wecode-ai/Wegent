@@ -29,6 +29,8 @@ Saving a new role enables it. Explicitly adding or enabling a source starts inta
 
 ## Instance binding and stopping
 
+If **My stand-in** encounters incompatible versions, it first shows an error with upgrade guidance without automatically navigating away. Select **View device status** beside the error to open **Cloud work**, inspect device status and versions, and follow the upgrade procedure supported by that device. For local issues, the desktop device section offers **View local version**, which opens About to check for updates even when there are no cloud devices. This action does not install or restart anything automatically. After resolving the issue, return to the stand-in page and select **Reload**. Other loading errors retain reload without this device guidance action.
+
 Each Wework instance binds one local or cloud stand-in at a time. Scenario roles belong to that stand-in, rather than being separate instance bindings. The page and settings have no direct execution-device switch. Reopening the page, device inventory changes, or changing accounts never replaces an existing binding.
 
 To rebind, open **Stand-in details → Manage stand-in**, then select **Stop stand-in** at the bottom left of the settings panel and confirm. This stops intake for the entire stand-in and cancels its primary and role conversations, running work, and queued delegated tasks. Other accounts’ stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories, and history remain; rebinding the original stand-in restores its previous intake switches.
