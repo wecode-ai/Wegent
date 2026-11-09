@@ -44,13 +44,14 @@ async function directoryDigest(root) {
 export function createGithubAuthBoundaries({
   protocol,
   ghConfigDir,
-  homePath,
+  executorHome,
   resultDir,
   uiTimeoutMs,
   modelResponseTimeoutMs,
   waitForValue,
 }) {
   const probes = []
+  const workbenchHome = join(executorHome, 'workbench')
   const rpc = (control, action, sessionId) =>
     requestExecutor(
       control,
@@ -173,7 +174,7 @@ export function createGithubAuthBoundaries({
       // Local devices cannot be sync targets. Reuse the existing real cloud
       // Executor, sharing the Workbench store consumed by this desktop.
       Object.assign(cloud.remoteExecutorEnv, {
-        WEGENT_WORKBENCH_HOME: join(homePath, '.wegent/workbench'),
+        WEGENT_WORKBENCH_HOME: workbenchHome,
         WEWORK_RUNTIME_BIN: protocol.directory,
         ...protocol.transportEnvironment,
       })
@@ -209,7 +210,7 @@ export function createGithubAuthBoundaries({
         })
         assert.equal(result.status, 'synced', JSON.stringify(result))
       }
-      const managed = join(homePath, '.wegent/workbench/git-auth/current/gh')
+      const managed = join(workbenchHome, 'git-auth/current/gh')
       let failure
       try {
         await openDetail(control)
