@@ -8,6 +8,14 @@ import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 
+// Mirror `WEWORK_E2E_REDIS_SERVER_BIN` so Windows runners use the downloaded
+// tools instead of whatever `redis-cli` the image happens to expose.
+function redisCliBinary() {
+  const serverBinary = process.env.WEWORK_E2E_REDIS_SERVER_BIN?.trim()
+  if (!serverBinary) return 'redis-cli'
+  return join(dirname(serverBinary), process.platform === 'win32' ? 'redis-cli.exe' : 'redis-cli')
+}
+
 import {
   CLOUD_DEVICE_ID,
   REMOTE_DOCKER_DEVICE_ID,
@@ -1119,7 +1127,7 @@ class RealCloudEnvironment {
 
   async setExecutorLatestVersion(version) {
     await runChecked(
-      'redis-cli',
+      redisCliBinary(),
       [
         '-h',
         '127.0.0.1',
@@ -1300,7 +1308,7 @@ class RealCloudEnvironment {
   }
 
   terminalSessionRecords() {
-    const keys = commandOutput('redis-cli', [
+    const keys = commandOutput(redisCliBinary(), [
       '-p',
       String(this.redisPort),
       '--raw',
@@ -1312,7 +1320,7 @@ class RealCloudEnvironment {
       .map(value => value.trim())
       .filter(Boolean)
     return keys.map(key => {
-      const serialized = commandOutput('redis-cli', [
+      const serialized = commandOutput(redisCliBinary(), [
         '-p',
         String(this.redisPort),
         '--raw',
@@ -1330,7 +1338,7 @@ class RealCloudEnvironment {
       'The terminal session ID is not safe for the Redis fixture'
     )
     const subscriberCount = Number(
-      commandOutput('redis-cli', [
+      commandOutput(redisCliBinary(), [
         '-p',
         String(this.redisPort),
         '--raw',
