@@ -23,6 +23,9 @@ use crate::logging::log_executor_event;
 mod tool_catalog;
 use tool_catalog::effective_tools;
 
+mod custom_tools;
+pub(crate) use custom_tools::CustomToolConversion;
+
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const TOOL_SEARCH_NAME: &str = "tool_search";
 pub(super) const BRIDGED_TOOL_SEARCH_NAME: &str = "search_deferred_tools";

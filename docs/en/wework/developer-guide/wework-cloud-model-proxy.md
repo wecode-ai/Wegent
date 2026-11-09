@@ -83,6 +83,14 @@ Passthrough preserves the original bytes of normal upstream chunks. A read error
 
 `standard` mode advertises only client-executable function tools. It omits provider-hosted tools such as `web_search` and `image_generation`. If `tool_choice` forces a hosted tool, the proxy returns HTTP 400. `auto` and `passthrough` continue to preserve these tools.
 
+#### DeepSeek Responses Tool Compatibility
+
+When the executor calls the Responses endpoint on `api.deepseek.com` directly in `auto` mode, the proxy follows the [official DeepSeek tool protocol](https://api-docs.deepseek.com/api/create-response/): it preserves native custom `apply_patch`, converts other custom tools such as `exec` into function tools with a string `input` parameter, translates historical calls and outputs, and restores original tool names, namespaces and raw inputs on the return path to Codex. Namespaces and client-side `tool_search` reuse the existing reversible adapters. Provider-hosted `web_search` is not removed by this adaptation; its availability remains model-dependent.
+
+This rule matches the actual request endpoint, not a guessed model name or a retry after an upstream failure. Explicit `standard` and `passthrough` modes retain their semantics. Gateways on other domains do not automatically inherit the DeepSeek rule.
+
+Regression coverage uses a local HTTP protocol simulator that rejects custom tools other than `apply_patch`. It verifies rejection of the original request, acceptance of the adapted request, and SSE tool-identity restoration. This is protocol integration coverage, not verification against the real DeepSeek service, and requires no real API key.
+
 #### Kimi K3 Chat Completions Compatibility
 
 When a cloud Model CRD uses OpenAI Chat Completions and its provider model name contains the case-insensitive substring `kimi-k3`, such as `moonshot-kimi-k3`, Wework automatically selects the `wework-kimi-k3` Codex model catalog with a 1,048,576-token context window if the Model CRD does not configure `codex_catalog_model_id` or `codexCatalogModelId`. An explicitly configured catalog always takes precedence over automatic Kimi K3 selection. Codex continues to use the Responses protocol internally, while the executor translates requests to Chat Completions at the boundary and applies the following Kimi K3 compatibility behavior:

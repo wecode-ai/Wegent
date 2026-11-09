@@ -81,6 +81,14 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 `standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。
 
+#### DeepSeek Responses 工具兼容
+
+当 executor 直接请求 `api.deepseek.com` 的 Responses 接口，且请求模式为 `auto` 时，代理遵循 [DeepSeek 官方工具协议](https://api-docs.deepseek.com/api/create-response/)：保留原生 `apply_patch` custom 工具，将 `exec` 等其他 custom 工具转换为带有字符串 `input` 参数的 function 工具，同时转换历史调用和结果，并在返回给 Codex 时恢复原始工具名称、namespace 与原始输入。namespace 和客户端 `tool_search` 复用已有可逆转换；服务端 `web_search` 不会因此被移除，其可用性仍由上游模型决定。
+
+此规则按实际请求端点匹配，不根据模型名称猜测，也不通过失败后重试选择协议。显式 `standard` 和 `passthrough` 模式仍保持各自语义；其他域名的网关不会自动套用 DeepSeek 规则。
+
+回归验证使用会拒绝非 `apply_patch` custom 工具的本地 HTTP 协议模拟服务，检查原始请求被拒绝、代理转换后的请求被接受，以及 SSE 工具身份恢复。这是协议集成验证，不代表已经验证真实 DeepSeek 服务兼容性；不需要真实 API Key。
+
 #### Kimi K3 Chat Completions 兼容
 
 云端 Model CRD 配置为 OpenAI Chat Completions，且 provider 模型名称包含不区分大小写的 `kimi-k3`（例如 `moonshot-kimi-k3`）时，如果 Model CRD 未配置 `codex_catalog_model_id` 或 `codexCatalogModelId`，Wework 会自动选择上下文窗口为 1,048,576 tokens 的 `wework-kimi-k3` Codex 模型目录。显式配置的模型目录始终优先于 Kimi K3 自动选择。Codex 内部仍使用 Responses 协议，executor 在边界将请求转换为 Chat Completions，并为 Kimi K3 进行以下兼容处理：

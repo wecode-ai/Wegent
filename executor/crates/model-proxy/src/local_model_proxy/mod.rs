@@ -189,7 +189,7 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
 
 #[derive(Debug, Clone, Copy)]
 struct ResponsesToolCapabilities {
-    convert_custom_tools: bool,
+    custom_tools: chat::CustomToolConversion,
     native_tool_search: bool,
     native_namespace_tools: bool,
     function_tools_only: bool,
@@ -210,7 +210,7 @@ impl LocalModelProxyUpstream {
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
         if self.codex_request_mode == CodexRequestMode::Standard {
             return ResponsesToolCapabilities {
-                convert_custom_tools: true,
+                custom_tools: chat::CustomToolConversion::All,
                 native_tool_search: false,
                 native_namespace_tools: false,
                 function_tools_only: true,
@@ -218,14 +218,32 @@ impl LocalModelProxyUpstream {
         }
         if self.codex_request_mode == CodexRequestMode::Passthrough {
             return ResponsesToolCapabilities {
-                convert_custom_tools: false,
+                custom_tools: chat::CustomToolConversion::None,
                 native_tool_search: true,
                 native_namespace_tools: true,
                 function_tools_only: false,
             };
         }
+        // DeepSeek documents custom apply_patch only; other custom names return HTTP 400.
+        // Match the actual endpoint, never a model-name substring or a failed-request guess.
+        let deepseek_responses = self.api_format == "openai-responses"
+            && url::Url::parse(&self.resolved_request_url())
+                .ok()
+                .is_some_and(|url| url.host_str() == Some("api.deepseek.com"));
+        if deepseek_responses {
+            return ResponsesToolCapabilities {
+                custom_tools: if self.convert_custom_tools {
+                    chat::CustomToolConversion::All
+                } else {
+                    chat::CustomToolConversion::ExceptApplyPatch
+                },
+                native_tool_search: false,
+                native_namespace_tools: false,
+                function_tools_only: false,
+            };
+        }
         ResponsesToolCapabilities {
-            convert_custom_tools: self.convert_custom_tools,
+            custom_tools: self.convert_custom_tools.into(),
             native_tool_search: self.native_tool_search,
             native_namespace_tools: self.native_namespace_tools,
             function_tools_only: false,

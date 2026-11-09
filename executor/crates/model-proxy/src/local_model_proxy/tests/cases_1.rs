@@ -708,7 +708,7 @@ fn chat_conversion_uses_the_routing_model_for_kimi_compatibility() {
     let (prepared, conversion, _) = prepare_request_with_model_hint(
         "openai-chat-completions",
         ResponsesToolCapabilities {
-            convert_custom_tools: false,
+            custom_tools: chat::CustomToolConversion::None,
             native_tool_search: false,
             native_namespace_tools: false,
             function_tools_only: false,

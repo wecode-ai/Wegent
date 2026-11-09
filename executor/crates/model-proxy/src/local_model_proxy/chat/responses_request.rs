@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn responses_tools(
     tools: &[Value],
     context: &ToolContext,
-    convert_custom_tools: bool,
+    convert_custom_tools: CustomToolConversion,
     bridge_tool_search: bool,
     bridge_namespace_tools: bool,
 ) -> Vec<Value> {
@@ -52,8 +52,14 @@ pub(super) fn responses_tools(
                     let Some(wire_name) = context.wire_name(Some(namespace), name) else {
                         continue;
                     };
-                    let mut flattened = inner_tool.clone();
-                    flattened["type"] = Value::String("function".to_owned());
+                    let mut flattened = responses_tools(
+                        std::slice::from_ref(inner_tool),
+                        context,
+                        CustomToolConversion::All,
+                        bridge_tool_search,
+                        false,
+                    )
+                    .remove(0);
                     flattened["name"] = Value::String(wire_name.to_owned());
                     converted.push(flattened);
                 }
@@ -66,7 +72,8 @@ pub(super) fn responses_tools(
             converted.push(tool.clone());
             continue;
         };
-        converted.push(if convert_custom_tools && context.is_custom(name) {
+        converted.push(if convert_custom_tools.converts(name)
+            && tool["type"] == "custom" {
             let contract = if name == "apply_patch" {
                 format!("{APPLY_PATCH_OUTPUT_CONTRACT}\n\n")
             } else {
@@ -127,13 +134,28 @@ pub(super) fn remove_defer_loading(tool: &mut Value) {
 pub(super) fn responses_tool_choice(
     choice: &Value,
     context: &ToolContext,
-    convert_custom_tools: bool,
+    convert_custom_tools: CustomToolConversion,
     bridge_namespace_tools: bool,
 ) -> Option<Value> {
     let choice_type = choice.get("type").and_then(Value::as_str)?;
-    if choice_type == "custom" && convert_custom_tools {
+    if choice_type == "custom" {
+        if !choice["name"].as_str().is_some_and(|name| {
+            convert_custom_tools.converts_identity(
+                name,
+                choice["namespace"].as_str(),
+                bridge_namespace_tools,
+            )
+        }) {
+            return None;
+        }
         let mut converted = choice.clone();
         converted["type"] = Value::String("function".to_owned());
+        if bridge_namespace_tools {
+            let name = choice["name"].as_str()?;
+            let wire_name = context.wire_name(choice["namespace"].as_str(), name)?;
+            converted["name"] = Value::String(wire_name.to_owned());
+            converted.as_object_mut()?.remove("namespace");
+        }
         return Some(converted);
     }
     if let Some(name) = choice.get("name").and_then(Value::as_str) {
@@ -158,7 +180,7 @@ pub(super) fn responses_tool_choice(
 /// are bridged only when the model configuration requests it.
 pub(crate) fn responses_to_responses(
     body: &Value,
-    convert_custom_tools: bool,
+    convert_custom_tools: CustomToolConversion,
     native_tool_search: bool,
     native_namespace_tools: bool,
 ) -> Result<(Value, ToolContext), String> {
@@ -169,7 +191,7 @@ pub(crate) fn responses_to_responses(
     let bridge_namespace_tools = !native_namespace_tools;
 
     let materialize_lite = result.get("tools").is_none()
-        && (convert_custom_tools || bridge_tool_search || bridge_namespace_tools);
+        && (convert_custom_tools.enabled() || bridge_tool_search || bridge_namespace_tools);
     if materialize_lite {
         result["tools"] = Value::Array(effective_tools.clone());
         if let Some(input) = result.get_mut("input").and_then(Value::as_array_mut) {
@@ -231,7 +253,7 @@ pub(crate) fn responses_to_responses(
 pub(super) fn convert_responses_input_items(
     input: &Value,
     context: &ToolContext,
-    convert_custom_tools: bool,
+    convert_custom_tools: CustomToolConversion,
     bridge_tool_search: bool,
     bridge_namespace_tools: bool,
 ) -> Result<Value, String> {
@@ -339,7 +361,7 @@ pub(super) fn convert_responses_input_item(
     item: &Value,
     context: &ToolContext,
     call_id_to_identity: &HashMap<String, ToolIdentity>,
-    convert_custom_tools: bool,
+    convert_custom_tools: CustomToolConversion,
     bridge_tool_search: bool,
     bridge_namespace_tools: bool,
 ) -> Result<Value, String> {
@@ -363,9 +385,23 @@ pub(super) fn convert_responses_input_item(
             }
             Ok(converted)
         }
-        Some("custom_tool_call") if convert_custom_tools && context.is_custom(name) => {
+        Some("custom_tool_call")
+            if convert_custom_tools.converts_identity(
+                name,
+                item["namespace"].as_str(),
+                bridge_namespace_tools,
+            ) && context
+                .wire_name(item["namespace"].as_str(), name)
+                .is_some_and(|wire_name| context.is_custom(wire_name)) =>
+        {
             let mut converted = item.clone();
             converted["type"] = Value::String("function_call".to_owned());
+            if bridge_namespace_tools {
+                if let Some(wire_name) = context.wire_name(item["namespace"].as_str(), name) {
+                    converted["name"] = Value::String(wire_name.to_owned());
+                    converted.as_object_mut().unwrap().remove("namespace");
+                }
+            }
             if let Some(input) = converted.get("input").and_then(Value::as_str) {
                 let arguments = serde_json::to_string(&json!({CUSTOM_TOOL_INPUT_FIELD: input}))
                     .map_err(|error| error.to_string())?;
@@ -380,7 +416,12 @@ pub(super) fn convert_responses_input_item(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if let Some(identity) = call_id_to_identity.get(call_id) {
-                if convert_custom_tools && identity.kind == ToolKind::Custom {
+                if convert_custom_tools.converts_identity(
+                    &identity.name,
+                    identity.namespace.as_deref(),
+                    bridge_namespace_tools,
+                ) && identity.kind == ToolKind::Custom
+                {
                     let mut converted = item.clone();
                     converted["type"] = Value::String("function_call_output".to_owned());
                     return Ok(converted);
@@ -423,14 +464,18 @@ pub(super) fn convert_responses_input_item(
 
 pub(super) fn responses_bridge_context(
     context: &ToolContext,
-    convert_custom_tools: bool,
+    convert_custom_tools: CustomToolConversion,
     bridge_tool_search: bool,
     bridge_namespace_tools: bool,
 ) -> ToolContext {
     let mut bridged = ToolContext::default();
     for (wire_name, identity) in &context.tools {
         let include = match identity.kind {
-            ToolKind::Custom => convert_custom_tools,
+            ToolKind::Custom => convert_custom_tools.converts_identity(
+                &identity.name,
+                identity.namespace.as_deref(),
+                bridge_namespace_tools,
+            ),
             ToolKind::ToolSearch => bridge_tool_search,
             ToolKind::Function => bridge_namespace_tools && identity.namespace.is_some(),
         };

@@ -286,7 +286,7 @@ fn responses_to_responses_converts_custom_apply_patch_tool() {
     });
 
     let (converted, context) =
-        responses_to_responses(&input, true, false, false).expect("request should convert");
+        responses_to_responses(&input, true.into(), false, false).expect("request should convert");
     assert!(context.is_custom("apply_patch"));
     assert_eq!(converted["tools"][0]["type"], "function");
     assert_eq!(converted["tools"][0]["name"], "exec_command");
@@ -343,7 +343,7 @@ fn responses_to_responses_moves_tool_images_after_all_tool_results() {
     });
 
     let (converted, _) =
-        responses_to_responses(&input, false, true, true).expect("request should convert");
+        responses_to_responses(&input, false.into(), true, true).expect("request should convert");
     let converted_input = converted["input"].as_array().expect("input");
 
     assert_eq!(converted_input.len(), 6);
@@ -424,7 +424,7 @@ fn responses_to_responses_bridges_tool_search_and_loaded_app_tools() {
     });
 
     let (converted, context) =
-        responses_to_responses(&input, false, false, false).expect("request should convert");
+        responses_to_responses(&input, false.into(), false, false).expect("request should convert");
 
     assert_eq!(converted["tools"].as_array().unwrap().len(), 2);
     assert_eq!(converted["tools"][0]["type"], "function");
@@ -484,7 +484,7 @@ fn responses_bridge_removes_defer_loading_without_native_tool_search() {
     });
 
     let (converted, _) =
-        responses_to_responses(&input, false, false, true).expect("request should convert");
+        responses_to_responses(&input, false.into(), false, true).expect("request should convert");
 
     assert_eq!(converted["tools"][0]["type"], "function");
     assert_eq!(
@@ -573,7 +573,7 @@ fn responses_to_responses_preserves_native_tool_search_and_namespaces() {
     });
 
     let (converted, bridge_context) =
-        responses_to_responses(&input, false, true, true).expect("request should convert");
+        responses_to_responses(&input, false.into(), true, true).expect("request should convert");
 
     assert_eq!(converted, input);
     assert!(bridge_context.is_empty());
@@ -669,8 +669,8 @@ async fn responses_sse_to_responses_restores_tool_search_and_app_namespace() {
             }
         ]
     });
-    let (_, context) =
-        responses_to_responses(&request, false, false, false).expect("request should convert");
+    let (_, context) = responses_to_responses(&request, false.into(), false, false)
+        .expect("request should convert");
     let output = convert_responses_stream(
         concat!(
             "event: response.output_item.added\n",
@@ -826,7 +826,7 @@ fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
     )
     .unwrap();
     assert_eq!(arguments["input"], script);
-    let (standard, context) = responses_to_responses(&body, true, false, false).unwrap();
+    let (standard, context) = responses_to_responses(&body, true.into(), false, false).unwrap();
     assert!(context.is_custom("functions__exec"));
     assert_eq!(standard["tools"][0]["name"], "functions__exec");
     assert!(!standard["input"]
@@ -834,7 +834,7 @@ fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
         .unwrap()
         .iter()
         .any(|item| item["type"] == "additional_tools"));
-    let (native, _) = responses_to_responses(&body, false, true, true).unwrap();
+    let (native, _) = responses_to_responses(&body, false.into(), true, true).unwrap();
     assert_eq!(native["input"], body["input"]);
     assert!(native.get("tools").is_none());
     let (anthropic, _) =
