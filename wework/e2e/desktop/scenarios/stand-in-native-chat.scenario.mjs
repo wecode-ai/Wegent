@@ -17,6 +17,7 @@ import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 const FIRST = 'STAND_IN_NATIVE_BACKGROUND_REQUEST'
 const NEXT = 'STAND_IN_NATIVE_SECOND_MESSAGE'
 const CHILD = 'STAND_IN_NATIVE_CHILD_WORK'
+const CHILD_RESULT = 'Native child verified its isolated work.'
 const RESULT = '原生子代理已经完成后台检查。'
 const CHAT =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
@@ -27,6 +28,7 @@ export function createDesktopScenario(options) {
   let active = false
   let spawned = false
   let followedUp = false
+  let childResultObserved = false
   let childResponse
   let released = false
   let sequence = 0
@@ -38,7 +40,7 @@ export function createDesktopScenario(options) {
   const releaseChild = () => {
     if (!childResponse || released) return
     released = true
-    reply(childResponse, [assistantMessage('Native child verified its isolated work.')])
+    reply(childResponse, [assistantMessage(CHILD_RESULT)])
   }
   return {
     ...sessions,
@@ -67,7 +69,8 @@ export function createDesktopScenario(options) {
             })
           )
         )
-      } else if (released) {
+      } else if (released && input.includes(CHILD_RESULT)) {
+        childResultObserved = true
         const result = assistantMessage(RESULT)
         result.item.id = 'native-chat-result'
         reply(response, [result])
@@ -151,6 +154,11 @@ export function createDesktopScenario(options) {
         await control.command('waitFor', `${CHAT} [data-testid="assistant-message-content"]`, {
           text: RESULT,
         })
+        assert.equal(
+          childResultObserved,
+          true,
+          'The parent must receive the real child result before reporting it'
+        )
         await control.command(
           'waitFor',
           `${CHAT} [data-testid="message-assistant"]:has([data-runtime-item-id="native-chat-followup"]):not(:has([data-runtime-item-id="native-chat-result"]))`,
@@ -184,7 +192,15 @@ export function createDesktopScenario(options) {
       }
     },
     diagnostics() {
-      return { sessions: sessions.diagnostics(), active, spawned, followedUp, released, sequence }
+      return {
+        sessions: sessions.diagnostics(),
+        active,
+        spawned,
+        followedUp,
+        childResultObserved,
+        released,
+        sequence,
+      }
     },
   }
 }
