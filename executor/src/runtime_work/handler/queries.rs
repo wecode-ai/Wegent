@@ -925,7 +925,25 @@ impl RuntimeWorkRpcHandler {
                     None,
                 ));
             }
-            Err(error) => return Err(error.0),
+            Err(error) => {
+                log_executor_event(
+                    "runtime work native transcript read failed",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", thread_id.clone()),
+                        ("code", error.0.code.clone()),
+                        ("error", error.0.message.clone()),
+                        (
+                            "archived",
+                            local_link
+                                .as_ref()
+                                .is_some_and(|link| link.status == "archived")
+                                .to_string(),
+                        ),
+                    ],
+                );
+                return Err(error.0);
+            }
         };
         let handler = self.clone();
         let input = super::queries_projection::TranscriptProjectionInput {
