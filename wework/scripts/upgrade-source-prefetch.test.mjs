@@ -15,9 +15,7 @@ async function fixture(t, platform = 'windows') {
   const arch = platform === 'windows' ? 'x64' : 'arm64'
   const directory = await mkdtemp(join(tmpdir(), 'wework-prefetch-test-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
-  const policy = JSON.parse(
-    await readFile(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
-  )
+  const policy = { schemaVersion: 1, minSourceVersion: '0.6.2' }
   const release = version => ({
     version,
     url: `https://example.com/${version}.tar.gz`,
@@ -58,7 +56,7 @@ async function fixture(t, platform = 'windows') {
   })
   await mkdir(options.planDirectory)
   await writeFile(join(options.planDirectory, `${platform}-${arch}.json`), JSON.stringify(frozen))
-  return { options, frozen }
+  return { options, frozen, policy }
 }
 
 test('prefetch selects exactly the frozen source and required legacy activation input', async t => {
@@ -67,7 +65,7 @@ test('prefetch selects exactly the frozen source and required legacy activation 
     selectedPrefetchSources(windows.frozen, windows.options).map(source => source.version),
     ['0.6.2']
   )
-  const { options, frozen } = await fixture(t, 'macos')
+  const { options, frozen, policy } = await fixture(t, 'macos')
   assert.deepEqual(
     selectedPrefetchSources(frozen, options).map(source => source.version),
     ['0.6.2', '0.6.3']
@@ -81,26 +79,34 @@ test('prefetch selects exactly the frozen source and required legacy activation 
   assert.throws(() => selectedPrefetchSources(frozen, { ...options, sourceVersion: 'unselected' }))
   const active = new Set()
   let peak = 0
-  await prefetchUpgradeSources(options, async input => {
-    assert.equal(input.expected.sha256, 'a'.repeat(64))
-    assert.equal(input.directory, join(options.directory, input.version))
-    active.add(input.version)
-    peak = Math.max(peak, active.size)
-    await new Promise(accept => setImmediate(accept))
-    active.delete(input.version)
-  })
+  await prefetchUpgradeSources(
+    options,
+    async input => {
+      assert.equal(input.expected.sha256, 'a'.repeat(64))
+      assert.equal(input.directory, join(options.directory, input.version))
+      active.add(input.version)
+      peak = Math.max(peak, active.size)
+      await new Promise(accept => setImmediate(accept))
+      active.delete(input.version)
+    },
+    async () => policy
+  )
   assert.equal(peak, 2)
 })
 
 test('settles every input before propagating failures and rejects a changed plan', async t => {
-  const { options, frozen } = await fixture(t, 'macos')
+  const { options, frozen, policy } = await fixture(t, 'macos')
   let settled = false
   await assert.rejects(
-    prefetchUpgradeSources(options, async source => {
-      if (source.version === '0.6.2') throw new Error('archive hash differs')
-      await new Promise(accept => setImmediate(accept))
-      settled = true
-    }),
+    prefetchUpgradeSources(
+      options,
+      async source => {
+        if (source.version === '0.6.2') throw new Error('archive hash differs')
+        await new Promise(accept => setImmediate(accept))
+        settled = true
+      },
+      async () => policy
+    ),
     /archive hash differs/
   )
   assert.equal(settled, true)
@@ -110,7 +116,11 @@ test('settles every input before propagating failures and rejects a changed plan
     JSON.stringify(frozen)
   )
   await assert.rejects(
-    prefetchUpgradeSources(options, () => assert.fail('download before plan verification')),
+    prefetchUpgradeSources(
+      options,
+      () => assert.fail('download before plan verification'),
+      async () => policy
+    ),
     /Frozen upgrade plan/
   )
 })

@@ -41,6 +41,24 @@ function publishedCatalog(channel, versions) {
 
 const automaticTarget = { version: '0.6.1', minSourceVersion: '0.5.13-beta.5' }
 
+test('security release candidates require the published credential bridge and exact-pair proof', async () => {
+  const policy = JSON.parse(
+    readFileSync(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
+  )
+  assert.equal(policy.minSourceVersion, '0.6.7')
+  const target = { version: '0.6.8-beta.1', minSourceVersion: policy.minSourceVersion }
+  const legacy = publishedCatalog('stable', ['0.6.6'])
+  assert.throws(() => releaseUpgradePlan([legacy], target, 'beta'), /No eligible published/)
+  const catalog = publishedCatalog('stable', ['0.6.6', '0.6.7'])
+  const plan = releaseUpgradePlan([catalog], target, 'beta')
+  assert.equal(plan.baseline.version, '0.6.7')
+  assert.equal(plan.previous.version, '0.6.7')
+  await assert.rejects(
+    verifyReleaseUpgradePlan(plan, async () => null),
+    /publication blocked/
+  )
+})
+
 test('channel shards preserve target publication boundaries', () => {
   assert.deepEqual(releaseVerificationChannels('stable'), ['stable', 'beta'])
   assert.deepEqual(releaseVerificationChannels('stable', 'stable'), ['stable'])
