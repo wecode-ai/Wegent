@@ -47,7 +47,18 @@ async function fixture() {
     return prepared.authorizationId
   }
   await service.commitAuthorization(await stage(backend, 'active-refresh'), 7)
-  return { root, request, service, stage, stored }
+  const expectCleared = async () => {
+    expect(JSON.parse(await readFile(join(root, 'cloud-credentials.json'), 'utf8'))).toEqual({
+      version: 3,
+      ciphertext: null,
+    })
+    const count = request.mock.calls.length
+    await expect(service.refreshAccessToken(backend, 7)).rejects.toMatchObject({
+      code: 'credentials_unavailable',
+    })
+    expect(request).toHaveBeenCalledTimes(count)
+  }
+  return { root, request, service, stage, stored, expectCleared }
 }
 
 beforeEach(() => vi.clearAllMocks())
@@ -92,15 +103,15 @@ describe('native cloud authorization transaction', () => {
     expect(request).toHaveBeenCalledTimes(count)
   })
 
-  test('a legacy candidate deletes active refresh credentials only after commit', async () => {
-    const { service, stage, stored } = await fixture()
+  test('a legacy candidate clears active refresh credentials only after commit', async () => {
+    const { service, stage, stored, expectCleared } = await fixture()
     const before = await stored()
     const discarded = await stage(backend, null)
     expect(await stored()).toBe(before)
     await service.discardAuthorization(discarded)
     expect(await stored()).toBe(before)
     await service.commitAuthorization(await stage(backend, null), 8)
-    await expect(stored()).rejects.toMatchObject({ code: 'ENOENT' })
+    await expectCleared()
   })
 
   test('invalidates an in-flight claim immediately when the next candidate starts', async () => {
@@ -126,7 +137,7 @@ describe('native cloud authorization transaction', () => {
   test.each(['prepare', 'clear'] as const)(
     'cancels a commit superseded by %s before rename',
     async action => {
-      const { service, stage, stored } = await fixture()
+      const { service, stage, stored, expectCleared } = await fixture()
       const before = await stored()
       const candidate = await stage()
       const entered = deferred()
@@ -144,7 +155,7 @@ describe('native cloud authorization transaction', () => {
       release.resolve()
       await rejected
       await next
-      if (action === 'clear') await expect(stored()).rejects.toMatchObject({ code: 'ENOENT' })
+      if (action === 'clear') await expectCleared()
       else expect(await stored()).toBe(before)
     }
   )
@@ -213,7 +224,7 @@ describe('native cloud authorization transaction', () => {
   )
 
   test('does not return a migrated token when disconnect interrupts its owner-binding rename', async () => {
-    const { root, service, stored, request } = await fixture()
+    const { root, service, stored, request, expectCleared } = await fixture()
     const credential = JSON.parse(await stored())
     delete credential.ownerUserId
     await writeFile(join(root, 'cloud-credentials.json'), JSON.stringify(credential))
@@ -234,6 +245,6 @@ describe('native cloud authorization transaction', () => {
     release.resolve()
     await rejected
     await clear
-    await expect(stored()).rejects.toMatchObject({ code: 'ENOENT' })
+    await expectCleared()
   })
 })
