@@ -310,6 +310,9 @@ mod mcp_reload;
 #[cfg(test)]
 use mcp_reload::config_reload_resume_thread_id;
 
+#[path = "codex/provider_routing.rs"]
+mod provider_routing;
+
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
 
@@ -4408,17 +4411,7 @@ pub(crate) fn bind_codex_thread_model_route(
     request: &ExecutionRequest,
     thread_id: &str,
 ) -> Result<Option<LocalProxyRegistration>, String> {
-    // Mirrors the launch-config decision so an existing thread resolves the same
-    // upstream it was started with.
-    let upstream = if use_user_runtime_config(&request.model_config) {
-        configured_codex_provider(
-            &inference_model_provider(&request.model_config),
-            runtime_proxy_url(&request.model_config),
-        )
-    } else {
-        local_model_proxy::upstream_from_model_config(&request.model_config)?
-    };
-    let Some(upstream) = upstream else {
+    let Some((upstream, _)) = provider_routing::request_upstream(request)? else {
         return Ok(None);
     };
     let mut upstream = upstream;
@@ -4479,9 +4472,6 @@ fn build_codex_launch_config_with_route_scope(
     route_scope: &str,
 ) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
-    let configured_base_url = non_empty_config(&request.model_config, "base_url")
-        .or_else(|| non_empty_config(&request.model_config, "baseUrl"));
-    let configured_auth_present = api_key(&request.model_config).is_some();
     let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
@@ -4553,112 +4543,7 @@ fn build_codex_launch_config_with_route_scope(
             .push(format!("model={model}"));
     }
 
-    let use_user_config = use_user_runtime_config(&request.model_config);
-    let project_id = project_id(request);
-    if use_user_config {
-        let inference_provider = inference_model_provider(&request.model_config);
-        if let Some(upstream) = configured_codex_provider(
-            &inference_provider,
-            runtime_proxy_url(&request.model_config),
-        ) {
-            let mut upstream = upstream;
-            inject_session_headers(&mut upstream.default_headers, &request.task_id);
-            log_executor_event(
-                "codex model route selected",
-                &[
-                    ("task_id", request.task_id.clone()),
-                    ("route", "local_proxy_user_provider".to_owned()),
-                    ("provider", inference_provider.clone()),
-                    ("model", model.clone().unwrap_or_default()),
-                    (
-                        "payload_base_url_present",
-                        configured_base_url.is_some().to_string(),
-                    ),
-                    ("payload_auth_present", configured_auth_present.to_string()),
-                ],
-            );
-            configure_codex_router(
-                &mut launch_config,
-                route_scope,
-                upstream,
-                model.clone(),
-                request_model_switched(request),
-                vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
-            );
-        } else {
-            log_executor_event(
-                "codex model route selected",
-                &[
-                    ("task_id", request.task_id.clone()),
-                    ("route", "direct_user_provider".to_owned()),
-                    ("provider", inference_provider.clone()),
-                    ("model", model.clone().unwrap_or_default()),
-                    (
-                        "payload_base_url_present",
-                        configured_base_url.is_some().to_string(),
-                    ),
-                    ("payload_auth_present", configured_auth_present.to_string()),
-                ],
-            );
-            launch_config.model_provider = Some(inference_provider.clone());
-            launch_config.config_overrides.extend(header_overrides(
-                &inference_provider,
-                request.model_config.get("default_headers"),
-                project_id.as_deref(),
-                &request.task_id,
-            ));
-        }
-    } else if let Some(upstream) =
-        local_model_proxy::upstream_from_model_config(&request.model_config)?
-    {
-        let mut upstream = upstream;
-        inject_session_headers(&mut upstream.default_headers, &request.task_id);
-        log_executor_event(
-            "codex model route selected",
-            &[
-                ("task_id", request.task_id.clone()),
-                ("route", "local_proxy_payload".to_owned()),
-                ("provider", inference_model_provider(&request.model_config)),
-                ("model", model.clone().unwrap_or_default()),
-                (
-                    "payload_base_url_present",
-                    configured_base_url.is_some().to_string(),
-                ),
-                ("payload_auth_present", configured_auth_present.to_string()),
-            ],
-        );
-        configure_codex_router(
-            &mut launch_config,
-            route_scope,
-            upstream,
-            model.clone(),
-            request_model_switched(request),
-            vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
-        );
-    } else {
-        let inference_provider = inference_model_provider(&request.model_config);
-        log_executor_event(
-            "codex model route selected",
-            &[
-                ("task_id", request.task_id.clone()),
-                ("route", "direct_payload_provider".to_owned()),
-                ("provider", inference_provider.clone()),
-                ("model", model.clone().unwrap_or_default()),
-                (
-                    "payload_base_url_present",
-                    configured_base_url.is_some().to_string(),
-                ),
-                ("payload_auth_present", configured_auth_present.to_string()),
-            ],
-        );
-        launch_config.model_provider = Some(inference_provider.clone());
-        launch_config.config_overrides.extend(header_overrides(
-            &inference_provider,
-            request.model_config.get("default_headers"),
-            project_id.as_deref(),
-            &request.task_id,
-        ));
-    }
+    provider_routing::configure_request_provider(&mut launch_config, request, route_scope)?;
 
     mcp_config::configure_task_mcp(request, &mut launch_config)?;
 
@@ -5060,10 +4945,11 @@ fn codex_auto_compact_token_limit(model_config: &Value, context_window: i64) -> 
 fn configured_codex_provider(
     provider: &str,
     proxy_url: Option<&str>,
+    codex_home: &Path,
 ) -> Option<LocalModelProxyUpstream> {
     use toml_edit::DocumentMut;
 
-    let document = fs::read_to_string(wework_codex_home().join("config.toml"))
+    let document = fs::read_to_string(codex_home.join("config.toml"))
         .ok()?
         .parse::<DocumentMut>()
         .ok()?;
@@ -5379,10 +5265,6 @@ fn bool_value(value: Option<&Value>) -> Option<bool> {
         },
         _ => None,
     }
-}
-
-fn inference_model_provider(model_config: &Value) -> String {
-    explicit_model_provider(model_config).unwrap_or_else(configured_inference_model_provider)
 }
 
 pub(crate) fn configured_inference_model_provider() -> String {

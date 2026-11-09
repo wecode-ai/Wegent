@@ -36,6 +36,8 @@ entry is selected only when no matching entry exists.
 
 ### Protocol and Endpoint Resolution
 
+When a local provider has an endpoint and resolvable static or environment-variable credentials, the executor uses the same model route for provider-ID-only requests and user-configuration requests. Initial execution, follow-up comments and native thread control operations share that resolution logic so different entry points cannot drift to different provider identities. Configuration is read only from the task's Codex Home: a missing provider in a named agent Home never selects a same-named provider from the application's default Home. An explicit task endpoint takes precedence and is never replaced by a local provider with the same name. Providers requiring native authentication remain owned by Codex.
+
 The proxy gateway supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. The Model CRD's `protocol`, `apiFormat`, and `wire_api` select the upstream wire protocol. Conflicting or ambiguous configuration returns an explicit backend error instead of silently falling back to another protocol.
 
 The provider `base_url` may be a service root, a versioned API base, or a complete protocol endpoint. The gateway merges endpoint path segments and removes overlap. For example:

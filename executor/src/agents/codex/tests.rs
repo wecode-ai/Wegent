@@ -2666,7 +2666,7 @@ wire_api = "responses"
         Some(codex_model_catalog::PROVIDER_ID)
     );
     assert!(launch.local_proxy_registration.is_some());
-    let upstream = configured_codex_provider("custom", None).unwrap();
+    let upstream = configured_codex_provider("custom", None, &wework_codex_home()).unwrap();
     assert_eq!(upstream.api_key, "synthetic-custom-token");
     assert_eq!(upstream.api_format, "openai-chat-completions");
 }
@@ -2736,8 +2736,12 @@ fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
     env::set_var(WEGENT_CODEX_HOME_ENV, &root);
     env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
 
-    let upstream = configured_codex_provider("wework-e2e", Some("http://127.0.0.1:7890"))
-        .expect("configured provider");
+    let upstream = configured_codex_provider(
+        "wework-e2e",
+        Some("http://127.0.0.1:7890"),
+        &wework_codex_home(),
+    )
+    .expect("configured provider");
 
     assert_eq!(upstream.api_format, "openai-responses");
     assert_eq!(
@@ -2766,8 +2770,8 @@ fn user_configured_provider_honors_standard_app_tool_compatibility() {
     env::set_var(WEGENT_CODEX_HOME_ENV, &root);
     env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
 
-    let upstream =
-        configured_codex_provider("standard-responses", None).expect("configured provider");
+    let upstream = configured_codex_provider("standard-responses", None, &wework_codex_home())
+        .expect("configured provider");
 
     assert!(!upstream.native_tool_search);
     assert!(!upstream.native_namespace_tools);
@@ -2789,7 +2793,8 @@ fn user_configured_provider_converts_tools_for_non_responses_upstreams() {
     env::set_var(WEGENT_CODEX_HOME_ENV, &root);
     env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
 
-    let upstream = configured_codex_provider("wework-e2e", None).expect("configured provider");
+    let upstream = configured_codex_provider("wework-e2e", None, &wework_codex_home())
+        .expect("configured provider");
 
     assert_eq!(upstream.api_format, "anthropic-messages");
     assert_eq!(
