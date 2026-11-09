@@ -2,6 +2,10 @@
 
 assert_case "docs only" "$all_false" "docs/zh/index.md"
 
+assert_case "Electron test runtime changes select Wework tests" \
+  "${all_false/wework=false/wework=true}" \
+  ".github/scripts/prepare-wework-electron-test-runtime.mjs"
+
 assert_case "DingTalk HTTPS fixture changes run platform E2E" \
   "${all_false/platform_e2e=false/platform_e2e=true}" \
   ".github/scripts/setup-dingtalk-oauth-e2e.sh"

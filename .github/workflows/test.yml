@@ -724,15 +724,14 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
-      - name: Prepare Wework Electron dependencies
-        if: matrix.shard == 1
-        run: pnpm --filter wework prepare:electron
-
       - name: Install Wework host modules for renderer fixtures
-        if: matrix.shard != 1
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: pnpm --dir wework/electron install --frozen-lockfile
+
+      - name: Prepare Wework Electron runtime for transport tests
+        if: matrix.shard == 1
+        run: node .github/scripts/prepare-wework-electron-test-runtime.mjs
 
       - name: Run process explorer package tests
         if: matrix.shard == 1
