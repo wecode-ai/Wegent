@@ -69,6 +69,15 @@
 .collaboration-template-dialog .collaboration-primary-button:hover:not(:disabled) {
   background: rgb(var(--color-text-primary) / 0.8);
 }
+.collaboration-template-page .collaboration-danger-button,
+.collaboration-template-dialog .collaboration-danger-button {
+  color: rgb(var(--color-error));
+  background: rgb(var(--color-error) / 0.08);
+}
+.collaboration-template-page .collaboration-danger-button:hover:not(:disabled),
+.collaboration-template-dialog .collaboration-danger-button:hover:not(:disabled) {
+  background: rgb(var(--color-error) / 0.14);
+}
 .collaboration-template-page svg,
 .collaboration-template-dialog svg {
   width: 16px;

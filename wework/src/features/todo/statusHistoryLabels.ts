@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next'
+import { localizeStandardStatusName } from '@wegent/collaboration'
 
 const STATUS_ACTION_KEYS: Record<string, string> = {
   create: 'todo.status_action_create',
@@ -30,6 +31,8 @@ export function statusHistoryLabels(t: TFunction) {
     unset: t('todo.status_history_unset', '未设置'),
     initial: t('todo.status_history_initial', '初始状态'),
     accept: t('todo.status_action_accept', '验收'),
+    statusName: (id: string, name: string | null | undefined) =>
+      localizeStandardStatusName(id, name, (key, fallback) => t(key, fallback ?? key)),
     action: (trigger: string) =>
       t(STATUS_ACTION_KEYS[trigger] ?? 'todo.status_action_user_update', trigger),
   }

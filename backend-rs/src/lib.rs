@@ -127,6 +127,7 @@ pub mod device_commands;
 pub mod device_identity;
 mod device_identity_lock;
 mod device_online_state;
+mod device_presence;
 mod device_records;
 mod device_running_tasks;
 mod device_upgrade;
