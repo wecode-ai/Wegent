@@ -178,17 +178,22 @@ export function createDesktopScenario({
         'Initial assignment did not start'
       )
       const firstTask = firstBindings[0].task_id
-      assert.ok(
-        firstTask.endsWith('-recovery-reviewer'),
-        'Manual delegation used an unconfigured identity'
-      )
-      await until(
+      const firstConversation = await until(
         () => rpc('runtime.tasks.get', { taskId: firstTask }),
         value => {
           assert.notEqual(value.task?.status, 'failed', JSON.stringify(value))
           return value.task?.status === 'done'
         },
         'Initial task did not finish'
+      )
+      assert.equal(
+        firstConversation.task.runtimeHandle.origin.standInId,
+        'recovery-reviewer',
+        'Manual delegation used an unconfigured identity'
+      )
+      assert.ok(
+        firstConversation.task.threadId,
+        'Initial work must have a real native conversation'
       )
       issue = await record('first-completed', issue)
       const firstIdentity = issue.human_task_binding
@@ -234,19 +239,32 @@ export function createDesktopScenario({
       await refresh()
       const secondBindings = await until(
         () => request(`/v1/loop-items/${issue.id}/tasks`),
-        rows => rows.length === 2,
-        'Reassignment back to me did not start a new stand-in task'
+        rows =>
+          rows.length === 1 &&
+          rows[0].human_assignment_id === issue.human_task_binding.humanAssignmentId,
+        'Reassignment back to me did not bind the fresh grant to the existing conversation'
       )
-      const secondTask = secondBindings.find(row => row.task_id !== firstTask)?.task_id
-      assert.ok(secondTask)
-      await until(
+      const secondTask = secondBindings[0].task_id
+      assert.equal(secondTask, firstTask, 'Reassignment must retain the Issue conversation')
+      const secondConversation = await until(
         () => rpc('runtime.tasks.get', { taskId: secondTask }),
         value => {
           assert.notEqual(value.task?.status, 'failed', JSON.stringify(value))
-          return value.task?.status === 'done'
+          return (
+            value.task?.status === 'done' &&
+            value.task.executionState?.latestTurnId !==
+              firstConversation.task.executionState?.latestTurnId
+          )
         },
         'Second task did not finish'
       )
+      assert.equal(
+        secondConversation.task.threadId,
+        firstConversation.task.threadId,
+        'Reassignment must retain native history'
+      )
+      assert.ok(firstConversation.task.executionState?.latestTurnId)
+      assert.ok(secondConversation.task.executionState?.latestTurnId)
       const manual = await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
       assert.equal(
         manual.taskId,

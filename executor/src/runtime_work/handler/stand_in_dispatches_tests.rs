@@ -199,6 +199,7 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     restarted.upsert_local_task(RuntimeTaskLink {
         local_task_id: "stand-in-human-review".into(),
         status: "failed".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"cloud","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
         ..Default::default()
     });
     restarted
@@ -227,6 +228,7 @@ async fn stand_in_dispatch_does_not_replay_accepted_or_deleted_work() {
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "stand-in-human-review".into(),
             status: status.into(),
+            runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","humanAssignmentId":"human"}}),
             ..Default::default()
         });
         assert!(handler

@@ -452,6 +452,10 @@ class LoopItemCollaboratorResponse(BaseModel):
 class LoopItemTaskBind(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    stand_in_conversation_id: str | None = Field(
+        default=None, alias="standInConversationId", min_length=1, max_length=255
+    )
+
     device_id: str = Field(alias="deviceId", min_length=1, max_length=100)
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)

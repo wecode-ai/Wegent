@@ -180,6 +180,7 @@ def _task_binding_metadata(
         if allowed_context:
             metadata["execution_context"] = allowed_context
     for key in (
+        "stand_in_conversation_id",
         "human_assignment_id",
         "dispatch_id",
         "dispatch_round_id",
@@ -2851,6 +2852,14 @@ class LoopItemService:
         commit: bool = True,
     ) -> LoopItemTaskBinding:
         item = self.get(db, item_id, user_id)
+        if values.stand_in_conversation_id:
+            from app.services.loop_items.stand_in_conversations import (
+                require_conversation_reservation,
+            )
+
+            require_conversation_reservation(
+                db, item=item, values=values, user_id=user_id
+            )
         self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
         self._validate_backend_task(db, values.backend_task_id, user_id)
         logger.info(

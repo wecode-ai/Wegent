@@ -29,10 +29,12 @@ async fn rejected_local_creation_preserves_the_issue_reservation() {
         .await
         .unwrap_err();
     assert_eq!(error.code, "unsupported_schema_version");
-    assert!(store
-        .find_user_task_binding("mac", "stand-in-human-default")
-        .is_ok());
-    assert!(handler.local_task_link("stand-in-human-default").is_none());
+    let task_id = handler.stand_in_task_id(
+        &json!({"id":"default","projectId":project.id,"projectStore":"local"}),
+        &serde_json::to_value(&issue).unwrap(),
+    );
+    assert!(store.find_user_task_binding("mac", &task_id).is_ok());
+    assert!(handler.local_task_link(&task_id).is_none());
 }
 
 #[tokio::test]
@@ -99,7 +101,7 @@ async fn deleted_stand_in_is_not_replayed_during_or_after_background_cleanup() {
     let mut config = json!({"id":"review","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
     let issue = json!({"id":"issue"});
     let binding = json!({"humanAssignmentId":"human"});
-    let task_id = handler.stand_in_task_id(&config, &binding);
+    let task_id = handler.stand_in_task_id(&config, &issue);
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: task_id.clone(),
         status: "archived".into(),
@@ -127,15 +129,12 @@ async fn deleted_stand_in_is_not_replayed_during_or_after_background_cleanup() {
     }
     config["manual"] = json!(false);
     let reassigned = json!({"humanAssignmentId":"new-human-assignment"});
-    assert_ne!(handler.stand_in_task_id(&config, &reassigned), task_id);
-    let error = handler
+    assert_eq!(handler.stand_in_task_id(&config, &issue), task_id);
+    handler
         .execute_stand_in_task(&config, &issue, &reassigned)
         .await
-        .unwrap_err();
-    assert_eq!(
-        error.code, "workspace_unavailable",
-        "A new assignment must reach execution preparation"
-    );
+        .unwrap();
+    assert!(handler.local_task_link(&task_id).is_none());
 }
 
 #[tokio::test]

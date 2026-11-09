@@ -14,6 +14,36 @@ pub(super) fn accepted_stand_in_result(result: Value) -> Result<Value, AppIpcErr
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn stand_in_assignment_is_handled(
+        &self,
+        config: &Value,
+        task_id: &str,
+        binding: &Value,
+    ) -> bool {
+        let legacy = format!(
+            "stand-in-{}-{}",
+            binding["humanAssignmentId"].as_str().unwrap_or_default(),
+            config["id"].as_str().unwrap_or_default()
+        );
+        if self.store.is_deleted_archived_task_id(&legacy) {
+            return true;
+        }
+        if !self.stand_in_task_is_handled(config, task_id) {
+            return false;
+        }
+        let Some(task) = self.local_task_link(task_id) else {
+            return true;
+        };
+        match task.runtime_handle["standInIssueWakeups"].as_array() {
+            Some(accepted) => accepted.contains(&binding["humanAssignmentId"]),
+            None => {
+                task.runtime_handle["origin"]["humanAssignmentId"].is_null()
+                    || task.runtime_handle["origin"]["humanAssignmentId"]
+                        == binding["humanAssignmentId"]
+            }
+        }
+    }
+
     pub(super) async fn dispatch_stand_in_task(
         &self,
         payload: Value,
@@ -21,7 +51,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         // These large futures must not inflate every enclosing stand-in state
         // machine and exhaust Windows worker stacks during nested polling.
-        let result = if retry {
+        if retry {
             let task_id = runtime_task_id(&payload)
                 .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
             if self
@@ -38,11 +68,8 @@ impl RuntimeWorkRpcHandler {
                     ));
                 }
             }
-            Box::pin(self.send_message(payload)).await
-        } else {
-            Box::pin(self.create_task(payload)).await
-        };
-        result.and_then(accepted_stand_in_result)
+        }
+        Box::pin(self.dispatch_stand_in_conversation(payload, false)).await
     }
 
     pub(super) fn stand_in_task_is_handled(&self, config: &Value, task_id: &str) -> bool {
@@ -68,8 +95,8 @@ impl RuntimeWorkRpcHandler {
         issue: &Value,
         binding: &Value,
     ) -> Result<(), AppIpcError> {
-        let task_id = self.stand_in_task_id(config, binding);
-        if self.stand_in_task_is_handled(config, &task_id) {
+        let task_id = self.stand_in_task_id(config, issue);
+        if self.stand_in_assignment_is_handled(config, &task_id, binding) {
             self.log_stand_in_decision(
                 config,
                 issue,
@@ -104,12 +131,8 @@ impl RuntimeWorkRpcHandler {
         }
         let result = async {
             let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-            if self.local_task_link(&task_id).is_some() {
-                self.dispatch_stand_in_task(payload, true).await.map(|_| ())
-            } else {
-                self.create_stand_in_task(config, issue, binding, payload)
-                    .await
-            }
+            self.create_stand_in_task(config, issue, binding, payload)
+                .await
         }
         .await;
         let reason = if result.is_ok() {

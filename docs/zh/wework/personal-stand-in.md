@@ -4,6 +4,14 @@ sidebar_position: 12
 
 # 我的分身与场景角色
 
+## 在 Issue 中持续协作
+
+指派 Issue 或在评论中 @ 成员，会唤醒该成员已开启、连接此项目、匹配标签且允许自动处理的分身。
+也可以 @ 自己：分身会接收，但不会给自己发送人员提醒。
+同一个分身在同一个 Issue 中沿用已有会话；重新指派不会清空历史，也不跳过新的权限核对。
+接单和完成结果作为两条独立评论出现。子代理执行期间仍可输入和发送评论，后续唤醒按顺序处理。
+直接回复分身评论时不必再次 @，回复会交给该原分身。私人聊天、推理和工具过程不会同步到评论区。
+
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 

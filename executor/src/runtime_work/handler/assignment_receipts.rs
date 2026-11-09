@@ -22,9 +22,22 @@ impl RuntimeWorkRpcHandler {
         };
         let mut binding = binding.clone();
         binding["deviceId"] = json!(self.device_id);
-        binding["taskId"] = json!(self.stand_in_task_id(config, &binding));
+        binding["taskId"] = json!(self.stand_in_task_id(config, issue));
         binding["taskTitle"] = issue["title"].clone();
+        binding["standInConversationId"] =
+            json!(super::stand_in::stand_in_issue_identity(config, issue));
         let issue_id = issue["id"].as_str().unwrap_or_default();
+        if binding["triggerCommentId"].is_string() {
+            self.runtime_http(
+                reqwest::Method::POST,
+                &format!("/v1/loop-items/{issue_id}/tasks"),
+                Some(&json!({
+                    "deviceId":self.device_id,"taskId":binding["taskId"],"taskTitle":issue["title"],"standInConversationId":binding["standInConversationId"]
+                })),
+            )
+            .await?;
+            return Ok(binding);
+        }
         if local {
             LocalTaskStore::open(self.task_store_path.as_ref())
                 .map_err(settings_error)?

@@ -44,6 +44,9 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "standInOwnerRequest",
     "standInResult",
     "standInResultReceipt",
+    "standInIssueWakeups",
+    "standInPublicTurn",
+    "standInIssueReplies",
     "overloadRecoveryTurnIds",
     "runtime",
     "supersededTranscriptTurnIds",
@@ -76,6 +79,7 @@ struct RuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, RuntimeTaskLink>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    issue_conversations: HashMap<String, String>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -86,6 +90,7 @@ struct PersistedRuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, PersistedRuntimeTask>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    issue_conversations: HashMap<String, String>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -368,6 +373,48 @@ struct IndexFileSignature {
 }
 
 impl RuntimeWorkStore {
+    pub(super) fn issue_conversation(&self, identity: &str) -> Option<String> {
+        self.refresh_index_from_disk_if_changed();
+        self.index
+            .lock()
+            .ok()?
+            .issue_conversations
+            .get(identity)
+            .cloned()
+    }
+
+    pub(super) fn bind_issue_conversation(&self, identity: &str, task: &str) -> io::Result<()> {
+        self.refresh_index_from_disk_if_changed();
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| io::Error::other("Runtime index lock is poisoned"))?;
+        let mut current = self
+            .index
+            .lock()
+            .map_err(|_| io::Error::other("Runtime index lock is poisoned"))?;
+        if let Some(existing) = current.issue_conversations.get(identity) {
+            return if existing == task {
+                Ok(())
+            } else {
+                Err(io::Error::other("Issue conversation is already bound"))
+            };
+        }
+        let mut next = current.clone();
+        next.issue_conversations
+            .insert(identity.into(), task.into());
+        let payload = serialize_index(&next)?;
+        atomic_write_file(&self.index_path, &payload)?;
+        *current = next;
+        drop(current);
+        *self
+            .last_written_payload
+            .lock()
+            .map_err(|_| io::Error::other("Runtime payload lock is poisoned"))? = Some(payload);
+        self.update_index_signature();
+        Ok(())
+    }
+
     pub(super) fn index_path(&self) -> &Path {
         &self.index_path
     }
@@ -763,6 +810,7 @@ fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> Runtime
             .map(|(task_id, task)| (task_id, task.into_runtime()))
             .collect(),
         workspaces: persisted.workspaces,
+        issue_conversations: persisted.issue_conversations,
         deleted_archived_task_ids: persisted.deleted_archived_task_ids,
     }
 }
@@ -780,6 +828,7 @@ fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRun
     }
     current.version = persisted.version;
     current.workspaces = persisted.workspaces;
+    current.issue_conversations = persisted.issue_conversations;
     current.deleted_archived_task_ids = persisted.deleted_archived_task_ids;
 }
 
@@ -794,6 +843,7 @@ fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Erro
             .map(|(task_id, task)| (task_id.clone(), PersistedRuntimeTask::from_runtime(task)))
             .collect(),
         workspaces: index.workspaces.clone(),
+        issue_conversations: index.issue_conversations.clone(),
         deleted_archived_task_ids,
     })
 }

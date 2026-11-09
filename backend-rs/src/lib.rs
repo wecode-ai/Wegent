@@ -324,6 +324,7 @@ pub use wegent_media::video_result_urls;
 mod web_scraper;
 mod web_scraper_create_document;
 use wegent_identity::wework_auth_tokens;
+mod stand_in_issue_events;
 mod wework_notification_preferences;
 mod wework_notifications;
 mod wework_runtime_downloads;
