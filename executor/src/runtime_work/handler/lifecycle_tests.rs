@@ -549,6 +549,49 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
 }
 
 #[tokio::test]
+async fn settled_native_turn_releases_capacity_when_local_execution_finishes_last() {
+    let (handler, root, request) = setup("native-settled-before-local-cleanup");
+    handler
+        .store
+        .update_task("task-1", |link| link.goal_status = None);
+    let execution = start_test_execution(&handler, "task-1");
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task-1".into(), RuntimeTaskKind::Personal);
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    // The native turn settles while the local execution is still registered, so
+    // `publish_native_execution` cannot hand the scheduler slot back yet.
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    assert!(handler.is_active_local_task("task-1"));
+    assert_eq!(handler.get_runtime_capacity().await.unwrap()["active"], 1);
+    let queued = handler
+        .send_message(json!({
+            "taskId": "task-1",
+            "message": "continue",
+            "executionRequest": request,
+        }))
+        .await
+        .unwrap();
+    assert_eq!(queued["status"], "queued");
+    assert_eq!(handler.queued_local_task_position("task-1"), Some(0));
+
+    // Whichever side settles last owns the release. The local execution is last
+    // here, so finishing it must admit the queued turn instead of stranding it.
+    assert!(handler.finish_local_task("task-1", execution, Some("thread-1".into()), "done"));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while handler.queued_local_task_position("task-1").is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("queued turn was never admitted after the local execution finished");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
     let (handler, root, request) = setup("native-completed-send-cleanup");
     handler
