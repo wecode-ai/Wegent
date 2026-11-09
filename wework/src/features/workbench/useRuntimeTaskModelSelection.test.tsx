@@ -1,8 +1,9 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
+import type { ModelOptions, ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
 import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
+import { requiresNewSessionForModelSwitch } from './modelSwitch'
 
 const selection: ModelSelectionConfig = {
   modelName: 'deepseek-v4-pro-responses(公网)',
@@ -33,6 +34,71 @@ function modelStore(models: UnifiedModel[]) {
 }
 
 describe('bound remote task model selection', () => {
+  const official: UnifiedModel = {
+    name: 'gpt-6.1-sol',
+    type: 'runtime',
+    provider: 'local',
+    config: { weworkModelKind: 'codex-official' },
+  }
+  it.each<{ modelName: string; options: ModelOptions; target: UnifiedModel }>([
+    {
+      modelName: 'local-model:desktop-e2e-responses',
+      options: { runnerModelProvider: 'local-desktop-e2e-responses' },
+      target: official,
+    },
+    {
+      modelName: 'deepseek-custom-provider',
+      options: { codexProviderId: 'custom-provider', codexProviderType: 'provider' },
+      target: official,
+    },
+    {
+      modelName: 'gpt-6.1-sol',
+      options: { codexProviderId: 'openai', codexProviderType: 'official' },
+      target: { name: 'deepseek', type: 'public', provider: 'cloud' },
+    },
+  ])(
+    'retains the persisted provider without a live catalog: $modelName',
+    ({ modelName, options, target }) => {
+      const source = runtimeTaskBindingAddress({
+        device_id: 'local-device',
+        task_id: 'stand-in-chat-7-primary',
+        modelSelection: {
+          modelName,
+          modelType: 'runtime',
+          options,
+        },
+      })
+      const { result } = renderHook(() =>
+        useRuntimeTaskModelSelection({
+          userId: 7,
+          resolveTask: () => null,
+          modelStore: modelStore([]),
+        })
+      )
+      const restored = result.current.resolveRuntimeTaskModelSelection(source)
+      expect(requiresNewSessionForModelSwitch(restored.activeModel, target)).toBe(true)
+      expect(restored.selectedModelOptions).toEqual(options)
+    }
+  )
+
+  it('does not infer an official provider from a model name alone', () => {
+    const source = runtimeTaskBindingAddress({
+      device_id: 'local-device',
+      task_id: 'stand-in-chat-7-primary',
+      modelSelection: { modelName: 'gpt-custom', modelType: 'runtime', options: {} },
+    })
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: () => null,
+        modelStore: modelStore([]),
+      })
+    )
+    expect(
+      result.current.resolveRuntimeTaskModelSelection(source).activeModel?.config
+    ).toBeUndefined()
+  })
+
   it('uses the persisted model before the remote task list and model catalog are available', () => {
     const store = modelStore([])
     const { result } = renderHook(() =>

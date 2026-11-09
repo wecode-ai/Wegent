@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import type {
   ModelOptions,
   ModelSelectionConfig,
@@ -44,6 +45,17 @@ function runtimeTaskModelScopeKey(userId: number, address: RuntimeTaskAddress): 
 function modelFromTaskSnapshot(selection: ModelSelectionConfig | null): UnifiedModel | null {
   if (!selection?.modelName || !selection.modelType) return null
 
+  const providerType = selection.options?.codexProviderType
+  const modelKind =
+    selection.modelType !== 'runtime'
+      ? null
+      : localModelIdFromModelName(selection.modelName)
+        ? 'model-interface'
+        : providerType === 'official'
+          ? 'codex-official'
+          : providerType === 'provider'
+            ? 'codex-provider'
+            : null
   const resourceUserIdValue = selection.options?.weworkCloudModelResourceUserId
   const resourceUserId = resourceUserIdValue ? Number(resourceUserIdValue) : null
   return {
@@ -52,6 +64,7 @@ function modelFromTaskSnapshot(selection: ModelSelectionConfig | null): UnifiedM
     modelId: selection.modelName,
     type: selection.modelType,
     provider: selection.modelType === 'runtime' ? 'local' : 'cloud',
+    ...(modelKind ? { config: { weworkModelKind: modelKind } } : {}),
     ...(selection.options?.weworkCloudModelNamespace
       ? { namespace: selection.options.weworkCloudModelNamespace }
       : {}),
