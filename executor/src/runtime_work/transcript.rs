@@ -1228,7 +1228,7 @@ fn unphased_progress_item_ids(items: &[Value], interrupted: bool) -> HashSet<Str
                 progress_ids.insert(item_id(item, "assistant-text"));
             }
             later_reply = true;
-        } else if later_reply && is_substantive_process_item_type(&kind) {
+        } else if later_reply && is_substantive_process_item(item) {
             process_before_reply = true;
         }
     }
@@ -1240,23 +1240,17 @@ fn turn_has_substantive_process(turn: &Value) -> bool {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(|raw_item| {
-            let item = transcript_item(raw_item);
-            let item_type = item_type(&item);
-            is_substantive_process_item_type(&item_type)
-                || (item_type == "message"
-                    && !string_field(&item, "role")
-                        .unwrap_or_default()
-                        .eq_ignore_ascii_case("user")
-                    && !is_agent_message(&item))
-        })
+        .any(|raw_item| is_substantive_process_item(&transcript_item(raw_item)))
 }
 
-fn is_agent_message(item: &Value) -> bool {
-    matches!(
-        item_type(item).as_str(),
-        "agentmessage" | "agentmessageevent"
-    )
+fn is_substantive_process_item(item: &Value) -> bool {
+    let kind = item_type(item);
+    is_substantive_process_item_type(&kind)
+        || is_default_tool_item(item)
+        || (kind == "message"
+            && !string_field(item, "role")
+                .unwrap_or_default()
+                .eq_ignore_ascii_case("user"))
 }
 
 fn is_substantive_process_item_type(item_type: &str) -> bool {

@@ -885,6 +885,32 @@ fn transcript_keeps_adjacent_unphased_reply_fragments_without_process_boundary()
 }
 
 #[test]
+fn transcript_preserves_progress_boundaries_for_unknown_provider_tools() {
+    for tool in [
+        json!({"id":"tool", "type":"providerAction", "call_id":"call-1", "name":"inspect"}),
+        json!({"id":"tool", "type":"providerAction", "callId":"call-1", "output":"done"}),
+    ] {
+        let mut thread = json!({"id":"thread-1", "turns":[{
+            "id":"turn-1", "status":"completed", "items":[
+                {"id":"progress", "type":"agentMessage", "text":"Inspecting"},
+                tool,
+                {"id":"reply", "type":"agentMessage", "text":"Done"}
+            ]
+        }]});
+        let messages = transcript_messages(&thread, "device-1");
+        let assistant = messages.last().unwrap();
+        assert_eq!(assistant["content"], "Done");
+        assert_eq!(assistant["blocks"][0]["content"], "Inspecting");
+        assert_eq!(assistant["blocks"][1]["type"], "tool");
+        let items = thread["turns"][0]["items"].as_array_mut().unwrap();
+        items.remove(0);
+        items.swap(0, 1);
+        let messages = transcript_messages(&thread, "device-1");
+        assert_eq!(messages.last().unwrap()["content"], "Done");
+    }
+}
+
+#[test]
 fn transcript_marks_successful_legacy_mcp_tool_call_end_as_done() {
     let thread = json!({
         "id": "thread-1",
