@@ -1,31 +1,30 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createDecipheriv, randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { HostCapabilityError } from './capability-router.js'
+import { systemSecretProtection, type SecretProtection } from './secret-protection.js'
 
 interface StoredValues {
-  version: 2
+  version: 2 | 3
   values: Record<string, string>
 }
 
-const ALGORITHM = 'aes-256-gcm'
-const KEY_BYTES = 32
 const IV_BYTES = 12
 const AUTH_TAG_BYTES = 16
 const ENVELOPE_VERSION = 1
 
 export class SecureValueStore {
   private operation = Promise.resolve()
-  private keyPromise: Promise<Buffer> | null = null
-
-  constructor(private readonly dataDirectory: string) {}
+  constructor(
+    private readonly dataDirectory: string,
+    private readonly protection: SecretProtection = systemSecretProtection
+  ) {}
 
   get(key: string): Promise<string | null> {
     validateKey(key)
     return this.serial(async () => {
       const values = await this.read()
-      const encrypted = values[key]
-      return encrypted ? this.decrypt(encrypted, await this.encryptionKey()) : null
+      return Object.hasOwn(values, key) ? this.protection.decrypt(values[key]) : null
     })
   }
 
@@ -33,7 +32,7 @@ export class SecureValueStore {
     validateKey(key)
     return this.serial(async () => {
       const values = await this.read()
-      values[key] = this.encrypt(value, await this.encryptionKey())
+      values[key] = await this.protection.encrypt(value)
       await this.write(values)
     })
   }
@@ -52,19 +51,7 @@ export class SecureValueStore {
     })
   }
 
-  private encrypt(value: string, key: Buffer): string {
-    const iv = randomBytes(IV_BYTES)
-    const cipher = createCipheriv(ALGORITHM, key, iv)
-    const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
-    return Buffer.concat([
-      Buffer.from([ENVELOPE_VERSION]),
-      iv,
-      cipher.getAuthTag(),
-      encrypted,
-    ]).toString('base64')
-  }
-
-  private decrypt(value: string, key: Buffer): string {
+  private decryptLegacy(value: string, key: Buffer): string {
     try {
       const envelope = Buffer.from(value, 'base64')
       const minimumBytes = 1 + IV_BYTES + AUTH_TAG_BYTES
@@ -74,7 +61,11 @@ export class SecureValueStore {
       const ivStart = 1
       const authTagStart = ivStart + IV_BYTES
       const encryptedStart = authTagStart + AUTH_TAG_BYTES
-      const decipher = createDecipheriv(ALGORITHM, key, envelope.subarray(ivStart, authTagStart))
+      const decipher = createDecipheriv(
+        'aes-256-gcm',
+        key,
+        envelope.subarray(ivStart, authTagStart)
+      )
       decipher.setAuthTag(envelope.subarray(authTagStart, encryptedStart))
       return Buffer.concat([
         decipher.update(envelope.subarray(encryptedStart)),
@@ -89,66 +80,59 @@ export class SecureValueStore {
   }
 
   private async read(): Promise<Record<string, string>> {
+    let source: string
     try {
-      const stored = JSON.parse(await readFile(this.path(), 'utf8')) as StoredValues
-      return stored.version === 2 && stored.values && typeof stored.values === 'object'
-        ? stored.values
-        : {}
+      source = await readFile(this.path(), 'utf8')
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.create(null)
       throw error
     }
+    const stored = JSON.parse(source) as StoredValues
+    if (
+      ![2, 3].includes(stored.version) ||
+      !stored.values ||
+      typeof stored.values !== 'object' ||
+      Array.isArray(stored.values) ||
+      Object.values(stored.values).some(value => typeof value !== 'string')
+    ) {
+      throw new HostCapabilityError('secure_storage_corrupted', 'Invalid encrypted storage')
+    }
+    if (stored.version === 2) {
+      const key = await readFile(join(this.dataDirectory, 'secure-values.key'))
+      if (key.length !== 32)
+        throw new HostCapabilityError('secure_storage_corrupted', 'Invalid legacy key')
+      const protectedValues: Record<string, string> = Object.create(null)
+      for (const [name, value] of Object.entries(stored.values)) {
+        protectedValues[name] = await this.protection.encrypt(this.decryptLegacy(value, key))
+      }
+      await this.write(protectedValues)
+      await rm(join(this.dataDirectory, 'secure-values.key'), { force: true })
+      return protectedValues
+    }
+    // Reclaim a legacy key left behind by an interrupted successful migration.
+    await rm(join(this.dataDirectory, 'secure-values.key'), { force: true })
+    return stored.values
   }
 
   private async write(values: Record<string, string>): Promise<void> {
     const path = this.path()
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-    const temporary = `${path}.${process.pid}.tmp`
-    await writeFile(
-      temporary,
-      `${JSON.stringify({ version: 2, values } satisfies StoredValues, null, 2)}\n`,
-      { mode: 0o600 }
-    )
-    await rename(temporary, path)
-    await chmod(path, 0o600)
+    const temporary = `${path}.${randomUUID()}.tmp`
+    try {
+      await writeFile(
+        temporary,
+        `${JSON.stringify({ version: 3, values } satisfies StoredValues, null, 2)}\n`,
+        { mode: 0o600 }
+      )
+      await rename(temporary, path)
+      await chmod(path, 0o600)
+    } finally {
+      await rm(temporary, { force: true })
+    }
   }
 
   private path(): string {
     return join(this.dataDirectory, 'secure-values.json')
-  }
-
-  private encryptionKey(): Promise<Buffer> {
-    this.keyPromise ??= this.readOrCreateEncryptionKey()
-    return this.keyPromise
-  }
-
-  private async readOrCreateEncryptionKey(): Promise<Buffer> {
-    const path = join(this.dataDirectory, 'secure-values.key')
-    try {
-      const key = await readFile(path)
-      if (key.length !== KEY_BYTES) {
-        throw new HostCapabilityError(
-          'secure_storage_corrupted',
-          'Encrypted local storage key is invalid'
-        )
-      }
-      await chmod(path, 0o600)
-      return key
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
-
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-    const key = randomBytes(KEY_BYTES)
-    const temporary = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
-    try {
-      await writeFile(temporary, key, { flag: 'wx', mode: 0o600 })
-      await rename(temporary, path)
-      await chmod(path, 0o600)
-      return key
-    } finally {
-      await rm(temporary, { force: true })
-    }
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {

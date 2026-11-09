@@ -98,8 +98,44 @@ export class ModelConfigurationStore {
     }
   }
 
+  /** Remove inline credentials only when accepting the file, never during a stale save check. */
+  private async protectInlineCredentials(
+    loaded: LoadedConfiguration
+  ): Promise<LoadedConfiguration> {
+    let { source } = loaded
+    const { path, config } = loaded
+    if (config.providers.some(provider => provider.api_key)) {
+      const references: string[] = []
+      try {
+        for (const provider of config.providers) {
+          if (!provider.api_key) continue
+          const reference = `wework-model-key.${randomUUID()}`
+          await this.secrets.set(reference, provider.api_key)
+          references.push(reference)
+          delete provider.api_key
+          provider.api_key_ref = reference
+        }
+        const { document } = parseModelConfiguration(source)
+        patchProviders(document, config.providers)
+        const protectedSource = document.toString({ lineWidth: 100 })
+        if ((await readFile(path, 'utf8')) !== source)
+          throw new Error('model.yml changed while securing credentials')
+        await atomicWrite(path, protectedSource)
+        source = protectedSource
+      } catch (error) {
+        for (const reference of references) {
+          const committed = await readFile(path, 'utf8').catch(() => '')
+          if (!committed.includes(reference)) await this.secrets.delete(reference)
+        }
+        throw error
+      }
+    }
+    return { path, source, revision: digest(path, source), config }
+  }
+
   /** Persist the encrypted recovery snapshot before publishing a new valid configuration. */
-  private async accept(loaded: LoadedConfiguration): Promise<void> {
+  private async accept(input: LoadedConfiguration): Promise<LoadedConfiguration> {
+    const loaded = await this.protectInlineCredentials(input)
     // Persist only a recovery snapshot, never a second editable configuration.
     // The existing encrypted credential store protects inline keys in this snapshot.
     if (this.lastGood?.revision !== loaded.revision || this.lastGood.path !== loaded.path) {
@@ -110,6 +146,7 @@ export class ModelConfigurationStore {
     }
     this.lastGood = loaded
     this.lastError = undefined
+    return loaded
   }
 
   /** Resolve one credential without making unrelated providers or the recovery UI unavailable. */
@@ -162,12 +199,12 @@ export class ModelConfigurationStore {
         }
       }
       try {
-        const loaded = await this.load(
+        let loaded = await this.load(
           path,
           (!this.lastGood || this.lastGood.config.providers.length === 0) &&
             path === join(this.directory, 'model.yml')
         )
-        await this.accept(loaded)
+        loaded = await this.accept(loaded)
         return this.publicSnapshot(loaded)
       } catch (error) {
         this.lastError =
@@ -204,7 +241,7 @@ export class ModelConfigurationStore {
   async bind(path: string): Promise<ModelConfigurationSnapshot> {
     return this.serial(async () => {
       const canonical = await realpath(path)
-      const loaded = await this.load(canonical, false)
+      const loaded = await this.protectInlineCredentials(await this.load(canonical, false))
       await atomicWrite(
         join(this.directory, 'model-binding.json'),
         JSON.stringify({ path: canonical })
@@ -253,6 +290,18 @@ export class ModelConfigurationStore {
           const provider = { ...(value as Record<string, unknown>) }
           delete provider.api_key_configured
           const before = previous.get(provider.id as string)
+          if (
+            before &&
+            (before.api_key || before.api_key_ref) &&
+            before.base_url !== provider.base_url &&
+            !provider.api_key
+          ) {
+            throw new Error('Enter the API key again when changing the connection address')
+          }
+          // Credential references belong to the saved provider, never to arbitrary renderer input.
+          if (provider.api_key_ref !== undefined && provider.api_key_ref !== before?.api_key_ref) {
+            throw new Error('A credential reference cannot be transferred between providers')
+          }
           if (provider.api_key === undefined && provider.api_key_ref === undefined && before) {
             if (before.api_key) provider.api_key = before.api_key
             if (before.api_key_ref) provider.api_key_ref = before.api_key_ref
@@ -332,6 +381,9 @@ export class ModelConfigurationStore {
         // Drafts may reuse only the credential owned by their saved provider.
         delete provider.api_key_ref
         if (!provider.api_key && saved) {
+          if (provider.base_url !== saved.base_url && (saved.api_key || saved.api_key_ref)) {
+            throw new Error('Enter the API key again when changing the connection address')
+          }
           provider.api_key = saved.api_key
           provider.api_key_ref = saved.api_key_ref
         }
@@ -379,6 +431,14 @@ export class ModelConfigurationStore {
         }).providers[0]
       }
       if (!provider) throw new Error('Enter the connection address before retrieving models')
+      if (
+        saved &&
+        provider.base_url !== saved.base_url &&
+        !provider.api_key &&
+        (saved.api_key || saved.api_key_ref)
+      ) {
+        throw new Error('Enter the API key again when changing the connection address')
+      }
       const apiKey = provider.api_key ?? (saved ? await this.credential(saved) : null)
       if (saved?.api_key_ref && !apiKey)
         throw new Error('The saved API key is unavailable. Enter it again to retrieve models.')

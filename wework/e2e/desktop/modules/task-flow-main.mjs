@@ -75,6 +75,7 @@ import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs
 
 import { DesktopE2EServer } from './desktop-server.mjs'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+import { prepareNativeKeychainPreferences } from './native-keychain-preferences.mjs'
 import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
@@ -1139,6 +1140,7 @@ async function main() {
     mkdir(codexSqliteHome, { recursive: true }),
     mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  await prepareNativeKeychainPreferences(homePath)
   // Exercise consent explicitly; the product default already marks it as asked.
   await writeFile(
     join(electronUserDataDirectory, 'app-preferences.json'),

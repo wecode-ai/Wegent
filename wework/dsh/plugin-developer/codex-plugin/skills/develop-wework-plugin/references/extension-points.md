@@ -78,7 +78,11 @@ context is disposed.
 | `ctx.wework.localization`  | Resolve visible plugin copy against the current Wework locale without importing private React hooks.     |
 | `ctx.wework.configuration` | Declare plugin settings, merge defaults with persisted values, validate updates, and subscribe.          |
 | `ctx.wework.storage`       | Read and write JSON-serializable plugin state under an isolated namespace.                               |
-| `ctx.wework.secrets`       | Read and write plugin secrets through Wework secure storage under an isolated namespace.                 |
+
+Credentials belong to the Node backend. Inject `weworkSecureStorage` there and
+use `ctx.weworkSecureStorage.scope(pluginNamespace)` internally. The renderer
+calls business methods through `ctx.wework.backend`; do not return plaintext
+credentials or expose generic credential read/write methods over HTTP.
 
 The public command-backed menu locations are currently:
 

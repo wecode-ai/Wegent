@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { stringify } from 'yaml'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -80,7 +81,7 @@ describe('Provider configuration file store', () => {
     const original = await readFile(join(directory, 'model.yml'), 'utf8')
     const { api_key_configured, ...draft } = snapshot.providers[0]
     expect(api_key_configured).toBe(true)
-    draft.base_url = 'https://draft.example/v1'
+    draft.base_url = 'https://relay.example/v1'
     draft.api_key_ref = 'wework-model-key.untrusted-ref'
     const runtime = await store.runtime(draft)
     expect(runtime.models[0].provider).toMatchObject({
@@ -88,6 +89,9 @@ describe('Provider configuration file store', () => {
       api_key: 'secret-not-for-output',
     })
     delete draft.api_key_ref
+    await expect(
+      store.runtime({ ...draft, base_url: 'https://attacker.example/v1' })
+    ).rejects.toThrow(/API key again/)
     expect(
       (await store.runtime({ ...draft, api_key: 'replacement' })).models[0].provider.api_key
     ).toBe('replacement')
@@ -200,11 +204,14 @@ describe('Provider configuration file store', () => {
     const other = join(directory, 'other.yml')
     await writeFile(other, YAML)
     const after = await store.bind(other)
+    const protectedSource = await readFile(other, 'utf8')
+    expect(protectedSource).not.toContain('secret-not-for-output')
     expect(after.revision).not.toBe(before.revision)
     await expect(store.save(before.revision, before.providers)).rejects.toThrow(
       /changed externally/
     )
-    expect(await readFile(other, 'utf8')).toBe(YAML)
+    expect(await readFile(other, 'utf8')).toBe(protectedSource)
+    expect(parseModelConfiguration(protectedSource).config.providers[0].id).toBe('relay')
   })
   test('binding rejects an invalid file and preserves the previous binding', async () => {
     const store = new ModelConfigurationStore(directory, secrets)
@@ -281,10 +288,16 @@ describe('Provider credential recovery and retirement', () => {
     const empty = await store.read()
     let saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
     const oldRef = saved.providers[0].api_key_ref!
-    saved = await store.save(saved.revision, [
-      ...saved.providers,
-      { ...saved.providers[0], id: 'shared', models: [] },
-    ])
+    await expect(
+      store.save(saved.revision, [
+        ...saved.providers,
+        { ...saved.providers[0], id: 'shared', models: [] },
+      ])
+    ).rejects.toThrow(/transferred/)
+    const imported = parseModelConfiguration(await readFile(saved.path, 'utf8')).config
+    imported.providers.push({ ...imported.providers[0], id: 'shared', models: [] })
+    await writeFile(saved.path, stringify(imported))
+    saved = await store.read()
     saved = await store.save(
       saved.revision,
       saved.providers.filter(provider => provider.id !== 'relay')
@@ -398,9 +411,9 @@ describe('Provider model discovery', () => {
     const secretsBefore = new Map(values)
     const request = vi.fn().mockResolvedValue(response({ data: [] }))
     vi.stubGlobal('fetch', request)
-    await store.discover('relay', { ...draft, api_key: '' })
+    await store.discover('relay', { ...draft, base_url: 'https://relay.example/v1', api_key: '' })
     expect(request).toHaveBeenCalledWith(
-      'https://draft.example/v1/models',
+      'https://relay.example/v1/models',
       expect.objectContaining({
         headers: { Authorization: 'Bearer secret-not-for-output' },
       })
@@ -413,6 +426,7 @@ describe('Provider model discovery', () => {
     await writeFile(join(directory, 'model.yml'), YAML)
     const store = new ModelConfigurationStore(directory, secrets)
     await store.read()
+    const protectedSource = await readFile(join(directory, 'model.yml'), 'utf8')
     const request = vi.fn().mockResolvedValue(response({ data: [] }))
     vi.stubGlobal('fetch', request)
     await store.discover('relay', draft)
@@ -423,7 +437,8 @@ describe('Provider model discovery', () => {
       })
     )
     expect((await store.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
-    expect(await readFile(join(directory, 'model.yml'), 'utf8')).toBe(YAML)
+    expect(protectedSource).not.toContain('secret-not-for-output')
+    expect(await readFile(join(directory, 'model.yml'), 'utf8')).toBe(protectedSource)
   })
 
   test('retains saved-provider discovery for older callers', async () => {
@@ -506,9 +521,13 @@ describe('Provider model discovery', () => {
     values.clear()
     const request = vi.fn().mockResolvedValue(response({ data: [] }))
     vi.stubGlobal('fetch', request)
-    await expect(store.discover('relay', { ...draft, api_key: undefined })).rejects.toThrow(
-      /saved API key/
-    )
+    await expect(
+      store.discover('relay', {
+        ...draft,
+        base_url: 'https://relay.example/v1',
+        api_key: undefined,
+      })
+    ).rejects.toThrow(/saved API key/)
     expect(request).not.toHaveBeenCalled()
     await expect(store.discover('relay', draft)).resolves.toEqual([])
   })

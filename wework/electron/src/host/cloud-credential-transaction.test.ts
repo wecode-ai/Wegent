@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudCredentialService } from './cloud-credential-service.js'
+import { createTestSecretProtection } from '../../test/secret-protection.js'
+
+const protection = createTestSecretProtection()
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -23,8 +26,13 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'wework-cloud-transaction-'))
   roots.push(root)
   const request = vi.fn<typeof fetch>()
-  const service = new CloudCredentialService(root, request)
-  const stored = () => readFile(join(root, 'cloud-credentials.json'), 'utf8')
+  const service = new CloudCredentialService(root, request, protection)
+  const stored = async () => {
+    const envelope = JSON.parse(await readFile(join(root, 'cloud-credentials.json'), 'utf8'))
+    return envelope.version === 3
+      ? protection.decrypt(envelope.ciphertext)
+      : JSON.stringify(envelope)
+  }
   async function stage(apiBaseUrl = backend, refreshToken: string | null = 'candidate-refresh') {
     const prepared = await service.prepareAuthorization(apiBaseUrl)
     request.mockResolvedValueOnce(

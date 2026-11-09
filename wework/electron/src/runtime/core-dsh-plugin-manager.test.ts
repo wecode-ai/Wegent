@@ -10,7 +10,6 @@ import { create as createTar } from 'tar'
 import { describe, expect, test, vi } from 'vitest'
 import {
   CoreDshPluginManager,
-  parseBlockedBuildMatcher,
   validateCoreDshDevelopmentPlugin,
 } from './core-dsh-plugin-manager.js'
 import { temporaryDirectory } from './test-helpers.js'
@@ -531,13 +530,25 @@ try {
     await root.remove()
   })
 
-  test('parses only the exact pnpm git build matcher', () => {
-    expect(
-      parseBlockedBuildMatcher(
-        'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\nallowBuilds:\n  "codeload.github.com/o/p/tar.gz/a": true\n'
+  test('never turns a package-manager build rejection into permission to execute package code', async () => {
+    const runCommand = vi.fn(async () => {
+      throw Object.assign(new Error('Build rejected'), {
+        stderr:
+          'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\nallowBuilds:\n  "codeload.github.com/o/p/tar.gz/a": true\n',
+      })
+    })
+    const fixture = await createFixture({ runCommand })
+    try {
+      const path = join(fixture.profileRoot, 'pnpm-workspace.yaml')
+      const before = await readFile(path, 'utf8')
+      await expect(fixture.manager().install('git+https://github.com/o/p.git')).rejects.toThrow(
+        'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED'
       )
-    ).toBe('codeload.github.com/o/p/tar.gz/a')
-    expect(parseBlockedBuildMatcher('allowBuilds:\n  package: true')).toBeNull()
+      expect(runCommand).toHaveBeenCalledTimes(1)
+      expect(await readFile(path, 'utf8')).toBe(before)
+    } finally {
+      await fixture.remove()
+    }
   })
 })
 
@@ -617,7 +628,11 @@ async function createFixture(
         runtimeRoot,
         dshEntry: join(runtimeRoot, 'dsh.js'),
         nodeCommand: process.execPath,
-        environment: options.environment ?? {},
+        // process.execPath may be the signed Electron Helper used as the managed Node runtime.
+        environment: {
+          ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
+          ...options.environment,
+        },
         runCommand: options.realCommands
           ? undefined
           : (options.runCommand ??

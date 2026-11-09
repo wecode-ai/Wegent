@@ -122,3 +122,22 @@ export async function createOfficePreviewFixtures(directory) {
   await createDocument(join(directory, 'document.docx'))
   await createWorkbook(join(directory, 'workbook.xlsx'))
 }
+
+/** Create external links with valid OOXML IDs, including forged relationship types. */
+export async function createLinkedDocumentFixture(path, links) {
+  const xml = value =>
+    String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('"', '&quot;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('\n', '&#10;')
+  await createOfficePackage(
+    path,
+    'word/document.xml',
+    {
+      'word/document.xml': `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="${OFFICE_RELATIONSHIPS}"><w:body>${links.map((link, index) => `<w:p><w:hyperlink r:id="rId${index}"><w:r><w:t>${xml(link.label)}</w:t></w:r></w:hyperlink></w:p>`).join('')}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`,
+      'word/_rels/document.xml.rels': `<Relationships xmlns="${RELATIONSHIPS}">${links.map((link, index) => `<Relationship Id="rId${index}" Type="${OFFICE_RELATIONSHIPS}/${xml(link.type ?? 'hyperlink')}" TargetMode="External" Target="${xml(link.target)}"/>`).join('')}</Relationships>`,
+    },
+    { 'word/document.xml': 'wordprocessingml.document.main+xml' }
+  )
+}

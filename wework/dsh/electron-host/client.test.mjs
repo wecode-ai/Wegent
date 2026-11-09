@@ -44,6 +44,7 @@ test('provides one Renderer service backed by the same-origin host route', async
     })
   })
   const generation = client.createWeworkDesktopClient()
+  assert.equal(generation.service.secureStorage, undefined)
 
   assert.deepEqual(JSON.parse(JSON.stringify(await generation.service.describe())), {
     protocolVersion: 1,

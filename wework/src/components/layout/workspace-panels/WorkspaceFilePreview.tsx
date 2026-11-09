@@ -38,6 +38,7 @@ import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
 import { isMarkdownFile } from './workspaceFileTypes'
+import { isDocxPreviewFile, safeOfficePreviewFile } from '@/lib/safe-office-preview'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -182,6 +183,31 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   themeType: 'light' | 'dark'
 }) {
   const containerRef = useRef<HTMLElement>(null)
+  const { t } = useTranslation('common')
+  const [prepared, setPrepared] = useState<{ source: File; file?: File; error?: boolean } | null>(
+    null
+  )
+  const requiresPreparation = isDocxPreviewFile(file.file)
+  useEffect(() => {
+    if (!requiresPreparation) return
+    let active = true
+    void safeOfficePreviewFile(file.file).then(
+      result => {
+        if (active) setPrepared({ source: file.file, file: result })
+      },
+      () => {
+        if (active) setPrepared({ source: file.file, error: true })
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [file.file, requiresPreparation])
+  const preparedFile = requiresPreparation
+    ? prepared?.source === file.file
+      ? prepared.file
+      : undefined
+    : file.file
   const viewerType = workspaceFileViewerType(file.name, file.file.type)
   const isDiagram = viewerType === 'mermaid' || viewerType === 'plantuml'
   const diagramFilename = `${file.name.replace(/\.[^.]+$/, '')}.png`
@@ -231,6 +257,19 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     )
   }
 
+  if (!preparedFile) {
+    return (
+      <section
+        data-testid="workspace-office-preview-preparing"
+        className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-secondary"
+      >
+        {prepared?.source === file.file && prepared.error
+          ? t('workbench.workspace_file_preview_failed')
+          : t('workbench.workspace_file_preview_loading', '正在加载文件...')}
+      </section>
+    )
+  }
+
   return (
     <section
       data-testid="workspace-binary-file-preview"
@@ -240,7 +279,7 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
       <Profiler id="workspace-file-viewer" onRender={handleFileViewerRender}>
         <FileViewer
           key={`${file.path}:${file.size}`}
-          file={file.file}
+          file={preparedFile}
           filename={file.name}
           type={viewerType}
           size={file.size}

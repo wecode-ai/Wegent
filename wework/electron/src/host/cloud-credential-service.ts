@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { systemSecretProtection, type SecretProtection } from './secret-protection.js'
 
 const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS = 30_000
 
@@ -77,7 +78,8 @@ export class CloudCredentialService {
 
   constructor(
     private readonly dataDirectory: string,
-    private readonly request?: typeof fetch
+    private readonly request?: typeof fetch,
+    private readonly protection: SecretProtection = systemSecretProtection
   ) {}
 
   /**
@@ -273,8 +275,19 @@ export class CloudCredentialService {
 
   private async readCredential(): Promise<StoredCloudCredential | null> {
     try {
-      const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
-      return normalizeStoredCredential(value)
+      const envelope = JSON.parse(await readFile(this.path(), 'utf8')) as {
+        version?: number
+        ciphertext?: string
+      }
+      const value =
+        envelope.version === 3
+          ? JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
+          : envelope
+      const credential = normalizeStoredCredential(value)
+      if (credential && envelope.version === 2) {
+        await this.writeCredential(credential, () => {})
+      }
+      return credential
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
       throw error
@@ -289,7 +302,8 @@ export class CloudCredentialService {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const temporary = `${path}.${process.pid}.tmp`
     try {
-      await writeFile(temporary, `${JSON.stringify(credential, null, 2)}\n`, { mode: 0o600 })
+      const ciphertext = await this.protection.encrypt(JSON.stringify(credential))
+      await writeFile(temporary, `${JSON.stringify({ version: 3, ciphertext })}\n`, { mode: 0o600 })
       beforeRename()
       await rename(temporary, path)
     } finally {

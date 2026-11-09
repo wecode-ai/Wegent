@@ -411,12 +411,7 @@ export class CoreDshPluginManager {
     try {
       await this.runCommand(command, commandArgs, this.pnpmCommandOptions())
     } catch (error) {
-      const matcher = parseBlockedBuildMatcher(commandOutput(error))
-      if (!matcher) throw commandError('pnpm', error)
-      await allowBuild(this.profileRoot, matcher)
-      await this.runCommand(command, commandArgs, this.pnpmCommandOptions()).catch(reason => {
-        throw commandError('pnpm', reason)
-      })
+      throw commandError('pnpm', error)
     } finally {
       await this.logManagedAssets('after-pnpm')
     }
@@ -524,27 +519,6 @@ export async function validateCoreDshDevelopmentPlugin(
   sourceRoot: string
 ): Promise<CoreDshDevelopmentPlugin> {
   return readDevelopmentPlugin(sourceRoot)
-}
-
-export function parseBlockedBuildMatcher(output: string): string | null {
-  if (!output.includes('ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED')) return null
-  const matches = [...output.matchAll(/^\s{2}("[^"]+"|'[^']+'|[^:\n]+):\s*(?:true|false)\s*$/gm)]
-  const raw = matches.at(-1)?.[1]?.trim()
-  return raw ? raw.replace(/^(['"])(.*)\1$/, '$2') : null
-}
-
-async function allowBuild(profileRoot: string, matcher: string): Promise<void> {
-  const path = join(profileRoot, 'pnpm-workspace.yaml')
-  let workspace = await readFile(path, 'utf8')
-  if (workspace.includes(`${JSON.stringify(matcher)}: true`)) return
-  if (!/^allowBuilds:\s*$/m.test(workspace)) {
-    workspace = `${workspace.trimEnd()}\n\nallowBuilds:\n`
-  }
-  workspace = workspace.replace(
-    /^allowBuilds:\s*$/m,
-    `allowBuilds:\n  ${JSON.stringify(matcher)}: true`
-  )
-  await writeFile(path, `${workspace.trimEnd()}\n`, { mode: 0o600 })
 }
 
 function validateSpec(spec: string): void {

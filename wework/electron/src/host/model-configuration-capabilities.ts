@@ -4,6 +4,8 @@ import type { HostCapabilityRouter } from './capability-router.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
 import type { SecureValueStore } from './secure-value-store.js'
 import { ModelConfigurationStore } from './model-configuration-store.js'
+import { probeModelConnection } from '../shared/model-connection-probe.js'
+import { findLocalModelProviderProfile } from '../shared/model-provider-profiles.js'
 
 /** Register native provider operations and publish revisions only after successful mutations. */
 export function registerModelConfigurationCapabilities(
@@ -26,7 +28,70 @@ export function registerModelConfigurationCapabilities(
     await syncRuntime?.()
     return result
   })
-  router.register('modelConfiguration.runtime', params => store().runtime(params.provider))
+  router.register('modelConfiguration.runtime', async () => {
+    const result = await store().runtime()
+    return {
+      ...result,
+      models: result.models.map(({ provider, model }) => {
+        const { api_key, ...metadata } = provider
+        delete metadata.api_key_ref
+        return {
+          provider: {
+            ...metadata,
+            api_key_configured: Boolean(api_key),
+            credential_revision: result.revision,
+          },
+          model,
+        }
+      }),
+    }
+  })
+  router.register('modelConfiguration.test', async params => {
+    const result = await store().runtime(params.provider)
+    return Promise.all(
+      result.models.map(async ({ provider, model }) => {
+        const apiFormat = model.api_format ?? provider.api_format
+        const path =
+          model.request_path ??
+          (model.api_format && model.api_format !== provider.api_format
+            ? undefined
+            : provider.request_path) ??
+          (apiFormat === 'anthropic-messages'
+            ? provider.base_url.endsWith('/v1')
+              ? '/messages'
+              : '/v1/messages'
+            : apiFormat === 'openai-chat-completions'
+              ? '/chat/completions'
+              : '/responses')
+        const profile = findLocalModelProviderProfile(model.provider_profile_id)
+        const probe =
+          profile.connectionTest &&
+          provider.base_url === profile.baseUrl &&
+          apiFormat === profile.apiFormat &&
+          path === profile.requestPath
+            ? profile.connectionTest
+            : undefined
+        try {
+          await probeModelConnection(
+            {
+              requestUrl: probe
+                ? `${probe.baseUrl}${probe.requestPath}`
+                : `${provider.base_url}${path}`,
+              apiFormat: probe?.apiFormat ?? apiFormat,
+              modelId: model.model_id,
+              toolProfile: probe ? 'function' : model.tool_profile,
+              apiKey: provider.api_key,
+            },
+            { verifyExactProbePayload: false }
+          )
+          return { model: model.display_name || model.model_id }
+        } catch {
+          // Remote error bodies may echo credentials. Expose only a stable local failure.
+          return { model: model.display_name || model.model_id, error: 'Connection test failed' }
+        }
+      })
+    )
+  })
   router.register('modelConfiguration.save', async params => {
     if (typeof params.revision !== 'string') throw new Error('Configuration revision is required')
     const result = await store().save(params.revision, params.providers)

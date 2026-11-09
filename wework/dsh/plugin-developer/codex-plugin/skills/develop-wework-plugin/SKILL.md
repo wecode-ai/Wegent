@@ -195,8 +195,10 @@ Wework modules into a plugin.
 - Use `ctx.wework.chat.providers`, `ctx.wework.testing.providers`, or
   `ctx.wework.environments.providers` when the capability must be reusable
   across multiple host or plugin surfaces.
-- Use namespaced `ctx.wework.storage` for JSON state and
-  `ctx.wework.secrets` only for sensitive strings.
+- Use namespaced `ctx.wework.storage` for non-sensitive JSON state. Handle
+  credentials inside the Node backend with `ctx.weworkSecureStorage.scope(...)`;
+  inject `weworkSecureStorage` there. Expose business operations and their results
+  to the renderer, never a plaintext credential read/write API.
 - Declare settings through `ctx.wework.configuration`; do not invent a second
   configuration store.
 - Register host-readable metadata through `ctx.wework.contributions`.
