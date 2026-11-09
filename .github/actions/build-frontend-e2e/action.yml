@@ -23,6 +23,14 @@ runs:
         save-cache: ${{ inputs.save-cache }}
 
     - name: Set up ORAS
+      id: setup-oras
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+      with:
+        version: 1.3.1
+      continue-on-error: true
+
+    - name: Retry ORAS setup after a transient download failure
+      if: steps.setup-oras.outcome == 'failure'
       uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
       with:
         version: 1.3.1
