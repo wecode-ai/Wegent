@@ -35,13 +35,19 @@ The project owns this policy, not a robot or model runtime profile. Changes affe
 
 Wework checks access on the target device before cloning and opening the project. Progress and errors remain in the dialog, without extra sidebar clone notices. Failures retain the URL, branch, and directory. If cloning succeeds but project registration fails, retry registers the existing checkout rather than cloning again.
 
+<a id="configuration-and-recovery"></a>
+
 ### Configuration and recovery
 
 The quiet **Configure Git account** action beside the URL label opens **Settings → Integrations → Git accounts** for the current cloud connection, targeting the repository domain, including its port. Execution environments and conversation error cards offer the same entry when credentials are needed.
 
+Navigation is unavailable until the Web address is resolved; the Backend URL is never used to guess the page. Once the current user's accounts load, a matching account opens for editing, otherwise a new account is prefilled. See [Repository access configuration and device sync](../../../wework/git-connections.md#device-git-configuration) for manual synchronization and independent clearing.
+
 On authentication failure, ClaudeCode cloud or remote devices attempt to sync configured accounts and recheck once. When the matching account is missing, configure it and return to resume. Successful synchronization does not prove repository access: expired credentials still produce an error. An empty account list never clears device credentials; removing managed configuration requires separate confirmation.
 
 Local devices do not show an unusable cloud configuration action. Repair their native Git or SSH credentials, then recheck. Network, certificate, URL, and permission failures are not treated as expired login. Offline devices refresh before retry. If a device was removed, the dialog retains inputs and requires explicit replacement-device selection and confirmation of that device's destination directory.
+
+Cloning and task checkout preserve Git's SSH precedence, including `core.sshCommand`, `GIT_SSH` and `GIT_SSH_COMMAND`.
 
 ## Directory Rules
 

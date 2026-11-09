@@ -215,14 +215,24 @@ async def initialize_execution_environment(
             # The actual device is authoritative: public repositories and native
             # credentials must work even when the owner has no cloud accounts.
             result = await execute_configured_device_command(**command_args)
-            if (
-                not result.get("success")
-                and _requires_git_configuration(result)
-                and await _sync_device_git_credentials(db, device)
-            ):
-                # Synchronization is not proof of repository access. The same
-                # environment is prepared again once, reusing completed checkouts.
-                result = await execute_configured_device_command(**command_args)
+            if not result.get("success") and _requires_git_configuration(result):
+                try:
+                    synced = await _sync_device_git_credentials(db, device)
+                except Exception as sync_error:
+                    failure = json.loads(
+                        str(result["error"]).split("git-access:", 1)[1]
+                    )
+                    failure["message"] = (
+                        f"{failure.get('message') or 'Git authentication failed'}. "
+                        f"Credential synchronization failed: {sync_error}"
+                    )
+                    raise RuntimeError(
+                        f"git-access:{json.dumps(failure, ensure_ascii=False)}"
+                    ) from sync_error
+                if synced:
+                    # Synchronization is not proof of repository access. Prepare
+                    # again once, reusing completed checkouts.
+                    result = await execute_configured_device_command(**command_args)
             if not bool(result.get("success")) or result.get("exit_code") != 0:
                 error_message = str(
                     result.get("stderr")

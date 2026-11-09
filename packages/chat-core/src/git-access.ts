@@ -68,7 +68,7 @@ export function gitAccountSettingsUrl(
   connection: { webUrl?: string; backendUrl?: string },
   domain?: string
 ): string | null {
-  const base = connection.webUrl || connection.backendUrl
+  const base = connection.webUrl
   if (!base) return null
   try {
     const parsed = new URL(base)

@@ -7,6 +7,19 @@ import {
 } from './git-access'
 
 describe('Git access protocol', () => {
+  it('retains authentication recovery after credential synchronization fails', () => {
+    const diagnostic = {
+      code: 'authentication-failed',
+      domain: 'git.example:8443',
+      message: 'Rejected. Credential synchronization failed: device rejected the sync',
+    }
+    const parsed = parseGitAccessFailure(`git-access:${JSON.stringify(diagnostic)}`)
+    expect(parsed).toEqual(diagnostic)
+    expect(needsGitConfiguration(parsed)).toBe(true)
+    const url = new URL(gitAccountSettingsUrl({ webUrl: 'https://web.example' }, parsed?.domain)!)
+    expect(url.searchParams.get('gitDomain')).toBe('git.example:8443')
+  })
+
   it('decodes diagnostics through initialization stage prefixes', () => {
     const failure = {
       code: 'credentials-required',
@@ -45,6 +58,13 @@ describe('Git access protocol', () => {
     expect(url.searchParams.get('auth')).toBeNull()
     expect(url.hash).toBe('#git-accounts')
     expect(gitAccountSettingsUrl({ webUrl: 'file:///tmp' })).toBeNull()
+    expect(gitAccountSettingsUrl({ backendUrl: 'https://backend.example/api' })).toBeNull()
+    expect(
+      gitAccountSettingsUrl({
+        webUrl: 'file:///tmp',
+        backendUrl: 'https://backend.example',
+      })
+    ).toBeNull()
     expect(gitAccountSettingsUrl({})).toBeNull()
   })
 

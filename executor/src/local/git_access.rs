@@ -95,14 +95,8 @@ pub fn noninteractive_environment(env: &HashMap<String, String>) -> HashMap<Stri
     env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
     env.insert("GCM_INTERACTIVE".into(), "Never".into());
     env.insert("LC_ALL".into(), "C".into());
-    // Preserve custom SSH transports and the device's native keys/configuration.
-    if !env.contains_key("GIT_SSH_COMMAND")
-        && !env.contains_key("GIT_SSH")
-        && std::env::var_os("GIT_SSH_COMMAND").is_none()
-        && std::env::var_os("GIT_SSH").is_none()
-    {
-        env.insert("GIT_SSH_COMMAND".into(), "ssh -o BatchMode=yes".into());
-    }
+    // Git owns SSH transport precedence, including core.sshCommand. Do not
+    // inject an environment override; native process deadlines bound SSH waits.
     env
 }
 
@@ -290,6 +284,14 @@ mod tests {
     }
 
     #[test]
+    fn does_not_override_ssh_commands_from_git_configuration() {
+        let result = noninteractive_environment(&HashMap::new());
+        assert!(!result.contains_key("GIT_SSH_COMMAND"));
+        assert!(!result.contains_key("GIT_SSH"));
+        assert_eq!(result["GCM_INTERACTIVE"], "Never");
+    }
+
+    #[test]
     fn exact_domain_and_safe_urls() {
         assert_eq!(
             repository_domain("https://git.example.com:8443/a.git").unwrap(),
@@ -454,3 +456,6 @@ mod tests {
         assert!(!root.path().join("checkout").exists());
     }
 }
+
+#[cfg(all(test, unix))]
+mod native_ssh_tests;

@@ -17,7 +17,8 @@ const syncGitAccounts = vi.hoisted(() => vi.fn())
 const cloudConnection = vi.hoisted(() => ({
   isConnected: true,
   apiBaseUrl: 'https://cloud.example.com/api',
-  backendUrl: 'https://cloud.example.com',
+  backendUrl: 'https://backend.example.com',
+  webUrl: 'https://cloud.example.com',
   token: 'cloud-token',
   refreshUser: vi.fn(),
 }))
@@ -88,6 +89,7 @@ describe('GitHostingSettingsPage', () => {
   beforeEach(() => {
     cloudConnection.isConnected = true
     cloudConnection.apiBaseUrl = 'https://cloud.example.com/api'
+    cloudConnection.webUrl = 'https://cloud.example.com'
     cloudConnection.token = 'cloud-token'
     getGitHostingCliStatus.mockReset()
     updateAppPreferences.mockReset()
@@ -321,6 +323,23 @@ describe('GitHostingSettingsPage', () => {
     })
     render(<DeviceGitSyncSection />)
     await screen.findByText('云端尚未配置 Git 账户。')
+    await userEvent.click(screen.getByTestId('git-device-sync-configure'))
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      'https://cloud.example.com/settings?tab=integrations#git-accounts',
+      { source: 'device-git-settings' }
+    )
+    expect(syncGitAccounts).not.toHaveBeenCalled()
+  })
+
+  test('waits for Web metadata without sending users to Backend or clearing credentials', async () => {
+    cloudConnection.webUrl = ''
+    const { rerender } = render(<DeviceGitSyncSection />)
+    await screen.findByTestId('git-device-sync-accounts')
+    expect(screen.queryByTestId('git-device-sync-configure')).not.toBeInTheDocument()
+    expect(openExternalUrl).not.toHaveBeenCalled()
+    expect(syncGitAccounts).not.toHaveBeenCalled()
+    cloudConnection.webUrl = 'https://cloud.example.com'
+    rerender(<DeviceGitSyncSection />)
     await userEvent.click(screen.getByTestId('git-device-sync-configure'))
     expect(openExternalUrl).toHaveBeenCalledWith(
       'https://cloud.example.com/settings?tab=integrations#git-accounts',

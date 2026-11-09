@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { gitRepositoryDomain } from '@wegent/chat-core/git-access'
 import '@/features/common/scrollbar.css'
@@ -32,9 +32,9 @@ import { SiGitea } from 'react-icons/si'
 import GitHubEdit from './GitHubEdit'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import LoadingState from '@/features/common/LoadingState'
-import { GitInfo } from '@/types/api'
+import { GitInfo, User } from '@/types/api'
 import { useUser } from '@/features/common/UserContext'
-import { fetchGitInfo, deleteGitToken, reorderGitTokens } from '../services/github'
+import { deleteGitToken, reorderGitTokens } from '../services/github'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 
@@ -133,12 +133,24 @@ function SortableGitToken({
 export default function GitHubIntegration() {
   const { t } = useTranslation()
   const { toast } = useToast()
-  const { user, refresh } = useUser()
-  const [gitInfo, setGitInfo] = useState<GitInfo[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const { user, refresh, isLoading: userLoading } = useUser()
+  const [optimisticOrder, setOptimisticOrder] = useState<{ user: User; info: GitInfo[] } | null>(
+    null
+  )
+  const gitInfo = useMemo(
+    () =>
+      optimisticOrder?.user === user
+        ? optimisticOrder.info
+        : Array.isArray(user?.git_info)
+          ? user.git_info
+          : [],
+    [optimisticOrder, user]
+  )
+  const isLoading = userLoading || !user
   const [showModal, setShowModal] = useState(false)
   const [modalType, setModalType] = useState<'add' | 'edit'>('add')
   const [currentEditInfo, setCurrentEditInfo] = useState<GitInfo | null>(null)
+  const [modalUserId, setModalUserId] = useState<number | null>(null)
   const requestedDomain = useSearchParams().get('gitDomain') ?? ''
   const handledDomain = useRef('')
   const sensors = useSensors(
@@ -146,35 +158,13 @@ export default function GitHubIntegration() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  useEffect(() => {
-    async function loadGitInfo() {
-      setIsLoading(true)
-      try {
-        if (user) {
-          const info = await fetchGitInfo(user)
-          setGitInfo(info)
-        } else {
-          // If no user, set empty array to show the "no tokens" state
-          setGitInfo([])
-        }
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:integrations.loading'),
-        })
-        setGitInfo([])
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    loadGitInfo()
-  }, [user, toast, t])
-
-  const platforms = gitInfo || []
+  const platforms = gitInfo
 
   useEffect(() => {
-    if (!user || isLoading || !requestedDomain || handledDomain.current === requestedDomain) return
-    handledDomain.current = requestedDomain
+    if (!user || isLoading || !requestedDomain) return
+    const requestKey = `${user.id}:${requestedDomain.toLowerCase()}`
+    if (handledDomain.current === requestKey) return
+    handledDomain.current = requestKey
     const account = gitInfo.find(info => {
       const domain = info.git_domain.trim()
       return (
@@ -184,6 +174,7 @@ export default function GitHubIntegration() {
     })
     setModalType(account ? 'edit' : 'add')
     setCurrentEditInfo(account ?? null)
+    setModalUserId(user.id)
     setShowModal(true)
   }, [gitInfo, isLoading, requestedDomain, user])
 
@@ -206,15 +197,19 @@ export default function GitHubIntegration() {
 
   // Edit
   const handleEdit = (info: GitInfo) => {
+    if (!user) return
     setModalType('edit')
     setCurrentEditInfo(info)
+    setModalUserId(user.id)
     setShowModal(true)
   }
 
   // Add
   const handleAdd = () => {
+    if (!user) return
     setModalType('add')
     setCurrentEditInfo(null)
+    setModalUserId(user.id)
     setShowModal(true)
   }
 
@@ -240,19 +235,19 @@ export default function GitHubIntegration() {
   }
 
   const handleDragEnd = async ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return
+    if (!user || !over || active.id === over.id) return
     const oldIndex = platforms.findIndex(info => getItemKey(info) === active.id)
     const newIndex = platforms.findIndex(info => getItemKey(info) === over.id)
     if (oldIndex < 0 || newIndex < 0) return
 
     const previous = platforms
     const reordered = arrayMove(platforms, oldIndex, newIndex)
-    setGitInfo(reordered)
+    setOptimisticOrder({ user, info: reordered })
     try {
       await reorderGitTokens(reordered.map(getItemKey))
       await refresh()
     } catch {
-      setGitInfo(previous)
+      setOptimisticOrder({ user, info: previous })
       toast({ variant: 'destructive', title: t('common:integrations.reorder_failed') })
     }
   }
@@ -323,7 +318,7 @@ export default function GitHubIntegration() {
       )}
 
       <GitHubEdit
-        isOpen={showModal}
+        isOpen={showModal && !isLoading && modalUserId === user?.id}
         onClose={() => setShowModal(false)}
         mode={modalType}
         editInfo={currentEditInfo}

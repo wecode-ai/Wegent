@@ -75,6 +75,7 @@ async function fillForm() {
 describe('Remote project Git configuration', () => {
   beforeEach(() => {
     mocks.cloud.isConnected = true
+    mocks.cloud.webUrl = 'https://web.example/wegent'
     mocks.cloud.user = { id: 1 }
     mocks.summary.mockReset().mockResolvedValue({ accounts: [], effective_count: 0 })
     mocks.sync.mockReset().mockResolvedValue(undefined)
@@ -118,6 +119,23 @@ describe('Remote project Git configuration', () => {
       target: { value: 'git@git.example:owner/repository.git' },
     })
     expect(screen.queryByTestId('remote-project-git-configure')).not.toBeInTheDocument()
+  })
+
+  test('waits for restored Web metadata instead of opening Backend settings', async () => {
+    mocks.cloud.webUrl = ''
+    const { rerender, props } = renderForm()
+    await fillForm()
+    expect(screen.queryByTestId('remote-project-git-configure')).not.toBeInTheDocument()
+    expect(mocks.openUrl).not.toHaveBeenCalled()
+
+    mocks.cloud.webUrl = 'https://restored-web.example/wegent'
+    rerender(<StandaloneGitProjectForm {...props} />)
+    await userEvent.click(screen.getByTestId('remote-project-git-configure'))
+    expect(mocks.openUrl).toHaveBeenCalledExactlyOnceWith(
+      'https://restored-web.example/wegent/settings?tab=integrations&gitDomain=git.example%3A8443#git-accounts',
+      { source: 'git-clone-recovery' }
+    )
+    expect(screen.getByTestId('remote-project-git-url-input')).toHaveValue(url)
   })
 
   test('retains inputs after missing credentials and resumes the same device, branch and path', async () => {

@@ -32,6 +32,7 @@ import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { basename, joinPath } from './device-folder-path'
 import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
 import { StandaloneGitProjectForm } from './StandaloneGitProjectForm'
+import { useStandaloneProjectDeviceSelection } from './useStandaloneProjectDeviceSelection'
 
 import {
   getPreferredStandaloneWorkspaceDevice,
@@ -315,23 +316,12 @@ export function StandaloneFolderProjectDialog({
   }, [devices, fixedDeviceId, mode, remoteDeviceOptions])
   const cloudDeviceOptions = remoteDeviceOptions.filter(isCloudDevice)
   const remoteDockerDeviceOptions = remoteDeviceOptions.filter(isRemoteDevice)
-  const defaultDevice = useMemo(
-    () =>
-      fixedDeviceId
-        ? (selectableDevices.find(device => device.device_id === fixedDeviceId) ?? null)
-        : (selectableDevices.find(device => device.device_id === preferredDeviceId) ??
-          selectableDevices.find(device => device.is_default) ??
-          selectableDevices[0] ??
-          null),
-    [fixedDeviceId, preferredDeviceId, selectableDevices]
-  )
-  const [activeDeviceId, setActiveDeviceId] = useState(
-    defaultDevice?.device_id ?? selectableDevices[0]?.device_id ?? ''
-  )
-  const activeDevice =
-    selectableDevices.find(device => device.device_id === activeDeviceId) ??
-    (remoteProjectSource === 'git' ? null : selectableDevices[0]) ??
-    null
+  const { activeDevice, setActiveDeviceId } = useStandaloneProjectDeviceSelection({
+    open,
+    devices: selectableDevices,
+    fixedDeviceId,
+    preferredDeviceId,
+  })
   const addingRemoteDevice = mode === 'remote' && remoteIntent === 'add-device'
   const choosingProjectSource =
     (mode === 'remote' || chooseProjectSource) &&
@@ -351,10 +341,11 @@ export function StandaloneFolderProjectDialog({
     setNativePickerFallback(false)
     setSelectedLocalRoots([])
     setSelectedLocalDeviceId('')
+    setActiveDeviceId(null)
     setRemoteProjectSource(null)
     setGitSubmitting(false)
     onClose()
-  }, [onClose])
+  }, [onClose, setActiveDeviceId])
 
   useEscapeKey(closeDialog, open && !gitSubmitting)
 
@@ -922,6 +913,7 @@ export function StandaloneFolderProjectDialog({
                   type="button"
                   data-testid={`remote-project-source-${option.source}`}
                   onClick={() => {
+                    if (activeDevice) setActiveDeviceId(activeDevice.device_id)
                     setRemoteProjectSource(option.source)
                   }}
                   className="flex w-full items-start gap-3 rounded-xl border border-border bg-background p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"

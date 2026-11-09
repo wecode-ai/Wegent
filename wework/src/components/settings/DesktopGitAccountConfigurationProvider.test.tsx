@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComponentProps } from 'react'
 import { GitAccountConfigurationButton } from '@wegent/collaboration/controls'
 import { createCollaborationTranslator } from '@wegent/collaboration'
@@ -18,7 +18,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 vi.mock('@/lib/external-links', () => ({ openExternalUrl }))
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: vi.fn() }))
 
-function mount(
+function surface(
   deviceType: string,
   bindShell = 'claudecode',
   explicitTarget = true,
@@ -40,7 +40,7 @@ function mount(
       currentRuntimeTask: { deviceId: 'target', taskId: 'task' },
     },
   } as unknown as ComponentProps<typeof WorkbenchContext.Provider>['value']
-  return render(
+  return (
     <WorkbenchContext.Provider value={value}>
       <DesktopGitAccountConfigurationProvider
         conversation={conversation}
@@ -61,7 +61,33 @@ function mount(
   )
 }
 
+function mount(...args: Parameters<typeof surface>) {
+  return render(surface(...args))
+}
+
 describe('desktop Git account configuration routing', () => {
+  beforeEach(() => {
+    cloud.isConnected = true
+    cloud.webUrl = 'https://cloud.example'
+    openExternalUrl.mockClear()
+  })
+
+  it.each([true, false])(
+    'waits for Web metadata and recovers navigation (conversation=%s)',
+    conversation => {
+      cloud.webUrl = ''
+      const { rerender } = mount('remote', 'claudecode', true, conversation)
+      expect(screen.queryByTestId('configure')).toBeNull()
+      expect(openExternalUrl).not.toHaveBeenCalled()
+      cloud.webUrl = 'https://web.example/wegent'
+      rerender(surface('remote', 'claudecode', true, conversation))
+      fireEvent.click(screen.getByTestId('configure'))
+      expect(openExternalUrl).toHaveBeenCalledWith(
+        'https://web.example/wegent/settings?tab=integrations&gitDomain=git.example%3A8443#git-accounts',
+        { source: 'git-access-recovery' }
+      )
+    }
+  )
   it('keeps a conversation without a workbench context usable', () => {
     render(
       <DesktopGitAccountConfigurationProvider conversation>

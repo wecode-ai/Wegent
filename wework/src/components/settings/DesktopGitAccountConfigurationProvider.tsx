@@ -33,7 +33,7 @@ export function DesktopGitAccountConfigurationProvider({
       value={
         cloud.isConnected && supported
           ? {
-              baseUrl: cloud.webUrl || cloud.backendUrl,
+              baseUrl: cloud.webUrl,
               openUrl: url => openExternalUrl(url, { source: 'git-access-recovery' }),
               canConfigureDevice,
             }

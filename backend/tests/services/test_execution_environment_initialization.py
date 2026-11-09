@@ -416,7 +416,15 @@ async def test_initialization_surfaces_credential_sync_failures(
     )
 
     assert result["status"] == "error"
-    assert result["error"] == "device rejected the sync"
+    assert json.loads(result["error"].removeprefix("git-access:")) == {
+        "code": "credentials-required",
+        "domain": "git.example",
+        "message": (
+            "Configure Git. Credential synchronization failed: device rejected the sync"
+        ),
+    }
+    assert result["workspace_path"] == ""
+    assert result["prepared_at"] is None
     execute.assert_awaited_once()
 
 
@@ -455,7 +463,13 @@ async def test_invalid_owner_credentials_are_not_treated_as_no_accounts(
         )
     )
     assert result["status"] == "error"
-    assert result["error"] == "Git token is invalid"
+    assert json.loads(result["error"].removeprefix("git-access:")) == {
+        "code": "authentication-failed",
+        "domain": "git.example",
+        "message": "Rejected. Credential synchronization failed: Git token is invalid",
+    }
+    assert result["workspace_path"] == ""
+    assert result["prepared_at"] is None
     execute.assert_awaited_once()
 
 

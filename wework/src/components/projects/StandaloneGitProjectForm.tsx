@@ -171,7 +171,7 @@ export function StandaloneGitProjectForm({
               value={
                 canConfigure && !submitting && (!url.trim() || /^https?:\/\//i.test(url.trim()))
                   ? {
-                      baseUrl: cloud.webUrl || cloud.backendUrl,
+                      baseUrl: cloud.webUrl,
                       openUrl: value => openExternalUrl(value, { source: 'git-clone-recovery' }),
                     }
                   : null
