@@ -346,14 +346,19 @@ impl RuntimeWorkRpcHandler {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
-                let (local, cloud) = tokio::join!(
-                    handler.poll_local_stand_ins(),
-                    handler.flush_stand_in_dispatches()
-                );
-                if let Err(error) = local {
+                if let Err(error) = handler.poll_local_stand_ins().await {
                     log_executor_event("stand-in polling failed", &[("error", error.message)]);
                 }
-                if let Err(error) = cloud {
+            }
+        });
+        let handler = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                // Cloud outages must not delay local assignment polling or receipts.
+                if let Err(error) = handler.flush_stand_in_dispatches().await {
                     log_executor_event(
                         "Stand-in dispatch reconciliation failed",
                         &[("code", error.code)],
