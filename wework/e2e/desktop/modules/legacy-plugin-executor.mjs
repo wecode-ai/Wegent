@@ -101,7 +101,7 @@ async function historicalComponent(release, component, directory, token) {
   }
 }
 
-async function historicalPluginExecutor(release, directory, token) {
+export async function historicalPluginExecutor(release, directory, token) {
   const { installed, evidence } = await historicalComponent(release, 'executor', directory, token)
   const executable = join(
     installed,
