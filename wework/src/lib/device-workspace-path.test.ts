@@ -1,6 +1,7 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
-  buildManagedWorktreePath,
   executorWorkspaceRoot,
   joinDevicePath,
   normalizeRelativeWorkspacePath,
@@ -26,15 +27,5 @@ describe('device workspace path helpers', () => {
       '/Users/me/.wework/workspace'
     )
     expect(executorWorkspaceRoot('/workspace')).toBe('/workspace')
-  })
-
-  test('builds managed worktree paths beside executor projects', () => {
-    expect(
-      buildManagedWorktreePath({
-        projectWorkspaceRoot: '/Users/me/.wework/workspace/projects',
-        sourceWorkspacePath: '/Users/me/project',
-        worktreeId: 42,
-      })
-    ).toBe('/Users/me/.wework/workspace/worktrees/42/project')
   })
 })

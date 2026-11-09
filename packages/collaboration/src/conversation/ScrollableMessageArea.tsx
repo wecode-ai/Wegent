@@ -32,6 +32,7 @@ function ScrollableMessagePaneContent({
   historyError,
   isWaitingForAssistant = false,
   hasMoreBefore = false,
+  beforeCursor,
   loadingMoreBefore = false,
   historyLoadingMode = 'automatic',
   turnNavigation,
@@ -70,8 +71,10 @@ function ScrollableMessagePaneContent({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
+  onFillSelectionToAnswer,
   autoScrollSuspended = false,
   searchTarget,
+  messageTarget,
   searchNavigationPaused = false,
   onSearchNavigationFailure,
   onLoadMoreBefore,
@@ -95,7 +98,7 @@ function ScrollableMessagePaneContent({
     turnNavigationTargetMessageId,
     handleTurnNavigationScrollTargetChange,
     handleTurnNavigationLoadStateChange,
-    handleContentLayoutChange,
+    handleVirtualLayoutChange,
     handleScrollToBottom,
     preserveScrollPositionForNextLayout,
     prepareForHistoryPrepend,
@@ -134,7 +137,9 @@ function ScrollableMessagePaneContent({
   const hasMessages = messages.length > 0
   const firstMessage = messages[0]
   const firstAssistantMessage = messages.find(message => message.role === 'assistant')
+  // Cached items may stay unchanged while native pagination advances through an opaque cursor.
   const historyBoundaryKey = JSON.stringify([
+    beforeCursor,
     loadedTranscriptRanges?.[0]?.start,
     firstMessage?.id,
     firstAssistantMessage?.id,
@@ -277,7 +282,7 @@ function ScrollableMessagePaneContent({
                 messages={messages}
                 turns={turns}
                 onBeforeUserMessageToggle={preserveUserMessagePosition}
-                onVirtualLayoutChange={handleContentLayoutChange}
+                onVirtualLayoutChange={handleVirtualLayoutChange}
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
@@ -312,6 +317,7 @@ function ScrollableMessagePaneContent({
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
+                onFillSelectionToAnswer={onFillSelectionToAnswer}
                 virtualAnchorToEnd={virtualAnchorToEnd}
                 virtualAnchor={virtualAnchor}
                 virtualScrollAdjustmentEnabled={virtualScrollAdjustmentEnabled}
@@ -344,6 +350,7 @@ function ScrollableMessagePaneContent({
         ) : null}
       </div>
       <MessageTurnNavigation
+        messageTarget={messageTarget}
         key={currentScrollKey ?? 'keyless-conversation'}
         translate={translate}
         messages={messages}

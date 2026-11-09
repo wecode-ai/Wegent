@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { chmod, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

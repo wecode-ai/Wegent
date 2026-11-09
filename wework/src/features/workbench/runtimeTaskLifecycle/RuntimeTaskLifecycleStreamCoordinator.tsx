@@ -1,12 +1,15 @@
 import { synchronizeRuntimeConversation } from '../runtimeConversationSynchronization'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import {
   createExecutorClientForWorkbenchServices,
   type WorkbenchServices,
 } from '../workbenchServices'
 import {
   beginRuntimeGoalSnapshot,
+  getRuntimeConversationQueuedMessages,
+  getRuntimeConversationTurns,
   isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   runtimeConversationKey,
@@ -36,6 +39,8 @@ function pendingRequestUserInputBlockPayload(payload: {
 }
 
 type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume'
+const RECOVERY_PAGE_SIZE = 5
+const RECOVERY_CONCURRENCY = 2
 
 interface LifecycleEventPayload {
   task?: import('@/types/api').RuntimeTaskSummary
@@ -80,12 +85,30 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     [services]
   )
   const recoverRuntimeConnections = services.recoverRuntimeConnections
+  const interruptedRecoveryRef = useRef<{
+    store: RuntimeTaskLifecycleStore
+    reason: ReconciliationReason | null
+    addresses: RuntimeTaskAddress[]
+  }>({ store, reason: null, addresses: [] })
 
   useEffect(() => {
+    if (interruptedRecoveryRef.current.store !== store) {
+      interruptedRecoveryRef.current = { store, reason: null, addresses: [] }
+    }
+    const interruptedRecovery = interruptedRecoveryRef.current
     let disposed = false
+    const reads = new AbortController()
     let reconciliation: Promise<void> | null = null
     let pendingReason: ReconciliationReason | null = null
-    const replacedAddresses: RuntimeTaskAddress[] = []
+    let activeReason: ReconciliationReason | null = null
+    let recoveringAddresses: RuntimeTaskAddress[] = []
+    const replacedAddresses = interruptedRecovery.addresses.splice(0)
+    const diagnose = (stage: string, details: Record<string, unknown> = {}) => {
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        logRuntimeTaskCreateStage('lifecycle-reconciliation', { phase: stage, ...details }, 'debug')
+      }
+    }
+    diagnose('subscribed')
 
     const reconcileRuntimeGoal = async (
       address: RuntimeTaskAddress,
@@ -118,39 +141,87 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     const runReconciliation = async (initialReason: ReconciliationReason) => {
       let reason: typeof pendingReason = initialReason
       while (!disposed && reason) {
+        const reconciliationReason = reason
+        activeReason = reason
         pendingReason = null
         try {
           const recoveryAddresses = runtimeRecoveryAddresses(store, replacedAddresses.splice(0))
+          recoveringAddresses = recoveryAddresses
+          diagnose('list-start', {
+            reason,
+            taskIds: recoveryAddresses.map(address => address.taskId),
+          })
           const runtimeWork = await executorClient.runtime.listRuntimeWork()
+          diagnose('list-resolved', { reason, disposed })
           if (!disposed) {
             store.syncRuntimeWork(runtimeWork)
-            for (const address of runtimeRecoveryAddresses(store, recoveryAddresses)) {
-              if (disposed) break
-              try {
-                const transcript = await synchronizeRuntimeConversation(
-                  request => executorClient.runtime.getRuntimeTranscript(request),
-                  address,
-                  {
-                    limit: 50,
-                    refresh: true,
+            const addresses = runtimeRecoveryAddresses(store, recoveryAddresses)
+            recoveringAddresses = addresses
+            let nextAddress = 0
+            const recoverNext = async () => {
+              while (!disposed && nextAddress < addresses.length) {
+                const address = addresses[nextAddress++]
+                try {
+                  const queriedClientUserMessageIds = getRuntimeConversationQueuedMessages(address)
+                    .filter(message => message.status === 'sending')
+                    .map(message => message.id)
+                  diagnose('transcript-start', {
+                    reason,
+                    taskId: address.taskId,
+                    receiptCount: queriedClientUserMessageIds.length,
+                  })
+                  const transcript = await synchronizeRuntimeConversation(
+                    (request, options) =>
+                      executorClient.runtime.getRuntimeTranscript(request, options),
+                    address,
+                    {
+                      limit: RECOVERY_PAGE_SIZE,
+                      signal: reads.signal,
+                      ...(queriedClientUserMessageIds.length
+                        ? { reconcileClientUserMessageIds: queriedClientUserMessageIds }
+                        : {}),
+                    }
+                  )
+                  if (disposed) return
+                  const turns = transcript.turns
+                  store.syncTranscript(address, transcript)
+                  if (queriedClientUserMessageIds.length) {
+                    const acceptedClientUserMessageIds = transcript.acceptedClientUserMessageIds
+                    const queried = new Set(queriedClientUserMessageIds)
+                    const receiptsValid =
+                      Array.isArray(acceptedClientUserMessageIds) &&
+                      acceptedClientUserMessageIds.every(id => queried.has(id))
+                    if (receiptsValid) {
+                      reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns, {
+                        acceptedClientUserMessageIds,
+                      })
+                    }
+                    const unconfirmed = getRuntimeConversationQueuedMessages(address).filter(
+                      message => message.status === 'sending' && queried.has(message.id)
+                    )
+                    if (!receiptsValid || unconfirmed.length) {
+                      console.warn('[Wework] Runtime message receipt confirmation unavailable', {
+                        taskId: address.taskId,
+                        reason: 'Incomplete acceptance evidence; pending sends remain unconfirmed',
+                        pendingCount: unconfirmed.length,
+                      })
+                    }
                   }
-                )
-                if (disposed) break
-                const turns = transcript.turns
-                if (reason === 'runtime_replaced') {
-                  reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns)
+                  await reconcileRuntimeGoal(address, reconciliationReason)
+                } catch (error) {
+                  if (disposed) return
+                  console.warn('[Wework] Runtime transcript reconciliation failed', {
+                    reason,
+                    deviceId: address.deviceId,
+                    taskId: address.taskId,
+                    error,
+                  })
                 }
-                store.syncTranscript(address, transcript)
-                await reconcileRuntimeGoal(address, reason)
-              } catch (error) {
-                console.warn('[Wework] Runtime transcript reconciliation failed', {
-                  reason,
-                  deviceId: address.deviceId,
-                  taskId: address.taskId,
-                  error,
-                })
               }
             }
+            await Promise.all(
+              Array.from({ length: Math.min(RECOVERY_CONCURRENCY, addresses.length) }, recoverNext)
+            )
           }
         } catch (error) {
           console.warn('[Wework] Runtime task lifecycle reconciliation failed', {
@@ -160,9 +231,11 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         }
         reason = pendingReason
       }
+      activeReason = null
     }
 
     const reconcile = (reason: ReconciliationReason) => {
+      diagnose('requested', { reason, disposed, alreadyRunning: Boolean(reconciliation) })
       if (disposed) return
       if (reconciliation) {
         pendingReason = reason
@@ -201,17 +274,47 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     const reconcileTerminalTranscript = async (
       address: RuntimeTaskAddress,
       outcome?: 'succeeded' | 'failed' | 'cancelled',
-      terminalTurnId?: string | null
+      terminalTurnId?: string | null,
+      hasAuthoritativeTask = false
     ) => {
       const expectedSnapshot = store.getTask(address)
+      // Execution ownership is independent of the turn body and may outlive a Goal turn.
+      // Confirm it through the owning executor without waiting for history projection.
+      const getTask = executorClient.runtime.getRuntimeTask
+      if (getTask && (!hasAuthoritativeTask || expectedSnapshot?.execution.running)) {
+        void getTask(address, { signal: reads.signal })
+          .then(task => {
+            if (
+              !disposed &&
+              task &&
+              !didStartNewerTurn(expectedSnapshot, store.getTask(address), terminalTurnId)
+            ) {
+              store.syncRuntimeTask(address, task, expectedSnapshot)
+            }
+          })
+          .catch(error => {
+            if (!disposed)
+              console.warn('[Wework] Runtime terminal task lookup failed', {
+                taskId: address.taskId,
+                error,
+              })
+          })
+      }
+      // Complete live content and an authoritative task snapshot need no history repair.
+      const terminal = getRuntimeConversationTurns(address).find(turn => turn.id === terminalTurnId)
+      if (
+        hasAuthoritativeTask &&
+        terminal &&
+        ['done', 'completed', 'failed', 'cancelled'].includes(terminal.status)
+      )
+        return
       try {
         const transcript = await synchronizeRuntimeConversation(
-          request => executorClient.runtime.getRuntimeTranscript(request),
+          (request, options) => executorClient.runtime.getRuntimeTranscript(request, options),
           address,
           {
-            limit: 50,
-            refresh: true,
-            includeFullContent: true,
+            limit: RECOVERY_PAGE_SIZE,
+            signal: reads.signal,
           }
         )
         if (disposed) return
@@ -229,6 +332,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           store.turnSettled(address, null, outcome)
         }
       } catch (error) {
+        if (disposed) return
         console.warn('[Wework] Runtime terminal transcript reconciliation failed', {
           deviceId: address.deviceId,
           taskId: address.taskId,
@@ -261,7 +365,12 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       onChatDone: payload => {
         const match = settleMatchingTask(payload, 'succeeded')
         if (match) {
-          void reconcileTerminalTranscript(match.address, 'succeeded', match.terminalTurnId)
+          void reconcileTerminalTranscript(
+            match.address,
+            'succeeded',
+            match.terminalTurnId,
+            Boolean(payload.task)
+          )
         }
       },
       onChatError: payload => {
@@ -273,7 +382,8 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           void reconcileTerminalTranscript(
             match.address,
             isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed',
-            match.terminalTurnId
+            match.terminalTurnId,
+            Boolean(payload.task)
           )
         }
       },
@@ -287,8 +397,20 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       },
     })
 
+    if (interruptedRecovery.reason) {
+      const reason = interruptedRecovery.reason
+      interruptedRecovery.reason = null
+      reconcile(reason)
+    }
+
     return () => {
+      diagnose('disposed', { reconciliationPending: Boolean(reconciliation), pendingReason })
+      if (activeReason || pendingReason) {
+        interruptedRecovery.reason = pendingReason ?? activeReason
+        interruptedRecovery.addresses = [...recoveringAddresses, ...replacedAddresses]
+      }
       disposed = true
+      reads.abort()
       unsubscribeSystemResume()
       unsubscribe()
     }

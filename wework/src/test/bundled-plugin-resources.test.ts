@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
@@ -55,7 +57,13 @@ describe('bundled plugin resources', () => {
     for (const manifest of bundledPluginExampleManifests) {
       expect(existsSync(resolve(resourcesDirectory, manifest))).toBe(true)
     }
-    expect(packageScript).toContain("join(electronRoot, 'resources', 'bundled-plugins')")
+    const componentLayout = readFileSync(
+      resolve(process.cwd(), 'electron/scripts/bundled-component-layout.cjs'),
+      'utf8'
+    )
+    expect(componentLayout).toContain("'bundled-plugins'")
+    expect(packageScript).toContain('...bundledComponentLayout.directories.map')
+    expect(packageScript).toContain("join(electronRoot, 'resources', `${name}.tar.gz`)")
   })
 
   test('packages a runnable MCP server in the plugin example', () => {
@@ -125,6 +133,40 @@ describe('bundled plugin resources', () => {
         )
       )
     ).toBe(true)
+  })
+
+  test('discovers host workflow metadata from the default runtime plugin', () => {
+    const root = resolve(process.cwd(), 'resources/bundled-plugins/wework-personal')
+    const marketplace = JSON.parse(
+      readFileSync(resolve(root, '.agents/plugins/marketplace.json'), 'utf8')
+    )
+    expect(
+      marketplace.plugins.find((plugin: { name: string }) => plugin.name === 'wework-runtime')
+        ?.policy?.installation
+    ).toBe('INSTALLED_BY_DEFAULT')
+    const plugin = resolve(root, 'plugins/wework-runtime')
+    const manifest = JSON.parse(readFileSync(resolve(plugin, '.codex-plugin/plugin.json'), 'utf8'))
+    expect(manifest.skills).toBe('./skills/')
+    for (const name of [
+      'coding',
+      'browser',
+      'computer',
+      'github',
+      'connector-auth',
+      'conversations',
+      'visualize',
+      'artifacts',
+    ]) {
+      const skill = readFileSync(resolve(plugin, 'skills', name, 'SKILL.md'), 'utf8')
+      expect(skill).toMatch(/^---\nname: /)
+      expect(skill).toContain('description:')
+    }
+    expect(readFileSync(resolve(plugin, 'skills/browser/SKILL.md'), 'utf8')).toContain(
+      'browser_inspect'
+    )
+    expect(readFileSync(resolve(plugin, 'skills/github/SKILL.md'), 'utf8')).toContain(
+      'connectorSlug=wework-github-cli'
+    )
   })
 
   test('installs the Smart app builder workflow by default', () => {
@@ -335,7 +377,7 @@ describe('bundled plugin resources', () => {
       expect(workflow).toContain('plan-desktop-release.mjs')
       const concurrencyGroup = workflow.match(/^ {2}group: (.+)$/m)?.[1].trim()
       expect(concurrencyGroup).toContain(
-        "inputs.verification_run_id != '' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)"
+        `inputs.verification_run_id != '' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)`
       )
       expect(concurrencyGroup).toContain(
         'github.ref, inputs.verification_run_id || inputs.verification_source_run_id)'
@@ -434,7 +476,9 @@ describe('bundled plugin resources', () => {
       resolve(process.cwd(), 'scripts/verify-release-upgrades.mjs'),
       'utf8'
     )
-    expect(upgradeVerifier).toContain('`${UPGRADE_CHECKPOINT_GROUP},app-update-full`')
+    expect(upgradeVerifier).toContain(
+      'diagnosticCheckpoint || upgradeVerificationCheckpoint(platform)'
+    )
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
     expect(workflow).toContain('macOS arm64')

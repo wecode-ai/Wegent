@@ -19,13 +19,18 @@ from app.mcp_server.tools import wework_space
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectIncomingEvent,
 )
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.services import collaboration_manager_decisions
 from app.services.issue_assignments import issue_assignment_service
+from app.services.project_automation_execution import project_automation_execution
+from app.services.project_incoming_hooks import project_incoming_hook_service
 from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 
@@ -69,8 +74,9 @@ def _token(user: User) -> MCPAuthInfo:
     )
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("human_round_owner", [False, True])
-def test_update_issue_status_is_scoped_to_manager_board_task(
+async def test_update_issue_status_is_scoped_to_manager_board_task(
     test_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
@@ -132,7 +138,8 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
         runtime_device_id="manager-device",
         runtime_task_id="codex-queue-manager",
     )
-    test_db.add_all([manager, item, dispatch])
+    rule = _status_rule(project, test_user)
+    test_db.add_all([manager, item, dispatch, rule])
     test_db.commit()
     if human_round_owner:
         from app.services.collaboration_round_assignment import assign_round_owner
@@ -193,6 +200,22 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
         "target_status": "in_review",
         "reason": "Executor evidence is ready for confirmation.",
     }
+    event = test_db.query(ProjectIncomingEvent).one()
+    assert event.status == "received"
+    assert event.metadata_json["payload"]["previous_status"] == "in_progress"
+    automation_dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", automation_dispatch)
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background", AsyncMock()
+    )
+
+    assert await project_incoming_hook_service.check_pending(test_db) == 1
+
+    run = test_db.query(ProjectAutomationRun).one()
+    assert run.parent_id == rule.id
+    assert run.task_id == item.id
+    assert event.status == "processed"
+    automation_dispatch.assert_awaited_once()
     labels["dispatchRole"] = "executor"
     with pytest.raises(ValueError, match="not a dispatch manager"):
         wework_space.update_issue_status(
@@ -201,6 +224,68 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
             "completed",
             "Executors cannot decide the Issue status.",
         )
+
+
+def _status_rule(project: CloudProject, user: User) -> ProjectAutomationRule:
+    return ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Review handler",
+        status="enabled",
+        created_by_user_id=user.id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {
+                "transition": "any",
+                "statuses": ["in_review"],
+                "execution_target": "existing_issue",
+            },
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_board_item_queues_and_dispatches_status_automation(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(test_db, test_user, provider="local")
+    item = LoopItem(
+        cloud_project_id=project.id,
+        title="Enter review through MCP",
+        sequence_number=1,
+        priority="medium",
+        status="in_progress",
+        created_by_user_id=test_user.id,
+    )
+    rule = _status_rule(project, test_user)
+    test_db.add_all([item, rule])
+    test_db.commit()
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+
+    result = await wework_space.update_board_item(
+        _token(test_user),
+        {"version": item.version, "status": "in_review"},
+        space_id=str(project.id),
+        item_id=item.id,
+    )
+
+    assert result["status"] == "in_review"
+    event = test_db.query(ProjectIncomingEvent).one()
+    assert event.status == "received"
+    assert event.metadata_json["payload"]["previous_status"] == "in_progress"
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background", AsyncMock()
+    )
+
+    assert await project_incoming_hook_service.check_pending(test_db) == 1
+
+    run = test_db.query(ProjectAutomationRun).one()
+    assert run.parent_id == rule.id
+    assert run.task_id == item.id
+    assert event.status == "processed"
+    dispatch.assert_awaited_once()
 
 
 def test_local_board_comment_uses_internal_provider(

@@ -23,7 +23,7 @@ from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
     get_shell_type,
-    get_shells_by_names_batch,
+    get_shells_by_owners_batch,
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
@@ -742,8 +742,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         else:
             db.refresh(model)
 
-        # Get the shell for response (from user's custom shells or public shells)
-        shell = get_shell_by_name(db, shell_ref_name, user_id)
+        # Get the shell for response using the same namespace written to shellRef.
+        shell = get_shell_by_name(db, shell_ref_name, user_id, shell_ref_namespace)
 
         # Return bot-like structure
         return self._convert_to_bot_dict(bot, ghost, shell, model, obj_in.agent_config)
@@ -904,7 +904,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     (bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace)
                 )
                 shell = shell_map.get(
-                    (bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
+                    (
+                        bot.user_id,
+                        bot_crd.spec.shellRef.name,
+                        bot_crd.spec.shellRef.namespace,
+                    )
                 )
                 # modelRef is optional, only get if it exists
                 if bot_crd.spec.modelRef:
@@ -1046,32 +1050,50 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")  # Mark JSON field as modified
         if "shell_name" in update_data:
-            # Update Bot's shellRef to point directly to the user-selected Shell
+            # Apply the selected Shell, preserving an existing resolvable reference.
             new_shell_name = update_data["shell_name"]
-            try:
-                shell_info = get_shell_info_by_name(db, new_shell_name, user_id)
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-
-            logger.info(
-                f"[DEBUG] update_with_user: shell_name={new_shell_name}, "
-                f"resolved shell_type={shell_info['shell_type']}, "
-                f"execution_type={shell_info['execution_type']}, "
-                f"base_image={shell_info['base_image']}, "
-                f"is_custom={shell_info['is_custom']}, "
-                f"namespace={shell_info.get('namespace', 'default')}"
-            )
-
-            # Update Bot's shellRef to point to the user-selected Shell
-            # Use the shell's actual namespace (public shells are in 'default' namespace)
             bot_crd = Bot.model_validate(bot.json)
-            bot_crd.spec.shellRef.name = new_shell_name
-            bot_crd.spec.shellRef.namespace = shell_info.get("namespace", "default")
-            bot.json = bot_crd.model_dump()
-            flag_modified(bot, "json")
+            shell_ref = bot_crd.spec.shellRef
+            shell = None
+            if shell_ref.name == new_shell_name:
+                existing_namespace = shell_ref.namespace or "default"
+                candidate = get_shell_by_name(
+                    db, new_shell_name, bot.user_id, existing_namespace
+                )
+                public_fallback = (
+                    candidate is not None
+                    and candidate.user_id == 0
+                    and candidate.namespace == "default"
+                )
+                if candidate and (
+                    existing_namespace == "default" or not public_fallback
+                ):
+                    shell = candidate
 
-            # Update shell reference for response
-            shell = get_shell_by_name(db, new_shell_name, user_id)
+            if shell is None:
+                try:
+                    shell_info = get_shell_info_by_name(db, new_shell_name, user_id)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
+                logger.info(
+                    f"[DEBUG] update_with_user: shell_name={new_shell_name}, "
+                    f"resolved shell_type={shell_info['shell_type']}, "
+                    f"execution_type={shell_info['execution_type']}, "
+                    f"base_image={shell_info['base_image']}, "
+                    f"is_custom={shell_info['is_custom']}, "
+                    f"namespace={shell_info.get('namespace', 'default')}"
+                )
+
+                # Re-resolve only when the shell changed or the existing
+                # reference is no longer resolvable.
+                shell_ref.name = new_shell_name
+                shell_ref.namespace = shell_info.get("namespace", "default")
+                bot.json = bot_crd.model_dump()
+                flag_modified(bot, "json")
+                shell = get_shell_by_name(
+                    db, new_shell_name, user_id, shell_ref.namespace
+                )
 
         if "agent_config" in update_data:
             bot_crd = Bot.model_validate(bot.json)
@@ -1686,12 +1708,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ghost_query = ghost_query.filter(Kind.user_id == owner_id)
         ghost = ghost_query.first()
 
-        # Get shell - try user's custom shells first, then public shells
+        # Get shell - resolve from the namespace stored on the Bot reference.
         shell_ref_name = bot_crd.spec.shellRef.name
-        shell = get_shell_by_name(db, shell_ref_name, owner_id)
+        shell_ref_namespace = bot_crd.spec.shellRef.namespace or "default"
+        shell = get_shell_by_name(db, shell_ref_name, owner_id, shell_ref_namespace)
 
         logger.info(
             f"[DEBUG] _get_bot_components: shellRef.name={shell_ref_name}, "
+            f"shellRef.namespace={shell_ref_namespace}, "
             f"shell found={shell is not None}, "
             f"shell type={type(shell).__name__ if shell else 'None'}"
         )
@@ -1726,7 +1750,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         Returns:
           - bot_crds: {bot.id: Bot} mapping to avoid repeated parsing
           - ghost_map: {(name, namespace): Kind}
-          - shell_map: {(name, namespace): Kind}
+          - shell_map: {(owner_id, name, namespace): Kind}
           - model_map: {(name, namespace): Kind}
         """
         if not bots:
@@ -1754,7 +1778,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 personal_ghost_keys.add(ghost_key)
 
             shell_keys.add(
-                (bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
+                (
+                    bot.user_id,
+                    bot_crd.spec.shellRef.name,
+                    bot_crd.spec.shellRef.namespace,
+                )
             )
             # modelRef is optional, only add if it exists
             if bot_crd.spec.modelRef:
@@ -1809,8 +1837,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 )
                 ghosts.extend(group_ghosts)
 
-        # Use unified shell query function that checks both user shells and public shells
-        shell_map = get_shells_by_names_batch(db, shell_keys, user_id)
+        # Use each Bot owner's identity when resolving referenced Shells.
+        shell_map = get_shells_by_owners_batch(db, shell_keys)
 
         # Query personal models (with user_id filter)
         if personal_model_keys:
@@ -1837,7 +1865,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 models.extend(group_models)
 
         ghost_map = {(g.name, g.namespace): g for g in ghosts}
-        # shell_map is already populated by get_shells_by_names_batch
+        # shell_map is already populated by get_shells_by_owners_batch
         model_map = {(m.name, m.namespace): m for m in models}
 
         # For models not found in kinds table (user models), try to find in public models (user_id=0)

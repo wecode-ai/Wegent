@@ -1,0 +1,12 @@
+{
+  "order": 1000,
+  "scenario": "./scenarios/mcp-apps.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 132000,
+      "shard": 2,
+      "position": 18000
+    }
+  }
+}

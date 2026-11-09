@@ -1,5 +1,6 @@
-import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
+import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
+import { createPreparationObserver } from './preparation-progress.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
@@ -18,6 +19,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
   PLUGIN_CREATOR_PROMPT,
+  SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   appendFile,
   appendProcessOutput,
@@ -198,6 +200,8 @@ async function resolveBackendRsBinary() {
 }
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
+  let lastOutput = ''
+  let logReadError = null
   const captureSpawnError = error => {
     spawnError = error
   }
@@ -205,8 +209,13 @@ async function waitForRedisReady(redis, logPath, fromOffset) {
   const startedAt = Date.now()
   try {
     while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-      const content = await readFile(logPath, 'utf8').catch(() => '')
+      logReadError = null
+      const content = await readFile(logPath, 'utf8').catch(error => {
+        logReadError = error.code ?? error.message
+        return ''
+      })
       const attemptOutput = content.slice(fromOffset)
+      lastOutput = attemptOutput.slice(-8192)
       if (REDIS_READY_PATTERN.test(attemptOutput)) return attemptOutput
       if (spawnError) throw spawnError
       if (redis.exitCode !== null || redis.signalCode !== null) {
@@ -219,7 +228,16 @@ async function waitForRedisReady(redis, logPath, fromOffset) {
   } finally {
     redis.off('error', captureSpawnError)
   }
-  throw new Error(`Timed out waiting for Redis readiness in ${logPath}`)
+  throw new Error(
+    `Timed out waiting for Redis readiness in ${logPath}: ` +
+      JSON.stringify({
+        pid: redis.pid,
+        exitCode: redis.exitCode,
+        signalCode: redis.signalCode,
+        logReadError,
+        output: lastOutput,
+      })
+  )
 }
 
 async function startRedisServer(
@@ -334,6 +352,7 @@ class RealCloudEnvironment {
     backendEnv = {},
     claudeBinary,
     codexBinary,
+    initialExecutorLatestVersion,
     managedCloudIdentity = false,
     modelServerUrl,
     scenarioConfigToml = '',
@@ -342,12 +361,14 @@ class RealCloudEnvironment {
     this.scenarioBackendEnv = backendEnv
     this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
+    this.initialExecutorLatestVersion = initialExecutorLatestVersion
     this.managedCloudIdentity = managedCloudIdentity
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
     this.generatedRemoteExecutors = []
     this.pluginAutoUpdateFixtures = []
+    this.observePreparation = createPreparationObserver({ checkpoint: SELECTED_DESKTOP_SEGMENT })
   }
 
   async reserveBackendPorts() {
@@ -382,10 +403,14 @@ class RealCloudEnvironment {
     this.nevisSandboxService = new LocalNevisSandboxService()
     await this.nevisSandboxService.start()
 
-    const redisServer = await startRedisServer(this.redisLogPath)
+    const redisServer = await this.observePreparation('redis-start', () =>
+      startRedisServer(this.redisLogPath)
+    )
     this.redisPort = redisServer.port
     this.redis = redisServer.redis
-    const mysqlServer = await startMysqlServer(this.mysqlLogPath)
+    const mysqlServer = await this.observePreparation('mysql-start', () =>
+      startMysqlServer(this.mysqlLogPath)
+    )
     this.mysql = mysqlServer.server
     this.mysqlConnectionOptions = mysqlServer.connectionOptions
     this.databaseName = mysqlServer.databaseName
@@ -421,8 +446,8 @@ class RealCloudEnvironment {
       PYTHONUTF8: '1',
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
-      INIT_DATA_DIR: join(backendDirectory, 'init_data'),
-      BUILTIN_PLUGINS_DIR: join(backendDirectory, 'init_data', 'plugins'),
+      INIT_DATA_DIR: join(repoDir, 'backend-rs', 'init_data'),
+      BUILTIN_PLUGINS_DIR: join(repoDir, 'backend-rs', 'init_data', 'plugins'),
       ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
       ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
@@ -434,22 +459,36 @@ class RealCloudEnvironment {
       ...this.scenarioBackendEnv,
     }
     this.backendEnv = backendEnv
-    await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
-      cwd: backendDirectory,
-      env: backendEnv,
-    })
+    // Seed before device requests can start a remote refresh that races fixture updates.
+    await this.observePreparation('executor-version-seeding', () =>
+      this.setExecutorLatestVersion('1.0.0')
+    )
+    await this.observePreparation('database-migrate', () =>
+      runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
+        cwd: backendDirectory,
+        env: backendEnv,
+      })
+    )
+    // Seed before any device request can start a remote cold-cache refresh.
+    if (this.initialExecutorLatestVersion !== undefined) {
+      await this.setExecutorLatestVersion(this.initialExecutorLatestVersion)
+    }
     await this.launchBackend({ retryPortConflicts: true })
 
     const password = `wework-desktop-e2e-${process.pid}`
-    const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    })
+    const setup = await this.observePreparation('admin-auth-setup', () =>
+      fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+    )
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
-    await this.seedCloudProtocolModels()
-    await this.seedCloudVisionSidecarModels()
+    await this.observePreparation('model-seeding', async () => {
+      await this.seedCloudProtocolModels()
+      await this.seedCloudVisionSidecarModels()
+    })
   }
 
   async launchBackend({ retryPortConflicts = false } = {}) {
@@ -513,10 +552,12 @@ class RealCloudEnvironment {
       appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
       appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
     ])
-    await waitForProcessUrl(
-      `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
-      this.pythonBackend,
-      `Real cloud Python backend did not start; see ${this.backendLogPath}`
+    await this.observePreparation('python-backend-ready', () =>
+      waitForProcessUrl(
+        `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
+        this.pythonBackend,
+        `Real cloud Python backend did not start; see ${this.backendLogPath}`
+      )
     )
 
     const backendRsBinary = await resolveBackendRsBinary()
@@ -540,10 +581,12 @@ class RealCloudEnvironment {
       appendProcessOutput(this.rustBackend.stdout, this.backendLogPath),
       appendProcessOutput(this.rustBackend.stderr, this.backendLogPath),
     ])
-    await waitForProcessUrl(
-      `${this.backendUrl}/api/startup`,
-      this.rustBackend,
-      `Real cloud Rust gateway did not start; see ${this.backendLogPath}`
+    await this.observePreparation('rust-gateway-ready', () =>
+      waitForProcessUrl(
+        `${this.backendUrl}/api/startup`,
+        this.rustBackend,
+        `Real cloud Rust gateway did not start; see ${this.backendLogPath}`
+      )
     )
   }
 
@@ -1613,12 +1656,7 @@ class RealCloudEnvironment {
   }
 
   async setCodexUpstreamProtocol(protocol) {
-    await writeCodexConfig(
-      this.remoteCodexHome,
-      this.modelServerUrl,
-      '',
-      codexUpstreamApiFormat(protocol)
-    )
+    await setMatrixUpstreamProtocol(this.remoteCodexHome, protocol)
     await this.restartCloudExecutor()
   }
 

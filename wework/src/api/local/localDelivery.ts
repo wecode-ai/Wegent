@@ -1,3 +1,4 @@
+import type { Milestone, MilestoneInput } from '@wegent/collaboration'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
@@ -27,6 +28,7 @@ import {
 } from '@/api/deliveries'
 import type { LocalProjectSpaceApi } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
+import { LOCAL_USER } from './localSession'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
 import type {
   Attachment,
@@ -843,6 +845,15 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
   const role = project?.access_role ?? 'Owner'
   const storedTags = stringList(record.metadata.tags)
   const localProjectAssociation = localProjectAssociationFromTags(storedTags)
+  const creatorLabelName =
+    typeof record.metadata.creator_label === 'string'
+      ? record.metadata.creator_label.split(':').slice(3).join(':').trim()
+      : ''
+  const localCreatorName =
+    record.created_by_user_id === LOCAL_USER.id &&
+    (!record.metadata.task_provider || record.metadata.task_provider === 'local')
+      ? LOCAL_USER.user_name
+      : null
   return {
     runner_binding: record.metadata.runner_binding as CloudLoopItem['runner_binding'],
     id: record.id,
@@ -850,10 +861,7 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     sequence_number: record.sequence_number ?? 0,
     parent_id: record.parent_id,
     created_by_user_id: record.created_by_user_id,
-    created_by_user_name:
-      typeof record.metadata.creator_label === 'string'
-        ? record.metadata.creator_label.split(':').slice(3).join(':').trim() || null
-        : null,
+    created_by_user_name: creatorLabelName || localCreatorName,
     can_view_detail: true,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
@@ -877,6 +885,9 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
       ? (record.metadata.status_history as CloudLoopItem['status_history'])
       : [],
     assignee_user_id: record.assignee_user_id ?? null,
+    human_requests: Array.isArray(record.metadata.human_requests)
+      ? (record.metadata.human_requests as CloudLoopItem['human_requests'])
+      : [],
     assignee_group_id:
       typeof (record.metadata.collaboration_group as { id?: unknown } | null)?.id === 'string'
         ? (record.metadata.collaboration_group as { id: string }).id
@@ -888,6 +899,10 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
     execution_state: record.execution_state ?? null,
+    processing_actor: record.metadata.processing_actor as CloudLoopItem['processing_actor'],
+    human_waiting_since: record.metadata
+      .human_waiting_since as CloudLoopItem['human_waiting_since'],
+    ai_state: record.metadata.ai_state as CloudLoopItem['ai_state'],
     local_project_id: localProjectAssociation?.id ?? null,
     local_project_name: localProjectAssociation?.name || null,
     assignee_name:
@@ -901,6 +916,8 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     start_at:
       typeof record.metadata.start_at === 'string' ? record.metadata.start_at || null : null,
     due_at: typeof record.metadata.due_at === 'string' ? record.metadata.due_at || null : null,
+    milestone_id:
+      typeof record.metadata.milestone_id === 'string' ? record.metadata.milestone_id : null,
     tags: visibleLoopItemTags(storedTags),
     sort_order: record.sort_order,
     current_delivery_id: record.current_delivery_id,
@@ -1099,7 +1116,43 @@ export function createLocalDeliveryApi(
       invalidateProjectRecords()
     },
     async listMyWork() {
-      return { items: [] }
+      const projects = (await loadProjectRecords(true))
+        .map(localProject)
+        .filter(
+          project =>
+            project.task_provider === 'local' &&
+            project.id !== DEFAULT_WORK_ITEM_PROJECT_ID &&
+            project.status === 'active'
+        )
+      const results = await Promise.all(
+        projects.map(async project => {
+          try {
+            const records = await request<LocalLoopItemRecord[]>('todos.list', {
+              project_id: project.id,
+            })
+            return {
+              items: records.map(record => ({
+                ...localTask(record, project),
+                project_key: project.project_key,
+                project_name: project.name,
+                has_active_task: false,
+              })),
+              errors: [] as string[],
+            }
+          } catch (error) {
+            return {
+              items: [],
+              errors: [
+                `${project.name}: ${error instanceof Error ? error.message : String(error)}`,
+              ],
+            }
+          }
+        })
+      )
+      return {
+        items: results.flatMap(result => result.items),
+        errors: results.flatMap(result => result.errors),
+      }
     },
     async listLoopItems(
       projectId: CloudProjectId,
@@ -1193,10 +1246,30 @@ export function createLocalDeliveryApi(
       taskProjects.set(record.id, projectId)
       return localTask(record)
     },
+    getMilestonesCacheScope() {
+      return request
+    },
+    listMilestones(projectId: string) {
+      return request<Milestone[]>('milestones.list', { project_id: projectId })
+    },
+    createMilestone(projectId: string, input: MilestoneInput) {
+      return request<Milestone>('milestones.create', { project_id: projectId, milestone: input })
+    },
+    updateMilestone(projectId: string, id: string, input: MilestoneInput & { version: number }) {
+      return request<Milestone>('milestones.update', {
+        project_id: projectId,
+        milestone_id: id,
+        milestone: input,
+      })
+    },
+    async deleteMilestone(projectId: string, id: string, version: number) {
+      await request('milestones.delete', { project_id: projectId, milestone_id: id, version })
+    },
     async createLoopItem(
       projectId: CloudProjectId,
       data: {
         title: string
+        milestone_id?: string | null
         description?: string
         status?: CloudLoopItem['status']
         priority?: CloudLoopItem['priority']
@@ -1225,6 +1298,7 @@ export function createLocalDeliveryApi(
       const record = await request<LocalLoopItemRecord>('todos.create', {
         project_id: projectId,
         todo: {
+          milestone_id: data.milestone_id,
           title: data.title,
           description: data.description ?? '',
           status: data.status ?? 'inbox',

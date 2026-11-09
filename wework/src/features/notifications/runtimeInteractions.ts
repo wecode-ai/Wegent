@@ -3,7 +3,7 @@ import {
   isAsyncRequestUserInputPayload,
   isPendingRequestUserInputBlock,
   isRequestUserInputBlock,
-  hasRequestUserInputResponse,
+  isSettledRequestUserInputBlock,
   requestUserInputPayloadKey,
   resolveAsyncRequestUserInputAnswers,
   requestUserInputApprovalDescription,
@@ -12,21 +12,63 @@ import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskRe
 import { projectRuntimePaneTranscript } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { WorkbenchMessage } from '@/types/workbench'
-import { weworkIssueScheme, weworkTaskScheme } from './scheme'
+import { parseWeworkScheme, weworkIssueScheme, weworkTaskScheme } from './scheme'
 import i18n from '@/i18n'
 
+export const INTERACTION_SOURCES = ['task', 'project', 'stand_in'] as const
+export type InteractionSource = (typeof INTERACTION_SOURCES)[number]
+const ISSUE_ORIGIN_TYPES = ['board_comment', 'board_task', 'issue_dispatch', 'project_automation']
+
+export function isInteractionSource(value: unknown): value is InteractionSource {
+  return INTERACTION_SOURCES.some(source => source === value)
+}
+
+export function interactionSource(
+  item: {
+    source?: InteractionSource
+    originalUrl?: string
+    project?: RuntimeInteraction['project']
+    task?: RuntimeInteraction['task']
+  },
+  origin: unknown = item.task?.task.runtimeHandle?.origin
+): InteractionSource {
+  if (item.source) return item.source
+  if (
+    origin &&
+    typeof origin === 'object' &&
+    'initiatedBy' in origin &&
+    origin.initiatedBy === 'stand_in'
+  )
+    return 'stand_in'
+  if (
+    item.project ||
+    (origin &&
+      typeof origin === 'object' &&
+      'type' in origin &&
+      ISSUE_ORIGIN_TYPES.includes(String(origin.type))) ||
+    item.task?.address.issueExecution ||
+    item.task?.address.projectSession ||
+    (item.originalUrl && parseWeworkScheme(item.originalUrl)?.kind === 'board')
+  )
+    return 'project'
+  return 'task'
+}
+
 export interface RuntimeInteraction {
+  sharedRequest?: import('@wegent/collaboration').IssueHumanRequest
+  source?: InteractionSource
   id: string
   requestKey: string
   task: RuntimeTaskReminderItem
   payload: RequestUserInputPayload
   question: string
-  context: string
   createdAt: number
   answered: boolean
   running?: boolean
   cached?: boolean
+  replyUnavailable?: boolean
   originalUrl?: string
+  sourceMessageIds?: string[]
   project?: {
     projectId: string
     issueId: string
@@ -35,7 +77,10 @@ export interface RuntimeInteraction {
   }
 }
 
-export function interactionId(task: RuntimeTaskReminderItem, requestKey: string): string {
+export function interactionId(
+  task: Pick<RuntimeTaskReminderItem, 'address'>,
+  requestKey: string
+): string {
   return JSON.stringify([task.address.deviceId, task.address.taskId, requestKey])
 }
 
@@ -72,6 +117,15 @@ export function interactionAllowsNativeReply(payload: RequestUserInputPayload): 
 }
 
 export function canReplyToInteraction(item: RuntimeInteraction): boolean {
+  if (item.replyUnavailable) return false
+  if (item.sharedRequest)
+    return (
+      !item.cached &&
+      canQuickReply(item.payload) &&
+      item.sharedRequest.can_reply !== false &&
+      item.sharedRequest.status === 'pending' &&
+      item.sharedRequest.recipient_user_id !== null
+    )
   if (item.task.workspace.available === false) return false
   if (!canQuickReply(item.payload)) return false
   if (item.project)
@@ -99,6 +153,7 @@ export async function readRuntimeInteractions(
   api: NonNullable<WorkbenchServices['runtimeWorkApi']>
 ): Promise<RuntimeInteraction[]> {
   const pages: WorkbenchMessage[][] = []
+  const sourceMessageIdsByTurn = new Map<string, string[]>()
   const cursors = new Set<string>()
   let beforeCursor: string | undefined
   let origin = task.task.runtimeHandle?.origin
@@ -115,7 +170,18 @@ export async function readRuntimeInteractions(
     if (response.historyUnavailable || response.parseError) {
       throw new Error(response.parseError || 'Runtime history is unavailable')
     }
-    pages.unshift(projectRuntimePaneTranscript(response).messages)
+    const transcript = projectRuntimePaneTranscript(response)
+    pages.unshift(transcript.messages)
+    for (const turn of transcript.turns) {
+      if (!turn.id) continue
+      sourceMessageIdsByTurn.set(turn.id, [
+        ...new Set([
+          ...(sourceMessageIdsByTurn.get(turn.id) ?? []),
+          ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
+          ...turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : [])),
+        ]),
+      ])
+    }
     if (!response.hasMoreBefore) break
     const cursor = response.beforeCursor
     if (!cursor || cursors.has(cursor)) throw new Error('Incomplete runtime interaction history')
@@ -128,7 +194,7 @@ export async function readRuntimeInteractions(
     origin &&
     typeof origin === 'object' &&
     'type' in origin &&
-    origin.type === 'board_comment' &&
+    ISSUE_ORIGIN_TYPES.includes(String(origin.type)) &&
     'cloudProjectId' in origin &&
     typeof origin.cloudProjectId === 'string' &&
     'loopItemId' in origin &&
@@ -154,8 +220,7 @@ export async function readRuntimeInteractions(
         original.interactionScope || !message.turnId || isAsyncRequestUserInputPayload(original)
           ? original
           : { ...original, interactionScope: message.turnId }
-      const answered =
-        hasRequestUserInputResponse(payload) || payload.interactionStatus === 'answered'
+      const answered = isSettledRequestUserInputBlock(block)
       if (!answered && !isPendingRequestUserInputBlock(block)) continue
       const key = requestUserInputPayloadKey(payload)
       if (!key) continue
@@ -180,13 +245,12 @@ export async function readRuntimeInteractions(
               detail: approval.detail || i18n.t('chat:request_user_input.approval_no_detail'),
             })
           : question || payload.message || payload.reason || task.task.title,
-        context: approval
-          ? approval.detail || ''
-          : payload.reason || message.content.trim().slice(0, 1200),
         createdAt: new Date(message.createdAt ?? task.task.createdAt ?? 0).getTime() || 0,
         answered,
         running,
         project,
+        source: interactionSource({ task, project }, origin),
+        sourceMessageIds: message.turnId ? sourceMessageIdsByTurn.get(message.turnId) : undefined,
       })
     }
   }

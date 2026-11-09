@@ -1,0 +1,20 @@
+[package]
+name = "wegent-resource-store"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Persisted CRD projections, references, and Kind lookup statements"
+
+[dependencies]
+url = "2"
+brz-json = "=0.0.11"
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+wegent-backend-persistence = { path = "../persistence" }
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -260,6 +260,12 @@ pnpm --filter wecode-ai-assistant run start
 
 #### Wework and Local Rust Build Cache
 
+When `dev:mac` starts from the Wework built-in terminal, it clears the parent
+application's release root, supervised-launch identity, active release, and
+component data directory. The development data directory therefore owns its
+release state. A development `release-bootstrap` path error must not be repaired
+by creating production release directories or removing startup validation.
+
 The Wework macOS development scripts share Cargo targets by component across Git worktrees, so switching worktrees can reuse already compiled dependencies instead of compiling them from scratch. Cargo coordinates concurrent access to a target directory and rebuilds artifacts when their fingerprints change. On the first `pnpm --dir wework run dev:mac`, the script installs `sccache` with Homebrew when it is missing to reuse compiler outputs as well.
 
 - `pnpm --dir wework run dev:mac`, `pnpm --dir wework run build:mac`, the development executor sidecar, and `executor/local.sh build` use `$XDG_CACHE_HOME/wegent/cargo-target/<component>`, or `~/.cache/wegent/cargo-target/...` when `XDG_CACHE_HOME` is not set.

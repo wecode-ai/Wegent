@@ -1,6 +1,9 @@
 import type { PluginMarketplaceItem } from '@/types/api'
+import { getInitializedBundledPluginMarketplace } from '@/desktop/localExecutor'
+import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { isWegentManagedStorePlugin } from './installedPluginMerge'
+import { installedPluginMarketplaceId } from './pluginDistribution'
 
 /**
  * Local created packages belong to the current user. Recipient/catalog cloud
@@ -16,7 +19,12 @@ export function marketplaceItemOwnsLocalCreatedPackage(
 
 /** Local plugins that can be edited / packaged for publish. */
 export function isPackableCreatedPlugin(plugin: InstalledPluginItem): boolean {
+  const bundled = getInitializedBundledPluginMarketplace()
+  const isBundled =
+    bundled?.defaultPluginNames?.includes(plugin.raw.spec.source.pluginKey) &&
+    isPersonalMarketplaceId(installedPluginMarketplaceId(plugin.raw) ?? '')
   return (
+    !isBundled &&
     !isWegentManagedStorePlugin(plugin.raw) &&
     (plugin.origin === 'created' || plugin.raw.spec.source.type === 'local')
   )

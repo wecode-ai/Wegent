@@ -853,6 +853,7 @@ done
             limit: 5,
             direction: super::super::codex_transcript_page::CodexTranscriptDirection::Descending,
             full_content: true,
+            bounded_items: false,
             prefer_rollout_history: false,
         },
     )

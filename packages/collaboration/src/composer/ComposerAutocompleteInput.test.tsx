@@ -132,6 +132,19 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(element(id)).not.toBeNull()
     await act(async () => element(id).click())
   }
+  it('keeps restored plain-text mentions closed until the user edits the draft', async () => {
+    const draft = '在指定的钉钉群里，有人 @我时根据已知信息简短回复。'
+    await mount({ value: draft, onListLocalSkills: listSkills })
+    act(() => input.current!.focus())
+    expect(container.querySelector('[data-testid="local-skill-autocomplete"]')).toBeNull()
+    act(() => {
+      input.current!.setValue('请处理有人 @我时需要回复的问题。')
+      input.current!.focus()
+    })
+    expect(container.querySelector('[data-testid="local-skill-autocomplete"]')).toBeNull()
+    await type('@')
+    expect(container.querySelector('[data-testid="local-skill-autocomplete"]')).not.toBeNull()
+  })
   it('restricts Issue autocomplete to members and Issues and treats slash as plain text', async () => {
     const plan = vi.fn()
     await mount({

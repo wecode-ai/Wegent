@@ -12,6 +12,29 @@ export interface ProjectAgentOwnerOption {
 }
 
 export interface ProjectAgentConfigurationHost {
+  requiresTemplateEnvironmentSelection?: boolean;
+  resolveTemplateAgentRouting?(
+    runtime: "codex" | "claude_code",
+    location: "local" | "cloud",
+    projectId?: string,
+    environmentId?: string,
+  ): Promise<import("../templates/types").TemplateAgentRouting>;
+  listTemplateAgentEnvironments?(
+    projectId: string,
+  ): Promise<import("../types").CollaborationExecutionEnvironment[]>;
+  templateAgentEnvironmentSettingsHref?(
+    project: import("../types").CollaborationProject,
+  ): string;
+
+  createTemplateAgent?(
+    agent: import("../templates/types").TemplateAgent,
+    namespace: string,
+    routing: import("../templates/types").TemplateAgentRouting,
+  ): Promise<{ id: string; name: string }>;
+  readTemplateAgent?(
+    teamId: number,
+  ): Promise<Omit<import("../templates/types").TemplateAgent, "key">>;
+
   /**
    * Whether the host lets the user pick an already existing Agent resource.
    * Defaults to true; hosts that only manage Agents through their own resource

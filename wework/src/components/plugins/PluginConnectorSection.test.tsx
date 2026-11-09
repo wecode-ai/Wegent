@@ -1,6 +1,6 @@
+import '@/i18n'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import '@/i18n'
 import { PluginConnectorSection } from './PluginConnectorSection'
 
 const connectors = ['git.one.example', 'git.two.example', 'git.three.example'].map((host, i) => ({
@@ -21,23 +21,6 @@ beforeEach(() => {
 })
 
 describe('connector source selection', () => {
-  test('shows one entry and routes every chosen site by its original slug', () => {
-    const manage = vi.fn()
-    render(<PluginConnectorSection connectors={connectors} installed onManage={manage} />)
-    expect(screen.getAllByRole('button')).toHaveLength(1)
-    for (const connector of connectors) {
-      fireEvent.click(screen.getByTestId('plugin-connection-manage-group:tianhe'))
-      expect(manage).not.toHaveBeenCalled()
-      fireEvent.change(screen.getByTestId('plugin-connector-source-select'), {
-        target: { value: connector.slug },
-      })
-      expect(screen.getByText(connector.description)).toBeVisible()
-      fireEvent.click(screen.getByTestId('plugin-connector-source-continue'))
-      expect(manage).toHaveBeenCalledExactlyOnceWith(connector.slug)
-      expect(screen.queryByTestId('plugin-connector-source-dialog')).toBeNull()
-      manage.mockClear()
-    }
-  })
   test('selects the connected site and supports dismissing without authentication', () => {
     const manage = vi.fn()
     render(

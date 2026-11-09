@@ -1,0 +1,12 @@
+{
+  "order": 49000,
+  "scenario": "./scenarios/stand-in-personal-task.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 48000,
+      "shard": 5,
+      "position": 9000
+    }
+  }
+}

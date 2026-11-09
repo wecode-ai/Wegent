@@ -52,7 +52,7 @@ def runtime_capacity_slot_values(online_info: Any) -> tuple[int, int]:
     limit = capacity.get("limit")
     if not isinstance(active, int) or isinstance(active, bool) or active < 0:
         return 0, 0
-    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 20:
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 60:
         return 0, 0
     if (
         not isinstance(active_task_ids, list)

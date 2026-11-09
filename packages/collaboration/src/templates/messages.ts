@@ -4,6 +4,20 @@
 export const templateMessages = {
   'zh-CN': {
     title: '协作模板',
+    destination: '选择模板使用位置',
+    newProject: '创建新项目',
+    existingProject: '选择已有项目',
+    noProjects: '暂无可管理的项目，可以创建新项目。',
+    loading: '正在加载…',
+    manageRequired: '只有项目所有者或维护者可以应用模板。',
+    executionEnvironment: '项目执行环境',
+    chooseProjectEnvironment: '选择执行设备',
+    configureProjectEnvironment: '配置项目执行设备（新标签页）',
+    projectEnvironmentSetupHint:
+      '还没有在线的项目执行设备。配置设备后，点击刷新即可继续，当前填写内容会保留。',
+    environmentAuthorizationHint:
+      '勾选后，创建时将把执行环境共享给所选空间并授权给新项目。包含智能体的模板需要勾选账号的默认执行环境。',
+    selectExecutionEnvironment: '请先选择要授权的默认执行环境；可在设备页面配置默认设备。',
     description: '把成熟的分工与流程，带进你的下一个项目。',
     discover: '发现模板',
     available: '可用模板',
@@ -29,6 +43,8 @@ export const templateMessages = {
     cloudAdded: '已添加到我的能力',
     added: '模板已就绪',
     roles: '角色与分工',
+    removeRole: '移除角色及其负责的阶段：{name}',
+    keepLeader: '协作群需要保留负责人',
     stages: '工作流',
     version: '版本',
     author: '作者',
@@ -63,8 +79,22 @@ export const templateMessages = {
     more: '加载更多',
     failed: '操作未完成，请检查连接后重试。',
     syncConflict: '模板尚未同步。请检查冲突，或另存为副本。',
-    bindingsTitle: '安排协作成员',
-    bindingsHint: '确认小组名称，并为每个角色选择成员或智能体。',
+    bindingsTitle: '确认协作配置',
+    bindingsHint:
+      '确认后，模板中的智能体和分工将在当前项目或空间内生效。未预配置的角色可在下方补充成员。',
+    embeddedAgents: '应用时自动创建模板智能体并绑定角色，模型和工具使用当前执行环境的配置。',
+    agentsCount: '将创建 {count} 个智能体并绑定角色。',
+    environmentHint: '模型和工具使用当前执行环境的配置。',
+    defaultModelRequired: '请先为当前执行环境设置默认模型，再应用此模板。',
+    destinationEnvironmentRequired:
+      '项目没有可用的已授权执行设备，请在项目的执行环境设置中检查设备状态与授权。',
+    destinationEnvironmentAmbiguous: '请选择本次应用模板使用的项目执行设备。',
+    destinationDeviceRequired: '当前执行设备暂不可用，请先连接设备并确认账号可访问，再重试。',
+    unsupportedAgent: '此智能体的运行时或多机器人配置无法完整保存为模板，请先调整智能体配置。',
+    unavailableAgent: '无法读取小组中的智能体配置，请检查智能体是否可用及访问权限。',
+    unsupportedPolicy: '云端空间无法保留模板中的执行策略，请在项目中直接应用此模板。',
+    autoCreate: '自动创建',
+    customizeMembers: '调整成员（可选）',
     choose: '选择成员或智能体',
     groupName: '小组名称',
     apply: '应用模板',
@@ -75,14 +105,29 @@ export const templateMessages = {
     configuration: '配置共享',
     configurationHint: '复用已有的协作方式，也把当前配置分享给其他项目。',
     importProject: '导入协作模板',
-    importProjectHint: '为项目添加一套新的分工与流程。选择模板、确认成员后即可使用。',
+    importProjectHint: '为项目添加一套新的分工与流程。选择模板、确认配置后即可使用。',
     exportHint:
-      '下载配置文件，在其他设备或空间导入使用。文件包含分工与流程，不包含任务、讨论或连接凭据。',
+      '下载配置文件，在其他设备或空间导入使用。文件包含智能体配置、分工与流程，不包含任务、讨论或连接凭据。',
     bindError: '负责人不能同时承担执行角色，请调整成员。',
-    partial: '部分小组已添加。请检查项目中的小组后再继续，避免重复创建。',
+    partial: '部分智能体或小组已添加。请检查当前配置后再继续，避免重复创建。',
   },
   en: {
     title: 'Collaboration templates',
+    destination: 'Choose where to use this template',
+    newProject: 'Create a new project',
+    existingProject: 'Choose an existing project',
+    noProjects: 'No manageable projects. You can create a new project.',
+    loading: 'Loading…',
+    manageRequired: 'Only project owners and maintainers can apply templates.',
+    executionEnvironment: 'Project execution environment',
+    chooseProjectEnvironment: 'Choose an execution device',
+    configureProjectEnvironment: 'Configure project devices (new tab)',
+    projectEnvironmentSetupHint:
+      'No project device is online. Configure a device, then refresh to continue. Your current input is preserved.',
+    environmentAuthorizationHint:
+      'Selected environments will be shared with the chosen space and authorized for the new project. Templates containing Agents require your account’s default executor.',
+    selectExecutionEnvironment:
+      'Select the default execution environment to authorize. You can set your default device on the Devices page.',
     description: 'Bring proven roles and workflows into your next project.',
     discover: 'Discover',
     available: 'Available',
@@ -108,6 +153,8 @@ export const templateMessages = {
     cloudAdded: 'Added to my capabilities',
     added: 'Template is ready',
     roles: 'Roles and responsibilities',
+    removeRole: 'Remove role and its assigned stages: {name}',
+    keepLeader: 'Keep the group coordinator',
     stages: 'Workflow',
     version: 'Version',
     author: 'Author',
@@ -142,8 +189,29 @@ export const templateMessages = {
     more: 'Load more',
     failed: 'The operation could not finish. Check your connection and try again.',
     syncConflict: 'Template not synced. Resolve the conflict or save a copy.',
-    bindingsTitle: 'Assign collaboration roles',
-    bindingsHint: 'Confirm group names and choose a member or agent for each role.',
+    embeddedAgents:
+      'Template Agents are created and bound automatically. Models and tools follow the execution environment.',
+    agentsCount: '{count} Agents will be created and bound to roles.',
+    environmentHint: 'Models and tools follow the execution environment.',
+    defaultModelRequired:
+      'Configure a default model in the current execution environment before applying this template.',
+    destinationEnvironmentRequired:
+      'No authorized execution device is available for this project. Check device status and access in the project execution environment settings.',
+    destinationEnvironmentAmbiguous:
+      'Choose the project execution device to use for this template.',
+    destinationDeviceRequired:
+      'The execution device is unavailable. Connect it and confirm that your account can access it, then try again.',
+    unsupportedAgent:
+      'This Agent runtime or multi-Bot configuration cannot be fully represented in a template. Adjust the Agent configuration first.',
+    unavailableAgent:
+      'Cannot read a group Agent definition. Check its availability and your access.',
+    unsupportedPolicy:
+      'Cloud workspaces cannot preserve the template execution settings. Apply it directly to a project instead.',
+    autoCreate: 'Created automatically',
+    customizeMembers: 'Customize members (optional)',
+    bindingsTitle: 'Confirm collaboration setup',
+    bindingsHint:
+      'Confirm to create the template Agents and role assignments. Complete any roles that are not preconfigured below.',
     choose: 'Choose a member or agent',
     groupName: 'Group name',
     apply: 'Apply template',
@@ -160,6 +228,18 @@ export const templateMessages = {
       'Download a configuration to import on another device or space. Includes roles and workflows, without tasks, discussions or credentials.',
     bindError: 'The coordinator cannot also execute a stage. Choose a different member.',
     partial:
-      'Some groups were added. Check the project groups before continuing to avoid duplicates.',
+      'Some Agents or groups were added. Check the current configuration before continuing to avoid duplicates.',
   },
 } as const
+
+export function templateFailureMessage(error: unknown, locale: 'zh-CN' | 'en'): string {
+  const code = error instanceof Error ? error.message : ''
+  const m = templateMessages[locale]
+  if (code === 'template_model_default_unavailable') return m.defaultModelRequired
+  if (code === 'template_environment_unavailable') return m.destinationEnvironmentRequired
+  if (code === 'template_environment_ambiguous') return m.destinationEnvironmentAmbiguous
+  if (code === 'template_agent_multi_bot' || code === 'template_agent_runtime_unsupported')
+    return m.unsupportedAgent
+  if (code === 'template_agent_definition_unavailable') return m.unavailableAgent
+  return m.failed
+}

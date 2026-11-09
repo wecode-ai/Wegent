@@ -1,0 +1,12 @@
+{
+  "order": 81000,
+  "scenario": "./scenarios/send-key-preference.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 120000,
+      "shard": 7,
+      "position": 14000
+    }
+  }
+}

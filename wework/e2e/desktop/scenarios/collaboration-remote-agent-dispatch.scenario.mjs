@@ -1,9 +1,11 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
+import { verifyUnconfiguredAssignment } from '../modules/unconfigured-issue-archive.mjs'
 import {
   createSharedWorkspaceAgent,
   assertCreatedWorkspaceIssueAgent,
@@ -38,6 +40,7 @@ import {
   selectCollaborationDomain,
   waitForControlValue,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -119,55 +122,6 @@ async function waitForPromise(promise, message, timeoutMs) {
   }
 }
 
-async function verifyUnconfiguredAssignment(
-  control,
-  request,
-  projectId,
-  timeoutMs,
-  captureScreenshot
-) {
-  const agent = await request(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
-    method: 'POST',
-    body: JSON.stringify({
-      name: `缺少配置的执行者-${process.pid}`,
-      capability_mode: 'manual',
-      visibility: 'public',
-    }),
-  })
-  const issue = await createAndAssignCloudIssue(control, request, {
-    contentSelector: CONTENT,
-    projectId,
-    title: UNCONFIGURED_ISSUE,
-    description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
-    assigneeTarget: `agent:${agent.id}`,
-    timeoutMs,
-  })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${issue.id}`),
-    item => item.status === 'in_progress' && item.execution_state === 'waiting_runtime',
-    'An assigned robot without configuration did not expose its blocked Run',
-    timeoutMs
-  )
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-status"]'), {
-    value: 'in_progress',
-    timeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-  await control.command(
-    'waitFor',
-    scoped(
-      `[data-testid="cloud-todo-column-in_progress"] [data-testid="collaboration-issue-${issue.id}"]`
-    ),
-    { visible: true, timeoutMs }
-  )
-  await control.command(
-    'waitFor',
-    scoped(`[data-testid="cloud-todo-card-needs-execution-config-${issue.id}"]`),
-    { text: '待配置', visible: true, timeoutMs }
-  )
-  await captureScreenshot(control, 'remote-agent-dispatch-00-waiting-configuration.png', CONTENT)
-}
-
 async function createAutoTaggedIssue(control, request, projectId, agent, timeoutMs) {
   const rule = await request(`/api/v1/cloud-projects/${projectId}/automations`, {
     method: 'POST',
@@ -213,9 +167,6 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
     visible: false,
-    timeoutMs,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
   })
   return { issue, rule }
@@ -388,7 +339,7 @@ async function verifyConfiguredExecutionEnvironment(
   timeoutMs,
   captureScreenshot
 ) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -606,6 +557,13 @@ export function createDesktopScenario({
   const modelStarted = new Promise(resolve => {
     resolveModelStarted = resolve
   })
+  const completeModelTurn = async (response, responseId, serialized) => {
+    resolveModelStarted()
+    await modelRelease
+    writeEvents(response, responseId, [
+      assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
+    ])
+  }
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const dispatchBoundary = createDispatchIssueBoundaryRegression(request)
 
@@ -651,7 +609,7 @@ export function createDesktopScenario({
         'Direct agent dispatch incorrectly entered the collaboration manager path'
       )
       const toolNames = advertisedToolNames(body)
-      if (requestAdvertisesProgrammaticExec(body)) {
+      if (requestAdvertisesProgrammaticExec(body) && modelRequests >= 3) {
         if (!requestContainsToolOutput(body, MANUAL_READ_CALL)) {
           const selection = selectProgrammaticExec(
             body,
@@ -668,8 +626,7 @@ export function createDesktopScenario({
               `text(${JSON.stringify(MANUAL_READ_OK)})`,
             ].join('\n')
           )
-          const event = customToolCall(MANUAL_READ_CALL, selection.name, selection.input)
-          event.item.namespace = 'functions'
+          const event = selectedToolCall(MANUAL_READ_CALL, { codeMode: selection }).at(-1)
           writeEvents(response, responseId, [event])
           return true
         }
@@ -681,9 +638,7 @@ export function createDesktopScenario({
           `The real bound Issue read did not succeed: ${JSON.stringify(output)}`
         )
         await dispatchBoundary.verify()
-        writeEvents(response, responseId, [
-          assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
-        ])
+        await completeModelTurn(response, responseId, serialized)
         return true
       }
       for (const toolName of MANAGEMENT_TOOLS) {
@@ -732,11 +687,7 @@ export function createDesktopScenario({
           'The real MCP read did not return the bound Issue'
         )
       }
-      resolveModelStarted()
-      await modelRelease
-      writeEvents(response, responseId, [
-        assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
-      ])
+      await completeModelTurn(response, responseId, serialized)
       return true
     },
 
@@ -769,13 +720,16 @@ export function createDesktopScenario({
         projectName: PROJECT,
         timeoutMs: uiTimeoutMs,
       })
-      await verifyUnconfiguredAssignment(
-        control,
-        request,
-        project.id,
-        modelResponseTimeoutMs,
-        captureScreenshot
-      )
+      await verifyUnconfiguredAssignment(control, request, {
+        projectId: project.id,
+        contentSelector: CONTENT,
+        title: UNCONFIGURED_ISSUE,
+        description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
+        cloud: { backendUrl, authToken },
+        modelRequests: () => modelRequests,
+        timeoutMs: modelResponseTimeoutMs,
+        captureScreenshot,
+      })
       await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,

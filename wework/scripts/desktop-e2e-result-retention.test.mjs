@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'

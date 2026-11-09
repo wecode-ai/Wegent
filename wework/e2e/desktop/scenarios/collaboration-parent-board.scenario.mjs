@@ -3,6 +3,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { dragBoardCard, waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
+import { verifyGanttHierarchyAndDetailArchive } from '../modules/collaboration-gantt-hierarchy.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -202,9 +203,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
       await click(`cloud-todo-card-${fixture.front.id}`)
       await control.command('select', test('cloud-todo-detail-status'), { value: 'completed' })
-      await wait('cloud-todo-save', '')
-      await capture('06b-completion-draft')
-      await click('cloud-todo-save')
+      await capture('06b-completion-selected')
       await waitForBoardValue(
         async () => (await get(fixture.front.id)).status,
         'completed',
@@ -307,6 +306,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: uiTimeoutMs,
       })
       await capture('13-return-to-ordinary-board')
+      await verifyGanttHierarchyAndDetailArchive(control, project, uiTimeoutMs)
+      await capture('14-gantt-hierarchy-restored')
     },
     diagnostics() {
       return {

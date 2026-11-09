@@ -475,9 +475,10 @@ pub fn bot_keys(spec: &BotSpec) -> (Option<RefKey>, Option<RefKey>, Option<RefKe
 #[must_use]
 pub fn resolve<'a>(
     ghost_map: &'a HashMap<RefKey, KindRow>,
-    shell_map: &'a HashMap<RefKey, KindRow>,
+    shell_map: &'a HashMap<(i64, String, String), KindRow>,
     model_map: &'a HashMap<RefKey, KindRow>,
     keys: &(Option<RefKey>, Option<RefKey>, Option<RefKey>),
+    shell_owner_id: i64,
 ) -> (
     Option<&'a KindRow>,
     Option<&'a KindRow>,
@@ -485,7 +486,9 @@ pub fn resolve<'a>(
 ) {
     (
         keys.0.as_ref().and_then(|key| ghost_map.get(key)),
-        keys.1.as_ref().and_then(|key| shell_map.get(key)),
+        keys.1.as_ref().and_then(|(name, namespace)| {
+            shell_map.get(&(shell_owner_id, name.clone(), namespace.clone()))
+        }),
         keys.2.as_ref().and_then(|key| model_map.get(key)),
     )
 }

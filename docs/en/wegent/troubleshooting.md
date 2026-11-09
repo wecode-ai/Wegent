@@ -630,6 +630,12 @@ pnpm install
 
 ---
 
+## Wework startup reports mkdir ENOENT
+
+If the legacy user-data directory is a symbolic link whose workbench data destination no longer exists, Wework removes that dangling link and its stale migration record, then creates the missing directory and starts. Existing directories and files are not overwritten, and data moved elsewhere is not deleted.
+
+The new directory does not automatically restore deleted or moved data. If local settings are empty after startup, retain the original data directory and quit Wework before restoring data. Do not delete the workbench data directory as a troubleshooting step.
+
 ## 🔍 Debugging Tips
 
 ### Enable Verbose Logging

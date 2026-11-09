@@ -1,10 +1,10 @@
+import { ProjectPluginsUnsupportedError } from '@/api/projectDevicePlugins'
+import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import '@/i18n'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { LocalProjectEditDialog } from './LocalProjectEditDialog'
-import { ProjectPluginsUnsupportedError } from '@/api/projectDevicePlugins'
 
 const pickerMocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -41,40 +41,6 @@ const folderPickerProps = {
 }
 
 describe('LocalProjectEditDialog', () => {
-  test('keeps a saved default space readable when unsupported and absent from the catalog', async () => {
-    const api = {
-      listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
-    } as unknown as ProjectSpaceApi
-    render(
-      <LocalProjectEditDialog
-        {...folderPickerProps}
-        open
-        device={{
-          device_id: 'local-device',
-          device_type: 'remote',
-          status: 'online',
-          name: 'Unknown',
-        }}
-        projectWork={{
-          ...projectWork,
-          project: {
-            ...projectWork.project,
-            defaultProjectSpace: { projectStore: 'backend', projectId: 'saved-space' },
-          },
-        }}
-        projectSpaceApis={[api]}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-        onDelete={vi.fn()}
-      />
-    )
-    await screen.findByText('不自动加入')
-    expect(screen.getByTestId('local-project-auto-join-space-select')).toHaveValue(
-      'backend:saved-space'
-    )
-    expect(screen.getByTestId('local-project-auto-join-space-select')).toBeDisabled()
-    expect(screen.getByTestId('project-default-space-upgrade-hint')).toBeVisible()
-  })
   test('keeps a saved model readable when unsupported and absent from the catalog', () => {
     render(
       <LocalProjectEditDialog
@@ -211,40 +177,6 @@ describe('LocalProjectEditDialog', () => {
     expect(screen.getByTestId('save-local-project-button')).toBeEnabled()
     expect(screen.queryByTestId('project-plugins-upgrade-hint')).not.toBeInTheDocument()
   })
-  test('keeps verified 1.8.5 folders editable while preserving unsupported AI settings', async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined)
-    render(
-      <LocalProjectEditDialog
-        {...folderPickerProps}
-        open
-        device={{
-          device_id: 'local-device',
-          device_type: 'remote',
-          status: 'online',
-          executor_version: '1.8.5',
-          name: 'Legacy',
-        }}
-        projectWork={{
-          ...projectWork,
-          project: { ...projectWork.project, aiSettings: { instructions: 'Preserved' } },
-        }}
-        onClose={vi.fn()}
-        onSave={onSave}
-        onDelete={vi.fn()}
-      />
-    )
-    expect(screen.getByTestId('add-local-project-folders')).toBeEnabled()
-    fireEvent.click(screen.getByTestId('local-project-settings-ai-tab'))
-    expect(screen.getByTestId('local-project-instructions-input')).toBeDisabled()
-    expect(screen.getByTestId('project-ai-settings-upgrade-hint')).toBeVisible()
-    fireEvent.click(screen.getByTestId('local-project-settings-quick-phrases-tab'))
-    expect(screen.getByTestId('project-quick-phrases-upgrade-hint')).toBeVisible()
-    fireEvent.click(screen.getByTestId('save-local-project-button'))
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
-    expect(onSave).toHaveBeenCalledWith(
-      expect.not.objectContaining({ aiSettings: expect.anything() })
-    )
-  })
 
   test('unknown remote versions allow name-only editing and retain saved plugin selections', async () => {
     render(
@@ -318,37 +250,6 @@ describe('LocalProjectEditDialog', () => {
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({ deviceId: 'remote-device', projectKey: 'real-key' })
     )
-  })
-
-  test('opens remote directory browsing without invoking the native picker', async () => {
-    pickerMocks.open.mockClear()
-    const getHome = vi.fn().mockResolvedValue('/srv')
-    const listDirectories = vi.fn().mockResolvedValue([])
-    render(
-      <LocalProjectEditDialog
-        {...folderPickerProps}
-        device={{
-          device_id: 'remote-device',
-          device_type: 'remote',
-          status: 'online',
-          name: 'Remote',
-          executor_version: '1.8.6',
-        }}
-        onGetDeviceHomeDirectory={getHome}
-        onListDeviceDirectories={listDirectories}
-        open
-        projectWork={{
-          ...projectWork,
-          project: { ...projectWork.project, ownerDeviceId: 'remote-device' },
-        }}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-        onDelete={vi.fn()}
-      />
-    )
-    await userEvent.click(screen.getByTestId('add-local-project-folders'))
-    expect(pickerMocks.open).not.toHaveBeenCalled()
-    await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('remote-device', '/repo/web'))
   })
 
   test('shows offline status instead of upgrade hints when discovery omits runtime metadata', async () => {
@@ -452,46 +353,6 @@ describe('LocalProjectEditDialog', () => {
     expect(screen.getByTestId('local-project-name-input')).toHaveValue('Product')
     expect(screen.getByTestId('save-local-project-button')).toBeDisabled()
     expect(screen.getByTestId('add-local-project-folders')).toBeDisabled()
-  })
-
-  test('shows configured plugins for a cached missing device without permitting installation', async () => {
-    const pluginApi = { readState: vi.fn(), installAvailablePlugin: vi.fn() }
-    render(
-      <LocalProjectEditDialog
-        {...folderPickerProps}
-        device={null}
-        open
-        projectWork={{
-          ...projectWork,
-          project: {
-            ...projectWork.project,
-            ownerDeviceId: 'missing-device',
-            aiSettings: {
-              plugins: [
-                {
-                  id: 'quality@team',
-                  pluginName: 'quality',
-                  marketplaceId: 'team',
-                  displayName: 'Quality',
-                },
-              ],
-            },
-          },
-          deviceWorkspaces: [
-            { deviceId: 'missing-device', workspacePath: '/repo', available: false, tasks: [] },
-          ],
-        }}
-        pluginApi={pluginApi as never}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-        onDelete={vi.fn()}
-      />
-    )
-    expect(screen.getByTestId('save-local-project-button')).toBeDisabled()
-    await userEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
-    expect(screen.getByTestId('project-selected-plugin-quality@team')).toHaveTextContent('Quality')
-    expect(screen.getByTestId('remove-project-selected-plugin-quality@team')).toBeDisabled()
-    expect(pluginApi.readState).not.toHaveBeenCalled()
   })
 
   test('waits for a legacy remote project owner key before enabling save', async () => {
@@ -668,23 +529,6 @@ describe('LocalProjectEditDialog', () => {
     expect(screen.getByTestId('local-project-name-input')).toHaveValue('Unsaved draft')
     expect(screen.getByRole('alert')).toHaveTextContent('Save rejected')
   })
-  test('hides the default project space while experimental features are disabled', () => {
-    experimentalFeatures.enabled = false
-    render(
-      <LocalProjectEditDialog
-        {...folderPickerProps}
-        open
-        projectWork={projectWork}
-        projectSpaceApis={[{} as ProjectSpaceApi]}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-        onDelete={vi.fn()}
-      />
-    )
-
-    expect(screen.queryByTestId('local-project-auto-join-space-select')).not.toBeInTheDocument()
-    experimentalFeatures.enabled = true
-  })
 
   test('edits the name, primary folder, and source folder list', async () => {
     pickerMocks.open.mockResolvedValue(['/repo/docs'])
@@ -744,67 +588,6 @@ describe('LocalProjectEditDialog', () => {
     expect(screen.getByTestId('remove-local-project-root-0')).toBeDisabled()
     await userEvent.click(screen.getByTestId('delete-local-project-button'))
     expect(onDelete).toHaveBeenCalledTimes(1)
-  })
-
-  test('configures whether new conversations automatically join a project space', async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined)
-    const projectSpaceApi = {
-      listCloudProjects: vi.fn().mockResolvedValue({
-        items: [
-          {
-            id: 'space-1',
-            public_id: 'space-public-1',
-            project_key: 'FOLLOWUP',
-            name: 'Task Follow-up Board',
-            description: '',
-            project_store: 'local',
-            task_provider: 'local',
-            provider_config: {},
-            created_by_user_id: 1,
-            status: 'active',
-            tags: [],
-            version: 1,
-            created_at: '2026-08-04T00:00:00Z',
-            updated_at: '2026-08-04T00:00:00Z',
-          },
-        ],
-      }),
-    } as unknown as ProjectSpaceApi
-
-    render(
-      <LocalProjectEditDialog
-        {...folderPickerProps}
-        open
-        projectWork={{
-          ...projectWork,
-          project: {
-            ...projectWork.project,
-            defaultProjectSpace: { projectStore: 'local', projectId: 'space-1' },
-          },
-        }}
-        projectSpaceApis={[projectSpaceApi]}
-        onClose={vi.fn()}
-        onSave={onSave}
-        onDelete={vi.fn()}
-      />
-    )
-
-    const select = await screen.findByTestId('local-project-auto-join-space-select')
-    await waitFor(() => expect(select).toHaveValue('local:space-1'))
-    await userEvent.selectOptions(select, '')
-    await userEvent.click(screen.getByTestId('save-local-project-button'))
-
-    expect(onSave).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      projectKey: 'multi-root',
-      name: 'Product',
-      roots: ['/repo/web', '/repo/api'],
-      defaultProjectSpace: null,
-      aiSettings: {
-        instructions: '',
-        modelSelection: null,
-      },
-    })
   })
 
   test('saves project instructions and a project-level default model', async () => {

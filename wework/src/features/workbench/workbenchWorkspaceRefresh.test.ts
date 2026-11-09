@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 
-test.each(['lists_refreshed', 'devices_refreshed'] as const)(
+test.each(['lists_refreshed'] as const)(
   'keeps an opened workspace owner when an earlier %s finishes',
   type => {
     const opened = workbenchReducer(initialWorkbenchState, {

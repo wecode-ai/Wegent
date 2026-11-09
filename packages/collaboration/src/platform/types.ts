@@ -55,6 +55,13 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  /** Stable authentication and backend identity, independent of optional data readiness. */
+  accountScope: string;
+  projectTemplateRequest?: {
+    key: string;
+    document: import("../templates/types").CollaborationTemplate;
+    onHandled(): void;
+  };
   templateStore?: import("../templates/store").CollaborationTemplateStore;
   templateNavigation?: boolean;
   renderStandInPage?(props: {
@@ -62,6 +69,7 @@ export interface CollaborationPlatformHostAdapter {
     onClose(): void;
   }): ReactNode;
   renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
+  openProjectConversation?(project: CollaborationProject): void;
   currentUser?: {
     id: number;
     name: string;

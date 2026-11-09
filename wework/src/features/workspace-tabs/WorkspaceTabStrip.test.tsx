@@ -1,12 +1,24 @@
+import { defaultAppPreferences, type AppPreferencesPatch } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { defaultAppPreferences, type AppPreferencesPatch } from '@/desktop/appPreferences'
-import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
+import {
+  RuntimeInteractionsContext,
+  type RuntimeInteractionsValue,
+} from '@/features/notifications/RuntimeInteractionsContext'
+import {
+  interactionQuestion,
+  interactionTask,
+} from '@/features/notifications/runtimeInteractions.fixtures'
+import enCommon from '@/i18n/locales/en/common.json'
+import zhCommon from '@/i18n/locales/zh-CN/common.json'
+import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { WorkspaceTabStrip } from './WorkspaceTabStrip'
-import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
 const returnWorkspaceTabToMain = vi.fn().mockResolvedValue(undefined)
@@ -49,6 +61,7 @@ const labels = {
   agent: '智能体',
   auxiliary: '工作区',
   auxiliaryRoutes: {
+    '/pending-interactions': '待你处理',
     '/plugins': '插件',
     '/sites': '站点',
     '/automations': '已安排',
@@ -140,7 +153,7 @@ describe('WorkspaceTabStrip', () => {
       .find(tab => tab.getAttribute('aria-selected') === 'true')
     expect(activeBoardTab).toBeDefined()
     expect(activeBoardTab?.parentElement).toHaveClass(
-      'bg-white',
+      'bg-surface',
       'border-border/70',
       'shadow-sm',
       'rounded-md'
@@ -228,6 +241,240 @@ describe('WorkspaceTabStrip', () => {
     expect(screen.getByTestId('workspace-tab-add-smart-app')).toBeInTheDocument()
   })
 
+  test('opens pending interactions without experimental features and reuses its tab', async () => {
+    experimentalFeatures.enabled = false
+    const user = userEvent.setup()
+    renderStrip()
+
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    expect(screen.getByTestId('workspace-tab-add-pending-interactions')).toHaveTextContent(
+      '待你处理'
+    )
+    await user.click(screen.getByTestId('workspace-tab-add-pending-interactions'))
+
+    expect(window.location.pathname).toBe('/pending-interactions')
+    expect(screen.getByRole('tab', { name: '待你处理' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByTestId('workspace-tab-add-menu')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: '任务' }))
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    await user.click(screen.getByTestId('workspace-tab-add-pending-interactions'))
+    expect(screen.getAllByRole('tab', { name: '待你处理' })).toHaveLength(1)
+    expect(screen.getByRole('tab', { name: '待你处理' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  test('selects the default fixed pending-interactions tab from the add menu', async () => {
+    const user = userEvent.setup()
+    render(
+      <WorkspaceTabsProvider
+        pathname="/"
+        search=""
+        storageScope="fixed-interactions-test"
+        labels={labels}
+        fixedTabs={defaultAppPreferences.fixedWorkspaceTabs.map(preference =>
+          createWorkspaceTab(preference.kind as WorkspaceTabKind, labels, {
+            id: preference.id,
+            contentRoute: preference.contentRoute,
+            fixed: true,
+          })
+        )}
+        restoreSessionTabs={false}
+      >
+        <WorkspaceTabStrip />
+      </WorkspaceTabsProvider>
+    )
+
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveTextContent(
+      '待你处理'
+    )
+    expect(screen.queryByTestId('workspace-tab-close-pending-interactions')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    await user.click(screen.getByTestId('workspace-tab-add-pending-interactions'))
+    expect(window.location.pathname).toBe('/pending-interactions')
+    expect(screen.getAllByRole('tab', { name: /待你处理/ })).toHaveLength(1)
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  })
+
+  test('restores the pending route when its tab has navigated to another page', async () => {
+    localStorage.setItem(
+      workspaceTabsStorageKey('strip-test'),
+      JSON.stringify({
+        activeTabId: 'pending-interactions',
+        tabs: [
+          {
+            id: 'pending-interactions',
+            kind: 'auxiliary',
+            title: '站点',
+            contentRoute: '/sites',
+            fixed: false,
+          },
+        ],
+      })
+    )
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/sites')
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    await user.click(screen.getByTestId('workspace-tab-add-pending-interactions'))
+    expect(window.location.pathname).toBe('/pending-interactions')
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveTextContent(
+      '待你处理'
+    )
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+  })
+
+  test('reuses a restored pending-route tab before repurposing the canonical tab', async () => {
+    localStorage.setItem(
+      workspaceTabsStorageKey('strip-test'),
+      JSON.stringify({
+        activeTabId: 'pending-interactions',
+        tabs: [
+          {
+            id: 'pending-interactions',
+            kind: 'auxiliary',
+            title: '站点',
+            contentRoute: '/sites',
+            fixed: false,
+          },
+          {
+            id: 'restored-inbox',
+            kind: 'auxiliary',
+            title: '待你处理',
+            contentRoute: '/pending-interactions?interaction=review',
+            fixed: false,
+          },
+        ],
+      })
+    )
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/sites')
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    await user.click(screen.getByTestId('workspace-tab-add-pending-interactions'))
+    expect(screen.getByTestId('workspace-tab-select-restored-inbox')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveTextContent(
+      '站点'
+    )
+    expect(screen.getAllByRole('tab')).toHaveLength(2)
+  })
+
+  test('hides pending interactions when auxiliary tabs are unavailable', async () => {
+    const user = userEvent.setup()
+    renderStrip('', ['task'])
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    expect(screen.queryByTestId('workspace-tab-add-pending-interactions')).not.toBeInTheDocument()
+  })
+
+  test.each(['zh-CN', 'en'])('updates the pending count in the %s tab title', async language => {
+    const i18n = createInstance()
+    await i18n.init({
+      lng: language,
+      resources: { 'zh-CN': { common: zhCommon }, en: { common: enCommon } },
+      defaultNS: 'common',
+      interpolation: { escapeValue: false },
+    })
+    const value: RuntimeInteractionsValue = {
+      pending: [],
+      history: [],
+      errors: {},
+      drafts: {},
+      busy: new Set(),
+      loading: false,
+      setDraft: vi.fn(),
+      respond: vi.fn(),
+      refresh: vi.fn(),
+      open: vi.fn(),
+      notice: null,
+      dismissNotice: vi.fn(),
+      dismiss: vi.fn(),
+      registerView: vi.fn(),
+    }
+    const tab = createWorkspaceTab('auxiliary', labels, {
+      id: 'pending-interactions',
+      contentRoute: '/pending-interactions?interaction=review',
+      fixed: true,
+    })
+    const tree = (count: number, projectCount?: number | null) => (
+      <I18nextProvider i18n={i18n}>
+        <RuntimeInteractionsContext.Provider
+          value={{
+            ...value,
+            projectItemsSupported: projectCount !== undefined,
+            pendingProjectCount: projectCount,
+            pending: Array.from({ length: count }, (_, index) => ({
+              id: `request-${index}`,
+              requestKey: `request-${index}`,
+              task: interactionTask,
+              payload: interactionQuestion,
+              question: 'Review?',
+              createdAt: index,
+              answered: false,
+            })),
+          }}
+        >
+          <WorkspaceTabsProvider
+            pathname="/pending-interactions"
+            search="?interaction=review"
+            storageScope="count-test"
+            labels={labels}
+            fixedTabs={[tab]}
+            restoreSessionTabs={false}
+          >
+            <WorkspaceTabStrip />
+          </WorkspaceTabsProvider>
+        </RuntimeInteractionsContext.Provider>
+      </I18nextProvider>
+    )
+    const rendered = render(tree(0))
+    for (const count of [0, 2, 1234, 1, 0]) {
+      rendered.rerender(tree(count))
+      const title = language === 'zh-CN' ? `待你处理（${count}）` : `Needs your input (${count})`
+      const button = screen.getByTestId('workspace-tab-select-pending-interactions')
+      expect(button).toHaveTextContent(title)
+      expect(button).toHaveAttribute('title', title)
+      expect(
+        screen.getByTestId('workspace-tab-pending-count-pending-interactions')
+      ).toHaveTextContent(String(count))
+      expect(screen.getAllByRole('tab')).toHaveLength(1)
+    }
+    rendered.rerender(tree(2, 3))
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-pending-question-count',
+      '2'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-pending-count',
+      '3'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-count-state',
+      'known'
+    )
+    expect(
+      screen.getByTestId('workspace-tab-pending-count-pending-interactions')
+    ).toHaveTextContent('5')
+    rendered.rerender(tree(2, null))
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-pending-question-count',
+      '2'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-count-state',
+      'unknown'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).not.toHaveAttribute(
+      'data-project-pending-count'
+    )
+    expect(screen.queryByTestId('workspace-tab-pending-count-pending-interactions')).toBeNull()
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveTextContent(
+      language === 'zh-CN' ? '待你处理' : 'Needs your input'
+    )
+  })
+
   test('opens Smart apps from the top tab add menu', async () => {
     const user = userEvent.setup()
     renderStrip()
@@ -277,49 +524,6 @@ describe('WorkspaceTabStrip', () => {
       'aria-selected',
       'true'
     )
-  })
-
-  test.each([
-    ['dynamic', 'shield', 'lucide-shield'],
-    ['legacy', 'applications', 'lucide-grid-3x3'],
-    ['invalid', 'not-a-real-icon', 'lucide-grid-3x3'],
-    ['empty', '', 'lucide-grid-3x3'],
-    ['missing', undefined, 'lucide-square-check'],
-  ])('renders the %s DSH route icon on the workspace tab surface', async (_, icon, className) => {
-    window.__WEWORK_DSH_UI__ = {
-      getEntries: slot => {
-        if (slot !== 'wework.route') return []
-        return [
-          {
-            id: 'icon-route',
-            path: '/dsh/icon-route',
-            telemetryFeature: 'plugins',
-            ...(icon === undefined ? {} : { icon }),
-          },
-        ]
-      },
-      subscribe: () => () => undefined,
-      attach: vi.fn(),
-    }
-    localStorage.setItem(
-      workspaceTabsStorageKey('strip-test'),
-      JSON.stringify({
-        activeTabId: 'icon-tab',
-        tabs: [
-          {
-            id: 'icon-tab',
-            kind: 'auxiliary',
-            title: 'Icon route',
-            contentRoute: '/dsh/icon-route',
-          },
-        ],
-      })
-    )
-
-    renderStrip('', undefined, '/dsh/icon-route')
-
-    const tab = screen.getByTestId('workspace-tab-select-icon-tab')
-    await waitFor(() => expect(tab.querySelector(`.${className}`)).toBeInTheDocument())
   })
 
   test('hides Smart apps from the top tab add menu while experiments are disabled', async () => {

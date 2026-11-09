@@ -1,6 +1,6 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -15,7 +15,9 @@ export function StandInConversation({
   roleId,
   onOpenTask,
   active = true,
-  pendingConfiguration,
+  hasPendingWork = false,
+  draftRequest,
+  onDraftRequestConsumed,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -23,23 +25,49 @@ export function StandInConversation({
   roleId?: string
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   active?: boolean
-  pendingConfiguration?: ReactNode
+  hasPendingWork?: boolean
+  draftRequest?: { id: number; text: string }
+  onDraftRequestConsumed?(id: number): void
 }) {
   useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
   const { t } = useTranslation('common')
   const [address, setAddress] = useState<RuntimeTaskAddress | null>()
-  const [error, setError] = useState<string | null>(null)
+  const [failure, setFailure] = useState<{
+    api: StandInExecutorApi
+    deviceId: string
+    taskId: string
+    message: string
+  } | null>(null)
   const [attempt, setAttempt] = useState(0)
   const taskId = standInConversationTaskId(userId, roleId)
+  const error =
+    failure?.api === api && failure.deviceId === deviceId && failure.taskId === taskId
+      ? failure.message
+      : null
   useEffect(() => {
     let active = true
     api
       .readTask(deviceId, taskId)
       .then(result => {
-        if (active) setAddress(result.task ? { deviceId, taskId } : null)
+        if (active) {
+          setAddress(
+            result.task
+              ? {
+                  deviceId,
+                  taskId,
+                  runtime: result.task.runtime,
+                  threadId: result.task.threadId,
+                  workspacePath: result.task.workspacePath,
+                  workspaceKind: result.task.workspaceKind,
+                  runtimeHandle: result.task.runtimeHandle,
+                }
+              : null
+          )
+          setFailure(null)
+        }
       })
       .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
+        if (active) setFailure({ api, deviceId, taskId, message: getStandInErrorMessage(cause) })
       })
     return () => {
       active = false
@@ -54,7 +82,7 @@ export function StandInConversation({
           data-testid="stand-in-conversation-retry"
           className="mt-2 underline"
           onClick={() => {
-            setError(null)
+            setFailure(null)
             setAddress(undefined)
             setAttempt(value => value + 1)
           }}
@@ -76,15 +104,21 @@ export function StandInConversation({
       source={null}
       instanceId={`stand-in:${deviceId}:${taskId}`}
       testId="stand-in-conversation"
+      draftRequest={draftRequest}
+      onDraftRequestConsumed={onDraftRequestConsumed}
       initialAddress={address}
       sendEphemeral={false}
       showExecutionTools={false}
+      hideProcessing
       expanded
       active={active}
-      composerHeader={pendingConfiguration}
       placeholder={t(roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt')}
       emptyStateText={t(
-        roleId ? 'standIn.workspace.role_empty' : 'standIn.workspace.primary_empty'
+        hasPendingWork
+          ? 'standIn.workspace.pending_work_help'
+          : roleId
+            ? 'standIn.workspace.role_empty'
+            : 'standIn.workspace.primary_empty'
       )}
       onOpenRuntimeTask={onOpenTask}
       createTask={async (message, options) => {

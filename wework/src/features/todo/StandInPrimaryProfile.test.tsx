@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { runnerModelKey } from '@wegent/collaboration'
@@ -6,6 +6,7 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeWorkListResponse } from '@/types/api'
+import type { StandInExecutorApi } from '@/api/standIn'
 import '@/i18n'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 
@@ -14,6 +15,9 @@ vi.mock('@/components/layout/useProjectWorktreeAvailabilityProbe', () => ({
 }))
 vi.mock('@/features/automations/AutomationsPage', () => ({
   AutomationsPage: () => <div data-testid="calendar-editor-fixture" />,
+}))
+vi.mock('@/features/dsh-runtime/dshExtensions', () => ({
+  getDshExtensionHost: () => ({ backend: { scope: () => ({ request: async () => [] }) } }),
 }))
 
 function fixture() {
@@ -73,10 +77,26 @@ function fixture() {
   }
 }
 
+it('explains an environment load failure and recovers without losing profile edits', async () => {
+  const props = fixture()
+  const listRuntimeWork = vi.mocked(props.services.runtimeWorkApi!.listRuntimeWork)
+  listRuntimeWork.mockRejectedValueOnce(new Error('internal failure'))
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  expect(await screen.findByRole('alert')).toHaveTextContent('未能加载所选设备的项目和工作目录')
+  await user.type(screen.getByTestId('stand-in-preferences'), ' draft')
+  await user.click(screen.getByTestId('stand-in-primary-environment-retry'))
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
+    'Review my work\n\nKeep replies concise draft'
+  )
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
 it('keeps existing identity and execution settings without a global processing switch', () => {
   const props = fixture()
   render(<StandInPrimaryProfile {...props} />)
-  expect(screen.getByTestId('stand-in-primary-enabled')).toBeChecked()
+  expect(screen.queryByTestId('stand-in-primary-enabled')).not.toBeInTheDocument()
   expect(screen.getByTestId('stand-in-preferences')).toBeInTheDocument()
   expect(screen.getByTestId('stand-in-device')).toBeInTheDocument()
   expect(screen.getByTestId('stand-in-primary-execution')).toBeInTheDocument()
@@ -90,6 +110,8 @@ it('consumes a menu calendar deep link once and returns to the connection list o
   const user = userEvent.setup()
   render(<StandInPrimaryProfile {...props} initialCalendar />)
   expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
+  expect(screen.queryByText('返回连接')).not.toBeInTheDocument()
+  expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
   await user.click(screen.getByTestId('stand-in-connections-back'))
   await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
   await user.click(screen.getByTestId('stand-in-primary-connections-open'))
@@ -97,16 +119,79 @@ it('consumes a menu calendar deep link once and returns to the connection list o
   expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
 })
 
-it('does not save a changed receive switch when the user discards the draft', async () => {
+it('provides clickable paths through all three primary settings levels and re-enters a source', async () => {
   const props = fixture()
   const user = userEvent.setup()
   render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-enabled'))
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await screen.findByTestId('stand-in-path-connections')
+  await user.click(screen.getByTestId('stand-in-time-connections'))
+  expect(await screen.findByTestId('stand-in-path-source')).toHaveTextContent('日历')
+  await user.click(screen.getByTestId('stand-in-path-connections'))
+  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-path-settings'))
+  expect(screen.getByTestId('stand-in-preferences')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(screen.getByTestId('stand-in-time-connections'))
+  expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
+})
+
+it('protects an unsaved mailbox when returning from the primary connections header', async () => {
+  const props = fixture()
+  const provider = '@wegent/dsh-connection-runtime/email'
+  const api = {
+    connectionProviders: async () => ({
+      items: [
+        { id: provider, displayName: '邮箱', dependencies: [], availability: { status: 'ready' } },
+      ],
+    }),
+  } as unknown as StandInExecutorApi
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} api={api} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(await screen.findByTestId(`stand-in-add-${provider}-connection`))
+  await user.click(screen.getByTestId('stand-in-email-add'))
+  fireEvent.change(screen.getByTestId('stand-in-email-email'), {
+    target: { value: 'owner@example.com' },
+  })
+  expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
+  await user.click(screen.getByTestId('stand-in-connections-back'))
+  expect(screen.getByTestId('stand-in-email-discard')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-email-discard-cancel-button'))
+  expect(screen.getByTestId('stand-in-email-email')).toHaveValue('owner@example.com')
+  await user.click(screen.getByTestId('stand-in-connections-back'))
+  await user.click(screen.getByTestId('stand-in-email-discard'))
+  expect(screen.queryByTestId('stand-in-email-connections')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getByTestId('stand-in-primary-connections-open')).toBeVisible()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
+it('does not save changed instructions when the user discards the draft', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.type(screen.getByTestId('stand-in-preferences'), ' changed')
   await user.click(screen.getByTestId('stand-in-primary-cancel'))
   expect(props.onSave).not.toHaveBeenCalled()
   expect(props.onClose).not.toHaveBeenCalled()
   await user.click(screen.getByTestId('stand-in-primary-discard'))
   expect(props.onClose).toHaveBeenCalledOnce()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
+it('clears a paused primary draft when source activation is reverted before Save', async () => {
+  const props = fixture()
+  props.settings.primary.enabled = false
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+  const source = screen.getByTestId('stand-in-source-collaboration')
+  await user.click(source)
+  expect(screen.getByTestId('stand-in-primary-save')).toBeEnabled()
+  await user.click(source)
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
   expect(props.onSave).not.toHaveBeenCalled()
 })
 
@@ -134,6 +219,21 @@ it('consolidates saved instructions without losing content and keeps connection 
       }),
     })
   )
+})
+
+it('returns from connections without discarding the profile draft', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.type(screen.getByTestId('stand-in-preferences'), '; keep this draft')
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
+    'Review my work\n\nKeep replies concise; keep this draft'
+  )
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+  expect(props.onClose).not.toHaveBeenCalled()
 })
 
 it('persists real project and model selections and protects unsaved changes when switching devices', async () => {
@@ -198,4 +298,21 @@ it('shows existing local connection names on a remote device while limiting new 
       }),
     })
   )
+})
+
+it('marks first-time collaboration edits pending against the fixed default scope', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  expect(screen.queryByTestId('stand-in-connections-pending')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  expect(screen.getByTestId('stand-in-connections-pending')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  expect(screen.queryByTestId('stand-in-connections-pending')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  await user.click(screen.getByTestId('stand-in-primary-cancel'))
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(props.onClose).toHaveBeenCalledExactlyOnceWith()
 })

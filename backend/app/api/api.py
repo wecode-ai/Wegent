@@ -59,7 +59,6 @@ from app.api.endpoints import (
     token_issuers,
     user_mcp_oauth,
     users,
-    utils,
     web_scraper,
     wework_api,
     wework_auth,
@@ -385,7 +384,6 @@ api_router.include_router(
     tags=["wework-transcripts"],
 )
 
-api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
     web_scraper.router, prefix="/web-scraper", tags=["web-scraper"]
 )

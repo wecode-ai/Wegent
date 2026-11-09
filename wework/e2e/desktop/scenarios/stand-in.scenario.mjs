@@ -1,5 +1,16 @@
-import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
+import {
+  openStandInActivity,
+  openStandInSettings,
+  openStandInMemory,
+} from '../modules/stand-in-profile-navigation.mjs'
+import {
+  openProjectStandIn,
+  discardStandInDraft,
+  editProjectSource,
+} from '../modules/stand-in-flows.mjs'
+import { verifyProjectIntakeBoundary } from '../modules/stand-in-project-intake-boundary.mjs'
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -17,6 +28,10 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
+import {
+  selectCollaborationProjectView,
+  collaborationProjectViewSelector,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身交互-${process.pid}`
@@ -42,7 +57,15 @@ async function waitForExecution(control, issueId, timeoutMs, roleIds = ['default
         { taskId: binding.task_id },
         10000
       )
-      assert.notEqual(task?.status, 'failed', JSON.stringify(task))
+      if (task?.status === 'failed') {
+        const transcript = await requestExecutor(
+          control,
+          'runtime.tasks.transcript',
+          { taskId: binding.task_id, limit: 10 },
+          10000
+        )
+        assert.fail(JSON.stringify({ task, transcript }))
+      }
       latest.push(task)
     }
     if (latest.length === roleIds.length && latest.every(task => task?.status === 'done')) {
@@ -68,6 +91,7 @@ async function waitForExecution(control, issueId, timeoutMs, roleIds = ['default
   assert.fail(`Stand-in tasks did not complete: ${JSON.stringify(latest)}`)
 }
 
+/** Verify independent stand-in creation, historical binding migration and real assignment execution. */
 export async function createDesktopScenario({
   executorHome,
   uiTimeoutMs,
@@ -142,7 +166,7 @@ export async function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)
@@ -215,7 +239,7 @@ export async function createDesktopScenario({
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         requirements: false,
       })
-      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-auto"]'), '0')
       await captureScreenshot(
         control,
         'stand-in-02-single-role-main.png',
@@ -228,9 +252,8 @@ export async function createDesktopScenario({
         'stand-in-03-requirements.png',
         '[data-testid="stand-in-settings"]'
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
-      assert.equal(await control.command('getValue', '[data-testid="stand-in-agent"]'), '')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-agent"]'), '0')
       await control.command('fill', '[data-testid="stand-in-prompt"]', { value: '不保存的提示词' })
       await discardStandInDraft(control)
       const initial = await requestExecutor(
@@ -250,7 +273,6 @@ export async function createDesktopScenario({
             '[data-testid="stand-in-settings"]'
           ),
       })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
@@ -279,11 +301,11 @@ export async function createDesktopScenario({
       await reloadMainWindow(control, 'Stand-in settings did not survive renderer reload')
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-project-${project.id}"]`)
       // Execution must not depend on the board being mounted or on composer navigation.
-      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-tab-table"]`, {
+      await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'table'), {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-table"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'table')
       const issue = await requestExecutor(
         control,
         'todos.create',
@@ -331,7 +353,7 @@ export async function createDesktopScenario({
       assert.equal(requests, 1)
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
       const model = catalog.models.find(row => row.runtime === 'codex' && row.is_default)
-      assert.ok(model, 'The native default model is required for Stand-in agent selection')
+      assert.ok(model, 'The native default model is required for the legacy binding fixture')
       const agent = await requestExecutor(
         control,
         'chat_agents.create',
@@ -350,9 +372,15 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
-      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
+      // Establish a dirty draft before the concurrent write. Clean settings
+      // may legitimately refresh while workbench services are recreated.
+      await control.command('fill', '[data-testid="stand-in-prompt"]', {
+        value: `${MARKER} 保留草稿`,
+      })
+      await control.command('waitFor', '[data-testid="stand-in-save"]:not(:disabled)')
       const concurrentSettings = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -374,9 +402,6 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await control.command('fill', '[data-testid="stand-in-prompt"]', {
-        value: `${MARKER} 保留草稿`,
-      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"] [role="alert"]')
       assert.equal(
@@ -384,6 +409,69 @@ export async function createDesktopScenario({
         `${MARKER} 保留草稿`
       )
       await discardStandInDraft(control)
+      const legacy = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId: USER_ID },
+        uiTimeoutMs
+      )
+      legacy.roles[0].agentId = agent.id
+      legacy.roles[0].agentProject = { id: project.id, store: 'local' }
+      legacy.roles[0].collaboration.allProjects = true
+      // Keep automatic execution enabled while migrating a primary with no project intake.
+      legacy.primary = {
+        enabled: true,
+        prompt: 'Legacy primary instructions',
+        preferences: 'Legacy primary preferences',
+        agentId: agent.id,
+        agentProject: { id: project.id, store: 'local' },
+      }
+      assert.equal(Object.hasOwn(legacy.primary, 'collaboration'), false)
+      const expected = structuredClone(legacy)
+      delete expected.roles[0].agentId
+      delete expected.roles[0].agentProject
+      delete expected.primary.agentId
+      delete expected.primary.agentProject
+      expected.roles[0].collaboration.allProjects = false
+      expected.roles[0].collaboration.projects = [{ id: project.id, store: 'local' }]
+      const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
+      try {
+        database.exec('PRAGMA busy_timeout = 10000')
+        const updated = database
+          .prepare(
+            "UPDATE loop_items SET metadata=? WHERE id=? AND resource_type='personal_stand_in'"
+          )
+          .run(JSON.stringify(legacy), `personal-stand-in:${USER_ID}`)
+        assert.equal(updated.changes, 1)
+        const migrated = await requestExecutor(
+          control,
+          'runtime.stand_in.personal.get',
+          { userId: USER_ID },
+          uiTimeoutMs
+        )
+        assert.deepEqual(
+          migrated,
+          expected,
+          'Migration must preserve identity, versions and grants'
+        )
+        assert.equal(Object.hasOwn(migrated.primary, 'collaboration'), false)
+        const persisted = database
+          .prepare('SELECT metadata FROM loop_items WHERE id=?')
+          .get(`personal-stand-in:${USER_ID}`)
+        assert.deepEqual(JSON.parse(persisted.metadata), migrated)
+        assert.deepEqual(
+          await requestExecutor(
+            control,
+            'runtime.stand_in.personal.get',
+            { userId: USER_ID },
+            uiTimeoutMs
+          ),
+          migrated,
+          'Repeated reads must not change the migrated settings'
+        )
+      } finally {
+        database.close()
+      }
       // Personal settings close independently of the project board. Re-enter
       // the fixture project before using its project-scoped stand-in control.
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
@@ -393,38 +481,17 @@ export async function createDesktopScenario({
       )
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
-      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
-      assert.equal(await control.command('getValue', '[data-testid="stand-in-agent"]'), '')
-      await control.command('waitFor', '[data-testid="stand-in-agent"] option', {
-        text: '分身专用助手',
-      })
-      await control.command('select', '[data-testid="stand-in-agent"]', {
-        value: JSON.stringify(['local', project.id, agent.id]),
-      })
-      await control.command('waitFor', '[data-testid="stand-in-project-agent-scope"]', {
-        text: PROJECT,
-      })
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-agent"]'), '0')
       await captureScreenshot(
         control,
-        'stand-in-09-project-agent-scope.png',
+        'stand-in-09-independent-settings.png',
         '[data-testid="stand-in-settings"]'
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
-      const scoped = await requestExecutor(
-        control,
-        'runtime.stand_in.personal.get',
-        { userId: USER_ID },
-        uiTimeoutMs
-      )
-      assert.deepEqual(scoped.roles[0].agentProject, { id: project.id, store: 'local' })
-      assert.equal(scoped.roles[0].collaboration.allProjects, false)
-      assert.deepEqual(scoped.roles[0].collaboration.projects, [{ id: project.id, store: 'local' }])
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
-      assert.equal(
-        await control.command('getValue', '[data-testid="stand-in-agent"]'),
-        JSON.stringify(['local', project.id, agent.id])
-      )
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-agent"]'), '0')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       const agentIssue = await requestExecutor(
@@ -432,12 +499,12 @@ export async function createDesktopScenario({
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '使用选定智能体处理', assignee_user_id: USER_ID },
+          todo: { title: '旧绑定迁移后独立处理', assignee_user_id: USER_ID },
         },
         uiTimeoutMs
       )
       await waitForExecution(control, agentIssue.id, modelResponseTimeoutMs)
-      assert.equal(agentRequests, 1, 'The configured agent prompt did not reach the native model')
+      assert.equal(agentRequests, 0, 'The migrated stand-in must not inherit the old agent prompt')
       // Editing an Issue must not create another task in later polling cycles.
       await requestExecutor(
         control,
@@ -449,7 +516,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await new Promise(resolve => setTimeout(resolve, 11000))
+      // Observe a full five-second scheduler interval plus timer jitter.
+      await new Promise(resolve => setTimeout(resolve, 5500))
       assert.equal(requests, 2, 'Polling or editing duplicated a completed assignment')
       for (const excluded of [old, other, unassigned]) {
         assert.equal(
@@ -459,9 +527,10 @@ export async function createDesktopScenario({
         )
       }
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
-      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+      await editProjectSource(control, false)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-sources-empty"]')
+      await control.command('click', '[data-testid="stand-in-close"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
         'waitFor',
@@ -488,7 +557,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await new Promise(resolve => setTimeout(resolve, 11000))
+      // Observe a full five-second scheduler interval plus timer jitter.
+      await new Promise(resolve => setTimeout(resolve, 5500))
       assert.equal(
         (
           await requestExecutor(
@@ -526,6 +596,10 @@ export async function createDesktopScenario({
           )
         )
       }
+      for (const profile of profiles) {
+        assert.equal(Object.hasOwn(profile, 'agentId'), false)
+        assert.equal(Object.hasOwn(profile, 'agentProject'), false)
+      }
       const taggedIssues = []
       for (const tag of ['review', 'docs']) {
         taggedIssues.push(
@@ -554,9 +628,10 @@ export async function createDesktopScenario({
           index === 0 ? 'review' : 'docs',
         ])
       await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review', 'docs'])
-      await new Promise(resolve => setTimeout(resolve, 11000))
+      // Observe a full five-second scheduler interval plus timer jitter.
+      await new Promise(resolve => setTimeout(resolve, 5500))
       assert.equal(requests, 6, 'Each eligible stand-in must execute each assignment exactly once')
-      assert.equal(agentRequests, 5)
+      assert.equal(agentRequests, 0, 'Independent roles must not inherit agent prompts')
       assert.deepEqual(
         tagRequests,
         { review: 2, docs: 2 },
@@ -682,6 +757,7 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
+      // Observe a full five-second scheduler interval plus timer jitter.
       await new Promise(resolve => setTimeout(resolve, 5500))
       assert.deepEqual(
         { requests, ...tagRequests },
@@ -736,7 +812,11 @@ export async function createDesktopScenario({
       const newRole = created.roles.find(row => row.name === '项目专用分身')
       assert.ok(newRole, 'A project-created stand-in must belong to the personal document')
       assert.equal(created.userId, USER_ID)
-      assert.equal(newRole.enabled, false)
+      assert.equal(
+        newRole.enabled,
+        true,
+        'Saving a new connected role enables it without a second intake switch'
+      )
       assert.equal(newRole.collaboration.allProjects, false)
       assert.deepEqual(newRole.collaboration.projects, [{ id: project.id, store: 'local' }])
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -745,11 +825,12 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-role-default"]')
       await control.command('click', '[data-testid="stand-in-overview-role-default"]')
+      await openStandInActivity(control)
       await control.command('waitFor', '[data-testid="stand-in-activity"]', { text: PROJECT })
       await captureScreenshot(control, 'stand-in-project-05-overview.png')
       await control.command('waitFor', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
       await control.command('click', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(
         await control.command('getElementCount', '[data-testid="stand-in-role-select"]'),
@@ -786,10 +867,12 @@ export async function createDesktopScenario({
         }))
       )
       assert.equal(
-        await control.command('getText', '[data-testid="stand-in-settings-open"]'),
-        '设置'
+        await control.command('getAttribute', '[data-testid="stand-in-details-open"]', {
+          value: 'aria-label',
+        }),
+        '分身详情'
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(await control.command('getValue', '[data-testid="stand-in-role-name"]'), renamed)
       await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '未保存的名字' })
@@ -803,7 +886,7 @@ export async function createDesktopScenario({
       await control.command('click', '[data-testid="stand-in-profile-backdrop"]')
       await control.command('click', '[data-testid="stand-in-discard"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
-      await control.command('click', '[data-testid="stand-in-memory-open"]')
+      await openStandInMemory(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-memory-add"]')
       const scopes = await control.command('getText', '[data-testid="stand-in-memory-scope"]')
       assert.ok(scopes.includes(`${renamed}（与你聊天时）`), scopes)
@@ -812,6 +895,14 @@ export async function createDesktopScenario({
       assert.ok(!scopes.includes(`项目 · ${project.id}`), scopes)
       await control.command('click', '[data-testid="stand-in-memory-cancel"]')
       await control.command('click', '[data-testid="stand-in-memory-close"]')
+      await verifyProjectIntakeBoundary({
+        control,
+        rpc: (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        userId: USER_ID,
+        sourceProject: project,
+        waitForExecution,
+        timeoutMs: modelResponseTimeoutMs,
+      })
     },
     diagnostics() {
       return { project: PROJECT, requests, agentRequests, tagRequests }

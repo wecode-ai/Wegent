@@ -247,6 +247,7 @@ async fn http_capability_provider_supports_signed_external_package_urls_without_
                 namespace: "team a&x=y#z".to_owned(),
                 is_public: false,
                 content_hash: None,
+                bind_shells: Vec::new(),
             },
             &target,
         )
@@ -1102,6 +1103,8 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         StreamProcessEngine::new(
             CommandSpec::new(script.display().to_string()),
             TEST_PROCESS_TIMEOUT_SECONDS,
+            std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+            env!("CARGO_PKG_VERSION"),
         ),
         sink.clone(),
         tracker.clone(),
@@ -1115,7 +1118,18 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
     let result = runner.submit(request).await;
 
     assert_eq!(result.status, TaskStatus::Running);
-    wait_until(|| pid_file.exists()).await;
+    wait_until_with_diagnostics(
+        || pid_file.exists(),
+        || {
+            format!(
+                "Child did not write {}: running={:?}, events={:?}",
+                pid_file.display(),
+                tracker.running_task_ids(),
+                sink.events()
+            )
+        },
+    )
+    .await;
     assert_eq!(tracker.running_task_ids(), vec!["501".to_owned()]);
     assert!(heartbeat_client
         .send_heartbeat(Duration::from_secs(1))
@@ -1718,6 +1732,13 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 async fn wait_until(condition: impl Fn() -> bool) {
+    wait_until_with_diagnostics(condition, String::new).await;
+}
+
+async fn wait_until_with_diagnostics(
+    condition: impl Fn() -> bool,
+    diagnostics: impl Fn() -> String,
+) {
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     while std::time::Instant::now() < deadline {
         if condition() {
@@ -1725,5 +1746,5 @@ async fn wait_until(condition: impl Fn() -> bool) {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    assert!(condition());
+    assert!(condition(), "{}", diagnostics());
 }

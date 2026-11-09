@@ -151,3 +151,21 @@ async def test_heartbeat_without_capacity_clears_previous_observation():
     assert stored["runtime_instance_id"] is None
     assert stored["runtime_capacity"] is None
     assert stored["runtime_features"] is None
+
+
+@pytest.mark.parametrize("limit, expected", [(60, (1, 60)), (61, (0, 0))])
+def test_runtime_capacity_accepts_sum_of_three_category_limits(limit, expected):
+    from app.services.device.local_provider import runtime_capacity_slot_values
+
+    assert (
+        runtime_capacity_slot_values(
+            {
+                "runtime_capacity": {
+                    "limit": limit,
+                    "active": 1,
+                    "active_task_ids": ["task-1"],
+                }
+            }
+        )
+        == expected
+    )

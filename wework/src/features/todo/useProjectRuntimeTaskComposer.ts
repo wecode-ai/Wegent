@@ -10,6 +10,7 @@ import type {
 } from '@/types/api'
 
 interface UseProjectRuntimeTaskComposerOptions {
+  resolveDeviceId?: () => Promise<string>
   project: ProjectWithTasks | null
   deviceWorkspaceId?: number | null
   workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
@@ -28,6 +29,7 @@ interface UseProjectRuntimeTaskComposerOptions {
 }
 
 export function useProjectRuntimeTaskComposer({
+  resolveDeviceId,
   project,
   deviceWorkspaceId,
   workspaceExecution,
@@ -41,9 +43,17 @@ export function useProjectRuntimeTaskComposer({
 
   return useCallback(
     async (message: string, options: RuntimeTaskComposerCreateOptions) => {
+      let deviceId: string | undefined
+      try {
+        deviceId = await resolveDeviceId?.()
+      } catch (cause) {
+        options.onError(cause instanceof Error ? cause.message : String(cause))
+        return false
+      }
       const address = await createProjectRuntimeTask(message, {
         project,
         deviceWorkspaceId,
+        ...(deviceId ? { deviceId, deviceWorkspaceId: null } : {}),
         ...(workspaceExecution !== undefined ? { workspaceExecution } : {}),
         workspaceSource,
         ...(taskRequest !== undefined ? { taskRequest } : {}),
@@ -69,6 +79,7 @@ export function useProjectRuntimeTaskComposer({
       onTaskCreated,
       prepareTask,
       project,
+      resolveDeviceId,
       runtimeContext,
       taskRequest,
       workspaceExecution,

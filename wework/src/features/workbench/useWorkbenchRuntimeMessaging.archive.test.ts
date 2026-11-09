@@ -1,10 +1,10 @@
-import { renderHook, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type {
   RequestUserInputResponse,
   RuntimeSendResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import { renderHook, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearRuntimeConversationCacheForTests,
   evictRuntimeConversation,
@@ -12,7 +12,6 @@ import {
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationTurns,
   reconcileRuntimeConversationSnapshot,
-  replaceRuntimeConversationSnapshot,
 } from './runtimeConversationCache'
 import { sendRuntimeQueuedMessage } from './runtimeQueuedMessageSender'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
@@ -188,7 +187,7 @@ describe('runtime message archival', () => {
     expect(store.getTask(address)).toBeNull()
   })
 
-  test('does not append an accepted message after archival during work-list refresh', async () => {
+  test('does not restore an accepted conversation archived during background work-list refresh', async () => {
     const { messaging, store, send, refresh, archive } = fixture()
     const refreshed = deferred<void>()
     send.mockResolvedValue({ accepted: true, taskId: address.taskId })
@@ -198,74 +197,17 @@ describe('runtime message archival', () => {
       sendRuntimePaneMessage: messaging.sendRuntimePaneMessage,
     })
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+    await expect(sending).resolves.toEqual({ accepted: true, queued: false })
+    expect(getRuntimeConversationMessages(address)).toContainEqual(
+      expect.objectContaining({ role: 'user', content: queuedMessage.content })
+    )
     archive()
     refreshed.resolve()
-
-    await expect(sending).resolves.toEqual({ accepted: false, queued: false })
+    await refreshed.promise
     expect(store.getTask(address)).toBeNull()
     expect(getRuntimeConversationMessages(address)).toEqual([])
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
   })
-
-  test('still accepts an ordinary non-archived continuation', async () => {
-    const { messaging, store, send, refresh } = fixture()
-    send.mockResolvedValue({ accepted: true, taskId: address.taskId })
-
-    await expect(
-      sendRuntimeQueuedMessage(address, queuedMessage, {
-        lifecycleStore: store,
-        sendRuntimePaneMessage: messaging.sendRuntimePaneMessage,
-      })
-    ).resolves.toEqual({ accepted: true, queued: false })
-
-    expect(
-      getRuntimeConversationMessages(address)
-        .filter(message => message.role === 'user')
-        .map(message => message.id)
-    ).toEqual([queuedMessage.id])
-    expect(store.getTask(address)).not.toBeNull()
-    expect(refresh).toHaveBeenCalledTimes(1)
-  })
-
-  test.each(['requestUserInputResponse', 'request_user_input_response'] as const)(
-    'preserves an accepted %s before terminal history overtakes work-list refresh',
-    async responseField => {
-      const { messaging, send, refresh, response, blockId } = inputFixture()
-      const refreshed = deferred<void>()
-      send.mockResolvedValue({ accepted: true, taskId: address.taskId })
-      refresh.mockReturnValue(refreshed.promise)
-      const sending = messaging.sendRuntimePaneMessage({
-        address,
-        message: 'owner',
-        modelId: 'test-model',
-        [responseField]: response,
-      })
-
-      try {
-        await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
-        replaceRuntimeConversationSnapshot(address, [
-          {
-            id: 'elicitation-turn',
-            status: 'done',
-            items: [{ id: 'final', type: 'assistant_text', content: 'Completed' }],
-          },
-        ])
-
-        expect(getRuntimeConversationTurns(address)[0].items).toContainEqual(
-          expect.objectContaining({
-            id: blockId,
-            block: expect.objectContaining({
-              status: 'done',
-              renderPayload: expect.objectContaining({ response }),
-            }),
-          })
-        )
-      } finally {
-        refreshed.resolve()
-        await sending
-      }
-    }
-  )
 
   test.each(['rejected', 'transport-failed'] as const)(
     'does not record an input answer when %s',

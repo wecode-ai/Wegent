@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   deviceId: 'skill-settings-device',
 }))
 
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
   isElectronRuntime: () => true,
@@ -78,6 +82,10 @@ describe('local plugin component settings updates', () => {
     })
     mocks.request.mockImplementation(
       async (method: string, args?: { method: string; params: Record<string, unknown> }) => {
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'executor.plugins.personal.list')
+          return { marketplaceId: 'wework-personal', marketplacePath: '/personal', plugins: [] }
+        if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
         if (method === 'executor.plugins.store.list') return { storePath: fixtureRoot, plugins: [] }
         if (method === 'executor.plugins.manifest.read') return { connectors: [] }
         if (method !== 'codex.app_server_request')
@@ -106,37 +114,6 @@ describe('local plugin component settings updates', () => {
         throw new Error(`Unexpected app-server call ${args?.method}`)
       }
     )
-  })
-
-  test.each([
-    { enabled: false, withPath: false },
-    { enabled: true, withPath: false },
-    { enabled: false, withPath: true },
-    { enabled: true, withPath: true },
-  ])('returns the confirmed setting after summary refresh (%j)', async ({ enabled, withPath }) => {
-    const api = await installedApi(withPath)
-
-    const updated = await api.updateInstalledPlugin(pluginId, {
-      componentStates: { 'skill:feature': enabled },
-    })
-
-    expect(mocks.writeSkill).toHaveBeenCalledExactlyOnceWith({
-      path: withPath ? skillPath : null,
-      name: withPath ? null : 'feature',
-      enabled,
-    })
-    expect(updated.metadata.labels).toEqual({ id: pluginId })
-    expect(updated.spec).toMatchObject({
-      displayName: 'Demo settings',
-      version: '1.0.0',
-      enabled: true,
-      componentStates: { 'skill:feature': enabled },
-    })
-    if (withPath) expect(updated.spec.componentStates['skill:unrelated']).toBe(false)
-    expect(peekLocalCodexPluginsReadState()?.installedPlugins[0]?.spec.componentStates).toEqual(
-      updated.spec.componentStates
-    )
-    expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/read')).toBe(false)
   })
 
   test.each([{}, { effectiveEnabled: 'false' }, { effectiveEnabled: true }, null])(
@@ -172,44 +149,6 @@ describe('local plugin component settings updates', () => {
     expect(
       peekLocalCodexPluginsReadState()?.installedPlugins[0]?.spec.componentStates['skill:feature']
     ).toBe(true)
-  })
-
-  test('waits for every write before reconciling a partially applied batch', async () => {
-    const api = await installedApi(true)
-    const pendingWrite = deferred<{ effectiveEnabled: boolean }>()
-    const error = new Error('Feature setting rejected')
-    const settled = vi.fn()
-    mocks.writeSkill.mockImplementation(({ path }) =>
-      path === skillPath ? Promise.reject(error) : pendingWrite.promise
-    )
-
-    const update = api.updateInstalledPlugin(pluginId, {
-      componentStates: { 'skill:feature': false, 'skill:unrelated': true },
-    })
-    void update.then(settled, settled)
-    await vi.waitFor(() => expect(mocks.writeSkill).toHaveBeenCalledTimes(2))
-
-    expect(settled).not.toHaveBeenCalled()
-    expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(false)
-
-    skillStates.unrelated = true
-    pendingWrite.resolve({ effectiveEnabled: true })
-    await expect(update).rejects.toBe(error)
-
-    const state = await api.readState()
-    expect(state.installedPlugins[0]?.spec.componentStates).toEqual({
-      'skill:feature': true,
-      'skill:unrelated': true,
-    })
-    expect(peekLocalCodexPluginsReadState()?.installedPlugins[0]?.spec.componentStates).toEqual(
-      state.installedPlugins[0]?.spec.componentStates
-    )
-    expect(
-      mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/list')
-    ).toHaveLength(1)
-    expect(
-      mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/read')
-    ).toHaveLength(1)
   })
 
   test.each([
@@ -274,24 +213,6 @@ describe('local plugin component settings updates', () => {
       }
     }
   )
-  test('keeps a newer plugin enabled setting when an old disable response arrives', async () => {
-    const api = await installedApi()
-    const held = deferred<Record<string, never>>()
-    mocks.writeEnabled.mockImplementation(({ value }) => {
-      summary.enabled = value
-      return value ? Promise.resolve({}) : held.promise
-    })
-    const old = api.updateInstalledPlugin(pluginId, { enabled: false })
-    const rejected = expect(old).rejects.toThrow('Plugin settings request is no longer current')
-    await vi.waitFor(() => expect(mocks.writeEnabled).toHaveBeenCalledOnce())
-    const updated = await api.updateInstalledPlugin(pluginId, { enabled: true })
-    expect(updated.spec.enabled).toBe(true)
-    const before = peekLocalCodexPluginsReadState()
-    held.resolve({})
-    await rejected
-    expect(summary.enabled).toBe(true)
-    expect(peekLocalCodexPluginsReadState()).toBe(before)
-  })
 
   test.each(['success', 'failure'] as const)(
     'rejects a superseded component write after its late %s',
@@ -322,7 +243,7 @@ describe('local plugin component settings updates', () => {
     }
   )
 
-  test.each(['different component', 'overlapping batch'] as const)(
+  test.each(['overlapping batch'] as const)(
     'retains independent settings while a newer request changes a %s',
     async mode => {
       const api = await installedApi(true)

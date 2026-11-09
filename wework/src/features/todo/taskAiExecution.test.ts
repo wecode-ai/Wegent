@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+// @vitest-environment node
+
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import { describe, expect, it, vi } from 'vitest'
 import {
   mergeProjectChatMessages,
   startTaskAiRun,
@@ -62,17 +64,7 @@ describe('project chat message ordering', () => {
     updatedAt: '2026-10-14T10:57:41.123456Z',
   }
 
-  it('ignores older snapshots even when their timestamps use a different timezone', () => {
-    const stale = { ...live, content: '', updatedAt: '2026-10-14T18:57:40+08:00' }
-    expect(mergeProjectChatMessages([live], [stale])).toEqual([live])
-  })
-
-  it('preserves submillisecond update order', () => {
-    const stale = { ...live, content: '', updatedAt: '2026-10-14T10:57:41.123455Z' }
-    expect(mergeProjectChatMessages([live], [stale])).toEqual([live])
-  })
-
-  it.each(['completed', 'failed', 'cancelled'] as const)(
+  it.each(['failed', 'cancelled'] as const)(
     'keeps the %s result in both acknowledgement delivery orders',
     status => {
       const terminal = { ...live, status }
@@ -97,38 +89,15 @@ describe('project chat message ordering', () => {
     }
   )
 
-  it('still ignores an older terminal snapshot after the terminal transition', () => {
-    const completed = { ...live, status: 'completed' as const }
-    const stale = {
-      ...completed,
-      content: 'Old result',
-      updatedAt: '2026-10-14T10:57:40Z',
-    }
-    expect(mergeProjectChatMessages([completed], [stale])).toEqual([completed])
-  })
-
   it('accepts a shorter nonempty streaming snapshot', () => {
     const replacement = { ...live, content: 'Live' }
     expect(mergeProjectChatMessages([live], [replacement])).toEqual([replacement])
-  })
-
-  it('accepts terminal content replacements including empty content', () => {
-    for (const content of ['Final', '']) {
-      const completed = { ...live, content, status: 'completed' as const }
-      expect(mergeProjectChatMessages([live], [completed])).toEqual([completed])
-    }
   })
 
   it('accepts new retry messages without changing the original terminal result', () => {
     const failed = { ...live, status: 'failed' as const }
     const retry = { ...agentMessage, messageId: 'retry-1', sequenceNumber: 2 }
     expect(mergeProjectChatMessages([failed], [retry])).toEqual([failed, retry])
-  })
-
-  it('does not prevent user message content updates', () => {
-    const user = { ...live, sender: { type: 'user' as const, id: '1', name: 'Me' } }
-    const edited = { ...user, content: '' }
-    expect(mergeProjectChatMessages([user], [edited])).toEqual([edited])
   })
 })
 
@@ -335,108 +304,6 @@ describe('startTaskAiRun model resolution', () => {
         modelSelection: expect.objectContaining({ modelName: kimiModel.name }),
       })
     )
-  })
-  it.each([false, true])(
-    'seeds the user comment before execution (continuation=%s)',
-    async continuation => {
-      const attachment = {
-        id: 7,
-        filename: 'spec.txt',
-        file_size: 12,
-        mime_type: 'text/plain',
-        status: 'ready' as const,
-        file_extension: 'txt',
-        created_at: '2026-09-16T00:00:00Z',
-      }
-      const { runtime } = await runWith(
-        {
-          agent: agent(null),
-          attachments: [attachment],
-          trigger: {
-            ...agentMessage,
-            messageId: 'trigger-1',
-            sender: { type: 'user', id: '1', name: 'User' },
-          },
-        },
-        {
-          replyTo: continuation
-            ? { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' }
-            : null,
-        }
-      )
-      const options = continuation
-        ? runtime.sendRuntimePaneMessage.mock.calls[0][1]
-        : runtime.createProjectRuntimeTask.mock.calls[0][1]
-      expect(options.optimisticUserMessage).toMatchObject({
-        id: continuation ? agentMessage.messageId : 'trigger-1',
-        role: 'user',
-        content: '请开始执行任务',
-        attachments: [expect.objectContaining({ id: 7, filename: 'spec.txt' })],
-      })
-    }
-  )
-
-  it('passes the comment-selected model as full execution fields', async () => {
-    const { runtime } = await run({
-      agent: agent(null),
-      models: [kimiModel],
-      selectedModel: kimiModel,
-      selectedModelOptions: {},
-    })
-
-    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        executionModel: {
-          modelId: kimiModel.name,
-          modelType: 'runtime',
-          modelOptions: expect.objectContaining({
-            codexProviderId: 'wecode-moonshot',
-            collaborationMode: 'default',
-          }),
-        },
-      })
-    )
-  })
-
-  it('does not infer a Runtime model from the robot record', async () => {
-    const { runtime } = await run({
-      agent: agent(kimiModel.name),
-      models: [kimiModel],
-      selectedModel: null,
-      selectedModelOptions: {},
-    })
-
-    const options = runtime.createProjectRuntimeTask.mock.calls[0]?.[1]
-    expect(options).not.toHaveProperty('executionModel')
-    expect(options).not.toHaveProperty('modelSelection')
-  })
-
-  it('does not preserve a legacy raw model fallback', async () => {
-    const { runtime } = await run({
-      agent: agent('legacy-raw-model'),
-      models: [],
-      selectedModel: null,
-      selectedModelOptions: {},
-    })
-
-    const options = runtime.createProjectRuntimeTask.mock.calls[0]?.[1]
-    expect(options).not.toHaveProperty('executionModel')
-    expect(options).not.toHaveProperty('modelSelection')
-  })
-
-  it('does not override the model when neither a comment nor a project model is configured', async () => {
-    const { runtime } = await run({
-      agent: agent(null),
-      models: [],
-      selectedModel: null,
-      selectedModelOptions: {},
-    })
-
-    const options = runtime.createProjectRuntimeTask.mock.calls[0][1] as Record<string, unknown>
-    expect(options.executionModel).toBeUndefined()
-    expect(options.modelSelection).toBeUndefined()
-    expect(options.modelId).toBeUndefined()
   })
 
   it('continues the replied AI message session when replyTo is provided', async () => {

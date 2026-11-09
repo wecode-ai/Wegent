@@ -1,3 +1,5 @@
+import { IssueCardMilestone } from "../issue-card/IssueCardMilestone";
+import type { Milestone } from "../milestones/types";
 import { unmatchedCreateDefaults } from "../project-board/projectBoardViews";
 import {
   projectBoardDnd,
@@ -7,6 +9,10 @@ import {
   useProjectBoardSensors,
 } from "../project-board/projectBoardDnd";
 import { ProjectBoardDragOverlay } from "../project-board/ProjectBoardDragOverlay";
+import {
+  IssueChildrenProgress,
+  collectIssueChildrenProgress,
+} from "../project-board/IssueChildrenProgress";
 import { BrowserIssueBoardCard } from "../issue-card/BrowserIssueBoardCard";
 import { useBrowserBoardRuntimeWork } from "./useBrowserBoardRuntimeWork";
 import type { SharedWorkspaceRuntimeApi } from "../ports/SharedWorkspaceApi";
@@ -16,7 +22,9 @@ import { runnerEnvironmentError } from "../execution-environment/runnerEnvironme
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { findRuntimeTask } from "@wegent/chat-core/runtime-task-lookup";
+import { issueNeedsUser } from "../issueParticipation";
 
 import {
   IssueBoardCard,
@@ -30,6 +38,7 @@ import {
   isExecutionBoardColumn,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useBoardTagFilter,
   useParentIssueBoard,
   useSavedBoardViews,
   savedBoardColumns,
@@ -37,7 +46,6 @@ import {
   BoardViewNotice,
   collectProjectTags,
   boardDropHint,
-  matchesBoardView,
   type ProjectBoardViews,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
@@ -79,6 +87,7 @@ export interface ProjectBoardAdapterLabels {
 export interface ProjectBoardIssueCardRenderContext {
   column: ProjectBoardColumn;
   defaultCard: ReactNode;
+  metadata?: ReactNode;
   childrenAction?: ReactNode;
   display: {
     showAssignee: boolean;
@@ -100,16 +109,24 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  participationUserId?: import("../issueParticipation").IssueParticipationViewer;
   parentGroupingEnabled?: boolean;
   emptyState?: ReactNode;
+  filterAction?: ReactNode;
   toolbarAction?: ReactNode;
   runtime?: SharedWorkspaceRuntimeApi;
+  isIssueRunning?(
+    issue: CollaborationIssue,
+    bindings: WorkspaceTaskBinding[],
+  ): boolean;
   previewDisabled?: boolean;
   onMarkRead?(issue: CollaborationIssue): void;
   translate: CollaborationTranslate;
   boardError: string | null;
   agents: CollaborationAgent[];
   issues: CollaborationIssue[];
+  allIssues?: CollaborationIssue[];
+  milestones?: readonly Milestone[];
   labels: ProjectBoardAdapterLabels;
   members: CollaborationMember[];
   project: CollaborationProject;
@@ -126,6 +143,8 @@ interface ProjectBoardAdapterProps {
     settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
   ): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
+  onOpenChildren?(issue: CollaborationIssue): void;
+  onCurrentParentIdChange?(parentId: string | null): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
     issue: CollaborationIssue,
@@ -153,15 +172,20 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  participationUserId,
   parentGroupingEnabled = false,
   emptyState,
+  filterAction,
   toolbarAction,
   runtime,
+  isIssueRunning,
   previewDisabled = false,
   translate,
   agents,
   boardError,
   issues,
+  allIssues = issues,
+  milestones = [],
   labels,
   members,
   onCreateIssue,
@@ -173,11 +197,39 @@ export function ProjectBoardAdapter({
   onSaveViews,
   onMove,
   onOpen,
+  onOpenChildren,
+  onCurrentParentIdChange,
   project,
   renderIssueCard,
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const handlingUserId = participationUserId ?? project.current_user_id;
+  const milestonesById = useMemo(
+    () => new Map(milestones.map((milestone) => [milestone.id, milestone])),
+    [milestones],
+  );
+  const renderMilestoneMetadata = (
+    issue: CollaborationIssue,
+    inline = false,
+  ) => {
+    const milestone =
+      issue.can_view_detail !== false && issue.milestone_id
+        ? milestonesById.get(issue.milestone_id)
+        : undefined;
+    return milestone ? (
+      <IssueCardMilestone
+        itemId={issue.id}
+        title={milestone.title}
+        label={translate("todo.milestone", "里程碑")}
+        inline={inline}
+      />
+    ) : null;
+  };
+  const childrenProgress = useMemo(
+    () => collectIssueChildrenProgress(allIssues),
+    [allIssues],
+  );
   const savedViews = useSavedBoardViews({
     projectKey: `${project.project_store}:${project.id}`,
     config: project.board_views,
@@ -197,9 +249,43 @@ export function ProjectBoardAdapter({
       project.access_role === "Owner" ||
       project.access_role === "Maintainer");
   const runtimeWork = useBrowserBoardRuntimeWork(
-    renderIssueCard ? undefined : runtime,
+    isIssueRunning && renderIssueCard ? undefined : runtime,
     taskBindings,
   );
+  const filterScope = `${project.project_store}:${project.id}:${handlingUserId ?? "anonymous"}`;
+  const [personalFilter, setPersonalFilter] = useState({
+    scope: filterScope,
+    enabled: false,
+  });
+  if (personalFilter.scope !== filterScope) {
+    setPersonalFilter({ scope: filterScope, enabled: false });
+  }
+  const needsMyInput =
+    personalFilter.scope === filterScope && personalFilter.enabled;
+  const myIssues = useMemo(
+    () =>
+      issues.filter((issue) => {
+        if (handlingUserId == null) return false;
+        const bindings = taskBindings.filter(
+          (binding) => binding.issueId === issue.id,
+        );
+        const running = isIssueRunning
+          ? isIssueRunning(issue, bindings)
+          : bindings.some(
+              (binding) =>
+                findRuntimeTask(runtimeWork?.work ?? null, {
+                  deviceId: binding.deviceId,
+                  taskId: binding.taskId,
+                })?.running,
+            );
+        return issueNeedsUser(
+          running ? { ...issue, execution_state: "running" } : issue,
+          handlingUserId,
+        );
+      }),
+    [issues, handlingUserId, taskBindings, isIssueRunning, runtimeWork?.work],
+  );
+  const visibleIssues = needsMyInput ? myIssues : issues;
   const availableTags = useMemo(
     () => collectProjectTags(project, issues),
     [project, issues],
@@ -264,7 +350,14 @@ export function ProjectBoardAdapter({
     }),
     [project],
   );
+  const tagFilter = useBoardTagFilter({
+    scope: `${project.project_store}:${project.id}:${savedViews.view?.id ?? "default"}`,
+    tags: availableTags,
+    translate,
+  });
   const controller = useStandardCloudBoardController({
+    currentUserId: handlingUserId,
+    tagFilter: tagFilter.tags,
     tagLimitError: translate(
       "todo.tag_limit_exceeded",
       "最多添加 20 个不同标签",
@@ -279,7 +372,9 @@ export function ProjectBoardAdapter({
     defaultGroupBy: project.board_config?.group_by ?? "status",
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
-    items: issues,
+    items: visibleIssues,
+    hierarchyItems: allIssues,
+    onCurrentParentIdChange,
     supportsOrder,
     onMove: async (issue, _column, _beforeItemId, mutation) => {
       try {
@@ -339,6 +434,8 @@ export function ProjectBoardAdapter({
                 translate,
                 getParentTitle: (issue) => issue.title,
                 getParentKey: (issue) => issue.id,
+                renderParentMetadata: (issue) =>
+                  renderMilestoneMetadata(issue, true),
                 onOpenParent: onOpen,
                 onEnterParent: (issue) =>
                   controller.setCurrentParentId(issue.id),
@@ -380,6 +477,29 @@ export function ProjectBoardAdapter({
             }}
             translate={translate}
           />
+        }
+        filterAction={
+          <>
+            {handlingUserId != null && (
+              <button
+                type="button"
+                data-testid="project-needs-my-input-filter"
+                aria-pressed={needsMyInput}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${needsMyInput ? "border-text-primary/30 bg-muted text-text-primary" : "border-border bg-background text-text-secondary"}`}
+                onClick={() =>
+                  setPersonalFilter({
+                    scope: filterScope,
+                    enabled: !needsMyInput,
+                  })
+                }
+              >
+                {translate("todo.home_my_todos")}
+                <span>{myIssues.length}</span>
+              </button>
+            )}
+            {tagFilter.control}
+            {filterAction}
+          </>
         }
         toolbarAction={
           <>
@@ -495,10 +615,8 @@ export function ProjectBoardAdapter({
         isExternalBoard={false}
         isMyTasksBoard={false}
         layerCount={
-          issues.filter(
-            (issue) =>
-              issue.parent_id === controller.currentParentId &&
-              matchesBoardView(issue, savedViews.view),
+          controller.filteredItems.filter(
+            (issue) => issue.parent_id === controller.currentParentId,
           ).length
         }
         onBreadcrumbSelect={controller.setCurrentParentId}
@@ -618,7 +736,9 @@ export function ProjectBoardAdapter({
             showPriority: display.show_priority,
             showTags: display.show_tags,
           };
+          const metadata = renderMilestoneMetadata(issue);
           const cardProps = {
+            metadata,
             translate,
             item: issue,
             unread: false,
@@ -637,21 +757,19 @@ export function ProjectBoardAdapter({
             dragEnabled: canEditCollaborationIssue(issue),
             onOpen: () => onOpen(issue),
           };
-          const childrenAction = issues.some(
-            (candidate) => candidate.parent_id === issue.id,
-          ) ? (
-            <button
-              type="button"
-              data-testid={`collaboration-issue-children-${issue.id}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                controller.setCurrentParentId(issue.id);
-              }}
-              className="mx-3 mb-3 min-h-11 text-xs text-text-secondary hover:text-text-primary md:min-h-0"
-            >
-              {translate("todo.view_child_task")}
-            </button>
-          ) : null;
+          const progress = childrenProgress.get(issue.id);
+          const childrenAction =
+            progress && issue.can_view_detail !== false ? (
+              <IssueChildrenProgress
+                itemId={issue.id}
+                progress={progress}
+                translate={translate}
+                onOpen={() => {
+                  onOpenChildren?.(issue);
+                  controller.setCurrentParentId(issue.id);
+                }}
+              />
+            ) : null;
           const defaultCard = (
             <IssueBoardCard {...cardProps} childrenAction={childrenAction} />
           );
@@ -659,6 +777,7 @@ export function ProjectBoardAdapter({
             renderIssueCard({
               column,
               defaultCard,
+              metadata,
               childrenAction,
               display: issueDisplay,
               focused,

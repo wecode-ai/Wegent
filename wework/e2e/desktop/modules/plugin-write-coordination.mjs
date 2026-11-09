@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from './shared.mjs'
 import { openComposerPluginPicker } from './conversation-layout.mjs'
 import { holdPluginWriteLease } from './plugin-write-lease.mjs'
+import { verifyConcurrentPluginPreparation } from './plugin-concurrent-preparation.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -21,6 +22,7 @@ export async function verifyPluginWriteCoordination({
   control,
   apiProxy,
   deviceProxy,
+  packageProxy,
   localDeviceId,
   evidence,
   timeoutMs,
@@ -46,7 +48,7 @@ export async function verifyPluginWriteCoordination({
   }
   const refreshSurfaces = async (item, present = true) => {
     await openPlugin(control, item)
-    await control.command('click', testId('plugins-refresh-button'))
+    await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
     if (present) {
       await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
         timeoutMs,
@@ -68,7 +70,7 @@ export async function verifyPluginWriteCoordination({
     slug: 'coordination-e2e-responsive',
   }
   await openPlugin(control, responsive)
-  await control.command('click', testId('plugins-refresh-button'))
+  await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   await assertInstallButton(control, responsive)
   let lease = await holdPluginWriteLease(cloud)
   let pending
@@ -199,6 +201,14 @@ export async function verifyPluginWriteCoordination({
     item: { ...acknowledged, installedId },
     remoteHome,
     refreshSurfaces,
+    evidence,
+    timeoutMs,
+  })
+  await verifyConcurrentPluginPreparation({
+    cloud,
+    control,
+    packageProxy,
+    remoteHome,
     evidence,
     timeoutMs,
   })

@@ -654,6 +654,13 @@ async fn drain_available_runtime_work<T>(
             return;
         }
     };
+    let Some(capacity) = capacity
+        .get("categories")
+        .and_then(|categories| categories.get("agent"))
+    else {
+        write_executor_error_line("Runtime capacity is missing the agent category");
+        return;
+    };
     let limit = capacity.get("limit").and_then(Value::as_u64).unwrap_or(0);
     let active = capacity
         .get("active")

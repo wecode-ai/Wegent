@@ -4,7 +4,7 @@
 
 use super::super::util::{
     infer_workspace_kind, normalize_workspace_path, now_ms, path_is_within, workspace_group_path,
-    workspace_label, workspace_task_path,
+    workspace_label,
 };
 use super::{
     compare_runtime_task_links, git_info_for_workspace, local_task_json, RuntimeTaskLink,
@@ -60,7 +60,7 @@ fn task_group(
         }
         return WorkspaceGroupKey::Directory(path.to_owned());
     }
-    if infer_workspace_kind(&link.workspace_path) == "chat" {
+    if link.workspace_kind() == "chat" {
         return WorkspaceGroupKey::Directory(normalize_workspace_path(&link.workspace_path));
     }
     // Unbound local tasks may be grouped by a unique local root. A remote
@@ -119,9 +119,9 @@ pub(crate) fn workspace_response(
             .map(|workspace| workspace.workspace_path.clone())
             .unwrap_or(path);
         link.workspace_path = if link.preserve_execution_path {
-            workspace_task_path(&link.workspace_path, "")
+            link.execution_workspace_path("")
         } else {
-            workspace_task_path(&link.workspace_path, &group_path)
+            link.execution_workspace_path(&group_path)
         };
         groups
             .entry(key)
@@ -417,6 +417,41 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["workspacePath"], target_path);
         assert_eq!(rows[0]["tasks"][0]["workspacePath"], restored_path);
+    }
+
+    #[test]
+    fn workspace_response_preserves_restored_directory_inside_a_git_worktree() {
+        let _guard = crate::test_env::lock();
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let git_dir = directory.path().join("repo/.git/worktrees/outer");
+        let worktree = directory.path().join("outer");
+        std::fs::create_dir_all(&git_dir).expect("worktree metadata");
+        std::fs::create_dir_all(&worktree).expect("worktree directory");
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", git_dir.display()),
+        )
+        .expect("worktree git pointer");
+        let executor_home = worktree.join("executor-home");
+        let restored = executor_home.join("restored-workspaces/task-1");
+        std::fs::create_dir_all(&restored).expect("restored workspace");
+        let restored_path = normalize_workspace_path(&restored.to_string_lossy());
+        let mut moved = task("restored", Some("target"));
+        moved.workspace_path = restored_path.clone();
+        moved.group_workspace_path = Some("/srv/work".to_owned());
+        moved.preserve_execution_path = true;
+        let previous = std::env::var_os("WEGENT_EXECUTOR_HOME");
+        std::env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
+
+        let rows = workspace_response(vec![moved], vec![project("target", None)]);
+
+        match previous {
+            Some(value) => std::env::set_var("WEGENT_EXECUTOR_HOME", value),
+            None => std::env::remove_var("WEGENT_EXECUTOR_HOME"),
+        }
+        assert_eq!(rows[0]["tasks"][0]["workspacePath"], restored_path);
+        assert_eq!(rows[0]["tasks"][0]["workspaceKind"], "workspace");
+        assert!(rows[0]["tasks"][0].get("worktreeId").is_none());
     }
 
     #[test]

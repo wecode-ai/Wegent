@@ -10,6 +10,12 @@ fn active(run: &AutomationRun) -> bool {
     )
 }
 
+fn memory_review(automation: &Automation) -> bool {
+    automation.task_request["standInOwner"]["roleId"] == "@primary"
+        && automation.task_request["standInCalendar"]["template"]
+            == crate::runtime_work::automations::MEMORY_REVIEW_TEMPLATE
+}
+
 #[cfg(test)]
 #[path = "stand_in_arrangements_tests.rs"]
 mod tests;
@@ -34,6 +40,27 @@ impl RuntimeWorkRpcHandler {
             .iter()
             .filter(|run| active(run))
         {
+            if let Some(automation) = self.automation_store.get(&run.automation_id) {
+                if memory_review(&automation)
+                    && run.status == AutomationRunStatus::Pending
+                    && run.trigger != "manual"
+                    && !self.memory_review_run_has_work(store, run)?
+                {
+                    continue;
+                }
+                if automation.task_request["standInCalendar"].is_object()
+                    && !memory_review(&automation)
+                    && run.status == AutomationRunStatus::Pending
+                    && run.trigger != "manual"
+                {
+                    if let Err(error) = self.queue_calendar_run(store, &automation, run) {
+                        self.automation_store
+                            .mark_needs_attention(&run.id, error.message)
+                            .map_err(|error| AppIpcError::new("calendar_store_error", error))?;
+                    }
+                    continue;
+                }
+            }
             let user = run
                 .coordination
                 .as_ref()
@@ -108,6 +135,19 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .filter(active)
         {
+            if run.trigger != "manual"
+                && self
+                    .automation_store
+                    .get(&run.automation_id)
+                    .is_some_and(|a| {
+                        a.task_request["standInCalendar"].is_object() && !memory_review(&a)
+                    })
+            {
+                if run.status == AutomationRunStatus::Running {
+                    self.reconcile_arrangement(&run).await?;
+                }
+                continue;
+            }
             let owner = run
                 .coordination
                 .as_ref()
@@ -168,7 +208,10 @@ impl RuntimeWorkRpcHandler {
         Ok(receipt)
     }
 
-    fn current_arrangement(&self, run: &AutomationRun) -> Result<Automation, AppIpcError> {
+    pub(super) fn current_arrangement(
+        &self,
+        run: &AutomationRun,
+    ) -> Result<Automation, AppIpcError> {
         let binding = run
             .coordination
             .as_ref()
@@ -320,7 +363,7 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    async fn dispatch_arrangement(
+    pub(super) async fn dispatch_arrangement(
         &self,
         run: &AutomationRun,
         settings: &Value,

@@ -26,7 +26,6 @@ from app.schemas.project import (
     ProjectCreate,
     ProjectDeviceSessionCreate,
     ProjectDeviceSessionResponse,
-    ProjectListResponse,
     ProjectResponse,
     ProjectTaskCreate,
     ProjectTaskListResponse,
@@ -51,28 +50,6 @@ ClientOriginQuery = Annotated[
         description="Client surface to scope projects and project chats",
     ),
 ]
-
-
-# MIGRATION-CANDIDATE(api="GET /api/projects"): remove after final confirmation.
-# @router.get("", response_model=ProjectListResponse)
-def list_projects(
-    include_tasks: bool = Query(
-        True, description="Whether to include tasks in response"
-    ),
-    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    List all projects for the current user.
-    Returns projects with optional task lists.
-    """
-    return project_service.list_projects(
-        db=db,
-        user_id=current_user.id,
-        include_tasks=include_tasks,
-        client_origin=client_origin,
-    )
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)

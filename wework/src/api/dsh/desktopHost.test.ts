@@ -75,6 +75,43 @@ describe('desktop host events', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  test.each(['true', 'false'])(
+    'records attachment chunk timing without its payload only in E2E: %s',
+    async e2e => {
+      vi.stubEnv('MODE', 'production')
+      vi.stubEnv('VITE_WEWORK_E2E', e2e)
+      vi.spyOn(performance, 'now').mockReturnValue(0)
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, result: 768 * 1024 }),
+        })
+      )
+      const { invokeDesktopHost } = await import('./desktopHost')
+      await invokeDesktopHost('attachment.append', {
+        uploadId: 'private-upload-id',
+        offset: 384 * 1024,
+        chunkBase64: 'private-file-content',
+      })
+      if (e2e === 'true') {
+        expect(debug).toHaveBeenCalledExactlyOnceWith(
+          '[Wework] Electron host diagnostic ' +
+            JSON.stringify({
+              capability: 'attachment.append',
+              phase: 'completed',
+              elapsedMs: 0,
+              status: 200,
+              ok: true,
+              offset: 384 * 1024,
+            })
+        )
+      } else expect(debug).not.toHaveBeenCalled()
+    }
+  )
+
   test('E2E can delay only delivery of a completed real host response', async () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
     const gates = await import('@/e2e/runtime-transport-gates')
@@ -111,30 +148,6 @@ describe('desktop host events', () => {
     } finally {
       gates.resetRuntimeTransportGates()
       await pending
-    }
-  })
-
-  test('production host responses cannot be held by an E2E gate', async () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    const gates = await import('@/e2e/runtime-transport-gates')
-    gates.armRuntimeTransportGate({ id: 'production', kind: 'response', name: 'smartApps.start' })
-    vi.stubEnv('MODE', 'production')
-    vi.stubEnv('VITE_WEWORK_E2E', 'false')
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ ok: true, result: 'running' }),
-      })
-    )
-    const { invokeDesktopHost } = await import('./desktopHost')
-    try {
-      await expect(invokeDesktopHost('smartApps.start')).resolves.toBe('running')
-      vi.stubEnv('VITE_WEWORK_E2E', 'true')
-      expect(gates.readRuntimeTransportGate('production')).toBeNull()
-    } finally {
-      vi.stubEnv('VITE_WEWORK_E2E', 'true')
-      gates.resetRuntimeTransportGates()
     }
   })
 

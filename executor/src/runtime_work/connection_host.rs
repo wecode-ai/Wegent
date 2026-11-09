@@ -60,6 +60,23 @@ fn host_is_live(host: &Value) -> bool {
         .is_some_and(|at| chrono::Utc::now().timestamp() - at <= 15)
 }
 
+pub(crate) fn provider_guidance() -> Vec<Value> {
+    HOST.get()
+        .and_then(|host| host.lock().ok())
+        .and_then(|host| host.as_ref().map(live_provider_guidance))
+        .unwrap_or_default()
+}
+
+fn live_provider_guidance(host: &Value) -> Vec<Value> {
+    if !host_is_live(host) {
+        return Vec::new();
+    }
+    host["providerGuidance"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
 pub(crate) fn declared_dependency(
     provider: &str,
     source: &Value,
@@ -131,21 +148,107 @@ pub(crate) async fn call(
         .map_err(|_| unavailable())?;
     let body: Value = response.json().await.map_err(|_| unavailable())?;
     if body["ok"] != true {
-        return Err(AppIpcError::new(
-            body["error"]["code"]
-                .as_str()
-                .unwrap_or("connection_failed"),
-            body["error"]["message"]
-                .as_str()
-                .unwrap_or("Connection failed"),
-        ));
+        return Err(response_error(method, &body["error"]));
     }
     Ok(body["result"].clone())
+}
+
+pub(super) fn collection_runtime_retry_after_ms(code: &str) -> Option<u64> {
+    // A runtime read timeout is not a provider rejection or an action outcome.
+    (code == "request_timeout").then_some(30_000)
+}
+
+fn response_error(method: &str, error: &Value) -> AppIpcError {
+    let failure = AppIpcError::new(
+        error["code"].as_str().unwrap_or("connection_failed"),
+        error["message"].as_str().unwrap_or("Connection failed"),
+    );
+    if method == "collect"
+        && !matches!(
+            failure.code.as_str(),
+            "connector_auth_required"
+                | "connection_response_invalid"
+                | "invalid_connection"
+                | "forbidden"
+                | "connection_tool_denied"
+                | "connection_cli_request_failed"
+                | "connection_cli_response_invalid"
+        )
+    {
+        if let Some(delay) = error["retryAfterMs"]
+            .as_u64()
+            .filter(|delay| (1..=3_600_000).contains(delay))
+            .or_else(|| collection_runtime_retry_after_ms(&failure.code))
+        {
+            return failure.with_retry_after_ms(delay);
+        }
+    }
+    failure
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_guidance_expires_with_the_registered_host() {
+        let mut host = json!({"registeredAt":chrono::Utc::now().timestamp(),"providerGuidance":[{"providerId":"mail","assistance":{"observe":["new mail"]}}]});
+        assert_eq!(live_provider_guidance(&host).len(), 1);
+        host["providerGuidance"] = json!([]);
+        assert!(live_provider_guidance(&host).is_empty());
+        host["providerGuidance"] = json!([{"providerId":"mail"}]);
+        host["registeredAt"] = json!(chrono::Utc::now().timestamp() - 30);
+        assert!(live_provider_guidance(&host).is_empty());
+    }
+
+    #[test]
+    fn collection_retry_metadata_is_bounded_and_never_authorizes_action_replay() {
+        let error =
+            json!({"code":"plugin_transport_failed","message":"Offline","retryAfterMs":45000});
+        assert_eq!(
+            response_error("collect", &error).retry_after_ms,
+            Some(45000)
+        );
+        for code in [
+            "connector_auth_required",
+            "connection_response_invalid",
+            "invalid_connection",
+            "forbidden",
+            "connection_tool_denied",
+            "connection_cli_request_failed",
+            "connection_cli_response_invalid",
+        ] {
+            let mut permanent = error.clone();
+            permanent["code"] = json!(code);
+            assert_eq!(response_error("collect", &permanent).retry_after_ms, None);
+        }
+        for method in ["executeAction", "readSource", "initialize", "validate"] {
+            assert_eq!(response_error(method, &error).retry_after_ms, None);
+        }
+        for delay in [
+            json!(0),
+            json!(-1),
+            json!(3600001),
+            json!("45000"),
+            json!(1.5),
+        ] {
+            let mut invalid = error.clone();
+            invalid["retryAfterMs"] = delay;
+            assert_eq!(response_error("collect", &invalid).retry_after_ms, None);
+        }
+    }
+
+    #[test]
+    fn runtime_timeouts_retry_collection_only_without_provider_retry_metadata() {
+        let error = json!({"code":"request_timeout","message":"Executor read timed out"});
+        assert_eq!(
+            response_error("collect", &error).retry_after_ms,
+            Some(30_000)
+        );
+        for method in ["executeAction", "readSource", "initialize", "validate"] {
+            assert_eq!(response_error(method, &error).retry_after_ms, None);
+        }
+    }
 
     #[test]
     fn connection_mcp_dependency_grants_are_exact_and_read_tools_come_from_the_host() {

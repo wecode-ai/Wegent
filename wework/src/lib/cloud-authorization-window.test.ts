@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { openExternalUrl } from './external-links'
 import { openCloudAuthorizationWindow } from './cloud-authorization-window'

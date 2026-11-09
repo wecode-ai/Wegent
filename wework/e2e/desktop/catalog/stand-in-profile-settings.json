@@ -1,0 +1,5 @@
+{
+  "order": 35000,
+  "scenario": "./scenarios/stand-in-scheduled-context.scenario.mjs",
+  "scenarioOnly": true
+}

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createUpgradeScenario } from './app-upgrade.scenario.mjs'
+import { assertRetainedSourceOwnership } from '../modules/retained-source-ownership.mjs'
 
 /** Extend the shared real-package flow without repeating its upgrade or rollback. */
 export async function createDesktopScenario(options) {
@@ -11,7 +12,7 @@ export async function createDesktopScenario(options) {
   // A retained later installation reproduces the delivered source's pending
   // activation without fabricating component state or changing program bytes.
   if (pair.kind !== 'regression' && !pair.from.installedSource) return scenario
-  if (pair.from.installedSource) {
+  if (pair.from.installedSource && options.checkpoint === 'app-rollback') {
     const prepareSource = scenario.prepareApp
     scenario.prepareApp = async preparation => {
       if (pair.transport === 'default-update-route') await prepareSource(preparation)
@@ -53,17 +54,23 @@ export async function createDesktopScenario(options) {
     const installed = (await readdir(slots)).filter(id => id.startsWith('installed-'))
     assert.equal(installed.length, 1)
     const baseline = JSON.parse(await readFile(join(slots, installed[0], 'release.json'), 'utf8'))
-    assert.equal(baseline.executable, running.hostExecutable, 'The running host was copied')
-    assert.equal(baseline.componentDataDirectory, data, 'The running components were replaced')
-    const retained = await stat(baseline.profileRoot, { bigint: true })
-    assert.equal(retained.dev, original.dev, 'The retained profile moved to another filesystem')
-    assert.equal(
-      retained.ino,
-      original.ino,
-      'Rollback must retain the original stopped profile, rather than prepare a copy'
-    )
+    const retainsLiveProfile = pair.kind === 'regression' || options.checkpoint === 'app-rollback'
+    await assertRetainedSourceOwnership({
+      baseline,
+      slot: join(slots, installed[0]),
+      running,
+      original,
+      data,
+      retainsLiveProfile,
+    })
     const stages = await readFile(join(data, 'logs/release-preparation.log'), 'utf8')
-    assert.equal(stages.includes(installed[0]), false, 'The installed source was prepared again')
+    assert.equal(
+      stages.includes(installed[0]),
+      !retainsLiveProfile,
+      retainsLiveProfile
+        ? 'The installed source was prepared again'
+        : 'The legacy rollback copy was not prepared'
+    )
   }
   return scenario
 }

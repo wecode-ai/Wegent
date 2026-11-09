@@ -1,0 +1,21 @@
+{
+  "revision": "f3a7c9e1b2d4",
+  "parents": [
+    "e6f1a2b3c4d5"
+  ],
+  "source": "20261010_f3a7c9e1b2d4_add_loop_item_start_at.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_items ADD COLUMN start_at DATETIME NOT NULL COMMENT '开始时间，纪元时间表示未设置' DEFAULT '1970-01-01 00:00:01'"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_items DROP COLUMN start_at"
+      ]
+    }
+  ]
+}

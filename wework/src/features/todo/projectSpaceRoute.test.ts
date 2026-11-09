@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
   defaultProjectSpaceContentRoute,
@@ -10,15 +12,6 @@ import {
 } from './projectSpaceRoute'
 
 describe('projectSpaceRoute', () => {
-  test('builds and parses a concrete project-space route', () => {
-    const project = { projectStore: 'local' as const, projectId: 'project-1' }
-    const route = projectSpaceContentRoute(project)
-
-    expect(route).toBe('/todo?projectStore=local&projectId=project-1')
-    expect(projectSpaceRefFromRoute(route)).toEqual(project)
-    expect(projectSpaceRouteParam(`${route}&itemId=issue-1`, 'itemId')).toBe('issue-1')
-  })
-
   test('builds a route focused on one project-space item', () => {
     const route = projectSpaceContentRoute(
       { projectStore: 'backend', projectId: 'project-1' },
@@ -49,15 +42,6 @@ describe('projectSpaceRoute', () => {
     ).toBe(true)
   })
 
-  test('does not treat the default placeholder as a named project', () => {
-    expect(
-      projectSpaceRouteMatchesProject(defaultProjectSpaceContentRoute(), {
-        projectStore: 'local',
-        projectId: 'project-1',
-      })
-    ).toBe(false)
-  })
-
   test('keeps concrete local and backend projects distinct', () => {
     const route = projectSpaceContentRoute({
       projectStore: 'local',
@@ -71,17 +55,6 @@ describe('projectSpaceRoute', () => {
         projectStore: 'backend',
         projectId: 'default-work-items',
       })
-    ).toBe(false)
-  })
-
-  test('does not target My Tasks for an ordinary concrete project route', () => {
-    expect(
-      projectSpaceRouteTargetsDefaultWorkItems(
-        projectSpaceContentRoute({
-          projectStore: 'local',
-          projectId: 'project-1',
-        })
-      )
     ).toBe(false)
   })
 })

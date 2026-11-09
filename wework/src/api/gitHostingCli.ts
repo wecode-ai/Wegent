@@ -10,7 +10,7 @@ export interface GitHostingCliStatus {
   authenticated: boolean
   executablePath: string | null
   version: string | null
-  detectionError: 'timeout' | null
+  detectionError: string | null
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -32,7 +32,7 @@ function normalizeStatus(provider: GitHostingCliProvider, value: unknown): GitHo
         : null,
     version:
       typeof record.version === 'string' && record.version.trim() ? record.version.trim() : null,
-    detectionError: record.detectionError === 'timeout' ? 'timeout' : null,
+    detectionError: typeof record.detectionError === 'string' ? record.detectionError : null,
   }
 }
 

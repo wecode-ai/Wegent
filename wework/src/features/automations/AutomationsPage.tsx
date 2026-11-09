@@ -8,6 +8,7 @@ import {
   type Ref,
 } from 'react'
 import { Menu } from 'lucide-react'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
@@ -57,6 +58,9 @@ export function AutomationsPage({
   embedded = false,
   standInOwner,
   standInDeviceId,
+  initialAutomationId,
+  detailOnly = false,
+  onClose,
   onDirtyChange,
   onNavigate,
   ref,
@@ -66,6 +70,9 @@ export function AutomationsPage({
   onDirtyChange?(dirty: boolean): void
   onNavigate?(action: () => void): void
   standInDeviceId?: string
+  initialAutomationId?: string
+  detailOnly?: boolean
+  onClose?(): void
   standInOwner?: { userId: number; roleId: string }
 } = {}) {
   const { t, i18n } = useTranslation('common')
@@ -136,7 +143,7 @@ export function AutomationsPage({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const initialAutomationLoadCompletedRef = useRef(false)
+  const initialSelectionResolvedRef = useRef(false)
   const runListSignatureRef = useRef('')
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const locale = i18n.language
@@ -158,29 +165,32 @@ export function AutomationsPage({
   const ownerRoleId = standInOwner?.roleId
   const loadAutomations = useCallback(async () => {
     if (!automationApi) {
-      setError(t('workbench.automations_unavailable', '当前运行环境不支持自动化'))
+      setError(t('todo.automations_unavailable', '当前运行环境不支持自动化'))
       setLoading(false)
       return
     }
     try {
       const response = await automationApi.listAutomations()
       const items = response.items.filter(item => {
-        if (ownerUserId === undefined) return true
+        const calendar = Boolean(item.taskRequest?.standInCalendar)
+        if (ownerUserId === undefined) return !calendar
+        if (!calendar) return false
         const owner = item.taskRequest?.standInOwner
-        if (owner)
-          return (
-            owner.userId === ownerUserId &&
-            (ownerRoleId === '@primary' || owner.roleId === ownerRoleId)
-          )
-        return ownerRoleId === '@primary'
+        if (owner) return owner.userId === ownerUserId && owner.roleId === ownerRoleId
+        return false
       })
       setAutomations(items)
-      const shouldSelectInitialAutomation = !initialAutomationLoadCompletedRef.current
-      initialAutomationLoadCompletedRef.current = true
-      if (shouldSelectInitialAutomation && items[0]) {
-        setSelectedAutomationId(items[0].id)
-        setEditing(items[0])
-        setDraft(automationDraftFromAutomation(items[0], state.runtimeWork))
+      const shouldSelectInitialAutomation = !initialSelectionResolvedRef.current
+      initialSelectionResolvedRef.current = true
+      const initial = initialAutomationId
+        ? items.find(item => item.id === initialAutomationId)
+        : ownerUserId === undefined
+          ? items[0]
+          : undefined
+      if (shouldSelectInitialAutomation && initial) {
+        setSelectedAutomationId(initial.id)
+        setEditing(initial)
+        setDraft(automationDraftFromAutomation(initial, state.runtimeWork))
         setDirty(false)
       }
       setError(null)
@@ -188,12 +198,12 @@ export function AutomationsPage({
       setError(
         loadError instanceof Error
           ? loadError.message
-          : t('workbench.automations_load_failed', '自动化加载失败')
+          : t('todo.automations_load_failed', '自动化加载失败')
       )
     } finally {
       setLoading(false)
     }
-  }, [automationApi, state.runtimeWork, t, ownerUserId, ownerRoleId])
+  }, [automationApi, state.runtimeWork, t, ownerUserId, ownerRoleId, initialAutomationId])
 
   const loadRuns = useCallback(
     async (automationId: string) => {
@@ -212,7 +222,7 @@ export function AutomationsPage({
         setError(
           loadError instanceof Error
             ? loadError.message
-            : t('workbench.automation_runs_load_failed', '运行记录加载失败')
+            : t('todo.automation_runs_load_failed', '运行记录加载失败')
         )
       }
     },
@@ -286,9 +296,7 @@ export function AutomationsPage({
     ]
   )
 
-  const openCreate = (
-    template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
-  ) =>
+  const openCreate = (template?: Partial<AutomationDraft>) =>
     requestLeave(() => {
       const device = standInDeviceId
         ? state.devices.find(item => item.device_id === standInDeviceId)
@@ -302,14 +310,47 @@ export function AutomationsPage({
         projectChat.selectedModelOptions
       )
       if (template) Object.assign(nextDraft, template)
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(nextDraft)
       setDirty(true)
     })
 
+  const openReviewTemplate = async () => {
+    if (!standInOwner || !standInDeviceId || !services.standInApi) return
+    const existing = automations.find(
+      item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
+    )
+    if (existing) {
+      selectAutomation(existing)
+      return
+    }
+    try {
+      const { reviewTemplate } = await services.standInApi.onboarding(
+        standInOwner.userId,
+        standInDeviceId,
+        locale
+      )
+      const template = automationDraftFromAutomation({ ...reviewTemplate, source: 'local' })
+      openCreate({
+        name: template.name,
+        prompt: template.prompt,
+        cronPreset: template.cronPreset,
+        weeklyDay: template.weeklyDay,
+        cronExpression: template.cronExpression,
+        cronTime: template.cronTime,
+        timezone: template.timezone,
+        calendarTemplate: template.calendarTemplate,
+      })
+    } catch (cause) {
+      setError(getStandInErrorMessage(cause))
+    }
+  }
+
   const selectAutomation = (automation: Automation) =>
     requestLeave(() => {
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(automation.id)
       setEditing(automation)
       setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
@@ -350,12 +391,38 @@ export function AutomationsPage({
 
   const buildMutation = (): AutomationMutation => {
     if (!draft) throw new Error('Automation draft is missing')
+    const owner = editing?.taskRequest?.standInOwner ?? standInOwner
+    if (standInOwner) {
+      return {
+        id: editing?.id,
+        version: editing?.version,
+        source: draft.source,
+        name: draft.name.trim(),
+        description: '',
+        prompt: draft.prompt.trim(),
+        schedule: scheduleFromAutomationDraft(draft),
+        timezone: draft.timezone,
+        enabled: editing?.enabled ?? true,
+        conversationMode: 'independent',
+        notificationPolicy: draft.notificationPolicy,
+        taskRequest: {
+          schemaVersion: 2,
+          standInOwner: owner,
+          standInCalendar: draft.calendarTemplate ? { template: draft.calendarTemplate } : {},
+          deviceId: draft.deviceId,
+          runtime: 'codex',
+          message: draft.prompt.trim(),
+          title: draft.name.trim(),
+        },
+        continuationPayload: null,
+      }
+    }
     const initialGoal = initialGoalFromAutomationDraft(draft)
     if (draft.conversationMode === 'continue_thread' && !draft.continuationAddress) {
-      throw new Error(t('workbench.automation_target_task_required', '请选择一个可用的已固定任务'))
+      throw new Error(t('todo.automation_target_task_required', '请选择一个可用的已固定任务'))
     }
     if (!draft.deviceId) {
-      throw new Error(t('workbench.automation_target_required', '请选择设备'))
+      throw new Error(t('todo.automation_target_required', '请选择设备'))
     }
     const projectTarget =
       draft.conversationMode === 'independent'
@@ -419,7 +486,7 @@ export function AutomationsPage({
   const saveAutomation = async () => {
     if (!automationApi || !draft) return
     if (!draft.name.trim() || !draft.prompt.trim()) {
-      setDraftError(t('workbench.automation_name_prompt_required', '请填写名称和任务说明'))
+      setDraftError(t('todo.automation_name_prompt_required', '请填写名称和任务说明'))
       return
     }
     setDraftError(null)
@@ -434,13 +501,21 @@ export function AutomationsPage({
       setDraft(automationDraftFromAutomation(response.automation))
       setDirty(false)
       await loadAutomations()
+      if (detailOnly) {
+        onClose?.()
+      } else if (standInOwner) {
+        setSelectedAutomationId(null)
+        setEditing(null)
+        setDraft(null)
+        setRuns([])
+      }
       track('automation_action_completed', { action: editing ? 'update' : 'create' })
     } catch (saveError) {
       track('operation_failed', { operation: 'automation_save' })
       setError(
         saveError instanceof Error
           ? saveError.message
-          : t('workbench.automation_save_failed', '保存自动化失败')
+          : t('todo.automation_save_failed', '保存自动化失败')
       )
     } finally {
       setSaving(false)
@@ -480,9 +555,10 @@ export function AutomationsPage({
 
   const deleteAutomation = async (automation: Automation) => {
     if (!automationApi) return
-    if (!window.confirm(t('workbench.automation_delete_confirm', '删除这个自动化？'))) return
+    if (!window.confirm(t('todo.automation_delete_confirm', '删除这个自动化？'))) return
     try {
       await automationApi.deleteAutomation(automation.id)
+      if (detailOnly) onClose?.()
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)
@@ -497,6 +573,11 @@ export function AutomationsPage({
 
   const closeDetail = () =>
     requestLeave(() => {
+      if (detailOnly) {
+        onClose?.()
+        return
+      }
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)
@@ -535,7 +616,9 @@ export function AutomationsPage({
   const hasWorkspace = automations.length > 0 || Boolean(draft)
 
   return (
-    <div className="relative flex h-full overflow-hidden bg-background text-text-primary">
+    <div
+      className={`relative flex min-h-0 overflow-hidden bg-background text-text-primary ${standInOwner && !draft ? 'shrink-0' : 'h-full flex-1'}`}
+    >
       <ConfirmDialog
         open={pendingNavigation !== null}
         onClose={() => setPendingNavigation(null)}
@@ -572,6 +655,7 @@ export function AutomationsPage({
           collapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
           onNewChat={handleNewChat}
+          onOpenStandIn={() => requestLeave(() => navigateTo('/stand-in'))}
           onStartStandaloneChat={handleStandaloneChat}
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}
@@ -648,30 +732,64 @@ export function AutomationsPage({
             onToggle={() => setSidebarCollapsed(false)}
           />
         )}
-        {hasWorkspace ? (
+        {detailOnly && !draft ? (
+          <div
+            data-testid="automation-detail-status"
+            className="p-4 text-sm text-text-secondary"
+            role={loading ? 'status' : 'alert'}
+          >
+            {loading ? t('standIn.loading') : error || t('todo.automation_not_found')}
+            {!loading && (
+              <button
+                type="button"
+                data-testid="automation-detail-retry"
+                onClick={() => void loadAutomations()}
+                className="ml-2 min-h-8 underline"
+              >
+                {t('standIn.reload')}
+              </button>
+            )}
+          </div>
+        ) : hasWorkspace ? (
           <>
-            <AutomationListPane
-              calendar={Boolean(standInOwner)}
-              automations={filteredAutomations}
-              allAutomations={automations}
-              query={query}
-              statusFilter={statusFilter}
-              selectedAutomationId={selectedAutomationId}
-              locale={locale}
-              loading={loading}
-              error={error}
-              detailOpen={Boolean(draft)}
-              mobileDetailOpen={isMobile && Boolean(draft)}
-              onQueryChange={setQuery}
-              onFilterChange={setStatusFilter}
-              onSelect={selectAutomation}
-              onCreate={openCreate}
-              onClearError={() => setError(null)}
-            />
+            {!detailOnly && (!standInOwner || !draft) && (
+              <AutomationListPane
+                calendar={Boolean(standInOwner)}
+                automations={filteredAutomations}
+                allAutomations={automations}
+                query={query}
+                statusFilter={statusFilter}
+                selectedAutomationId={selectedAutomationId}
+                locale={locale}
+                loading={loading}
+                error={error}
+                detailOpen={Boolean(draft)}
+                mobileDetailOpen={isMobile && Boolean(draft)}
+                onQueryChange={setQuery}
+                onFilterChange={setStatusFilter}
+                onSelect={selectAutomation}
+                onCreate={openCreate}
+                onReviewTemplate={
+                  standInOwner?.roleId === '@primary' &&
+                  services.standInApi &&
+                  !loading &&
+                  !error &&
+                  !automations.some(
+                    item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
+                  )
+                    ? () => void openReviewTemplate()
+                    : undefined
+                }
+                onClearError={() => setError(null)}
+              />
+            )}
             {draft ? (
               <AutomationDetailWorkspace
-                validationError={draftError}
+                dialogMode={detailOnly}
+                compact={Boolean(standInOwner)}
+                validationError={draftError || (detailOnly ? error : null)}
                 draft={draft}
+                calendarMode={Boolean(standInOwner)}
                 inheritStandIn={Boolean(standInOwner || editing?.taskRequest?.standInOwner)}
                 automation={editing}
                 runs={runs}
@@ -706,6 +824,11 @@ export function AutomationsPage({
             query={query}
             onQueryChange={setQuery}
             onCreate={openCreate}
+            onReviewTemplate={
+              standInOwner?.roleId === '@primary' && services.standInApi && !loading && !error
+                ? () => void openReviewTemplate()
+                : undefined
+            }
             onClearError={() => setError(null)}
           />
         )}

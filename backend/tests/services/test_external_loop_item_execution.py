@@ -168,6 +168,8 @@ def _mock_issue(monkeypatch: pytest.MonkeyPatch) -> None:
             issue["title"] = payload["title"]
         if payload.get("state_event") == "close":
             issue["state"] = "closed"
+        if "state" in payload:
+            issue["state"] = payload["state"]
         issue["updated_at"] = "2026-08-07T00:01:00Z"
         state["issue"] = issue
         return dict(issue)
@@ -563,8 +565,14 @@ def test_external_parent_remains_stored_in_description(
     assert created["description"] == "Child details"
 
 
-def test_completed_external_issue_stays_open_and_archive_closes_it(
-    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "issue_status", ["inbox", "in_progress", "in_review", "completed"]
+)
+def test_editable_external_issue_stays_open_and_archive_closes_it(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    issue_status: str,
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
     issue = _issue()
@@ -590,14 +598,32 @@ def test_completed_external_issue_stays_open_and_archive_closes_it(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemUpdate(version=1, status="completed"),
+        LoopItemUpdate(version=1, status=issue_status),
     )
     external_loop_item_provider.archive(test_db, _item_id(project), test_user.id)
 
-    assert updated["status"] == "completed"
+    assert updated["status"] == issue_status
     assert writes[0]["state"] == "opened"
-    assert "wegent:status:completed" in writes[0]["labels"]
+    assert f"wegent:status:{issue_status}" in writes[0]["labels"]
     assert writes[1] == {"state": "closed"}
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_list_issues_state",
+        lambda _project, requested_state: (
+            [issue] if issue["state"] == requested_state else []
+        ),
+    )
+    archived, next_cursor = external_loop_item_provider.list_archived(
+        test_db, project.id, test_user.id, offset=0, limit=50
+    )
+    assert next_cursor is None
+    assert [item["id"] for item in archived] == [_item_id(project)]
+    assert archived[0]["status"] == issue_status
+    restored = external_loop_item_provider.restore(
+        test_db, _item_id(project), test_user.id
+    )
+    assert restored[0]["status"] == issue_status
+    assert issue["state"] == "opened"
 
 
 def test_external_restore_compensates_reopened_issues_on_failure(
@@ -1298,3 +1324,38 @@ def test_external_assigned_task_chat_start_creates_message(
     )
     assert row is not None
     assert row.runtime_task_id == "codex-queue-test"
+
+
+@pytest.mark.parametrize("execution_status", ["queued", "waiting_runtime"])
+def test_external_archive_cancels_unstarted_execution(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    execution_status: str,
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    _mock_issue(monkeypatch)
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_list_issues",
+        lambda target: [external_loop_item_provider._get_issue(target, 1)],
+    )
+    external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+    )
+    execution = _active_execution(test_db, _item_id(project))
+    assert execution is not None
+
+    execution.status = execution_status
+    test_db.commit()
+
+    external_loop_item_provider.archive(test_db, _item_id(project), test_user.id)
+
+    test_db.refresh(execution)
+    assert execution.status == "cancelled"
+    assert _active_execution(test_db, _item_id(project)) is None
+    assert external_loop_item_provider._get_issue(project, 1)["state"] == "closed"

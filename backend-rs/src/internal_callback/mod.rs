@@ -20,11 +20,12 @@ pub(crate) mod emitter;
 pub(crate) mod event;
 pub(crate) mod parser;
 mod pipeline;
-pub(crate) mod py_json;
+pub(crate) use wegent_python_compat::py_json;
 pub(crate) mod session;
 mod socketio;
 
 pub(crate) use session::is_cancelled;
+pub(crate) use socketio::publish_chat_start;
 
 #[cfg(test)]
 mod tests;
@@ -82,7 +83,7 @@ async fn handle_callback(
     let request = parse_request(&body)?;
 
     let parser = parser::shared();
-    let Some(mut event) = parser
+    let Some(event) = parser
         .parse(
             request.task_id,
             request.subtask_id,
@@ -95,16 +96,33 @@ async fn handle_callback(
         return Ok(CallbackResponse::skipped());
     };
 
+    process_execution_event(
+        state,
+        event,
+        request.executor_name.as_deref(),
+        request.executor_namespace.as_deref(),
+    )
+    .await?;
+    Ok(CallbackResponse::ok())
+}
+
+/// Apply one executor event through the shared persistence and notification path.
+pub(crate) async fn process_execution_event(
+    state: &AppState,
+    mut event: event::ExecutionEvent,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+) -> Result<(), FastApiError> {
     let Some(redis) = state.redis.as_ref() else {
         // The source tolerates an unavailable Redis by swallowing the cache
         // errors and still returning `ok`.
-        return Ok(CallbackResponse::ok());
+        return Ok(());
     };
 
     let terminal_status = completion::terminal_status(&event.event_type);
 
-    let mut emitter =
-        StatusUpdatingEmitter::new(redis.to_owned(), request.task_id, request.subtask_id);
+    prepare_interactive_form_event(&state.interactive_form, &mut event).await;
+    let mut emitter = StatusUpdatingEmitter::new(redis.to_owned(), event.task_id, event.subtask_id);
     if terminal_status.is_none()
         && let Err(error) = emitter.emit(&mut event).await
     {
@@ -122,14 +140,14 @@ async fn handle_callback(
         };
         let (final_result, user_id, auto_advance) = completion::complete_terminal_with_advance(
             &ctx,
-            request.task_id,
-            request.subtask_id,
+            event.task_id,
+            event.subtask_id,
             status,
             event.result.as_ref(),
             event.error.as_deref(),
             event.error_code.as_deref(),
-            request.executor_name.as_deref(),
-            request.executor_namespace.as_deref(),
+            executor_name,
+            executor_namespace,
         )
         .await;
         // `_update_task_status_sync` only schedules the next turn when
@@ -138,7 +156,7 @@ async fn handle_callback(
         let advance = if auto_advance {
             state
                 .task_store
-                .advance_pipeline_stage(&state.mysql, request.task_id, request.subtask_id)
+                .advance_pipeline_stage(&state.mysql, event.task_id, event.subtask_id)
                 .await
                 .map_err(|error| {
                     tracing::error!(%error, "pipeline advancement failed");
@@ -161,12 +179,33 @@ async fn handle_callback(
         }
     }
 
-    if let Err(error) = session::publish_callback_event(redis, request.subtask_id, &event).await {
+    if let Err(error) = session::publish_callback_event(redis, event.subtask_id, &event).await {
         tracing::warn!(%error, "callback channel publish failed");
     }
-    channel::forward_event_to_channel_callbacks(redis, request.task_id, &event).await;
+    channel::forward_event_to_channel_callbacks(redis, event.task_id, &event).await;
 
-    Ok(CallbackResponse::ok())
+    Ok(())
+}
+
+async fn prepare_interactive_form_event(
+    registry: &crate::InteractiveFormRegistry,
+    event: &mut event::ExecutionEvent,
+) {
+    if event.event_type != "tool_result"
+        || !event
+            .tool_name
+            .as_deref()
+            .unwrap_or_default()
+            .contains("interactive_form_question")
+    {
+        return;
+    }
+    if let Some(payload) = registry
+        .render_payload_from_tool_input(event.task_id, event.subtask_id, event.tool_input.as_ref())
+        .await
+    {
+        event.data.insert("render_payload".into(), payload);
+    }
 }
 
 /// The deployment's task/subtask table templates.

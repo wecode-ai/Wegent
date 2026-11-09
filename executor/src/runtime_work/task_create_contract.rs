@@ -134,6 +134,8 @@ enum SupervisorMode {
 struct AdditionalContextEntry {
     kind: AdditionalContextKind,
     value: String,
+    #[serde(default, rename = "runtimePolicy")]
+    runtime_policy: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +173,9 @@ pub(crate) fn validate_runtime_task_create_v2(payload: &Value) -> Result<(), Str
         }
     }
     for (name, context) in &request.additional_context {
+        if context.runtime_policy && !matches!(context.kind, AdditionalContextKind::Application) {
+            return Err("runtimePolicy contributions must have application kind".to_owned());
+        }
         if name.trim().is_empty() || context.value.is_empty() {
             return Err("additionalContext entries require a name and value".to_owned());
         }
@@ -214,5 +219,18 @@ mod tests {
         assert!(validate_runtime_task_create_v2(&request)
             .unwrap_err()
             .contains("modelConfig"));
+    }
+    #[test]
+    fn runtime_policy_metadata_cannot_promote_untrusted_context() {
+        let mut payload = serde_json::json!({"schemaVersion":2,"runtime":"codex","message":"run","additionalContext":{"policy":{"kind":"application","runtimePolicy":true,"value":"Host policy"}}});
+        validate_runtime_task_create_v2(&payload).unwrap();
+        payload["additionalContext"]["policy"]["kind"] = serde_json::json!("untrusted");
+        assert!(validate_runtime_task_create_v2(&payload)
+            .unwrap_err()
+            .contains("application kind"));
+        payload["additionalContext"]["policy"]["runtimePolicy"] = serde_json::json!(false);
+        validate_runtime_task_create_v2(&payload).unwrap();
+        payload["additionalContext"]["policy"]["runtimePolicy"] = serde_json::json!("true");
+        assert!(validate_runtime_task_create_v2(&payload).is_err());
     }
 }

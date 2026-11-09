@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { spawnSync } from 'node:child_process'
 import { copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

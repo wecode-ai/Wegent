@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { RuntimeConversationTurn } from '@/types/workbench'

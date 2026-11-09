@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { gunzipSync } from 'node:zlib'
+import { readRuntimeTranscript } from '../../../../packages/chat-core/src/runtime-transcript-transport.ts'
 import { requestExecutor } from './executor-rpc.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
@@ -106,7 +107,36 @@ function updateFixtureReply(sqliteHome, threadId) {
   }
 }
 
-async function verifyCachedInitialRecovery({
+export async function findTranscriptItemPage(query, request, itemId) {
+  let pageQuery = { ...query }
+  const visited = new Set([pageQuery.beforeCursor])
+  for (;;) {
+    let totalBytes
+    const transcript = await readRuntimeTranscript(pageQuery, async params => {
+      const packet = await request(params)
+      totalBytes ??= packet.transfer?.totalBytes
+      return packet
+    })
+    assert.ok(Array.isArray(transcript.turns), 'Device history must retain canonical turns')
+    const item = transcript.turns.flatMap(turn => turn.items).find(item => item.id === itemId)
+    if (item) return { query: pageQuery, item, totalBytes }
+    assert.equal(
+      transcript.hasMoreBefore,
+      true,
+      `History ended before restoring the seeded item ${itemId}`
+    )
+    const cursor = transcript.beforeCursor
+    assert.ok(
+      typeof cursor === 'string' && cursor.length > 0,
+      'An older history page must have a continuation cursor'
+    )
+    assert.ok(!visited.has(cursor), 'History returned a repeated continuation cursor')
+    visited.add(cursor)
+    pageQuery = { ...query, beforeCursor: cursor }
+  }
+}
+
+export async function verifyCachedInitialRecovery({
   control,
   proxy,
   scope,
@@ -115,7 +145,8 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
-  // Cached messages can appear before the shared initial history read settles.
+  // Cached text can render before the shared snapshot writer settles. Finish
+  // that read before remounting, or the next viewer can reuse its pending reply.
   await control.command(
     'waitFor',
     `${modal} [data-testid="work-item-task-chat-panel"][aria-busy="false"]`
@@ -200,30 +231,30 @@ export async function verifyIssueTranscriptTransfer({
   assert.equal(task?.running, false, 'The real Issue execution must finish before seeding history')
   assert.ok(task?.threadId, 'The Issue must resolve to its actual native session')
   seedLargeOutput(codexSqliteHome, task.threadId, task.workspacePath)
-  const packet = await requestExecutor(
-    control,
-    'runtime.tasks.transcript',
-    {
-      ...address,
-      limit: 5,
-      transcriptProtocolVersion: 2,
-    },
-    timeoutMs
+  // Bounded native pages can place the final assistant ahead of the large tool.
+  // Follow its actual cursor instead of assuming that the tool is on the tail.
+  const {
+    query: pageQuery,
+    item,
+    totalBytes: deviceBytes,
+  } = await findTranscriptItemPage(
+    { ...address, limit: 5 },
+    params => requestExecutor(control, 'runtime.tasks.transcript', params, timeoutMs),
+    'issue-large-history-tool'
   )
-  assert.ok(packet.transfer.totalBytes > 980_000, 'History must exceed the legacy relay limit')
+  assert.ok(deviceBytes > 980_000, 'History must exceed the legacy relay limit')
+  assert.equal(item.block?.tool_output, OUTPUT, 'Device history must preserve the full tool output')
 
   const query = {
-    ...address,
+    ...pageQuery,
     projectSession: { projectId: fixture.project.id, issueId: fixture.issue.id },
     transcriptProtocolVersion: 2,
-    limit: 5,
   }
   // Older HTTP clients still expect one canonical JSON response. Backend must
   // use device chunks internally instead of asking Socket.IO to carry the page.
   const legacy = await request('/api/runtime-work/transcript', {
-    ...address,
+    ...pageQuery,
     projectSession: query.projectSession,
-    limit: query.limit,
   })
   assert.equal(legacy.transcriptProtocolVersion, undefined)
   assert.ok(Array.isArray(legacy.turns), 'Legacy HTTP history must retain canonical turns')
@@ -267,7 +298,7 @@ export async function verifyIssueTranscriptTransfer({
   await reloadMainWindow(control, 'The large Issue history did not reload')
   // The reload remounts the tab strip, so the fixed board tab is not queryable yet.
   await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
-    timeoutMs,
+    visible: true,
   })
   await control.command(
     'waitFor',

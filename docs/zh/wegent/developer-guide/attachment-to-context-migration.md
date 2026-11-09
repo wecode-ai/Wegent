@@ -88,7 +88,7 @@ alembic upgrade head
 alembic downgrade -1
 ```
 
-迁移文件：`backend/alembic/versions/o5p6q7r8s9t0_add_subtask_contexts_table.py`
+迁移文件：`backend-rs/migrations/reference/versions/o5p6q7r8s9t0_add_subtask_contexts_table.py`
 
 ## 代码变更
 

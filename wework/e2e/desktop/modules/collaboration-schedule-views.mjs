@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 
 function dateKey(value) {
   const year = value.getFullYear()
@@ -101,9 +102,6 @@ export async function verifyCollaborationScheduleViews({
   await control.command('fill', '[data-testid="cloud-todo-detail-due-date"]', {
     value: keys.initialEnd,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
     visible: false,
     timeoutMs,
@@ -114,7 +112,7 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs,
   })
 
-  await control.command('click', scoped('[data-testid="collaboration-calendar-tab"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'calendar')
   await control.command('waitFor', scoped('[data-testid="collaboration-calendar"]'), {
     visible: true,
     timeoutMs,
@@ -177,7 +175,7 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs
   )
 
-  await control.command('click', scoped('[data-testid="collaboration-gantt-tab"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'gantt')
   await control.command('waitFor', scoped('[data-testid="collaboration-gantt"]'), {
     visible: true,
     timeoutMs,
@@ -243,7 +241,7 @@ export async function verifyCollaborationScheduleViews({
   )
   await capture(control, 'offline-local-project-space-03-gantt-schedule.png')
 
-  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table')
   await control.command('waitFor', scoped('[data-testid="collaboration-issue-table"]'), {
     text: issueTitle,
     visible: true,

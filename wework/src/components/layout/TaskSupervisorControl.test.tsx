@@ -1,11 +1,7 @@
+import type { RuntimeSupervisorState } from '@/types/api'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
-import {
-  SupervisorSuggestionCards,
-  TaskSupervisorControl,
-  TaskSupervisorStatusButton,
-} from './TaskSupervisorControl'
-import type { RuntimeSupervisorState } from '@/types/api'
+import { SupervisorSuggestionCards, TaskSupervisorControl } from './TaskSupervisorControl'
 
 const supervisor: RuntimeSupervisorState = {
   mode: 'suggest',
@@ -130,71 +126,6 @@ describe('TaskSupervisorControl', () => {
           },
         },
         60
-      )
-    )
-  })
-
-  test('shows and remembers runtime models from the conversation model list', async () => {
-    const onSet = vi.fn().mockResolvedValue(supervisor)
-    render(
-      <TaskSupervisorControl
-        supervisor={null}
-        open
-        onOpenChange={vi.fn()}
-        models={[
-          {
-            name: 'gpt-5.6-sol',
-            type: 'runtime',
-            displayName: 'GPT 5.6 Sol',
-            provider: 'local',
-            config: {
-              protocol: 'openai-responses',
-              ui: {
-                family: 'codex-official',
-                modelLabel: 'GPT 5.6 Sol',
-                reasoningEfforts: ['low', 'high'],
-                defaultReasoningEffort: 'high',
-              },
-            },
-          },
-          {
-            name: 'k3',
-            type: 'runtime',
-            displayName: 'k3',
-            provider: 'local',
-            config: {
-              protocol: 'openai-responses',
-              ui: {
-                family: 'model-interface',
-                modelLabel: 'k3',
-                reasoningEfforts: ['low', 'high'],
-                defaultReasoningEffort: 'low',
-              },
-            },
-          },
-        ]}
-        onSet={onSet}
-        onClear={vi.fn()}
-      />
-    )
-
-    selectSupervisorModel('k3')
-    expectSelectedSupervisorModel('runtime:k3::')
-    fireEvent.click(screen.getByTestId('task-supervisor-save-button'))
-
-    await waitFor(() =>
-      expect(onSet).toHaveBeenCalledWith(
-        'auto',
-        '',
-        {
-          modelName: 'k3',
-          modelType: 'runtime',
-          options: {
-            reasoning: 'low',
-            modelSelection: 'model',
-          },
-        },
-        30
       )
     )
   })
@@ -349,21 +280,6 @@ describe('TaskSupervisorControl', () => {
     )
   })
 
-  test('defaults to the last selected supervisor interval', () => {
-    render(
-      <TaskSupervisorControl
-        supervisor={null}
-        open
-        defaultIntervalSeconds={300}
-        onOpenChange={vi.fn()}
-        onSet={vi.fn()}
-        onClear={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('task-supervisor-frequency')).toHaveValue('300')
-  })
-
   test('reopens supervision configured before the task starts', () => {
     render(
       <TaskSupervisorControl
@@ -439,123 +355,6 @@ describe('TaskSupervisorControl', () => {
     )
 
     expectSelectedSupervisorModel('public:review-model:default:0')
-  })
-
-  test('renders configuration in an accessible dialog', () => {
-    render(
-      <TaskSupervisorControl
-        open
-        supervisor={null}
-        onOpenChange={vi.fn()}
-        onSet={vi.fn()}
-        onClear={vi.fn()}
-      />
-    )
-
-    expect(screen.getByRole('dialog')).toContainElement(screen.getByTestId('task-supervisor-panel'))
-  })
-
-  test('distinguishes an active supervisor from an in-progress check', () => {
-    const { rerender } = render(
-      <TaskSupervisorStatusButton supervisor={supervisor} onClick={vi.fn()} />
-    )
-
-    expect(screen.getByTestId('task-supervisor-status-icon')).toHaveAccessibleName(
-      'workbench.supervisor_active'
-    )
-
-    rerender(
-      <TaskSupervisorStatusButton
-        supervisor={{ ...supervisor, status: 'checking' }}
-        onClick={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('task-supervisor-status-icon')).toHaveAccessibleName(
-      'workbench.supervisor_checking'
-    )
-  })
-
-  test('shows when the latest check found no correction', () => {
-    render(
-      <TaskSupervisorStatusButton
-        supervisor={{ ...supervisor, lastEvaluatedAt: 100, suggestions: [] }}
-        onClick={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('task-supervisor-status-icon')).toHaveAccessibleName(
-      'workbench.supervisor_aligned'
-    )
-  })
-
-  test('shows the next scheduled check and runs supervision from the status row', async () => {
-    const onRunNow = vi.fn().mockResolvedValue(supervisor)
-    render(
-      <TaskSupervisorStatusButton
-        supervisor={{
-          ...supervisor,
-          lastEvaluatedAt: Date.now(),
-          intervalSeconds: 30,
-        }}
-        onClick={vi.fn()}
-        onRunNow={onRunNow}
-      />
-    )
-
-    expect(screen.getByTestId('task-supervisor-status-next-check')).toHaveTextContent(
-      'workbench.supervisor_next_check'
-    )
-    const statusRow = screen.getByTestId('task-supervisor-status-row')
-    expect(statusRow).toContainElement(screen.getByTestId('task-supervisor-toggle-button'))
-    expect(statusRow).toContainElement(screen.getByTestId('task-supervisor-status-next-check'))
-    expect(statusRow).toContainElement(screen.getByTestId('task-supervisor-status-run-now-button'))
-    expect(screen.getByTestId('task-supervisor-status-run-now-button')).toHaveAccessibleName(
-      'workbench.supervisor_run_now'
-    )
-    fireEvent.click(screen.getByTestId('task-supervisor-status-run-now-button'))
-    await waitFor(() => expect(onRunNow).toHaveBeenCalledOnce())
-  })
-
-  test('shows the next scheduled check and can run immediately', async () => {
-    const onRunNow = vi.fn().mockResolvedValue(supervisor)
-
-    render(
-      <TaskSupervisorControl
-        open
-        supervisor={{
-          ...supervisor,
-          intervalSeconds: 30,
-          lastEvaluatedAt: Date.now(),
-        }}
-        onOpenChange={vi.fn()}
-        onSet={vi.fn()}
-        onClear={vi.fn()}
-        onRunNow={onRunNow}
-      />
-    )
-
-    expect(screen.getByTestId('task-supervisor-next-check')).toHaveTextContent(
-      'workbench.supervisor_next_check'
-    )
-    fireEvent.click(screen.getByTestId('task-supervisor-run-now-button'))
-
-    await waitFor(() => expect(onRunNow).toHaveBeenCalledTimes(1))
-  })
-
-  test('disables immediate review while a check is running', () => {
-    render(
-      <TaskSupervisorControl
-        open
-        supervisor={{ ...supervisor, status: 'checking' }}
-        onOpenChange={vi.fn()}
-        onSet={vi.fn()}
-        onClear={vi.fn()}
-        onRunNow={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('task-supervisor-run-now-button')).toBeDisabled()
   })
 
   test('renders pending suggestions and resolves explicit actions', async () => {

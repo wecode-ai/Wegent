@@ -5,6 +5,7 @@
 """API tests for outbound token issuer endpoints."""
 
 import jwt
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -151,6 +152,7 @@ def test_admin_cannot_disable_signing_key_referenced_by_active_issuer(
     )
 
 
+@pytest.mark.xdist_group("production_openapi")
 def test_issue_endpoint_openapi_declares_oauth2_and_api_key_security(
     test_client: TestClient,
 ):

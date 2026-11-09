@@ -113,7 +113,7 @@ test.each([
   {
     name: 'unsigned',
     signingIdentity: '',
-    signIgnore: ['/Contents/Resources/wework-core-plugins/'],
+    signIgnore: [],
   },
   {
     name: 'signed',
@@ -122,9 +122,6 @@ test.each([
       '/Contents/Resources/harness-runtime/',
       '/Contents/Resources/bin/',
       '/Contents/Resources/codex/',
-      '/Contents/Resources/wework-core-plugins/',
-      '/Contents/Resources/wework-app-static/',
-      '/Contents/Resources/bundled-plugins/',
     ],
   },
 ])(
@@ -274,9 +271,9 @@ process.stdout.write(JSON.stringify(config.extraResources.map(resource => resour
     'harness-runtime',
     'bin',
     'codex',
-    'wework-core-plugins',
-    'wework-app-static',
-    'bundled-plugins',
+    'wework-core-plugins.tar.gz',
+    'wework-app-static.tar.gz',
+    'bundled-plugins.tar.gz',
     'components.json',
     'licenses',
     'icons',

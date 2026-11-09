@@ -69,6 +69,7 @@ export function GlobalIconButtonTooltip() {
         event.target instanceof Element ? event.target.closest('[data-tooltip-trigger]') : null
       const button = buttonFromTarget(event.target)
       if (button) schedule(button, event.target)
+      else hide()
     }
     const handlePointerOut = (event: PointerEvent) => {
       if (

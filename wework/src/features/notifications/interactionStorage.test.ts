@@ -25,6 +25,71 @@ const entry = (index: number): InteractionHistory => ({
 
 beforeEach(() => localStorage.clear())
 
+const resolution = {
+  questionIdentity: JSON.stringify(['backend', 'project', 'ISSUE-1', 'review', 'question']),
+  nativeInteractionId: JSON.stringify(['device', 'review', 'item:question']),
+}
+
+it('persists only complete internally consistent canonical resolution identities', () => {
+  const resolved = {
+    ...entry(1),
+    id: resolution.nativeInteractionId,
+    resolvedIssueQuestion: resolution,
+  }
+  saveInteractionState('history', [resolved])
+  expect(readInteractionHistory('history')).toEqual([resolved])
+  for (const invalid of [
+    {},
+    { ...resolution, questionIdentity: 'broken JSON' },
+    { ...resolution, nativeInteractionId: 'different' },
+    {
+      ...resolution,
+      questionIdentity: JSON.stringify(['backend', 'project', 'ISSUE-1', 'other-task', 'question']),
+    },
+  ]) {
+    saveInteractionState('history', [{ ...resolved, resolvedIssueQuestion: invalid }])
+    expect(readInteractionHistory('history')).toEqual([])
+  }
+})
+
+it('upgrades an existing history row with validated resolution without duplicating or rewriting it', () => {
+  const ordinary = { ...entry(1), id: resolution.nativeInteractionId }
+  const upgraded = archiveInteraction([ordinary], {
+    ...ordinary,
+    answeredAt: 5,
+    resolvedIssueQuestion: resolution,
+  })
+  expect(upgraded).toEqual([{ ...ordinary, resolvedIssueQuestion: resolution }])
+  expect(archiveInteraction(upgraded, { ...ordinary, resolvedIssueQuestion: resolution })).toBe(
+    upgraded
+  )
+  expect(archiveInteraction(upgraded, ordinary)).toBe(upgraded)
+})
+
+it('retains source grouping across offline cache and handled-history reloads', async () => {
+  const [item] = await readRuntimeInteractions(interactionTask, {
+    getRuntimeTranscript: vi.fn().mockResolvedValue(interactionTranscript()),
+  } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>)
+  item.source = 'stand_in'
+  saveInteractionState('pending', pendingInteractionCache([item]))
+  expect(readPendingInteractionCache('pending')[0].source).toBe('stand_in')
+  saveInteractionState('history', [{ ...entry(1), source: item.source }])
+  expect(readInteractionHistory('history')[0].source).toBe('stand_in')
+})
+
+it('keeps native source message locators in the offline cache and handled history', async () => {
+  const [item] = await readRuntimeInteractions(interactionTask, {
+    getRuntimeTranscript: vi.fn().mockResolvedValue(interactionTranscript()),
+  } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>)
+  item.sourceMessageIds = ['original-comment']
+  saveInteractionState('pending', pendingInteractionCache([item]))
+  expect(readPendingInteractionCache('pending')[0].sourceMessageIds).toEqual(['original-comment'])
+  saveInteractionState('history', [{ ...entry(1), sourceMessageIds: item.sourceMessageIds }])
+  expect(readInteractionHistory('history')[0].sourceMessageIds).toEqual(['original-comment'])
+  saveInteractionState('history', [{ ...entry(1), sourceMessageIds: [42] }])
+  expect(readInteractionHistory('history')).toEqual([])
+})
+
 it('restores only last-known display metadata, never cached answers or runtime credentials', async () => {
   const task = {
     ...interactionTask,
@@ -67,8 +132,17 @@ it('keeps a storage quota failure from changing the accepted response outcome', 
   const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
     throw new Error('Quota exceeded')
   })
-  expect(() => saveInteractionState('history', [entry(1)])).not.toThrow()
+  let saved: boolean | undefined
+  expect(() => {
+    saved = saveInteractionState('history', [entry(1)])
+  }).not.toThrow()
+  expect(saved).toBe(false)
   expect(log).toHaveBeenCalledOnce()
   write.mockRestore()
   log.mockRestore()
+})
+
+it('acknowledges a successful synchronous storage update', () => {
+  expect(saveInteractionState('history', [entry(1)])).toBe(true)
+  expect(readInteractionHistory('history')).toEqual([entry(1)])
 })

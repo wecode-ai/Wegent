@@ -1,5 +1,6 @@
 import { Check, Copy, ExternalLink, GitBranch, Loader2, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import {
   getGitHostingCliStatus,
   type GitHostingCliProvider,
@@ -55,14 +56,17 @@ export function GitHostingSettingsPage() {
     Partial<Record<GitHostingCliProvider, GitHostingCliStatus>>
   >({})
   const [loading, setLoading] = useState(true)
+  const detectionRevision = useRef(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copiedProvider, setCopiedProvider] = useState<GitHostingCliProvider | null>(null)
 
   const detect = useCallback(async () => {
+    const revision = ++detectionRevision.current
     setLoading(true)
     setError(null)
     const results = await Promise.allSettled(PROVIDERS.map(getGitHostingCliStatus))
+    if (revision !== detectionRevision.current) return
     const nextStatuses: Partial<Record<GitHostingCliProvider, GitHostingCliStatus>> = {}
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
@@ -78,7 +82,15 @@ export function GitHostingSettingsPage() {
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void detect(), 0)
-    return () => window.clearTimeout(timeout)
+    const refresh = () => void detect()
+    window.addEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      window.clearTimeout(timeout)
+      window.removeEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+      window.removeEventListener('focus', refresh)
+      detectionRevision.current += 1
+    }
   }, [detect])
 
   const updateEnabled = async (nextEnabled: boolean) => {
@@ -168,7 +180,7 @@ export function GitHostingSettingsPage() {
                     </h2>
                     <span
                       data-testid={`git-hosting-cli-${provider}-status`}
-                      className={`text-xs ${ready ? 'text-green-500' : 'text-text-muted'}`}
+                      className={`text-xs ${ready ? 'text-success' : 'text-text-muted'}`}
                     >
                       {statusLabel(t, status, loading)}
                     </span>
@@ -209,7 +221,7 @@ export function GitHostingSettingsPage() {
                       className="inline-flex h-8 items-center gap-2 rounded-lg bg-muted px-3 text-sm text-text-primary hover:bg-hover"
                     >
                       {copiedProvider === provider ? (
-                        <Check className="h-4 w-4 text-green-500" />
+                        <Check className="h-4 w-4 text-success" />
                       ) : (
                         <Copy className="h-4 w-4" />
                       )}
@@ -229,7 +241,7 @@ export function GitHostingSettingsPage() {
       </div>
 
       {error ? (
-        <p data-testid="git-hosting-settings-error" className="mt-4 text-xs text-red-500">
+        <p data-testid="git-hosting-settings-error" className="mt-4 text-xs text-destructive">
           {error}
         </p>
       ) : null}

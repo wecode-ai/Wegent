@@ -34,7 +34,7 @@ import {
 import type { CloneGitRepositoryInput, DeviceInfo } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse, RemoteDeviceStartupCommand } from '@/types/devices'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
-import { basename, joinPath } from './device-folder-path'
+import { basename, getParentPath, joinPath } from './device-folder-path'
 import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
 
 export type StandaloneWorkspaceDialogMode = 'existing' | 'remote'
@@ -321,7 +321,7 @@ export function StandaloneBlankProjectDialog({
           }}
           className="mt-5 h-12 w-full rounded-xl border border-border bg-transparent px-4 text-base text-text-primary outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/10 disabled:opacity-50"
         />
-        {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+        {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
         <div className="mt-5 flex justify-end gap-3">
           <button
             type="button"
@@ -353,6 +353,7 @@ export function StandaloneFolderProjectDialog({
   open,
   mode,
   remoteIntent = 'project',
+  initialGitClone,
   fixedDeviceId,
   chooseProjectSource = false,
   layer = 'modal',
@@ -372,6 +373,7 @@ export function StandaloneFolderProjectDialog({
   open: boolean
   mode: StandaloneWorkspaceDialogMode
   remoteIntent?: StandaloneRemoteDialogIntent
+  initialGitClone?: CloneGitRepositoryInput | null
   fixedDeviceId?: string
   chooseProjectSource?: boolean
   layer?: 'modal' | 'system-popover'
@@ -407,12 +409,16 @@ export function StandaloneFolderProjectDialog({
   const [nativePickerFallback, setNativePickerFallback] = useState(false)
   const [selectedLocalRoots, setSelectedLocalRoots] = useState<string[]>([])
   const [selectedLocalDeviceId, setSelectedLocalDeviceId] = useState('')
-  const [remoteProjectSource, setRemoteProjectSource] = useState<RemoteProjectSource | null>(null)
-  const [gitUrl, setGitUrl] = useState('')
-  const [gitBranch, setGitBranch] = useState('')
-  const [gitParentPath, setGitParentPath] = useState('')
+  const [remoteProjectSource, setRemoteProjectSource] = useState<RemoteProjectSource | null>(
+    initialGitClone ? 'git' : null
+  )
+  const [gitUrl, setGitUrl] = useState(initialGitClone?.url ?? '')
+  const [gitBranch, setGitBranch] = useState(initialGitClone?.branch ?? '')
+  const [gitParentPath, setGitParentPath] = useState(
+    initialGitClone ? getParentPath(initialGitClone.targetPath) : ''
+  )
   const [gitParentPickerOpen, setGitParentPickerOpen] = useState(false)
-  const [gitAdvancedOpen, setGitAdvancedOpen] = useState(false)
+  const [gitAdvancedOpen, setGitAdvancedOpen] = useState(Boolean(initialGitClone?.branch))
   const [gitSubmitting, setGitSubmitting] = useState(false)
   const [gitError, setGitError] = useState<string | null>(null)
   const nativePickerStartedRef = useRef(false)
@@ -787,7 +793,7 @@ export function StandaloneFolderProjectDialog({
               <h2 className="text-lg font-semibold">
                 {t('workbench.use_existing_folder_title', '使用现有文件夹')}
               </h2>
-              <p className="mt-2 text-sm leading-5 text-red-500">{nativePickerError}</p>
+              <p className="mt-2 text-sm leading-5 text-destructive">{nativePickerError}</p>
             </div>
             <button
               type="button"
@@ -981,14 +987,14 @@ export function StandaloneFolderProjectDialog({
               )}
 
               {startupCommandError && (
-                <div className="mt-4 flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-3 text-sm text-red-500">
+                <div className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-3 text-sm text-destructive">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span className="min-w-0 flex-1">{startupCommandError}</span>
                   <button
                     type="button"
                     data-testid="retry-remote-device-startup-command"
                     onClick={retryLoadStartupCommand}
-                    className="shrink-0 rounded-md px-2 py-1 text-xs font-medium hover:bg-red-500/10"
+                    className="shrink-0 rounded-md px-2 py-1 text-xs font-medium hover:bg-destructive/10"
                   >
                     {t('workbench.remote_device_startup_retry', '重试')}
                   </button>
@@ -1290,7 +1296,10 @@ export function StandaloneFolderProjectDialog({
                   </label>
                 )}
                 {gitError && (
-                  <p data-testid="remote-project-git-error" className="mt-3 text-sm text-red-500">
+                  <p
+                    data-testid="remote-project-git-error"
+                    className="mt-3 text-sm text-destructive"
+                  >
                     {gitError}
                   </p>
                 )}

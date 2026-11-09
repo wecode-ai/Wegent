@@ -1,16 +1,23 @@
 import { createContext, useContext } from 'react'
-import type { RuntimeInteraction } from './runtimeInteractions'
+import type { InteractionSource, RuntimeInteraction } from './runtimeInteractions'
+import type { ValidatedIssueResolution } from './issueHumanInteractions'
 
 export interface InteractionHistory {
+  source?: InteractionSource
   id: string
   title: string
   question: string
   address: RuntimeInteraction['task']['address']
   originalUrl?: string
+  sourceMessageIds?: string[]
   answeredAt: number
+  resolvedIssueQuestion?: ValidatedIssueResolution
 }
 
 export interface RuntimeInteractionsValue {
+  projectItemsSupported?: boolean
+  pendingProjectCount?: number | null
+  reportProjectPendingCount?: (count: number | null) => void
   pending: RuntimeInteraction[]
   history: InteractionHistory[]
   errors: Record<string, string>
@@ -18,7 +25,12 @@ export interface RuntimeInteractionsValue {
   busy: ReadonlySet<string>
   loading: boolean
   setDraft: (id: string, text: string) => void
-  respond: (item: RuntimeInteraction, answer: string) => Promise<boolean>
+  respond: (
+    item: RuntimeInteraction,
+    answer: string,
+    options?: { clientMessageId?: string; send?: () => Promise<boolean> }
+  ) => Promise<boolean>
+  dismiss: (item: RuntimeInteraction) => Promise<void>
   refresh: () => Promise<void>
   open: (id?: string) => void
   notice: RuntimeInteraction | null

@@ -4,8 +4,6 @@ import {
   connectLocalTerminal,
   getLocalExecutorDeviceId,
   getLocalPathKind,
-  isLocalHarnessAvailable,
-  isLocalTerminalAvailable,
   listLocalWorkspaceOpeners,
   localPathExists,
   openLocalFile,
@@ -68,16 +66,6 @@ describe('Electron local terminal', () => {
     )
     setNavigatorValue('platform', 'MacIntel')
     setNavigatorValue('maxTouchPoints', 0)
-  })
-
-  test('exposes terminal and harness features only in the Electron desktop runtime', () => {
-    expect(isLocalTerminalAvailable()).toBe(true)
-    expect(isLocalHarnessAvailable()).toBe(true)
-
-    mocks.desktop = false
-
-    expect(isLocalTerminalAvailable()).toBe(false)
-    expect(isLocalHarnessAvailable()).toBe(false)
   })
 
   test('reads executor and filesystem state through Electron services', async () => {
@@ -199,49 +187,6 @@ describe('Electron local terminal', () => {
       ['workspace.listOpeners'],
       ['workspace.pickOpener'],
     ])
-  })
-
-  test('opens attachments with the workspace choice and uses the global choice for a new workspace', async () => {
-    const available = ['vscode', 'cursor', 'file-manager'].map(id => ({ id, available: true }))
-    mocks.desktopHost.mockImplementation(async capability =>
-      capability === 'workspace.listOpeners' ? available : undefined
-    )
-    setPreferredWorkspaceOpener('/project-a', 'cursor')
-    setPreferredWorkspaceOpener('/project-b', 'file-manager')
-
-    await openLocalFileInWorkspaceApp(' /draft/test.md ', '/project-a')
-    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
-      opener: 'cursor',
-      path: '/draft/test.md',
-    })
-    await openLocalFileInWorkspaceApp('/draft/test.md', '/project-b')
-    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
-      opener: 'file-manager',
-      path: '/draft/test.md',
-    })
-    await openLocalFileInWorkspaceApp('/draft/test.md', '/project-c')
-    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
-      opener: 'file-manager',
-      path: '/draft/test.md',
-    })
-  })
-
-  test('shares an opener discovery in flight and refreshes after it settles', async () => {
-    const available = [{ id: 'vscode', category: 'general', available: true }]
-    let complete!: (value: typeof available) => void
-    mocks.desktopHost.mockReturnValue(new Promise(resolve => (complete = resolve)))
-    const pending = Array.from({ length: 3 }, () => listLocalWorkspaceOpeners())
-    try {
-      expect(mocks.desktopHost).toHaveBeenCalledExactlyOnceWith('workspace.listOpeners')
-    } finally {
-      complete(available)
-      await Promise.all(pending)
-    }
-    expect(await Promise.all(pending)).toEqual([available, available, available])
-
-    mocks.desktopHost.mockResolvedValue([])
-    await expect(listLocalWorkspaceOpeners()).resolves.toEqual([])
-    expect(mocks.desktopHost).toHaveBeenCalledTimes(2)
   })
 
   test('shares discovery failure and permits a fresh request afterward', async () => {

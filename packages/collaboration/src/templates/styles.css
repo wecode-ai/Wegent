@@ -290,3 +290,54 @@
     min-height: 44px;
   }
 }
+
+.collaboration-template-agent-roster {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.collaboration-template-agent-roster li {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.collaboration-template-agent-roster strong {
+  font-weight: 500;
+}
+.collaboration-template-role-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.collaboration-template-role-heading button {
+  flex: none;
+}
+.collaboration-template-role-heading button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+@media (max-width: 767px) {
+  .collaboration-template-role-heading button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+.collaboration-template-agent-roster span {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-sm);
+}
+.collaboration-template-bindings summary {
+  cursor: pointer;
+  margin: 12px 0;
+}
+@media (max-width: 767px) {
+  .collaboration-template-bindings summary {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+}

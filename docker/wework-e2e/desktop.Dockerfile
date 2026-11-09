@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
+    fontconfig \
+    fonts-noto-cjk \
     gnupg \
     gh \
     git \
@@ -58,6 +60,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 ENV IS_SANDBOX=1
 
 RUN node --version \
+  && fc-match --format '%{family}\n' ':lang=zh-cn' | grep -F 'Noto Sans CJK' \
   && pnpm --version \
   && gh --version \
   && python3 --version \
@@ -66,4 +69,6 @@ RUN node --version \
   && skopeo --version \
   && umoci --version \
   && rustc --version \
-  && cargo --version
+  && cargo --version \
+  && fc-match --format '%{family}\n' 'sans-serif:lang=zh-cn' \
+  && fc-list :lang=zh family | grep -F 'Noto Sans CJK'

@@ -18,7 +18,7 @@ use super::{
     util::{item_type, string_field},
 };
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use super::transcript_search_text::codex_turn_search_sources;
 
 const SEARCH_CURSOR_PREFIX: &str = "wework-codex-search:";
@@ -63,6 +63,17 @@ pub(super) struct CodexSearchContextCursor {
     direction: ContextDirection,
     turn_cursor: Option<String>,
     pending_turns: Vec<PendingContextTurn>,
+}
+
+/// Enter a later conversation segment at its oldest native turn without scanning its history.
+pub(super) fn first_history_cursor() -> Result<String, String> {
+    serde_json::to_string(&CodexSearchContextCursor {
+        direction: ContextDirection::Asc,
+        turn_cursor: None,
+        pending_turns: Vec::new(),
+    })
+    .map(|encoded| format!("{CONTEXT_CURSOR_PREFIX}{encoded}"))
+    .map_err(|error| format!("Cannot encode history context cursor: {error}"))
 }
 
 pub(super) fn parse_context_cursor(

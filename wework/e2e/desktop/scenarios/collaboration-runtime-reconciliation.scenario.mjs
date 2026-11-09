@@ -11,7 +11,11 @@ import { RuntimeEventProxy } from '../modules/runtime-event-proxy.mjs'
 import { createRuntimeReconciliationModel } from '../modules/runtime-reconciliation-model.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
-import { reloadMainWindow, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import {
+  reloadMainWindow,
+  selectCollaborationDomain,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MARKER = `RUNTIME_RECONCILIATION_${process.pid}`
@@ -356,9 +360,7 @@ export async function createDesktopScenario({
     const projectRow = `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     await control.command('waitFor', projectRow, { visible: true, timeoutMs: uiTimeoutMs })
     await control.command('click', projectRow, { visible: true })
-    const boardTab = `${CONTENT} [data-testid="collaboration-tab-board"]`
-    await control.command('waitFor', boardTab, { visible: true, timeoutMs: uiTimeoutMs })
-    await control.command('click', boardTab, { visible: true })
+    await selectCollaborationProjectView(control, CONTENT, 'board', uiTimeoutMs)
     const card = `${CONTENT} [data-testid="cloud-todo-card-${testCase.issue.id}"]`
     await control.command('waitFor', card)
     await control.command('click', card)
@@ -390,7 +392,7 @@ export async function createDesktopScenario({
     await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
     // Fixed workspace tabs keep effects alive. The files view unmounts board cards,
     // whose transcript reads would otherwise submit uncontrolled Runtime snapshots.
-    await control.command('click', `${CONTENT} [data-testid="collaboration-tab-files"]`)
+    await selectCollaborationProjectView(control, CONTENT, 'files')
     await until(
       () => control.command('getElementCount', `${CONTENT} [data-testid^="cloud-todo-card-"]`),
       count => Number(count) === 0,

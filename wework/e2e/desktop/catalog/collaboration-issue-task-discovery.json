@@ -1,0 +1,12 @@
+{
+  "order": 20000,
+  "scenario": "./scenarios/collaboration-issue-task-discovery.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 13000,
+      "shard": 7,
+      "position": 2000
+    }
+  }
+}

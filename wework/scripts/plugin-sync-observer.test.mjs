@@ -1,5 +1,10 @@
+// @vitest-environment node
+
 import { expect, test } from 'vitest'
-import { acknowledgedPluginGeneration } from '../e2e/desktop/modules/plugin-sync-observer.mjs'
+import {
+  acknowledgedPluginGeneration,
+  latestPluginSyncRequest,
+} from '../e2e/desktop/modules/plugin-sync-observer.mjs'
 
 const request = (generation, id = String(generation)) => ({
   at: generation * 100,
@@ -9,6 +14,37 @@ const request = (generation, id = String(generation)) => ({
   pluginSync: { version: 2, generation, complete: generation !== 7 },
 })
 const ack = request => ({ ...request, at: request.at + 10, success: true })
+
+test.each([{ order: [14, 13, 15] }, { order: [14, 15, 13] }, { order: [13, 15, 14] }])(
+  'settles only the highest received generation when frames arrive as $order',
+  ({ order }) => {
+    const requests = order.map((generation, index) => ({
+      ...request(generation),
+      at: index * 100,
+      pluginSync: { version: 2, generation, complete: generation === 14 },
+    }))
+    const observation = { capabilities: requests, acknowledgements: requests.map(ack) }
+    const latest = latestPluginSyncRequest(requests)
+    expect(latest.pluginSync.generation).toBe(15)
+    expect(
+      acknowledgedPluginGeneration(observation, { plugin_sync_generation: 15 }, 71, latest)
+    ).toEqual(ack(latest))
+    for (const generation of [13, 14]) {
+      expect(
+        acknowledgedPluginGeneration(
+          observation,
+          { plugin_sync_generation: generation },
+          71,
+          latest
+        )
+      ).toBeNull()
+    }
+  }
+)
+
+test('does not invent a latest generation before observing a request', () => {
+  expect(latestPluginSyncRequest([])).toBeUndefined()
+})
 
 test('accepts the exact ACK for a current full sync superseding the setup delta', () => {
   const initial = request(7)

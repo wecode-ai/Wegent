@@ -118,6 +118,9 @@ export class TransportFaultProxy {
     this.capabilitySyncGate = null
     this.stopPromise = null
     this.server = createServer((request, response) => this.forward(request, response))
+    // Only configured faults may interrupt healthy traffic. Teardown closes
+    // tracked sockets; an idle timer must not race the next package request.
+    this.server.keepAliveTimeout = 0
     this.server.on('connection', socket => this.track(socket))
     this.server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head))
   }
@@ -233,7 +236,21 @@ export class TransportFaultProxy {
               }
               response.once('finish', () => resolve(true))
               response.once('close', () => resolve(entry.responseCompleted === true))
-              response.writeHead(reply.status, reply.headers)
+              let headers = reply.headers
+              if (entry.responseTimingId) {
+                assert.match(entry.responseTimingId, /^[a-zA-Z0-9-]+$/)
+                headers = {
+                  ...headers,
+                  'server-timing': [
+                    headers['server-timing'],
+                    `wework-e2e-response;desc="${entry.responseTimingId}"`,
+                  ]
+                    .filter(Boolean)
+                    .join(', '),
+                  'timing-allow-origin': request.headers.origin ?? '*',
+                }
+              }
+              response.writeHead(reply.status, headers)
               response.end(reply.body)
               entry.released = true
             })

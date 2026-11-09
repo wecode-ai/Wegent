@@ -36,7 +36,7 @@ impl RuntimeWorkRpcHandler {
             return Err(AppIpcError::new("bad_request", "Invalid project storage"));
         }
         if storage == "cloud" || self.backend_connection_snapshot()?.is_some() {
-            self.verify_stand_in_user(&json!({"userId":user})).await?;
+            self.verify_runtime_user(&json!({"userId":user})).await?;
         }
         let dispatch = method == "runtime.project_coordinator.command.dispatch";
         let mut input = payload["input"].clone();
@@ -69,7 +69,7 @@ impl RuntimeWorkRpcHandler {
         path: &str,
         input: Option<&Value>,
     ) -> Result<Value, AppIpcError> {
-        let response = self.stand_in_request(method, path, input).await?;
+        let response = self.runtime_request(method, path, input).await?;
         let status = response.status();
         let body: Value = response.json().await.map_err(|_| {
             AppIpcError::new(
@@ -130,7 +130,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime scheduler lock")
                 .active_task_ids
-                .contains(&task);
+                .contains_key(&task);
             let queue_cancelled = self
                 .local_task_link(&task)
                 .and_then(|link| crate::runtime_work::lifecycle::native_execution_state(&link))

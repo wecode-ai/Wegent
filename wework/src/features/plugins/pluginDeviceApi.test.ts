@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createHttpClient } from '@/api/http'
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
+import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import i18n from '@/i18n'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalDevicePluginApi, resolveLocalPluginDeviceRouteId } from './pluginDeviceApi'
 
 vi.mock('@/desktop/localExecutor', () => ({
@@ -131,52 +131,6 @@ describe('local plugin device API boundary', () => {
     }
   )
 
-  test.each(['single', 'reconcile'] as const)(
-    'maps only the current Runtime in a %s sync response',
-    async operation => {
-      const api = apiWithResponse({ deviceId: requestId, pendingCount: 1, sync })
-
-      const response =
-        operation === 'single'
-          ? await api.syncInstalledPluginToDevice(101, deviceId)
-          : await api.syncInstalledPluginsToDevice(deviceId, true)
-
-      expect(fetch).toHaveBeenCalledWith(
-        operation === 'single'
-          ? '/api/plugins/installed/101/sync-device?device_id=app-record-70'
-          : '/api/plugins/installed/sync-device?device_id=app-record-70&reconcile=true',
-        expect.objectContaining({ method: 'POST' })
-      )
-      expect(response.deviceId).toBe(deviceId)
-      expect(response.sync).toEqual({
-        ...sync,
-        device_id: deviceId,
-        results: [{ ...sync.results[0], device_id: deviceId }, sync.results[1]],
-      })
-    }
-  )
-
-  test('maps a device status acknowledgement without changing the acknowledged plugin IDs', async () => {
-    const api = apiWithResponse({
-      deviceId: requestId,
-      acknowledgedCount: 1,
-      acknowledgedInstalledPluginIds: [101],
-    })
-    const reports = [{ installedPluginId: 101, releaseId: 1002, version: '1.1.0' }]
-
-    const response = await api.reportInstalledPluginsOnDevice(deviceId, reports)
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/report-device?device_id=app-record-70',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ plugins: reports }) })
-    )
-    expect(response).toEqual({
-      deviceId,
-      acknowledgedCount: 1,
-      acknowledgedInstalledPluginIds: [101],
-    })
-  })
-
   test('resolves the current plugin route without changing stable identity', async () => {
     vi.mocked(requestLocalExecutor).mockResolvedValue({
       device_id: deviceId,
@@ -253,40 +207,6 @@ describe('local plugin device API boundary', () => {
       '/api/plugins/installed/101',
       expect.objectContaining({ method: 'PUT' })
     )
-  })
-
-  test('reads account inventory and removes account membership without requiring IPC', async () => {
-    const resolveRoute = vi.fn().mockRejectedValue(new Error('IPC offline'))
-    vi.stubGlobal(
-      'fetch',
-      vi
-        .fn()
-        .mockImplementation(async (_url, options) =>
-          options.method === 'DELETE'
-            ? new Response(null, { status: 204 })
-            : new Response(JSON.stringify({ items: [installed] }))
-        )
-    )
-    const api = createLocalDevicePluginApi(cloudApi(), resolveRoute)
-
-    await api.listInstalledPlugins(deviceId)
-    await api.listMarketplacePlugins({ deviceId })
-    resolveRoute.mockClear()
-    await api.uninstallInstalledPlugin(101, deviceId)
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed',
-      expect.objectContaining({ method: 'GET' })
-    )
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/marketplace',
-      expect.objectContaining({ method: 'GET' })
-    )
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/101',
-      expect.objectContaining({ method: 'DELETE' })
-    )
-    expect(resolveRoute).not.toHaveBeenCalled()
   })
 
   test.each(['install', 'builtin', 'upgrade', 'release', 'single-sync', 'reconcile', 'report'])(

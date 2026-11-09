@@ -5,9 +5,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { ChevronDownIcon, ChevronRightIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
+import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
 import { BranchDiffResponse, GitDiffFile } from '@/apis/tasks'
 import { useTranslation } from '@/hooks/useTranslation'
+import { parseUnifiedDiff } from '@wegent/collaboration/conversation/parseUnifiedDiff'
+import type { TaskFileChanges } from '@/types/api'
 
 interface FileChange {
   old_path: string
@@ -25,6 +27,7 @@ interface DiffViewerProps {
   isLoading?: boolean
   gitType: 'github' | 'gitlab'
   fileChanges?: FileChange[]
+  inlineChanges?: TaskFileChanges
   showDiffContent?: boolean
 }
 
@@ -38,22 +41,6 @@ interface DiffFile {
   oldPath?: string
   newPath?: string
   isExpanded: boolean
-}
-
-function _getStatusIcon(status: string) {
-  const iconClasses = 'w-4 h-4'
-  switch (status) {
-    case 'added':
-      return <DocumentTextIcon className={`${iconClasses} text-green-600`} />
-    case 'removed':
-      return <DocumentTextIcon className={`${iconClasses} text-red-600`} />
-    case 'modified':
-      return <DocumentTextIcon className={`${iconClasses} text-blue-600`} />
-    case 'renamed':
-      return <DocumentTextIcon className={`${iconClasses} text-purple-600`} />
-    default:
-      return <DocumentTextIcon className={`${iconClasses} text-gray-600`} />
-  }
 }
 
 function normalizeFileChanges(fileChanges: FileChange[]): DiffFile[] {
@@ -97,34 +84,69 @@ function normalizeGitFiles(files: GitDiffFile[]): DiffFile[] {
   }))
 }
 
+function normalizeInlineChanges(changes: TaskFileChanges): DiffFile[] {
+  const sections = new Map(parseUnifiedDiff(changes.diff).map(section => [section.path, section]))
+  return changes.files.map(file => ({
+    filename: file.path,
+    status:
+      file.change_type === 'created'
+        ? 'added'
+        : file.change_type === 'deleted'
+          ? 'removed'
+          : file.change_type,
+    additions: file.additions,
+    deletions: file.deletions,
+    changes: file.additions + file.deletions,
+    diff: sections.get(file.path)?.lines.join('\n') || '',
+    oldPath: file.old_path || undefined,
+    newPath: file.path,
+    isExpanded: false,
+  }))
+}
+
 function renderDiffContent(diff: string) {
   if (!diff) return null
 
-  const lines = diff.split('tasks:\n')
+  const lines = diff.split('\n')
+  let inHunk = false
   return lines.map((line, index) => {
     let lineClass = 'text-gray-700'
     let prefix = ''
+    let lineType = 'metadata'
 
+    if (line.startsWith('diff --git ')) inHunk = false
     if (line.startsWith('@@')) {
+      inHunk = true
       lineClass = 'text-purple-600 bg-purple-50'
-    } else if (line.startsWith('+')) {
+      lineType = 'hunk'
+    } else if (inHunk && line.startsWith('+')) {
       lineClass = 'text-green-700 bg-green-50'
       prefix = '+'
-    } else if (line.startsWith('-')) {
+      lineType = 'addition'
+    } else if (inHunk && line.startsWith('-')) {
       lineClass = 'text-red-700 bg-red-50'
       prefix = '-'
-    } else if (line.startsWith(' ')) {
+      lineType = 'deletion'
+    } else if (inHunk && line.startsWith(' ')) {
       lineClass = 'text-gray-600'
       prefix = ' '
+      lineType = 'context'
     }
 
     return (
-      <div key={index} className={`flex ${lineClass} text-sm font-mono`}>
+      <div
+        key={index}
+        data-testid="diff-line"
+        data-diff-line-type={lineType}
+        className={`flex ${lineClass} text-sm font-mono`}
+      >
         <span className="w-8 flex-shrink-0 text-right pr-2 select-none opacity-50">
           {index + 1}
         </span>
         <span className="flex-shrink-0 w-4 text-right pr-2 select-none">{prefix}</span>
-        <span className="flex-1 whitespace-pre-wrap break-all">{line.substring(1)}</span>
+        <span className="flex-1 whitespace-pre-wrap break-all">
+          {prefix ? line.substring(1) : line}
+        </span>
       </div>
     )
   })
@@ -135,37 +157,24 @@ export default function DiffViewer({
   isLoading = false,
   gitType,
   fileChanges,
+  inlineChanges,
   showDiffContent = true,
 }: DiffViewerProps) {
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([])
-  const { t } = useTranslation()
-
-  const _getStatusText = (status: string) => {
-    switch (status) {
-      case 'added':
-        return t('tasks:workbench.file_status.added')
-      case 'removed':
-        return t('tasks:workbench.file_status.removed')
-      case 'modified':
-        return t('tasks:workbench.file_status.modified')
-      case 'renamed':
-        return t('tasks:workbench.file_status.renamed')
-      default:
-        return t('tasks:workbench.file_status.modified')
-    }
-  }
+  const { t } = useTranslation('tasks')
 
   // Normalize diff data when it changes
   useEffect(() => {
-    if (fileChanges && fileChanges.length > 0) {
-      // Use simple file changes without diff content
-      setDiffFiles(normalizeFileChanges(fileChanges))
-    } else if (diffData) {
-      if (diffData.files) {
-        setDiffFiles(normalizeGitFiles(diffData.files))
-      }
-    }
-  }, [diffData, gitType, fileChanges])
+    const normalized = inlineChanges
+      ? normalizeInlineChanges(inlineChanges)
+      : fileChanges && fileChanges.length > 0
+        ? normalizeFileChanges(fileChanges)
+        : normalizeGitFiles(diffData?.files || [])
+    setDiffFiles(previous => {
+      const expanded = new Set(previous.filter(file => file.isExpanded).map(file => file.filename))
+      return normalized.map(file => ({ ...file, isExpanded: expanded.has(file.filename) }))
+    })
+  }, [diffData, gitType, fileChanges, inlineChanges])
 
   const toggleFile = (index: number) => {
     setDiffFiles(prev =>
@@ -186,7 +195,7 @@ export default function DiffViewer({
     )
   }
 
-  if ((!diffData && !fileChanges) || diffFiles.length === 0) {
+  if (diffFiles.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-surface p-8 text-center">
         <p className="text-text-muted">{t('tasks:workbench.no_changes_found')}</p>
@@ -231,6 +240,7 @@ export default function DiffViewer({
               )}
             </div>
             <button
+              data-testid="diff-expand-all"
               onClick={() => toggleAllFiles(!allExpanded)}
               className="text-sm text-primary hover:text-primary/80 transition-colors"
             >
@@ -251,8 +261,12 @@ export default function DiffViewer({
           return (
             <div key={index} className="border border-border rounded-lg overflow-hidden">
               {/* File header */}
-              <div
-                className={`flex items-center justify-between p-3 bg-muted transition-colors ${
+              <button
+                type="button"
+                data-testid="diff-file-toggle"
+                aria-expanded={file.isExpanded}
+                disabled={!showDiffContent || !file.diff}
+                className={`w-full text-left flex items-center justify-between p-3 bg-muted transition-colors ${
                   showDiffContent && file.diff ? 'hover:bg-muted/80 cursor-pointer' : ''
                 }`}
                 onClick={() => showDiffContent && file.diff && toggleFile(index)}
@@ -331,11 +345,11 @@ export default function DiffViewer({
                     )}
                   </div>
                 </div>
-              </div>
+              </button>
 
               {/* Diff content - only show if available and expanded */}
               {showDiffContent && file.isExpanded && file.diff && (
-                <div className="border-t border-border bg-surface">
+                <div data-testid="diff-file-content" className="border-t border-border bg-surface">
                   <div className="p-4 overflow-x-auto">
                     <div className="inline-block min-w-full">{renderDiffContent(file.diff)}</div>
                   </div>

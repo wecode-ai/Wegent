@@ -11,7 +11,10 @@ import yaml
 
 GHOST_NAME = "code-wiki-ghost"
 RESOURCES = (
-    Path(__file__).resolve().parents[4] / "init_data" / "02-public-resources.yaml"
+    Path(__file__).resolve().parents[4].parent
+    / "backend-rs"
+    / "init_data"
+    / "02-public-resources.yaml"
 )
 
 

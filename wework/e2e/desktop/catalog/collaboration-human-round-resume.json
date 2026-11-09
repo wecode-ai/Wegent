@@ -1,0 +1,12 @@
+{
+  "order": 61000,
+  "scenario": "./scenarios/collaboration-human-round-resume.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 54000,
+      "shard": 3,
+      "position": 14000
+    }
+  }
+}

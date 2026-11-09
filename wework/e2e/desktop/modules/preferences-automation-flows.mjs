@@ -256,7 +256,6 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function setExperimentalFeaturesEnabled(control, enabled) {
-  if (control.experimentalFeaturesEnabled === enabled) return
   const settingsButtonCount = Number(
     await control.command('getElementCount', '[data-testid="settings-button"]', {
       visible: true,
@@ -266,7 +265,6 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({ experimentalFeaturesEnabled: enabled }),
     })
-    control.experimentalFeaturesEnabled = enabled
     return
   }
 
@@ -282,7 +280,12 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
     snapshot => snapshot.testIds.includes('general-experimental-features-toggle'),
     'The experimental features control did not mount'
   )
-  await control.command('scrollIntoView', toggleSelector, { visible: false })
+  // Suspense retains hidden settings DOM while its next module is loading.
+  await control.command('waitFor', '[data-testid="dsh-settings-loading"]', {
+    visible: false,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', toggleSelector, { visible: true })
   await control.command('waitFor', toggleSelector, { visible: true })
   if (
     (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !==
@@ -297,7 +300,6 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
       `${enabled ? 'Enabling' : 'Disabling'} experimental features was not persisted`
     )
   }
-  control.experimentalFeaturesEnabled = enabled
   await control.command('click', '[data-testid="settings-back-button"]')
 }
 
@@ -312,8 +314,8 @@ async function ensureExperimentalFeaturesDisabled(control) {
 async function verifyAutomationLifecycle(control, executorHome, homePath) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
-    initialSnapshot.testIds.includes('personal-stand-in-button'),
-    'The stand-in schedules entry remained hidden behind the experimental-features preference'
+    initialSnapshot.testIds.includes('automation-button'),
+    'Independent schedules must remain available when experimental features are disabled'
   )
   await control.command('navigate', 'body', { value: '/automations' })
   await control.command('waitFor', '[data-testid="create-automation-button"]', {

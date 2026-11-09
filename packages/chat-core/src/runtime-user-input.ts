@@ -141,11 +141,30 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
   messages: WorkbenchMessage<TAttachment, TFileChanges>[]
 ): WorkbenchMessage<TAttachment, TFileChanges>[] {
   const replyByIndex = asyncReplyByMessageIndex(messages)
+  const rowsByReply = resolveAsyncRequestUserInputReplies(messages)
+  const offsetByReply = new Map<string, number>()
   let changed = false
   const resolved = messages.map((message, index) => {
     const reply = replyByIndex[index]
     if (!reply) return message
-    const blocks = message.blocks?.map(block => resolveAsyncBlock(block, reply))
+    const rows = rowsByReply.get(reply.id)
+    const blocks = message.blocks?.map(block => {
+      if (
+        block.type !== 'tool' ||
+        !isRequestUserInputPayload(block.renderPayload) ||
+        !isAsyncRequestUserInputPayload(block.renderPayload)
+      ) {
+        return block
+      }
+      const offset = offsetByReply.get(reply.id) ?? 0
+      const count = block.renderPayload.questions?.length ?? 0
+      offsetByReply.set(reply.id, offset + count)
+      return resolveAsyncBlock<TFileChanges>(
+        block,
+        reply.content,
+        rows?.slice(offset, offset + count)
+      )
+    })
     if (!blocks || blocks.every((block, blockIndex) => block === message.blocks![blockIndex])) {
       return message
     }
@@ -175,14 +194,16 @@ export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
   messages: WorkbenchMessage<TAttachment, TFileChanges>[]
 ): Map<string, AsyncRequestUserInputReply[]> {
   const replies = new Map<string, AsyncRequestUserInputReply[]>()
-  messages.forEach((message, index) => {
-    const questions = asyncQuestionPrompts(message)
-    if (questions.length === 0) return
-    const reply = messages.slice(index + 1).find(isUserReply)
-    if (!reply) return
-    const rows = pairQuestionsWithReply(questions, reply.content)
-    if (rows.length > 0) replies.set(reply.id, rows)
-  })
+  let questions: string[] = []
+  for (const message of messages) {
+    if (isDeliveredRequestUserInputReply(message)) {
+      const rows = pairQuestionsWithReply(questions, message.content)
+      if (rows.length > 0) replies.set(message.id, rows)
+      questions = []
+    } else {
+      questions.push(...asyncQuestionPrompts(message))
+    }
+  }
   return replies
 }
 
@@ -225,7 +246,8 @@ function pairQuestionsWithReply(questions: string[], reply: string): AsyncReques
 
 function resolveAsyncBlock<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
-  reply: string
+  reply: string,
+  rows?: AsyncRequestUserInputReply[]
 ): WorkbenchProcessingBlock<TFileChanges> {
   if (block.type !== 'tool') return block
   const payload = block.renderPayload
@@ -238,30 +260,31 @@ function resolveAsyncBlock<TFileChanges>(
     status: 'done',
     renderPayload: {
       ...payload,
-      response: asyncRequestUserInputResponse(payload, reply),
+      response: asyncRequestUserInputResponse(payload, reply, rows),
     },
   }
 }
 
-function asyncReplyByMessageIndex(messages: WorkbenchMessage[]): (string | null)[] {
-  const replies: (string | null)[] = new Array(messages.length).fill(null)
-  let reply: string | null = null
+function asyncReplyByMessageIndex(messages: WorkbenchMessage[]): (WorkbenchMessage | null)[] {
+  const replies: (WorkbenchMessage | null)[] = new Array(messages.length).fill(null)
+  let reply: WorkbenchMessage | null = null
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     replies[index] = reply
-    if (isUserReply(messages[index])) reply = messages[index].content
+    if (isDeliveredRequestUserInputReply(messages[index])) reply = messages[index]
   }
   return replies
 }
 
 /** The user message that answers a preceding question, whenever the composer sent it. */
-function isUserReply(message: WorkbenchMessage): boolean {
-  return message.role === 'user' && Boolean(message.content.trim())
+export function isDeliveredRequestUserInputReply(message: WorkbenchMessage): boolean {
+  return message.role === 'user' && message.status === 'done' && Boolean(message.content.trim())
 }
 
 /** A single free-form reply answers every question the async card asked. */
 function asyncRequestUserInputResponse(
   payload: RequestUserInputPayload,
-  reply: string
+  reply: string,
+  rows?: AsyncRequestUserInputReply[]
 ): RequestUserInputResponse {
   return {
     requestId: payload.requestId ?? payload.request_id,
@@ -270,7 +293,7 @@ function asyncRequestUserInputResponse(
     answers: Object.fromEntries(
       (payload.questions ?? []).map((question, index) => [
         question.id?.trim() || `question_${index + 1}`,
-        { answers: [reply] },
+        { answers: [rows?.[index]?.answer ?? reply] },
       ])
     ),
   }

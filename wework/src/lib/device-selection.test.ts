@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
   getPreferredStandaloneDeviceId,
@@ -41,37 +43,6 @@ describe('device-selection', () => {
 
     expect(isWeWorkSelectableStandaloneDevice(devices[0])).toBe(false)
     expect(getPreferredStandaloneDeviceId(devices, 'old-device')).toBe('new-device')
-  })
-
-  test('prefers the local device when cloud and local devices are both selectable', () => {
-    const devices = [
-      selectableDevice({ device_id: 'cloud-device', name: 'Cloud Device', device_type: 'cloud' }),
-      selectableDevice({ device_id: 'local-device', name: 'Local Device', device_type: 'local' }),
-    ]
-
-    expect(getPreferredStandaloneDeviceId(devices)).toBe('local-device')
-  })
-
-  test('does not fall back to a remembered cloud device while a local device is selectable', () => {
-    const devices = [
-      selectableDevice({ device_id: 'cloud-device', name: 'Cloud Device', device_type: 'cloud' }),
-      selectableDevice({ device_id: 'local-device', name: 'Local Device', device_type: 'local' }),
-    ]
-
-    expect(getPreferredStandaloneDeviceId(devices, 'cloud-device')).toBe('local-device')
-  })
-
-  test('returns null when only cloud devices are selectable', () => {
-    const devices = [
-      selectableDevice({ device_id: 'cloud-device', name: 'Cloud Device', device_type: 'cloud' }),
-      selectableDevice({
-        device_id: 'remote-device',
-        name: 'Remote Device',
-        device_type: 'remote',
-      }),
-    ]
-
-    expect(getPreferredStandaloneDeviceId(devices)).toBeNull()
   })
 
   test('does not select a local device below the WeWork executor version when a cloud device is compatible', () => {

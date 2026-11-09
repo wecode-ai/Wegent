@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,6 +20,9 @@ vi.mock('../e2e/desktop/modules/shared.mjs', () => ({ CLOUD_DEVICE_ID: 'remote-d
 vi.mock('../e2e/desktop/modules/plugin-source-continuation.mjs', () => ({
   verifyPluginSourceContinuation: context => state.invoke('source-continuation', context),
 }))
+vi.mock('../e2e/desktop/modules/plugin-personal-inventory-recovery.mjs', () => ({
+  verifyPersonalInventoryRecovery: context => state.invoke('personal-inventory-recovery', context),
+}))
 vi.mock('../e2e/desktop/modules/plugin-catalog-boundaries.mjs', () => ({
   verifyPluginCatalogBoundaries: context => state.invoke('catalog-sources', context),
 }))
@@ -35,6 +40,12 @@ vi.mock('../e2e/desktop/modules/plugin-scope-boundaries.mjs', () => ({
 }))
 vi.mock('../e2e/desktop/modules/plugin-sync-disconnect.mjs', () => ({
   verifyPluginSyncDisconnect: context => state.invoke('sync-disconnect', context),
+}))
+vi.mock('../e2e/desktop/modules/plugin-reinstall-status.mjs', () => ({
+  verifyPluginReinstallStatus: context => state.invoke('reinstall-status', context),
+}))
+vi.mock('../e2e/desktop/modules/plugin-copied-source-reinstall.mjs', () => ({
+  verifyPluginCopiedSourceReinstall: context => state.invoke('copied-source-reinstall', context),
 }))
 vi.mock('../e2e/desktop/modules/plugin-write-coordination.mjs', () => ({
   verifyPluginWriteCoordination: context => state.invoke('write-coordination', context),
@@ -201,6 +212,7 @@ async function fixture(t, checkpoint) {
 
 const catalogGroups = [
   'source-continuation',
+  'personal-inventory-recovery',
   'catalog-sources',
   'late-response',
   'plugin-detail',
@@ -253,7 +265,13 @@ test('install/update cases reuse the write-coordination cloud, MinIO and all exi
 
   await f.scenario.verify(f.control)
 
-  expect(state.calls).toEqual(['sync-disconnect', 'write-coordination', 'install-and-update'])
+  expect(state.calls).toEqual([
+    'sync-disconnect',
+    'reinstall-status',
+    'copied-source-reinstall',
+    'write-coordination',
+    'install-and-update',
+  ])
   expect(state.storages).toHaveLength(1)
   expect(state.proxies).toHaveLength(3)
   expect(f.cloud.restartCloudExecutor).toHaveBeenCalledTimes(1)
@@ -269,14 +287,20 @@ test('install/update cases reuse the write-coordination cloud, MinIO and all exi
   }
 })
 
-for (const name of ['sync-disconnect', 'write-coordination']) {
+for (const name of ['sync-disconnect', 'copied-source-reinstall', 'write-coordination']) {
   test(`a restored ${name} fault does not skip the remaining checks or hide failure`, async t => {
     const f = await fixture(t, 'plugin-write-coordination')
     state.failGroup = name
 
     await expect(f.scenario.verify(f.control)).rejects.toBeInstanceOf(AggregateError)
 
-    expect(state.calls).toEqual(['sync-disconnect', 'write-coordination', 'install-and-update'])
+    expect(state.calls).toEqual([
+      'sync-disconnect',
+      'reinstall-status',
+      'copied-source-reinstall',
+      'write-coordination',
+      'install-and-update',
+    ])
     const { evidence } = await f.evidence()
     expect(evidence.find(entry => entry.group === name).passed).toBe(false)
     expect(evidence.find(entry => entry.group === 'install-and-update').passed).toBe(true)

@@ -539,6 +539,71 @@ async def test_runtime_rpc_service_sends_v2_to_capable_executor(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("capable", [False, True])
+async def test_device_creation_intent_requires_capability_and_account_proxy(
+    monkeypatch, capable
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(
+            return_value=_runtime_route(
+                runtime_features={
+                    "runtimeTaskCreate": {
+                        "schemaVersions": [1, 2],
+                        "features": {"intentCompilation": capable},
+                    }
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_remote_runtime_proxy_url",
+        lambda user_id: "http://account-proxy.invalid",
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    payload = {
+        "schemaVersion": 2,
+        "runtime": "codex",
+        "message": "Create",
+        "executionRequest": {"model_config": {}},
+        "initialSupervisor": {"modelConfig": {}},
+    }
+    if not capable:
+        with pytest.raises(module.RuntimeRpcError) as error:
+            await module.RuntimeRpcService().call(
+                user_id=7,
+                device_id="device-1",
+                method="runtime.tasks.create_from_intent",
+                payload=payload,
+            )
+        assert error.value.code == "unsupported_runtime_task_create_features"
+        sio_call.assert_not_awaited()
+        return
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create_from_intent",
+        payload=payload,
+    )
+    emitted = sio_call.await_args.args[1]
+    assert emitted["method"] == "runtime.tasks.create_from_intent"
+    assert emitted["payload"]["creationProxyPolicy"] == {
+        "url": "http://account-proxy.invalid"
+    }
+    for config in [
+        emitted["payload"]["executionRequest"]["model_config"],
+        emitted["payload"]["initialSupervisor"]["modelConfig"],
+    ]:
+        assert config["proxy"]["url"] == "http://account-proxy.invalid"
+        assert config["runtime_config"]["codex"]["proxy_configured"] is True
+
+
+@pytest.mark.asyncio
 async def test_runtime_rpc_service_losslessly_downgrades_plain_v2(monkeypatch):
     from app.services.device import runtime_rpc_service as module
 
@@ -1045,4 +1110,114 @@ async def test_composer_catalog_rpc_respects_disabled_app_remote_control(monkeyp
         )
 
     assert exc_info.value.code == "remote_control_disabled"
+    sio_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submitted_interface_binding_uses_authenticated_actor_and_runtime_route(
+    monkeypatch,
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    monkeypatch.setattr(module, "_load_remote_runtime_proxy_url", lambda _: "")
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    config = {
+        "wework_model_kind": "model-interface",
+        "model_id": "upstream",
+        "model_provider": "local-source",
+        "api_key": "synthetic-secret",
+    }
+    payload = {
+        "taskId": "task-1",
+        "commandId": "command-1",
+        "modelBinding": {"actorUserId": 99, "deviceId": "foreign"},
+        "executionRequest": {"user_id": 7, "model_config": config},
+    }
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload=payload,
+    )
+    request = sio_call.await_args.args[1]
+    binding = request["modelBinding"]
+    assert binding == {
+        "kind": "submitted_interface",
+        "actorUserId": 7,
+        "deviceId": "runtime-device-1",
+        "taskId": "task-1",
+        "commandId": "command-1",
+        "modelConfig": request["payload"]["executionRequest"]["model_config"],
+    }
+    assert binding["modelConfig"]["api_key"] == "synthetic-secret"
+    assert payload["modelBinding"]["actorUserId"] == 99
+
+
+@pytest.mark.asyncio
+async def test_runner_reference_does_not_acquire_submitted_interface_binding(
+    monkeypatch,
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    monkeypatch.setattr(module, "_load_remote_runtime_proxy_url", lambda _: "")
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.send",
+        payload={
+            "taskId": "task-1",
+            "executionRequest": {
+                "user_id": 7,
+                "model_config": {
+                    "model_id": "local-model:source",
+                    "model_provider": "local-source",
+                },
+            },
+        },
+    )
+    assert "modelBinding" not in sio_call.await_args.args[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [None, [], "invalid"])
+@pytest.mark.parametrize("field", ["executionRequest", "model_config"])
+async def test_task_model_binding_rejects_non_object_execution_config(
+    monkeypatch, field, invalid
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    payload = (
+        {"executionRequest": invalid}
+        if field == "executionRequest"
+        else {"executionRequest": {"model_config": invalid}}
+    )
+    with pytest.raises(module.RuntimeRpcError) as raised:
+        await module.RuntimeRpcService().call(
+            user_id=7,
+            device_id="device-1",
+            method="runtime.tasks.send",
+            payload=payload,
+        )
+    assert raised.value.code == "bad_request"
+    assert field in str(raised.value)
     sio_call.assert_not_awaited()

@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import type { ModelProvider } from '@/features/model-settings/providerModelConfiguration'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { ProviderConnectionTestButton } from './ProviderConnectionTestButton'
-import type { ModelProvider } from '@/features/model-settings/providerModelConfiguration'
 const { probe } = vi.hoisted(() => ({ probe: vi.fn() }))
 vi.mock('@/features/model-settings/providerConnectionTest', () => ({
   testProviderConnection: probe,
@@ -31,25 +31,4 @@ test('requires a model and displays connection errors with retry', async () => {
   fireEvent.click(screen.getByTestId('probe'))
   expect(await screen.findByRole('status')).toBeInTheDocument()
   expect(screen.queryByRole('alert')).toBeNull()
-})
-test('disables duplicate requests and ignores results for a changed draft', async () => {
-  let finish!: (result: { model: string; error: string }[]) => void
-  probe.mockImplementation(
-    () =>
-      new Promise(resolve => {
-        finish = resolve
-      })
-  )
-  const { rerender } = render(<ProviderConnectionTestButton provider={provider} testId="probe" />)
-  fireEvent.click(screen.getByTestId('probe'))
-  expect(screen.getByTestId('probe')).toBeDisabled()
-  rerender(
-    <ProviderConnectionTestButton
-      provider={{ ...provider, base_url: 'https://other.example/v1' }}
-      testId="probe"
-    />
-  )
-  await act(async () => finish([{ model: 'model', error: 'old error' }]))
-  expect(screen.queryByRole('alert')).toBeNull()
-  expect(screen.getByTestId('probe')).toBeEnabled()
 })

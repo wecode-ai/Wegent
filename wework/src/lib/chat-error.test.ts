@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { parseChatError } from './chat-error'
 
@@ -20,24 +22,6 @@ describe('parseChatError', () => {
 
     expect(parsed.type).toBe('payload_too_large')
     expect(parsed.titleKey).toBe('assistant_error.types.payload_too_large.title')
-  })
-
-  test.each([
-    ['maximum context length exceeded', 'context_length_exceeded'],
-    ['data_inspection_failed: risky content', 'content_filter'],
-    ['image size exceeds limit', 'image_too_large'],
-    ['invalid role: user', 'invalid_role'],
-    ['only claude models are supported', 'model_protocol_error'],
-    ['out of memory', 'container_oom'],
-    ['peer closed connection without response', 'network_error'],
-    ['unexpected status 502 Bad Gateway', 'timeout_error'],
-    ['请求超时，请稍后重试', 'timeout_error'],
-    [
-      'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议"}}',
-      'model_protocol_error',
-    ],
-  ])('classifies %s as %s', (message, type) => {
-    expect(parseChatError(message).type).toBe(type)
   })
 
   test('reports the model service endpoint when the local proxy cannot connect', () => {

@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Clock3, FileText, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  FileText,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Tooltip } from "../issue-detail/Tooltip";
@@ -12,7 +19,6 @@ import type { CollaborationIssue } from "../types";
 import {
   addLocalDays,
   filterAndSortScheduleIssues,
-  ganttIssueRange,
   localDateKey,
   scheduleDayOffset,
   scheduleIssueAssigneeLabel,
@@ -31,6 +37,7 @@ import {
   type ProjectScheduleViewProps,
 } from "./ProjectCalendarView";
 import { ScheduleViewControls } from "./ScheduleViewControls";
+import { ganttHierarchyRows } from "./ganttHierarchy";
 
 type GanttScale = "week" | "month" | "quarter" | "year";
 
@@ -64,6 +71,8 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
   const weekStartsOnMonday = locale === "zh-CN";
   const [scale, setScale] = useState<GanttScale>("month");
   const [taskColumnCollapsed, setTaskColumnCollapsed] = useState(false);
+  const taskColumnWidth = taskColumnCollapsed ? "w-20 max-md:w-24" : "w-80";
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [windowStart, setWindowStart] = useState(() =>
     startOfScheduleWeek(new Date(), weekStartsOnMonday),
   );
@@ -72,19 +81,13 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
     () => filterAndSortScheduleIssues(issues, props.viewOptions),
     [issues, props.viewOptions],
   );
-  const ranges = useMemo(
-    () =>
-      displayedIssues.flatMap((issue) => {
-        const range = ganttIssueRange(issue);
-        return range ? [range] : [];
-      }),
-    [displayedIssues],
-  );
   const windowEnd = addLocalDays(windowStart, scaleOption.days - 1);
-  const visibleRanges = ranges.filter(
-    (range) =>
-      range.end.getTime() >= windowStart.getTime() &&
-      range.start.getTime() <= windowEnd.getTime(),
+  const visibleRows = ganttHierarchyRows(
+    issues,
+    props.viewOptions,
+    windowStart,
+    windowEnd,
+    collapsed,
   );
   const dateLocale = locale === "zh-CN" ? "zh-CN" : "en-US";
   const monthFormatter = new Intl.DateTimeFormat(dateLocale, {
@@ -233,8 +236,8 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
             <div className="sticky top-0 z-20 flex h-16 border-b border-border bg-background">
               <div
                 className={`sticky left-0 z-30 flex shrink-0 items-end border-r border-border bg-background pb-2 ${
-                  taskColumnCollapsed ? "w-12 justify-center" : "w-80 px-4"
-                }`}
+                  taskColumnWidth
+                } ${taskColumnCollapsed ? "justify-center" : "px-4"}`}
               >
                 {taskColumnCollapsed ? null : (
                   <>
@@ -313,11 +316,11 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
                 </div>
               </div>
             </div>
-            {visibleRanges.length === 0 ? (
+            {visibleRows.length === 0 ? (
               <div className="flex h-32">
                 <div
                   className={`sticky left-0 z-10 shrink-0 border-r border-border bg-background ${
-                    taskColumnCollapsed ? "w-12" : "w-80"
+                    taskColumnWidth
                   }`}
                 />
                 <div
@@ -330,174 +333,225 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
                 </div>
               </div>
             ) : (
-              visibleRanges.map(({ issue, start, end }, index) => {
-                const rawStart = scheduleDayOffset(windowStart, start);
-                const rawEnd = scheduleDayOffset(windowStart, end);
-                const left = Math.max(0, rawStart);
-                const right = Math.min(scaleOption.days - 1, rawEnd);
-                const durationDays = rawEnd - rawStart + 1;
-                const offset = left * scaleOption.dayWidth;
-                const width = Math.max(
-                  24,
-                  (right - left + 1) * scaleOption.dayWidth - 8,
-                );
-                const previousIssue = visibleRanges[index - 1]?.issue;
-                const groupValue =
-                  props.viewOptions.groupBy === "none"
-                    ? ""
-                    : scheduleIssueGroupValue(issue, props.viewOptions.groupBy);
-                const previousGroupValue =
-                  !previousIssue || props.viewOptions.groupBy === "none"
-                    ? null
-                    : scheduleIssueGroupValue(
-                        previousIssue,
-                        props.viewOptions.groupBy,
-                      );
-                const showGroupHeader =
-                  props.viewOptions.groupBy !== "none" &&
-                  groupValue !== previousGroupValue;
-                return (
-                  <div key={issue.id}>
-                    {showGroupHeader ? (
-                      <div
-                        className="sticky left-0 z-10 flex h-8 items-center border-b border-border bg-muted/40 px-4 text-xs font-medium text-text-secondary"
-                        data-testid={`collaboration-gantt-group-${groupValue || "empty"}`}
-                      >
-                        {groupLabel(issue)}
-                      </div>
-                    ) : null}
-                    <div
-                      className="flex h-12 border-b border-border"
-                      data-testid={`collaboration-gantt-row-${issue.id}`}
-                    >
-                      <Tooltip
-                        label={issue.title}
-                        align="start"
-                        side="bottom"
-                        testId={`collaboration-gantt-title-tooltip-${issue.id}`}
-                        className={`sticky left-0 z-10 ${
-                          taskColumnCollapsed ? "w-12" : "w-80"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          aria-label={issue.title}
-                          onClick={() => onOpen(issue)}
-                          className="flex h-full w-full items-center border-r border-border bg-background text-left hover:bg-muted"
+              visibleRows.map(
+                ({ issue, root, range, depth, hasChildren }, index) => {
+                  const start = range?.start ?? windowStart;
+                  const end = range?.end ?? windowStart;
+                  const rawStart = scheduleDayOffset(windowStart, start);
+                  const rawEnd = scheduleDayOffset(windowStart, end);
+                  const left = Math.max(0, rawStart);
+                  const right = Math.min(scaleOption.days - 1, rawEnd);
+                  const durationDays = rawEnd - rawStart + 1;
+                  const offset = left * scaleOption.dayWidth;
+                  const width = Math.max(
+                    24,
+                    (right - left + 1) * scaleOption.dayWidth - 8,
+                  );
+                  const previousIssue = visibleRows[index - 1]?.root;
+                  const groupValue =
+                    props.viewOptions.groupBy === "none"
+                      ? ""
+                      : scheduleIssueGroupValue(
+                          root,
+                          props.viewOptions.groupBy,
+                        );
+                  const previousGroupValue =
+                    !previousIssue || props.viewOptions.groupBy === "none"
+                      ? null
+                      : scheduleIssueGroupValue(
+                          previousIssue,
+                          props.viewOptions.groupBy,
+                        );
+                  const showGroupHeader =
+                    props.viewOptions.groupBy !== "none" &&
+                    groupValue !== previousGroupValue;
+                  return (
+                    <div key={issue.id}>
+                      {showGroupHeader ? (
+                        <div
+                          className="sticky left-0 z-10 flex h-8 items-center border-b border-border bg-muted/40 px-4 text-xs font-medium text-text-secondary"
+                          data-testid={`collaboration-gantt-group-${groupValue || "empty"}`}
                         >
-                          <span className="w-10 shrink-0 text-center text-xs text-text-muted">
-                            {index + 1}
-                          </span>
-                          {taskColumnCollapsed ? null : (
-                            <>
-                              <FileText className="mr-2 h-4 w-4 shrink-0 text-text-muted" />
-                              <span className="min-w-0 flex-1 truncate pr-4 text-sm text-text-primary">
-                                {issue.title}
-                              </span>
-                            </>
-                          )}
-                          <span className="sr-only">
-                            {statusLabel(statuses, issue)}
-                          </span>
-                        </button>
-                      </Tooltip>
-                      <div className="relative" style={{ width: gridWidth }}>
-                        {days.map((day) => (
-                          <ScheduleDateDropZone
-                            key={`drop-${issue.id}-${localDateKey(day)}`}
-                            date={localDateKey(day)}
-                            instance={`gantt-row-${issue.id}`}
-                            testId={`collaboration-gantt-row-${issue.id}-day-${localDateKey(day)}`}
-                            className="absolute inset-y-0 z-[1] shrink-0"
-                            style={{
-                              left:
-                                scheduleDayOffset(windowStart, day) *
-                                scaleOption.dayWidth,
-                              width: scaleOption.dayWidth,
-                            }}
-                          />
-                        ))}
-                        {days
-                          .map((day, dayIndex) => ({ day, dayIndex }))
-                          .filter(
-                            ({ day }) =>
-                              day.getDay() === 0 || day.getDay() === 6,
-                          )
-                          .map(({ day, dayIndex }) => (
+                          {groupLabel(root)}
+                        </div>
+                      ) : null}
+                      <div
+                        className="flex h-12 border-b border-border"
+                        data-testid={`collaboration-gantt-row-${issue.id}`}
+                      >
+                        <div
+                          className={`sticky left-0 z-10 flex shrink-0 items-center border-r border-border bg-background ${taskColumnWidth}`}
+                          data-depth={depth}
+                        >
+                          {hasChildren ? (
+                            <button
+                              type="button"
+                              data-testid={`collaboration-gantt-toggle-${issue.id}`}
+                              aria-expanded={!collapsed.has(issue.id)}
+                              aria-label={`${locale === "zh-CN" ? (collapsed.has(issue.id) ? "展开" : "收起") : collapsed.has(issue.id) ? "Expand" : "Collapse"} ${issue.title}`}
+                              onClick={() =>
+                                setCollapsed((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(issue.id)) next.delete(issue.id);
+                                  else next.add(issue.id);
+                                  return next;
+                                })
+                              }
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted max-md:h-11 max-md:w-11"
+                              style={
+                                taskColumnCollapsed
+                                  ? undefined
+                                  : { marginLeft: depth * 16 }
+                              }
+                            >
+                              {collapsed.has(issue.id) ? (
+                                <ChevronRight className="h-4 w-4" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4" />
+                              )}
+                            </button>
+                          ) : (
                             <span
-                              key={`weekend-${localDateKey(day)}`}
-                              className="absolute inset-y-0 border-r border-border"
-                              style={{
-                                left: dayIndex * scaleOption.dayWidth,
-                                width: scaleOption.dayWidth,
-                                backgroundImage:
-                                  "repeating-linear-gradient(135deg, transparent 0, transparent 5px, rgb(var(--color-border) / 0.55) 5px, rgb(var(--color-border) / 0.55) 6px)",
-                              }}
                               aria-hidden="true"
+                              className="w-8 shrink-0 max-md:w-11"
+                              style={
+                                taskColumnCollapsed
+                                  ? undefined
+                                  : { marginLeft: depth * 16 }
+                              }
+                            />
+                          )}
+                          <Tooltip
+                            label={issue.title}
+                            align="start"
+                            side="bottom"
+                            testId={`collaboration-gantt-title-tooltip-${issue.id}`}
+                            className="h-full min-w-0 flex-1"
+                          >
+                            <button
+                              type="button"
+                              aria-label={issue.title}
+                              onClick={() => onOpen(issue)}
+                              className="flex h-full w-full items-center bg-background text-left hover:bg-muted"
+                            >
+                              <span className="w-10 shrink-0 text-center text-xs text-text-muted">
+                                {index + 1}
+                              </span>
+                              {taskColumnCollapsed ? null : (
+                                <>
+                                  <FileText className="mr-2 h-4 w-4 shrink-0 text-text-muted" />
+                                  <span className="min-w-0 flex-1 truncate pr-4 text-sm text-text-primary">
+                                    {issue.title}
+                                  </span>
+                                </>
+                              )}
+                              <span className="sr-only">
+                                {statusLabel(statuses, issue)}
+                              </span>
+                            </button>
+                          </Tooltip>
+                        </div>
+                        <div className="relative" style={{ width: gridWidth }}>
+                          {days.map((day) => (
+                            <ScheduleDateDropZone
+                              key={`drop-${issue.id}-${localDateKey(day)}`}
+                              date={localDateKey(day)}
+                              instance={`gantt-row-${issue.id}`}
+                              testId={`collaboration-gantt-row-${issue.id}-day-${localDateKey(day)}`}
+                              className="absolute inset-y-0 z-[1] shrink-0"
+                              style={{
+                                left:
+                                  scheduleDayOffset(windowStart, day) *
+                                  scaleOption.dayWidth,
+                                width: scaleOption.dayWidth,
+                              }}
                             />
                           ))}
-                        <span
-                          className="absolute inset-0"
-                          style={{
-                            backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${scaleOption.dayWidth - 1}px, rgb(var(--color-border)) ${scaleOption.dayWidth - 1}px, rgb(var(--color-border)) ${scaleOption.dayWidth}px)`,
-                          }}
-                          aria-hidden="true"
-                        />
-                        {todayOffset >= 0 && todayOffset < scaleOption.days ? (
+                          {days
+                            .map((day, dayIndex) => ({ day, dayIndex }))
+                            .filter(
+                              ({ day }) =>
+                                day.getDay() === 0 || day.getDay() === 6,
+                            )
+                            .map(({ day, dayIndex }) => (
+                              <span
+                                key={`weekend-${localDateKey(day)}`}
+                                className="absolute inset-y-0 border-r border-border"
+                                style={{
+                                  left: dayIndex * scaleOption.dayWidth,
+                                  width: scaleOption.dayWidth,
+                                  backgroundImage:
+                                    "repeating-linear-gradient(135deg, transparent 0, transparent 5px, rgb(var(--color-border) / 0.55) 5px, rgb(var(--color-border) / 0.55) 6px)",
+                                }}
+                                aria-hidden="true"
+                              />
+                            ))}
                           <span
-                            className="absolute inset-y-0 z-10 w-px bg-blue-500/70"
+                            className="absolute inset-0"
                             style={{
-                              left:
-                                todayOffset * scaleOption.dayWidth +
-                                scaleOption.dayWidth / 2,
+                              backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${scaleOption.dayWidth - 1}px, rgb(var(--color-border)) ${scaleOption.dayWidth - 1}px, rgb(var(--color-border)) ${scaleOption.dayWidth}px)`,
                             }}
                             aria-hidden="true"
                           />
-                        ) : null}
-                        <DraggableScheduleBar
-                          issue={issue}
-                          enabled={
-                            Boolean(props.onSchedule) &&
-                            canEditCollaborationIssue(issue)
-                          }
-                          showStartHandle={
-                            Boolean(props.onSchedule) &&
-                            canEditCollaborationIssue(issue) &&
-                            rawStart >= 0
-                          }
-                          showEndHandle={
-                            Boolean(props.onSchedule) &&
-                            canEditCollaborationIssue(issue) &&
-                            rawEnd < scaleOption.days
-                          }
-                          testId={`collaboration-gantt-issue-${issue.id}`}
-                          onOpen={() => onOpen(issue)}
-                          className={`absolute top-2.5 z-10 flex h-7 min-w-10 items-stretch rounded-md text-center text-xs font-medium text-white shadow-sm transition-[box-shadow,filter] hover:brightness-105 hover:shadow-md max-md:top-0.5 max-md:h-11 ${statusClass(statuses, issue)}`}
-                          bodyClassName="flex items-center justify-center px-4 text-center"
-                          bodyCursorClassName="cursor-pointer"
-                          handleClassName="after:block after:h-4 after:w-px after:rounded-full after:bg-white/80 after:shadow-sm"
-                          showDragDateLabels
-                          locale={locale}
-                          style={{
-                            left: offset + 4,
-                            width,
-                          }}
-                          title={`${issue.title} · ${localDateKey(start)} → ${localDateKey(end)}`}
-                        >
-                          <span className="sr-only">
-                            {statusLabel(statuses, issue)}
-                          </span>
-                          <span className="block truncate">
-                            {locale === "zh-CN"
-                              ? `${durationDays}天`
-                              : `${durationDays}d`}
-                          </span>
-                        </DraggableScheduleBar>
+                          {todayOffset >= 0 &&
+                          todayOffset < scaleOption.days ? (
+                            <span
+                              className="absolute inset-y-0 z-10 w-px bg-blue-500/70"
+                              style={{
+                                left:
+                                  todayOffset * scaleOption.dayWidth +
+                                  scaleOption.dayWidth / 2,
+                              }}
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                          {range ? (
+                            <DraggableScheduleBar
+                              issue={issue}
+                              enabled={
+                                Boolean(props.onSchedule) &&
+                                canEditCollaborationIssue(issue)
+                              }
+                              showStartHandle={
+                                Boolean(props.onSchedule) &&
+                                canEditCollaborationIssue(issue) &&
+                                rawStart >= 0
+                              }
+                              showEndHandle={
+                                Boolean(props.onSchedule) &&
+                                canEditCollaborationIssue(issue) &&
+                                rawEnd < scaleOption.days
+                              }
+                              testId={`collaboration-gantt-issue-${issue.id}`}
+                              onOpen={() => onOpen(issue)}
+                              className={`absolute top-2.5 z-10 flex h-7 min-w-10 items-stretch rounded-md text-center text-xs font-medium text-white shadow-sm transition-[box-shadow,filter] hover:brightness-105 hover:shadow-md max-md:top-0.5 max-md:h-11 ${statusClass(statuses, issue)}`}
+                              bodyClassName="flex items-center justify-center px-4 text-center"
+                              bodyCursorClassName="cursor-pointer"
+                              handleClassName="after:block after:h-4 after:w-px after:rounded-full after:bg-white/80 after:shadow-sm"
+                              showDragDateLabels
+                              locale={locale}
+                              style={{
+                                left: offset + 4,
+                                width,
+                              }}
+                              title={`${issue.title} · ${localDateKey(start)} → ${localDateKey(end)}`}
+                            >
+                              <span className="sr-only">
+                                {statusLabel(statuses, issue)}
+                              </span>
+                              <span className="block truncate">
+                                {locale === "zh-CN"
+                                  ? `${durationDays}天`
+                                  : `${durationDays}d`}
+                              </span>
+                            </DraggableScheduleBar>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })
+                  );
+                },
+              )
             )}
           </div>
         </div>

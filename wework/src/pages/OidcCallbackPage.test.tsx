@@ -1,7 +1,7 @@
-import { render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/auth/redirect'
+import { render, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { OidcCallbackPage } from './OidcCallbackPage'
 
 describe('OidcCallbackPage', () => {

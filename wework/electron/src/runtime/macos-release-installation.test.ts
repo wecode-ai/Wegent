@@ -7,6 +7,7 @@ import { afterEach, expect, test } from 'vitest'
 import { prepareMacosReleaseInstallation } from './macos-release-installation.js'
 import { macosApplication, macosInstallationStage } from './macos-installation-paths.js'
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
+import { copyPhysicalRelease } from './physical-release-files.js'
 
 const execute = promisify(execFile)
 
@@ -34,13 +35,17 @@ if (process.platform === 'darwin') {
     await mkdir(join(application, 'Contents/Resources'), { recursive: true })
     await copyFile('/usr/bin/true', join(application, 'Contents/MacOS/WeWork'))
     await writeFile(
+      join(application, 'Contents/Resources/app.asar'),
+      `signed application ${version}`
+    )
+    await writeFile(
       join(application, 'Contents/Info.plist'),
       `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${identifier}</string><key>CFBundleExecutable</key><string>WeWork</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`
     )
     await execute('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', application])
   }
 
-  async function fixture(versioned = false, binding: 'saved' | 'previous' = 'saved') {
+  async function fixture(versioned = false, binding: 'saved' | 'previous' | 'bridge' = 'saved') {
     const directory = await realpath(await mkdtemp(join(tmpdir(), 'wework-installed-app-test-')))
     roots.push(directory)
     const store = new ReleaseStore(join(directory, 'data/releases'))
@@ -48,7 +53,10 @@ if (process.platform === 'darwin') {
     const sourceBundle = versioned ? join(store.slot('source'), 'host/WeWork.app') : installed
     const targetBundle = join(store.slot('target'), 'host/WeWork.app')
     await bundle(installed, '1.0.0')
-    if (versioned) await bundle(sourceBundle, '2.0.0')
+    if (versioned) {
+      if (binding === 'bridge') await copyPhysicalRelease(installed, sourceBundle)
+      else await bundle(sourceBundle, '2.0.0')
+    }
     await bundle(targetBundle, '3.0.0')
     const release = (id: string, application: string, version: string): DesktopRelease => ({
       schemaVersion: 1,
@@ -61,11 +69,18 @@ if (process.platform === 'darwin') {
       dataSchema: 1,
       readableDataSchemas: [1],
     })
-    const source = release('source', sourceBundle, versioned ? '2.0.0' : '1.0.0')
+    const source = release(
+      'source',
+      sourceBundle,
+      versioned && binding !== 'bridge' ? '2.0.0' : '1.0.0'
+    )
     const target = release('target', targetBundle, '3.0.0')
     await store.save(source)
     await store.save(target)
     await mkdir(source.profileRoot, { recursive: true })
+    const sourcePlugins = join(store.slot(source.id), 'managed-components/composed/core')
+    await mkdir(sourcePlugins, { recursive: true })
+    await writeFile(join(sourcePlugins, 'index.js'), 'original source component')
     await writeFile(join(source.profileRoot, 'package.json'), '{"private":true}')
     await atomicReleaseWrite(join(store.root, 'active'), source.id)
     await atomicReleaseWrite(join(store.root, 'bridge'), source.executable)
@@ -75,12 +90,18 @@ if (process.platform === 'darwin') {
         components: {
           coreDsh: join(source.resources, 'harness-runtime'),
           executor: join(source.resources, 'bin/executor'),
+          weworkCorePlugins: sourcePlugins,
         },
       })
     )
     if (versioned) {
       if (binding === 'saved')
         await atomicReleaseWrite(join(store.root, 'macos-application'), installed)
+      else if (binding === 'bridge')
+        await atomicReleaseWrite(
+          join(store.root, 'bridge'),
+          join(installed, 'Contents/MacOS/WeWork')
+        )
       else {
         await store.save(release('previous', installed, '1.0.0'))
         await atomicReleaseWrite(
@@ -97,12 +118,12 @@ if (process.platform === 'darwin') {
     return { store, source, target, installed }
   }
 
-  test.each(['installed', 'mapped', 'history'] as const)(
+  test.each(['installed', 'mapped', 'history', 'bridge'] as const)(
     'prepares signed replacement and rollback without changing the live source (%s)',
     async mode => {
       const { store, source, target, installed } = await fixture(
         mode !== 'installed',
-        mode === 'history' ? 'previous' : 'saved'
+        mode === 'history' ? 'previous' : mode === 'bridge' ? 'bridge' : 'saved'
       )
       const inode = (await stat(installed)).ino
       const installedInfo = await readFile(join(installed, 'Contents/Info.plist'))
@@ -135,12 +156,21 @@ if (process.platform === 'darwin') {
         version: source.version,
         retainedRelease: source.id,
         profileRoot: source.profileRoot,
-        componentDataDirectory: store.slot(source.id),
+        componentDataDirectory: store.slot(rollback.id),
       })
       const components = JSON.parse(
         await readFile(join(store.slot(rollback.id), 'prepared.json'), 'utf8')
       ).components
       expect(components.coreDsh).toBe(join(installed, 'Contents/Resources/harness-runtime'))
+      expect(components.weworkCorePlugins).toBe(
+        join(store.slot(rollback.id), 'managed-components/composed/core')
+      )
+      expect(await realpath(components.weworkCorePlugins)).toBe(
+        await realpath(join(store.slot(source.id), 'managed-components/composed/core'))
+      )
+      expect(await readFile(join(components.weworkCorePlugins, 'index.js'), 'utf8')).toBe(
+        'original source component'
+      )
       for (const item of [prepared, rollback]) {
         const stage = macosInstallationStage(item.executable, item.id)
         await execute('/usr/bin/codesign', ['--verify', '--deep', '--strict', stage])
@@ -157,9 +187,24 @@ if (process.platform === 'darwin') {
         stat(dirname(macosInstallationStage(prepared.executable, prepared.id)))
       ).rejects.toMatchObject({ code: 'ENOENT' })
       await stat(join(source.profileRoot, 'package.json'))
+      expect(
+        await readFile(
+          join(store.slot(source.id), 'managed-components/composed/core/index.js'),
+          'utf8'
+        )
+      ).toBe('original source component')
       expect((await stat(installed)).ino).toBe(inode)
     }
   )
+
+  test('a legacy bridge cannot select another signed application payload', async () => {
+    const { store, target, installed } = await fixture(true, 'bridge')
+    await bundle(installed, '9.0.0')
+    await expect(
+      prepareMacosReleaseInstallation(store, target, 'io.wecode.wework.installation-test')
+    ).rejects.toThrow()
+    expect((await store.read(target.id)).macosInstallation).toBeUndefined()
+  })
 
   test('a different installed identity cannot be prepared or overwritten', async () => {
     const { store, target, installed } = await fixture()

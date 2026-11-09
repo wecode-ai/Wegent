@@ -1,0 +1,18 @@
+{
+  "order": 171000,
+  "scenario": "./scenarios/application-menu.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 117000,
+      "shard": 5,
+      "position": 12000
+    }
+  },
+  "paths": [
+    "packages/collaboration/src/theme/*",
+    "wework/src/features/appearance/*",
+    "wework/src/styles/*",
+    "wework/e2e/desktop/modules/appearance-theme.mjs"
+  ]
+}

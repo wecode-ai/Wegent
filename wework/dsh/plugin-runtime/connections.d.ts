@@ -14,8 +14,40 @@ export interface ConnectionDescriptor {
   collectionModes: ['poll']
   resourceKinds: string[]
   resourceLabels: Record<string, string>
+  /** Public discovery parameters encoded in listResources.query as a JSON object. */
+  resourceQuerySchema?: {
+    type: 'object'
+    properties: Record<string, Record<string, unknown>>
+    required?: string[]
+    [key: string]: unknown
+  }
+  allResourceKinds?: string[]
+  allResourceLabels?: Record<string, string>
+  allResourceLabel?: string
   locales?: Record<string, { displayName?: string; resourceLabels?: Record<string, string> }>
   eventTypes: string[]
+  /** Mutable event types must identify the object and its opaque source version. */
+  versionedEventTypes: string[]
+  /** Business schemas belong to this provider, not the host. */
+  read?: {
+    inputSchema: Record<string, unknown>
+    itemSchema: Record<string, unknown>
+    pagination: 'cursor' | 'none'
+  }
+  /** Domain guidance, scoped to current connections; never permissions or global instructions. */
+  assistance?: {
+    observe: string[]
+    prepare: string[]
+    notifyWhen: string[]
+    confirmBefore: string[]
+  }
+  /** Declared operations remain subject to native host authorization on every call. */
+  actions?: Array<{
+    id: string
+    resourceKinds: string[]
+    inputSchema: Record<string, unknown>
+    resultSchema: Record<string, unknown>
+  }>
   /** Read contract for existing tools without readOnlyHint; explicit false always wins. */
   mcpReadTools?: Record<string, Array<{ server: string; tool: string }>>
   cliReadTools?: Record<string, ConnectionCliDeclaration>
@@ -52,28 +84,42 @@ export interface ConnectionResource {
   profile: string
   kind: string
   name: string
+  scope?: 'all'
+  /** Nonempty collection identity, at most 256 UTF-8 bytes; never read or action authority. */
+  collectionKey?: string
+  /** Complete plain-text configuration description, at most 4096 UTF-8 bytes. */
+  configurationSummary?: string
   [key: string]: unknown
 }
 
 export interface ConnectionSource extends ConnectionResource {
+  boundary?: { partition: string; sequence: number }
   enabledAfter: string
-  policy: { automatic: boolean; askBeforeAct: boolean }
+  policy: { automatic: boolean; askBeforeAct: boolean; immediate?: boolean }
 }
 
 export interface ConnectionResourceQuery {
   kind: string
   query: string
   cursor?: string
+  scope?: 'all'
 }
 
 export interface ConnectionResourcePage {
   items: ConnectionResource[]
   hasMore?: boolean
   nextCursor?: string
+  /** Dynamic discovery state, including an exact native account identity when blocked. */
+  availability?: ConnectionAvailability
 }
 
 export interface ConnectionEvent {
+  position?: { partition: string; sequence: number }
   id: string
+  /** Stable within the provider account, independent of subscription scope. */
+  objectId?: string
+  /** Opaque equality token, paired with objectId; never a collection timestamp. */
+  version?: string
   text: string
   at: string
   eventType: string
@@ -94,6 +140,7 @@ export interface ConnectionPage {
 export interface ConnectionAvailability {
   status: 'ready' | 'auth_required' | 'error'
   code?: string
+  authTarget?: { pluginKey: string; connectorSlug: string; instance?: string }
 }
 
 export interface ConnectionContext {
@@ -113,6 +160,7 @@ export interface ConnectionContext {
     ): Promise<ConnectionMcpResult>
   }
   cli: {
+    describe(dependency: string): Promise<{ pluginKey: string; connectorSlug: string }>
     callTool(
       dependency: string,
       input: { tool: string; arguments?: Record<string, string> }
@@ -120,8 +168,10 @@ export interface ConnectionContext {
   }
 }
 
-export interface ConnectionCliDeclaration {
-  connectorSlug: string
+export type ConnectionCliDeclaration = (
+  | { connectorSlug: string; toolId?: never }
+  | { toolId: string; connectorSlug?: never }
+) & {
   outputArgs: string[]
   operations: Record<string, { command: string[]; parameters: Record<string, string> }>
 }
@@ -149,6 +199,20 @@ export interface ConnectionProvider {
   ): Promise<ConnectionResourcePage>
   validate(context: ConnectionContext, input: ConnectionSource): Promise<unknown>
   initialize(context: ConnectionContext, input: ConnectionSource): Promise<ConnectionCheckpoint>
+  /** Only the authorized host invokes actions; declarations are not execution grants. */
+  executeAction?(
+    context: ConnectionContext,
+    input: { action: string; source: ConnectionSource; [key: string]: unknown }
+  ): Promise<unknown>
+  readSource?(
+    context: ConnectionContext,
+    input: { source: ConnectionSource; query?: Record<string, unknown>; cursor?: string }
+  ): Promise<{
+    items: Array<{ id: string; [key: string]: unknown }>
+    hasMore: boolean
+    nextCursor?: string
+    [key: string]: unknown
+  }>
   collect(
     context: ConnectionContext,
     input: { source: ConnectionSource; checkpoint: ConnectionCheckpoint }
@@ -173,5 +237,8 @@ export declare function dependencyPlan(
   satisfies: (version: string, range: string) => boolean
 ): ConnectionDependencyResolution[]
 export declare class ConnectionError extends Error {
+  constructor(code: string, message: string, options?: { retryAfterMs?: number })
   code: string
+  /** A bounded retry delay for collection reads only; never authorizes retrying actions. */
+  retryAfterMs?: number
 }

@@ -2,12 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Route-level regression tests for KB policy at attachment binary exits.
+"""KB policy regressions at the retained Python HTTP binary exits.
 
-The service-level policy tests prove the decision logic; these tests prove the
-HTTP exits (download, download-token, playback, executor, public share) keep
-calling it, including the re-check of tokens issued before a policy flip.
+Browser detail/download/upload are Rust-owned. Keep exercising OpenAPI download,
+download-token issuance, playback and public-share policy on production routes.
 """
+
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -79,11 +80,11 @@ def _assert_download_disabled(response) -> None:
     assert response.json()["detail"]["code"] == "DOCUMENT_DOWNLOAD_DISABLED"
 
 
-def test_download_rejected_for_protected_kb_document(
+def test_openapi_download_rejected_for_protected_kb_document(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
-    test_token: str,
+    test_api_key,
 ) -> None:
     _, attachment_id = _create_kb_document_attachment(
         test_db,
@@ -93,8 +94,8 @@ def test_download_rejected_for_protected_kb_document(
     )
 
     response = test_client.get(
-        f"/api/attachments/{attachment_id}/download",
-        headers={"Authorization": f"Bearer {test_token}"},
+        f"/api/v1/attachments/{attachment_id}/download",
+        headers={"X-API-Key": test_api_key[0]},
     )
 
     _assert_download_disabled(response)
@@ -121,7 +122,7 @@ def test_download_token_creation_rejected_for_protected_kb_document(
     _assert_download_disabled(response)
 
 
-def test_issued_download_token_is_rechecked_when_policy_is_disabled(
+def test_issued_share_token_is_rechecked_when_policy_is_disabled(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -141,15 +142,17 @@ def test_issued_download_token_is_rechecked_when_policy_is_disabled(
     )
 
     token_response = test_client.post(
-        f"/api/attachments/{attachment_id}/download-token",
+        f"/api/attachments/{attachment_id}/public-share",
         headers={"Authorization": f"Bearer {test_token}"},
     )
     assert token_response.status_code == 200
-    download_token = token_response.json()["download_token"]
+    download_token = parse_qs(urlparse(token_response.json()["share_url"]).query)[
+        "token"
+    ][0]
 
     allowed_response = test_client.get(
-        f"/api/attachments/{attachment_id}/download",
-        params={"download_token": download_token},
+        "/api/attachments/download/shared",
+        params={"token": download_token},
     )
     assert allowed_response.status_code == 200
     assert allowed_response.content == ORIGINAL_BYTES
@@ -157,8 +160,8 @@ def test_issued_download_token_is_rechecked_when_policy_is_disabled(
     _protect(knowledge_base, test_db)
 
     blocked_response = test_client.get(
-        f"/api/attachments/{attachment_id}/download",
-        params={"download_token": download_token},
+        "/api/attachments/download/shared",
+        params={"token": download_token},
     )
     _assert_download_disabled(blocked_response)
 
@@ -168,6 +171,7 @@ def test_playback_allowed_but_download_rejected_for_protected_video(
     test_db: Session,
     test_user: User,
     test_token: str,
+    test_api_key,
 ) -> None:
     _, attachment_id = _create_kb_document_attachment(
         test_db,
@@ -184,8 +188,8 @@ def test_playback_allowed_but_download_rejected_for_protected_video(
     assert "download_token=" in playback_response.json()["playback_url"]
 
     download_response = test_client.get(
-        f"/api/attachments/{attachment_id}/download",
-        headers={"Authorization": f"Bearer {test_token}"},
+        f"/api/v1/attachments/{attachment_id}/download",
+        headers={"X-API-Key": test_api_key[0]},
     )
     _assert_download_disabled(download_response)
 
@@ -232,14 +236,3 @@ def test_shared_download_rechecks_policy_after_share_token_issued(
     )
 
     _assert_download_disabled(response)
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(
-        test_client, ("attachment_detail", "attachment_download")
-    ) as client:
-        yield client

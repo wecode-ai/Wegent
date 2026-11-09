@@ -12,6 +12,7 @@ import {
 } from '../modules/plugin-regression-fixture.mjs'
 import {
   acknowledgedPluginGeneration,
+  latestPluginSyncRequest,
   observePluginSyncTransport,
 } from '../modules/plugin-sync-observer.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
@@ -147,12 +148,9 @@ export async function createDesktopScenario({
               requests.length,
               `${target.kind} received duplicate setup syncs for the same generation`
             )
-            assert.deepEqual(
-              generations,
-              [...generations].sort((left, right) => left - right),
-              `${target.kind} retried an older setup generation`
-            )
-            const request = requests.at(-1)
+            // Full snapshots can overtake an allocated delta. Settle against
+            // the highest intent, never an older frame that happened to arrive last.
+            const request = latestPluginSyncRequest(requests)
             const plugin = await materializedPlugin(target.home, fixture.installedId)
             return {
               request,

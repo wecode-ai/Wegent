@@ -94,6 +94,41 @@ where
     Ok(Value::Object(payload))
 }
 
+/// Source `build_desired_capabilities` for the registration-time sync.
+///
+/// The registration path passes `include_plugins`: when plugin coordination
+/// is unavailable the source loads no plugins and falls back to `mode="merge"`
+/// so existing client plugins are preserved. Key order matches the source
+/// dict (`mode`, `skills`, `mcps`, then `plugins`).
+pub async fn build_desired_capabilities_for_registration<M>(
+    mysql: &M,
+    user_id: i64,
+    device_id: &str,
+    include_plugins: bool,
+) -> Result<Value, BuildError>
+where
+    M: Mysql,
+{
+    let skills = load_installed_skills(mysql, user_id).await?;
+    let plugins = if include_plugins {
+        load_installed_plugins(mysql, user_id, device_id).await?
+    } else {
+        Vec::new()
+    };
+    let mcps = load_installed_mcps(mysql, user_id).await?;
+    let mut payload = Map::new();
+    payload.insert(
+        "mode".to_string(),
+        Value::String(if include_plugins { "replace" } else { "merge" }.to_string()),
+    );
+    payload.insert("skills".to_string(), Value::Array(skills));
+    payload.insert("mcps".to_string(), Value::Array(mcps));
+    if include_plugins {
+        payload.insert("plugins".to_string(), Value::Array(plugins));
+    }
+    Ok(Value::Object(payload))
+}
+
 /// Source `build_desired_plugins`: the plugins-only merge payload used by the
 /// reconcile branch. It never loads skills or MCPs.
 pub async fn build_desired_plugins<M>(

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import { createImSessionApi } from './imSessions'
 import type { HttpClient } from './http'

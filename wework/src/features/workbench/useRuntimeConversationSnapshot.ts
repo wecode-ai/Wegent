@@ -2,9 +2,46 @@ import { useCallback, useSyncExternalStore } from 'react'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   EMPTY_RUNTIME_CONVERSATION_SNAPSHOT,
+  EMPTY_RUNTIME_CONVERSATION_METADATA,
+  EMPTY_RUNTIME_QUEUED_MESSAGES,
+  getRuntimeConversationMetadata,
+  getRuntimeConversationQueuedMessages,
+  getRuntimeConversationQueuePaused,
   getRuntimeConversationSnapshot,
   subscribeRuntimeConversation,
 } from './runtimeConversationCache'
+
+function useRuntimeConversationValue<T>(
+  address: RuntimeTaskAddress | null,
+  read: (address: RuntimeTaskAddress) => T,
+  empty: T
+) {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? subscribeRuntimeConversation(address, listener) : () => {},
+    [address]
+  )
+  const getSnapshot = useCallback(() => (address ? read(address) : empty), [address, empty, read])
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+export function useRuntimeConversationMetadata(address: RuntimeTaskAddress | null) {
+  return useRuntimeConversationValue(
+    address,
+    getRuntimeConversationMetadata,
+    EMPTY_RUNTIME_CONVERSATION_METADATA
+  )
+}
+
+export function useRuntimeConversationQueue(address: RuntimeTaskAddress | null) {
+  const messages = useRuntimeConversationValue(
+    address,
+    getRuntimeConversationQueuedMessages,
+    EMPTY_RUNTIME_QUEUED_MESSAGES
+  )
+  const paused = useRuntimeConversationValue(address, getRuntimeConversationQueuePaused, false)
+  return { messages, paused }
+}
 
 /** A pane reads the shared conversation; it never owns another transcript copy. */
 export function useRuntimeConversationSnapshot(address: RuntimeTaskAddress | null) {
@@ -12,7 +49,14 @@ export function useRuntimeConversationSnapshot(address: RuntimeTaskAddress | nul
     (listener: () => void) => {
       if (!address) return () => {}
       let cancel: (() => void) | undefined
-      const unsubscribe = subscribeRuntimeConversation(address, () => {
+      const unsubscribe = subscribeRuntimeConversation(address, (_action, coalesced) => {
+        // A coalesced publication must not queue a second render frame.
+        if (coalesced) {
+          cancel?.()
+          cancel = undefined
+          listener()
+          return
+        }
         if (cancel) return
         const flush = () => {
           cancel = undefined

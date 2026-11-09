@@ -21,6 +21,8 @@ import {
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
+import { isTranscriptReadAdmissionBusy } from '../modules/runtime-read-admission.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -98,7 +100,7 @@ function writeEvents(response, responseId, events) {
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
 }
 
-async function requestJson(baseUrl, token, pathname, options = {}) {
+async function requestJson(baseUrl, token, pathname, options = {}, deferTranscriptBusy = false) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     ...options,
     headers: {
@@ -108,6 +110,12 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
+  if (
+    deferTranscriptBusy &&
+    pathname === '/api/runtime-work/transcript' &&
+    isTranscriptReadAdmissionBusy(response.status, text)
+  )
+    return null
   assert.equal(
     response.ok,
     true,
@@ -340,7 +348,7 @@ async function createCoordinateGroup(control, request, projectId, timeoutMs) {
 }
 
 async function createIssue(control, request, projectId, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ISSUE,
@@ -369,9 +377,6 @@ async function assignGroup(control, groupId, timeoutMs) {
     'click',
     `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
     text: GROUP,
     timeoutMs,
@@ -517,7 +522,8 @@ export async function createDesktopScenario({
   const bothChildrenStarted = new Promise(resolve => {
     resolveBothChildrenStarted = resolve
   })
-  const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
+  const request = (pathname, options, deferTranscriptBusy) =>
+    requestJson(backendUrl, authToken, pathname, options, deferTranscriptBusy)
 
   return {
     requiresCloudEnvironment: true,
@@ -756,7 +762,11 @@ export async function createDesktopScenario({
       await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
       await waitForActivityText(control, FIRST_TASK, modelResponseTimeoutMs)
       await waitForActivityText(control, SECOND_TASK, modelResponseTimeoutMs)
-      await waitForActivityText(control, `${LEADER} 负责人 · 分配任务：`, modelResponseTimeoutMs)
+      await waitForActivityText(
+        control,
+        `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
+        modelResponseTimeoutMs
+      )
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
         'in_progress',
@@ -873,13 +883,24 @@ export async function createDesktopScenario({
         MANAGER_REPLY,
         modelResponseTimeoutMs
       )
-      const continuedTranscript = await request('/api/runtime-work/transcript', {
-        method: 'POST',
-        body: JSON.stringify({
-          deviceId: runtimeDeviceId(dispatch),
-          taskId: managerTaskId,
-        }),
-      })
+      // Closed popup readers retain worker admission until cancellation completes.
+      const continuedTranscript = await waitForValue(
+        () =>
+          request(
+            '/api/runtime-work/transcript',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                deviceId: runtimeDeviceId(dispatch),
+                taskId: managerTaskId,
+              }),
+            },
+            true
+          ),
+        Boolean,
+        'The continued manager transcript did not regain read admission',
+        uiTimeoutMs
+      )
       assert.equal(continuedTranscript.taskId, managerTaskId)
       assert.ok(
         JSON.stringify(continuedTranscript.turns).includes(updateStatusArguments().comment),

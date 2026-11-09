@@ -10,6 +10,7 @@ import {
   createIssueDispatchMockModel,
   createProjectAgent,
   createProjectFixture,
+  initializeProjectExecutionEnvironment,
   deleteIssueDispatchMockModel,
   type IssueDispatchMockModel,
 } from '../../utils/issue-dispatch-test-support'
@@ -77,6 +78,106 @@ test.describe('Collaboration group Executor coordination', () => {
     if (model) await deleteIssueDispatchMockModel(request, model)
   })
 
+  for (const deviceSetup of ['authorized', 'configure'] as const) {
+    test(`applies a marketplace template with an ${deviceSetup} project APP device and preserves edits across refresh`, async ({
+      page,
+      request,
+    }) => {
+      if (!model) throw new Error('Issue Dispatch mock model was not provisioned')
+      const fixture = await createProjectFixture(
+        page,
+        `template-${Date.now()}`,
+        'Template fixture issue'
+      )
+      try {
+        const originalAgents = await apiRequest<Array<{ id: string }>>(
+          request,
+          model.token,
+          `/api/v1/cloud-projects/${fixture.projectId}/chat-agents`
+        )
+        if (deviceSetup === 'configure') {
+          const removed = await request.delete(
+            `${PROVIDER_NATIVE_API_URL}/api/v1/cloud-projects/${fixture.projectId}/execution-environments/${appDevice.id}`,
+            {
+              headers: authHeaders(model.token),
+            }
+          )
+          expect(removed.status(), await removed.text()).toBe(204)
+        }
+        await page.goto('/resource-library?type=template')
+        await page.getByTestId('template-details-product-lifecycle').click()
+        await page.getByTestId('template-use').click()
+        await page.getByTestId(`template-project-${fixture.projectId}`).click()
+        const environment = page.getByTestId('template-project-environment-select')
+        await expect(environment).toBeEnabled()
+        await expect(environment).toHaveValue(
+          deviceSetup === 'authorized' ? String(appDevice.id) : ''
+        )
+        const groupName = `Imported project team ${Date.now()}`
+        const name = page.locator('[data-testid^="template-group-name-"]')
+        await name.fill(groupName)
+        if (deviceSetup === 'configure') {
+          const popup = page.waitForEvent('popup')
+          await page.getByTestId('template-project-environment-settings').click()
+          const settings = await popup
+          await expect(settings).toHaveURL(
+            `${fixture.projectPath}?view=manage&section=environments`
+          )
+          await initializeProjectExecutionEnvironment(settings)
+          await settings.close()
+        }
+        await page.getByTestId('template-project-environment-refresh').click()
+        await expect(environment).toBeEnabled()
+        await expect(environment).toHaveValue(String(appDevice.id))
+        await expect(name).toHaveValue(groupName)
+        await expect(page.getByTestId('template-project-environment-settings')).toHaveAttribute(
+          'href',
+          `${fixture.projectPath}?view=manage&section=environments`
+        )
+        await page.getByTestId('template-bindings-apply').click()
+        await expect(page).toHaveURL(new RegExp(`${fixture.projectPath}$`))
+        await page.reload()
+        await expect(page.getByTestId('collaboration-board')).toBeVisible()
+        const agents = await apiRequest<
+          Array<{
+            id: string
+            executionPolicy: { mode: string; environment_id: string }
+            modelPolicy: { mode: string }
+          }>
+        >(request, model.token, `/api/v1/cloud-projects/${fixture.projectId}/chat-agents`)
+        const imported = agents.filter(
+          agent => !originalAgents.some(original => original.id === agent.id)
+        )
+        expect(imported).toHaveLength(6)
+        for (const agent of imported) {
+          expect(agent.executionPolicy).toEqual({
+            mode: 'fixed',
+            environment_id: String(appDevice.id),
+          })
+          expect(agent.modelPolicy.mode).toBe('fixed')
+        }
+        const groups = await apiRequest<{ items: Array<{ name: string }> }>(
+          request,
+          model.token,
+          `/api/v1/cloud-projects/${fixture.projectId}/collaboration-groups`
+        )
+        expect(groups.items.map(group => group.name)).toContain(groupName)
+      } finally {
+        for (const path of [
+          `/api/v1/cloud-projects/${fixture.projectId}`,
+          `/api/v1/workspaces/${fixture.workspaceId}`,
+        ]) {
+          const current = await apiRequest<{ version: number }>(request, model.token, path)
+          const removed = await request.delete(
+            `${PROVIDER_NATIVE_API_URL}${path}?version=${current.version}`,
+            { headers: authHeaders(model.token) }
+          )
+          expect(removed.status(), await removed.text()).toBe(204)
+        }
+      }
+    })
+  }
+
   test('dispatches a directly assigned agent and moves only to review', async ({
     page,
     request,
@@ -96,6 +197,12 @@ test.describe('Collaboration group Executor coordination', () => {
           {
             toolName: 'wework_space__get_current_context',
             arguments: {},
+            inspectToolNames: [
+              'submit_workflow_plan',
+              'update_issue_status',
+              'spawn_agent',
+              'wait_agent',
+            ],
           },
         ],
       },
@@ -118,7 +225,6 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       await page.getByTestId('cloud-todo-detail-assignee').click()
       await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`).click()
-      await page.getByTestId('cloud-todo-save').click()
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
         'data-value',
@@ -146,6 +252,7 @@ test.describe('Collaboration group Executor coordination', () => {
       const modelBodies = await getScenarioModelBodies(request, scenarioMatch)
       expect(modelBodies.length).toBeGreaterThan(2)
       expect(modelRequestText(modelBodies.slice(1))).toContain(issueTitle)
+      expect(modelRequestText(modelBodies)).toContain('ALL_TOOLS.filter')
       expect(modelToolNames(modelBodies).some(isSubmitWorkflowPlan)).toBe(false)
       expect(modelToolNames(modelBodies).some(isUpdateIssueStatus)).toBe(false)
       expect(modelToolNames(modelBodies).some(isNativeSubagentTool)).toBe(false)
@@ -273,13 +380,14 @@ test.describe('Collaboration group Executor coordination', () => {
         responseContent: `Manager evaluated ${synthesisEvidence} and moved the Issue to review.`,
       },
     ])
+    // Keep both worker responses active while verifying concurrent dispatch (maximum 10s).
     const clearCollectorScenario = await configureIssueDispatchModelScenario(
       request,
       collectorTask,
-      [{ responseContent: collectorEvidence, doneDelayMs: 15_000 }]
+      [{ responseContent: collectorEvidence, doneDelayMs: 10_000 }]
     )
     const clearReviewerScenario = await configureIssueDispatchModelScenario(request, reviewerTask, [
-      { responseContent: reviewerEvidence, doneDelayMs: 15_000 },
+      { responseContent: reviewerEvidence, doneDelayMs: 10_000 },
     ])
     const clearSynthesisScenario = await configureIssueDispatchModelScenario(
       request,
@@ -291,19 +399,18 @@ test.describe('Collaboration group Executor coordination', () => {
       await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       await page.getByTestId('cloud-todo-detail-assignee').click()
-      await page.getByTestId(`cloud-todo-detail-assignee-option-group:${groupId}`).click()
-      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-        'data-value',
-        `group:${groupId}`
-      )
-      // The manager can reassign the Issue before a subsequent read reaches the server.
       const groupAssigned = page.waitForResponse(
         response =>
           response.request().method() === 'PATCH' &&
           new URL(response.url()).pathname === `/api/v1/loop-items/${fixture.issueId}` &&
           response.request().postDataJSON()?.assignee_group_id === groupId
       )
-      await page.getByTestId('cloud-todo-save').click()
+      await page.getByTestId(`cloud-todo-detail-assignee-option-group:${groupId}`).click()
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        `group:${groupId}`
+      )
+      // The manager can reassign the Issue before a subsequent read reaches the server.
       const assignmentResponse = await groupAssigned
       expect(assignmentResponse.ok()).toBe(true)
       const assigned: CollaborationIssue = await assignmentResponse.json()

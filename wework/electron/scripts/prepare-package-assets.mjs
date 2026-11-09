@@ -1,4 +1,5 @@
 import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
+import { packBundledComponentArchives } from '../../scripts/lib/bundled-component-archives.mjs'
 import { spawn } from 'node:child_process'
 import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -207,6 +208,7 @@ await withTemporaryBuildDirectory({
       { mode: 0o600 }
     )
 
+    await packBundledComponentArchives(resourcesRoot)
     console.log(`Electron package resources: ${resourcesRoot}`)
   },
 })

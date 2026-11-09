@@ -63,7 +63,10 @@ from app.services.ghost_capabilities import (
     merge_ghost_capabilities,
 )
 from app.services.loop_item_events import publish_loop_item_changed
-from app.services.loop_item_status_history import write_status_change
+from app.services.loop_item_status_history import (
+    automatic_project_status,
+    write_status_change,
+)
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.access import can_view_item
 from app.services.loop_items.change_requests import update_change_request_source
@@ -471,6 +474,22 @@ class ReplyContext:
 
 
 class ProjectChatService:
+    @staticmethod
+    def _queue_task_status_change(
+        db: Session,
+        task: LoopItem,
+        previous_status: str,
+        row: ProjectChatMessage,
+    ) -> None:
+        from app.services.project_internal_events import queue_issue_status_changed
+
+        queue_issue_status_changed(
+            db,
+            item=task,
+            previous_status=previous_status,
+            automation_run_id=(row.metadata_json or {}).get("automation_run_id"),
+        )
+
     @staticmethod
     def _queue_loop_item_change(db: Session, item: LoopItem) -> None:
         pending = db.info.setdefault(PENDING_LOOP_ITEM_CHANGES_KEY, set())
@@ -1409,6 +1428,20 @@ class ProjectChatService:
                 db, parent=row, data=data, sequence=sequence
             )
         terminal_status = self._project_chat_terminal_status(event_name, payload, data)
+        human_request_id = (row.metadata_json or {}).get("human_request_id")
+        if human_request_id:
+            from app.services.project_chat.execution_snapshot import (
+                runtime_event_client_message_id,
+            )
+            from app.services.project_chat.human_requests import settle_reply
+
+            if runtime_event_client_message_id(payload) == row.trigger_message_id:
+                settle_reply(
+                    db,
+                    issue_id=row.task_id,
+                    request_id=human_request_id,
+                    message_id=row.trigger_message_id,
+                )
         self._update_project_automation_run(db, row, terminal_status, event_name)
         if terminal_status is not None:
             logger.info(
@@ -1568,6 +1601,8 @@ class ProjectChatService:
         event_name: str,
     ) -> None:
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        if metadata.get("dispatch_role") in {"manager", "member"}:
+            return
         run_id = metadata.get("automation_run_id")
         if not isinstance(run_id, str) or not run_id:
             return
@@ -2076,6 +2111,7 @@ class ProjectChatService:
             return
 
         now = datetime.now(UTC).replace(tzinfo=None)
+        previous_board_status = task.status
         task_metadata = dict(task.metadata_json or {})
         external_index = (
             task_metadata.get("external_index") is True
@@ -2141,17 +2177,23 @@ class ProjectChatService:
             ):
                 project = db.get(CloudProject, task.cloud_project_id)
                 if project is not None:
-                    write_status_change(
-                        task_metadata,
-                        project=project,
-                        from_status=task.status,
-                        to_status="in_progress",
-                        trigger="ai_started",
-                        by_user_id=None,
+                    next_status = automatic_project_status(
+                        project,
+                        current_status=task.status,
+                        candidate_status="in_progress",
                     )
-                task.status = "in_progress"
-                task.completed_at = ProjectChatService._loop_unset_datetime(db)
-                task.sort_order = 0
+                    if next_status != task.status:
+                        write_status_change(
+                            task_metadata,
+                            project=project,
+                            from_status=task.status,
+                            to_status=next_status,
+                            trigger="ai_started",
+                            by_user_id=None,
+                        )
+                        task.status = next_status
+                        task.completed_at = ProjectChatService._loop_unset_datetime(db)
+                        task.sort_order = 0
         else:
             next_state["completed_at"] = now.isoformat()
             next_state["heartbeat_at"] = None
@@ -2173,6 +2215,7 @@ class ProjectChatService:
             self._queue_loop_item_change(db, task)
         task.metadata_json = task_metadata
         task.version += 1
+        self._queue_task_status_change(db, task, previous_board_status, row)
         if (
             status_value != "running"
             or previous_status != "running"
@@ -2313,21 +2356,29 @@ class ProjectChatService:
             or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
             return
+        previous_status = task.status
         project = db.get(CloudProject, task.cloud_project_id)
-        if project is not None:
-            write_status_change(
-                task_metadata,
-                project=project,
-                from_status=task.status,
-                to_status="in_review",
-                trigger="ai_completed",
-                by_user_id=None,
-            )
+        if project is None:
+            return
+        next_status = automatic_project_status(
+            project, current_status=task.status, candidate_status="in_review"
+        )
+        if next_status == task.status:
+            return
+        write_status_change(
+            task_metadata,
+            project=project,
+            from_status=task.status,
+            to_status=next_status,
+            trigger="ai_completed",
+            by_user_id=None,
+        )
         task.metadata_json = task_metadata
-        task.status = "in_review"
+        task.status = next_status
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
         task.version += 1
+        ProjectChatService._queue_task_status_change(db, task, previous_status, row)
 
     def fail_agent_response(
         self,

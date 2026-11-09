@@ -316,6 +316,8 @@ export interface DeleteProjectWorktreeResponse {
 
 export interface RuntimeSettings {
   maxConcurrentTasks: number
+  maxConcurrentStandInTasks: number
+  maxConcurrentAgentTasks: number
 }
 
 export interface RuntimeTaskQueueReorderRequest extends RuntimeTaskAddress {
@@ -915,6 +917,7 @@ export interface RuntimeTaskExecutionConfig {
 export interface RuntimeTaskCreateRequest extends RuntimeTaskCreateIntent {
   /** Identity that owns this scheduled work; checked again when it executes. */
   standInOwner?: { userId: number; roleId: string }
+  standInCalendar?: { template?: 'weekly_review' | 'memory_review' }
   forceStart?: boolean
   /** Logical route used to bind this task to a project Issue. */
   executionDeviceId?: string
@@ -1116,7 +1119,7 @@ export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
   name: string
   status: 'cloning' | 'opening' | 'failed'
   failureStage?: 'clone' | 'open'
-  failureReason?: 'executor-offline' | 'clone-failed' | 'open-failed'
+  failureReason?: 'executor-offline' | 'executor-not-found' | 'clone-failed' | 'open-failed'
   error?: string
 }
 

@@ -12,7 +12,7 @@
  *
  * Handles three URL formats:
  *   /knowledge/default/{kbName}           → Personal KB (current user, namespace="default")
- *   /knowledge/public/{kbName}            → Organization KB (globally unique)
+ *   /knowledge/public/{kbName}            → Organization KB (company scope)
  *   /knowledge/{namespace}/{kbName}       → Team KB (namespace=team name)
  *
  * With optional document path:
@@ -72,7 +72,7 @@ function KnowledgeVirtualPageContent() {
   const docPathSegments = params.docPath as string[] | undefined
   const docPath = docPathSegments ? docPathSegments.map(decodeURIComponent).join('/') : undefined
 
-  // For "public" namespace, pass undefined so KnowledgeDocumentPageDesktop searches by name only
+  // For "public", resolve within the company collection; the kb query preserves identity
   // For all others, pass the actual namespace
   const namespace = rawNamespace === 'public' ? undefined : rawNamespace
 

@@ -15,6 +15,11 @@ import {
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import { findModelForSelection } from './runtimeContextUsage'
 import { modelSelectionIdentityOptions } from './runtimeModelSelection'
+import {
+  modelSelectionIdentityDiagnostics,
+  modelSelectionScopeFingerprint,
+  type ModelSelectionDiagnostics,
+} from './modelSelectionDiagnostics'
 import type {
   ModelCompatibilityDisabledReason,
   ModelOptions,
@@ -78,6 +83,7 @@ function getSelectionKey(selectionConfig?: ModelSelectionConfig | null): string 
   return [selectionConfig?.modelType ?? '', selectionConfig?.modelName ?? '', optionsKey].join('::')
 }
 
+/** Restore and manage independent model choices for each conversation or new-chat scope. */
 export function useWorkbenchModels({
   api,
   locked,
@@ -173,6 +179,30 @@ export function useWorkbenchModels({
       selectionReady,
     ]
   )
+  const configuredModelFingerprint =
+    modelSelectionIdentityDiagnostics(selectionConfig)?.fingerprint ?? 0
+  const modelSelectionDiagnostics = useMemo<ModelSelectionDiagnostics>(
+    () => ({
+      scopeFingerprint: modelSelectionScopeFingerprint(scopeKey),
+      configured: modelSelectionIdentityDiagnostics(selectionConfig),
+      effective: modelSelectionIdentityDiagnostics(effectiveSelectionConfig),
+      selected: modelSelectionIdentityDiagnostics(
+        selectedModel ? toSelectionConfig(selectedModel, selectedModelOptions) : null
+      ),
+      catalogReady: enabled && hasCompletedModelLoad,
+      selectionReady: isSelectionReady,
+    }),
+    [
+      effectiveSelectionConfig,
+      enabled,
+      hasCompletedModelLoad,
+      isSelectionReady,
+      scopeKey,
+      selectedModel,
+      selectedModelOptions,
+      selectionConfig,
+    ]
+  )
 
   useEffect(() => {
     logModelLoading(traceId, 'workbench.gates', { enabled, selectionReady })
@@ -195,6 +225,13 @@ export function useWorkbenchModels({
       logModelLoading(traceId, 'workbench.selection_restored', {
         runtimeTaskScope: scopeKey.includes(':runtime:'),
         planMode: nextOptions.collaborationMode === 'plan',
+        scopeFingerprint: modelSelectionScopeFingerprint(scopeKey),
+        configuredModelFingerprint,
+        restoredModelFingerprint:
+          modelSelectionIdentityDiagnostics(nextSelectionConfig)?.fingerprint ?? 0,
+        selectedModelFingerprint:
+          modelSelectionIdentityDiagnostics(model ? toSelectionConfig(model, nextOptions) : null)
+            ?.fingerprint ?? 0,
       })
       selectedModelRef.current[scopeKey] = model
       selectedModelOptionsRef.current[scopeKey] = nextOptions
@@ -210,7 +247,7 @@ export function useWorkbenchModels({
         current[scopeKey] ? { ...current, [scopeKey]: false } : current
       )
     },
-    [scopeKey, traceId]
+    [configuredModelFingerprint, scopeKey, traceId]
   )
 
   const reconcileSelectedModels = useCallback((nextModels: UnifiedModel[]) => {
@@ -371,6 +408,28 @@ export function useWorkbenchModels({
       const currentSelection = selectedModelRef.current[targetScopeKey] ?? null
       const currentOptions = selectedModelOptionsRef.current[targetScopeKey] ?? {}
       const nextOptions = resolveOptions(model, currentSelection, currentOptions)
+      logModelLoading(traceId, 'workbench.selection_changed', {
+        scopeFingerprint: modelSelectionScopeFingerprint(targetScopeKey),
+        previousModelFingerprint:
+          modelSelectionIdentityDiagnostics(
+            currentSelection ? toSelectionConfig(currentSelection, currentOptions) : null
+          )?.fingerprint ?? 0,
+        selectedModelFingerprint:
+          modelSelectionIdentityDiagnostics(model ? toSelectionConfig(model, nextOptions) : null)
+            ?.fingerprint ?? 0,
+        persist,
+      })
+      if (
+        currentSelection &&
+        model &&
+        model.type === 'runtime' &&
+        isSameModelSelection(currentSelection, model) &&
+        currentOptions.runnerModelProvider
+      ) {
+        nextOptions.runnerModelProvider = currentOptions.runnerModelProvider
+      } else {
+        delete nextOptions.runnerModelProvider
+      }
       selectedModelRef.current[targetScopeKey] = model
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
@@ -383,7 +442,7 @@ export function useWorkbenchModels({
         onSelectionChange?.(toSelectionConfig(model, nextOptions))
       }
     },
-    [locked, onSelectionBlocked, onSelectionChange]
+    [locked, onSelectionBlocked, onSelectionChange, traceId]
   )
 
   const setSelectedModelForScope = useCallback(
@@ -474,6 +533,13 @@ export function useWorkbenchModels({
     ) => {
       const nextOptions = model ? normalizeModelOptions(model, options) : options
       const persistedSelection = persist && model ? toSelectionConfig(model, nextOptions) : null
+      logModelLoading(traceId, 'workbench.selection_seeded', {
+        scopeFingerprint: modelSelectionScopeFingerprint(targetScopeKey),
+        selectedModelFingerprint:
+          modelSelectionIdentityDiagnostics(model ? toSelectionConfig(model, nextOptions) : null)
+            ?.fingerprint ?? 0,
+        persist,
+      })
       selectedModelRef.current[targetScopeKey] = model
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
@@ -492,7 +558,7 @@ export function useWorkbenchModels({
         onSelectionChange?.(persistedSelection)
       }
     },
-    [onSelectionChange, selectionKey]
+    [onSelectionChange, selectionKey, traceId]
   )
 
   const getSelectedModel = useCallback(() => selectedModelRef.current[scopeKey] ?? null, [scopeKey])
@@ -511,6 +577,7 @@ export function useWorkbenchModels({
     refreshModels,
     selectedModel,
     selectedModelOptions,
+    modelSelectionDiagnostics,
     isCatalogReady: enabled && hasCompletedModelLoad,
     selectedModelAvailable,
     isSelectionReady,

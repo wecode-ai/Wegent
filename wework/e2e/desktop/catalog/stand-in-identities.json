@@ -1,0 +1,12 @@
+{
+  "order": 42000,
+  "scenario": "./scenarios/stand-in-identities.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 31000,
+      "shard": 3,
+      "position": 2000
+    }
+  }
+}

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { execFile } from 'node:child_process'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

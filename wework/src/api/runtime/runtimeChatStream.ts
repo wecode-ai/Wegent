@@ -2,6 +2,7 @@ import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload }
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import { observeRuntimePluginInvocation } from '@/features/plugins/pluginInvocationTelemetry'
+import { measureRuntimeStreamEvent } from '@/stream/runtimeStreamDiagnostics'
 import {
   createResponseApiStreamState,
   emitResponseApiEvent,
@@ -19,6 +20,7 @@ const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 const STREAM_EVENT_BATCH_INTERVAL_MS = 16
 export const E2E_DROPPED_RUNTIME_EVENTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__'
 export const E2E_RUNTIME_EVENT_DISPATCHERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__'
+export const E2E_RUNTIME_EVENT_LISTENERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_LISTENERS__'
 
 export function isRuntimeChatStreamDebugEnabled(): boolean {
   return (
@@ -52,6 +54,21 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
 
   function processNativeEvent(event: LocalExecutorEvent): void {
     if (shouldDropRuntimeEventForE2E(event.event)) return
+    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+      const root = globalThis as typeof globalThis & {
+        [E2E_RUNTIME_EVENT_LISTENERS_KEY]?: Set<(event: LocalExecutorEvent) => void>
+      }
+      for (const listener of [...(root[E2E_RUNTIME_EVENT_LISTENERS_KEY] ?? [])]) {
+        try {
+          listener(event)
+        } catch (error) {
+          console.error('[Wework] E2E runtime event listener failed', {
+            event: event.event,
+            error,
+          })
+        }
+      }
+    }
     try {
       observeRuntimePluginInvocation(event)
     } catch {
@@ -83,6 +100,14 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       }
       if (event.event === 'executor.event_lagged') {
         const payload = runtimeEventLaggedPayload(event.payload)
+        if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+          console.debug('[Wework] Runtime lag recovery dispatch', {
+            sequence: event.sequence,
+            subscriptionId,
+            validPayload: payload !== null,
+            hasRecoveryHandler: Boolean(subscription.handlers.onRuntimeEventLagged),
+          })
+        }
         if (payload) subscription.handlers.onRuntimeEventLagged?.(payload)
         continue
       }
@@ -106,7 +131,22 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         subscription.eventCount,
         subscription.textDeltaCount
       )
-      emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
+      try {
+        measureRuntimeStreamEvent(event.event, () => {
+          emitResponseApiEvent(
+            subscription.handlers,
+            event.event,
+            event.payload,
+            subscription.state
+          )
+        })
+      } catch (error) {
+        console.error('[Wework] Runtime chat stream handler failed', {
+          event: event.event,
+          subscriptionId,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        })
+      }
     }
   }
 
@@ -130,6 +170,10 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
   }
 
   function handleNativeEvent(event: LocalExecutorEvent): void {
+    measureRuntimeStreamEvent(event.event, () => queueNativeEvent(event), 'native')
+  }
+
+  function queueNativeEvent(event: LocalExecutorEvent): void {
     if (!isBatchableRuntimeStreamEvent(event)) {
       flushPendingStreamEvent()
       processNativeEvent(event)
@@ -439,6 +483,7 @@ function mergeRuntimeBlockContentSnapshots(
   if ((currentData.blockId ?? currentData.block_id) !== (nextData.blockId ?? nextData.block_id)) {
     return null
   }
+  if (asRecord(currentData.updates).status !== asRecord(nextData.updates).status) return null
   return next
 }
 

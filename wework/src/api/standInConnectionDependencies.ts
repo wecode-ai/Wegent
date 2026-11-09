@@ -43,7 +43,7 @@ export async function installStandInConnectionDependencies(options: {
   if (missing.some(item => item.status !== 'missing')) throw failure('dependency_conflict')
   if (missing.length) {
     if (!plugins) throw failure('dependency_cloud_required')
-    const catalog = await plugins.listMarketplacePlugins({ deviceId, source: 'wegent' })
+    const catalog = await plugins.listMarketplacePlugins({ deviceId })
     // The server-owned sourceProvider identifies the official cloud source. A
     // community listing or another Codex marketplace must never satisfy it.
     const targets = missing.map(dependency => {

@@ -1,0 +1,12 @@
+{
+  "order": 137000,
+  "scenario": "./scenarios/device-artifact-declaration.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 87000,
+      "shard": 5,
+      "position": 2000
+    }
+  }
+}

@@ -1,12 +1,17 @@
 import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
-import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
+import {
+  createClaudeCliAlias,
+  localHarnessCliPath,
+  localHarnessCliVersion,
+} from '../modules/local-harness-cli.mjs'
 import { createSharedSkillRuntime } from '../modules/shared-skill-runtime.mjs'
+import { createConcurrentClaudeHomes } from '../modules/concurrent-claude-homes.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   responseCompleted,
@@ -342,21 +347,18 @@ export async function createDesktopScenario({
 }) {
   await access(CLAUDE_BINARY, constants.X_OK)
   const claudeVersion = await localHarnessCliVersion(CLAUDE_BINARY)
-  const localClaudeAlias = join(
-    resultDir,
-    process.platform === 'win32' ? 'local-claude.cmd' : 'local-claude'
-  )
+  const localClaudeAlias = await createClaudeCliAlias(dirname(CLAUDE_BINARY), resultDir)
   const remoteWorkspacePath = join(resultDir, 'claude-remote-workspace')
-  await rm(localClaudeAlias, { force: true })
-  if (process.platform === 'win32') {
-    await writeFile(localClaudeAlias, `@echo off\r\ncall "${CLAUDE_BINARY}" %*\r\n`, 'utf8')
-  } else {
-    await symlink(CLAUDE_BINARY, localClaudeAlias)
-  }
   await mkdir(remoteWorkspacePath, { recursive: true })
   await writeFile(join(remoteWorkspacePath, 'README.md'), '# Claude remote E2E\n', 'utf8')
 
   const requests = []
+  const concurrentHomes = createConcurrentClaudeHomes({
+    resultDir,
+    workspacePath: remoteWorkspacePath,
+    writeBashToolCall,
+    writeText,
+  })
   const sharedSkills = createSharedSkillRuntime({
     resultDir,
     workspacePath: remoteWorkspacePath,
@@ -393,6 +395,7 @@ export async function createDesktopScenario({
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
       const body = await readJson(request)
+      if (concurrentHomes.handleModel(body, response)) return true
       if (sharedSkills.handleModel(body, response)) return true
       if (codexSkills.handleModel(body, response)) return true
       const serialized = JSON.stringify(body)
@@ -622,9 +625,11 @@ export async function createDesktopScenario({
       }
       await sharedSkills.verify(cloudEnvironment)
       await codexSkills.verify(cloudEnvironment)
+      await concurrentHomes.verify(cloudEnvironment)
     },
 
     async cleanup() {
+      concurrentHomes.cleanup()
       await rm(localClaudeAlias, {
         force: true,
         maxRetries: process.platform === 'win32' ? 20 : 0,

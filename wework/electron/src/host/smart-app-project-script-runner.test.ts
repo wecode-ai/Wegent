@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   runSmartAppProjectScripts,
@@ -33,16 +34,18 @@ describe('runSmartAppProjectScripts', () => {
           scripts: { check: 'node -e "process.exit(0)"' },
         })
       )
-      const pnpmEntry = process.env.npm_execpath
-      if (!pnpmEntry) throw new Error('Run this regression through pnpm test')
-      // npm_execpath can name either a JavaScript entry or a standalone executable.
-      const nodeEntry = /\.[cm]?js$/i.test(pnpmEntry)
+      // Exercise the managed runtime's JavaScript CLI rather than the host pnpm distribution.
+      const pnpmEntry = join(
+        dirname(createRequire(import.meta.url).resolve('pnpm')),
+        'bin',
+        'pnpm.cjs'
+      )
       const result = await runSmartAppProjectScripts({
         ...options(root),
         scripts: { typecheck: 'check', test: 'check', build: 'check' },
         resolveCommand: async () => ({
-          command: nodeEntry ? process.execPath : pnpmEntry,
-          argsPrefix: [...(nodeEntry ? [pnpmEntry] : []), '--pm-on-fail=error'],
+          command: process.execPath,
+          argsPrefix: [pnpmEntry, '--pm-on-fail=error'],
           environment: { PATH: process.env.PATH, CI: 'true' },
         }),
       })

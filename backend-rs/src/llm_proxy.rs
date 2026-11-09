@@ -328,6 +328,29 @@ pub(crate) async fn resolve_model_config(
     namespace: &str,
     resource_user_id: i64,
 ) -> Result<model_config::ModelConfig, FastApiError> {
+    Ok(resolve_model_config_with_spec(
+        state,
+        user,
+        model_name,
+        model_type,
+        namespace,
+        resource_user_id,
+    )
+    .await?
+    .0)
+}
+
+/// [`resolve_model_config`] plus the raw Model CRD spec. The Wework cloud
+/// gateway config reads `modelConfig` token limits and native-tool flags from
+/// the same row instead of issuing a second Model read.
+pub(crate) async fn resolve_model_config_with_spec(
+    state: &AppState,
+    user: &UserRow,
+    model_name: &str,
+    model_type: &str,
+    namespace: &str,
+    resource_user_id: i64,
+) -> Result<(model_config::ModelConfig, Value), FastApiError> {
     validate_model_access(state, user, model_type, namespace, resource_user_id).await?;
     let row: Option<ModelKindRow> = state
         .mysql
@@ -353,7 +376,7 @@ pub(crate) async fn resolve_model_config(
     let config =
         model_config::extract_and_process_model_config(&spec, i64::from(user.id), &user.user_name)?;
     model_config::validate_wework_model_config_options(&spec, model_name, &config)?;
-    Ok(config)
+    Ok((config, spec))
 }
 
 /// `forward_upstream`: send the native request and stream the upstream response.

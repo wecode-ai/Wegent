@@ -16,6 +16,11 @@ import { ExperimentalBadge } from '@/features/experimental-features/Experimental
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  INTERACTIONS_PATH,
+  useRuntimeInteractions,
+} from '@/features/notifications/RuntimeInteractionsContext'
+import { openRuntimeInteractionsTab } from '@/features/notifications/runtimeInteractionsNavigation'
 import { navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import {
@@ -135,11 +140,24 @@ function WorkspaceTabButton({
 }) {
   const { t } = useTranslation('common')
   const { selectTab, closeTab } = useWorkspaceTabs()
-  const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title: tab.title })
+  const interactions = useRuntimeInteractions()
+  const pendingTab = tab.contentRoute.split('?', 1)[0] === INTERACTIONS_PATH
+  const pendingCount =
+    interactions &&
+    pendingTab &&
+    (!interactions.projectItemsSupported || interactions.pendingProjectCount != null)
+      ? interactions.pending.length + (interactions.pendingProjectCount ?? 0)
+      : null
+  const label = pendingTab ? t('interactions.title', '待你处理') : tab.title
+  const title =
+    pendingCount !== null
+      ? t('interactions.tab_title_with_count', '待你处理（{{count}}）', {
+          count: pendingCount,
+        })
+      : label
+  const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title })
   const unavailable = tab.kind === 'agent' && !agentAvailable
-  const tabTitle = unavailable
-    ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
-    : tab.title
+  const tabTitle = unavailable ? t('workbench.app_wegent_requires_cloud', '连接云端后可用') : title
 
   const handleDragStart = (event: DragEvent<HTMLDivElement>) => {
     onDragStartTab(tab.id)
@@ -163,10 +181,11 @@ function WorkspaceTabButton({
       }}
       className={cn(
         'group relative flex h-8 w-36 min-w-28 max-w-[188px] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
+        pendingCount !== null && 'w-40',
         tab.contentRoute.startsWith('/app/harness-') && 'smart-app-workspace-tab-enter',
         active
-          ? 'border border-border/70 bg-white text-text-primary shadow-sm dark:bg-white/[0.09]'
-          : 'border border-transparent text-text-secondary hover:bg-black/[0.045] hover:text-text-primary dark:hover:bg-white/[0.06]',
+          ? 'border border-border/70 bg-surface text-text-primary shadow-sm'
+          : 'border border-transparent text-text-secondary hover:bg-muted hover:text-text-primary',
         draggedTabId === tab.id && 'opacity-55'
       )}
     >
@@ -175,6 +194,25 @@ function WorkspaceTabButton({
         role="tab"
         aria-selected={active}
         data-testid={`workspace-tab-select-${tab.id}`}
+        data-pending-question-count={pendingTab ? interactions?.pending.length : undefined}
+        data-project-pending-count={
+          pendingTab
+            ? interactions?.projectItemsSupported
+              ? (interactions.pendingProjectCount ?? undefined)
+              : 0
+            : undefined
+        }
+        data-project-count-state={
+          pendingTab
+            ? !interactions
+              ? 'loading'
+              : !interactions.projectItemsSupported
+                ? 'unsupported'
+                : interactions.pendingProjectCount == null
+                  ? 'unknown'
+                  : 'known'
+            : undefined
+        }
         data-tab-kind={tab.kind}
         data-unavailable={unavailable || undefined}
         onClick={() => {
@@ -200,11 +238,21 @@ function WorkspaceTabButton({
             tab.id
           )
         }}
-        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
+        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus"
         title={tabTitle}
       >
         {tabKindIcon(tab, unavailable)}
-        <span className={cn('truncate', active && 'font-medium')}>{tab.title}</span>
+        <span className={cn('flex min-w-0 items-center', active && 'font-medium')}>
+          <span className="truncate">{label}</span>
+          {pendingCount !== null ? (
+            <span
+              data-testid={`workspace-tab-pending-count-${tab.id}`}
+              className="shrink-0 whitespace-pre tabular-nums"
+            >
+              {t('interactions.tab_pending_count', '（{{count}}）', { count: pendingCount })}
+            </span>
+          ) : null}
+        </span>
         {tab.fixed ? (
           <Pin
             aria-label={t('workbench.workspace_tab_fixed', '固定标签页')}
@@ -221,7 +269,7 @@ function WorkspaceTabButton({
             closeTab(tab.id)
           }}
           className={cn(
-            'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-black/[0.06] keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500 dark:hover:bg-white/[0.08]',
+            'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus',
             active
               ? 'text-text-secondary'
               : 'opacity-0 text-text-muted group-hover:opacity-100 group-hover:text-text-secondary group-focus-within:opacity-100'
@@ -455,7 +503,7 @@ export function WorkspaceTabStrip({
   const addMenuKinds = (
     [
       ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
-      ['board', Columns3, t('workbench.workspace_tab_board', '协作 (Beta)')],
+      ['board', Columns3, t('workbench.workspace_tab_board', '协作')],
       ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
     ] as const
   ).filter(([kind]) => availableKindSet.has(kind))
@@ -512,7 +560,7 @@ export function WorkspaceTabStrip({
             setContextMenu(null)
             setAddMenuPosition(current => (current ? null : menuPosition(trigger, 220)))
           }}
-          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-black/[0.04] hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500"
+          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
           aria-label={t('workbench.workspace_tab_new', '新建标签页')}
           title={t('workbench.workspace_tab_new', '新建标签页')}
         >
@@ -543,7 +591,7 @@ export function WorkspaceTabStrip({
                     }
                     openNewTab(kind)
                   }}
-                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8"
                 >
                   {kind === 'agent' && !agentAvailable ? (
                     <CloudOff aria-hidden="true" className="h-4 w-4 text-text-muted" />
@@ -553,6 +601,24 @@ export function WorkspaceTabStrip({
                   {label}
                 </button>
               ))}
+              {availableKindSet.has('auxiliary') ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="workspace-tab-add-pending-interactions"
+                  onClick={() => {
+                    openRuntimeInteractionsTab(
+                      { tabs, selectTab, openTab },
+                      t('interactions.title', '待你处理')
+                    )
+                    setAddMenuPosition(null)
+                  }}
+                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8"
+                >
+                  <CheckSquare2 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  {t('interactions.title', '待你处理')}
+                </button>
+              ) : null}
               {availableKindSet.has('auxiliary') && experimentalFeaturesEnabled ? (
                 <>
                   {installedSmartApps.map(installation => (
@@ -562,7 +628,7 @@ export function WorkspaceTabStrip({
                       role="menuitem"
                       data-testid={`workspace-tab-add-smart-app-${installation.id}`}
                       onClick={() => openInstalledSmartApp(installation)}
-                      className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                      className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8"
                     >
                       <Boxes aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
                       <span className="truncate">{installation.manifest.displayName}</span>
@@ -573,7 +639,7 @@ export function WorkspaceTabStrip({
                     role="menuitem"
                     data-testid="workspace-tab-add-smart-app"
                     onClick={openSmartApps}
-                    className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                    className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8"
                   >
                     <Boxes aria-hidden="true" className="h-4 w-4 text-text-secondary" />
                     {t('workbench.smart_apps_manage', '管理智能工作台')}
@@ -594,7 +660,7 @@ export function WorkspaceTabStrip({
                         role="menuitem"
                         data-testid={`workspace-tab-add-dsh-${descriptor.id}`}
                         onClick={() => openDshWorkspaceTab(descriptor.id, descriptor.title)}
-                        className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                        className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8"
                       >
                         <Boxes
                           aria-hidden="true"

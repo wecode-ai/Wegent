@@ -6,6 +6,10 @@ sidebar_position: 7
 
 Wework desktop manages its built-in browser under **Settings → Integrations → Browser**. Codex browser tools control the same visible page in the current task's right panel instead of opening another Chrome window.
 
+## AI operation permissions
+
+**Full control** is off by default. When enabled, AI can operate the built-in browser across all tasks on this device, including submitting forms and changing or deleting page data, without asking for confirmation each time. This device-local setting persists across restarts. Turning it off restores confirmation for subsequent actions that require approval. Taking over the browser still pauses AI operations.
+
 ## Link targets
 
 Regular web links and local development links can use separate targets:

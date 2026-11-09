@@ -1,10 +1,10 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { createLocalAppServices } from './localServices'
 import {
   clearLocalModelConfigs,
   localModelName,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createLocalAppServices } from './localServices'
 
 const gateway = 'https://wegent.example/api/runtime-work/llm-responses-proxy'
 const selection = {

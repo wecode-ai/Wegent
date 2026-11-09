@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test, vi } from 'vitest'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { reportDesktopStartupFailure } from './startupFailure'

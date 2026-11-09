@@ -51,7 +51,7 @@ async function resolvePluginDirectory(rootDirectory, definition) {
 
 export async function stageBuiltinPlugin(
   definition,
-  { sourceRoot, required = false } = {},
+  { sourceRoot, required = false, workspaceRoot = workspaceDirectory } = {},
 ) {
   const configuredSourceRoot =
     sourceRoot || process.env[definition.sourceEnvironmentVariable]?.trim();
@@ -83,8 +83,8 @@ export async function stageBuiltinPlugin(
   }
 
   const destinationDirectory = join(
-    workspaceDirectory,
-    "backend",
+    workspaceRoot,
+    "backend-rs",
     "init_data",
     "plugins",
     definition.name,

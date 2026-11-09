@@ -86,6 +86,7 @@ export interface ApplicationMenuDependencies {
   dispatch: (action: ApplicationMenuAction, window: BrowserWindow) => void
   openDevTools: (window: BrowserWindow) => void
   openLogDirectory: () => Promise<void>
+  openProcessExplorer: () => Promise<void>
   showMain: () => Promise<void>
   quit: () => void
   openExternal: (url: string) => Promise<void>
@@ -133,7 +134,7 @@ const EN_LABELS = {
   tasks: 'Tasks',
   projectSpaces: 'Project spaces',
   plugins: 'Plugins',
-  automations: 'Calendar connection',
+  automations: 'Scheduled',
   applications: 'Applications',
   search: 'Search tasks',
   sidebar: 'Toggle sidebar',
@@ -182,7 +183,7 @@ const ZH_LABELS: typeof EN_LABELS = {
   tasks: '任务',
   projectSpaces: '项目空间',
   plugins: '插件',
-  automations: '日历连接',
+  automations: '已安排',
   applications: '应用',
   search: '搜索任务',
   sidebar: '切换侧边栏',
@@ -253,7 +254,7 @@ export class ApplicationMenu {
     return this.menu?.items.map(snapshotItem) ?? []
   }
 
-  activateForTesting(id: string, windowLabel: string): boolean {
+  async activateForTesting(id: string, windowLabel: string): Promise<boolean> {
     const item = this.menu?.getMenuItemById(id)
     const window = this.dependencies.targetWindow(windowLabel)
     if (!item?.enabled || !item.visible || !window || window.isDestroyed() || item.submenu) {
@@ -261,7 +262,9 @@ export class ApplicationMenu {
     }
     this.popupWindow = window
     try {
-      item.click(item, window, {} as Electron.KeyboardEvent)
+      // Native actions finish their existing window readiness checks before
+      // the desktop control response acknowledges the activation.
+      await item.click(item, window, {} as Electron.KeyboardEvent)
       return true
     } finally {
       this.popupWindow = null
@@ -277,8 +280,8 @@ export class ApplicationMenu {
     return () => this.withWindow(window => this.dependencies.dispatch(action, window))
   }
 
-  private run(action: () => Promise<void>): () => void {
-    return () => void action().catch(this.dependencies.reportError)
+  private run(action: () => Promise<void>): () => Promise<void> {
+    return () => action().catch(this.dependencies.reportError)
   }
 
   private template(language: string): MenuItemConstructorOptions[] {
@@ -490,7 +493,7 @@ export class ApplicationMenu {
               {
                 id: 'developer.processExplorer',
                 label: labels.processExplorer,
-                click: this.dispatch('open-process-explorer'),
+                click: this.run(this.dependencies.openProcessExplorer),
               },
               {
                 id: 'developer.logs',

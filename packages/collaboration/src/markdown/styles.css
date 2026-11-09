@@ -1,3 +1,10 @@
+:is(.assistant-markdown, .thinking-markdown, .user-markdown) .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.25em;
+}
+
 .wework-diagram-preview .drawing-scroll,
 .wework-diagram-preview .drawing-canvas,
 .wework-diagram-preview .drawing-diagram-shell {
@@ -82,7 +89,13 @@
   -webkit-user-select: text;
 }
 .composer-link-node {
+  min-width: 0;
   cursor: pointer;
+}
+.composer-link-node .composer-mention-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .composer-mention-link {
   color: rgb(var(--color-focus));

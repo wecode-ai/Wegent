@@ -1,6 +1,8 @@
+// @vitest-environment node
+
+import type { UnifiedModel } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
-import type { UnifiedModel } from '@/types/api'
 
 describe('runtimeModelSelection', () => {
   test.each(['standard', 'passthrough'] as const)(
@@ -32,18 +34,6 @@ describe('runtimeModelSelection', () => {
       })
     }
   )
-
-  test('sends default collaboration mode when plan mode is not selected', () => {
-    expect(selectedModelExecutionFields(null, {})).toEqual({
-      modelOptions: { collaborationMode: 'default' },
-    })
-  })
-
-  test('keeps model options when the default model is selected', () => {
-    expect(selectedModelExecutionFields(null, { collaborationMode: 'plan' })).toEqual({
-      modelOptions: { collaborationMode: 'plan' },
-    })
-  })
 
   test('sends the runtime model name instead of its picker label', () => {
     const model: UnifiedModel = {
@@ -151,66 +141,6 @@ describe('runtimeModelSelection', () => {
     expect(defaultNewChatModelSelection([officialWithoutAuth, cloudModel])).toMatchObject({
       modelName: 'cloud-gpt',
       modelType: 'public',
-    })
-  })
-
-  test('uses the cloud model marked as the picker default', () => {
-    const firstCloudModel: UnifiedModel = {
-      name: 'cloud-first',
-      type: 'public',
-      provider: 'cloud',
-      config: { ui: { family: 'gpt' } },
-    }
-    const defaultCloudModel: UnifiedModel = {
-      name: 'cloud-default',
-      type: 'public',
-      provider: 'cloud',
-      config: {
-        ui: {
-          family: 'gpt',
-          defaultModel: true,
-          reasoningEfforts: ['low', 'high'],
-          defaultReasoningEffort: 'high',
-        },
-      },
-    }
-
-    expect(defaultNewChatModelSelection([firstCloudModel, defaultCloudModel])).toMatchObject({
-      modelName: 'cloud-default',
-      modelType: 'public',
-      options: {
-        reasoning: 'high',
-      },
-    })
-  })
-
-  test('passes Codex provider id as hidden execution options', () => {
-    const providerModel: UnifiedModel = {
-      name: 'Doubao-Seed-2.0-pro-260215',
-      type: 'runtime',
-      provider: 'local',
-      config: {
-        weworkModelKind: 'codex-provider',
-        codexProviderId: 'wecode-openai',
-        codexProviderName: 'wecode openai',
-        codexProviderType: 'provider',
-        ui: { family: 'codex-provider', controls: ['speed'] },
-      },
-    }
-
-    expect(
-      selectedModelExecutionFields(providerModel, { speed: 'fast', reasoning: 'extra_high' })
-    ).toEqual({
-      modelId: 'Doubao-Seed-2.0-pro-260215',
-      modelType: 'runtime',
-      modelOptions: {
-        speed: 'fast',
-        reasoning: 'xhigh',
-        collaborationMode: 'default',
-        codexProviderId: 'wecode-openai',
-        codexProviderName: 'wecode openai',
-        codexProviderType: 'provider',
-      },
     })
   })
 

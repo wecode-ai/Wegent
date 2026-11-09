@@ -25,7 +25,9 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.device_service import device_service
+from app.services.loop_item_executions.cancellation import execution_cancellation_target
 from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.runtime_cancellation import emit_runtime_cancellations
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -280,13 +282,6 @@ async def consume_queues_background() -> None:
         logger.exception("[RobotQueue] Work availability notification failed")
 
 
-def _robot_queue_internal_url() -> str:
-    base = (
-        (settings.BACKEND_INTERNAL_URL or "http://localhost:8000").strip().rstrip("/")
-    )
-    return base if base.endswith("/api") else f"{base}/api"
-
-
 def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     """Request Runtime cancellation and return executions whose RPC was accepted.
 
@@ -295,51 +290,18 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     trusted transcript snapshot proves that the task actually stopped.
     """
 
-    import httpx
-
-    accepted_execution_ids: set[int] = set()
+    execution_ids_by_target: dict[tuple[int, str, str], set[int]] = {}
+    targets = []
     for execution in executions:
-        runtime_task_id = execution.runtime_task_id or ""
-        runtime_device_id = execution.runtime_device_id or ""
-        execution_target_id = (
-            execution.execution_device_id or execution.runtime_device_id or ""
-        )
-        owner_user_id = execution.executor_owner_user_id
-        if not runtime_task_id or not execution_target_id or not owner_user_id:
-            continue
-        try:
-            with httpx.Client(
-                base_url=_robot_queue_internal_url(),
-                timeout=5,
-                trust_env=False,
-            ) as client:
-                response = client.post(
-                    "/internal/robot-queue/emit-runtime-rpc",
-                    headers={
-                        "Authorization": f"Bearer {settings.INTERNAL_SERVICE_TOKEN}"
-                    },
-                    json={
-                        "user_id": owner_user_id,
-                        "device_id": execution_target_id,
-                        "method": "runtime.tasks.cancel",
-                        "payload": {
-                            "taskId": runtime_task_id,
-                            "deviceId": runtime_device_id,
-                        },
-                        "wait_ack": True,
-                        "ack_timeout_seconds": 15,
-                    },
-                )
-                result = response.json() if response.status_code == 200 else {}
-                if response.status_code != 200 or not result.get("accepted"):
-                    continue
-            accepted_execution_ids.add(execution.id)
-        except Exception:
-            logger.exception(
-                "[RobotQueue] Runtime cancel failed execution=%s",
-                execution.id,
-            )
-    return accepted_execution_ids
+        target = execution_cancellation_target(execution)
+        if target is not None:
+            targets.append(target)
+            execution_ids_by_target.setdefault(target.identity, set()).add(execution.id)
+    return {
+        execution_id
+        for target in emit_runtime_cancellations(targets)
+        for execution_id in execution_ids_by_target[target.identity]
+    }
 
 
 async def reconcile_device_executions(

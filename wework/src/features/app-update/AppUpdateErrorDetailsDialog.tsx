@@ -115,6 +115,9 @@ export function AppUpdateErrorDetailsDialog({
     <div
       data-testid="app-update-error-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+      // Keep the owning menu mounted until portaled dialog actions receive their click.
+      onPointerDown={event => event.stopPropagation()}
+      onMouseDown={event => event.stopPropagation()}
       onClick={event => {
         if (event.target === event.currentTarget && !retrying) onClose()
       }}
@@ -142,7 +145,7 @@ export function AppUpdateErrorDetailsDialog({
         </button>
 
         <div className="flex items-start gap-3 pr-10">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
             <TriangleAlert className="h-4 w-4" aria-hidden="true" />
           </span>
           <div className="min-w-0">
@@ -204,19 +207,21 @@ export function AppUpdateErrorDetailsDialog({
             )}
             {copyLabel}
           </button>
-          <button
-            type="button"
-            data-testid="app-update-error-retry"
-            disabled={retrying}
-            onClick={() => {
-              setRetrying(true)
-              void onRetry().finally(() => setRetrying(false))
-            }}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            {retryLabel}
-          </button>
+          {error.retryable !== false ? (
+            <button
+              type="button"
+              data-testid="app-update-error-retry"
+              disabled={retrying}
+              onClick={() => {
+                setRetrying(true)
+                void onRetry().finally(() => setRetrying(false))
+              }}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              {retryLabel}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>,

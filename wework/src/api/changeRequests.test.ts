@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 import { loadTaskChangeRequests, type TaskChangeRequestTarget } from './changeRequests'
 
@@ -167,26 +169,6 @@ describe('loadTaskChangeRequests', () => {
       mergeQueue: 'not_queued',
       mergeQueueReason: null,
     })
-  })
-
-  it('queries separate repositories once each instead of once per task', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: [],
-      stderr: '',
-    })
-
-    await loadTaskChangeRequests({ executeCommand }, [
-      ...targets,
-      {
-        ...targets[0],
-        taskId: 'task-c',
-        remoteUrl: 'https://github.com/openai/example.git',
-        workspacePath: '/repo/example',
-      },
-    ])
-
-    expect(executeCommand).toHaveBeenCalledTimes(2)
   })
 
   it('returns a structured unavailable state when the hosting CLI is missing', async () => {

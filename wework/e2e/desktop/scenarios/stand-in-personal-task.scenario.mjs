@@ -19,6 +19,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPLETE = 'PERSONAL_STAND_IN_COMPLETE'
@@ -88,9 +89,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     return mcpToolRequestEvents(body, {
       toolName: step.name,
       argumentsValue: step.args,
-      directToolName: (body.tools ?? [])
-        .map(tool => tool.name)
-        .find(name => name?.endsWith(`__${step.name}`)),
+      directToolName: `mcp__wework_space__${step.name}`,
       searchCallId: `${callId()}-search`,
       toolCallId: callId(),
     }).events
@@ -262,7 +261,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         scoped(`collaboration-workspace-toggle-${workspace.id}`)
       )
       await control.command('click', scoped(`collaboration-workspace-project-${project.id}`))
-      await control.command('clickWhenEnabled', scoped('collaboration-tab-board'))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${manualIssue.id}`))
       await control.command('clickWhenEnabled', scoped('cloud-todo-personal-task-start'))
       const composer = `${scoped('work-item-new-task-chat-panel')} [data-testid="chat-message-input"]`
@@ -282,7 +281,6 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('click', scoped('ai-chat-modal-close'))
       await control.command('click', scoped('cloud-todo-detail-close'))
       await openProjectStandIn(control, scoped('stand-in-open'), { connect: true })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
         value: 'Review my assigned Issues, post the result and return them to the project owner.',
       })

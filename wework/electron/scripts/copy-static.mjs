@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 await mkdir(resolve(root, 'dist/runtime'), { recursive: true })
 await cp(
+  resolve(root, 'src/runtime/legacy-release-layout.mjs'),
+  resolve(root, 'dist/runtime/legacy-release-layout.mjs')
+)
+await cp(
   resolve(root, 'src/runtime/legacy-dsh-browser-auth.cjs'),
   resolve(root, 'dist/runtime/legacy-dsh-browser-auth.cjs')
 )
@@ -22,6 +26,10 @@ await cp(resolve(root, 'src/shell'), resolve(root, 'dist/shell'), {
   recursive: true,
 })
 await mkdir(resolve(root, 'dist/host/browser-runtime'), { recursive: true })
+await cp(
+  resolve(root, 'src/host/macos-quit-workaround.mjs'),
+  resolve(root, 'dist/host/macos-quit-workaround.mjs')
+)
 await cp(
   resolve(root, 'src/host/browser-runtime/embedded_browser_inspect.js'),
   resolve(root, 'dist/host/browser-runtime/embedded_browser_inspect.js')

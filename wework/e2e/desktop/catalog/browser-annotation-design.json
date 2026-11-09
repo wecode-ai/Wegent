@@ -1,0 +1,13 @@
+{
+  "order": 210000,
+  "scenario": "./scenarios/embedded-browser-annotation.scenario.mjs",
+  "scenarioOnly": true,
+  "resources": ["macos-inspector-foreground"],
+  "ci": {
+    "core": {
+      "order": 155000,
+      "shard": 3,
+      "position": 19000
+    }
+  }
+}

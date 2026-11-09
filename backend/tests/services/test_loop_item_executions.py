@@ -1936,9 +1936,7 @@ async def test_retry_processor_uses_only_executions_from_the_current_attempt(
 
     assert failed_run.metadata_json["retry_execution_floor_id"] == previous_execution.id
     assert (
-        project_automation_execution._project_robot_execution_for_run(
-            test_db, str(failed_run.id)
-        )
+        project_automation_execution._execution_for_run(test_db, str(failed_run.id))
         is None
     )
 
@@ -1951,9 +1949,7 @@ async def test_retry_processor_uses_only_executions_from_the_current_attempt(
     )
 
     assert (
-        project_automation_execution._project_robot_execution_for_run(
-            test_db, str(failed_run.id)
-        )
+        project_automation_execution._execution_for_run(test_db, str(failed_run.id))
         == current_execution
     )
 
@@ -2475,6 +2471,7 @@ def test_project_agent_runtime_and_capabilities_reach_runtime_request(
     )
 
     assert request.runtime == runtime
+    assert request.client_user_message_id is None
     assert request.project_instructions == "Use the configured project capabilities."
     assert request.additional_skills == [
         {"name": "project-review", "namespace": "default"}
@@ -3523,6 +3520,46 @@ def test_open_execution_activity_does_not_create_late_placeholder_for_completed_
         .count()
         == 0
     )
+
+
+@pytest.mark.parametrize("trigger_status", ["in_review", "completed"])
+def test_completed_status_trigger_can_open_its_execution_activity(
+    test_db: Session, test_user: User, trigger_status: str
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(
+        test_db,
+        item,
+        bot,
+        test_user,
+        automation_context={
+            "run_id": "completed-status-run",
+            "event": {
+                "type": "task.status_changed",
+                "payload": {"status": trigger_status},
+            },
+        },
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    item.status = "completed"
+    test_db.commit()
+
+    opened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+
+    assert (opened is not None) == (trigger_status == "completed")
+    assert item.status == "completed"
 
 
 def test_open_execution_activity_does_not_revive_terminal_activity_from_stale_execution(
@@ -5874,3 +5911,78 @@ def test_managed_team_run_announces_its_start_once(
     )
 
     assert _execution_notification_ids(test_db, test_user.id) == queued
+
+
+@pytest.mark.parametrize(
+    ("comment", "continuation", "stored_identity"),
+    [
+        (True, False, None),
+        (True, False, "previous-comment"),
+        (True, True, None),
+        (True, True, "previous-comment"),
+        (False, False, "ordinary-user-input"),
+    ],
+)
+def test_dispatch_binds_persisted_comment_identity_for_either_intent_producer(
+    test_db: Session,
+    test_user: User,
+    comment: bool,
+    continuation: bool,
+    stored_identity: str | None,
+) -> None:
+    """Dispatch a materialized intent without trusting its inherited user ID."""
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    context = (
+        {"comment_trigger_message_id": "current-comment", "comment_prompt": "Reply"}
+        if comment
+        else {}
+    )
+    execution = _make_execution(
+        test_db, item, bot, test_user, automation_context=context
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-identity-test",
+    )
+    assert claimed is not None and claimed.id == execution.id
+    # Rust admission can persist a complete intent with no ID or a previous turn's ID.
+    request = dict(claimed.runtime_request)
+    request.pop("clientUserMessageId", None)
+    if stored_identity is not None:
+        request["clientUserMessageId"] = stored_identity
+    origin = dict(claimed.runtime_origin_context)
+    if continuation:
+        origin["comment_continue_task_id"] = claimed.runtime_task_id
+        request["newSession"] = False
+    claimed.execution_payload = loop_item_execution_service._serialize_execution_intent(
+        runtime_selection=dict(claimed.runtime_selection),
+        origin_context=origin,
+        runtime_request=request,
+    )
+    test_db.flush()
+
+    payload = loop_item_execution_service.build_executor_runtime_payload(
+        test_db,
+        execution=claimed,
+        execution_target_id="cloud-device-1",
+        executor_device_id="cloud-device-1",
+    )
+
+    assert payload["clientUserMessageId"] == (
+        "current-comment" if comment else stored_identity
+    )
+    assert payload["executionRequest"]["client_user_message_id"] == (
+        "current-comment" if comment else stored_identity
+    )
+    assert payload["taskId"] == claimed.runtime_task_id
+    assert payload["executionRequest"]["task_id"] == claimed.runtime_task_id
+    assert payload["executionRequest"]["bot"][0]["id"] == bot.id
+    assert claimed.runtime_request == request
+    if continuation:
+        assert payload["runtimeAction"] == "send"

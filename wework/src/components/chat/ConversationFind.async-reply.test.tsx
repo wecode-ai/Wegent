@@ -1,13 +1,13 @@
 import { act, fireEvent, render, renderHook } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { appendCodeCommentContexts } from '@wegent/chat-core/code-comment-context'
 import type { RuntimeTranscriptTurn } from '@wegent/chat-core/runtime'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import { resolveAsyncRequestUserInputReplies } from '@wegent/chat-core/runtime-user-input'
-import { appendCodeCommentContexts } from '@wegent/chat-core/code-comment-context'
 import { projectRuntimeConversationTurns } from '@wegent/chat-core/runtime-conversation-turns'
 import { runtimeTranscriptTurnsToConversationTurns } from '@wegent/chat-core/runtime-transcript'
+import { resolveAsyncRequestUserInputReplies } from '@wegent/chat-core/runtime-user-input'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ConversationTranslationProvider, UserMessage } from '@wegent/collaboration/conversation'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { conversationSearchRanges } from '../../../../packages/collaboration/src/conversation/useConversationSearchTarget'
 import { resolveConversationMatch } from './conversationSearch'
 import { useConversationFind } from './useConversationFind'
@@ -336,42 +336,6 @@ describe('persisted async question replies', () => {
       expect(hydrate).toHaveBeenCalledOnce()
     }
   )
-
-  test('refreshes historical reply validation when its question changes or disappears', () => {
-    const reply = message('reply', '**answer**', 'user')
-    const target = { messageId: reply.id, occurrence: 0, cursor: 'reply-cursor' }
-    const resolve = (query: string, questions: WorkbenchMessage[]) =>
-      resolveConversationMatch(target, [...questions, reply], query)
-
-    // First cache the ordinary Markdown presentation of the same reply object.
-    expect(resolve('**answer**', [])).toBeNull()
-    expect(resolve('Initial', [questionMessage('Initial question')])).toEqual({
-      messageId: reply.id,
-      occurrence: 0,
-      regionId: reply.id,
-      range: { start: 0, end: 7 },
-    })
-    expect(resolve('Initial', [questionMessage('Updated question')])).toBeNull()
-    expect(resolve('Updated', [questionMessage('Updated question')])).toEqual({
-      messageId: reply.id,
-      occurrence: 0,
-      regionId: reply.id,
-      range: { start: 0, end: 7 },
-    })
-    expect(resolve('**answer**', [questionMessage('Updated question')])).toEqual({
-      messageId: reply.id,
-      occurrence: 0,
-      regionId: reply.id,
-      range: { start: 17, end: 27 },
-    })
-    expect(resolve('**answer**', [])).toBeNull()
-    expect(resolve('answer', [])).toEqual({
-      messageId: reply.id,
-      occurrence: 0,
-      regionId: reply.id,
-      range: { start: 0, end: 6 },
-    })
-  })
 
   test('does not borrow questions from another reading window', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })

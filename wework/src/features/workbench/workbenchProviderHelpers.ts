@@ -58,12 +58,12 @@ export function getRuntimeTaskChatScopeKey(address: RuntimeTaskAddress): string 
   return ['runtime', address.deviceId, address.taskId].join(':')
 }
 
-export function normalizeGuidanceError(error?: string) {
+export function normalizeGuidanceError(error?: string | null) {
   if (!error) return '引导发送失败'
   if (error.includes('Chat Shell')) {
     return '当前智能体不支持引导，请编辑后排队发送'
   }
-  if (error.includes('Turn not found')) {
+  if (error.includes('Turn not found') || error.includes('no active turn')) {
     return '当前回复已结束，请编辑后重新发送'
   }
   if (error.includes('Not connected') || error.includes('连接未建立')) {

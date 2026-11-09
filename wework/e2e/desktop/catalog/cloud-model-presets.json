@@ -1,0 +1,12 @@
+{
+  "order": 15000,
+  "scenario": "./scenarios/cloud-model-presets.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 3000,
+      "shard": 2,
+      "position": 8000
+    }
+  }
+}

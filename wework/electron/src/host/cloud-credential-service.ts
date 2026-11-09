@@ -10,6 +10,7 @@ interface StoredCloudCredential {
   publicKey: DevicePublicKey
   privateKey: string
   refreshToken: string
+  ownerUserId?: number
 }
 
 export interface DevicePublicKey {
@@ -20,9 +21,22 @@ export interface DevicePublicKey {
 }
 
 export interface AuthorizationPollInput {
-  apiBaseUrl: string
+  authorizationId: string
   sessionId: string
   pollToken: string
+}
+
+export interface PreparedCloudAuthorization {
+  authorizationId: string
+  publicKey: DevicePublicKey
+}
+
+interface CloudAuthorizationCandidate {
+  id: string
+  apiBaseUrl: string
+  credential: StoredCloudCredential | null
+  claimed: boolean
+  refreshToken: string | null
 }
 
 export interface AuthorizationPollResult {
@@ -46,7 +60,8 @@ export class CloudCredentialError extends Error {
       | 'credentials_unavailable'
       | 'cloud_auth_expired'
       | 'request_failed'
-      | 'request_timeout',
+      | 'request_timeout'
+      | 'authorization_cancelled',
     message: string,
     readonly status: number | null = null
   ) {
@@ -57,6 +72,8 @@ export class CloudCredentialError extends Error {
 
 export class CloudCredentialService {
   private operation = Promise.resolve()
+  private candidate: CloudAuthorizationCandidate | null = null
+  private activeRevision = 0
 
   constructor(
     private readonly dataDirectory: string,
@@ -86,24 +103,33 @@ export class CloudCredentialService {
     }
   }
 
-  devicePublicKey(): Promise<DevicePublicKey> {
+  prepareAuthorization(apiBaseUrl: string): Promise<PreparedCloudAuthorization> {
+    const candidate: CloudAuthorizationCandidate = {
+      id: randomUUID(),
+      apiBaseUrl: normalizeApiBaseUrl(apiBaseUrl),
+      credential: null,
+      claimed: false,
+      refreshToken: null,
+    }
+    this.candidate = candidate
     return this.serial(async () => {
       const stored = await this.readCredential()
-      if (stored) return stored.publicKey
-      const generated = this.generateCredential()
-      await this.writeCredential(generated)
-      return generated.publicKey
+      this.requireCandidate(candidate.id)
+      candidate.credential = stored ?? this.generateCredential(candidate.apiBaseUrl)
+      return { authorizationId: candidate.id, publicKey: candidate.credential.publicKey }
     })
   }
 
   claimAuthorization(input: AuthorizationPollInput): Promise<AuthorizationPollResult> {
     return this.serial(async () => {
-      const apiBaseUrl = normalizeApiBaseUrl(input.apiBaseUrl)
+      const candidate = this.requireCandidate(input.authorizationId)
+      const apiBaseUrl = candidate.apiBaseUrl
       const endpoint = `${apiBaseUrl}/auth/wework/sessions/${encodeURIComponent(
         input.sessionId
       )}/poll?poll_token=${encodeURIComponent(input.pollToken)}`
       const response = await this.requestWithTimeout(endpoint, { method: 'GET' })
       const payload = await responseJson(response)
+      this.requireCandidate(input.authorizationId)
       if (!response.ok) {
         throw requestError(response.status, payload)
       }
@@ -119,42 +145,70 @@ export class CloudCredentialService {
       }
       const accessToken = requiredString(payload.access_token, 'access token')
       const refreshToken = optionalString(payload.refresh_token)
-      if (!refreshToken) {
-        await rm(this.path(), { force: true })
-        return {
-          status,
-          accessToken,
-          tokenType: optionalString(payload.token_type),
-          username: optionalString(payload.username),
-          credentialMode: 'legacy_access_token',
-        }
-      }
-      const existing = await this.readCredential()
-      const credential = existing ?? this.generateCredential(apiBaseUrl)
-      await this.writeCredential({
-        ...credential,
-        apiBaseUrl,
-        refreshToken,
-      })
+      candidate.claimed = true
+      candidate.refreshToken = refreshToken ?? null
       return {
         status,
         accessToken,
         tokenType: optionalString(payload.token_type),
         username: optionalString(payload.username),
-        credentialMode: 'desktop_refresh',
+        credentialMode: refreshToken ? 'desktop_refresh' : 'legacy_access_token',
       }
     })
   }
 
-  refreshAccessToken(apiBaseUrl: string): Promise<RefreshedAccessToken> {
+  commitAuthorization(authorizationId: string, ownerUserId: number): Promise<void> {
+    requireUserId(ownerUserId)
     return this.serial(async () => {
+      const candidate = this.requireCandidate(authorizationId)
+      if (!candidate.claimed || !candidate.credential) {
+        throw new CloudCredentialError('request_failed', 'Cloud authorization is not verified')
+      }
+      if (candidate.refreshToken) {
+        await this.writeCredential(
+          {
+            ...candidate.credential,
+            apiBaseUrl: candidate.apiBaseUrl,
+            refreshToken: candidate.refreshToken,
+            ownerUserId,
+          },
+          () => {
+            this.requireCandidate(candidate.id)
+            // Issuing the atomic rename is the commit point. A later prepare
+            // belongs to the next transaction and cannot revoke this owner.
+            this.candidate = null
+            this.activeRevision += 1
+          }
+        )
+      } else {
+        this.candidate = null
+        this.activeRevision += 1
+        await rm(this.path(), { force: true })
+      }
+    })
+  }
+
+  discardAuthorization(authorizationId: string): Promise<void> {
+    if (this.candidate?.id === authorizationId) this.candidate = null
+    return Promise.resolve()
+  }
+
+  refreshAccessToken(apiBaseUrl: string, expectedUserId: number): Promise<RefreshedAccessToken> {
+    requireUserId(expectedUserId)
+    const revision = this.activeRevision
+    return this.serial(async () => {
+      this.requireActiveRevision(revision)
       const normalizedApiBaseUrl = normalizeApiBaseUrl(apiBaseUrl)
       const credential = await this.readCredential()
+      this.requireActiveRevision(revision)
       if (!credential || credential.apiBaseUrl !== normalizedApiBaseUrl) {
         throw new CloudCredentialError(
           'credentials_unavailable',
           'Desktop cloud credentials are unavailable'
         )
+      }
+      if (credential.ownerUserId !== undefined && credential.ownerUserId !== expectedUserId) {
+        throw new CloudCredentialError('cloud_auth_expired', 'Cloud credential owner changed')
       }
       const refreshToken = credential.refreshToken
       if (!refreshToken) {
@@ -179,11 +233,17 @@ export class CloudCredentialService {
         }),
       })
       const payload = await responseJson(response)
+      this.requireActiveRevision(revision)
       if (!response.ok) {
         throw requestError(response.status, payload)
       }
+      const accessToken = requiredString(payload.access_token, 'access token')
+      if (credential.ownerUserId === undefined) {
+        await this.bindCredentialOwner(credential, accessToken, expectedUserId, revision)
+      }
+      this.requireActiveRevision(revision)
       return {
-        accessToken: requiredString(payload.access_token, 'access token'),
+        accessToken,
         tokenType: optionalString(payload.token_type) ?? 'bearer',
         expiresIn: numberValue(payload.expires_in, 'expires_in'),
       }
@@ -191,6 +251,8 @@ export class CloudCredentialService {
   }
 
   clear(): Promise<void> {
+    this.candidate = null
+    this.activeRevision += 1
     return this.serial(async () => {
       await rm(this.path(), { force: true })
     })
@@ -219,12 +281,54 @@ export class CloudCredentialService {
     }
   }
 
-  private async writeCredential(credential: StoredCloudCredential): Promise<void> {
+  private async writeCredential(
+    credential: StoredCloudCredential,
+    beforeRename: () => void
+  ): Promise<void> {
     const path = this.path()
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const temporary = `${path}.${process.pid}.tmp`
-    await writeFile(temporary, `${JSON.stringify(credential, null, 2)}\n`, { mode: 0o600 })
-    await rename(temporary, path)
+    try {
+      await writeFile(temporary, `${JSON.stringify(credential, null, 2)}\n`, { mode: 0o600 })
+      beforeRename()
+      await rename(temporary, path)
+    } finally {
+      await rm(temporary, { force: true })
+    }
+  }
+
+  private async bindCredentialOwner(
+    credential: StoredCloudCredential,
+    accessToken: string,
+    expectedUserId: number,
+    revision: number
+  ): Promise<void> {
+    const response = await this.requestWithTimeout(`${credential.apiBaseUrl}/users/me`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    const user = await responseJson(response)
+    this.requireActiveRevision(revision)
+    if (!response.ok) throw requestError(response.status, user)
+    if (user.id !== expectedUserId) {
+      throw new CloudCredentialError('cloud_auth_expired', 'Cloud credential owner changed')
+    }
+    await this.writeCredential({ ...credential, ownerUserId: expectedUserId }, () =>
+      this.requireActiveRevision(revision)
+    )
+  }
+
+  private requireCandidate(authorizationId: string): CloudAuthorizationCandidate {
+    if (this.candidate?.id !== authorizationId) {
+      throw new CloudCredentialError('authorization_cancelled', 'Cloud authorization was cancelled')
+    }
+    return this.candidate
+  }
+
+  private requireActiveRevision(revision: number): void {
+    if (revision !== this.activeRevision) {
+      throw new CloudCredentialError('authorization_cancelled', 'Cloud credentials changed')
+    }
   }
 
   private path(): string {
@@ -317,12 +421,20 @@ function normalizeStoredCredential(value: unknown): StoredCloudCredential | null
   ) {
     return null
   }
+  if (record.ownerUserId !== undefined) requireUserId(record.ownerUserId)
   return {
     version: 2,
     apiBaseUrl: record.apiBaseUrl,
     publicKey: normalizePublicKey(record.publicKey),
     privateKey: record.privateKey,
     refreshToken: record.refreshToken,
+    ...(record.ownerUserId === undefined ? {} : { ownerUserId: record.ownerUserId }),
+  }
+}
+
+function requireUserId(value: unknown): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw new CloudCredentialError('request_failed', 'Cloud credential owner is invalid')
   }
 }
 

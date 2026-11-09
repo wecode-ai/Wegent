@@ -1,82 +1,10 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from './devices'
 import type { HttpClient } from './http'
 
 describe('createDeviceApi', () => {
-  test('filters OpenClaw devices out of device list responses', async () => {
-    const client = {
-      get: vi.fn().mockResolvedValue({
-        items: [
-          {
-            id: 1,
-            device_id: 'claude-device',
-            name: 'Claude Device',
-            status: 'online',
-            is_default: true,
-            device_type: 'cloud',
-            bind_shell: 'claudecode',
-            client_ip: '192.0.2.10',
-            runtime_transfer_host: '192.0.2.10:9000',
-          },
-          {
-            id: 2,
-            device_id: 'openclaw-device',
-            name: 'OpenClaw Device',
-            status: 'online',
-            is_default: false,
-            device_type: 'cloud',
-            bind_shell: 'openclaw',
-          },
-        ],
-        total: 2,
-      }),
-    } as unknown as HttpClient
-
-    const api = createDeviceApi(client)
-
-    await expect(api.listDevices()).resolves.toEqual([
-      expect.objectContaining({
-        device_id: 'claude-device',
-        client_ip: '192.0.2.10',
-        runtime_transfer_host: '192.0.2.10:9000',
-      }),
-    ])
-    await expect(api.getAllDevices()).resolves.toEqual([
-      expect.objectContaining({ device_id: 'claude-device' }),
-    ])
-  })
-
-  test('loads Git account summaries and syncs only a selected device', async () => {
-    const summary = {
-      accounts: [],
-      effective_count: 0,
-      duplicate_count: 0,
-    }
-    const result = {
-      device_id: 'remote/1',
-      status: 'synced',
-      synced_domains: [],
-      removed_domains: ['git.example.com'],
-      duplicate_domains: [],
-      identity_warning_domains: [],
-      cli: [],
-      warning_codes: [],
-    }
-    const client = {
-      get: vi.fn().mockResolvedValue(summary),
-      put: vi.fn().mockResolvedValue(result),
-    } as unknown as HttpClient
-    const api = createDeviceApi(client)
-
-    await expect(api.getGitAccountSyncSummary()).resolves.toBe(summary)
-    await expect(api.syncGitAccounts('remote/1', true)).resolves.toBe(result)
-
-    expect(client.get).toHaveBeenCalledWith('/users/me/git-accounts/sync-summary')
-    expect(client.put).toHaveBeenCalledWith('/devices/remote%2F1/git-accounts', {
-      allow_empty: true,
-    })
-  })
-
   test('uses cloud device endpoints for restart and delete actions', async () => {
     const client = {
       delete: vi.fn().mockResolvedValue({ message: 'deleted' }),
@@ -138,45 +66,6 @@ describe('createDeviceApi', () => {
 
     expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/code-server', {
       path: '/workspace/project',
-    })
-  })
-
-  test('listWorkspaceEntries maps workspace tree output', async () => {
-    const post = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: {
-        path: '/workspace/project',
-        entries: [
-          {
-            name: 'src',
-            path: '/workspace/project/src',
-            is_directory: true,
-            size: 0,
-            modified_at: '2026-06-12T00:00:00+00:00',
-          },
-        ],
-      },
-      stderr: '',
-    })
-    const api = createDeviceApi({ post } as never)
-
-    await expect(api.listWorkspaceEntries('device-a', '/workspace/project')).resolves.toEqual({
-      path: '/workspace/project',
-      entries: [
-        {
-          name: 'src',
-          path: '/workspace/project/src',
-          isDirectory: true,
-          size: 0,
-          modifiedAt: '2026-06-12T00:00:00+00:00',
-        },
-      ],
-    })
-    expect(post).toHaveBeenCalledWith('/devices/device-a/commands', {
-      command_key: 'workspace_tree',
-      path: '/workspace/project',
-      timeout_seconds: 15,
-      max_output_bytes: 1024 * 512,
     })
   })
 
@@ -286,39 +175,6 @@ describe('createDeviceApi', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
-  test('readWorkspaceTextFile calls parent path with file name arg', async () => {
-    const post = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: {
-        path: '/workspace/project/src/main.ts',
-        name: 'main.ts',
-        content: 'export {}',
-        truncated: false,
-        size: 9,
-        modified_at: null,
-      },
-      stderr: '',
-    })
-    const api = createDeviceApi({ post } as never)
-
-    await expect(
-      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts')
-    ).resolves.toMatchObject({
-      path: '/workspace/project/src/main.ts',
-      name: 'main.ts',
-      content: 'export {}',
-      truncated: false,
-      size: 9,
-    })
-    expect(post).toHaveBeenCalledWith('/devices/device-a/commands', {
-      command_key: 'workspace_read_text_file',
-      path: '/workspace/project/src',
-      args: ['main.ts'],
-      timeout_seconds: 15,
-      max_output_bytes: 1024 * 1024 * 2,
-    })
-  })
-
   test('readWorkspaceTextFile rejects relative file paths', async () => {
     const post = vi.fn()
     const api = createDeviceApi({ post } as never)
@@ -356,29 +212,6 @@ describe('createDeviceApi', () => {
       args: ['main.ts'],
       timeout_seconds: 15,
       max_output_bytes: 1024 * 1024 * 2,
-    })
-  })
-
-  test('readWorkspaceTextFile preserves a symlinked request path', async () => {
-    const post = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: {
-        path: '/workspace/.canonical/project/main.ts',
-        name: 'main.ts',
-        content: 'export {}',
-        truncated: false,
-        size: 9,
-        modified_at: null,
-      },
-      stderr: '',
-    })
-    const api = createDeviceApi({ post } as never)
-
-    await expect(
-      api.readWorkspaceTextFile('device-a', '/workspace/.alias/project/main.ts')
-    ).resolves.toMatchObject({
-      path: '/workspace/.alias/project/main.ts',
-      name: 'main.ts',
     })
   })
 

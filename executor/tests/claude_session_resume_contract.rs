@@ -435,6 +435,18 @@ fn assert_observed_calls(selected: &Path, transcript: &Path, workspace: &Path) {
             "The path retry must preserve the original prompt"
         );
     }
+    let observed = fs::read_to_string(selected.join("runtime/resumed-config-dirs")).unwrap();
+    let configurations = observed.lines().map(PathBuf::from).collect::<Vec<_>>();
+    assert_eq!(configurations.len(), 4);
+    assert_eq!(configurations[0], configurations[1]);
+    assert_eq!(configurations[2], configurations[3]);
+    assert_ne!(configurations[0], configurations[2]);
+    for configuration in configurations {
+        assert_eq!(
+            configuration.parent().unwrap(),
+            selected.join("runtime/executions")
+        );
+    }
 }
 
 fn archive_options(home: &Path, workspace: &Path) -> ArchiveOptions {
@@ -475,23 +487,26 @@ while [ "$#" -gt 0 ]; do
   fi
   shift
 done
-printf '%s\n' "$resume" >> "$CLAUDE_CONFIG_DIR/runtime/resume-attempts"
-pwd -P >> "$CLAUDE_CONFIG_DIR/runtime/resumed-cwds"
+test "$CLAUDE_CONFIG_DIR" != "$WEGENT_AGENT_HOME" || exit 82
+test -f "$CLAUDE_CONFIG_DIR/settings.json" || exit 83
+printf '%s\n' "$CLAUDE_CONFIG_DIR" >> "$WEGENT_AGENT_HOME/runtime/resumed-config-dirs"
+printf '%s\n' "$resume" >> "$WEGENT_AGENT_HOME/runtime/resume-attempts"
+pwd -P >> "$WEGENT_AGENT_HOME/runtime/resumed-cwds"
 attempt=1
-if [ -f "$CLAUDE_CONFIG_DIR/runtime/attempt-count" ]; then
-  read -r attempt < "$CLAUDE_CONFIG_DIR/runtime/attempt-count"
+if [ -f "$WEGENT_AGENT_HOME/runtime/attempt-count" ]; then
+  read -r attempt < "$WEGENT_AGENT_HOME/runtime/attempt-count"
   attempt=$((attempt + 1))
 fi
-printf '%s\n' "$attempt" > "$CLAUDE_CONFIG_DIR/runtime/attempt-count"
+printf '%s\n' "$attempt" > "$WEGENT_AGENT_HOME/runtime/attempt-count"
 mode=missing-id
-if [ -f "$CLAUDE_CONFIG_DIR/runtime/fake-mode" ]; then
-  mode=$(cat "$CLAUDE_CONFIG_DIR/runtime/fake-mode")
+if [ -f "$WEGENT_AGENT_HOME/runtime/fake-mode" ]; then
+  mode=$(cat "$WEGENT_AGENT_HOME/runtime/fake-mode")
 fi
 if [ "$resume" = '11111111-2222-4333-8444-555555555555' ] && [ "$mode" = 'early-missing' ]; then
   printf 'No conversation found with session ID: 11111111-2222-4333-8444-555555555555\n' >&2
   exit 1
 fi
-cat > "$CLAUDE_CONFIG_DIR/runtime/resumed-input-$attempt"
+cat > "$WEGENT_AGENT_HOME/runtime/resumed-input-$attempt"
 if [ "$resume" = '11111111-2222-4333-8444-555555555555' ]; then
   case "$mode" in
     id-success) ;;
@@ -510,7 +525,7 @@ if [ "$mode" = 'path-failure' ]; then
   printf 'No conversation found with session ID: 11111111-2222-4333-8444-555555555555\n' >&2
   exit 1
 fi
-printf '%s\n' "$resume" >> "$CLAUDE_CONFIG_DIR/runtime/resumed-paths"
+printf '%s\n' "$resume" >> "$WEGENT_AGENT_HOME/runtime/resumed-paths"
 printf '%s\n' '{"sessionId":"11111111-2222-4333-8444-555555555555","type":"system","message":"continued"}' >> "$resume"
 fi
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"restored"}]}}'

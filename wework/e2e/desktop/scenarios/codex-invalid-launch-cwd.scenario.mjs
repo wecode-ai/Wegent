@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { verifyModelCatalogRecovery } from '../modules/model-catalog-recovery.mjs'
 
 import { isReplyPredictionRequest } from '../modules/response-protocol.mjs'
 import {
@@ -339,6 +340,7 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await verifyModelCatalogRecovery(control, { resultDir, uiTimeoutMs })
       await captureConfigState('before-executor-restart')
       if (process.platform !== 'win32') {
         await restartExecutorAfterRemovingCwd(

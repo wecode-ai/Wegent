@@ -93,11 +93,48 @@ pub(crate) struct ChatShellJob<M: Mysql, R: Redis> {
     pub(crate) request_id: String,
 }
 
+/// The `chat:start` frame the dispatcher emits after the executor
+/// acknowledgement (`dispatcher.py:730-747` ->
+/// `webpage_websocket_chat_emitter.py:88-99`).
+pub(crate) struct ExecutorStart<R: Redis> {
+    pub(crate) redis: R,
+    pub(crate) task_id: i64,
+    pub(crate) subtask_id: i64,
+    pub(crate) bot_name: Value,
+    pub(crate) shell_type: String,
+    pub(crate) message_id: Option<i64>,
+}
+
+/// `_build_start_event_data` + `_get_bot_name` (`dispatcher.py:468-493`): the
+/// START event's shell type and first bot name.
+pub(crate) fn start_event<R: Redis>(redis: R, request: &ExecutionRequest) -> ExecutorStart<R> {
+    let bot_name = request
+        .bot
+        .as_array()
+        .and_then(|bots| bots.first())
+        .and_then(|bot| bot.get("name"))
+        .filter(|name| name.as_str().is_some_and(|name| !name.trim().is_empty()))
+        .cloned()
+        .unwrap_or(Value::Null);
+    ExecutorStart {
+        redis,
+        task_id: request.task_id,
+        subtask_id: request.subtask_id,
+        bot_name,
+        shell_type: crate::responses::create::routing::shell_type(request),
+        message_id: request.message_id,
+    }
+}
+
 /// One background dispatch the create flow hands to the supervisor.
 pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `_dispatch_http_callback`: `POST {target}/v1/responses` with
-    /// `stream=false, background=true`; the acknowledgement is logged only.
-    Executor { url: String, body: Value },
+    /// `stream=false, background=true`, then the `chat:start` emit.
+    Executor {
+        url: String,
+        body: Value,
+        start: Option<ExecutorStart<R>>,
+    },
     /// `_dispatch_sse`: the chat-shell SSE consumer. Boxed because the job is
     /// far larger than the executor arm and every dispatch is already an owned
     /// hand-off to the supervisor.
@@ -121,9 +158,9 @@ struct JobContext {
 impl<M: Mysql, R: Redis> DispatchJob<M, R> {
     fn context(&self) -> JobContext {
         match self {
-            Self::Executor { url, .. } => JobContext {
-                task_id: 0,
-                subtask_id: 0,
+            Self::Executor { url, start, .. } => JobContext {
+                task_id: start.as_ref().map_or(0, |start| start.task_id),
+                subtask_id: start.as_ref().map_or(0, |start| start.subtask_id),
                 request_id: String::new(),
                 target: url.clone(),
             },
@@ -314,14 +351,30 @@ where
     R: Redis + Clone + 'static,
 {
     match job {
-        DispatchJob::Executor { url, body } => {
+        DispatchJob::Executor { url, body, start } => {
             let Some(request) = executor_request(http, &url, &body) else {
                 tracing::warn!(%url, "failed to build an executor dispatch request");
                 return;
             };
             match request.timeout(DISPATCH_TIMEOUT).send().await {
                 Ok(response) => {
-                    tracing::info!(%url, status = %response.status(), "executor dispatch acknowledged")
+                    tracing::info!(%url, status = %response.status(), "executor dispatch acknowledged");
+                    // `dispatcher.py:747`: the acknowledgement is followed by
+                    // the START emit; a rejected dispatch raises before it.
+                    if response.status().is_success()
+                        && let Some(start) = start
+                        && let Err(error) = crate::internal_callback::publish_chat_start(
+                            &start.redis,
+                            start.task_id,
+                            start.subtask_id,
+                            start.bot_name,
+                            &start.shell_type,
+                            start.message_id,
+                        )
+                        .await
+                    {
+                        tracing::warn!(%error, "chat:start emit failed (fire-and-forget)");
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(%url, %error, "executor dispatch failed (fire-and-forget)")
@@ -352,6 +405,7 @@ where
 {
     let app = job.consumer.app.upgrade();
     let consumer = sse_sync::ConsumerContext {
+        package_mode: super::create::package_runtime::is_target(&job.target_url),
         mysql: &job.consumer.mysql,
         redis: job.consumer.redis.as_ref(),
         tables: job.consumer.tables,
@@ -393,14 +447,17 @@ fn executor_request(
     body: &Value,
 ) -> Option<brz_http::RequestBuilder> {
     Some(
-        crate::responses::create::dispatch::apply_openai_client_headers(
+        crate::responses::create::openai_client::apply_openai_client_headers(
             http.post(url)
                 .ok()?
                 .header("content-type", "application/json")
-                .header("accept", crate::responses::create::dispatch::OPENAI_ACCEPT)
+                .header(
+                    "accept",
+                    crate::responses::create::openai_client::OPENAI_ACCEPT,
+                )
                 .header(
                     "authorization",
-                    crate::responses::create::dispatch::OPENAI_DUMMY_AUTHORIZATION,
+                    crate::responses::create::openai_client::OPENAI_DUMMY_AUTHORIZATION,
                 ),
         )
         .json(body),

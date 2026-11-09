@@ -12,33 +12,44 @@ export function useIssueActivityHistory(
 ) {
   const [loaded, setLoaded] = useState<{
     taskId: string
-    history: IssueHistory
+    version: number
+    api: typeof api
+    history: IssueHistory | null
   } | null>(null)
+  const needsHistory =
+    enabled &&
+    !(statusHistory.length > 0 && task.assignment_history !== undefined) &&
+    Boolean(api?.getLoopItem)
 
   useEffect(() => {
-    if (
-      !enabled ||
-      (statusHistory.length && task.assignment_history !== undefined) ||
-      !api?.getLoopItem
-    )
-      return
+    if (!needsHistory || !api?.getLoopItem) return
     let active = true
     void api.getLoopItem(task.id).then(
       item => {
-        if (active) setLoaded({ taskId: task.id, history: item })
+        if (active) setLoaded({ taskId: task.id, version: task.version, api, history: item })
       },
-      () => undefined
+      () => {
+        if (active)
+          setLoaded(previous => ({
+            taskId: task.id,
+            version: task.version,
+            api,
+            history: previous?.taskId === task.id && previous.api === api ? previous.history : null,
+          }))
+      }
     )
     return () => {
       active = false
     }
-  }, [api, enabled, statusHistory.length, task.assignment_history, task.id, task.version])
+  }, [api, needsHistory, task.id, task.version])
 
   return useMemo(() => {
-    const history = loaded?.taskId === task.id ? loaded.history : null
+    const current = loaded?.taskId === task.id && loaded.api === api
+    const history = current ? loaded.history : null
     return {
+      loading: needsHistory && !(current && loaded.version === task.version),
       statusHistory: statusHistory.length ? statusHistory : (history?.status_history ?? []),
       assignmentHistory: task.assignment_history ?? history?.assignment_history ?? [],
     }
-  }, [loaded, statusHistory, task.assignment_history, task.id])
+  }, [api, loaded, needsHistory, statusHistory, task.assignment_history, task.id, task.version])
 }

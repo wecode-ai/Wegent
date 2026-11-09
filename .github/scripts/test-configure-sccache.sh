@@ -8,6 +8,8 @@ trap 'rm -rf "$test_dir"' EXIT
 
 ruby -ryaml -e '
   action = YAML.load_file(ARGV.fetch(0))
+  install = action.fetch("runs").fetch("steps").find { |step| step["name"] == "Install sccache" }
+  abort "sccache idle shutdown must be disabled before the installer can start its daemon" unless install.fetch("env", {})["SCCACHE_IDLE_TIMEOUT"] == "0"
   puts action.fetch("runs").fetch("steps").find { |step|
     step["name"] == "Configure Rust compiler cache"
   }.fetch("run")
@@ -18,6 +20,7 @@ cat > "$test_dir/bin/sccache" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$SCCACHE_GHA_ENABLED" == true ]]
+[[ "$SCCACHE_IDLE_TIMEOUT" == 0 ]]
 [[ "$SCCACHE_BASEDIRS" == '/test/workspace' ]]
 [[ "$SCCACHE_GHA_VERSION" == 'wegent-sccache-v1-Linux-X64' ]]
 printf '%s:%s\n' "$*" "${SCCACHE_GHA_RW_MODE-unset}" >> "$SCCACHE_TEST_CALLS"
@@ -49,6 +52,7 @@ run_case() {
   if [[ "$startup_exit" == 0 ]]; then
     grep -Fxq 'RUSTC_WRAPPER=sccache' "$test_dir/$name.env"
     grep -Fxq 'SCCACHE_GHA_ENABLED=true' "$test_dir/$name.env"
+    grep -Fxq 'SCCACHE_IDLE_TIMEOUT=0' "$test_dir/$name.env"
     grep -Fxq 'SCCACHE_BASEDIRS=/test/workspace' "$test_dir/$name.env"
     if [[ "$expected_mode" == READ_ONLY ]]; then
       grep -Fxq 'SCCACHE_GHA_RW_MODE=READ_ONLY' "$test_dir/$name.env"

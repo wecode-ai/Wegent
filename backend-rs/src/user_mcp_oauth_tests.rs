@@ -144,3 +144,68 @@ fn token_payload_usable_requires_an_access_token() {
     assert!(!token_payload_usable(&json!({"access_token": ""})));
     assert!(!token_payload_usable(&json!([])));
 }
+
+/// `UserMCPService.locked_user` (`user_mcp_service.py:83-95`) renders the
+/// labeled ORM projection with the row lock and no `LIMIT`.
+#[test]
+fn locked_user_statement_matches_the_source_lock_read() {
+    let flat = locked_user_statement()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(flat.starts_with("SELECT users.id AS users_id, users.user_name AS users_user_name"));
+    assert!(flat.contains("users.preferences AS users_preferences"));
+    assert!(
+        flat.ends_with("FROM users WHERE users.id = ? FOR UPDATE"),
+        "{flat}"
+    );
+    assert!(!flat.to_uppercase().contains("LIMIT"), "{flat}");
+}
+
+/// `_ensure_access_token` always enters `locked_user`, even when the stored
+/// token is already usable: the first statement is the owner row's locking
+/// read, and the fake server's parse error proves the read precedes the
+/// usable-token return.
+#[tokio::test]
+async fn a_usable_token_still_locks_the_owner_row_first() {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mysql = crate::connect_mysql(&format!(
+            "mysql://test:test@{}/test?ssl-mode=disabled",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(
+            crate::sql_test_support::mysql_pool_server::capture_queries_until(listener, stopped),
+        );
+        let service = McpOAuthTokenService {
+            user_id: 1555,
+            mysql: &mysql,
+        };
+        let stored = preferences(
+            "synthetic-access-token",
+            Utc::now().timestamp() + 3600,
+            false,
+        );
+        let result = service
+            .ensure_access_token(&stored, "dingtalk", "table")
+            .await;
+        assert!(
+            result.is_err(),
+            "the fake server answers the locking read with a parse error"
+        );
+        stop.send(()).unwrap();
+        let queries = server.await.unwrap();
+        assert_eq!(queries.len(), 1, "{queries:?}");
+        assert_eq!(
+            queries[0].split_whitespace().collect::<Vec<_>>().join(" "),
+            locked_user_statement()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    })
+    .await
+    .unwrap();
+}

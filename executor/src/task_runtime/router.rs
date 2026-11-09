@@ -28,6 +28,26 @@ pub struct TaskRuntime {
 }
 
 impl TaskRuntime {
+    pub(crate) fn list_milestones(&self, project: &str) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.list_milestones(project)
+    }
+    pub(crate) fn save_milestone(
+        &self,
+        project: &str,
+        id: Option<&str>,
+        input: super::store::milestones::MilestoneInput,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store.save_milestone(project, id, input)
+    }
+    pub(crate) fn delete_milestone(
+        &self,
+        project: &str,
+        id: &str,
+        version: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store.delete_milestone(project, id, version)
+    }
+
     pub(crate) fn stand_in_store(&self) -> &LocalTaskStore {
         &self.local_store
     }
@@ -1752,6 +1772,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Created issue".to_owned(),
                     description: "Description".to_owned(),
                     status: "pending".to_owned(),
@@ -1858,6 +1879,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "GitLab created".to_owned(),
                     description: "GitLab body".to_owned(),
                     status: "pending".to_owned(),

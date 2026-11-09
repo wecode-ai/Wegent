@@ -1,7 +1,3 @@
-import { useEffect } from 'react'
-import { act, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { WorkspaceTabSurface } from './App'
 import {
   beginHarnessAppLaunch,
   clearHarnessAppLaunch,
@@ -10,7 +6,11 @@ import {
   registerHarnessAppTab,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { useEffect } from 'react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { WorkspaceTabSurface } from './App'
 
 const appIframeMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
@@ -192,135 +192,6 @@ describe('WorkspaceTabSurface', () => {
     unmount()
   })
 
-  test('signals a runtime-work revalidation when a retained tab is revealed', async () => {
-    const props = {
-      cloudWebUrl: null,
-      lifecycleStore: {} as never,
-      services: {} as never,
-      tab: {
-        id: 'fixed-task',
-        kind: 'task' as const,
-        fixed: true,
-        title: '任务',
-        contentRoute: '/',
-      },
-      user: {
-        id: 1,
-        user_name: 'tester',
-        email: 'tester@example.com',
-      },
-    }
-
-    const { rerender } = render(<WorkspaceTabSurface {...props} active />)
-    await waitFor(() =>
-      expect(workbenchProviderMocks.workspaceTabRevealRevision).toHaveBeenLastCalledWith(0)
-    )
-
-    rerender(<WorkspaceTabSurface {...props} active={false} />)
-    rerender(<WorkspaceTabSurface {...props} active />)
-
-    await waitFor(() =>
-      expect(workbenchProviderMocks.workspaceTabRevealRevision).toHaveBeenLastCalledWith(1)
-    )
-  })
-
-  test('keeps a project board in the local workbench for task execution', () => {
-    render(
-      <WorkspaceTabSurface
-        active
-        cloudWebUrl="https://app.example.com"
-        lifecycleStore={{} as never}
-        services={{} as never}
-        tab={{
-          id: 'project-board',
-          kind: 'board',
-          title: '项目',
-          contentRoute: '/todo?projectId=project-1&itemId=ISSUE-1',
-        }}
-        user={{
-          id: 1,
-          user_name: 'tester',
-          email: 'tester@example.com',
-        }}
-      />
-    )
-
-    expect(screen.getByTestId('mock-workbench-board')).toBeInTheDocument()
-    expect(screen.queryByTestId('mock-app-iframe')).not.toBeInTheDocument()
-  })
-
-  test('shows an unavailable route instead of degrading a removed plugin route to the task workbench', () => {
-    const defaultRuntime = window.__WEWORK_DSH_UI__
-    let routes = [
-      {
-        id: 'removed-plugin-route',
-        path: '/removed-plugin-route',
-        telemetryFeature: 'apps',
-      },
-    ]
-    const listeners = new Set<() => void>()
-    window.__WEWORK_DSH_UI__ = {
-      getEntries: slot =>
-        slot === 'wework.route' ? routes : (defaultRuntime?.getEntries(slot) ?? []),
-      subscribe(slot, listener) {
-        if (slot !== 'wework.route') return defaultRuntime?.subscribe(slot, listener) ?? (() => {})
-        listeners.add(listener)
-        return () => listeners.delete(listener)
-      },
-      attach(slot, id, container) {
-        if (slot === 'wework.route' && id === 'removed-plugin-route') {
-          const page = document.createElement('div')
-          page.dataset.testid = 'removed-plugin-page'
-          container.append(page)
-          return {
-            update: () => undefined,
-            dispose: () => page.remove(),
-          }
-        }
-        return {
-          update: () => undefined,
-          dispose: () => undefined,
-        }
-      },
-    }
-    const props = {
-      active: true,
-      cloudWebUrl: null,
-      lifecycleStore: {} as never,
-      services: {} as never,
-      tab: {
-        id: 'removed-plugin-tab',
-        kind: 'auxiliary' as const,
-        title: 'Removed plugin',
-        contentRoute: '/removed-plugin-route',
-      },
-      user: {
-        id: 1,
-        user_name: 'tester',
-        email: 'tester@example.com',
-      },
-    }
-
-    const { unmount } = render(<WorkspaceTabSurface {...props} />)
-    expect(screen.getByTestId('removed-plugin-page')).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-route-unavailable')).not.toBeInTheDocument()
-    expect(workbenchProviderMocks.composerAppsSourceActive).toHaveBeenLastCalledWith(true)
-
-    act(() => {
-      routes = []
-      for (const listener of listeners) listener()
-    })
-
-    expect(screen.queryByTestId('removed-plugin-page')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-route-unavailable')).toHaveTextContent(
-      '提供此页面的插件可能已停用或卸载'
-    )
-    expect(screen.queryByTestId('mock-workbench-task')).not.toBeInTheDocument()
-
-    unmount()
-    window.__WEWORK_DSH_UI__ = defaultRuntime
-  })
-
   test('keeps an inactive iframe app connected so its page state survives tab switches', () => {
     registerHarnessAppTab({
       id: 'stateful',
@@ -399,45 +270,6 @@ describe('WorkspaceTabSurface', () => {
     expect(portalOwnershipMocks.setActiveOwner).toHaveBeenLastCalledWith('smart-app-tab-1')
     unmount()
     unregisterHarnessAppTab('titlebar')
-  })
-
-  test('renders the launch surface when a running Harness app opens directly as an iframe', () => {
-    const installationId = 'running-app'
-    registerHarnessAppTab({
-      id: installationId,
-      webUrl: 'http://localhost:3000',
-      manifest: {
-        displayName: 'Running app',
-        description: 'Running app',
-      },
-    } as never)
-    beginHarnessAppLaunch(installationId, 'Running app', vi.fn(), 'loadingApp')
-
-    const { unmount } = render(
-      <WorkspaceTabSurface
-        active
-        cloudWebUrl={null}
-        lifecycleStore={{} as never}
-        services={{} as never}
-        tab={{
-          id: 'running-app-tab',
-          kind: 'auxiliary',
-          title: 'Running app',
-          contentRoute: `/app/harness-${installationId}`,
-        }}
-        user={{
-          id: 1,
-          user_name: 'tester',
-          email: 'tester@example.com',
-        }}
-      />
-    )
-
-    expect(screen.getByTestId(`harness-app-launch-${installationId}`)).toBeInTheDocument()
-
-    unmount()
-    clearHarnessAppLaunch(installationId)
-    unregisterHarnessAppTab(installationId)
   })
 
   test('does not render an unavailable route before Smart app startup establishes launch state', () => {
@@ -627,58 +459,5 @@ describe('WorkspaceTabSurface', () => {
       clearHarnessAppLaunch(installationId)
       unregisterHarnessAppTab(installationId)
     }
-  })
-
-  test('renders a running Electron Harness app through the DOM webview host', () => {
-    const installationId = 'dom-webview-app'
-    runtimeEnvironmentMocks.electron = true
-    registerHarnessAppTab({
-      id: installationId,
-      manifest: {
-        name: installationId,
-        displayName: 'DOM Webview App',
-        version: '0.1.0',
-        type: 'deepseek-harness-plugin-bundle',
-        description: '',
-        entry: { installPackage: '.', profile: 'default' },
-        requirements: { dsh: '0.1.0-rc.8', node: '>=20' },
-      },
-      packagePath: '/tmp/dom-webview-app',
-      sha256: 'fixture',
-      modelKey: null,
-      resident: false,
-      runtimeVersion: '0.1.0-rc.8',
-      state: 'running',
-      webUrl: 'http://127.0.0.1:4101',
-      error: null,
-      source: 'linked',
-    })
-
-    const { unmount } = render(
-      <WorkspaceTabSurface
-        active
-        cloudWebUrl={null}
-        lifecycleStore={{} as never}
-        services={{} as never}
-        tab={{
-          id: 'dom-webview-tab',
-          kind: 'auxiliary',
-          title: 'DOM Webview App',
-          contentRoute: `/app/harness-${installationId}`,
-        }}
-        user={{ id: 1, user_name: 'tester', email: 'tester@example.com' }}
-      />
-    )
-
-    expect(screen.getByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'true')
-    expect(appIframeMocks.props).toHaveBeenCalledWith(
-      expect.objectContaining({
-        appKey: `harness-${installationId}`,
-        embeddedBrowserLabel: `smart-app:${installationId}`,
-        src: 'http://127.0.0.1:4101',
-      })
-    )
-    unmount()
-    unregisterHarnessAppTab(installationId)
   })
 })

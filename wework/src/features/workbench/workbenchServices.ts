@@ -156,7 +156,17 @@ export interface LocalDecisionRouterApi {
   unregister(token: string): Promise<void>
 }
 
+/** Local participation discovery, not cloud authorization or a global user alias. */
+export interface LocalParticipationIdentity {
+  readonly nativeOwnerUserId: 0
+  readonly currentUser: Readonly<Pick<User, 'id' | 'user_name'>>
+  readonly viewerUserIds: readonly number[]
+}
+
 export interface WorkbenchServices {
+  localParticipationIdentity?: LocalParticipationIdentity
+  issueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
+  localIssueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
   standInApi?: import('@/api/standIn').StandInExecutorApi
   /** Read the current healthy local IPC identity, independently of the device catalog. */
   getLocalRuntimeSidebarIdentity?: () => Promise<LocalRuntimeSidebarIdentity | null>
@@ -204,7 +214,9 @@ export interface WorkbenchServices {
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> &
-    Partial<RuntimeBackgroundTerminalsApi & RuntimeMcpAppsApi>
+    Partial<RuntimeBackgroundTerminalsApi & RuntimeMcpAppsApi> & {
+      getRuntimeTask?: ExecutorClient['runtime']['getRuntimeTask']
+    }
   /** Backend-free execution ports for locally owned projects in a connected workbench. */
   localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
@@ -357,6 +369,9 @@ export function createDefaultWorkbenchServices(
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
   return {
     ...cloudServices,
+    localParticipationIdentity: localServices.localParticipationIdentity,
+    localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
+    localProjectChatClient: localServices.localProjectChatClient,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     externalIssueApi: localServices.externalIssueApi,

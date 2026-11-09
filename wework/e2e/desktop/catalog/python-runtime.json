@@ -1,0 +1,18 @@
+{
+  "order": 99100,
+  "scenario": "./scenarios/python-runtime.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/modules/managed-python.mjs",
+    "wework/electron/src/runtime/python-runtime*",
+    "wework/src/desktop/executionEnvironments*",
+    "wework/src/components/settings/ExecutionEnvironmentsSettingsPage*"
+  ],
+  "ci": {
+    "core": {
+      "order": 99000,
+      "shard": 10,
+      "position": 9000
+    }
+  }
+}

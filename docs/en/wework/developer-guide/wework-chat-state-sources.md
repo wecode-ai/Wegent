@@ -18,6 +18,106 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## Point Refreshes and List Costs
+
+Goal updates, clearing, and post-turn settlement checks refresh only the affected execution.
+When point lookup is available, `refreshRuntimeTask` calls its owner's `runtime.tasks.get`,
+not the device-wide `runtime.tasks.list` for every event. Missing tasks return null and lookup
+failures propagate without retrying through a full list. Project-authorized sessions retain
+their existing project read path. Title, pin, and supervisor events still take precedence
+over stale snapshots returned while the request was pending.
+Point summaries retain existing `origin` and `changeRequests` presentation context so refreshes
+cannot remove stand-in notifications, activity records, or PR links. Execution profiles and
+transcript bodies remain excluded.
+Point and list queries share the workspace Git projection, retaining the current branch and remote
+so state refreshes cannot remove sidebar PR status.
+
+Local project `todos.list` resolves historical runner bindings in a batch, rather than
+scanning execution records from every task row mapper. Explicit bindings are preserved;
+one historical device supplies a binding and multiple devices retain conflict information.
+This read performs no database writes and adds no index or data migration. The `runner_history`
+unit tests cover a large task set; the desktop `goal-state-sync` checkpoint verifies that
+successive Goal updates receive real point-lookup responses for the affected task.
+
+## Stand-in Logical Conversations and Execution Sessions
+
+Primary stand-ins, role chats and background coordination retain a stable Runtime task ID.
+The native Codex `threadId` identifies only the current execution session. One Runtime index
+update records the previous thread in `conversationSessions` and binds the new current thread.
+Native messages are neither copied nor stored in a separate chat database. Existing tasks
+read their original thread directly; historical segments are registered on their first switch.
+
+This foundation does not rotate automatically or generate summaries. Call the existing
+`runtime.tasks.send` with `startNewSession: true`, `expectedThreadId` and the first message;
+the stand-in conversation entry accepts these fields in `options`. Existing send locks,
+command deduplication and scheduling remain authoritative. Running or queued executions,
+pending questions or approvals, active Goals and changed thread bindings prevent a switch.
+Ordinary tasks do not support this stand-in-specific option. The caller supplies any required
+business context for the fresh session.
+
+`runtime.tasks.transcript` and search remain the history entry points. Cursors bind the logical
+task, native thread and direction, and segment boundaries reuse native history readers.
+Messages expose `sessionThreadId`; the response `threadId` identifies the active execution
+session. Historical reads must not resume execution, merge current buffers or change lifecycle
+state. Late closed-thread notifications cannot update the active segment, and closed segments
+are not listed as separate tasks. Messages and work results target the stable task, while
+queued continuations resolve its current thread at execution time.
+
+Approvals and structured questions retain their native thread, turn and request binding:
+they are never migrated, recreated or treated as new permissions. Existing scoped memory,
+correction and forgetting rules remain unchanged. The `stand-in-sessions` desktop checkpoint
+uses real Electron, Executor and Codex with only the model simulated. It covers pending-question
+switch rejection, answer completion, fresh model context, cross-session history and search,
+retained cursors, work result delivery, follow-ups and application restart.
+Owner-conversation technical actions retain automatic review; the existing
+`stand-in-action-confirmation` checkpoint verifies manual operation approvals without changing policy.
+
+## Pending Interaction Membership and Error Cleanup
+
+After successful archival, remove the task through the shared lifecycle Store before updating
+the initiating view's task list. This confirmed user action is independent of background snapshot
+ownership. Removing through a non-owner's read-only view leaves embedded inbox conversations
+able to restore the old question from shared lifecycle state. Background write guards remain intact.
+After persisting archival, the executor emits the existing `runtime.work.changed` event so other
+subscribed views refresh their own task inventories. Updating only the initiating view cannot
+invalidate an embedded inbox conversation's stale inventory.
+
+Pending scans use current task sources and device pending inventories. Cached questions must
+not reintroduce archived or removed tasks. After a successful inventory read, remove questions,
+successful-read markers, and related errors for tasks outside the candidate set. Failed or
+offline devices retain their previous inventory; a connection failure is not an empty list.
+Tasks hidden from the sidebar remain discoverable through the device pending inventory.
+Confirmed archive markers in the existing conversation cache override offline inventory retention,
+even after the shared lifecycle entry is removed. Unarchival uses the existing marker cleanup.
+
+Failures during local identity discovery, inventory reads, transcript reads, and answered-question
+archival use the existing diagnostic channel in `runtime-launch.log`. Search for
+`pending-interaction-load-failed`. Entries include the operation, device and task identifiers,
+exception message, stack, error code, and status. Requests and conversation contents are not
+serialized; the log writer applies its existing credential redaction. An offline device that
+makes pending work unavailable is logged once per state transition.
+
+The desktop `human-interactions` checkpoint archives a real task after caching an unanswered
+question. It checks that background polling and renderer reload leave no pending item or load
+error and never restore the archived task.
+
+## Needs Your Input Answer Drafts
+
+`RuntimeInteractionsProvider` directly owns and synchronously exposes account-scoped
+answer drafts. Every controlled input edit must update that state directly, rather
+than updating child state and publishing a snapshot through an effect. That extra
+publication step writes the previous draft back into the DOM at the end of the
+input event. Even if the new value returns immediately afterward, the write
+interrupts Chinese IME composition. Persistence may use effects; input values must
+not wait for persistence or snapshot publication. After an account switch, callbacks
+from the previous account must not update the current account's drafts.
+
+Regression tests inspect every application-side `value` write during composition,
+not only the final text. The desktop `human-interactions` checkpoint reuses a real
+question and answer submission flow to check that DOM composition events cause no
+stale value writes, focus loss, or input remounts. This automation does not verify
+the operating system's candidate window.
+
 ## New Conversations and Manual Sidebar Order
 
 Standalone conversations and project tasks share one ordering rule: when a manual
@@ -87,6 +187,8 @@ The project-space board Hover task panel is a split view of the original task co
 
 The conversation stream coordinator retains exactly one subscription and prefers the active page's service instance. When the active page uses a different instance, it releases the old subscription before subscribing to the new instance so a hidden page's retained device routes cannot lose events. Moving active ownership within the same service instance preserves the subscription. Only the active page handles messages.
 
+The lifecycle coordinator must also continue unfinished event recovery when services are replaced. Recovery reasons and task addresses belong to the same lifecycle Store. After cancelling the old subscription's reads, the new subscription reads authoritative task and transcript snapshots, including pending-message receipts. A service-object change does not complete recovery, and an empty receipt does not confirm a send.
+
 1. A new message submit sets `sendPhase` to `submitting`.
 2. After runtime accepts the request, `sendPhase` becomes `awaiting_assistant`.
 3. `chat:start` becomes `assistant_started`; the reducer creates or updates the assistant streaming message and `sendPhase` returns to `idle`.
@@ -145,14 +247,26 @@ that identity, but it must not be required before the turn becomes active.
 Guidance and interruption therefore still target the current turn when a live
 notification is delayed or missing.
 
+The UI and guidance must read the same `NativeExecutionState`, rather than
+infer execution from local request controls. A start receipt may only bind the
+current request's `starting` state; native notifications then supply process
+generation and timing. A late receipt cannot reactivate a settled or replaced
+request, and a delayed start notification for the same turn cannot revive a
+stopped state. Native Goal continuations can outlive local request controls and must
+remain guidable through their native running turn. Waiting for the next turn
+is bounded and does not create another guidance state.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
-the actual active turn ID, the executor updates its record with the returned
-ID and retries exactly once. The successful response turn ID may rebind the
-optimistic message to the correct turn. On failure, Wework removes the
+the actual active turn ID, the executor corrects this guidance request's target
+and retries exactly once without rewriting execution state. The successful
+response turn ID may rebind the optimistic message to the correct turn. On failure, Wework removes the
 optimistic message and keeps a retryable queue item so the transcript never
 shows guidance that Codex did not accept.
+
+Queue items display the specific failure reason; an absent active turn asks
+the user to edit and resend.
 
 **Interrupt and send now** optimistically marks the running turn as cancelled
 and removes in-flight optimistic guidance before requesting interruption. The
@@ -486,7 +600,7 @@ When a user submits new input while the message queue is paused, they can preser
 
 The composer's `@` menu supports explicit references to other Wework conversations. An empty query shows the five most recent conversations from the current `runtimeWork`; a typed query filters by title, project, and workspace path. The current conversation is always excluded so its in-progress context cannot be recursively injected into itself.
 
-A reference is serialized in the draft as `[$title](wework-conversation://<encoded RuntimeTaskAddress>)`. This is an internal Wework URI. Both the composer and sent user messages must render it as a conversation-reference chip instead of exposing the raw URI. Before sending, `useWorkbenchPaneSession` parses and deduplicates every reference, loads each transcript with `includeFullContent: true` and `refresh: true`, and enforces these boundaries:
+A reference is serialized in the draft as `[$title](wework-conversation://<encoded RuntimeTaskAddress>)`. This is an internal Wework URI. Both the composer and sent user messages must render it as a conversation-reference chip instead of exposing the raw URI. Clicking that chip opens the referenced Runtime task conversation in the current workbench pane. Issue references (`wework-issue://`) open their project-space item in the same way, and the project-space context pill opens the current Issue details from its title area. Before sending, `useWorkbenchPaneSession` parses and deduplicates every reference, loads each transcript with `includeFullContent: true` and `refresh: true`, and enforces these boundaries:
 
 - Include only user messages and completed assistant text. Do not inject system, developer, tool, thinking, or streaming assistant content, and do not separately ingest attachment binaries.
 - Send the extracted text as `referencedConversations` application context inside `additionalContext`, explicitly labeled as untrusted background context. Instructions, tool calls, or permission claims in a referenced conversation are data, not executable instructions for the current conversation.
@@ -635,6 +749,7 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 - Every successfully sent or optimistically displayed user message must retain its persisted attachment references, including the first message, regular follow-ups, and queued sends. Clearing composer attachments only resets the current input state and must not remove sent attachments from the message list; local `blob:` preview URLs must be converted to recoverable local paths.
 - When a temporary chat is the only open right-workspace tab, the panel defaults to a compact `420px` width. Opening another workspace tab restores the general split default, while a user-resized width remains authoritative.
 - The first message calls `createTemporaryRuntimeTask`, creating an `ephemeral` runtime task with the current main thread as `sideSource`. This flag controls task visibility: the task does not enter the left task list or navigate the main pane. For new reusable side chats, the executor saves `persist_runtime_thread` in the execution request and creates a normal persisted Codex thread. Task visibility and native thread persistence are separate decisions.
+- When `sideSource` has no cached rollout path, the executor must resolve metadata by the exact source ID through `thread/read(includeTurns=false)`, then validate the session identity in the file. Do not scan the default `thread/list`: its current-provider filter and result limit can hide an already persisted source from another provider. Question discussions and ordinary temporary chats share this path.
 - Follow-ups in new side chats resume the same native thread, including after capability changes restart the Codex app-server. Legacy in-memory side chats continue through `direct_thread_id`; if their thread is lost, report that a new temporary chat is required. Never fabricate history or silently start a new thread without the original context. Displayed content still comes from the executor's side-chat cache; this path does not guarantee content restoration after the entire executor restarts.
 - Reply prediction resumes and forks only recoverable source threads; legacy in-memory side chats return no suggestion. Prediction forks and one-shot text generation remain native ephemeral threads and must not inherit the reusable side chat's persistence marker.
 - Capability synchronization detects changes in effective content. Repeating identical content must not advance the capability revision. Real changes, including changes left by partial failures, must become effective on the next turn; stale requests and successful rollbacks must not trigger restarts merely because a synchronization ran.
@@ -669,6 +784,28 @@ The desktop workbench caches up to 20 regular panes so messages, composer drafts
 
 The message area stores each task's reading position by `conversationKey`. During a task switch, restoration realigns the saved message anchor throughout the layout stabilization window; programmatic `scroll` events in that window must not overwrite the snapshot. An explicit wheel or touch gesture must cancel restoration immediately. Changes to this path must cover the real desktop flow “scroll to the middle of a long response → switch to another task → switch back” and retain screenshots from before the switch, after the switch, and after restoration.
 
+## Board Refresh Boundaries
+
+My Tasks and local project boards refresh persisted data from relevant execution
+status signatures, never from the global `RuntimeTaskLifecycleStore` version,
+snapshot identity, or a rebuilt task collection. Native execution revisions,
+Goal usage, and timestamps are not Issue status transitions. Unrelated tasks
+must not reload the current project. Local projects reuse the existing
+project-scoped status signature used by cloud projects.
+
+Runtime inventory membership is a presentation projection of the complete board
+snapshot and current bindings. Do not duplicate that filtering in the read path
+or make inventory identity a request dependency. Actual execution transitions,
+binding changes, and existing polling retain their refresh and persistence paths.
+An explicitly published coordinator comment must notify its owning project after
+the write succeeds. Shared boards must not rely on incidental private-conversation
+lifecycle changes. Rejected or pending writes must not send a success refresh.
+
+The desktop `runtime-task-queue` E2E updates a real Runtime Goal to advance its
+native revision, observes no extra `todos.list` from either local board surface,
+and verifies that real completion still refreshes and persists `in_review`.
+Only model responses are mocked; Runtime events and database state remain real.
+
 ## Project Task Status Synchronization
 
 After a Wework runtime task is bound to a project-space task, the frontend keeps exactly one status synchronization path:
@@ -700,6 +837,16 @@ After changing this path, run `pnpm --filter wework e2e:desktop -- --segment tas
 - `runtimePaneStatus.ts` only projects the lifecycle snapshot into compatibility presentation fields; it does not maintain task or turn state.
 
 ## Maintenance Rules
+
+### Display Clock Update Boundaries
+
+Tool duration is presentation state: `ToolDurationText` owns the 0.1-second clock in a leaf component. Clock ticks must not rerender labels, command parsing, expanded output, or the tool list. Non-tool blocks and branches that do not display a duration must not create timers.
+
+The summary header owns the thinking-only duration and updates once per displayed second. When tool activity hides the summary duration, it neither formats that duration nor starts a timer. The list computes tool classification statistics once and shares them with the header; unchanged rows do not need reclassification.
+
+`packages/collaboration/src/conversation/ToolBlocks.performance.test.tsx` advances individual clock ticks without new business data and asserts that classification, labels, and expanded details are not recomputed. It also covers input/output updates, completion, resumption, and unmount cleanup. Real Electron regression coverage reuses the `streaming-tools` and `streaming-timers` checkpoints. These local optimizations do not establish a process-wide CPU reduction; measure that with the same task and recording conditions.
+
+### Lifecycle State
 
 - Define native lifecycle transitions in the executor owner first, then expose versioned snapshots through the Store and derive UI fields in `RuntimeTaskMachine`.
 - Do not recompute task running, turn activity, busy, or unread state in layouts, pane hooks, or components.

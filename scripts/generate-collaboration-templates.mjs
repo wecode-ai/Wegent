@@ -16,7 +16,7 @@ const definitions = JSON.parse(
   ),
 )
 const target = new URL(
-  '../backend/init_data/04-collaboration-templates.yaml',
+  '../backend-rs/init_data/04-collaboration-templates.yaml',
   import.meta.url,
 )
 await writeFile(

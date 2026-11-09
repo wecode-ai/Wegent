@@ -1,4 +1,6 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import { openInExternalBrowser } from './external-browser.js'
+import type { ModelConfigurationStore } from './model-configuration-store.js'
 import {
   acknowledgeNotificationReply,
   enqueueNotificationReply,
@@ -7,6 +9,8 @@ import {
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
+import { focusE2EWindow } from './e2e-window-focus.js'
+import { setE2EWindowSize } from './e2e-window-size.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
 import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
@@ -26,7 +30,7 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat, writeFile } from 'node:fs/promises'
-import { cpus } from 'node:os'
+import { cpuLoadRatioBetween, cpuTimeSample } from './system-cpu.js'
 import { availableMemoryRatio } from './maintenance-memory.js'
 import { basename, join, resolve } from 'node:path'
 import {
@@ -138,6 +142,8 @@ function assertE2EEnabled(control: string): void {
 export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
+  modelConfiguration?: ModelConfigurationStore
+  syncLocalModels?: () => Promise<void>
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
   executorPid?: () => number | null
   requestMcpApp?: (payload: Record<string, unknown>) => Promise<unknown>
@@ -429,7 +435,9 @@ export function createElectronCapabilityRouter(
     router,
     window,
     desktopServices.secureStorage,
-    desktopServices.events
+    desktopServices.events,
+    desktopServices.modelConfiguration,
+    desktopServices.syncLocalModels
   )
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
@@ -494,6 +502,9 @@ export function createElectronCapabilityRouter(
       visible: booleanParam(params, 'visible') ?? true,
       navigateExisting: booleanParam(params, 'navigateExisting') ?? true,
     })
+  )
+  router.register('browser.openExternal', params =>
+    openInExternalBrowser(stringParam(params, 'url'))
   )
   registerBrowserAnnotationCapabilities(router, desktopServices.browserAnnotations)
   router.register('browser.setBounds', params =>
@@ -734,9 +745,30 @@ export function createElectronCapabilityRouter(
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()
-    target.focus()
-    const primaryContents = e2eHost.captureTarget('main')
-    if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    try {
+      await focusE2EWindow(target, () => {
+        app.focus({ steal: true })
+        target.focus()
+        const primaryContents = e2eHost.captureTarget('main')
+        if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+      })
+    } catch (error) {
+      const destroyed = target.isDestroyed()
+      console.error('[desktop-e2e-window-focus-failed]', {
+        windowLabel: 'main',
+        pid: process.pid,
+        executable: app.getPath('exe'),
+        appPath: app.getAppPath(),
+        windowId: destroyed ? null : target.id,
+        destroyed,
+        visible: !destroyed && target.isVisible(),
+        minimized: !destroyed && target.isMinimized(),
+        focusable: !destroyed && target.isFocusable(),
+        focused: !destroyed && target.isFocused(),
+        appHidden: process.platform === 'darwin' ? app.isHidden() : null,
+      })
+      throw error
+    }
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
@@ -825,13 +857,12 @@ export function createElectronCapabilityRouter(
     }
   })
   router.register('e2e.setMainWindowSize', params => {
-    const target = requiredWindow(window)
-    const [width, height] = target.getContentSize()
-    target.setContentSize(
+    return setE2EWindowSize(
+      requiredWindow(window),
       requiredIntegerParam(params, 'width'),
-      requiredIntegerParam(params, 'height')
+      requiredIntegerParam(params, 'height'),
+      params.maximized === undefined ? false : requiredBooleanParam(params, 'maximized')
     )
-    return { width, height }
   })
   // Windows restores precision-touchpad input only while the native window
   // keeps Chromium's default visibility lifecycle; see window-background-policy.
@@ -1006,7 +1037,10 @@ export function createElectronCapabilityRouter(
     return mcpDiscoveryFault.configure(params.enabled)
   })
   router.register('e2e.inlineVisualizationFrame', params =>
-    controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
+    controlInlineVisualizationFrame(
+      e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main'),
+      params
+    )
   )
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
@@ -1402,7 +1436,7 @@ export function registerAppUpdateCapabilities(
   // appUpdate.downloadProgress until it reports a terminal phase.
   router.register('appUpdate.download', params => {
     void requiredAppUpdates(appUpdates)
-      .download(updateChannelParam(params))
+      .download(updateChannelParam(params), optionalStringParam(params, 'retryToken'))
       .catch(() => undefined)
     return null
   })
@@ -1466,11 +1500,32 @@ export function registerDesktopServiceCapabilities(
   router.register('processExplorer.setAlwaysOnTop', params =>
     developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
   )
-  router.register('diagnostics.processSnapshot', (options: ProcessSnapshotOptions = {}) =>
-    services.processExplorer.snapshot({
-      waitForSystemProcesses: options?.waitForSystemProcesses !== false,
-    })
-  )
+  router.register('diagnostics.processSnapshot', async (options: ProcessSnapshotOptions = {}) => {
+    const snapshotOptions = { waitForSystemProcesses: options?.waitForSystemProcesses !== false }
+    if (process.env.VITE_WEWORK_E2E !== 'true')
+      return services.processExplorer.snapshot(snapshotOptions)
+    const startedAt = Date.now()
+    console.info('[process-explorer-host]', { stage: 'requested', startedAt })
+    try {
+      const snapshot = await services.processExplorer.snapshot(snapshotOptions)
+      console.info('[process-explorer-host]', {
+        stage: 'completed',
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        processCount: snapshot.processes.length,
+        degraded: snapshot.degraded.map(item => item.code),
+      })
+      return snapshot
+    } catch (error) {
+      console.info('[process-explorer-host]', {
+        stage: 'failed',
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        errorName: error instanceof Error ? error.name : typeof error,
+      })
+      throw error
+    }
+  })
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )
@@ -1559,32 +1614,15 @@ function unavailableOwnerCapture(): HostCapabilityError {
   )
 }
 
-interface CpuTimeSample {
-  idle: number
-  total: number
-}
-
-function cpuTimeSample(): CpuTimeSample {
-  return cpus().reduce<CpuTimeSample>(
-    (sample, cpu) => ({
-      idle: sample.idle + cpu.times.idle,
-      total:
-        sample.total +
-        cpu.times.user +
-        cpu.times.nice +
-        cpu.times.sys +
-        cpu.times.idle +
-        cpu.times.irq,
-    }),
-    { idle: 0, total: 0 }
-  )
-}
-
-export function cpuLoadRatioBetween(before: CpuTimeSample, after: CpuTimeSample): number {
-  const totalDelta = after.total - before.total
-  if (totalDelta <= 0) return 0
-  const idleDelta = Math.max(0, after.idle - before.idle)
-  return Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+export function e2eSystemPressureOverride(environment: NodeJS.ProcessEnv = process.env) {
+  if (
+    environment.VITE_WEWORK_E2E !== 'true' ||
+    !environment.WEWORK_E2E_CONTROL_URL?.trim() ||
+    environment.WEWORK_E2E_SYSTEM_PRESSURE !== 'idle'
+  ) {
+    return null
+  }
+  return { cpuLoadRatio: 0.1, freeMemoryRatio: 0.5, userIdleSeconds: 60 }
 }
 
 export async function systemPressureSnapshot(): Promise<{
@@ -1592,6 +1630,8 @@ export async function systemPressureSnapshot(): Promise<{
   freeMemoryRatio: number
   userIdleSeconds: number
 }> {
+  const override = e2eSystemPressureOverride()
+  if (override) return override
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()

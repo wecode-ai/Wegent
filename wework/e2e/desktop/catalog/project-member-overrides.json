@@ -1,0 +1,12 @@
+{
+  "order": 93000,
+  "scenario": "./scenarios/project-member-overrides.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 68000,
+      "shard": 2,
+      "position": 4000
+    }
+  }
+}

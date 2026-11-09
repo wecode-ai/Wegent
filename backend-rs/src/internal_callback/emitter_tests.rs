@@ -112,6 +112,8 @@ struct RecordingState {
     /// Every `SET key value` payload, in call order.
     sets: Vec<(String, Vec<u8>)>,
     evals: Vec<Vec<String>>,
+    lists: std::collections::HashMap<String, Vec<String>>,
+    published: Vec<Value>,
 }
 
 impl RecordingRedis {
@@ -135,11 +137,30 @@ impl brz_redis::Redis for RecordingRedis {
         command.arg_encoded(keys.num_args())?;
         keys.encode_args(&mut command)?;
         arguments.encode_args(&mut command)?;
-        let captured = (1..command.arg_count())
+        let captured: Vec<String> = (1..command.arg_count())
             .filter_map(|index| command.arg_at(index))
             .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
             .collect();
-        self.state.lock().expect("state").evals.push(captured);
+        let mut state = self.state.lock().expect("state");
+        state.evals.push(captured.clone());
+        if captured[2].starts_with("chat:task_streaming:") {
+            let key = &captured[2];
+            state.calls.push(format!("EVAL {key}"));
+            let current = state
+                .sets
+                .iter()
+                .rev()
+                .find(|(stored_key, _)| stored_key == key)
+                .map(|(_, value)| String::from_utf8(value.clone()).expect("marker JSON"))
+                .or_else(|| state.task_streaming.clone())
+                .unwrap_or_default();
+            if current != captured[3] {
+                return R::from_redis_value(&brz_redis::Value::Int(0));
+            }
+            state
+                .sets
+                .push((key.clone(), captured[4].as_bytes().to_vec()));
+        }
         R::from_redis_value(&brz_redis::Value::Int(1))
     }
 
@@ -242,17 +263,66 @@ impl brz_redis::Redis for RecordingRedis {
         Ok(true)
     }
 
-    async fn rpush<K, V>(&self, key: K, _values: V) -> brz_redis::RedisResult<i64>
+    async fn rpush<K, V>(&self, key: K, values: V) -> brz_redis::RedisResult<i64>
     where
         K: brz_redis::EncodeRedisArg + Send,
         V: brz_redis::EncodeRedisArgs + Send,
     {
         let name = Self::key_name(&key);
+        let mut command = brz_redis::cmd("RPUSH");
+        values.encode_args(&mut command)?;
+        let values = (1..command.arg_count())
+            .filter_map(|index| command.arg_at(index))
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+        let mut state = self.state.lock().expect("state");
+        state.calls.push(format!("RPUSH {name}"));
+        let list = state.lists.entry(name).or_default();
+        list.extend(values);
+        Ok(list.len() as i64)
+    }
+
+    async fn lrange<K, R>(&self, key: K, start: i64, stop: i64) -> brz_redis::RedisResult<Vec<R>>
+    where
+        K: brz_redis::EncodeRedisArg + Send,
+        R: brz_redis::FromRedisValue + Send,
+    {
+        assert_eq!((start, stop), (0, -1));
+        let state = self.state.lock().expect("state");
+        state
+            .lists
+            .get(&Self::key_name(&key))
+            .into_iter()
+            .flatten()
+            .map(|value| {
+                R::from_redis_value(&brz_redis::Value::BulkString(
+                    value.as_bytes().to_vec().into(),
+                ))
+            })
+            .collect()
+    }
+
+    async fn lset<K, V>(&self, key: K, index: i64, value: V) -> brz_redis::RedisResult<()>
+    where
+        K: brz_redis::EncodeRedisArg + Send,
+        V: brz_redis::EncodeRedisArg + Send,
+    {
+        let mut state = self.state.lock().expect("state");
+        let list = state.lists.get_mut(&Self::key_name(&key)).expect("list");
+        list[index as usize] = Self::key_name(&value);
+        Ok(())
+    }
+
+    async fn publish<C, M>(&self, channel: C, message: M) -> brz_redis::RedisResult<i64>
+    where
+        C: brz_redis::EncodeRedisArg + Send,
+        M: brz_redis::EncodeRedisArg + Send,
+    {
+        assert_eq!(Self::key_name(&channel), "socketio");
         self.state
             .lock()
             .expect("state")
-            .calls
-            .push(format!("RPUSH {name}"));
+            .published
+            .push(serde_json::from_str(&Self::key_name(&message)).expect("publish JSON"));
         Ok(1)
     }
 
@@ -304,6 +374,119 @@ impl brz_redis::Redis for RecordingRedis {
     }
 }
 
+struct CountingFormNormalizer(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+#[async_trait::async_trait]
+impl crate::InteractiveFormQuestionNormalizer for CountingFormNormalizer {
+    async fn normalize(&self, task_id: i64, mut questions: Vec<Value>) -> Vec<Value> {
+        assert_eq!(task_id, 7);
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        questions[0]["question"] = json!("Continue the normalized diff changes?");
+        questions
+    }
+}
+
+async fn emit_function_call(
+    redis: &RecordingRedis,
+    registry: &crate::InteractiveFormRegistry,
+    tool_name: &str,
+) -> Vec<super::super::event::ExecutionEvent> {
+    let parser = super::super::parser::ResponsesApiEventParser::default();
+    let item = json!({
+        "type": "function_call", "call_id": "codex-interaction-1", "name": tool_name,
+        "arguments": json!({"questions": [{
+            "id": "diff_scope", "question": "Continue the diff changes?",
+            "input_type": "choice", "options": [{"label": "Continue", "value": "continue"}],
+        }]}).to_string(),
+        "output": r#"{"__deferred_user_input__":true,"success":true,"status":"waiting_for_user_response"}"#,
+        "status": "completed",
+    });
+    let mut events = Vec::new();
+    for event_type in [
+        "response.output_item.added",
+        "response.output_item.done",
+        "response.output_item.done",
+    ] {
+        let mut event = parser
+            .parse(7, 9, Some(4), event_type, &json!({"item": item}))
+            .expect("parse")
+            .expect("event");
+        super::super::prepare_interactive_form_event(registry, &mut event).await;
+        let mut emitter = StatusUpdatingEmitter::new(redis.clone(), 7, 9);
+        emitter.emit(&mut event).await.expect("emit");
+        emitter.close().await;
+        events.push(event);
+    }
+    events
+}
+
+#[tokio::test]
+async fn native_user_input_callback_preserves_form_in_storage_and_socket_updates() {
+    let redis = RecordingRedis::default();
+    let registry = crate::InteractiveFormRegistry::default();
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    registry.register(std::sync::Arc::new(CountingFormNormalizer(calls.clone())));
+    let events = emit_function_call(&redis, &registry, "interactive_form_question").await;
+    let blocks = session::get_blocks(&redis, 9).await;
+    assert_eq!(
+        blocks.len(),
+        1,
+        "a repeated callback must update the same block"
+    );
+    let form = blocks[0]
+        .get("render_payload")
+        .expect("stored interactive form payload");
+    assert_eq!(form["type"], "interactive_form_question");
+    assert_eq!(form["task_id"], 7);
+    assert_eq!(form["subtask_id"], 9);
+    assert_eq!(
+        form["questions"][0]["question"],
+        "Continue the normalized diff changes?"
+    );
+    assert_eq!(form["questions"][0]["options"][0]["value"], "continue");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let state = redis.state.lock().expect("state");
+    let updates: Vec<_> = state
+        .published
+        .iter()
+        .filter(|message| message["event"] == "chat:block_updated")
+        .collect();
+    assert_eq!(updates.len(), 2);
+    for update in updates {
+        assert_eq!(&update["data"][0]["render_payload"], form);
+        assert_eq!(update["data"][0]["block_id"], "codex-interaction-1");
+    }
+    assert_eq!(events[1].tool_input, events[2].tool_input);
+    assert!(
+        events[1]
+            .tool_input
+            .as_ref()
+            .unwrap()
+            .get("render_payload")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn ordinary_tool_callbacks_do_not_normalize_or_attach_a_form() {
+    let redis = RecordingRedis::default();
+    let registry = crate::InteractiveFormRegistry::default();
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    registry.register(std::sync::Arc::new(CountingFormNormalizer(calls.clone())));
+    emit_function_call(&redis, &registry, "exec_command").await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let blocks = session::get_blocks(&redis, 9).await;
+    assert_eq!(blocks.len(), 1);
+    assert!(!blocks[0].contains_key("render_payload"));
+    let state = redis.state.lock().expect("state");
+    assert!(
+        state
+            .published
+            .iter()
+            .all(|message| message["data"][0].get("render_payload").is_none())
+    );
+}
+
 /// Adjacent Unicode deltas merge within an item; replayed prefixes and distinct
 /// item IDs must remain separate Redis appends for atomic offset handling.
 #[tokio::test]
@@ -320,8 +503,14 @@ async fn identified_text_flush_preserves_unicode_offsets_and_callback_replays() 
     }
     emitter.flush_stream_storage().await;
     let state = redis.state.lock().expect("state");
-    assert_eq!(state.evals.len(), 3);
-    for (call, id) in state.evals.iter().zip(["one", "one", "two"]) {
+    // The task marker now uses its own CAS script after the content batch.
+    let content_appends: Vec<_> = state
+        .evals
+        .iter()
+        .filter(|call| call[2] == "chat:streaming:9")
+        .collect();
+    assert_eq!(content_appends.len(), 3);
+    for (call, id) in content_appends.into_iter().zip(["one", "one", "two"]) {
         assert_eq!(call[1], "6");
         assert_eq!(call[3], format!("chat:streaming:block_content:9:{id}"));
         assert_eq!(
@@ -409,7 +598,7 @@ async fn the_flush_reads_the_task_streaming_marker_after_the_batch() {
     };
     let append = position("APPEND chat:streaming:block_content:");
     let marker_read = position("GET chat:task_streaming:7");
-    let marker_write = position("SET chat:task_streaming:7");
+    let marker_write = position("EVAL chat:task_streaming:7");
     assert!(append < marker_read, "{calls:?}");
     assert!(marker_read < marker_write, "{calls:?}");
     assert_eq!(
@@ -458,7 +647,7 @@ async fn touch_preserves_the_stored_object_and_refreshes_activity() {
     // Keep the refreshed clock distinguishable from the created one.
     std::thread::sleep(std::time::Duration::from_millis(2));
     assert!(
-        session::touch_task_streaming_activity(&redis, 7)
+        session::touch_task_streaming_activity(&redis, 7, 9, "2026-10-26T15:11:07+00:00")
             .await
             .expect("touch")
     );

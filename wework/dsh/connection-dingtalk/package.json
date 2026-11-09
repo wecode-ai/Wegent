@@ -11,7 +11,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
-    "@wegent/dsh-connection-runtime": "0.1.0"
+    "@wegent/dsh-connection-host": "0.1.0"
   },
   "wework": {
     "connections": {
@@ -49,10 +49,7 @@
           "eventTypes": [
             "message.received"
           ],
-          "authTarget": {
-            "pluginKey": "dingtalk",
-            "connectorSlug": "dingtalk"
-          },
+          "versionedEventTypes": [],
           "resourceLabels": {
             "group": "群聊中 @我",
             "direct": "私聊消息"
@@ -63,12 +60,16 @@
               "resourceLabels": {
                 "group": "Group mentions",
                 "direct": "Direct messages"
-              }
+              },
+              "allResourceLabels": {
+                "group": "Mentions in all groups",
+                "direct": "Direct messages from all contacts"
+              },
+              "allResourceLabel": "All messages"
             }
           },
           "cliReadTools": {
             "dingtalk": {
-              "connectorSlug": "dingtalk",
               "outputArgs": [
                 "--format",
                 "json"
@@ -132,9 +133,120 @@
                     "cursor": "--cursor",
                     "profile": "--profile"
                   }
+                },
+                "listTopicReplies": {
+                  "command": [
+                    "chat",
+                    "message",
+                    "list-topic-replies"
+                  ],
+                  "parameters": {
+                    "group": "--group",
+                    "topicId": "--topic-id",
+                    "time": "--time",
+                    "direction": "--direction",
+                    "limit": "--limit",
+                    "profile": "--profile"
+                  }
+                },
+                "listConversation": {
+                  "command": [
+                    "chat",
+                    "+messages-list",
+                    "--forward=false"
+                  ],
+                  "parameters": {
+                    "group": "--group",
+                    "time": "--time",
+                    "limit": "--limit",
+                    "profile": "--profile"
+                  }
+                },
+                "listDirectConversation": {
+                  "command": [
+                    "chat",
+                    "+messages-list-direct",
+                    "--forward=false"
+                  ],
+                  "parameters": {
+                    "peer": "--open-dingtalk-id",
+                    "time": "--time",
+                    "limit": "--limit",
+                    "profile": "--profile"
+                  }
                 }
-              }
+              },
+              "toolId": "dws"
             }
+          },
+          "allResourceKinds": [
+            "group",
+            "direct"
+          ],
+          "allResourceLabels": {
+            "group": "所有群聊中 @我",
+            "direct": "所有联系人私聊"
+          },
+          "allResourceLabel": "全部消息",
+          "assistance": {
+            "observe": [
+              "New mentions of the user or direct messages within the selected chats; use the actual sender, quoted message and topic to understand the request."
+            ],
+            "prepare": [
+              "For an identity conversation or verified connection work, prefer read_source on its exact connected DingTalk source. It reads recent conversation messages directly through the native SDK, newest first, including the user’s own replies. Start with the relevant recent window rather than automatically scanning seven days. Follow nextCursor without changing the window until you have read the follow-up evidence needed for the actual request; read the whole requested window for a comprehensive inventory. Check replies and resolution evidence before deciding a request still needs an answer. Do not present unfinished retrieval or a hasMore disclaimer as the deliverable. Prepare a grounded useful answer for unresolved work or explain what has already been handled. Independent delegated workers have no new source-read permission. Never borrow another role’s connection, substitute a chat, or send without the required native approval.",
+              "In managed Wework executions, invoke the documented DingTalk business operation through the plugin wrapper or a declared native business tool first. Do not run ensure-dws-ready.sh, plugin-health, local-dws-ready.sh, installers or auth status as a business-work preflight, even if the standalone Skill setup recipe recommends them: these helpers can start interactive login. Wework already owns installation and native connector authorization.",
+              "If the actual DingTalk business operation reports missing or expired authentication, preserve its exact declared connector identity and use Wework’s native user-initiated authorization card. Never run auth login or OAuth inside the worker. A .dws file-lock failure or operation-not-permitted error is a permission failure, not proof that login expired; do not relabel it as auth-required, copy or relocate credentials, or broaden sandbox access. Preserve the existing native approval path for the actual operation.",
+              "Apply the role’s current reply and routing rules only to the request types they actually cover. Do not expand a review-specific route into a reason to defer merging, shipping, troubleshooting or other requests. Inspect existing links and follow-up records before asking anyone to repeat information you can already read. Draft a useful answer rather than an empty acknowledgement. The current user’s draft-only or do-not-send request overrides any ongoing automatic-reply grant for this run.",
+              "For an exact source-message reply use wework_stand_in.reply; each operation is tied to the verified source message and current native approval or continuous grant. Do not send a second reply through arbitrary CLI commands."
+            ],
+            "notifyWhen": [
+              "An urgent request, unresolved blocker or decision needs the user, or a useful reply draft is ready for the user to approve. Avoid separate notifications for repeated messages about an unchanged issue.",
+              "Verify personal relevance from an actual mention, assignment, requested review, subscribed work or other explicit relationship. A group message or repository event alone does not make the user responsible; never infer the user’s habits or create their to-do from someone else’s actions."
+            ],
+            "confirmBefore": [
+              "Posting a message, making a commitment, changing a group, or enabling ongoing automatic replies requires native approval or a current grant covering that exact chat and action."
+            ]
+          },
+          "read": {
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "since": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Start within the past seven days; omitted defaults to the past 24 hours."
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20,
+                  "default": 20
+                }
+              },
+              "additionalProperties": false
+            },
+            "itemSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "at": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 20000
+                }
+              },
+              "required": [
+                "id",
+                "at",
+                "text"
+              ]
+            },
+            "pagination": "cursor"
           }
         }
       ]

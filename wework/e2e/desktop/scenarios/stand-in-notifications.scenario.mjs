@@ -1,5 +1,9 @@
 import { verifyIssueAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
-import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import {
+  openCollaborationNotifications,
+  openProjectStandIn,
+  sendStandInNotificationFollowUp,
+} from '../modules/stand-in-flows.mjs'
 import { verifyLocalStandInStatuses } from '../modules/stand-in-status-flows.mjs'
 import { createStandInFailureRegression } from '../modules/stand-in-failure-notification.mjs'
 import { createSubscriptionConfigRegression } from '../modules/stand-in-subscription-config.mjs'
@@ -7,10 +11,10 @@ import { verifyStandInArchiveRecovery } from '../modules/stand-in-archive-recove
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { sendPrompt } from '../modules/conversation-navigation.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
+  reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -19,6 +23,7 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身通知-${process.pid}`
@@ -42,15 +47,6 @@ async function assertInboxReady(control) {
     '0',
     'The real notification API must load without an error banner'
   )
-}
-
-export async function openStandInNotifications(control) {
-  const entry = '[data-testid="wework-notifications-button"]'
-  const category = '[data-testid="wework-notifications-category-collaboration"]'
-  await control.command('waitFor', entry)
-  await control.command('click', entry)
-  await control.command('waitFor', category)
-  await control.command('click', category)
 }
 
 export function createDesktopScenario({
@@ -105,14 +101,13 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         connect: true,
       })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
@@ -153,7 +148,7 @@ export function createDesktopScenario({
       }
       assert.ok(binding, 'Stand-in execution must finish')
       const id = `stand-in:${encodeURIComponent(`${binding.device_id}\0${binding.task_id}`)}`
-      await openStandInNotifications(control)
+      await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-processing-${id}`))
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
@@ -185,16 +180,14 @@ export function createDesktopScenario({
       await control.command('activateSystemNotification', 'body', {
         value: `wework://tasks/${encodeURIComponent(binding.device_id)}/${encodeURIComponent(binding.task_id)}`,
       })
-      const composer = `${CONTENT} [data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]`
-      await control.command('waitFor', composer)
-      await sendPrompt(control, composer, FOLLOW_UP)
+      await sendStandInNotificationFollowUp(control, CONTENT, FOLLOW_UP)
       const followUpDeadline = Date.now() + uiTimeoutMs
       while (!followUpResponse && Date.now() < followUpDeadline)
         await new Promise(resolve => setTimeout(resolve, 100))
       assert.ok(followUpResponse, 'The original session must receive the follow-up')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       followUpResponse.response.end(followUpResponse.output)
-      await openStandInNotifications(control)
+      await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-processing-${id}`), {
         text: '已按补充要求完成检查。',
         timeoutMs: modelResponseTimeoutMs,
@@ -227,10 +220,8 @@ export function createDesktopScenario({
         'Each completed turn must deliver exactly one alert, including after summary refresh'
       )
 
-      const readyBeforeReload = control.readyCount
-      await control.command('reloadApp', 'body')
-      await control.awaitReadyAfter(readyBeforeReload)
-      await openStandInNotifications(control)
+      await reloadMainWindow(control, 'The stand-in notifications renderer did not reconnect')
+      await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
       })
@@ -264,11 +255,7 @@ export function createDesktopScenario({
       })
       for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('click', '[data-testid="wework-notifications-button"]')
-        await control.command(
-          'click',
-          '[data-testid="wework-notifications-category-collaboration"]'
-        )
+        await openCollaborationNotifications(control)
         await control.command('waitFor', row)
         await control.command('waitFor', selector(`notification-stand-in-status-${id}`))
         const [bounds] = JSON.parse(await control.command('getElementMetrics', row))
@@ -292,7 +279,10 @@ export function createDesktopScenario({
         })
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
         assert.equal(
-          await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
+          await control.command(
+            'getValueWhenReady',
+            `${CONTENT} [data-testid="cloud-todo-detail-title"]`
+          ),
           '在通知内继续处理分身任务',
           'Every notification hit target must open the original Issue'
         )
@@ -307,7 +297,10 @@ export function createDesktopScenario({
       })
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
       assert.equal(
-        await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
+        await control.command(
+          'getValueWhenReady',
+          `${CONTENT} [data-testid="cloud-todo-detail-title"]`
+        ),
         '在通知内继续处理分身任务'
       )
       await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
@@ -316,7 +309,8 @@ export function createDesktopScenario({
         project.id,
         uiTimeoutMs,
         captureScreenshot,
-        userId
+        userId,
+        modelResponseTimeoutMs
       )
       await verifyLocalStandInStatuses(
         control,

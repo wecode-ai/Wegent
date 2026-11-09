@@ -39,17 +39,22 @@ from app.models.task import TaskResource
 from app.models.user import User
 
 
-def test_create_response_is_registered_in_application(test_client: TestClient) -> None:
-    routes = [
-        route
-        for route in test_client.app.routes
-        if isinstance(route, APIRoute)
+@pytest.fixture
+def test_client(test_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Expose the Python reference handler only inside compatibility tests."""
+    app = test_client.app
+    monkeypatch.setattr(app.router, "routes", list(app.router.routes))
+    app.add_api_route("/api/v1/responses", create_response, methods=["POST"])
+    return test_client
+
+
+def test_create_response_is_owned_by_rust(test_app) -> None:
+    assert not any(
+        isinstance(route, APIRoute)
         and route.path == "/api/v1/responses"
         and "POST" in route.methods
-    ]
-
-    assert len(routes) == 1
-    assert routes[0].endpoint is create_response
+        for route in test_app.routes
+    )
 
 
 @pytest.mark.asyncio

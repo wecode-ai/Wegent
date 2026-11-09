@@ -1,0 +1,12 @@
+{
+  "order": 66000,
+  "groupOrder": 2000,
+  "members": ["collaboration-issue-comment-notification-navigation", "issue-notification-read"],
+  "ci": {
+    "core": {
+      "order": 60000,
+      "shard": 8,
+      "position": 4000
+    }
+  }
+}

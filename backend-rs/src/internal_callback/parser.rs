@@ -787,6 +787,7 @@ fn extract_completed_result(response: &Value) -> Map<String, Value> {
         "context_compactions",
         "standalone_chat_workspace_path",
         "file_changes",
+        "task_file_changes",
         "executor_session",
     ] {
         result.insert(

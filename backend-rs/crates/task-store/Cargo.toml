@@ -1,0 +1,23 @@
+[package]
+name = "wegent-task-store"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Task persistence, transactional lifecycle, and stable documents"
+
+[dependencies]
+wegent-backend-persistence = { path = "../persistence" }
+wegent-resource-store = { path = "../resource-store" }
+wegent-python-compat = { path = "../python-compat" }
+async-trait = "0.1"
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-json = "=0.0.11"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+getrandom = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }

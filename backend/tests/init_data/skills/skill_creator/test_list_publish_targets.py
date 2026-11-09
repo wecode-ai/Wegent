@@ -16,7 +16,8 @@ pytestmark = pytest.mark.unit
 
 BACKEND_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT_PATH = (
-    BACKEND_ROOT
+    BACKEND_ROOT.parent
+    / "backend-rs"
     / "init_data"
     / "skills"
     / "skill-creator"

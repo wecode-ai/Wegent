@@ -18,6 +18,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.catalog",
         "runtime.connections.resources",
         "runtime.connections.dependencies.inventory",
+        "runtime.python.has_demand",
     ] {
         assert!(
             !should_resume_persisted_turns_before_rpc(method),
@@ -31,14 +32,17 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "native_history_test_support.rs"]
-mod native_history_test_support;
-use native_history_test_support::install_native_history;
+pub(super) mod native_history_test_support;
+pub(super) use native_history_test_support::install_native_history;
 
 #[path = "command_recovery_tests.rs"]
 mod command_recovery_tests;
 
 #[path = "native_timeline_tests.rs"]
 mod native_timeline_tests;
+
+#[path = "stand_in_review_pagination_tests.rs"]
+mod stand_in_review_pagination_tests;
 
 #[path = "runtime_rpc_tests.rs"]
 mod runtime_rpc_tests;
@@ -48,12 +52,17 @@ mod text_generation_tests;
 
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
+#[path = "workspace_identity_tests.rs"]
+mod workspace_identity_tests;
 
 #[path = "mcp_elicitation_tests.rs"]
 mod mcp_elicitation_tests;
 
 #[path = "async_question_tests.rs"]
 mod async_question_tests;
+
+#[path = "issue_question_hint_tests.rs"]
+mod issue_question_hint_tests;
 
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
@@ -76,13 +85,13 @@ mod transcript_status_tests;
 mod async_question_delivery_tests;
 
 /// Restores one environment variable when a test finishes.
-pub(super) struct ScalarEnv {
+pub(in crate::runtime_work) struct ScalarEnv {
     key: &'static str,
     previous: Option<String>,
 }
 
 impl ScalarEnv {
-    pub(super) fn set(key: &'static str, value: &str) -> Self {
+    pub(in crate::runtime_work) fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
         Self { key, previous }
@@ -212,10 +221,13 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned");
-        scheduler.max_concurrent_tasks = 4;
-        scheduler.active_tasks = 2;
-        scheduler.active_task_ids = HashSet::from(["active-1".to_owned(), "active-2".to_owned()]);
+        scheduler.settings = RuntimeSettings::uniform(4);
+        scheduler.active_task_ids = HashMap::from([
+            ("active-1".to_owned(), RuntimeTaskKind::Personal),
+            ("active-2".to_owned(), RuntimeTaskKind::Personal),
+        ]);
         scheduler.queued_turns = VecDeque::from([SpawnTurnRequest {
+            task_kind: None,
             local_task_id: "queued-1".to_owned(),
             runtime: "codex".to_owned(),
             request: ExecutionRequest::default(),
@@ -233,7 +245,7 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
         .await
         .expect("capacity should be available");
 
-    assert_eq!(capacity["limit"], 4);
+    assert_eq!(capacity["limit"], 12);
     assert_eq!(capacity["active"], 2);
     assert_eq!(capacity["queued"], 1);
     let active_task_ids = capacity["active_task_ids"]
@@ -253,8 +265,10 @@ async fn create_task_persists_collaboration_member_runtime_profiles() {
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned");
-        scheduler.max_concurrent_tasks = 1;
-        scheduler.active_tasks = 1;
+        scheduler.settings = RuntimeSettings::uniform(1);
+        scheduler
+            .active_task_ids
+            .insert("busy".into(), RuntimeTaskKind::Personal);
     }
     let profiles = json!([{
         "memberIds": ["agent-2"],
@@ -337,6 +351,7 @@ async fn default_work_item_binding_uses_the_handler_store_path() {
 fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let mut turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request: ExecutionRequest::default(),
@@ -371,6 +386,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
 async fn archive_stop_waits_for_worktree_preparation_ack() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let mut turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request: ExecutionRequest::default(),
@@ -438,6 +454,7 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
         Value::String(plan.path.display().to_string()),
     );
     let turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request,
@@ -1115,6 +1132,7 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
         Value::String(plan.path.display().to_string()),
     );
     let interrupted = VecDeque::from([SpawnTurnRequest {
+        task_kind: None,
         local_task_id: "task-queued".to_owned(),
         runtime: "codex".to_owned(),
         request,
@@ -1205,9 +1223,13 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
     handler.turn_queue_path = Arc::new(runtime_work_dir.join("turn-queue.json"));
+    handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
+    handler.automation_store =
+        crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
     handler
         .turn_scheduler
         .lock()
@@ -1238,6 +1260,15 @@ mod lifecycle_tests;
 
 #[path = "pre_admission_transcript_tests.rs"]
 mod pre_admission_transcript_tests;
+
+#[path = "active_transcript_responsiveness_tests.rs"]
+mod active_transcript_responsiveness_tests;
+
+#[path = "control_metadata_tests.rs"]
+mod control_metadata_tests;
+
+#[path = "execution_control_tests.rs"]
+mod execution_control_tests;
 
 impl RuntimeWorkRpcHandler {
     // Test the same route/publication/hook handoff used by the two real subscriptions.
@@ -3576,7 +3607,9 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 .send(json!({"event": "runtime.work.changed", "payload": {"taskId": "unrelated"}}))
                 .unwrap();
 
-            handler.delete_archived_link_background(link.clone()).await;
+            handler
+                .delete_archived_link_background(link.clone(), false)
+                .await;
 
             assert!(path.exists());
             assert!(handler.local_task_link("task-1").is_some());
@@ -3591,7 +3624,7 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 .is_empty());
 
             fs::write(path.join(".git"), marker).unwrap();
-            handler.delete_archived_link_background(link).await;
+            handler.delete_archived_link_background(link, false).await;
             assert!(!path.exists());
             assert!(handler.local_task_link("task-1").is_none());
             assert!(handler.worktrees.snapshot_source_for(path).is_none());
@@ -5874,7 +5907,7 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
 
 #[tokio::test]
 async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visibility() {
-    let (handler, root) = isolated_runtime_work_handler("pending-task-list");
+    let (mut handler, root) = isolated_runtime_work_handler("pending-task-list");
     let project_index = CodexGlobalProjectIndex::from_test_payload(
         json!({"electron-saved-workspace-roots": ["/tmp/visible-project"]})
             .as_object()
@@ -5890,6 +5923,29 @@ async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visi
             ..RuntimeTaskLink::default()
         });
     }
+    for (id, interaction, recovering) in [
+        ("native-input", Some("waitingForUserInput"), false),
+        ("async-reply", Some("awaitingUserReply"), false),
+        ("recovery-pending", Some("awaitingUserReply"), true),
+        ("terminal", None, false),
+        ("recovery-without-question", None, true),
+    ] {
+        let mut link = RuntimeTaskLink {
+            local_task_id: id.into(),
+            runtime: "codex".into(),
+            thread_id: Some(format!("thread-{id}")),
+            workspace_path: "/tmp/hidden-project".into(),
+            interaction_status: interaction.map(str::to_owned),
+            goal_status: recovering.then(|| "active".into()),
+            goal_execution_status: recovering.then(|| "recovering".into()),
+            ..RuntimeTaskLink::default()
+        };
+        crate::runtime_work::lifecycle::begin_native_request(&mut link);
+        crate::runtime_work::lifecycle::settle_native_execution(&mut link, "completed");
+        handler.upsert_local_task(link);
+    }
+    // Pending interactions are durable even when the provider process is stopped.
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
     let visible = handler
         .list_tasks_with_project_index(
             &json!({"preferCached":true}),
@@ -5914,8 +5970,92 @@ async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visi
         .filter_map(|workspace| workspace["tasks"].as_array())
         .flatten()
         .collect::<Vec<_>>();
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0]["taskId"], "hidden-pending");
+    let ids: HashSet<_> = tasks
+        .iter()
+        .filter_map(|task| task["taskId"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        HashSet::from([
+            "hidden-pending",
+            "native-input",
+            "async-reply",
+            "recovery-pending"
+        ])
+    );
+    assert!(tasks.iter().any(|task| task["taskId"] == "native-input"
+        && task["interactionStatus"] == "waitingForUserInput"));
+    assert!(tasks
+        .iter()
+        .any(|task| task["taskId"] == "recovery-pending"
+            && task["goalExecutionStatus"] == "recovering"));
+    handler.store.update_task("async-reply", |link| {
+        link.interaction_status = None;
+    });
+    handler.store.update_task("hidden-idle", |link| {
+        link.interaction_status = Some("waitingForUserInput".into());
+    });
+    let refreshed = handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true, "pendingOnly":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let refreshed = refreshed.to_string();
+    assert!(!refreshed.contains("async-reply"));
+    assert!(refreshed.contains("hidden-idle"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pending_inventory_does_not_spawn_codex_but_sidebar_bootstrap_still_does() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (mut handler, root) = isolated_runtime_work_handler("pending-inventory-spawn");
+    fs::create_dir_all(&root).unwrap();
+    let binary = root.join("codex-launch-probe");
+    fs::write(
+        &binary,
+        "#!/bin/sh\nprintf launched > \"$0.launched\"\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    handler.codex_app_server =
+        CodexAppServerClient::isolated_for_test(binary.display().to_string(), root.join("codex"));
+    let (events, mut receiver) = broadcast::channel(16);
+    handler.event_tx = Some(events);
+    let project_index = CodexGlobalProjectIndex::from_test_payload(&Map::new());
+    handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true,"pendingOnly":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let reconciliation = tokio::time::timeout(Duration::from_secs(5), receiver.recv()).await;
+    assert!(
+        reconciliation.is_err(),
+        "Pending inventory unexpectedly reconciled provider threads: {reconciliation:?}"
+    );
+    assert!(!binary.with_extension("launched").exists());
+    handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event["payload"]["taskId"], "runtime-work-bootstrap");
+    assert!(binary.with_extension("launched").exists());
     let _ = fs::remove_dir_all(root);
 }
 

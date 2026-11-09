@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest'
+// @vitest-environment node
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
-import { getStandInErrorMessage } from './stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from './stand-in-error-message'
 
 const originalLanguage = i18n.language
 
@@ -11,6 +13,72 @@ afterEach(async () => {
 })
 
 describe('stand-in error localization', () => {
+  it('records the failing operation and transport code without logging error contents', () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      reportStandInError(
+        'load_environment',
+        {
+          code: 'executor_disconnected',
+          status: 503,
+          message: 'private request contents',
+          token: 'secret-token',
+        },
+        'device'
+      )
+      expect(log).toHaveBeenCalledOnce()
+      expect(log.mock.calls[0][0]).toBe('[Wework] Runtime task create diagnostic')
+      expect(JSON.parse(log.mock.calls[0][1])).toEqual(
+        expect.objectContaining({
+          stage: 'stand-in-operation-failed',
+          operation: 'load_environment',
+          deviceId: 'device',
+          code: 'executor_disconnected',
+          status: 503,
+        })
+      )
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/private request contents|secret-token/)
+    } finally {
+      log.mockRestore()
+    }
+  })
+  it('distinguishes device transport and service failures without exposing raw internals', async () => {
+    await i18n.changeLanguage('zh-CN')
+    for (const [error, key] of [
+      [{ code: 'executor_disconnected' }, 'executor_unavailable'],
+      [new Error('local-sidebar-runtime-changed'), 'executor_restarted'],
+      [{ code: 'protocol_mismatch' }, 'executor_update_required'],
+      [{ code: 'unsupported_method' }, 'executor_update_required'],
+      [{ status: 401 }, 'authentication_required'],
+      [{ code: 'http_503' }, 'service_unavailable'],
+      [{ status: 403 }, 'permission_denied'],
+      [new Error('executor-not-found:device'), 'executor_unavailable'],
+      [new Error('executor-offline:device'), 'device_offline'],
+      [new Error('ambiguous-executor-identity:device'), 'executor_ambiguous'],
+    ] as const) {
+      expect(getStandInErrorMessage(error)).toBe(i18n.t(`common:standIn.errors.${key}`))
+    }
+  })
+
+  it('identifies the failed operation even after an inner boundary localized an unknown error', async () => {
+    for (const language of ['zh-CN', 'en']) {
+      await i18n.changeLanguage(language)
+      const error = getStandInErrorMessage(new Error('internal database path'))
+      for (const operation of [
+        'load_settings_failed',
+        'save_settings_failed',
+        'load_environment_failed',
+        'load_projects_failed',
+      ] as const) {
+        expect(getStandInErrorMessage(error, operation)).toBe(
+          i18n.t(`common:standIn.errors.${operation}`)
+        )
+      }
+      expect(getStandInErrorMessage({ code: 'permission_denied' }, 'load_environment_failed')).toBe(
+        i18n.t('common:standIn.errors.permission_denied')
+      )
+    }
+  })
   it('provides recovery guidance for every registered error in both languages', async () => {
     expect(Object.keys(enCommon.standIn.errors).sort()).toEqual(
       Object.keys(zhCommon.standIn.errors).sort()
@@ -51,34 +119,26 @@ describe('stand-in error localization', () => {
     expect(getStandInErrorMessage(error)).toBe(english)
     expect(getStandInErrorMessage(new Error(english))).toBe(english)
   })
-
-  it('localizes persisted legacy failures without an error code', async () => {
-    await i18n.changeLanguage('zh-CN')
-    expect(getStandInErrorMessage('Error: Stand-in role no longer exists')).toBe(
-      '该分身角色已被删除，请重新选择角色。'
-    )
-    expect(
-      getStandInErrorMessage('This assignment has already been handled or is no longer active')
-    ).toBe(i18n.t('common:standIn.errors.assignment_already_handled'))
-  })
-
-  it('uses localized recovery guidance for unknown errors and preserves localized validation', async () => {
-    await i18n.changeLanguage('zh-CN')
-    expect(getStandInErrorMessage(new Error('internal database path'))).toBe(
-      i18n.t('common:standIn.errors.failed')
-    )
-    expect(getStandInErrorMessage({ message: '请选择一个项目' })).toBe('请选择一个项目')
-  })
 })
 
-it('preserves project-scoped agent connection guidance through repeated UI resolution', async () => {
+it('preserves recovery guidance for historical agent binding errors through repeated UI resolution', async () => {
   await i18n.changeLanguage('zh-CN')
   const error = {
     code: 'stand_in_project_connections',
     message: 'invalid task data: Project-scoped agents can only receive work from their project',
   }
   const message = getStandInErrorMessage(error)
-  expect(message).toBe('该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。')
+  expect(message).toBe('分身的旧智能体绑定已失效。请重新加载分身设置后重试。')
   expect(getStandInErrorMessage(new Error(message))).toBe(message)
   expect(getStandInErrorMessage(error.message)).toBe(message)
+})
+
+it('maps a submitted interface needing restoration to model selection guidance', async () => {
+  for (const language of ['zh-CN', 'en']) {
+    await i18n.changeLanguage(language)
+    const message = "Reselect the task's submitted model interface to restore its credentials"
+    const expected = i18n.t('common:standIn.errors.model_unavailable')
+    expect(getStandInErrorMessage({ code: 'RUNNER_MODEL_UNAVAILABLE', message })).toBe(expected)
+    expect(getStandInErrorMessage(new Error(message))).toBe(expected)
+  }
 })

@@ -44,6 +44,7 @@ export function connectionTools(identity, dependencies, request, satisfies) {
       }),
   })
   const cli = Object.freeze({
+    describe: alias => invoke('cli', alias, 'describe'),
     callTool: (alias, input) =>
       invoke('cli', alias, 'callTool', {
         tool: input.tool,

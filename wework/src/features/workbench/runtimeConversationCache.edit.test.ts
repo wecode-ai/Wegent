@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, expect, test } from 'vitest'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import {

@@ -109,6 +109,50 @@ independently built regression packages.
 Compatible manual rollback switches directly to the retained release. Incompatible
 rollback still requires confirmation before restoring the pre-update snapshot.
 
+Startup-failure rollback records identify the actual activation attempt and target
+package hash. Update checks still return a verified path, with a retry question in
+the existing update dialog. Cancelling neither downloads nor clears the record;
+confirmation authorizes only the displayed target and failure record. Manual
+rollback has distinct copy, and legacy version-only records do not imply a startup
+failure. Cancelling an unstarted activation does not quarantine the target. A
+healthy startup clears that version's failure record. Confirmation never overrides
+server revocation or a missing verified upgrade edge.
+
+Cleanup resolves the complete live resource graph before deleting anything,
+including cross-slot profiles, component directory roots, symlinks, and Windows
+junctions. An unresolved live reference skips all deletion for that collection.
+Verified archives live in a separate cache, so plugin configuration changes only
+repeat preparation; reuse still checks size and SHA-256. Download, extraction,
+verification, preparation, and installation failures retain their structured
+stage in the UI. Legacy macOS installation discovery excludes applications on
+read-only volumes while retaining valid installations on writable external volumes.
+
+Historical signed updaters may copy the host and prepare a separate rollback
+profile first. Their verification still exercises real upgrades, rollbacks,
+and persisted data, and checks executable and `app.asar` hashes, physical slot
+ownership, and the independent profile. Historical packages cannot implement the
+new live-directory retention protocol; that protocol still requires unchanged
+host paths and profile inodes.
+
+Shared immutable runtime indexes must point to content beneath the physical
+parent directory, rather than a checkpoint or release-slot directory alias.
+Regression coverage cleans up the first caller before preparing again and
+requires reuse of the same integrity-checked content. Each target still checks
+its own delivered archive, with profiles and mutable catalogs kept isolated.
+
+Release verification can populate this program cache with the delivered target's
+own Electron binary and preparation module while source inputs load. Checkpoints
+start only after both preparations finish; cleanup waits for every writer before
+removing the temporary host and private catalog. Source catalogs never gain future
+target roles. Real UI upgrades still download, extract, and verify the delivered
+target bytes. Preparation, cleanup, and aggregation all count toward the complete
+execution budget.
+When complete runtime descriptors match, the source verifies its own archive
+before reusing the prepared target programs and writes only its delivered roles
+to its private catalog. Removing the target's private catalog preserves those
+program links. A selected source's failed checkpoint process must fail its job,
+rather than merely record the failure and exit successfully.
+
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
 update, Wework shuts down its local runtime and then restarts into the new

@@ -42,7 +42,7 @@ fi
 backend_pid=""
 if [[ ! -x "$backend_destination" ]]; then
   (
-    CARGO_TARGET_DIR="$backend_target_dir" cargo build \
+    CARGO_PROFILE_DEV_DEBUG=0 CARGO_TARGET_DIR="$backend_target_dir" cargo build \
       --locked \
       --manifest-path backend-rs/Cargo.toml \
       --bin wegent-backend-rs

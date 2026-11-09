@@ -143,6 +143,7 @@ async fn revocation_of_native_accepted_unstarted_work_releases_queue_scope() {
     ));
     handler
         .queue_turn(SpawnTurnRequest {
+            task_kind: None,
             local_task_id: task.clone(),
             runtime: "codex".into(),
             request,

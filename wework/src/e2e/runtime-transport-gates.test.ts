@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, expect, test, vi } from 'vitest'
 import {
   armRuntimeTransportGate,
@@ -20,6 +22,20 @@ test('production cannot install a runtime delivery barrier', () => {
   expect(() =>
     armRuntimeTransportGate({ id: 'blocked', kind: 'event', name: 'response.completed' })
   ).toThrow('only available in E2E')
+})
+
+test('a request observation forwards the real operation without awaiting its response', () => {
+  vi.stubEnv('VITE_WEWORK_E2E', 'true')
+  armRuntimeTransportGate({
+    id: 'request',
+    kind: 'request',
+    name: 'runtime.tasks.transcript',
+    hold: false,
+  })
+  const forward = vi.fn()
+  deliverRuntimeTransport('request', 'runtime.tasks.transcript', { params: { limit: 5 } }, forward)
+  expect(forward).toHaveBeenCalledOnce()
+  expect(readRuntimeTransportGate('request')?.value).toEqual({ params: { limit: 5 } })
 })
 
 test('holding an actual response leaves live events independent and preserves its identity', async () => {

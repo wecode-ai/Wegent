@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { assertStartupSplashDragRegions } from './startup-splash-drag.mjs'
 
 export function parseStartupEvents(log) {
   return [...log.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)].flatMap(match => {
@@ -102,15 +103,29 @@ async function waitForSplash(control, predicate, description) {
   assert.fail(`${description}: ${JSON.stringify(state)}`)
 }
 
-export function startupSlowObservation(state) {
+function rendererStageObservation(state, accept) {
+  // Host progress can advance before the splash applies the renderer update.
+  const progress = state.progress
+  if (progress?.stage.id !== 'renderer') return undefined
+  const steps = [
+    `Step ${progress.index + 1} of ${progress.total} · ${progress.stage.label.en}`,
+    `第 ${progress.index + 1} 步，共 ${progress.total} 步 · ${progress.stage.label.zh}`,
+  ]
   return state.observations?.find(
     snapshot =>
       snapshot.progress?.stage.id === 'renderer' &&
-      snapshot.progress.startedAt === state.progress?.startedAt &&
-      snapshot.stepCount === state.stepCount &&
-      !snapshot.slowHidden &&
-      snapshot.timeoutHidden
+      snapshot.progress.startedAt === progress.startedAt &&
+      steps.includes(snapshot.stepCount) &&
+      accept(snapshot)
   )
+}
+
+export function startupSlowObservation(state) {
+  return rendererStageObservation(state, snapshot => !snapshot.slowHidden && snapshot.timeoutHidden)
+}
+
+export function startupTimeoutObservation(state) {
+  return rendererStageObservation(state, snapshot => !snapshot.timeoutHidden)
 }
 
 async function waitForHandlerLog(logPath, afterBytes, step, status) {
@@ -220,6 +235,7 @@ export async function verifyStartupSplashProgress({
     'The real startup stage did not show its slow state before its timeout budget'
   )
   const slow = startupSlowObservation(slowEvidence)
+  assertStartupSplashDragRegions(slow)
   assert.equal(slow.failure, null)
   assert.equal(slow.recoveryHidden, true)
   assert.match(slow.title, /启动比预期慢|Startup is taking longer than expected/)
@@ -229,19 +245,16 @@ export async function verifyStartupSplashProgress({
   const timeout = await waitForSplash(
     control,
     state =>
-      !state.timeoutHidden &&
-      !state.timeoutActionsHidden &&
-      state.observations.some(
-        snapshot =>
-          snapshot.progress?.startedAt === state.progress.startedAt && !snapshot.timeoutHidden
-      ),
+      !state.timeoutHidden && !state.timeoutActionsHidden && startupTimeoutObservation(state),
     'The real startup timer did not show diagnostics actions'
   )
   assert.equal(timeout.failure, null)
   assert.equal(slow.progress.startedAt, timeout.progress.startedAt)
-  const timeoutObservation = timeout.observations.find(
-    snapshot =>
-      snapshot.progress?.startedAt === timeout.progress.startedAt && !snapshot.timeoutHidden
+  const timeoutObservation = startupTimeoutObservation(timeout)
+  assertStartupSplashDragRegions(timeout)
+  await writeFile(
+    join(root, 'observations.json'),
+    `${JSON.stringify({ slowEvidence, timeout }, null, 2)}\n`
   )
   await writeFile(
     join(resultDir, 'startup-timer-observations.json'),
@@ -271,6 +284,7 @@ export async function verifyStartupSplashProgress({
     state => !state.failureHidden && !state.recoveryHidden,
     'The renderer error did not become a real startup failure'
   )
+  assertStartupSplashDragRegions(failure)
   assert.equal(failure.timeoutHidden, true)
   assert.equal(failure.failure?.message, 'Desktop E2E intentional renderer crash')
   assert.equal(failure.failure?.source, 'renderer_mount')

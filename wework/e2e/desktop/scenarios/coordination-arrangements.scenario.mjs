@@ -7,6 +7,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
   isReplyPredictionRequest,
   readRequestBody,
   responseCompleted,
@@ -40,8 +41,8 @@ export function createDesktopScenario({
     assert.fail(`${label}: ${JSON.stringify(latest)}`)
   }
   async function showArrangements(control) {
-    await control.command('navigate', 'body', { value: '/stand-in?view=scheduled' })
-    await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]')
+    await control.command('navigate', 'body', { value: '/automations' })
+    await control.command('waitFor', '[data-testid="create-automation-button"]')
     await control.command('waitFor', '[data-testid="automation-open-arrangement-once"]')
   }
   return {
@@ -49,6 +50,13 @@ export function createDesktopScenario({
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
+      const resultEvents = delegatedTaskResultEvents(body)
+      if (resultEvents) {
+        const id = `arrangement-result-${Date.now()}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...resultEvents, responseCompleted(id)]))
+        return true
+      }
       if (isReplyPredictionRequest(body) || !JSON.stringify(body.input ?? []).includes(MARKER))
         return false
       calls++

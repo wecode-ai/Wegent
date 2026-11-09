@@ -4,6 +4,14 @@ import {
   validateUpgradeCatalog,
 } from '../../electron/src/runtime/upgrade-policy.mjs'
 
+export function releaseVerificationChannels(channel, selected = '', sourceVersion = '') {
+  if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
+  const channels = releaseUpgradeChannels(channel, sourceVersion)
+  if (selected && !channels.includes(selected))
+    throw new Error('Verification channel is outside the target release channels')
+  return selected ? [selected] : channels
+}
+
 /** Production promotion accepts exact delivered packages, never regression fixture results. */
 export function verifiedUpgradeEdge({
   from,

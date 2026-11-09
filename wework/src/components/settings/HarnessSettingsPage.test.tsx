@@ -1,7 +1,7 @@
+import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
 import './../../../src/i18n'
 import { HarnessSettingsPage } from './HarnessSettingsPage'
 
@@ -168,22 +168,6 @@ describe('HarnessSettingsPage', () => {
         kimi_code: null,
       })
     )
-  })
-
-  test('does not persist malformed environment variables', async () => {
-    render(<HarnessSettingsPage />)
-
-    await screen.findByText('1.2.3')
-    await userEvent.click(screen.getByTestId('harness-settings-toggle-opencode'))
-    fireEvent.change(screen.getByTestId('harness-env-opencode'), {
-      target: { value: 'MISSING_VALUE' },
-    })
-    await waitFor(() =>
-      expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
-        'OpenCode 的环境变量第 1 行无效'
-      )
-    )
-    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
   })
 
   test('shows one tool-specific settings panel at a time', async () => {

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { observeWindowsSocketExhaustion } from '../e2e/desktop/modules/windows-network-diagnostics.mjs'

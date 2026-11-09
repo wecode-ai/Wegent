@@ -25,6 +25,8 @@ pub(super) struct RuntimeCommand {
     pub(super) turn: SpawnTurnRequest,
     #[serde(default)]
     pub(super) native: Option<(u64, String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) owner_resolution: Option<Value>,
 }
 
 pub(super) type CommandJournal = std::collections::BTreeMap<String, RuntimeCommand>;
@@ -86,6 +88,7 @@ impl RuntimeCommand {
             accepted_at: now_ms(),
             turn: turn.clone(),
             native: None,
+            owner_resolution: None,
         }))
     }
 
@@ -145,9 +148,25 @@ impl RuntimeCommand {
         true
     }
 
+    pub(super) fn is_owner_abandoned(&self) -> bool {
+        self.state == CommandState::RecoveryRequired && self.owner_resolution.is_some()
+    }
+
     pub(super) fn receipt(&self) -> Value {
-        json!({"success":true,"accepted":true,"taskId":self.turn.local_task_id,"commandId":self.id,
-            "state":self.state,"acceptedAt":self.accepted_at,"runtime":self.turn.runtime,"native":self.native,"requiresUserReview":matches!(self.state, CommandState::RecoveryRequired | CommandState::AwaitingUser)})
+        let mut receipt = json!({"success":true,"accepted":true,"taskId":self.turn.local_task_id,"commandId":self.id,
+            "state":self.state,"acceptedAt":self.accepted_at,"runtime":self.turn.runtime,"native":self.native,
+            "commandFingerprint":self.fingerprint,
+            "requiresUserReview":!self.is_owner_abandoned() && matches!(self.state, CommandState::RecoveryRequired | CommandState::AwaitingUser)});
+        if self.is_owner_abandoned() {
+            receipt["state"] = json!("abandoned");
+        }
+        if self.state == CommandState::RecoveryRequired {
+            receipt["nativeOutcome"] = json!("unknown");
+        }
+        if let Some(resolution) = &self.owner_resolution {
+            receipt["ownerResolution"] = resolution.clone();
+        }
+        receipt
     }
 }
 
@@ -204,6 +223,58 @@ pub(super) fn project_queue(
 }
 
 impl RuntimeWorkRpcHandler {
+    /// Recover only exact native command evidence; unresolved execution is never restarted.
+    pub(super) fn recover_settled_command_session(
+        &self,
+        task: &str,
+        user: i64,
+    ) -> Result<Option<String>, AppIpcError> {
+        let journal = self
+            .command_journal
+            .lock()
+            .map_err(|_| AppIpcError::new("internal_error", "Command journal is unavailable"))?;
+        let commands = journal
+            .values()
+            .filter(|command| command.turn.local_task_id == task)
+            .collect::<Vec<_>>();
+        for command in &commands {
+            if command
+                .turn
+                .request
+                .extra
+                .get("user_id")
+                .and_then(Value::as_i64)
+                != Some(user)
+            {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "Command owner does not match the conversation",
+                ));
+            }
+            if !command.is_owner_abandoned()
+                && !matches!(
+                    command.state,
+                    CommandState::Failed | CommandState::Settled | CommandState::Cancelled
+                )
+            {
+                return Err(AppIpcError::new(
+                    "command_recovery_required",
+                    "Resolve the original command before starting a native session",
+                ));
+            }
+        }
+        Ok(commands
+            .into_iter()
+            .filter_map(|command| {
+                command
+                    .native
+                    .as_ref()
+                    .map(|native| (command.accepted_at, native.1.clone()))
+            })
+            .max_by_key(|(at, _)| *at)
+            .map(|(_, thread)| thread))
+    }
+
     pub(super) async fn existing_payload_command(
         &self,
         payload: &Value,
@@ -218,6 +289,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required with commandId"))?;
         let runtime = string_field(payload, "runtime").unwrap_or_else(|| "codex".to_owned());
         let turn = SpawnTurnRequest {
+            task_kind: None,
             local_task_id: task,
             runtime,
             request,
@@ -229,7 +301,7 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal: None,
         };
         if self.backend_connection_snapshot()?.is_some() {
-            self.verify_stand_in_user(&json!({"userId":turn.request.extra.get("user_id")}))
+            self.verify_runtime_user(&json!({"userId":turn.request.extra.get("user_id")}))
                 .await?;
         }
         if matches!(self.existing_command(&turn),Err(ref error) if error.code == "command_recovery_required")
@@ -257,6 +329,9 @@ impl RuntimeWorkRpcHandler {
             return Ok(None);
         };
         existing.validate_replay(&incoming)?;
+        if existing.is_owner_abandoned() {
+            return Err(AppIpcError::new("command_abandoned", "The owner abandoned this unconfirmed command. Its outcome remains unknown and the original command cannot be replayed."));
+        }
         if existing.state == CommandState::RecoveryRequired {
             return Err(AppIpcError::new("command_recovery_required", "The command was accepted before the Runtime stopped, but native execution cannot be confirmed. Review the original task before retrying; it will not be resent automatically."));
         }
@@ -264,9 +339,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn command_receipt(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let user = super::stand_in_work::stand_in_user(&payload)?;
+        let user = super::runtime_owner::runtime_user(&payload)?;
         if self.backend_connection_snapshot()?.is_some() {
-            self.verify_stand_in_user(&payload).await?;
+            self.verify_runtime_user(&payload).await?;
         }
         let task = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -297,17 +372,35 @@ impl RuntimeWorkRpcHandler {
             .command_journal
             .lock()
             .expect("command journal lock should not be poisoned");
-        let command = commands.get(&key(&task, &id)).filter(|command| {
-            command
-                .turn
-                .request
-                .extra
-                .get("user_id")
-                .and_then(Value::as_i64)
-                == Some(user)
-        });
+        let command = commands
+            .get(&key(&task, &id))
+            .filter(|command| {
+                command
+                    .turn
+                    .request
+                    .extra
+                    .get("user_id")
+                    .and_then(Value::as_i64)
+                    == Some(user)
+            })
+            .cloned();
+        drop(commands);
         match command {
-            Some(command) => Ok(command.receipt()),
+            Some(command) => {
+                let mut receipt = command.receipt();
+                let link = self.local_task_link(&task);
+                receipt["taskTitle"] = link
+                    .as_ref()
+                    .map(|link| json!(link.title))
+                    .unwrap_or(Value::Null);
+                receipt["ownerReview"] = json!({
+                    "commandOwnerMatches":command.turn.request.extra.get("user_id") == Some(&json!(user)),
+                    "commandDeviceMatches":command.turn.request.device_id.as_deref() == Some(self.device_id.as_str()),
+                    "taskOwnerMatches":link.as_ref().is_some_and(|link| link.runtime_handle["executionRequest"]["user_id"] == user),
+                    "taskDeviceMatches":link.as_ref().is_some_and(|link| link.runtime_handle["executionRequest"]["device_id"] == self.device_id),
+                });
+                Ok(receipt)
+            }
             None => Err(AppIpcError::new(
                 "not_found",
                 "Command receipt was not found for this user and task",
@@ -357,10 +450,12 @@ impl RuntimeWorkRpcHandler {
                 let Some(command) = commands.get_mut(&key(&task, &id)) else {
                     return;
                 };
-                if !matches!(
-                    command.state,
-                    CommandState::Dispatching | CommandState::RecoveryRequired
-                ) {
+                if command.is_owner_abandoned()
+                    || !matches!(
+                        command.state,
+                        CommandState::Dispatching | CommandState::RecoveryRequired
+                    )
+                {
                     return;
                 }
                 command.state = CommandState::Started;
@@ -460,7 +555,7 @@ impl RuntimeWorkRpcHandler {
             .lock()
             .expect("command journal poisoned");
         for command in commands.values_mut() {
-            if command.state != CommandState::RecoveryRequired {
+            if command.state != CommandState::RecoveryRequired || command.is_owner_abandoned() {
                 continue;
             }
             let link = self.local_task_link(&command.turn.local_task_id);
@@ -501,9 +596,9 @@ impl RuntimeWorkRpcHandler {
             .expect("command journal poisoned")
             .get(&key(task, id))
             .cloned();
-        let Some(command) =
-            command.filter(|command| command.state == CommandState::RecoveryRequired)
-        else {
+        let Some(command) = command.filter(|command| {
+            command.state == CommandState::RecoveryRequired && !command.is_owner_abandoned()
+        }) else {
             return Ok(());
         };
         let Some((_, thread, turn)) = command.native.as_ref() else {
@@ -522,9 +617,18 @@ impl RuntimeWorkRpcHandler {
             Some(&cursor),
             1,
             false,
-        )
-        .await
-        .map_err(|error| {
+            false,
+        );
+        #[cfg(test)]
+        let page = match self.transcript_test_workers.clone() {
+            Some(workers) => {
+                crate::runtime_work::transcript_work::with_test_workers(workers, page).await
+            }
+            None => page.await,
+        };
+        #[cfg(not(test))]
+        let page = page.await;
+        let page = page.map_err(|error| {
             AppIpcError::new(
                 "command_recovery_unavailable",
                 format!("Native command history could not be verified: {error}"),
@@ -570,6 +674,7 @@ impl RuntimeWorkRpcHandler {
                 return Ok(());
             };
             if current.state != CommandState::RecoveryRequired
+                || current.is_owner_abandoned()
                 || current.fingerprint != command.fingerprint
             {
                 return Ok(());
@@ -666,3 +771,6 @@ impl CommandState {
 #[cfg(test)]
 #[path = "command_journal_tests.rs"]
 mod tests;
+
+#[path = "command_owner_resolution.rs"]
+mod owner_resolution;

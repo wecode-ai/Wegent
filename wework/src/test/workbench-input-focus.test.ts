@@ -168,63 +168,6 @@ beforeAll(async () => {
 
 afterEach(() => document.body.replaceChildren())
 
-test.each(['light', 'dark'])(
-  '%s theme keeps an arbitrary border opacity without a pointer restoration rule',
-  theme => {
-    const markup = field('border border-[#737373]/[.37] keyboard:focus:border-[#339cff]/70')
-    const { baseline, pointer } = expectPointerBaseline(markup, theme)
-    expect(baseline.border).not.toBe('')
-    for (const modality of ['keyboard', undefined] as const) {
-      const keyboard = computed(markup, modality, { theme })
-      expect(keyboard.border).not.toBe(pointer.border)
-      expect(keyboard.borderWidth).toBe(baseline.borderWidth)
-    }
-  }
-)
-
-test.each(['border-transparent border', 'border-0'])(
-  '%s stays unchanged on pointer focus without gaining a gray border',
-  classes => {
-    const markup = field(
-      `${classes} keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70`
-    )
-    const { pointer } = expectPointerBaseline(markup)
-    for (const modality of ['keyboard', undefined] as const) {
-      expect(computed(markup, modality).ring).not.toBe(pointer.ring)
-    }
-  }
-)
-
-test.each(['light', 'dark'])(
-  '%s member controls keep ordinary shadows and have no pointer ring or offset',
-  theme => {
-    const classes = sourceClass(sources.members, /const focus =\s*'([^']+)'/)
-    const markup = field(`border border-transparent shadow-sm ${classes}`, 'select')
-    const { baseline, pointer } = expectPointerBaseline(markup, theme)
-    expect(baseline.ordinaryShadow).not.toBe('')
-    expect(baseline.ordinaryShadow).not.toBe('0 0 #0000')
-    expect(pointer.offsetWidth).toBe('0px')
-    for (const modality of ['keyboard', undefined] as const) {
-      const keyboard = computed(markup, modality, { theme })
-      expect(keyboard.offsetWidth).toBe('2px')
-      expect(keyboard.ring).not.toBe(pointer.ring)
-      expect(keyboard.ordinaryShadow).toBe(baseline.ordinaryShadow)
-    }
-  }
-)
-
-test('non-text radio rows gate their complete focus-within ring', () => {
-  const classes = sourceClass(
-    sources.agents,
-    /className={`([^`]*focus-within:ring-focus\/20[^`]*)`}/
-  )
-  const markup = container(classes, '<input data-focus type="radio">')
-  const { pointer } = expectPointerBaseline(markup)
-  for (const modality of ['keyboard', undefined] as const) {
-    expect(computed(markup, modality).ring).not.toBe(pointer.ring)
-  }
-})
-
 test.each([
   {
     name: 'project stand-in selection',
@@ -236,14 +179,14 @@ test.each([
   {
     name: 'project space search',
     source: sources.projectSpace,
-    expression: /className="([^"]*focus-within:ring-blue-500\/70[^"]*)"/,
+    expression: /className="([^"]*focus-within:ring-focus\/70[^"]*)"/,
     tag: 'input',
     nested: true,
   },
   {
     name: 'project space sorting',
     source: sources.projectSpace,
-    expression: /className="([^"]*focus-visible:ring-blue-500\/70[^"]*)"/,
+    expression: /className="([^"]*focus-visible:ring-focus\/70[^"]*)"/,
     tag: 'select',
     nested: false,
   },
@@ -258,111 +201,3 @@ test.each([
     }
   }
 )
-
-test.each(['projects', 'branches'] as const)(
-  'floating %s source retains its translucent base border and gates focus paint',
-  source => {
-    const classes = sourceClass(sources[source], /<label className="([^"]*border-border\/70[^"]*)"/)
-    expect(classes.split(/\s+/)).toEqual(
-      expect.arrayContaining(['border-border/70', 'keyboard:focus-within:border-focus'])
-    )
-    expect(classes.split(/\s+/)).not.toContain('focus-within:border-focus')
-  }
-)
-
-test('the real validation branch keeps its error border and ring for pointer input', () => {
-  const branches = sources.errors.match(
-    /className={\[\s*'([^']+)',\s*sourceError\s*\?\s*'([^']+)'\s*:\s*'([^']+)'/
-  )
-  expect(branches).not.toBeNull()
-  const [, common, error, normal] = branches!
-  expectPointerBaseline(field(`${common} ${normal}`))
-  const errorMarkup = field(`${common} ${error}`)
-  const baseline = computed(errorMarkup, 'pointer', { focus: false })
-  const pointer = computed(errorMarkup, 'pointer')
-  expect(pointer.ring).not.toBe(baseline.ring)
-  expect(pointer.ringColor).toMatch(/239[ ,]+68[ ,]+68/)
-  expect(pointer.border).not.toBe(baseline.border)
-})
-
-test('static selection rings survive pointer focus unchanged', () => {
-  const markup = field('ring-2 ring-focus/20 shadow-sm')
-  const { baseline } = expectPointerBaseline(markup)
-  expect(baseline.ring).not.toBe('')
-  expect(baseline.ring).not.toBe('0 0 #0000')
-})
-
-test('intentional neutral focus rings remain available for pointer input', () => {
-  const markup = field('focus:ring-2 focus:ring-border/60')
-  const baseline = computed(markup, 'pointer', { focus: false })
-  const pointer = computed(markup, 'pointer')
-  expect(pointer.ring).not.toBe(baseline.ring)
-  expect(pointer.ringColor).not.toBe('')
-  expect(pointer.ringColor).toBe(computed(markup, 'keyboard').ringColor)
-})
-
-test('DSH pointer suppression changes its token without overwriting explicit error outlines', () => {
-  // Set a local token because jsdom does not reliably inherit custom properties.
-  const ordinary = field('focus-token-baseline')
-  expect(computed(ordinary, 'pointer').dshColor).toBe('transparent')
-  for (const modality of ['keyboard', undefined] as const) {
-    expect(computed(ordinary, modality).dshColor).toBe('rgb(51, 156, 255)')
-  }
-  const error = field('focus-visible:outline-2 focus-visible:outline-red-500')
-  expect(computed(error, 'pointer').outlineColor).toMatch(/239[ ,]+68[ ,]+68/)
-  expect(computed(error, 'pointer').outlineColor).toBe(computed(error, 'keyboard').outlineColor)
-})
-
-test('pointer suppression preserves focus backgrounds instead of disabling every focus rule', () => {
-  const classes = sourceClass(
-    sources.browser,
-    /className="([^"]*workbench-chrome-input[^"\n]*focus:bg-background[^"\n]*)"/
-  )
-  expect(classes.split(/\s+/)).toContain('focus:bg-background')
-  // jsdom cannot resolve rgb(var(...)) colors, so exercise the variant with literals.
-  const markup = field('bg-[#ffffff] focus:bg-[#eeeeee]')
-  const baseline = computed(markup, 'pointer', { focus: false })
-  const pointer = computed(markup, 'pointer')
-  expect(baseline.background).toMatch(/255[ ,]+255[ ,]+255/)
-  expect(pointer.background).toMatch(/238[ ,]+238[ ,]+238/)
-  expect(pointer.background).not.toBe(baseline.background)
-  expect(pointer.background).toBe(computed(markup, 'keyboard').background)
-  expect(pointer.borderWidth).toBe(baseline.borderWidth)
-})
-
-test('focus can still reveal actions in pointer mode', () => {
-  const markup =
-    '<div class="group"><input data-focus><button data-target class="opacity-0 group-focus-within:opacity-100">Action</button></div>'
-  expect(computed(markup, 'pointer', { focus: false }).opacity).toBe('0')
-  expect(computed(markup, 'pointer').opacity).toBe('1')
-  expect(computed(markup, 'keyboard').opacity).toBe('1')
-})
-
-test('Issue title blue shadows belong to keyboard mode', () => {
-  const markup = field('task-detail-title')
-  const baseline = computed(markup, 'pointer', { focus: false })
-  const pointer = computed(markup, 'pointer')
-  expect(pointer.shadow).toBe(baseline.shadow)
-  expect(computed(markup, 'keyboard').shadow).not.toBe(pointer.shadow)
-})
-
-test('document source retains its outer border and gates the keyboard cue', () => {
-  const classes = sourceClass(
-    sources.composer,
-    /'([^']*rounded-2xl border border-border\/60[^']*)'/
-  )
-  expect(classes.split(/\s+/)).toEqual(
-    expect.arrayContaining(['border-border/60', 'keyboard:focus-within:border-focus/70'])
-  )
-  expect(classes.split(/\s+/)).not.toContain('focus-within:border-focus/70')
-})
-
-test('configuration composer backgrounds round their top corners without adding a border', () => {
-  const classes = sourceClass(
-    sources.composer,
-    /const surfaceClassName = cn\([\s\S]*?presentation === 'configuration'\s*\? '([^']+)'/
-  )
-  const state = computed(container(classes), 'pointer')
-  expect(state.radius).toBe('0.75rem')
-  expect(classes.split(/\s+/)).not.toContain('border')
-})

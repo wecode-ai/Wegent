@@ -66,6 +66,7 @@ export interface ComposerAutocompleteInputProps<
   externalMentionCandidates?: ComposerExternalMentionCandidate[]
   mentionScope?: 'all' | 'external'
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
+  onActivateMention?: (reference: string) => boolean
   onSelectCloudProject?: (project: Project) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>

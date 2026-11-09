@@ -1,11 +1,11 @@
-import { APIRequestContext, expect, test } from '@playwright/test'
-import { ADMIN_USER } from '../../config/test-users'
+import { APIRequestContext } from '@playwright/test'
+import { test, expect, EXECUTOR_USER, executorMockUrl } from '../../fixtures/executor-test'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 import { collectTaskToolCalls, extractTaskAnswer } from '../../utils/provider-native-test-support'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
-const MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
-const PROVIDER_URL = process.env.E2E_CLAUDE_MODEL_SERVER_URL || MOCK_URL
+const MOCK_URL = executorMockUrl()
+const PROVIDER_URL = executorMockUrl(process.env.E2E_CLAUDE_MODEL_SERVER_URL)
 const EXECUTOR_IMAGE =
   process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const INHERITED_CEILING_MS = 500
@@ -37,8 +37,8 @@ test.describe('Real Claude background subagent lifecycle', () => {
       const botName = `${model}-bot`
       const teamName = `${model}-team`
       const login = await createApiClient(request).login(
-        ADMIN_USER.username,
-        ADMIN_USER.password,
+        EXECUTOR_USER.username,
+        EXECUTOR_USER.password,
         1
       )
       expect(login.status).toBe(200)
@@ -163,7 +163,11 @@ test.describe('Real Claude background subagent lifecycle', () => {
     const teamName = `${model}-team`
     const childMarker = `BG_LARGE_CHILD_${model}`
     const finalMarker = `BG_LARGE_PARENT_DONE_${model}`
-    const login = await createApiClient(request).login(ADMIN_USER.username, ADMIN_USER.password, 1)
+    const login = await createApiClient(request).login(
+      EXECUTOR_USER.username,
+      EXECUTOR_USER.password,
+      1
+    )
     expect(login.status).toBe(200)
     const headers = createBackendRequestHeaders(login.data!.access_token)
     let taskId: number | undefined

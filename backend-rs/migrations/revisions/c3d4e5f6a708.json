@@ -1,0 +1,51 @@
+{
+  "revision": "c3d4e5f6a708",
+  "parents": [
+    "b2c3d4e5f707"
+  ],
+  "source": "20260509_c3d4e5f6a708_add_knowledge_folders.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE knowledge_folders (\n    id INTEGER NOT NULL AUTO_INCREMENT, \n    kind_id INTEGER NOT NULL, \n    parent_id INTEGER NOT NULL DEFAULT 0, \n    name VARCHAR(255) NOT NULL, \n    created_at DATETIME NOT NULL DEFAULT now(), \n    updated_at DATETIME NOT NULL DEFAULT now(), \n    PRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Knowledge base folder hierarchy for multi-level document organization'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_knowledge_folders_parent ON knowledge_folders (kind_id, parent_id)"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents ADD COLUMN folder_id INTEGER NOT NULL DEFAULT 0"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_knowledge_documents_folder ON knowledge_documents (folder_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_knowledge_documents_folder ON knowledge_documents"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents DROP COLUMN folder_id"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_knowledge_folders_parent ON knowledge_folders"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE knowledge_folders"
+      ]
+    }
+  ]
+}

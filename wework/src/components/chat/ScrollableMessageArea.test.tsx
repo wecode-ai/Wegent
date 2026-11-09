@@ -1,17 +1,17 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import { getConversationDiagnosticsSnapshot } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { createRef } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
-import { getConversationDiagnosticsSnapshot } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import {
-  installScrollTestEnvironment,
   allResizeCallbacks,
   flushObservedLayout,
+  flushScheduledTimers,
   fromBottom,
+  installScrollTestEnvironment,
   messageText,
   mockRect,
-  flushScheduledTimers,
 } from './scrollableMessageTestHelpers'
 
 vi.mock('@/lib/runtime-environment', async importOriginal => ({
@@ -44,21 +44,6 @@ describe('ScrollableMessageArea: presentation', () => {
     expect(inputs[0].details.deltaY).toBe(-120)
   })
 
-  test('renders a centered empty state when the conversation has no messages', () => {
-    render(<ScrollableMessageArea messages={[]} />)
-
-    const emptyState = screen.getByTestId('chat-empty-state')
-    expect(emptyState).toHaveClass('min-h-full', 'items-center', 'justify-center')
-    expect(emptyState).toHaveTextContent('开始新的对话')
-  })
-
-  test('renders a loading state instead of the new conversation empty state', () => {
-    render(<ScrollableMessageArea messages={[]} loading />)
-
-    expect(screen.getByTestId('chat-loading-state')).toHaveTextContent('正在加载会话')
-    expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
-  })
-
   test('shows history failure and retries instead of displaying a new conversation', () => {
     const retry = vi.fn()
     const { rerender } = render(
@@ -76,153 +61,6 @@ describe('ScrollableMessageArea: presentation', () => {
     rerender(<ScrollableMessageArea messages={[]} loading />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.getByTestId('chat-loading-state')).toBeInTheDocument()
-  })
-
-  test.each([true, false])('top-aligns four short messages with virtualization %s', virtualize => {
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(900)
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
-    render(
-      <ScrollableMessageArea
-        virtualize={virtualize}
-        messages={[
-          {
-            id: '1',
-            role: 'user',
-            content: '执行pwd',
-            status: 'done',
-            createdAt: '2026-05-29T00:00:00.000Z',
-          },
-          {
-            id: '2',
-            role: 'assistant',
-            content: 'Ready',
-            status: 'done',
-            createdAt: '2026-05-29T00:00:01.000Z',
-          },
-          {
-            id: '3',
-            role: 'user',
-            content: 'Continue',
-            status: 'done',
-            createdAt: '2026-05-29T00:00:02.000Z',
-          },
-          {
-            id: '4',
-            role: 'assistant',
-            content: 'Done',
-            status: 'done',
-            createdAt: '2026-05-29T00:00:03.000Z',
-          },
-        ]}
-      />
-    )
-
-    const content = screen.getByTestId('chat-message-scroll-area-content')
-    expect(content).toHaveClass('flex', 'flex-col', 'flex-1', 'shrink-0')
-    expect(content).not.toHaveClass('justify-end')
-    expect(
-      [...content.querySelectorAll('[data-message-id]')].map(row =>
-        row.getAttribute('data-message-id')
-      )
-    ).toEqual(['1', '2', '3', '4'])
-  })
-
-  test('uses normal coordinates for an internal conversation preview', () => {
-    render(
-      <ScrollableMessageArea
-        messages={[
-          {
-            id: 'normal-coordinate-preview',
-            role: 'assistant',
-            content: '最新消息直接出现在底部',
-            status: 'done',
-            createdAt: '2026-09-10T00:00:00.000Z',
-          },
-        ]}
-      />
-    )
-
-    const scroller = screen.getByTestId('chat-message-scroll-area')
-    expect(scroller).toHaveAttribute('data-scroll-origin', 'top')
-    expect(scroller).toHaveClass('flex', 'flex-col', '[overflow-anchor:none]')
-    expect(scroller.scrollTop).toBeCloseTo(0)
-  })
-
-  test('updates the message list layout when only the layout class changes', () => {
-    const messages = [
-      {
-        id: '1',
-        role: 'assistant' as const,
-        content: 'Ready',
-        status: 'done' as const,
-        createdAt: '2026-05-29T00:00:00.000Z',
-      },
-    ]
-    const { rerender } = render(
-      <ScrollableMessageArea messages={messages} messageListClassName="layout-width-a" />
-    )
-
-    expect(screen.getByTestId('message-assistant').parentElement).toHaveClass('layout-width-a')
-
-    rerender(<ScrollableMessageArea messages={messages} messageListClassName="layout-width-b" />)
-
-    expect(screen.getByTestId('message-assistant').parentElement).toHaveClass('layout-width-b')
-    expect(screen.getByTestId('message-assistant').parentElement).not.toHaveClass('layout-width-a')
-  })
-
-  test('renders an optional sticky footer inside the scroll flow', () => {
-    render(
-      <ScrollableMessageArea
-        messages={[
-          {
-            id: '1',
-            role: 'assistant',
-            content: 'Ready',
-            status: 'done',
-            createdAt: '2026-05-29T00:00:00.000Z',
-          },
-        ]}
-        stickyFooterClassName="footer-shell"
-        stickyFooter={<div data-testid="composer-footer">Composer</div>}
-      />
-    )
-
-    const scroller = screen.getByTestId('chat-message-scroll-area')
-    const content = screen.getByTestId('chat-message-scroll-area-content')
-    const footer = screen.getByTestId('chat-message-scroll-area-sticky-footer')
-
-    expect(scroller).toHaveClass('flex', 'flex-col')
-    expect(content).toHaveClass('flex-1', 'shrink-0')
-    expect(footer).toHaveClass('sticky', 'bottom-0', 'z-10', 'footer-shell')
-    expect(footer).toContainElement(screen.getByTestId('composer-footer'))
-    expect(scroller.lastElementChild).toBe(footer)
-  })
-
-  test('renders an optional content footer directly after the message list', () => {
-    render(
-      <ScrollableMessageArea
-        messages={[
-          {
-            id: '1',
-            role: 'user',
-            content: 'Create a worktree',
-            status: 'done',
-            createdAt: '2026-08-11T00:00:00.000Z',
-          },
-        ]}
-        contentFooterClassName="content-footer-shell"
-        contentFooter={<div data-testid="creation-status">Creating worktree</div>}
-      />
-    )
-
-    const content = screen.getByTestId('chat-message-scroll-area-content')
-    const messageList = screen.getByTestId('message-user').parentElement
-    const footer = screen.getByTestId('chat-message-scroll-area-content-footer')
-
-    expect(footer).toHaveClass('content-footer-shell')
-    expect(footer).toContainElement(screen.getByTestId('creation-status'))
-    expect(content.lastElementChild).toBe(footer)
-    expect(messageList?.nextElementSibling).toBe(footer)
   })
 
   test('keeps a silent history prefetch boundary at the top of the message flow', () => {

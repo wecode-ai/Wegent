@@ -13,11 +13,14 @@ import { pathToFileURL } from 'node:url'
 import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
 import { fetchLocalRuntime } from './runtime-request.mjs'
 import { request } from 'node:http'
+import { SELECTED_DESKTOP_SEGMENT } from './shared.mjs'
+import { createPreparationObserver } from './preparation-progress.mjs'
 
 export async function prepareHarnessAppUi(
   control,
   { uiTimeoutMs, captureScreenshot, electronUserDataDirectory, resultDir, legacyPackagePath }
 ) {
+  const observe = createPreparationObserver({ checkpoint: SELECTED_DESKTOP_SEGMENT })
   await setExperimentalFeatures(control, false, uiTimeoutMs)
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
@@ -193,14 +196,15 @@ export async function prepareHarnessAppUi(
     timeoutMs: uiTimeoutMs,
   })
 
-  await verifyLegacyAppLaunch(control, {
-    legacyPackagePath,
-    electronUserDataDirectory,
-    uiTimeoutMs,
-  })
-  const legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(
-    join(resultDir, 'harness-runtime'),
-    '0.1.0-rc.8'
+  await observe('legacy-app-verification', () =>
+    verifyLegacyAppLaunch(control, {
+      legacyPackagePath,
+      electronUserDataDirectory,
+      uiTimeoutMs,
+    })
+  )
+  const legacyRuntimeCache = await observe('legacy-cache-verification', () =>
+    verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8')
   )
 
   return { legacyRuntimeCache }
@@ -331,10 +335,7 @@ async function removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs)
     timeoutMs: uiTimeoutMs,
   })
   await control.command('click', `[data-testid="smart-app-actions-${id}"]`)
-  await control.command('waitFor', `[data-testid="smart-app-remove-local-${id}"]`, {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('click', `[data-testid="smart-app-remove-local-${id}"]`)
+  await control.command('clickWhenEnabled', `[data-testid="smart-app-remove-local-${id}"]`)
   await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]', {
     timeoutMs: uiTimeoutMs,
   })

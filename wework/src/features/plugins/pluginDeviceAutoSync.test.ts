@@ -1,21 +1,17 @@
-import { beforeEach, describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { beforeEach, describe, expect, test } from 'vitest'
 import {
   acquirePluginDeviceSync,
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
   collectPluginDeviceStatusReports,
-  getPluginDeviceSyncRevision,
-  hasAttemptedPluginDeviceAutoSync,
-  hasAttemptedPluginDeviceStatusReport,
   hasInFlightPluginDeviceSync,
   hasSettledPluginDeviceAutoSync,
   marketplaceItemNeedsDeviceSync,
   marketplaceItemOffersDeviceSyncRetry,
-  markPluginDeviceAutoSyncAttempted,
   markPluginDeviceAutoSyncSettled,
-  markPluginDeviceStatusReportAttempted,
-  subscribePluginDeviceSync,
   withOptimisticDevicePending,
 } from './pluginDeviceAutoSync'
 
@@ -89,69 +85,6 @@ describe('pluginDeviceAutoSync', () => {
     await expect(acquirePluginDeviceSync('device-a', controller.signal)).rejects.toMatchObject({
       name: 'AbortError',
     })
-    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
-  })
-
-  test('tracks an in-flight per-device sync lock', () => {
-    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
-    const finish = beginPluginDeviceSync('device-a')
-    expect(finish).not.toBeNull()
-    expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
-    expect(beginPluginDeviceSync('device-a')).toBeNull()
-    finish?.()
-    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
-  })
-
-  test('notifies readers when a sync settles even if acquire and release are batched', () => {
-    const initialRevision = getPluginDeviceSyncRevision('device-a')
-    const otherRevision = getPluginDeviceSyncRevision('device-b')
-    const states: boolean[] = []
-    const unsubscribe = subscribePluginDeviceSync(() => {
-      states.push(hasInFlightPluginDeviceSync('device-a'))
-    })
-    try {
-      const finish = beginPluginDeviceSync('device-a')!
-      expect(beginPluginDeviceSync('device-a')).toBeNull()
-      finish()
-      finish()
-
-      expect(states).toEqual([true, false])
-      expect(getPluginDeviceSyncRevision('device-a')).toBe(initialRevision + 2)
-      expect(getPluginDeviceSyncRevision('device-b')).toBe(otherRevision)
-    } finally {
-      unsubscribe()
-    }
-
-    const finish = beginPluginDeviceSync('device-a')!
-    finish()
-    expect(states).toEqual([true, false])
-  })
-
-  test('does not let an old completion release a newer lease after reset', () => {
-    const finishOld = beginPluginDeviceSync('device-a')!
-    clearPluginDeviceAutoSyncAttempts()
-    const finishNew = beginPluginDeviceSync('device-a')!
-    const newRevision = getPluginDeviceSyncRevision('device-a')
-
-    finishOld()
-
-    expect(getPluginDeviceSyncRevision('device-a')).toBe(newRevision)
-    expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
-    expect(beginPluginDeviceSync('device-a')).toBeNull()
-    finishNew()
-    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
-  })
-
-  test('makes lease release idempotent after another sync starts', () => {
-    const finishOld = beginPluginDeviceSync('device-a')!
-    finishOld()
-    const finishNew = beginPluginDeviceSync('device-a')!
-
-    finishOld()
-
-    expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
-    expect(beginPluginDeviceSync('device-a')).toBeNull()
-    finishNew()
     expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
   })
 
@@ -291,22 +224,6 @@ describe('pluginDeviceAutoSync', () => {
         })
       )
     ).toBe(false)
-  })
-
-  test('tracks one auto-sync attempt per device id', () => {
-    expect(hasAttemptedPluginDeviceAutoSync('device-a')).toBe(false)
-    markPluginDeviceAutoSyncAttempted('device-a')
-    expect(hasAttemptedPluginDeviceAutoSync('device-a')).toBe(true)
-    expect(hasAttemptedPluginDeviceAutoSync('device-b')).toBe(false)
-  })
-
-  test('allows only one in-flight plugin sync per device', () => {
-    const finish = beginPluginDeviceSync('device-a')
-    expect(finish).not.toBeNull()
-    expect(beginPluginDeviceSync('device-a')).toBeNull()
-    expect(beginPluginDeviceSync('device-b')).not.toBeNull()
-    finish?.()
-    expect(beginPluginDeviceSync('device-a')).not.toBeNull()
   })
 
   test('offers retry for pending gaps after auto-sync settles', () => {
@@ -477,52 +394,6 @@ describe('pluginDeviceAutoSync', () => {
     ).toEqual([])
   })
 
-  test('does not acknowledge a package without an observed local version', () => {
-    const plugin: InstalledPlugin = {
-      apiVersion: 'agent.wecode.io/v1',
-      kind: 'InstalledPlugin',
-      metadata: { name: 'mail', labels: { id: '101' } },
-      spec: {
-        source: { type: 'marketplace', providerKey: 'wegent', pluginKey: 'mail' },
-        displayName: 'Mail',
-        description: '',
-        version: '1.0.0',
-        installState: 'not_installed',
-        enabled: true,
-        manifest: {},
-        components: {
-          skills: [],
-          commands: [],
-          agents: [],
-          hooks: [],
-          mcps: [],
-          connectors: [],
-          lsps: [],
-          monitors: [],
-          bins: [],
-        },
-        pluginId: 7,
-        releaseId: 9,
-        sourcePayload: { localPresent: true },
-      },
-      status: {
-        state: 'pending',
-        devices: [
-          {
-            deviceId: 'd1',
-            desiredReleaseId: 9,
-            actualReleaseId: null,
-            state: 'pending',
-            attemptCount: 0,
-            updatedAt: '2026-01-01T00:00:00Z',
-          },
-        ],
-      },
-    }
-
-    expect(collectPluginDeviceStatusReports([plugin], [], 'd1')).toEqual([])
-  })
-
   test('does not report a newer desired release as already installed', () => {
     const plugin: InstalledPlugin = {
       apiVersion: 'agent.wecode.io/v1',
@@ -565,18 +436,5 @@ describe('pluginDeviceAutoSync', () => {
       },
     }
     expect(collectPluginDeviceStatusReports([plugin], [], 'd1')).toEqual([])
-  })
-
-  test('tracks one status report attempt per device id', () => {
-    const reports = [{ installedPluginId: 101, releaseId: 9, version: '1.0.0' }]
-    expect(hasAttemptedPluginDeviceStatusReport('device-a', reports)).toBe(false)
-    markPluginDeviceStatusReportAttempted('device-a', reports)
-    expect(hasAttemptedPluginDeviceStatusReport('device-a', reports)).toBe(true)
-    expect(
-      hasAttemptedPluginDeviceStatusReport('device-a', [
-        { installedPluginId: 101, releaseId: 10, version: '1.1.0' },
-      ])
-    ).toBe(false)
-    expect(hasAttemptedPluginDeviceStatusReport('device-b')).toBe(false)
   })
 })

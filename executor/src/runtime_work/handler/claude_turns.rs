@@ -223,6 +223,7 @@ impl RuntimeWorkRpcHandler {
         force_start: bool,
     ) -> Result<(), AppIpcError> {
         let turn = SpawnTurnRequest {
+            task_kind: None,
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
@@ -246,6 +247,7 @@ impl RuntimeWorkRpcHandler {
         request: ExecutionRequest,
     ) -> Result<(), AppIpcError> {
         self.queue_turn(SpawnTurnRequest {
+            task_kind: None,
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
@@ -265,6 +267,7 @@ impl RuntimeWorkRpcHandler {
         mut request: ExecutionRequest,
         restore_startup: Option<Arc<RestoreStartupGate>>,
     ) {
+        request.agent_home_runtime_task_id = Some(local_task_id.clone());
         let backend_connection = match self.backend_connection_snapshot() {
             Ok(connection) => connection,
             Err(error) => {

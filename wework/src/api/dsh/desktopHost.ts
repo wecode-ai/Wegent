@@ -73,8 +73,14 @@ export async function invokeDesktopHost<Result>(
       result?: Result
       error?: DesktopHostErrorPayload
     }
-    if (e2e && performance.now() - startedAt >= 1_000) {
-      diagnostic('completed', { status: response.status, ok: response.ok && body.ok === true })
+    if (e2e && (capability.startsWith('attachment.') || performance.now() - startedAt >= 1_000)) {
+      diagnostic('completed', {
+        status: response.status,
+        ok: response.ok && body.ok === true,
+        ...(capability === 'attachment.append' && typeof params.offset === 'number'
+          ? { offset: params.offset }
+          : {}),
+      })
     }
     if (!response.ok || body.ok !== true) {
       throw new DesktopHostError(

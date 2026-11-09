@@ -41,9 +41,9 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        self.verify_stand_in_user(&configs[0]).await?;
+        self.verify_runtime_user(&configs[0]).await?;
         let issue = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{issue_id}"),
                 None,

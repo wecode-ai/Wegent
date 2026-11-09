@@ -28,6 +28,7 @@ export function ProjectCoordinatorConversation({
   onOpenTask,
   onOpenGroupSettings,
   onOpenIssue,
+  onPublished,
 }: {
   api: SharedWorkspaceApi
   project: CollaborationProject
@@ -37,6 +38,7 @@ export function ProjectCoordinatorConversation({
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   onOpenGroupSettings(): void
   onOpenIssue(issueId: string): void
+  onPublished(): void
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
@@ -202,6 +204,7 @@ export function ProjectCoordinatorConversation({
                   api={api}
                   project={project}
                   onClose={() => setPublication(false)}
+                  onPublished={onPublished}
                 />
               )}
               <div

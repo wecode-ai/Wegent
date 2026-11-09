@@ -21,6 +21,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.subtask import SubtaskStatus
+from app.services.chat.storage.execution_evidence import has_execution_evidence
 from app.services.execution.emitters import (
     StatusUpdatingEmitter,
     WebSocketResultEmitter,
@@ -30,8 +31,14 @@ from app.services.execution.executor_health import (
     executor_heartbeat_alive,
     executor_pod_missing,
 )
+from app.services.execution.stalled_task_cursor import (
+    StalledTaskCursor,
+    load_stalled_task_cursor,
+    save_stalled_task_cursor,
+)
 from app.stores.tasks import subtask_store
 from shared.models import EventType, ExecutionEvent
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +73,7 @@ def list_stalled_candidates(
     cutoff: datetime,
     max_age_cutoff: datetime,
     limit: int,
+    cursor: StalledTaskCursor | None = None,
 ) -> List[StalledCandidate]:
     """Return recent RUNNING assistant subtasks that have not reported since cutoff."""
     rows = subtask_store.list_stalled_running_assistant_subtasks(
@@ -73,6 +81,8 @@ def list_stalled_candidates(
         cutoff=cutoff,
         max_age_cutoff=max_age_cutoff,
         limit=limit,
+        after_updated_at=cursor.updated_at if cursor else None,
+        after_subtask_id=cursor.subtask_id if cursor else None,
     )
     return [
         StalledCandidate(
@@ -108,13 +118,19 @@ class StalledSubtaskSweeper:
         now: datetime,
         max_age_seconds: int,
         limit: int,
+        cursor: StalledTaskCursor | None = None,
     ) -> List[StalledCandidate]:
         """Load candidates for the given sweep time."""
         return list_stalled_candidates(
             db,
-            cutoff=now - self._silent_timeout,
+            cutoff=(
+                min(cursor.scan_cutoff, now - self._silent_timeout)
+                if cursor
+                else now - self._silent_timeout
+            ),
             max_age_cutoff=now - timedelta(seconds=max_age_seconds),
             limit=limit,
+            cursor=cursor,
         )
 
     async def classify(
@@ -129,6 +145,30 @@ class StalledSubtaskSweeper:
             # behind backpressure. Only fail when the manager confirms it is
             # no longer queued; an unknown answer also keeps it alive.
             if await executor_dispatch_pending(candidate.task_id) is not False:
+                return None
+            try:
+                evidence = await has_execution_evidence(
+                    candidate.task_id,
+                    candidate.subtask_id,
+                    since=candidate.updated_at,
+                )
+            except Exception:
+                # A failed probe must not interrupt checks of other candidates.
+                evidence = None
+            if evidence is not False:
+                logger.info(
+                    "[StalledTasks] Exempting subtask task_id=%s subtask_id=%s "
+                    "reason=%s last_update=%s cutoff=%s",
+                    candidate.task_id,
+                    candidate.subtask_id,
+                    (
+                        "execution_evidence"
+                        if evidence is True
+                        else "execution_evidence_unknown"
+                    ),
+                    candidate.updated_at,
+                    now - self._heartbeat_timeout,
+                )
                 return None
             return (EXECUTOR_NOT_STARTED_ERROR, "executor_not_started")
         if (
@@ -216,6 +256,7 @@ async def fail_stalled_subtask(
     return True
 
 
+@trace_async("execution.sweep_stalled_subtasks", "execution.schedule")
 async def sweep_stalled_subtasks(
     db,
     *,
@@ -227,20 +268,35 @@ async def sweep_stalled_subtasks(
     now: Optional[datetime] = None,
 ) -> List[int]:
     """Run one sweep against an ``AsyncSession`` and return failed subtask ids."""
+    if limit <= 0:
+        return []
     current_time = now or datetime.now()
     sweeper = StalledSubtaskSweeper(
         silent_timeout_seconds=silent_timeout_seconds,
         heartbeat_timeout_seconds=heartbeat_timeout_seconds,
         heartbeat_check_enabled=heartbeat_check_enabled,
     )
-    candidates = await db.run_sync(
-        lambda sync_db: sweeper.candidates(
-            sync_db,
-            now=current_time,
-            max_age_seconds=max_age_seconds,
-            limit=limit,
+
+    async def load_page(
+        cursor: StalledTaskCursor | None,
+    ) -> List[StalledCandidate]:
+        return await db.run_sync(
+            lambda sync_db: sweeper.candidates(
+                sync_db,
+                now=current_time,
+                max_age_seconds=max_age_seconds,
+                limit=limit,
+                cursor=cursor,
+            )
         )
-    )
+
+    cursor = await load_stalled_task_cursor()
+    candidates = await load_page(cursor)
+    if not candidates and cursor is not None:
+        # A fixed cutoff makes each round finite despite newly eligible work.
+        # Finish that round before reopening the window and revisiting its head.
+        cursor = None
+        candidates = await load_page(None)
 
     failed: List[int] = []
     for candidate in candidates:
@@ -252,4 +308,17 @@ async def sweep_stalled_subtasks(
             candidate, error_message=error_message, error_code=error_code
         ):
             failed.append(candidate.subtask_id)
+    if candidates:
+        last = candidates[-1]
+        await save_stalled_task_cursor(
+            StalledTaskCursor(
+                scan_cutoff=(
+                    cursor.scan_cutoff
+                    if cursor
+                    else current_time - timedelta(seconds=silent_timeout_seconds)
+                ),
+                updated_at=last.updated_at,
+                subtask_id=last.subtask_id,
+            )
+        )
     return failed

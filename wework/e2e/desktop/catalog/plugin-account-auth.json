@@ -1,0 +1,13 @@
+{
+  "order": 101000,
+  "groupOrder": 4000,
+  "members": [
+    "plugin-account-auth-password",
+    "plugin-account-auth-transfer",
+    "plugin-account-auth-oauth",
+    "plugin-account-auth-dws",
+    "plugin-account-auth-conversation",
+    "plugin-account-auth-github",
+    "plugin-account-auth-coordination"
+  ]
+}

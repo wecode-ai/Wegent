@@ -26,8 +26,8 @@ use serde_json::Value;
 
 use crate::permissions::EntityResolvers;
 use crate::plugins_marketplace::db::{
-    DEVICE_COLUMNS, DeviceInstallationRow, GRANT_COLUMNS, InstalledKindRow, KIND_COLUMNS,
-    PLUGIN_COLUMNS, PluginReleaseRow, PluginRow, RELEASE_COLUMNS, ResourceMemberRow,
+    GRANT_COLUMNS, InstalledKindRow, KIND_COLUMNS, PLUGIN_COLUMNS, PluginReleaseRow, PluginRow,
+    RELEASE_COLUMNS, ResourceMemberRow,
 };
 use crate::plugins_marketplace::query::PluginQuery;
 
@@ -63,16 +63,8 @@ const PUBLISHED_BY_KEY_QUERY: &str = "SELECT {cols} FROM plugins WHERE plugins.s
      'published' AND plugins.visibility IN ('personal', 'workspace', 'public') AND \
      (plugins.name = ? OR plugins.slug = ?) ORDER BY plugins.id DESC";
 
-/// `reconcile_stale_installed_catalog_refs`'s `stale_device_rows` read.
-const USER_DEVICE_ROWS_QUERY: &str =
-    "SELECT {cols} FROM plugin_device_installations WHERE plugin_device_installations.user_id = ?";
-
 /// `_clear_device_installations`.
 pub(super) const DELETE_DEVICE_BY_KIND_QUERY: &str = "DELETE FROM plugin_device_installations WHERE plugin_device_installations.installed_kind_id = ?";
-
-/// `db.delete(device_row)`.
-const DELETE_DEVICE_BY_ID_QUERY: &str =
-    "DELETE FROM plugin_device_installations WHERE plugin_device_installations.id = ?";
 
 /// `_reset_failed_device_installations`'s failing-row read.
 pub(super) const FAILED_DEVICE_ROWS_QUERY: &str = "SELECT plugin_device_installations.id AS \
@@ -617,26 +609,6 @@ where
         {
             changed += 1;
         }
-    }
-
-    // Drop device-install rows that no longer point at an active install.
-    let device_rows: Vec<DeviceInstallationRow> = mysql
-        .fetch_all(sql(USER_DEVICE_ROWS_QUERY, DEVICE_COLUMNS), (user_id,))
-        .await?;
-    let active: HashMap<i64, &InstalledKindRow> = rows.iter().map(|row| (row.id, row)).collect();
-    for device_row in &device_rows {
-        let keep = active
-            .get(&device_row.installed_kind_id)
-            .is_some_and(|kind| {
-                kind.is_active && spec_str(&kind.json.0.to_value(), "installState") != "uninstalled"
-            });
-        if keep {
-            continue;
-        }
-        mysql
-            .execute(DELETE_DEVICE_BY_ID_QUERY, (device_row.id,))
-            .await?;
-        changed += 1;
     }
 
     if changed > 0 {

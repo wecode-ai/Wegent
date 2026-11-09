@@ -373,8 +373,13 @@ impl<'a> SkillDownloadRepository<'a> {
         // `check_group_permission` is not called for the personal `default`
         // namespace, so it stays out of the dependency sequence.
         let mut authorized: Vec<String> = Vec::new();
-        for group_name in
-            super::skills_unified::get_user_groups(self.mysql, &erp, resolution.user_id).await?
+        for group_name in super::skills_unified::get_user_groups(
+            self.mysql,
+            &erp,
+            &resolution.state.entity_resolvers,
+            resolution.user_id,
+        )
+        .await?
         {
             if group_name == "default" {
                 continue;

@@ -12,7 +12,6 @@ function setup(store: 'local' | 'backend' = 'backend') {
     task: interactionTask,
     payload: interactionQuestion,
     question: 'Keep old behavior?',
-    context: '',
     createdAt: 1,
     answered: false,
     project: { projectId: 'project', issueId: 'issue', rootCommentId: 'root', store },

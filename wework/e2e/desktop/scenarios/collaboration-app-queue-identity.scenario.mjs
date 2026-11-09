@@ -205,7 +205,6 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
         scoped('[data-testid="cloud-todo-detail-assignee"]'),
         agent.id
       )
-      await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
         text: RESULT,
         timeoutMs: modelResponseTimeoutMs,

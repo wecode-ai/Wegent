@@ -22,13 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Detect CI Changes
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
@@ -150,7 +150,7 @@ jobs:
 
   check-settings-config:
     name: Check Settings Configuration
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
 
     steps:
@@ -167,29 +167,34 @@ jobs:
       - name: Test CI change classifier
         run: .github/scripts/test-classify-ci-changes.sh
 
+      - name: Verify bundled Wework navigation documentation
+        run: node --test wework/scripts/wework-navigation-docs.test.mjs wework/scripts/bundled-wework-docs.test.mjs
+
       - name: Test Wework release gates
-        run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs .github/scripts/pnpm-install-report.test.mjs
+        run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs .github/scripts/verify-wework-upgrade-duration.test.mjs .github/scripts/pnpm-install-report.test.mjs
 
       - name: Test E2E resource cleanup
-        run: node --test .github/scripts/test-e2e-resource-reuse.mjs
+        run: node --test .github/scripts/test-e2e-resource-reuse.mjs .github/scripts/backend-delivery-image.test.mjs
 
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
 
       - name: Test Windows E2E package caching and scheduling
-        run: node --test .github/scripts/wework-windows-e2e-build-key.test.mjs .github/scripts/balance-wework-windows-e2e.test.mjs
+        run: node --test .github/scripts/wework-windows-e2e-build-key.test.mjs .github/scripts/balance-wework-windows-e2e.test.mjs .github/scripts/order-wework-linux-e2e.test.mjs .github/scripts/balance-wework-unit-tests.test.mjs .github/scripts/core-runner-slots.test.mjs
 
       - name: Test shared E2E runtime revisions
         run: bash .github/scripts/test-wework-core-e2e-runtimes.sh
 
       - name: Test CI resource logging
-        run: node --test .github/scripts/run-with-resource-logging.test.mjs
+        run: node --test .github/scripts/run-with-resource-logging.test.mjs .github/scripts/redis-monitor.test.mjs
 
       - name: Test AI push gate
         run: scripts/hooks/test-ai-push-gate.sh
 
       - name: Test Wegent release policy
-        run: scripts/test-publish-image-release-policy.sh
+        run: |
+          scripts/test-publish-image-release-policy.sh
+          node --test .github/scripts/local-executor-installer.test.mjs
 
       - name: Set up Python for standalone regression checks
         uses: ./.github/actions/setup-python-uv-cache
@@ -223,7 +228,7 @@ jobs:
 
   check-alembic-heads:
     name: Check Alembic Multi-Head
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
 
     steps:
@@ -248,7 +253,7 @@ jobs:
         check-settings-config,
         check-alembic-heads,
       ]
-    if: always() && !cancelled() && github.event_name != 'merge_group'
+    if: always() && !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
 
     steps:
       - name: Check lint results

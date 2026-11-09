@@ -1,0 +1,31 @@
+{
+  "revision": "e5f6a7b8c9d0",
+  "parents": [
+    "d4e5f6a7b8c9"
+  ],
+  "source": "20260806_e5f6a7b8c9d0_add_marketplace_recommendation_score.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE marketplace_resources ADD COLUMN recommendation_score SMALLINT NOT NULL COMMENT 'Marketplace recommendation score from 0 to 100' DEFAULT '0'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_marketplace_resources_type_recommendation ON marketplace_resources (resource_type, recommendation_score, updated_at, kind_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_marketplace_resources_type_recommendation ON marketplace_resources"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE marketplace_resources DROP COLUMN recommendation_score"
+      ]
+    }
+  ]
+}

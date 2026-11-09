@@ -246,6 +246,15 @@ pub fn acl_visible_knowledge_base_ids_query(
     );
     params.extend(candidate_ids.iter().copied().map(BindingArg::Int));
 
+    // `apply_acl_deny_filter` first applies `exclude_hidden_replicas`
+    // (`app/services/knowledge/replica_policy.py:17-29`): an unfinished KS
+    // migration copy (any `ksReplica` marker) stays hidden unless
+    // `nativeHidden` is an explicit JSON `false`.
+    sql.push_str(&format!(
+        " \nAND ({})",
+        crate::knowledge_bases_all_grouped::queries::hidden_replica_filter()
+    ));
+
     // `apply_acl_deny_filter`
     sql.push_str(&format!(
         " \nAND NOT ({})",
@@ -806,6 +815,9 @@ mod tests {
              ({member}resource_members.entity_type = 'user' AND resource_members.entity_id = ?)) OR \
              ({member}resource_members.entity_type = 'namespace' AND \
              resource_members.entity_id IN (?, ?, ?, ?, ?)))) AND kinds.id IN (?) AND \
+             (json_contains_path(kinds.json, 'one', '$.spec.ksReplica') = 0 OR \
+             json_type(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'BOOLEAN' AND \
+             json_unquote(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'false') AND \
              NOT ({member}resource_members.entity_type = 'user' AND \
              resource_members.entity_id = ? AND resource_members.`role` = 'RestrictedAnalyst'))"
         );
@@ -831,6 +843,41 @@ mod tests {
                 BindingArg::Str("477".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn acl_visible_query_hides_unopened_ks_replicas() {
+        // Recorded b27a96c6 seq196: `apply_acl_deny_filter` applies
+        // `exclude_hidden_replicas` between the candidate id filter and the
+        // RestrictedAnalyst deny, with no bound parameters.
+        let context = AclQueryContext {
+            user_id: 477,
+            ..Default::default()
+        };
+        let (sql, _) = acl_visible_knowledge_base_ids_query(&context, &[263_078]);
+        let flat = normalize(&sql);
+        let candidates = flat.find("AND kinds.id IN (?)").expect("candidate filter");
+        let replica = flat
+            .find(
+                "AND (json_contains_path(kinds.json, 'one', '$.spec.ksReplica') = 0 OR \
+                 json_type(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'BOOLEAN' AND \
+                 json_unquote(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'false')",
+            )
+            .expect("replica filter");
+        let deny = flat.find("AND NOT (EXISTS").expect("deny filter");
+        assert!(candidates < replica && replica < deny, "{flat}");
+        // Both visibility branches: no `ksReplica` marker, or an explicit JSON
+        // boolean `false` for `nativeHidden`.
+        assert!(flat.contains("json_contains_path(kinds.json, 'one', '$.spec.ksReplica') = 0"));
+        assert!(flat.contains(
+            "json_type(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'BOOLEAN'"
+        ));
+        assert!(flat.contains(
+            "json_unquote(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'false'"
+        ));
+        // User, shared user entity, candidate id, restricted user. The replica
+        // filter binds no parameters.
+        assert_eq!(sql.matches('?').count(), 4, "{sql}");
     }
 
     #[test]

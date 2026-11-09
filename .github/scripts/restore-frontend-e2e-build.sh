@@ -25,9 +25,10 @@ find_standalone_server() {
 }
 
 test -s "$archive"
+node .github/scripts/frontend-e2e-build.mjs verify-current "$artifact_dir"
 
-rm -rf frontend/.next
-tar -I zstd -xf "$archive" -C frontend
+rm -rf frontend/.next frontend/public
+zstd -dc "$archive" | tar -xf - -C frontend
 
 test -f frontend/.next/BUILD_ID
 standalone_server="$(find_standalone_server)"
@@ -35,3 +36,4 @@ test -n "$standalone_server"
 test -f "$standalone_server"
 test -d "$(dirname "$standalone_server")/public"
 test -d "$(dirname "$standalone_server")/.next/static"
+node .github/scripts/frontend-e2e-build.mjs check-restored "$artifact_dir"

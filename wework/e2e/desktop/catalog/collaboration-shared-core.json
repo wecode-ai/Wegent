@@ -1,0 +1,12 @@
+{
+  "order": 17000,
+  "scenario": "./scenarios/collaboration-shared-core.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 9000,
+      "shard": 10,
+      "position": 1000
+    }
+  }
+}

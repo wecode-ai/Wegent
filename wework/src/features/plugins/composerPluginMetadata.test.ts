@@ -1,14 +1,12 @@
+// @vitest-environment node
+
+import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import {
   appendInstalledPluginsAsComposerApps,
   enrichComposerApps,
 } from '@wegent/chat-core/composer-plugin-metadata'
 import { describe, expect, test } from 'vitest'
-import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
-import {
-  composerAppPluginKey,
-  pluginPresentation,
-  overlayMarketplaceLogosOnComposerApps,
-} from './composerPluginMetadata'
+import { composerAppPluginKey, pluginPresentation } from './composerPluginMetadata'
 
 const githubApp: LocalDeviceApp = {
   id: 'github',
@@ -52,17 +50,6 @@ const githubPlugin: InstalledPlugin = {
   status: { state: 'enabled' },
 }
 
-test('uses the connector slug as its plugin icon key', () => {
-  expect(
-    composerAppPluginKey({
-      ...githubApp,
-      id: 'wegent:github',
-      pluginDisplayNames: ['Wegent Cloud'],
-      source: 'wegent-connector',
-    })
-  ).toBe('github')
-})
-
 const superpowersPlugin: InstalledPlugin = {
   apiVersion: 'wegent.ai/v1',
   kind: 'InstalledPlugin',
@@ -102,22 +89,6 @@ const superpowersPlugin: InstalledPlugin = {
 }
 
 describe('enrichComposerApps', () => {
-  test('uses the installed plugin icon and localized metadata for slash commands', () => {
-    expect(
-      enrichComposerApps([githubApp], [githubPlugin], plugin => pluginPresentation(plugin, []))
-    ).toEqual([
-      expect.objectContaining({
-        name: 'GitHub',
-        pluginKey: 'github',
-        description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
-        logoUrl:
-          '/wework/executor/v1/plugin-image?path=%2FUsers%2Ftest%2Fplugins%2Fgithub%2Fassets%2Ficon.png',
-        pluginDisplayNames: ['GitHub'],
-        trialTemplates: expect.any(Array),
-      }),
-    ])
-  })
-
   test('preserves the canonical plugin key when the app uses a localized display name', () => {
     const localizedPlugin: InstalledPlugin = {
       ...githubPlugin,
@@ -244,24 +215,6 @@ describe('appendInstalledPluginsAsComposerApps', () => {
         trialTemplates: expect.any(Array),
       }),
     ])
-  })
-
-  test('does not duplicate plugins already represented by an app', () => {
-    expect(
-      appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin], plugin =>
-        pluginPresentation(plugin, [])
-      )
-    ).toEqual([githubApp])
-  })
-
-  test('skips disabled skill-only plugins', () => {
-    const disabled = {
-      ...superpowersPlugin,
-      spec: { ...superpowersPlugin.spec, enabled: false },
-    }
-    expect(
-      appendInstalledPluginsAsComposerApps([], [disabled], plugin => pluginPresentation(plugin, []))
-    ).toEqual([])
   })
 
   test('includes installed plugins that only have a mention path and no skill files', () => {
@@ -501,71 +454,6 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       expect.objectContaining({
         id: 'plugin:broken-plugin',
         skillPath: 'plugin://broken-plugin@wegent',
-      }),
-    ])
-  })
-})
-
-describe('overlayMarketplaceLogosOnComposerApps', () => {
-  test('replaces unresolved composer logos with marketplace package logos', () => {
-    const apps: LocalDeviceApp[] = [
-      {
-        id: 'plugin:weibo-api-wiki',
-        name: '微博开放平台内部WIKI',
-        pluginKey: 'weibo-api-wiki',
-        description: null,
-        logoUrl: '/plugin-icons/wework.svg',
-        isAccessible: true,
-        isEnabled: true,
-        source: 'installed-plugin',
-      },
-      {
-        id: 'wegent:dingtalk',
-        name: '钉钉',
-        description: null,
-        logoUrl: 'https://example.com/dingtalk.png',
-        isAccessible: true,
-        isEnabled: true,
-        source: 'wegent-connector',
-      },
-    ]
-
-    expect(
-      overlayMarketplaceLogosOnComposerApps(apps, [
-        {
-          id: 42,
-          remotePluginId: 'wegent~Plugin_42',
-          name: 'weibo-api-wiki',
-          displayName: '微博开放平台内部WIKI',
-          description: '',
-          visibility: 'workspace',
-          featured: false,
-          installed: true,
-          enabled: true,
-          sourceType: 'marketplace',
-          ownerUserId: 1,
-          components: {
-            skills: [],
-            commands: [],
-            agents: [],
-            hooks: [],
-            mcps: [],
-            lsps: [],
-            monitors: [],
-            bins: [],
-          },
-          manifest: {},
-          interface: { logo: 'data:image/png;base64,wiki' },
-        },
-      ])
-    ).toEqual([
-      expect.objectContaining({
-        id: 'plugin:weibo-api-wiki',
-        logoUrl: 'data:image/png;base64,wiki',
-      }),
-      expect.objectContaining({
-        id: 'wegent:dingtalk',
-        logoUrl: 'https://example.com/dingtalk.png',
       }),
     ])
   })

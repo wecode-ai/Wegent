@@ -8,6 +8,7 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
+  observeConversationScrollWrites,
   recordConversationScrollWrite,
 } from './conversationScrollWrite'
 
@@ -56,8 +57,13 @@ export function useConversationVirtualizer({
     observeElementOffset: (instance, callback) => {
       readOffsetRef.current = callback
       const dispose = observeElementOffset(instance, callback)
+      const element = instance.scrollElement
+      const stopObservingWrites = element
+        ? observeConversationScrollWrites(element, offset => callback(offset, false))
+        : undefined
       return () => {
         readOffsetRef.current = null
+        stopObservingWrites?.()
         dispose?.()
       }
     },
@@ -85,15 +91,9 @@ export function useConversationVirtualizer({
           () => elementScroll(offset, settings, instance)
         )
       const after = element?.scrollTop ?? before
-      // A clamped no-op write emits no native scroll event. Without its read-back,
-      // the engine can retain an estimated offset beyond a short conversation.
-      if (
-        element &&
-        settings.behavior !== 'smooth' &&
-        after === before &&
-        Math.abs(after - offset - (settings.adjustments ?? 0)) > 1
-      )
-        readOffsetRef.current?.(after, false)
+      // Instant writes have already landed. A native scroll event can be delayed
+      // or absent, so acknowledge the actual offset before the next commit.
+      if (element && settings.behavior !== 'smooth') readOffsetRef.current?.(after, false)
       onScrollAdjustment?.(after - before)
     },
   })
@@ -132,5 +132,10 @@ export function useConversationVirtualizer({
     }
     return () => observer.disconnect()
   }, [listRef, options.enabled, scrollElementRef])
-  return { virtualizer, tailHeight: scrollTailHeight, scrollMargin: prefix }
+  return {
+    virtualizer,
+    tailHeight: scrollTailHeight,
+    scrollMargin: prefix,
+    viewportReady,
+  }
 }

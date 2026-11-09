@@ -26,6 +26,7 @@ def _context() -> RemoteDeviceCommandContext:
 def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch):
     monkeypatch.delenv("REMOTE_DEVICE_BACKEND_URL", raising=False)
     monkeypatch.delenv("REMOTE_DEVICE_DOCKER_IMAGE", raising=False)
+    monkeypatch.delenv("REMOTE_DEVICE_EXECUTOR_INSTALL_URL", raising=False)
     monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "")
     monkeypatch.setattr(settings, "WEGENT_SOCKET_URL", "")
     provider = DefaultRemoteDeviceCommandProvider()
@@ -34,6 +35,10 @@ def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch)
     rebuilt = provider.build(_context())
 
     assert first.command == rebuilt.command
+    assert (
+        "https://raw.githubusercontent.com/wecode-ai/Wegent/main/"
+        "executor/scripts/local_executor_install.sh"
+    ) in first.commands[1].command
     assert first.env["DEVICE_ID"] == "device-stable-1"
     assert first.env["DEVICE_CODE_SERVER_ENABLED"] == "true"
     assert first.env["DEVICE_TERMINAL_ENABLED"] == "true"

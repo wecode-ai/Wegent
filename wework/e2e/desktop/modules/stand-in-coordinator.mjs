@@ -1,3 +1,6 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
+import { verifyStandInScheduleActivity } from './stand-in-schedule-activity.mjs'
+import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
@@ -72,20 +75,32 @@ export function createStandInCoordinatorVerification({
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       await control.command('click', '[data-testid="stand-in-primary-open"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-      await control.command('click', '[data-testid="stand-in-primary-enabled"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
-        visible: false,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      assert.equal(
+        (await rpc('runtime.stand_in.personal.get', { userId: USER })).primary.enabled,
+        true
+      )
+      await openStandInSettings(control)
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]')
       assert.equal(
         await control.command('getElementCount', '[data-testid="stand-in-work-view-scheduled"]'),
         '0'
       )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-processing-settings-toggle"]'
+      )
+      await control.command('click', '[data-testid="stand-in-calendar-policy"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+        visible: false,
+      })
+      await openStandInSettings(control)
+      await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await openConnectionTypePicker(control)
+      await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('click', '[data-testid="create-automation-button"]')
       await control.command('click', '[data-testid="automation-save-button"]')
       await control.command('waitFor', '[data-testid="automation-draft-error"]', {
@@ -123,6 +138,7 @@ export function createStandInCoordinatorVerification({
       const schedule = schedules.items.find(row => row.name === SCHEDULE)
       assert.deepEqual(schedule.taskRequest.standInOwner, { userId: USER, roleId: '@primary' })
       assert.equal(schedule.taskPayload.executionRequest, undefined)
+      await control.command('click', `[data-testid="automation-open-${schedule.id}"]`)
       await control.command('fill', '[data-testid="automation-name-input"]', {
         value: `${SCHEDULE}（已调整）`,
       })
@@ -132,6 +148,7 @@ export function createStandInCoordinatorVerification({
         (await rpc('runtime.automations.list', {})).items.find(row => row.id === schedule.id).name,
         `${SCHEDULE}（已调整）`
       )
+      await control.command('click', `[data-testid="automation-open-${schedule.id}"]`)
       await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
       await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
         text: '已暂停',
@@ -160,15 +177,18 @@ export function createStandInCoordinatorVerification({
         timeoutMs: modelResponseTimeoutMs,
       })
       await captureScreenshot(control, '24b-calendar-result-in-original-work.png')
+      await verifyStandInScheduleActivity(control, rpc, schedule, captureScreenshot)
 
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       const preferences = await control.command('getValue', '[data-testid="stand-in-preferences"]')
       await control.command('fill', '[data-testid="stand-in-preferences"]', {
         value: `${preferences}\n保留这份说明草稿`,
       })
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
+      const savedSchedules = (await rpc('runtime.automations.list', {})).items
       await control.command('click', '[data-testid="create-automation-button"]')
       await control.command('fill', '[data-testid="automation-name-input"]', {
         value: '不保存的日历草稿',
@@ -182,6 +202,12 @@ export function createStandInCoordinatorVerification({
         await control.command('getElementCount', '[data-testid="automation-name-input"]'),
         '0'
       )
+      const remainingSchedules = (await rpc('runtime.automations.list', {})).items
+      assert.deepEqual(
+        remainingSchedules.map(({ id, name }) => ({ id, name })),
+        savedSchedules.map(({ id, name }) => ({ id, name }))
+      )
+      assert.ok(!remainingSchedules.some(row => row.name === '不保存的日历草稿'))
       await control.command('click', '[data-testid="stand-in-connections-back"]')
       await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
       assert.equal(
@@ -198,11 +224,17 @@ export function createStandInCoordinatorVerification({
       await control.command('waitFor', 'html[data-theme="dark"]')
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('click', `[data-testid="stand-in-overview-role-${role.id}"]`)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-      await control.command('click', '[data-testid="stand-in-connections-open"]')
+      await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
+      await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')
-      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-save"]'), '0')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-processing-settings-toggle"]'
+      )
+      await control.command('waitFor', '[data-testid="stand-in-calendar-policy"]')
+      await control.command('waitFor', '[data-testid="stand-in-save"]')
       const previousWindowSize = JSON.parse(
         await control.command('setMainWindowSize', 'body', {
           value: JSON.stringify({ width: 960, height: 720 }),
@@ -216,6 +248,7 @@ export function createStandInCoordinatorVerification({
       )
       await captureScreenshot(control, '24c1-role-calendar-dark-compact.png')
       await control.command('click', '[data-testid="create-automation-button"]')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-save"]'), '0')
       await control.command('fill', '[data-testid="automation-name-input"]', {
         value: '角色的安排草稿',
       })

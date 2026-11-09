@@ -47,13 +47,17 @@ from app.services.loop_item_executions.profile import (
     validate_wework_execution_target,
 )
 from app.services.loop_item_executions.runtime_identity import (
+    bind_comment_user_identity,
     execution_actor_options,
     execution_conversation_task_id,
     execution_runtime_task_id,
     execution_runtime_turn_id,
     runtime_task_id_for,
 )
-from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
+from app.services.project_automation_domain import (
+    TERMINAL_RUN_STATUSES,
+    status_automation_target,
+)
 from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
@@ -280,6 +284,34 @@ def execution_display_state(execution: LoopItemExecution) -> str:
     ):
         return "running"
     return "waiting_runtime"
+
+
+def execution_human_waiting_since(execution: LoopItemExecution | None) -> str | None:
+    """A finished attempt returns work to people; execution timestamps are UTC."""
+    if execution is None or execution_display_state(execution) not in {
+        "succeeded",
+        "failed",
+        "cancelled",
+    }:
+        return None
+    completed_at = _optional_datetime(execution.completed_at)
+    if not isinstance(completed_at, datetime):
+        return None
+    if completed_at.tzinfo is None:
+        completed_at = completed_at.replace(tzinfo=timezone.utc)
+    return completed_at.astimezone(timezone.utc).isoformat()
+
+
+def execution_processing_actor(
+    execution: LoopItemExecution | None, ai_state: object
+) -> dict[str, str] | None:
+    """Only an observed running execution identifies the current AI actor."""
+    if execution is None or execution_display_state(execution) != "running":
+        return None
+    name = ai_state.get("agent_name") if isinstance(ai_state, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return {"kind": "agent", "name": name.strip()}
 
 
 def execution_ai_state(
@@ -2195,7 +2227,11 @@ class LoopItemExecutionService:
             )
         if row is None:
             task = db.get(LoopItem, execution.loop_item_id)
-            if task is not None and task.status == "completed":
+            if (
+                task is not None
+                and task.status == "completed"
+                and status_automation_target(origin_context) != "completed"
+            ):
                 logger.info(
                     "[LoopItemExecution] Activity open skipped for completed "
                     "Issue execution=%s task=%s",
@@ -2300,6 +2336,8 @@ class LoopItemExecutionService:
         observed_at: Optional[datetime] = None,
         event_seq: Optional[int] = None,
         reconciled: bool = False,
+        commit: bool = True,
+        termination_reason: str = "runtime_succeeded",
     ) -> Optional[LoopItemExecution]:
         """Mark a run completed and release its device slot."""
 
@@ -2314,8 +2352,9 @@ class LoopItemExecutionService:
             observed_state=OBSERVED_SUCCEEDED,
             observed_at=observed_at,
             event_seq=event_seq,
-            termination_reason="runtime_succeeded",
+            termination_reason=termination_reason,
             reconciled=reconciled,
+            commit=commit,
         )
         return result
 
@@ -2688,7 +2727,10 @@ class LoopItemExecutionService:
             return False
         execution = (
             db.query(LoopItemExecution)
-            .filter(LoopItemExecution.automation_run_id == run_id)
+            .filter(
+                LoopItemExecution.automation_run_id == run_id,
+                LoopItemExecution.owns_automation_run,
+            )
             .order_by(LoopItemExecution.id.desc())
             .first()
         )
@@ -2746,7 +2788,7 @@ class LoopItemExecutionService:
         latest_query = db.query(
             LoopItemExecution.automation_run_id.label("automation_run_id"),
             func.max(LoopItemExecution.id).label("execution_id"),
-        ).filter(LoopItemExecution.automation_run_id != "")
+        ).filter(LoopItemExecution.owns_automation_run)
         if normalized_run_ids is not None:
             latest_query = latest_query.filter(
                 LoopItemExecution.automation_run_id.in_(normalized_run_ids)
@@ -2869,7 +2911,7 @@ class LoopItemExecutionService:
                     "subagent_status": terminal_status,
                 }
 
-        if execution.automation_run_id:
+        if execution.owns_automation_run:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None:
                 run_status = {
@@ -2934,7 +2976,7 @@ class LoopItemExecutionService:
                 row.runtime_activity_key = project_chat_message_key(
                     row.message_id, deleted=True
                 )
-        if execution.automation_run_id:
+        if execution.owns_automation_run:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None and run.status not in {
                 "succeeded",
@@ -3162,7 +3204,7 @@ class LoopItemExecutionService:
         *,
         commit: bool = False,
     ) -> None:
-        if not execution.automation_run_id:
+        if not execution.owns_automation_run:
             return
         from app.models.delivery import ProjectAutomationRun
 
@@ -3435,7 +3477,17 @@ class LoopItemExecutionService:
         # Any accepted observation identifies the current turn, even when the
         # created event lost a concurrent lease update or arrived out of order.
         self._bind_activity_runtime_turn(db, row, payload)
-        db.commit()
+        from app.services.project_chat.execution_snapshot import (
+            runtime_event_client_message_id,
+        )
+        from app.services.project_chat.human_requests import settle_execution_reply
+
+        settle_execution_reply(
+            db, row, observed_message_id=runtime_event_client_message_id(payload)
+        )
+        from app.services.project_chat.service import project_chat_service
+
+        project_chat_service._commit(db)
         db.refresh(row)
         return row
 
@@ -3575,6 +3627,7 @@ class LoopItemExecutionService:
             )
             from app.services.runtime_work_service import compile_runtime_task_create
 
+            request = bind_comment_user_identity(request, execution)
             manager_request = compile_runtime_task_create(
                 db=db,
                 user_id=execution.executor_owner_user_id,
@@ -3604,6 +3657,7 @@ class LoopItemExecutionService:
                     execution=execution,
                 )
             )
+            request = bind_comment_user_identity(request, execution)
             if execution_target_id:
                 if not _same_runtime_device(
                     db,
@@ -3699,9 +3753,6 @@ class LoopItemExecutionService:
                     {
                         "runtimeAction": "send",
                         "queueIfBusy": True,
-                        "clientUserMessageId": execution.runtime_origin_context[
-                            "comment_trigger_message_id"
-                        ],
                     }
                 )
                 if execution.runtime_origin_context.get("dispatch_role") == "manager":
@@ -4006,10 +4057,8 @@ class LoopItemExecutionService:
                     "Selected Runtime owner no longer matches the queued execution"
                 )
             if run is not None and rule is not None:
-                # Automation only decides who receives the task. Once a
-                # project robot is assigned it must execute through the same
-                # role + live task-context contract as an ordinary assignment;
-                # the manager's scheduling prompt is not an execution prompt.
+                # Restore automation provenance while the persisted assignment
+                # intent supplies the execution prompt and runtime selection.
                 origin_context = self._automation_runtime_context(run, rule)
             else:
                 origin_context = dict(execution.runtime_origin_context)

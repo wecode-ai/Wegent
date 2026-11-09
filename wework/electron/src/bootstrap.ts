@@ -1,7 +1,7 @@
 import { app, dialog } from 'electron'
 import { existsSync } from 'node:fs'
 import { readFile, realpath } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { resolveWorkbenchPaths } from './runtime/workbench-environment.js'
 import { optionalText, ReleaseStore } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
@@ -55,6 +55,37 @@ async function routeRelease(): Promise<boolean> {
       'user-data'
     )
   const root = join(dataDirectory, 'releases')
+  const store = new ReleaseStore(root)
+  const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
+  const recoveryToken = process.env.WEWORK_RELEASE_RECOVERY
+  delete process.env.WEWORK_RELEASE_SUPERVISED
+  delete process.env.WEWORK_RELEASE_RECOVERY
+  const physicalRollback =
+    process.platform === 'darwin' ? await optionalText(join(root, 'macos-rollback')) : null
+  const slotPath = relative(join(root, 'slots'), process.execPath)
+  const versionedPayload = slotPath !== '..' && !slotPath.startsWith('../') && !isAbsolute(slotPath)
+  if (
+    process.platform === 'darwin' &&
+    !supervisedId &&
+    !recoveryToken &&
+    !versionedPayload &&
+    !physicalRollback
+  ) {
+    // Only the installed package owns ordinary startup. A delayed recovery or
+    // versioned bridge must still route the selected release after its journal
+    // has been finalized; it must never open data in the rejected host.
+    try {
+      if (!(await store.activation())) {
+        await bindInstalledReleaseComponents(store)
+        return true
+      }
+    } catch (error) {
+      console.warn('[release-bootstrap] Cannot read update history; starting installed app', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      return true
+    }
+  }
   if (
     process.env.WEWORK_RELEASE_ROOT &&
     resolve(process.env.WEWORK_RELEASE_ROOT) !== resolve(root) &&
@@ -62,10 +93,7 @@ async function routeRelease(): Promise<boolean> {
   ) {
     throw new Error('Release root does not match the application data directory')
   }
-  const store = new ReleaseStore(root)
   const active = await store.active()
-  const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
-  delete process.env.WEWORK_RELEASE_SUPERVISED
   const bridge = await optionalText(join(root, 'bridge'))
   // The installed entry owns restoring physical Contents even when activation
   // failed or rollback selected an older payload. A delivered recovery bridge
@@ -164,6 +192,23 @@ async function routeRelease(): Promise<boolean> {
   return false
 }
 
+async function bindInstalledReleaseComponents(store: ReleaseStore): Promise<void> {
+  const release = await store.active()
+  if (
+    !release ||
+    release.version !== metadata.version ||
+    resolve(release.executable) !== resolve(process.execPath) ||
+    !release.macosInstallation
+  )
+    return
+  await enterInstalledMacosRelease(store, release, process.resourcesPath)
+  process.env.WEWORK_HARNESS_RUNTIME_ROOT = release.runtimeRoot
+  process.env.WEWORK_ACTIVE_RELEASE_ID = release.id
+  process.env.WEWORK_RELEASE_ROOT = store.root
+  process.env.WEWORK_COMPONENT_DATA_DIRECTORY =
+    release.componentDataDirectory ?? store.slot(release.id)
+}
+
 async function launchSelectedRelease(
   store: ReleaseStore,
   dataDirectory: string,
@@ -226,12 +271,13 @@ async function launchSelectedRelease(
   }
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
-  if (process.platform === 'darwin' && active.macosInstallation) {
-    const selectedUserData = await releaseBridgeUserData(store, active.executable, dataDirectory)
-    if (!selectedUserData) throw new Error('The selected release does not own its launch data')
-    process.env.WEWORK_USER_DATA_DIR = selectedUserData
-    process.env.WEWORK_RELEASE_ROOT = root
-  }
+  // Legacy Windows entries resolve the release root above user-data and compare
+  // its lexical path with the launcher's handoff. Pass the selected store owner
+  // explicitly on every platform, including interrupted rollback recovery.
+  const selectedUserData = await releaseBridgeUserData(store, active.executable, dataDirectory)
+  if (!selectedUserData) throw new Error('The selected release does not own its launch data')
+  process.env.WEWORK_USER_DATA_DIR = selectedUserData
+  process.env.WEWORK_RELEASE_ROOT = root
   const bridge = (await optionalText(join(root, 'bridge'))) || process.execPath
   const launcher =
     process.platform === 'darwin' && active.macosInstallation

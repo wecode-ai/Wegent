@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import event
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -20,6 +21,9 @@ from app.models.delivery import (
     LoopItem,
     LoopItemActiveAssignment,
     LoopItemComment,
+    LoopNode,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
     ProjectChatAgent,
 )
 from app.models.kind import Kind
@@ -46,6 +50,69 @@ from tests.utils.collaboration import (
 def isolate_notification_delivery():
     with patch("app.core.async_utils.schedule_async_task"):
         yield
+
+
+@pytest.mark.parametrize("for_update", [False, True])
+def test_assignment_history_query_does_not_require_a_named_mysql_index(
+    for_update: bool,
+) -> None:
+    with (
+        Session() as db,
+        patch("sqlalchemy.orm.Query.all", autospec=True, return_value=[]) as read,
+    ):
+        assert (
+            issue_assignment_service._assignment_comments(
+                db, ["issue-with-history"], for_update=for_update
+            )
+            == []
+        )
+
+    query = read.call_args.args[0]
+    statement = str(
+        query.statement.compile(
+            dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "INDEX" not in statement
+    assert "loop_items.loop_item_id IN ('issue-with-history')" in statement
+    assert ("FOR UPDATE" in statement) is for_update
+    assert query.load_options._populate_existing is for_update
+    if for_update:
+        where_clause = statement.split("WHERE ", 1)[1].split(" ORDER BY", 1)[0]
+        assert where_clause == "loop_items.loop_item_id IN ('issue-with-history')"
+
+
+@pytest.mark.parametrize(
+    "deleted_at", [None, datetime(1970, 1, 1), datetime(1970, 1, 1, 0, 0, 1)]
+)
+def test_locking_assignment_history_filters_issue_nodes(
+    deleted_at: datetime | None,
+) -> None:
+    assignment = LoopItemComment(
+        id="assignment",
+        deleted_at=deleted_at,
+        metadata_json={"event_type": "assignment"},
+    )
+    nodes = [
+        LoopNode(
+            id="attachment",
+            resource_type="attachment",
+            metadata_json={"event_type": "assignment"},
+        ),
+        LoopItemComment(id="normal-comment", metadata_json={"event_type": "comment"}),
+        LoopItemComment(id="no-metadata", metadata_json=None),
+        LoopItemComment(id="invalid-metadata", metadata_json=[]),
+        LoopItemComment(
+            id="deleted",
+            deleted_at=datetime(2026, 11, 9),
+            metadata_json={"event_type": "assignment"},
+        ),
+        assignment,
+    ]
+    with Session() as db, patch("sqlalchemy.orm.Query.all", return_value=nodes):
+        assert issue_assignment_service._assignment_comments(
+            db, ["issue-with-history"], for_update=True
+        ) == [assignment]
 
 
 def _make_project(db: Session, user: User) -> CloudProject:
@@ -995,6 +1062,71 @@ def test_create_completed_issue_does_not_start_execution(
         .count()
         == 0
     )
+
+
+@pytest.mark.parametrize("target_status", ["in_review", "completed"])
+@pytest.mark.parametrize("target_type", ["agent", "team"])
+def test_status_automation_creates_new_runs_for_an_existing_agent_assignment(
+    test_db: Session, test_user: User, target_status: str, target_type: str
+) -> None:
+    project = _make_project(test_db, test_user)
+    if target_type == "agent":
+        bot = _make_bot(test_db, project, test_user)
+        target_id = bot.id
+    else:
+        team = create_runnable_wegent_team(
+            test_db, user_id=test_user.id, name_prefix="status-handler"
+        )
+        _make_bot(test_db, project, test_user, wegent_team_id=team.id)
+        target_id = str(team.id)
+    item = _make_item(test_db, project, test_user)
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Status handler",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(rule)
+    test_db.flush()
+    run_ids = []
+    for _ in range(2):
+        run = ProjectAutomationRun(
+            cloud_project_id=project.id,
+            parent_id=rule.id,
+            created_by_user_id=test_user.id,
+        )
+        test_db.add(run)
+        item.status = target_status
+        test_db.commit()
+        run_ids.append(str(run.id))
+        loop_item_service.assign(
+            test_db,
+            project_id=project.id,
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                assignee_type=target_type,
+                assignee_id=target_id,
+                version=item.version,
+                trigger="automation",
+            ),
+            automation_context={
+                "run_id": str(run.id),
+                "event": {
+                    "type": "task.status_changed",
+                    "payload": {"status": target_status},
+                },
+            },
+        )
+
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .all()
+    )
+    assert {row.automation_run_id for row in executions} == set(run_ids)
+    assert len(executions) == 2
+    if target_status == "completed":
+        assert item.status == "completed"
 
 
 def test_refresh_execution_configuration_starts_run_without_snapshot(

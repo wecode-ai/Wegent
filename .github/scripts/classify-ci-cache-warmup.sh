@@ -5,6 +5,7 @@ set -euo pipefail
 declare -A changed=(
   [docker]=false
   [executor_rust]=false
+  [backend_rs_rust]=false
   [node]=false
   [python]=false
   [wework_target]=false
@@ -21,13 +22,35 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    .github/actions/* | .github/scripts/lib/apt-packages.sh | \
+    .github/scripts/verified-build-oci.mjs)
+      changed[node]=true
+      changed[wework_target]=true
+      ;;
+    .github/actions/build-frontend-e2e/* | .github/scripts/frontend-e2e-build*.mjs | \
+      .github/scripts/restore-frontend-ci-build.mjs | \
+      .github/scripts/archive-frontend-e2e-build.sh | .github/scripts/restore-frontend-e2e-build.sh)
+      changed[node]=true
+      ;;
+    .github/ci/rust-toolchain | .github/actions/* | .github/scripts/lib/apt-packages.sh | \
       .github/workflows/ci-cache-warmup.yml)
       mark_all
       ;;
-    .github/scripts/wework-windows-e2e-build-key.mjs | \
+    .github/runtime-images/* | .github/scripts/ci-prebuilt-images.* | LICENSES/Apache-2.0.txt | \
+      .github/ci/prebuilt-images.json | .github/scripts/resolve-ci-image.* | \
+      .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
+      .github/scripts/wework-windows-e2e-build-key.mjs | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/restore-wework-core-e2e-build.sh | \
+      .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/download-actions-artifact.sh | \
+      .github/scripts/restore-actions-runtime.sh | \
+      .github/scripts/runtime-artifact.* | \
+      .github/scripts/prepare-macos-inspector-e2e.sh | \
+      .github/scripts/build-macos-e2e-runtimes.sh | \
+      .github/scripts/macos-e2e-source-digest.* | \
+      .github/scripts/macos-e2e-build*.mjs | .github/scripts/restore-macos-ci-build.mjs | \
+      .github/scripts/verified-build-oci.mjs | \
+      .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh | \
       .github/scripts/publish-wework-core-e2e-build-oci.sh | \
       .github/scripts/resolve-backend-rs-e2e-runtime.sh | \
       .github/scripts/resolve-wework-core-e2e-build-ref.sh | \
@@ -57,7 +80,10 @@ classify_path() {
     .github/scripts/install-executor-rust-system-dependencies.sh)
       changed[executor_rust]=true
       ;;
-    .github/claude-code-cli/* | frontend/src/* | package.json | \
+    frontend/e2e/fixtures/claudecode-executor/*)
+      changed[docker]=true
+      ;;
+    .github/claude-code-cli/* | frontend/* | .npmrc | patches/* | package.json | \
       pnpm-workspace.yaml | \
       frontend/package.json | wework/package.json | packages/*)
       changed[node]=true
@@ -80,23 +106,40 @@ classify_path() {
       ;;
     wework/e2e/* | wework/test-results/*)
       ;;
-    .cargo/* | .npmrc | backend-rs/* | wework/*)
+    backend-rs/*)
+      changed[backend_rs_rust]=true
+      changed[wework_target]=true
+      ;;
+    shared/rust/*)
+      changed[docker]=true
+      changed[executor_rust]=true
+      changed[backend_rs_rust]=true
+      changed[wework_target]=true
+      ;;
+    .cargo/*)
+      changed[executor_rust]=true
+      changed[backend_rs_rust]=true
+      changed[wework_target]=true
+      ;;
+    wework/*)
       changed[wework_target]=true
       ;;
     docker/wework-e2e/desktop.Dockerfile)
       changed[docker]=true
       changed[wework_target]=true
       ;;
-    executor/*)
+    executor/* | sdk/plugin-auth/* | sdk/plugin-creator/*)
       changed[docker]=true
       changed[executor_rust]=true
       changed[wework_target]=true
       ;;
-    shared/assets/*)
+    shared/protocol/*)
       changed[wework_target]=true
       changed[docker]=true
       ;;
-    frontend/e2e/fixtures/claudecode-executor/*)
+    shared/assets/*)
+      changed[node]=true
+      changed[wework_target]=true
       changed[docker]=true
       ;;
   esac
@@ -115,6 +158,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in docker executor_rust node python wework_target; do
+for key in docker executor_rust backend_rs_rust node python wework_target; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

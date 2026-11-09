@@ -15,6 +15,8 @@ import {
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { rustSourceInputs } from './rust-source-inputs.mjs'
+
 const DEBOUNCE_DELAY_MS = 350
 const EXIT_RESTART_DELAY_MS = 1000
 const EXIT_RESTART_MAX_DELAY_MS = 10_000
@@ -26,6 +28,8 @@ const executorDir = resolve(
   process.env.WEGENT_EXECUTOR_SOURCE_DIR || join(scriptDir, '..', '..', 'executor')
 )
 const manifestPath = join(executorDir, 'Cargo.toml')
+let sourceDirectories = []
+let sourceManifests = []
 const targetDir = resolve(
   process.cwd(),
   process.env.WEGENT_EXECUTOR_TARGET_DIR ||
@@ -84,11 +88,11 @@ function hashPath(hash, path) {
 
 function sourceFingerprint() {
   const hash = createHash('sha256')
-  for (const path of [manifestPath, join(executorDir, 'Cargo.lock')]) {
+  for (const path of sourceManifests) {
     hash.update(relative(executorDir, path))
     hash.update(readFileSync(path))
   }
-  hashPath(hash, join(executorDir, 'src'))
+  for (const path of sourceDirectories) hashPath(hash, path)
   return hash.digest('hex')
 }
 
@@ -288,15 +292,19 @@ function registerWatcher(watcher) {
 }
 
 function startWatching() {
-  const sourceDir = join(executorDir, 'src')
-  registerWatcher(watch(sourceDir, { recursive: true }, scheduleSourceRestart))
-  registerWatcher(
-    watch(executorDir, (_event, filename) => {
-      if (filename === 'Cargo.toml' || filename === 'Cargo.lock') {
-        scheduleSourceRestart()
-      }
-    })
-  )
+  for (const sourceDir of sourceDirectories) {
+    registerWatcher(watch(sourceDir, { recursive: true }, scheduleSourceRestart))
+  }
+  const manifestDirectories = [...new Set(sourceManifests.map(path => dirname(path)))]
+  for (const path of manifestDirectories) {
+    registerWatcher(
+      watch(path, (_event, filename) => {
+        if (sourceManifests.includes(join(path, filename?.toString() || ''))) {
+          scheduleSourceRestart()
+        }
+      })
+    )
+  }
   log(`wegent-executor dev reload watching ${executorDir}`)
 }
 
@@ -324,6 +332,9 @@ setInterval(() => {
 }, PARENT_CHECK_INTERVAL_MS)
 
 try {
+  const sources = rustSourceInputs(manifestPath)
+  sourceDirectories = sources.directories
+  sourceManifests = sources.files
   startWatching()
   if (existsSync(executorBinary)) {
     lastAttemptedSourceFingerprint = sourceFingerprint()

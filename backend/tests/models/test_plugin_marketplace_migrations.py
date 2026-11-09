@@ -21,7 +21,14 @@ from app.models.plugin_publication import (
 
 
 def _load_migration(filename: str) -> ModuleType:
-    path = Path(__file__).parents[2] / "alembic" / "versions" / filename
+    path = (
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
+        / "versions"
+        / filename
+    )
     spec = importlib.util.spec_from_file_location(filename, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

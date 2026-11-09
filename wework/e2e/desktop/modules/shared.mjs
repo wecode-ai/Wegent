@@ -26,6 +26,7 @@ import { reservePort } from '../port-reservation.mjs'
 import { appendProcessOutput } from '../process-output.mjs'
 import {
   crashOwnedProcessTree,
+  logDesktopE2eSignal,
   processIsAlive,
   stopProcess,
   stopProcessGroup,
@@ -550,6 +551,7 @@ const CLOUD_PUBLIC_MODEL_OPTIONS = {
   weworkCloudModelUpstreamApiFormat: 'openai-responses',
 }
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
+const CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION = '999.0.0'
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
@@ -774,8 +776,13 @@ function shouldStopAfterDesktopCheckpoint(checkpoint) {
 }
 
 function shouldConfigureToolDetailsMcp() {
-  if (TOOL_BLOCK_ORDER_ONLY) return true
-  return getActiveOnlyModes().length === 0 && shouldRunDesktopCheckpoint('rendering-extensions')
+  if (TOOL_BLOCK_ORDER_ONLY || MODEL_SWITCH_ONLY) return true
+  const selectedCheckpointNeedsTools =
+    shouldRunDesktopCheckpoint('rendering-extensions') ||
+    shouldRunDesktopCheckpoint('model-routing')
+  // Cloud model matrices use these tools; unrelated only modes never do.
+  if (CLOUD_ONLY) return selectedCheckpointNeedsTools
+  return getActiveOnlyModes().length === 0 && selectedCheckpointNeedsTools
 }
 
 function shouldRunPluginSegment(segment) {
@@ -1056,12 +1063,18 @@ async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
     return
   }
 
-  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGTERM')
+  if (processIsAlive(app.pid)) {
+    logDesktopE2eSignal({ action: 'stop-app', pid: app.pid, signal: 'SIGTERM' })
+    process.kill(app.pid, 'SIGTERM')
+  }
   const startedAt = Date.now()
   while (processIsAlive(app.pid) && Date.now() - startedAt < 10_000) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
   }
-  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGKILL')
+  if (processIsAlive(app.pid)) {
+    logDesktopE2eSignal({ action: 'stop-app', pid: app.pid, signal: 'SIGKILL' })
+    process.kill(app.pid, 'SIGKILL')
+  }
   await stopProcess(app.launcher)
 }
 
@@ -1087,22 +1100,59 @@ async function runChecked(command, args, options = {}) {
 class BlockingNetworkProxy {
   constructor() {
     this.requests = []
+    this.requestEvents = []
+    this.connections = []
+    this.generation = 0
     this.sockets = new Set()
     this.released = false
     this.server = createTcpServer(socket => {
+      const acceptedAt = Date.now()
+      const acceptedGeneration = this.generation
+      const connectionId = this.connections.length + 1
+      const acceptedWhileReleased = this.released
+      const connection = { connectionId, acceptedAt, acceptedGeneration, acceptedWhileReleased }
+      this.connections.push(connection)
       this.sockets.add(socket)
-      socket.on('close', () => this.sockets.delete(socket))
-      socket.on('error', () => this.sockets.delete(socket))
-      if (this.released) {
-        socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
-        return
-      }
+      socket.on('close', () => {
+        connection.closedAt = Date.now()
+        this.sockets.delete(socket)
+      })
+      socket.on('error', () => {
+        connection.errorAt = Date.now()
+        this.sockets.delete(socket)
+      })
       let request = ''
       socket.on('data', chunk => {
         if (request) return
         request = chunk.toString('utf8').split(/\r?\n/, 1)[0]?.trim() ?? ''
-        if (request) this.requests.push(request)
+        if (request) {
+          connection.firstDataAt = Date.now()
+          connection.releasedAtFirstData = this.released
+          const [method, destination] = request.split(' ')
+          let host = destination?.split(/[/?#]/)[0] ?? ''
+          try {
+            const absoluteHost = new URL(destination).host
+            if (absoluteHost) host = absoluteHost
+          } catch {
+            // CONNECT targets use authority form instead of an absolute URL.
+          }
+          Object.assign(connection, { method, host })
+          if (acceptedWhileReleased) return
+          this.requests.push(request)
+          this.requestEvents.push({
+            connectionId,
+            acceptedAt,
+            acceptedGeneration,
+            receivedAt: Date.now(),
+            receivedGeneration: this.generation,
+            method,
+            host,
+          })
+        }
       })
+      if (acceptedWhileReleased) {
+        socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      }
     })
   }
 
@@ -1138,6 +1188,7 @@ class BlockingNetworkProxy {
   }
 
   block() {
+    this.generation += 1
     this.released = false
   }
 
@@ -1146,6 +1197,10 @@ class BlockingNetworkProxy {
     for (const socket of this.sockets) socket.destroy()
     this.sockets.clear()
     await new Promise(resolvePromise => this.server.close(resolvePromise))
+    await writeFile(
+      join(resultDir, 'blocking-network-proxy-events.json'),
+      JSON.stringify({ connections: this.connections, requests: this.requestEvents }, null, 2)
+    ).catch(error => console.warn('Could not save blocking proxy diagnostics:', error.message))
   }
 }
 
@@ -1883,6 +1938,7 @@ export {
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_DEVICE_ID,
+  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   REMOTE_DOCKER_DEVICE_ID,
   FRESH_CHAT_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,

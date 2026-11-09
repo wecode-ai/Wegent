@@ -37,14 +37,6 @@ class SandboxArchiveRequest(BaseModel):
     executor_namespace: str = ""
 
 
-class SandboxRestoreResponse(BaseModel):
-    """Response model for sandbox restore operations."""
-
-    success: bool
-    task_id: int
-    skipped: bool = False
-
-
 class ArchiveDownloadUrlResponse(BaseModel):
     """Response model for direct workspace archive downloads."""
 
@@ -136,33 +128,6 @@ async def archive_sandbox_workspace(
     )
 
     return ManualArchiveResponse(task_id=task_id, archive=archive_info)
-
-
-# MIGRATION-CANDIDATE(api="POST /api/internal/workspace-archives/*/restore-sandbox"): remove after final confirmation.
-# @router.post("/{task_id}/restore-sandbox", response_model=SandboxRestoreResponse)
-async def restore_sandbox_workspace(
-    task_id: int,
-    request: SandboxArchiveRequest,
-    db: Session = Depends(get_db),
-):
-    """Restore sandbox runtime files from the latest task archive."""
-    task = _get_active_task(db, task_id)
-
-    restored = await archive_service.restore_workspace(
-        db=db,
-        task=task,
-        executor_name=request.executor_name,
-        executor_namespace=request.executor_namespace,
-        runtime_type="sandbox",
-    )
-
-    if restored:
-        return SandboxRestoreResponse(success=True, task_id=task_id)
-    status = (task.json or {}).get("status") or {}
-    archive = status.get("archive") or {}
-    if not archive.get("storageKey"):
-        return SandboxRestoreResponse(success=True, task_id=task_id, skipped=True)
-    raise HTTPException(status_code=409, detail="sandbox_archive_restore_failed")
 
 
 @router.get("/{task_id}/download-url", response_model=ArchiveDownloadUrlResponse)

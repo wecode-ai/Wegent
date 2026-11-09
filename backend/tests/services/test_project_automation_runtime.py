@@ -125,6 +125,84 @@ async def test_status_event_dispatches_only_when_processing_boundary_is_crossed(
     assert run.metadata_json["event"]["payload"]["previous_status"] == "inbox"
 
 
+@pytest.mark.parametrize(
+    ("previous_status", "current_status", "expected"),
+    [
+        ("in_progress", "custom_review", True),
+        ("completed", "custom_review", True),
+        ("custom_review", "custom_review", False),
+        ("custom_review", "completed", False),
+        (None, "custom_review", False),
+        ("in_progress", None, False),
+    ],
+)
+def test_status_event_matches_only_actual_entry_into_configured_state(
+    previous_status: str | None, current_status: str | None, expected: bool
+) -> None:
+    event = ProjectAutomationEvent(
+        event_type="task.status_changed",
+        project_id="project-1",
+        subject_id="task-1",
+        source="board",
+        actor_user_id=7,
+        payload={"previous_status": previous_status, "status": current_status},
+    )
+
+    assert (
+        ProjectAutomationProcessor._matches(
+            {"transition": "any", "statuses": ["custom_review"]},
+            event,
+            SimpleNamespace(metadata_json={}),
+        )
+        is expected
+    )
+
+
+@pytest.mark.asyncio
+async def test_target_status_dispatches_after_processing_has_already_started(
+    monkeypatch,
+) -> None:
+    matching_rule = SimpleNamespace(
+        id="review-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {"transition": "any", "statuses": ["in_review"]},
+        },
+    )
+    run = SimpleNamespace(id="run-1", task_id="", task_title="", metadata_json={})
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [matching_rule]
+    db = MagicMock()
+    db.query.return_value = query
+    db.get.return_value = SimpleNamespace(metadata_json={})
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    with patch(
+        "app.tasks.robot_queue_tasks.consume_queues_background", new=AsyncMock()
+    ):
+        dispatched = await processor.process(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.status_changed",
+                project_id="project-1",
+                subject_id="task-1",
+                source="board",
+                actor_user_id=7,
+                payload={"previous_status": "in_progress", "status": "in_review"},
+            ),
+            automation_id="review-rule",
+        )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, matching_rule, run)
+    assert run.task_id == "task-1"
+
+
 @pytest.mark.asyncio
 async def test_unbound_issue_does_not_dispatch_multiple_matching_automations(
     monkeypatch,

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   ManagedExecutorRuntime,
+  executorRequestTimeoutMs,
   managedExecutorLogPath,
   prepareManagedExecutorEnvironment,
   requestExecutor,
@@ -13,6 +14,48 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
+  test('allows Python provisioning before auth operations without extending ordinary requests', () => {
+    for (const method of [
+      'executor.plugin_auth.migrate',
+      'executor.plugin_auth.run',
+      'runtime.connections.cli',
+      'runtime.local_connector_auth.start',
+      'runtime.local_connector_auth.health',
+    ]) {
+      expect(executorRequestTimeoutMs(method)).toBe(21 * 60_000 + 5_000)
+    }
+    expect(executorRequestTimeoutMs('executor.health')).toBe(75_000)
+  })
+
+  test('binds verification ownership to the native-created auth entry without exposing auth', async () => {
+    const directory = await temporaryDirectory('managed-auth-ownership-')
+    try {
+      const native = join(directory.path, 'native')
+      const managed = join(directory.path, 'managed')
+      await mkdir(native, { recursive: true })
+      await writeFile(join(native, 'auth.json'), 'synthetic-account-not-marker-data')
+      prepareManagedExecutorEnvironment({
+        dataDirectory: directory.path,
+        environment: {
+          VITE_WEWORK_E2E: 'true',
+          WEWORK_E2E_NATIVE_CODEX_HOME: native,
+          WEGENT_CODEX_HOME: managed,
+          WEGENT_EXECUTOR_HOME: directory.path,
+          WEWORK_AI_VERIFY_AUTH_OWNER: 'synthetic-session-owner',
+        },
+      })
+      const text = await readFile(join(managed, '.wework-managed-auth'), 'utf8')
+      const marker = JSON.parse(text)
+      expect(marker.version).toBe(1)
+      expect(marker.ownerId).toBe('synthetic-session-owner')
+      expect(marker.auth.kind).toBe(process.platform === 'win32' ? 'file' : 'symlink')
+      expect(marker.auth.ino).toMatch(/^\d+$/)
+      expect(text).not.toContain('synthetic-account-not-marker-data')
+    } finally {
+      await directory.remove()
+    }
+  })
+
   test('reuses the existing executor home by default', () => {
     const environment = prepareManagedExecutorEnvironment({
       dataDirectory: '/unused-electron-data',
@@ -90,6 +133,7 @@ describe('managed executor runtime', () => {
 
     expect(environment.CODEX_HOME).toBe(managedCodexHome)
     expect(environment.WEGENT_CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBe(nativeCodexHome)
     expect(await readFile(join(managedCodexHome, 'auth.json'), 'utf8')).toBe('{"auth":"native"}\n')
     await directory.remove()
   })
@@ -105,15 +149,38 @@ describe('managed executor runtime', () => {
       dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: launchingCodexHome,
+        WEGENT_NATIVE_CODEX_HOME: launchingCodexHome,
         VITE_WEWORK_E2E: 'true',
         WEGENT_CODEX_HOME: managedCodexHome,
       },
     })
 
     expect(environment.CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBeUndefined()
     await expect(readFile(join(managedCodexHome, 'auth.json'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     })
+    await directory.remove()
+  })
+
+  test('retains the custom native auth source when preparing an existing managed environment', async () => {
+    const directory = await temporaryDirectory('managed-executor-native-source-')
+    const nativeCodexHome = join(directory.path, 'custom-native')
+    const managedCodexHome = join(directory.path, 'managed')
+    const options = {
+      dataDirectory: join(directory.path, 'data'),
+      environment: {
+        CODEX_HOME: nativeCodexHome,
+        WEGENT_CODEX_HOME: managedCodexHome,
+      },
+    }
+
+    const environment = prepareManagedExecutorEnvironment(options)
+    expect(environment.CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBe(nativeCodexHome)
+    expect(
+      prepareManagedExecutorEnvironment({ ...options, environment }).WEGENT_NATIVE_CODEX_HOME
+    ).toBe(nativeCodexHome)
     await directory.remove()
   })
 
@@ -290,6 +357,8 @@ describe('managed executor runtime', () => {
           const identityPath = process.argv[2]
           fs.writeFileSync(identityPath, JSON.stringify({
             deviceId: process.env.WEGENT_APP_IPC_DEVICE_ID,
+            registrationDeviceId: process.env.DEVICE_ID,
+            runtimeInstanceId: process.env.WEGENT_RUNTIME_INSTANCE_ID,
             deviceName: process.env.DEVICE_NAME,
           }))
           if (process.platform !== 'win32') {
@@ -321,6 +390,8 @@ describe('managed executor runtime', () => {
           ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
           VITE_WEWORK_E2E: 'true',
           WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
+          DEVICE_ID: 'stale-launcher-device',
+          WEGENT_RUNTIME_INSTANCE_ID: 'stale-launcher-runtime',
         },
         dataDirectory: join(directory.path, 'data'),
         logDirectory: join(directory.path, 'logs'),
@@ -345,6 +416,8 @@ describe('managed executor runtime', () => {
         .poll(async () => JSON.parse(await readFile(identityPath, 'utf8')))
         .toEqual({
           deviceId: 'test-device',
+          registrationDeviceId: 'device-test-device',
+          runtimeInstanceId: 'runtime-test-device',
           deviceName: 'Test Device',
         })
 

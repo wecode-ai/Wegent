@@ -4,7 +4,7 @@
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
-use std::{collections::HashMap, future::Future, path::Path, pin::Pin, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
@@ -20,6 +20,7 @@ use tokio::{
 
 use super::backend::runtime_rpc_encoding::encode_app_ipc_response;
 use super::event_stream::{event_sequence, ExecutorEventHub};
+mod read_requests;
 use crate::{
     agents::resolve_codex_binary,
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
@@ -72,6 +73,9 @@ use crate::{
     },
     version::get_version,
 };
+use read_requests::{
+    is_cancellable_read, wait_for_cancellation, ConnectionReadRequests, HistoryReadAdmission,
+};
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
 pub const APP_IPC_PROTOCOL_VERSION: u64 = 1;
@@ -79,11 +83,18 @@ const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
 const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
+// Python provisioning (uv + CPython) precedes the adapter's own action deadline.
+const PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS: u64 =
+    crate::python_runtime::PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS + 5 * 60;
 
 fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
     match method {
-        Some("executor.plugin_auth.migrate") => 280,
-        Some("executor.plugin_auth.run") => 200,
+        Some(
+            "executor.plugin_auth.migrate" | "executor.plugin_auth.run" | "runtime.connections.cli",
+        ) => PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS,
+        Some(method) if method.starts_with("runtime.local_connector_auth.") => {
+            PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS
+        }
         Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
         // Context compaction waits for the Codex app-server to finish the
         // compaction turn, so the request deadline must outlive that budget.
@@ -167,6 +178,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "external_todos.*",
     "files.*",
     "projects.*",
+    "milestones.*",
     "runtime.*",
     "runtime_tasks.*",
     "todos.*",
@@ -229,60 +241,9 @@ if target.exists() and target.is_file():
 print(json.dumps(result, ensure_ascii=False))
 "#;
 
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-pub trait RuntimeWorkHandler: Send + Sync {
-    fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
-
-    fn reconcile_bound_task_statuses<'a>(&'a self) -> BoxFuture<'a, ()> {
-        Box::pin(async {})
-    }
-
-    fn handle_codex_app_server_rpc<'a>(
-        &'a self,
-        _data: Value,
-    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
-        Box::pin(async {
-            Err(AppIpcError::new(
-                "codex_app_server_unavailable",
-                "Codex app-server handler is not available",
-            ))
-        })
-    }
-}
-
-pub trait BackendConnectionHandler: Send + Sync {
-    fn execute_plugin_auth<'a>(
-        &'a self,
-        params: Value,
-    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
-    fn migrate_plugin_auth<'a>(
-        &'a self,
-        params: Value,
-    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
-    fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
-    fn backend_quota<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
-    fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
-    fn plugin_device_route<'a>(
-        &'a self,
-        params: Value,
-    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppIpcError {
-    pub code: String,
-    pub message: String,
-}
-
-impl AppIpcError {
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            code: code.into(),
-            message: message.into(),
-        }
-    }
-}
+pub use wegent_execution_contracts::ipc::{
+    AppIpcError, BackendConnectionHandler, RuntimeWorkHandler,
+};
 
 #[derive(Clone)]
 struct LocalAppCommandDefinition {
@@ -392,6 +353,7 @@ pub struct AppIpcServer {
     event_tx: broadcast::Sender<Value>,
     event_hub: ExecutorEventHub,
     bundled_plugin_marketplace: Arc<BlockingSingleFlight<BundledPluginMarketplace>>,
+    history_read_admission: Arc<HistoryReadAdmission>,
 }
 
 impl Default for AppIpcServer {
@@ -408,6 +370,7 @@ impl Default for AppIpcServer {
             event_tx,
             event_hub,
             bundled_plugin_marketplace: Arc::new(BlockingSingleFlight::default()),
+            history_read_admission: Arc::new(HistoryReadAdmission::default()),
         }
     }
 }
@@ -891,7 +854,8 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        if method.starts_with("projects.")
+        if method.starts_with("milestones.")
+            || method.starts_with("projects.")
             || method.starts_with("external_projects.")
             || method.starts_with("dws.")
             || method.starts_with("aitable.")
@@ -1009,6 +973,8 @@ impl AppIpcServer {
                 "structured_errors": true,
                 "compressed_responses": true,
                 "event_resume": true,
+                "request_cancellation": true,
+                "request_cancellation_methods": ["runtime.tasks.transcript"],
             },
         })
     }
@@ -1239,6 +1205,7 @@ impl AppIpcServer {
         let mut events = self.event_hub.subscribe_live();
         let mut frame = Vec::new();
         let mut bulk_backpressure_reported = false;
+        let read_requests = ConnectionReadRequests::new(self.history_read_admission.clone());
         loop {
             frame.clear();
             tokio::select! {
@@ -1265,8 +1232,36 @@ impl AppIpcServer {
                     };
                     let server = self.clone();
                     let response_tx = priority_write_tx.clone();
+                    if read_requests.handle_cancel(&request_line) {
+                        continue;
+                    }
                     let (request_id, method, command_key) =
                         app_ipc_request_metadata(&request_line);
+                    if matches!(command_key.as_deref(), Some("home_dir" | "ls_dirs")) {
+                        log_app_ipc_request(
+                            "app IPC request received",
+                            request_id.as_deref(),
+                            method.as_deref(),
+                            command_key.as_deref(),
+                            None,
+                            None,
+                        );
+                    }
+                    let admission = if is_cancellable_read(method.as_deref()) {
+                        request_id.as_deref().map(|id| read_requests.admit(id))
+                    } else {
+                        None
+                    };
+                    let (mut read_guard, mut cancellation) = match admission {
+                        Some(Ok((guard, receiver))) => (Some(guard), Some(receiver)),
+                        Some(Err(error)) => {
+                            response_tx.send(error_message(request_id.as_deref(), &error))
+                                .await
+                                .map_err(|error| format!("failed to reject history read: {error}"))?;
+                            continue;
+                        }
+                        None => (None, None),
+                    };
                     tokio::spawn(async move {
                         let started_at = Instant::now();
                         log_app_ipc_request(
@@ -1278,14 +1273,17 @@ impl AppIpcServer {
                             None,
                         );
                         let timeout_seconds = app_ipc_request_timeout_seconds(method.as_deref());
-                        let response = match tokio::time::timeout(
-                            Duration::from_secs(timeout_seconds),
-                            server.handle_line(&request_line),
-                        )
-                        .await
-                        {
-                            Ok(response) => response,
-                            Err(_) => {
+                        let outcome = tokio::select! {
+                            biased;
+                            _ = wait_for_cancellation(&mut cancellation) => {
+                                Some(error_message(
+                                    request_id.as_deref(),
+                                    &AppIpcError::new("request_cancelled", "History read cancelled"),
+                                ))
+                            }
+                            // Expired queued reads must not enter their handler when
+                            // an active request releases its permit at the same deadline.
+                            _ = tokio::time::sleep(Duration::from_secs(timeout_seconds)) => {
                                 log_app_ipc_request(
                                     "app IPC request timed out",
                                     request_id.as_deref(),
@@ -1303,10 +1301,18 @@ impl AppIpcServer {
                                         ),
                                     ),
                                 ))
-                            }
+                            },
+                            response = async {
+                                if let Some(guard) = &mut read_guard {
+                                    if let Err(error) = guard.wait_for_admission().await {
+                                        return Some(error_message(request_id.as_deref(), &error));
+                                    }
+                                }
+                                server.handle_line(&request_line).await
+                            } => response,
                         };
 
-                        if let Some(response) = response {
+                        if let Some(response) = outcome {
                             let ok = response.get("ok").and_then(Value::as_bool);
                             let elapsed_ms = started_at.elapsed().as_millis();
                             let response_bytes =
@@ -1950,6 +1956,38 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "milestones.list" => serialize_task_value(
+            runtime
+                .list_milestones(required_task_string(&params, "project_id")?)
+                .map_err(task_runtime_error)?,
+        ),
+        "milestones.create" | "milestones.update" => {
+            let project = required_task_string(&params, "project_id")?;
+            let id = if method == "milestones.update" {
+                Some(required_task_string(&params, "milestone_id")?)
+            } else {
+                None
+            };
+            let input = task_input::<crate::task_runtime::MilestoneInput>(&params, "milestone")?;
+            serialize_task_value(
+                runtime
+                    .save_milestone(project, id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "milestones.delete" => {
+            let version = params["version"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
+            runtime
+                .delete_milestone(
+                    required_task_string(&params, "project_id")?,
+                    required_task_string(&params, "milestone_id")?,
+                    version,
+                )
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
         "projects.update" => {
             let project_id = required_task_string(&params, "project_id")?;
             let input = task_input::<ProjectUpdate>(&params, "project")?;
@@ -1969,6 +2007,37 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .archive_project(project_id, version)
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
+        }
+        "projects.automation.run" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let rule_id = required_task_string(&params, "automation_id")?;
+            let issue_id = optional_nullable_task_string(&params, "issue_id")?.flatten();
+            runtime
+                .run_project_automation(project_id, rule_id, issue_id.as_deref())
+                .map_err(task_runtime_error)
+        }
+        "projects.automation.runs" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let rule_id = required_task_string(&params, "automation_id")?;
+            serialize_task_value(
+                runtime
+                    .list_project_automation_runs(project_id, rule_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "projects.automation.cancel" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            runtime
+                .cancel_project_automation_run(project_id, run_id)
+                .map_err(task_runtime_error)
+        }
+        "projects.automation.retry" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            runtime
+                .retry_project_automation_run(project_id, run_id)
+                .map_err(task_runtime_error)
         }
         "external_projects.configure" => {
             let project = task_input::<ProjectDescriptor>(&params, "project")?;
@@ -2352,6 +2421,48 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .list_comments(project_id, task_id, after_sequence)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.humanRequests.inbox" => {
+            let default = if params.get("user_ids").is_some() {
+                Vec::new()
+            } else {
+                vec![params["user_id"]
+                    .as_i64()
+                    .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?]
+            };
+            let users = human_request_viewer_ids(&params, "user_ids", &default)?;
+            serialize_task_value(
+                json!({"items":runtime.stand_in_store().issue_human_request_inbox(&users).map_err(task_runtime_error)?}),
+            )
+        }
+        "todos.humanRequests.list" => {
+            let project = required_task_string(&params, "project_id")?;
+            let issue = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                json!({"items":runtime.stand_in_store().list_issue_human_requests(project,issue).map_err(task_runtime_error)?}),
+            )
+        }
+        "todos.humanRequests.assign" => {
+            let project = required_task_string(&params, "project_id")?;
+            let issue = required_task_string(&params, "task_id")?;
+            let question = required_task_string(&params, "request_id")?;
+            let name = required_task_string(&params, "recipient_name")?;
+            serialize_task_value(
+                runtime
+                    .stand_in_store()
+                    .assign_issue_human_request(
+                        crate::task_runtime::IssueHumanRequestScope {
+                            project_id: project,
+                            issue_id: issue,
+                        },
+                        question,
+                        params["version"].as_i64().unwrap_or(0),
+                        params["recipient_user_id"].as_i64().unwrap_or(0),
+                        name,
+                        params["blocks_progress"].as_bool(),
+                    )
                     .map_err(task_runtime_error)?,
             )
         }
@@ -2889,6 +3000,40 @@ fn task_input<T: serde::de::DeserializeOwned>(
     .map_err(|error| AppIpcError::new("bad_request", error.to_string()))
 }
 
+pub(crate) fn human_request_viewer_ids(
+    params: &Value,
+    key: &str,
+    default: &[i64],
+) -> Result<Vec<i64>, AppIpcError> {
+    let mut users = match params.get(key) {
+        None => default.to_vec(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", format!("{key} must be an integer array"))
+            })?
+            .iter()
+            .map(|value| {
+                value.as_i64().filter(|user| *user >= 0).ok_or_else(|| {
+                    AppIpcError::new(
+                        "bad_request",
+                        format!("{key} must contain non-negative integers"),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    if users.iter().any(|user| *user < 0) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Question viewer IDs must be non-negative",
+        ));
+    }
+    users.sort_unstable();
+    users.dedup();
+    Ok(users)
+}
+
 fn required_task_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, AppIpcError> {
     params
         .get(key)
@@ -2930,6 +3075,7 @@ fn task_runtime_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcErr
         crate::task_runtime::TaskRuntimeError::ProjectNotFound
         | crate::task_runtime::TaskRuntimeError::TaskNotFound => "not_found",
         crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
+        crate::task_runtime::TaskRuntimeError::MemorySuppressed => "memory_suppressed",
         crate::task_runtime::TaskRuntimeError::UnsupportedProvider(_) => "provider_unavailable",
         crate::task_runtime::TaskRuntimeError::ProviderRequest(_) => "provider_request_failed",
         crate::task_runtime::TaskRuntimeError::Invalid(_) => "bad_request",
@@ -2965,35 +3111,6 @@ async fn handle_builtin_device_command(
             Some((
                 CommandResult::ok(if Path::new(path).exists() { "true" } else { "" }),
                 None,
-            ))
-        }
-        "ls_dirs" => {
-            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
-            Some((
-                match std::fs::read_dir(&path) {
-                    Ok(entries) => {
-                        let mut output = String::new();
-                        for entry in entries.flatten() {
-                            if let Ok(metadata) = entry.metadata() {
-                                let name = entry.file_name().to_string_lossy().to_string();
-                                if metadata.is_dir() {
-                                    output.push_str(&name);
-                                    output.push('/');
-                                } else {
-                                    output.push_str(&name);
-                                }
-                                output.push('\n');
-                            }
-                        }
-                        CommandResult::ok(output)
-                    }
-                    Err(error) => CommandResult::error(
-                        format!("Failed to list directory {path}: {error}"),
-                        0.0,
-                        false,
-                    ),
-                },
-                Some(PostProcessor::DirectoryList),
             ))
         }
         "runtime_auth_status" => {
@@ -3582,7 +3699,7 @@ fn response_message(request_id: &str, result: Value) -> Value {
 }
 
 fn error_message(request_id: Option<&str>, error: &AppIpcError) -> Value {
-    json!({
+    let mut response = json!({
         "type": "response",
         "id": request_id,
         "ok": false,
@@ -3590,7 +3707,14 @@ fn error_message(request_id: Option<&str>, error: &AppIpcError) -> Value {
             "code": error.code,
             "message": error.message,
         },
-    })
+    });
+    if let Some(delay) = error.retry_after_ms {
+        response["error"]["retryAfterMs"] = json!(delay);
+    }
+    if error.code == "runtime_read_busy" {
+        response["error"]["retryable"] = json!(true);
+    }
+    response
 }
 
 fn string_field(value: &Value, key: &str) -> Option<String> {
@@ -3735,6 +3859,10 @@ where
 }
 
 #[cfg(test)]
+#[path = "app_ipc_automation_tests.rs"]
+mod automation_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -3763,6 +3891,25 @@ mod tests {
             app_ipc_request_timeout_seconds(Some("runtime.tasks.list")),
             75
         );
+    }
+
+    #[test]
+    fn python_auth_requests_allow_provisioning_before_execution() {
+        for method in [
+            "executor.plugin_auth.migrate",
+            "executor.plugin_auth.run",
+            "runtime.connections.cli",
+            "runtime.local_connector_auth.health",
+            "runtime.local_connector_auth.start",
+            "runtime.local_connector_auth.poll",
+            "runtime.local_connector_auth.logout",
+        ] {
+            assert!(
+                app_ipc_request_timeout_seconds(Some(method))
+                    > crate::python_runtime::PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS + 280
+            );
+        }
+        assert_eq!(app_ipc_request_timeout_seconds(Some("executor.health")), 75);
     }
 
     #[test]

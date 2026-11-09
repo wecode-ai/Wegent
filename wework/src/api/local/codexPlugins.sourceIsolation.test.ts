@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
   deviceId: 'device-a',
   bundled: null as { id: string; path: string } | null,
 }))
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
   isElectronRuntime: () => true,
@@ -37,7 +41,7 @@ describe('local plugin source isolation', () => {
   const marketplace = {
     name: 'wework-personal',
     path: '/personal',
-    plugins: [{ name: 'codex-tool', installed: true, enabled: true }],
+    plugins: [{ name: 'personal-tool', installed: true, enabled: true }],
   }
   const store = {
     storePath: '/store',
@@ -82,6 +86,7 @@ describe('local plugin source isolation', () => {
   })
 
   function consumeSnapshot(state: LocalCodexPluginsState, expected: string[]) {
+    expected = [...expected].sort()
     const local = resolveLocalPluginInventory(
       getPluginMarketplaceCache('source-generations'),
       {
@@ -138,8 +143,8 @@ describe('local plugin source isolation', () => {
           snapshot.sourceReads?.store?.items?.map(plugin => plugin.spec.source.pluginKey)
         ).toEqual(['managed-tool'])
         expect(snapshot.items.map(plugin => plugin.spec.source.pluginKey).sort()).toEqual([
-          'codex-tool',
           'managed-tool',
+          'personal-tool',
         ])
         expect(
           peekLocalCodexPluginsReadState({
@@ -179,12 +184,27 @@ describe('local plugin source isolation', () => {
         empty.add('plugin/installed')
         empty.add('executor.plugins.store.list')
       }
-      empty.add('executor.plugins.personal.list')
+      const nativeRequest = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation(async (method, args) => {
+        const result = await nativeRequest(method, args)
+        return source === 'installed' &&
+          method === 'codex.app_server_request' &&
+          ['plugin/installed', 'plugin/list'].includes(args.method)
+          ? {
+              ...result,
+              marketplaces: result.marketplaces.map((market: typeof marketplace) => ({
+                ...market,
+                name: 'openai-curated-remote',
+              })),
+            }
+          : result
+      })
+      if (source === 'installed' || outcome === 'add') empty.add('executor.plugins.personal.list')
       const api = createLocalCodexPluginApi()
       const params = { mergeAllMarketplaces: true as const, refresh: true }
       consumeSnapshot(
         await api.readState(params),
-        outcome === 'add' ? [] : ['codex-tool', 'managed-tool']
+        outcome === 'add' ? [] : ['personal-tool', 'managed-tool']
       )
       const original = mocks.request.getMockImplementation()!
       let release!: (value: unknown) => void
@@ -201,7 +221,11 @@ describe('local plugin source isolation', () => {
         )
           return {
             marketplaces: [
-              { ...marketplace, plugins: [{ name: 'new-tool', installed: true, enabled: true }] },
+              {
+                ...marketplace,
+                name: 'openai-curated-remote',
+                plugins: [{ name: 'new-tool', installed: true, enabled: true }],
+              },
             ],
           }
         return original(method, args)
@@ -210,6 +234,7 @@ describe('local plugin source isolation', () => {
       await vi.waitFor(() => expect(release).toBeTypeOf('function'))
       try {
         empty.add('plugin/installed')
+        if (source === 'disk' && outcome !== 'add') empty.add('executor.plugins.personal.list')
         if (outcome === 'remove') empty.add('executor.plugins.store.list')
         if (outcome === 'add') {
           if (source === 'disk') empty.delete('executor.plugins.store.list')
@@ -250,7 +275,7 @@ describe('local plugin source isolation', () => {
   test('publishes a catalog membership failure before a newer disk scan inherits its source outcomes', async () => {
     const api = createLocalCodexPluginApi()
     const params = { mergeAllMarketplaces: true as const, refresh: true }
-    consumeSnapshot(await api.readState(params), ['codex-tool', 'managed-tool'])
+    consumeSnapshot(await api.readState(params), ['personal-tool', 'managed-tool'])
     failures.add('plugin/installed')
     const original = mocks.request.getMockImplementation()!
     let release!: (value: unknown) => void
@@ -294,7 +319,7 @@ describe('local plugin source isolation', () => {
       if (method === 'codex.app_server_request' && args.method === 'plugin/read')
         return {
           plugin: {
-            summary: { name: 'codex-tool' },
+            summary: { name: 'personal-tool' },
             skills: [{ name: 'detail-skill', path: 'skills/detail' }],
           },
         }
@@ -303,11 +328,11 @@ describe('local plugin source isolation', () => {
     })
     const initial = await api.readState(params)
     await api.readInstalledPluginDetail(
-      initial.installedPlugins.find(item => item.spec.source.pluginKey === 'codex-tool')!
+      initial.installedPlugins.find(item => item.spec.source.marketplace === 'wework-personal')!
     )
     const current = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })!
-    const local = consumeSnapshot(current, ['codex-tool', 'codex-tool', 'managed-tool'])
-    const detailed = local.items.find(item => item.spec.source.pluginKey === 'codex-tool')!
+    const local = consumeSnapshot(current, ['personal-tool', 'personal-tool', 'managed-tool'])
+    const detailed = local.items.find(item => item.spec.source.marketplace === 'wework-personal')!
     expect(detailed.spec.components.skills.map(skill => skill.name)).toContain('detail-skill')
     expect(
       local.items.find(item => item.spec.source.marketplace === 'openai-curated-remote')?.spec
@@ -317,19 +342,19 @@ describe('local plugin source isolation', () => {
     const failed = await api.listInstalledPlugins({ refresh: true })
     expect(
       failed.items
-        .find(item => item.spec.source.pluginKey === 'codex-tool')
+        .find(item => item.spec.source.marketplace === 'wework-personal')
         ?.spec.components.skills.map(skill => skill.name)
     ).toContain('detail-skill')
   })
 
   test.each([
-    ['plugin/installed', 'managed-tool'],
-    ['executor.plugins.store.list', 'codex-tool'],
+    ['plugin/installed', ['managed-tool', 'personal-tool']],
+    ['executor.plugins.store.list', ['personal-tool']],
   ])('returns a healthy source when %s fails and strict reads reject', async (source, retained) => {
     failures.add(source)
     const api = createLocalCodexPluginApi()
     const result = await api.listInstalledPlugins({ refresh: true })
-    expect(result.items.map(item => item.spec.source.pluginKey)).toEqual([retained])
+    expect(result.items.map(item => item.spec.source.pluginKey).sort()).toEqual(retained)
     expect(result.partial).toBe(true)
     await expect(api.listInstalledPlugins({ requireComplete: true })).rejects.toThrow('unavailable')
   })
@@ -339,6 +364,7 @@ describe('local plugin source isolation', () => {
     await api.listInstalledPlugins({ refresh: true })
     failures.add('executor.plugins.store.list')
     empty.add('plugin/installed')
+    empty.add('executor.plugins.personal.list')
     const partial = await api.listInstalledPlugins({ refresh: true })
     expect(partial.items.map(item => item.spec.source.pluginKey)).toEqual(['managed-tool'])
     expect(partial.partial).toBe(true)
@@ -353,6 +379,8 @@ describe('local plugin source isolation', () => {
     mocks.deviceId = 'device-b'
     failures.add('plugin/installed')
     failures.add('executor.plugins.store.list')
+    failures.add('executor.plugins.personal.list')
+    failures.add('executor.codex_home.config.read')
     await expect(api.listInstalledPlugins({ refresh: true })).rejects.toThrow('unavailable')
   })
 
@@ -393,10 +421,10 @@ describe('local plugin source isolation', () => {
       failures.add(source)
       const result = await api.readState({ mergeAllMarketplaces: true, refresh: true })
       expect(result.partial).toBe(true)
-      expect(result.marketplaceItems.map(item => item.name)).toEqual(['codex-tool'])
+      expect(result.marketplaceItems.map(item => item.name)).toEqual(['personal-tool'])
       expect(result.installedPlugins.map(item => item.spec.source.pluginKey).sort()).toEqual([
-        'codex-tool',
         'managed-tool',
+        'personal-tool',
       ])
     }
   )
@@ -407,6 +435,7 @@ describe('local plugin source isolation', () => {
     failures.add('plugin/list')
     empty.add('plugin/installed')
     empty.add('executor.plugins.store.list')
+    empty.add('executor.plugins.personal.list')
     const result = await api.readState({ mergeAllMarketplaces: true, refresh: true })
     expect(result.marketplaceItems).toHaveLength(1)
     expect(result.installedPlugins).toEqual([])
@@ -470,6 +499,27 @@ describe('local plugin source isolation', () => {
     ).toEqual(['managed-tool', 'personal-tool'])
   })
 
+  test.each([false, true])(
+    'retains disabled personal membership after a disk read (warm=%s)',
+    async warm => {
+      if (warm) await readLocalInstalledInventoryFromDisk()
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation(async (method, params) =>
+        method === 'executor.codex_home.config.read'
+          ? { enabledPluginKeys: [], disabledPluginKeys: ['personal-tool@wework-personal'] }
+          : original(method, params)
+      )
+      const result = await readLocalInstalledInventoryFromDisk()
+      const personal = result.items.find(plugin => plugin.spec.source.pluginKey === 'personal-tool')
+      expect(personal?.spec.enabled).toBe(false)
+      expect(result.sourceReads.personal?.status).toBe('fulfilled')
+      expect(result.sourceReads.personal?.items).toContainEqual(personal)
+      expect(result.items.some(plugin => plugin.spec.source.pluginKey === 'managed-tool')).toBe(
+        true
+      )
+    }
+  )
+
   test('clears recovered inventory partial status while retaining an independent catalog failure', async () => {
     const api = createLocalCodexPluginApi()
     failures.add('executor.plugins.store.list')
@@ -530,7 +580,7 @@ describe('local plugin source isolation', () => {
     mocks.request.mockImplementation(async (method, params) =>
       method === 'executor.plugins.links.list' && !failures.has(method)
         ? linked
-          ? [{ localPluginName: 'codex-tool', cloudPluginId: 9, cloudReleaseId: 8 }]
+          ? [{ localPluginName: 'personal-tool', cloudPluginId: 9, cloudReleaseId: 8 }]
           : []
         : original(method, params)
     )
@@ -540,12 +590,13 @@ describe('local plugin source isolation', () => {
     const partial = await api.readState({ mergeAllMarketplaces: true, refresh: true })
     expect(partial.partial).toBe(true)
     expect(
-      partial.installedPlugins.find(item => item.spec.source.pluginKey === 'codex-tool')?.spec
+      partial.installedPlugins.find(item => item.spec.source.pluginKey === 'personal-tool')?.spec
         .sourcePayload
     ).toMatchObject({ cloudPluginId: 9, cloudReleaseId: 8 })
     expect(
-      partial.sourceReads?.codex?.items?.find(item => item.spec.source.pluginKey === 'codex-tool')
-        ?.spec.sourcePayload
+      partial.sourceReads?.personal?.items?.find(
+        item => item.spec.source.pluginKey === 'personal-tool'
+      )?.spec.sourcePayload
     ).toMatchObject({ cloudPluginId: 9, cloudReleaseId: 8 })
     mocks.bundled = { id: 'wework-personal', path: '/personal' }
     await expect(api.listInstalledPlugins({ requireComplete: true })).rejects.toThrow('unavailable')
@@ -554,12 +605,13 @@ describe('local plugin source isolation', () => {
     const cleared = await api.readState({ mergeAllMarketplaces: true, refresh: true })
     expect(cleared.partial).not.toBe(true)
     const payload = cleared.installedPlugins.find(
-      item => item.spec.source.pluginKey === 'codex-tool'
+      item => item.spec.source.pluginKey === 'personal-tool'
     )?.spec.sourcePayload
     expect(payload?.cloudPluginId).toBeUndefined()
     expect(
-      cleared.sourceReads?.codex?.items?.find(item => item.spec.source.pluginKey === 'codex-tool')
-        ?.spec.sourcePayload?.cloudPluginId
+      cleared.sourceReads?.personal?.items?.find(
+        item => item.spec.source.pluginKey === 'personal-tool'
+      )?.spec.sourcePayload?.cloudPluginId
     ).toBeUndefined()
     expect(payload?.cloudReleaseId).toBeUndefined()
   })
@@ -573,8 +625,8 @@ describe('local plugin source isolation', () => {
     const result = await api.listInstalledPlugins({ refresh: true })
     expect(result.partial).toBe(true)
     expect(result.items.map(item => item.spec.source.pluginKey).sort()).toEqual([
-      'codex-tool',
       'managed-tool',
+      'personal-tool',
     ])
   })
 
@@ -613,7 +665,168 @@ describe('local plugin source isolation', () => {
     }
   )
 
-  test('retains other Codex markets beside fresh personal rows and clears them on empty recovery', async () => {
+  test.each(['executor.plugins.personal.list', 'executor.codex_home.config.read'])(
+    'does not revive personal plugins on Codex recovery after a successful empty %s',
+    async source => {
+      const api = createLocalCodexPluginApi()
+      const params = { mergeAllMarketplaces: true as const }
+      consumeSnapshot(await api.readState({ ...params, refresh: true }), [
+        'managed-tool',
+        'personal-tool',
+      ])
+      empty.add(source)
+      await readLocalInstalledInventoryFromDisk()
+      consumeSnapshot(peekLocalCodexPluginsReadState(params)!, ['managed-tool'])
+      failures.add('plugin/installed')
+      await api.listInstalledPlugins({ refresh: true })
+      consumeSnapshot(peekLocalCodexPluginsReadState(params)!, ['managed-tool'])
+
+      failures.delete('plugin/installed')
+      const recovered = await api.listInstalledPlugins({ refresh: true })
+      expect(recovered.partial).not.toBe(true)
+      expect(recovered.sourceReads?.personal).toEqual({ status: 'fulfilled', items: [] })
+      expect(
+        recovered.sourceReads?.codex?.items?.every(
+          plugin => plugin.spec.source.marketplace !== 'wework-personal'
+        )
+      ).toBe(true)
+      consumeSnapshot(peekLocalCodexPluginsReadState(params)!, ['managed-tool'])
+      consumeSnapshot(await api.readState({ ...params, refresh: true }), ['managed-tool'])
+
+      // A new disk-confirmed install must still replace the earlier empty result.
+      empty.delete(source)
+      await readLocalInstalledInventoryFromDisk()
+      await api.listInstalledPlugins({ refresh: true })
+      consumeSnapshot(peekLocalCodexPluginsReadState(params)!, ['managed-tool', 'personal-tool'])
+    }
+  )
+
+  test('explicit inventory invalidation admits a new personal install', async () => {
+    const api = createLocalCodexPluginApi()
+    const params = { mergeAllMarketplaces: true as const }
+    await api.readState({ ...params, refresh: true })
+    empty.add('executor.plugins.personal.list')
+    await readLocalInstalledInventoryFromDisk()
+    consumeSnapshot(peekLocalCodexPluginsReadState(params)!, ['managed-tool'])
+
+    empty.delete('executor.plugins.personal.list')
+    const original = mocks.request.getMockImplementation()!
+    mocks.request.mockImplementation((method, args) =>
+      method === 'codex.app_server_request' && args.method === 'plugin/installed'
+        ? {
+            marketplaces: [
+              {
+                ...marketplace,
+                plugins: [{ name: 'personal-tool', installed: true, enabled: true }],
+              },
+            ],
+          }
+        : original(method, args)
+    )
+    clearLocalCodexPluginsReadStateCache()
+    consumeSnapshot(await api.readState({ ...params, refresh: true }), [
+      'managed-tool',
+      'personal-tool',
+    ])
+  })
+
+  test('confirmed personal removal survives renderer cache invalidation', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.listInstalledPlugins({ refresh: true })
+    empty.add('executor.plugins.personal.list')
+    const disk = await readLocalInstalledInventoryFromDisk()
+    const confirmed = resolveLocalPluginInventory(null, disk, mocks.deviceId)
+    failures.add('plugin/installed')
+    await api.listInstalledPlugins({ refresh: true })
+    clearLocalCodexPluginsReadStateCache()
+    failures.delete('plugin/installed')
+    const read = await api.listInstalledPlugins({ refresh: true })
+    const recovered = resolveLocalPluginInventory(
+      {
+        deviceId: mocks.deviceId,
+        installedPlugins: confirmed.items,
+        localInstalledSources: confirmed.localInstalledSources,
+        localInstalledSourceStatus: confirmed.localInstalledSourceStatus,
+      },
+      read,
+      mocks.deviceId
+    )
+    expect(recovered.items.map(item => item.spec.source.pluginKey)).not.toContain('personal-tool')
+    expect(read.sourceReads?.personal).toEqual({ status: 'fulfilled', items: [] })
+  })
+
+  test('complete inventory observes a newer personal uninstall without an earlier disk refresh', async () => {
+    const api = createLocalCodexPluginApi()
+    await readLocalInstalledInventoryFromDisk()
+    empty.add('executor.plugins.personal.list')
+    empty.add('executor.codex_home.config.read')
+    empty.add('plugin/installed')
+    const fresh = await api.listInstalledPlugins({ refresh: true, requireComplete: true })
+    expect(fresh.partial).not.toBe(true)
+    expect(fresh.items.map(item => item.spec.source.pluginKey)).not.toContain('personal-tool')
+    expect(fresh.sourceReads?.personal).toEqual({ status: 'fulfilled', items: [] })
+  })
+
+  test.each([
+    'executor.plugins.personal.list',
+    'executor.codex_home.config.read',
+    'executor.plugins.links.list',
+  ])(
+    'complete reads reject a new %s failure instead of claiming a cached personal source is fresh',
+    async source => {
+      const api = createLocalCodexPluginApi()
+      await api.listInstalledPlugins({ requireComplete: true })
+      failures.add(source)
+      const partial = await api.listInstalledPlugins({ refresh: true })
+      expect(partial.partial).toBe(true)
+      expect(partial.items.some(item => item.spec.source.pluginKey === 'personal-tool')).toBe(true)
+      await expect(api.listInstalledPlugins({ requireComplete: true })).rejects.toThrow(
+        'unavailable'
+      )
+      failures.delete(source)
+      expect((await api.listInstalledPlugins({ requireComplete: true })).partial).not.toBe(true)
+    }
+  )
+
+  test('newer successful disk absence overtakes a slow installed read', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.listInstalledPlugins({ requireComplete: true })
+    const original = mocks.request.getMockImplementation()!
+    let release!: (value: unknown) => void
+    mocks.request.mockImplementation((method, args) => {
+      if (method === 'codex.app_server_request' && args.method === 'plugin/installed')
+        return new Promise(resolve => {
+          release = resolve
+        })
+      return original(method, args)
+    })
+    const pending = api.listInstalledPlugins({ refresh: true })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    await vi.waitFor(() =>
+      expect(
+        mocks.request.mock.calls.filter(([method]) => method === 'executor.plugins.links.list')
+      ).toHaveLength(2)
+    )
+    empty.add('executor.plugins.personal.list')
+    const disk = await readLocalInstalledInventoryFromDisk()
+    expect(disk.sourceReads?.personal?.items).toEqual([])
+    release({ marketplaces: [marketplace] })
+    const recovered = await pending
+    expect(recovered.items.map(plugin => plugin.spec.source.pluginKey)).toEqual(['managed-tool'])
+    expect(recovered.sourceReads?.personal).toEqual({ status: 'fulfilled', items: [] })
+  })
+
+  test('a first failed personal disk read never accepts unverified Codex personal membership', async () => {
+    failures.add('executor.plugins.personal.list')
+    const disk = await readLocalInstalledInventoryFromDisk()
+    expect(disk.sourceReads?.personal?.status).toBe('rejected')
+    const result = await createLocalCodexPluginApi().listInstalledPlugins({ refresh: true })
+    expect(result.sourceReads?.personal?.status).toBe('rejected')
+    expect(result.partial).toBe(true)
+    expect(result.items.map(item => item.spec.source.pluginKey)).toEqual(['managed-tool'])
+  })
+
+  test('clears recovered Codex markets independently of disk-confirmed personal membership', async () => {
     const original = mocks.request.getMockImplementation()!
     mocks.request.mockImplementation(async (method, params) => {
       const source = method === 'codex.app_server_request' ? params.method : method
@@ -639,6 +852,13 @@ describe('local plugin source isolation', () => {
 
     failures.clear()
     empty.add('plugin/installed')
+    expect(
+      (await api.listInstalledPlugins({ refresh: true })).items
+        .map(item => item.spec.source.pluginKey)
+        .sort()
+    ).toEqual(['managed-tool', 'personal-tool'])
+    empty.add('executor.plugins.personal.list')
+    await readLocalInstalledInventoryFromDisk()
     expect(
       (await api.listInstalledPlugins({ refresh: true })).items.map(
         item => item.spec.source.pluginKey
@@ -674,6 +894,7 @@ describe('local plugin source isolation', () => {
             ...marketplace,
             plugins: [
               ...marketplace.plugins,
+              { name: 'stale-catalog-plugin', installed: true, enabled: true },
               { name: 'new-catalog-plugin', installed: false, enabled: false },
             ],
           },
@@ -683,11 +904,11 @@ describe('local plugin source isolation', () => {
       const result = await pending
       expect(result.marketplaceItems.map(item => item.name)).toContain('new-catalog-plugin')
       expect(result.installedPlugins.map(item => item.spec.source.pluginKey).sort()).toEqual(
-        source === 'disk' ? ['managed-tool', 'personal-tool'] : []
+        source === 'disk' ? ['managed-tool', 'personal-tool'] : ['personal-tool']
       )
-      expect(result.marketplaceItems.find(item => item.name === 'codex-tool')?.installed).toBe(
-        false
-      )
+      expect(
+        result.marketplaceItems.find(item => item.name === 'stale-catalog-plugin')?.installed
+      ).toBe(false)
       expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toEqual(result)
     }
   )
@@ -703,7 +924,7 @@ describe('local plugin source isolation', () => {
         return new Promise(resolve => {
           finishCatalog = resolve
         })
-      if (method === 'executor.plugins.personal.list')
+      if (method === 'executor.plugins.personal.list' && finishCatalog)
         return new Promise(resolve => {
           finishPersonal = resolve
         })
@@ -788,7 +1009,7 @@ describe('local plugin source isolation', () => {
         mocks.request.mock.calls.filter(([method]) => method === 'executor.plugins.personal.ensure')
           .length
       const before = migrationRequests()
-      expect(before).toBeGreaterThan(0)
+      expect(before).toBe(0)
       holdCatalog = true
       failures.add('plugin/installed')
       const catalog = api.readState({ mergeAllMarketplaces: true, refresh: true })
@@ -862,7 +1083,7 @@ describe('local plugin source isolation', () => {
       let releasePersonal!: (value: typeof personal) => void
       let rejectInstalled!: (error: Error) => void
       mocks.request.mockImplementation((method, args) => {
-        if (method === 'executor.plugins.personal.list')
+        if (method === 'executor.plugins.personal.list' && !releasePersonal)
           return new Promise(resolve => {
             releasePersonal = resolve
           })
@@ -898,10 +1119,10 @@ describe('local plugin source isolation', () => {
       mocks.request.mockImplementation(original)
       empty.add('plugin/installed')
       expect(
-        (await api.listInstalledPlugins({ requireComplete: true })).items.map(
-          plugin => plugin.spec.source.pluginKey
-        )
-      ).toEqual(['managed-tool'])
+        (await api.listInstalledPlugins({ requireComplete: true })).items
+          .map(plugin => plugin.spec.source.pluginKey)
+          .sort()
+      ).toEqual(expected)
       expect(peekLocalCodexPluginsReadState(params)?.partial).not.toBe(true)
     }
   )

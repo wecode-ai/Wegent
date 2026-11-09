@@ -54,6 +54,8 @@ describe('runtimeConversationCache', () => {
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.useRealTimers()
   })
 
   test('keeps transcript data independently from a mounted pane', () => {
@@ -716,18 +718,9 @@ describe('runtimeConversationCache', () => {
   })
 
   test('cancels a pending streaming notification when bounded eviction removes its turn', () => {
-    const animationFrames = new Map<number, FrameRequestCallback>()
-    let nextFrameId = 1
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-      const frameId = nextFrameId++
-      animationFrames.set(frameId, callback)
-      return frameId
-    })
-    const cancelAnimationFrame = vi.fn((frameId: number) => {
-      animationFrames.delete(frameId)
-    })
-    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
-
+    vi.useFakeTimers()
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',
       taskId: address.taskId,
@@ -742,7 +735,8 @@ describe('runtimeConversationCache', () => {
       content: 'pending update',
     })
 
-    expect(animationFrames.size).toBe(1)
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 100)
+    const streamingTimer = setTimeoutSpy.mock.results.at(-1)!.value
 
     for (let index = 0; index < 50; index += 1) {
       const otherAddress = { ...address, taskId: `other-task-${index}` }
@@ -758,8 +752,8 @@ describe('runtimeConversationCache', () => {
     }
 
     expect(getRuntimeConversationMessages(address)).toEqual([])
-    expect(cancelAnimationFrame).toHaveBeenCalledOnce()
-    expect(animationFrames.size).toBe(0)
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(streamingTimer)
+    vi.advanceTimersByTime(100)
     expect(listener).not.toHaveBeenCalled()
     unsubscribe()
   })
@@ -840,7 +834,7 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([nextMessage])
   })
 
-  test('requeues an interrupted send and removes a send already present after transport replacement', () => {
+  test('retains unconfirmed sends and removes only accepted sends after transport replacement', () => {
     cacheRuntimeConversationQueuedMessages(address, [
       {
         id: 'accepted-message',
@@ -852,7 +846,7 @@ describe('runtimeConversationCache', () => {
       },
       {
         id: 'interrupted-message',
-        content: 'retry after replacement',
+        content: 'await confirmation after replacement',
         status: 'sending',
         deliveryMode: 'message',
         awaitingTurnStart: false,
@@ -860,27 +854,67 @@ describe('runtimeConversationCache', () => {
       },
     ])
 
-    reconcileRuntimeConversationQueueAfterTransportReplacement(address, [
+    reconcileRuntimeConversationQueueAfterTransportReplacement(
+      address,
+      [
+        {
+          id: 'turn-1',
+          status: 'done',
+          clientUserMessageId: 'accepted-message',
+          items: [],
+        },
+      ],
       {
-        id: 'turn-1',
-        status: 'done',
-        clientUserMessageId: 'accepted-message',
-        items: [],
-      },
-    ])
+        acceptedClientUserMessageIds: ['accepted-message'],
+      }
+    )
 
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([
       {
         id: 'interrupted-message',
-        content: 'retry after replacement',
-        status: 'queued',
+        content: 'await confirmation after replacement',
+        status: 'sending',
         createdAt: '2026-08-21T00:00:01.000Z',
-        deliveryMode: undefined,
-        awaitingTurnStart: undefined,
-        error: undefined,
-        notice: undefined,
+        deliveryMode: 'message',
+        awaitingTurnStart: false,
       },
     ])
+  })
+
+  test('receipt confirmation acknowledges off-page sends without requeuing a newer send', () => {
+    const queued = ['off-page', 'unconfirmed', 'newer-send'].map(id => ({
+      id,
+      content: id,
+      status: 'sending' as const,
+      createdAt: '2026-11-03T00:00:00.000Z',
+    }))
+    cacheRuntimeConversationQueuedMessages(address, queued)
+
+    reconcileRuntimeConversationQueueAfterTransportReplacement(address, [], {
+      acceptedClientUserMessageIds: ['off-page'],
+    })
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([queued[1], queued[2]])
+  })
+
+  test('preserves a pending send and its queue snapshot when receipts are empty', () => {
+    const queued = [
+      {
+        id: 'accepted-but-not-started',
+        content: 'Already queued on the executor',
+        status: 'sending' as const,
+        deliveryMode: 'message' as const,
+        awaitingTurnStart: true,
+        createdAt: '2026-11-03T00:00:00.000Z',
+      },
+    ]
+    cacheRuntimeConversationQueuedMessages(address, queued)
+
+    reconcileRuntimeConversationQueueAfterTransportReplacement(address, [], {
+      acceptedClientUserMessageIds: [],
+    })
+
+    expect(getRuntimeConversationQueuedMessages(address)).toBe(queued)
   })
 
   test('keeps goal, plan, and subagent state independently from a mounted pane', () => {

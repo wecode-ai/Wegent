@@ -8,7 +8,7 @@ import { navigateWorkspaceTab } from '@/features/workspace-tabs/workspaceNavigat
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { inferWorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
-import { INTERACTIONS_TAB_ID } from './RuntimeInteractionsContext'
+import { openRuntimeInteractionsTab } from './runtimeInteractionsNavigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getDshApps, resolveDshApp } from '@/features/dsh-runtime/dshApps'
 import { subscribeDshSlot, WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
@@ -63,14 +63,7 @@ export function WeworkSchemeBridge() {
       if (destination.kind === 'interaction') {
         const currentTabs = tabsRef.current
         const contentRoute = weworkDestinationRoute(destination)
-        const existing = currentTabs.tabs.find(tab => tab.id === INTERACTIONS_TAB_ID)
-        if (existing) currentTabs.selectTab(existing.id, { contentRoute })
-        else
-          currentTabs.openTab('auxiliary', {
-            id: INTERACTIONS_TAB_ID,
-            title: pendingTitle.current,
-            contentRoute,
-          })
+        openRuntimeInteractionsTab(currentTabs, pendingTitle.current, contentRoute)
         return true
       }
       if (destination.kind === 'app') {

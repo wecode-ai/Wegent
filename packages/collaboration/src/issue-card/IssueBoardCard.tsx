@@ -62,6 +62,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   goal,
   renderTaskSummary,
   summary,
+  metadata,
   cardStyle,
   cardClassName,
   dragging: draggingOverride = false,
@@ -226,6 +227,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
         'aria-disabled': !canOpenItem || undefined,
         disabled: !canOpenItem || detailButtonProps?.disabled,
       }}
+      metadata={canOpenItem ? metadata : null}
       childrenAction={
         <>
           {childrenAction}

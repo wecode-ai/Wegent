@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
+import { packBundledComponentArchives } from '../../scripts/lib/bundled-component-archives.mjs'
 
 const execute = promisify(execFile)
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -96,6 +97,7 @@ export async function prepareSignedComponents(environment = process.env) {
     console.log(`[components] prepared immutable ${id}: ${component.sha256}`)
   }
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  await packBundledComponentArchives(resources)
 }
 
 async function machOFiles(source) {

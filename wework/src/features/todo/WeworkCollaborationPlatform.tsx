@@ -5,6 +5,9 @@ import { StandInIcon } from '@wegent/collaboration'
 import { bindProjectStandInApi } from '@/api/standIn'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
+import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
+import { MessageSquare } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
@@ -56,7 +59,9 @@ import {
 } from '@/api/deliveries'
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { getChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
@@ -354,6 +359,7 @@ function projectWorkspaceRoots(project: CollaborationProject): string[] {
     : []
 }
 
+/** Adapts a project to desktop services, separating public stand-in and experimental coordinator actions. */
 export function WeworkSharedProject({
   api,
   projectCatalogApi,
@@ -372,6 +378,8 @@ export function WeworkSharedProject({
   onOpenRuntimeTask,
   onCancelRuntimeTask,
   project,
+  conversationRequestKey,
+  onOpenProjectConversation,
   runtimeTaskLifecycle,
   runtimeWork,
   runtimePort,
@@ -398,6 +406,8 @@ export function WeworkSharedProject({
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   project: CollaborationProject
+  conversationRequestKey?: string
+  onOpenProjectConversation?(): void
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
   runtimePort?: IssueRuntimeBindingPort
@@ -408,6 +418,11 @@ export function WeworkSharedProject({
 }) {
   const { t } = useTranslation('common')
   const preferences = useAppPreferencesState()
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const [closedConversationRequestKey, setClosedConversationRequestKey] = useState<string>()
+  const projectChatOpen = Boolean(
+    conversationRequestKey && conversationRequestKey !== closedConversationRequestKey
+  )
   const issueChangeRequestMonitor =
     services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
       ? getChangeRequestMonitor(services.deviceApi)
@@ -533,32 +548,57 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
+      renderBoardToolbarAction: onOpenProjectConversation
+        ? () => (
+            <Tooltip label={t('workbench.project_space_chat.open')} side="bottom">
+              <button
+                type="button"
+                data-testid="project-space-chat-open"
+                aria-label={t('workbench.project_space_chat.open')}
+                aria-expanded={projectChatOpen}
+                onClick={() => {
+                  if (projectChatOpen) setClosedConversationRequestKey(conversationRequestKey)
+                  else onOpenProjectConversation()
+                }}
+                className="project-board-compact-action inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+              >
+                <MessageSquare className="h-4 w-4" aria-hidden="true" />
+                <span className="project-board-action-label">
+                  {t('workbench.project_space_chat.open')}
+                </span>
+              </button>
+            </Tooltip>
+          )
+        : undefined,
       renderProjectHeaderAction: currentProject => (
         <div className="flex items-center gap-2">
-          <ProjectCoordinatorConversation
-            key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
-            api={scopedApi}
-            project={currentProject}
-            services={services}
-            userId={Number(userId)}
-            devices={devices ?? []}
-            onOpenTask={onOpenRuntimeTask}
-            onOpenIssue={issueId => {
-              setTaskComposer(null)
-              setLocation(current => ({ ...current, projectView: 'board', issueId }))
-              if (focusedItemId) onFocusedItemHandled?.()
-            }}
-            onOpenGroupSettings={() => {
-              setTaskComposer(null)
-              setLocation(current => ({
-                ...current,
-                projectView: 'manage',
-                projectSettingsSection: 'groups',
-                issueId: null,
-              }))
-              if (focusedItemId) onFocusedItemHandled?.()
-            }}
-          />
+          {experimentalFeaturesEnabled && (
+            <ProjectCoordinatorConversation
+              key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
+              api={scopedApi}
+              project={currentProject}
+              services={services}
+              userId={Number(userId)}
+              devices={devices ?? []}
+              onOpenTask={onOpenRuntimeTask}
+              onPublished={() => setRefreshProjectRequestKey(value => value + 1)}
+              onOpenIssue={issueId => {
+                setTaskComposer(null)
+                setLocation(current => ({ ...current, projectView: 'board', issueId }))
+                if (focusedItemId) onFocusedItemHandled?.()
+              }}
+              onOpenGroupSettings={() => {
+                setTaskComposer(null)
+                setLocation(current => ({
+                  ...current,
+                  projectView: 'manage',
+                  projectSettingsSection: 'groups',
+                  issueId: null,
+                }))
+                if (focusedItemId) onFocusedItemHandled?.()
+              }}
+            />
+          )}
           <StandInPopover
             key={currentProject.id}
             api={standInWorkspaceApi}
@@ -623,6 +663,11 @@ export function WeworkSharedProject({
     [
       focusedItemId,
       devices,
+      experimentalFeaturesEnabled,
+      onOpenProjectConversation,
+      projectChatOpen,
+      conversationRequestKey,
+      t,
       standInWorkspaceApi,
       scopedApi,
       onOpenRuntimeTask,
@@ -684,8 +729,17 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
-  // Stop any in-flight run bound to the Issue before it leaves the board, so an
-  // archived Issue never keeps an orphaned execution running on a device.
+  const isIssueRunning = useCallback(
+    (_issue: CollaborationIssue, bindings: WorkspaceTaskBinding[]) =>
+      bindings.some(binding =>
+        runtimeRunningByAddress.get(
+          runtimeConversationKey({ deviceId: binding.deviceId, taskId: binding.taskId })
+        )
+      ),
+    [runtimeRunningByAddress]
+  )
+  // Local archives require the Runtime to stop first. Cloud archives own the
+  // tombstone and cancellation transaction in the Backend before stopping work.
   const prepareIssueArchive = useCallback(
     async (issue: CollaborationIssue) => {
       if (!onCancelRuntimeTask) return
@@ -704,18 +758,9 @@ export function WeworkSharedProject({
     },
     [onCancelRuntimeTask, runtimeRunningByAddress, scopedApi]
   )
-  const runtimeTaskStatusSignature =
-    project.project_store === 'local'
-      ? ''
-      : projectRuntimeStatusSignature(runtimeTaskLifecycle, {
-          projectStore: project.project_store,
-          projectId: String(project.id),
-        })
-  const localRuntimeLifecycleVersion =
-    project.project_store === 'local' ? runtimeTaskLifecycle?.version : undefined
-  const previousLocalRuntimeRef = useRef({
-    projectId: project.project_store === 'local' ? String(project.id) : null,
-    version: localRuntimeLifecycleVersion,
+  const runtimeTaskStatusSignature = projectRuntimeStatusSignature(runtimeTaskLifecycle, {
+    projectStore: project.project_store,
+    projectId: String(project.id),
   })
 
   useEffect(() => {
@@ -729,31 +774,6 @@ export function WeworkSharedProject({
       for (const timeout of timeouts) window.clearTimeout(timeout)
     }
   }, [runtimeTaskStatusSignature])
-
-  useEffect(() => {
-    const projectId = project.project_store === 'local' ? String(project.id) : null
-    const previous = previousLocalRuntimeRef.current
-    previousLocalRuntimeRef.current = {
-      projectId,
-      version: localRuntimeLifecycleVersion,
-    }
-    if (
-      projectId === null ||
-      localRuntimeLifecycleVersion === undefined ||
-      previous.projectId !== projectId ||
-      previous.version === localRuntimeLifecycleVersion
-    ) {
-      return
-    }
-    const timeouts = PROJECT_STATUS_REFRESH_DELAYS_MS.map(delay =>
-      window.setTimeout(() => {
-        setRefreshProjectRequestKey(value => value + 1)
-      }, delay)
-    )
-    return () => {
-      for (const timeout of timeouts) window.clearTimeout(timeout)
-    }
-  }, [localRuntimeLifecycleVersion, project.id, project.project_store])
 
   useEffect(
     () =>
@@ -1107,7 +1127,7 @@ export function WeworkSharedProject({
 
   return (
     <div
-      className="issue-drawer-workspace flex h-full min-h-0 min-w-0"
+      className="issue-drawer-workspace relative flex h-full min-h-0 min-w-0"
       data-testid="issue-drawer-workspace"
     >
       <TransientNotice
@@ -1117,6 +1137,12 @@ export function WeworkSharedProject({
       />
       <div className="min-w-0 flex-1">
         <CollaborationApp
+          participationUserId={
+            project.project_store === 'local'
+              ? (services.localParticipationIdentity?.viewerUserIds ?? taskOwnerUserId)
+              : taskOwnerUserId
+          }
+          isIssueRunning={isIssueRunning}
           parentGroupingEnabled
           api={scopedApi}
           initialProject={project}
@@ -1128,7 +1154,9 @@ export function WeworkSharedProject({
           showProjectBack={false}
           refreshProjectRequestKey={refreshProjectRequestKey}
           issueArchiveEnabled
-          onPrepareIssueArchive={prepareIssueArchive}
+          onPrepareIssueArchive={
+            project.project_store === 'local' ? prepareIssueArchive : undefined
+          }
           onCreateTask={
             runtimePort ? async (_taskProject, issue) => openNewTaskConversation(issue) : undefined
           }
@@ -1250,6 +1278,7 @@ export function WeworkSharedProject({
             </IssueConversationDrawers>
           )}
           renderBoardIssueCard={({
+            metadata,
             childrenAction,
             display,
             focused,
@@ -1290,6 +1319,7 @@ export function WeworkSharedProject({
             return (
               <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
                 <CloudTodoBoardCard
+                  metadata={metadata}
                   childrenAction={childrenAction}
                   item={
                     {
@@ -1329,6 +1359,16 @@ export function WeworkSharedProject({
           }}
         />
       </div>
+      {projectChatOpen && (
+        <ProjectSpaceChatSidebar
+          key={`${project.project_store}:${project.id}:${conversationRequestKey}`}
+          project={editorProject}
+          localProjects={localProjects}
+          localExecution
+          startNew
+          onClose={() => setClosedConversationRequestKey(conversationRequestKey)}
+        />
+      )}
     </div>
   )
 }
@@ -1342,6 +1382,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
 }
 
+/** Binds project navigation and stand-in indicators to the current account and project catalog. */
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
@@ -1377,6 +1418,23 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     ]
   )
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
+  const [conversationRequest, setConversationRequest] = useState<{
+    projectId: string
+    projectStore: CollaborationProject['project_store']
+    accountScope: string
+    key: string
+  }>()
+  const openProjectConversation = useCallback(
+    (project: CollaborationProject) => {
+      setConversationRequest({
+        projectId: project.id,
+        projectStore: project.project_store,
+        accountScope: templateScope,
+        key: crypto.randomUUID(),
+      })
+    },
+    [templateScope]
+  )
   const api = props.services.sharedWorkspaceApi
   const locale = useMemo(() => (i18n.language.startsWith('zh') ? 'zh-CN' : 'en'), [i18n.language])
   const collaborationUserName =
@@ -1501,8 +1559,12 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
   const navigationRequestRevisionRef = useRef(0)
   const resolvedWorkspaceProjectRef = useRef<string | null>(null)
+  const publishActiveProject = useStableEvent((project: LocatedProjectSpace | null) =>
+    props.onActiveProjectChange?.(project)
+  )
   // An external route supersedes an internal project's pending lookup, even
   // when it only selects another Issue or comment in the same project.
+  // API refreshes in the same account do not revoke the user's navigation intent.
   useLayoutEffect(() => {
     navigationRequestRevisionRef.current += 1
     pendingNavigationProjectIdRef.current = undefined
@@ -1512,7 +1574,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   }, [
     activeProject?.projectId,
     activeProject?.projectStore,
-    platformApi,
+    templateScope,
     props.focusedCommentId,
     props.focusedCommentRequestKey,
     props.focusedItemId,
@@ -1639,8 +1701,10 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          accountScope: templateScope,
           templateStore,
           templateNavigation: true,
+          openProjectConversation,
           renderProjectSidebarBadge: project => {
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
@@ -1717,7 +1781,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                   : null,
             })
             if (!nextLocation.projectId) {
-              props.onActiveProjectChange?.(null)
+              publishActiveProject(null)
               return
             }
             const requestedProjectId = String(nextLocation.projectId)
@@ -1725,7 +1789,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               .get(requestedProjectId)
               .then(project => {
                 if (navigationRequestRevisionRef.current !== navigationRevision) return
-                props.onActiveProjectChange?.({
+                publishActiveProject({
                   ...project,
                   location: project.project_store === 'local' ? 'local' : 'cloud',
                 })
@@ -1953,6 +2017,14 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               onOpenRuntimeTask={props.onOpenRuntimeTask}
               sendRuntimePaneMessage={props.sendRuntimePaneMessage}
               project={project}
+              onOpenProjectConversation={() => openProjectConversation(project)}
+              conversationRequestKey={
+                conversationRequest?.projectId === project.id &&
+                conversationRequest.projectStore === project.project_store &&
+                conversationRequest.accountScope === templateScope
+                  ? conversationRequest.key
+                  : undefined
+              }
               runtimeTaskLifecycle={props.runtimeTaskLifecycle}
               runtimeWork={props.runtimeWork}
               runtimePort={runtimePort}

@@ -50,19 +50,16 @@ export async function verifyLocalIssueAssigneeRecovery(
     `[data-testid="${create ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}"]`
   )
   await selectWorkspaceIssueAgent(control, trigger, resource.id, timeoutMs, mode)
-  const save = scoped(`[data-testid="${create ? 'cloud-todo-create-confirm' : 'cloud-todo-save'}"]`)
-  if (!create) {
-    await control.command('waitFor', save, { text: '保存分配' })
-    assert.equal(Number(await control.command('getElementCount', save)), 1)
+  const save = scoped(
+    `[data-testid="${create ? 'cloud-todo-create-confirm' : 'cloud-todo-field-retry'}"]`
+  )
+  if (create) await control.command('clickWhenEnabled', save)
+  else
     assert.equal(
-      Number(
-        await control.command('getElementCount', scoped('header [data-testid="cloud-todo-save"]'))
-      ),
+      Number(await control.command('getElementCount', scoped('[data-testid="cloud-todo-save"]'))),
       0,
-      'Pending assignment must expose its save action next to its owner'
+      'Assignment must persist directly without a separate Save action'
     )
-  }
-  await control.command('clickWhenEnabled', save)
   await control.command('waitFor', '[data-testid="runner-selection-dialog"]', { timeoutMs })
   const createdBindings = await bindings()
   assert.equal(

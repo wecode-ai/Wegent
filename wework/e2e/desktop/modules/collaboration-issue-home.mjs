@@ -26,9 +26,13 @@ export async function verifyCollaborationIssueHome(
   )
   const ownerButton = scoped('[data-testid="collaboration-issue-owner"]')
   const openComposer = async () => {
-    await control.command('hover', projectRow)
-    await control.command('click', newConversation)
+    await control.command(
+      'click',
+      inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
+    )
     await control.command('waitFor', input)
+    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
+    await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
     await control.command(
       'waitFor',
       scoped('[data-testid="collaboration-issue-project-trigger"]'),

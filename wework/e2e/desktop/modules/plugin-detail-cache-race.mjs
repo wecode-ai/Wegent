@@ -2,12 +2,34 @@ import assert from 'node:assert/strict'
 import { inventory, requestPluginExecutor, testId, until } from './plugin-regression-fixture.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 
+export function assertPluginDetailMembership(before, after, pluginName) {
+  const member = state => state.installedPlugins.find(plugin => plugin.pluginKey === pluginName)
+  const expected = member(before.sharedInventory)
+  assert.ok(expected, 'The race needs confirmed shared membership')
+  assert.equal(
+    after.sharedInventory.deviceId,
+    before.sharedInventory.deviceId,
+    'Old detail crossed device scope'
+  )
+  assert.deepEqual(
+    member(after.sharedInventory),
+    expected,
+    'Old detail overwrote shared membership'
+  )
+  // A cleared or partial adapter peek is not an uninstall. A successful native
+  // read, or an existing adapter member, must still preserve the confirmed state.
+  if (member(after) || after.installedSourceReads.codex?.status === 'fulfilled') {
+    assert.deepEqual(member(after), member(before), 'Old detail overwrote adapter membership')
+  }
+}
+
 // Hold original Runtime detail bytes while a real management action changes membership.
 export async function verifyPluginDetailCacheRace({
   control,
   item,
   openDetail,
   backToList,
+  refreshCatalog,
   entry,
 }) {
   const gates = runtimeTransportGates(control)
@@ -15,8 +37,10 @@ export async function verifyPluginDetailCacheRace({
   const manifestGate = 'plugin-detail-after-disable-manifest'
   const toggle = testId(`installed-plugin-toggle-${item.id}`)
   const member = state => state.installedPlugins.find(plugin => plugin.pluginKey === item.name)
+  const sharedMember = state => member(state.sharedInventory)
   const read = () => inventory(control)
   try {
+    await refreshCatalog()
     await gates.arm({
       id: detailGate,
       kind: 'response',
@@ -36,8 +60,12 @@ export async function verifyPluginDetailCacheRace({
     await control.command('clickWhenEnabled', toggle)
     await control.command('waitFor', `${toggle}[aria-checked="false"]`, { enabled: true })
     const before = await until(
-      read,
-      state => member(state)?.enabled === false,
+      async () => {
+        const state = await read()
+        entry.beforeReleaseInventory = state
+        return state
+      },
+      state => member(state)?.enabled === false && sharedMember(state)?.enabled === false,
       'The real management disable did not reach the adapter inventory'
     )
     entry.beforeRelease = member(before)
@@ -53,12 +81,10 @@ export async function verifyPluginDetailCacheRace({
     // cache on the next renderer command, without another inventory refresh.
     const completed = await gates.wait(manifestGate)
     assert.equal(completed.deliveries, 1)
-    entry.afterRelease = member(await read())
-    assert.deepEqual(
-      entry.afterRelease,
-      entry.beforeRelease,
-      'Old detail overwrote the newer disabled membership'
-    )
+    const after = await read()
+    entry.afterReleaseInventory = after
+    entry.afterRelease = member(after)
+    assertPluginDetailMembership(before, after, item.name)
     await control.command('waitFor', `${toggle}[aria-checked="false"]`, { enabled: true })
     entry.oldDetailDelivered = (await gates.read(detailGate)).deliveries === 1
     assert.ok(entry.oldDetailDelivered)

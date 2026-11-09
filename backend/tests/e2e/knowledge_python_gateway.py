@@ -284,6 +284,28 @@ class KnowledgePythonGateway(unittest.TestCase):
                 finally:
                     self.policy(True)
 
+    def test_link_preview_protection_includes_viewer_watermark(self) -> None:
+        path = f"/api/knowledge-bases/{self.kbs[0].id}/document-protection"
+        for allowed in (True, False):
+            with self.subTest(allowed=allowed):
+                try:
+                    self.policy(allowed)
+                    response = self.get(
+                        path,
+                        actor=1,
+                        params={"preview_watermark": "true"},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.json(),
+                        {
+                            "original_download_allowed": allowed,
+                            "watermark_text": self.users[1].user_name,
+                        },
+                    )
+                finally:
+                    self.policy(True)
+
     def test_lists_filters_pagination_and_folder_tree(self) -> None:
         kb_id = self.kbs[0].id
         paths = (

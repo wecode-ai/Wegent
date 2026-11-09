@@ -43,6 +43,7 @@ export interface CollaborationProjectViewExtension {
   testId: string;
   content: ReactNode;
   available?: boolean;
+  after?: StandardCollaborationProjectView;
 }
 
 export interface CollaborationProjectViewSlots {
@@ -130,15 +131,19 @@ export function buildCollaborationProjectViewOptions({
       (extension) =>
         extension.available !== false && !standardIds.has(extension.id),
     )
-    .map(({ id, label, testId }) => ({ id, label, testId }));
+    .map(({ id, label, testId, after = "board" }) => ({
+      id,
+      label,
+      testId,
+      after,
+    }));
 
-  return [
-    standardOptions[0],
-    ...extensionOptions,
-    ...standardOptions.slice(1),
-  ].filter((option): option is CollaborationProjectViewOption =>
-    Boolean(option),
-  );
+  return standardOptions.flatMap((option) => [
+    option,
+    ...extensionOptions
+      .filter((extension) => extension.after === option.id)
+      .map(({ id, label, testId }) => ({ id, label, testId })),
+  ]);
 }
 
 export interface CollaborationProjectViewShellProps extends Omit<

@@ -10,6 +10,7 @@ import {
   openProjectAgentCreator,
   selectProjectRunnerModel,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -247,7 +248,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         ACTIVE_WORKBENCH_SELECTOR,
         uiTimeoutMs
       )
-      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+      await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'board')
       await control.command(
         'clickWhenEnabled',
         scoped('[data-testid="collaboration-issue-create"]')
@@ -283,7 +284,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       assertLocalIsolation()
 
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
       await control.command('waitFor', scoped('[data-testid="project-settings-shell"]'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -292,6 +293,16 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         settingsSnapshot.testIds.includes('collaboration-tab-automation'),
         false,
         'Automation must not remain a top-level project view'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-project-view-select"] option[value="automation"]')
+          )
+        ),
+        0,
+        'Automation must not remain a compact top-level project view'
       )
 
       await control.command(
@@ -365,7 +376,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         ACTIVE_WORKBENCH_SELECTOR
       )
       assertLocalIsolation()
-      await control.command('click', scoped('[data-testid="collaboration-tab-files"]'))
+      await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'files')
       await control.command('waitFor', scoped('[data-testid="cloud-files-view"]'), {
         timeoutMs: uiTimeoutMs,
       })

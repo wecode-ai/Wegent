@@ -2,9 +2,12 @@
 name = "wegent-executor"
 version = "1.8.7"
 edition = "2021"
-rust-version = "1.77"
+rust-version.workspace = true
 description = "Wegent task executor service"
 license = "Apache-2.0"
+
+[package.metadata.wegent]
+source-inputs = ["../shared/protocol/runtime_task_create_request_v2.schema.json"]
 
 [lib]
 doctest = false
@@ -27,12 +30,37 @@ test = true
 default = []
 dev-reload = ["dep:ctrlc", "dep:notify"]
 
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+default-members = [".", "crates/*"]
+exclude = ["vendor/tf-rust-socketio"]
+
+[workspace.package]
+rust-version = "1.77"
+
 [dependencies]
+wegent-claude-harness = { path = "crates/claude-harness" }
+wegent-mcp-runtime = { path = "crates/mcp-runtime" }
+wegent-native-home = { path = "crates/native-home" }
+wegent-multimodal = { path = "crates/multimodal" }
+wegent-execution-stream = { path = "crates/execution-stream" }
+wegent-plugin-packages = { path = "crates/plugin-packages" }
+wegent-model-proxy = { path = "crates/model-proxy" }
+wegent-local-task-store = { path = "crates/task-store" }
+wegent-automation = { path = "crates/automation" }
+wegent-workspace = { path = "crates/workspace" }
+wegent-hooks = { path = "crates/hooks" }
+wegent-subprocess = { path = "crates/subprocess" }
+wegent-execution-contracts = { path = "crates/execution-contracts" }
+wegent-runtime-config = { path = "crates/config" }
+wegent-runtime-logging = { path = "crates/logging" }
+wegent-filesystem = { path = "../shared/rust/filesystem" }
+wegent-protocol = { path = "../shared/rust/protocol" }
+wegent-crypto = { path = "../shared/rust/crypto" }
 axum = { version = "0.8", features = ["multipart", "ws"] }
-aes = "0.8"
 aes-gcm = "0.10"
 base64 = "0.22"
-cbc = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
 cron = "0.15"
@@ -69,6 +97,8 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+wegent-model-proxy = { path = "crates/model-proxy", features = ["test-support"] }
+wegent-executor-test-support = { path = "crates/test-support" }
 http-body-util = "0.1"
 tokio = { version = "1.48", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

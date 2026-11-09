@@ -141,6 +141,7 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  milestoneId?: string | null;
   title: string;
   description?: string;
   status?: string;
@@ -158,6 +159,7 @@ export interface WorkspaceIssueCreateInput {
 }
 
 export interface WorkspaceIssueUpdateInput {
+  milestoneId?: string | null;
   position?: { beforeItemId: string | null };
   version: number;
   securityLevel?: "open" | "related";
@@ -592,6 +594,11 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceMemberUpdateInput,
   ): Promise<CollaborationWorkspaceMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
+  createTemplateAgent?(
+    workspaceId: string,
+    agent: import("../templates/types").TemplateAgent,
+    routing: import("../templates/types").TemplateAgentRouting,
+  ): Promise<WorkspaceProjectAgent>;
   listAgents(
     workspaceId: string,
     options?: { forceRefresh?: boolean },
@@ -960,7 +967,6 @@ export interface WorkspaceStandInSettings {
   id?: string;
   name?: string;
   tags?: string[];
-  agentId?: string | null;
   enabled: boolean;
   prompt: string;
   executionDeviceId: string;
@@ -968,6 +974,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {
     run?(
       projectId: string,

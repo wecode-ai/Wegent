@@ -8,6 +8,7 @@ import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import { RuntimeInteractionsProvider } from '@/features/notifications/RuntimeInteractionsProvider'
 import { RuntimeInteractionsPage } from '@/features/notifications/RuntimeInteractionsPage'
 import { RuntimeInteractionNotice } from '@/features/notifications/RuntimeInteractionNotice'
+import { PluginPythonRuntimeNotice } from '@/components/plugins/PluginPythonRuntimeNotice'
 import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   Activity,
@@ -26,6 +27,7 @@ import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
 import {
   registerRuntimeTaskLifecycleAutomation,
   RuntimeTaskLifecycleStore,
@@ -37,6 +39,7 @@ import {
 } from '@/features/workbench/workbenchServices'
 import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { RuntimeTaskSystemSleepBridge } from '@/features/workbench/RuntimeTaskSystemSleepBridge'
+import { ReplyPredictionCoordinator } from '@/features/reply-predictions/ReplyPredictionCoordinator'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
@@ -45,7 +48,6 @@ import { stripAppBasePath } from '@/config/runtime'
 import {
   AppearanceProvider,
   getWorkbenchBackground,
-  useAppearance,
   useOptionalAppearance,
 } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -568,10 +570,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
+  const { user: workbenchIdentity, key: ownershipKey } = resolveWorkbenchOwnership(
+    cloudConnection,
+    user
+  )
+  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(ownershipKey), [ownershipKey])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
-  const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   const workbenchIdentityId = workbenchIdentity?.id
   const workbenchIdentityName = workbenchIdentity?.user_name
   const workbenchIdentityEmail = workbenchIdentity?.email
@@ -723,6 +727,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return (
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+        <ReplyPredictionCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
         <NotificationEventsBridge
           chatStream={services.chatStream}
@@ -752,6 +757,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   return (
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+      <ReplyPredictionCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
       <NotificationEventsBridge
         chatStream={services.chatStream}
@@ -772,8 +778,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
                 services={services}
                 user={user}
                 workspaceTabId={tab.id}
-                loadTaskComposerCatalogs={false}
-                composerAppsSourceActive={false}
+                loadTaskComposerCatalogs={tab.id === workspaceTabs.activeTabId}
+                composerAppsSourceActive={tab.id === workspaceTabs.activeTabId}
                 debugSnapshotEnabled={false}
                 publishDebugSnapshots={false}
                 consumePluginTrials={false}
@@ -827,14 +833,17 @@ export default function App() {
     isDesktopRuntime() && path === '/system-drag' ? (
       <SystemDragPanel />
     ) : isDesktopRuntime() && path === '/process-explorer' ? (
-      <AppEnvironment persistAppearance={false} syncAppearanceFromPreferences>
-        <ProcessExplorerPage />
-      </AppEnvironment>
+      <ProcessExplorerPage />
     ) : (
       <MainApp />
     )
   return (
-    <>
+    <AppEnvironment
+      persistAppearance={
+        !isDesktopRuntime() ||
+        (!['/system-drag', '/process-explorer'].includes(path) && !isPopoutWindowRuntime())
+      }
+    >
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
       <GlobalIconButtonTooltip />
@@ -846,7 +855,7 @@ export default function App() {
           slot={WEWORK_DSH_SLOTS.shellOverlay}
         />
       </div>
-    </>
+    </AppEnvironment>
   )
 }
 
@@ -856,50 +865,33 @@ function MainApp() {
   }, [])
 
   return (
-    <AppEnvironment>
-      <AppUpdateProvider>
-        <CloudConnectionProvider>
-          <AuthProvider>
-            <TelemetryBridge />
-            <TelemetryAgent />
-            <AppShell />
-          </AuthProvider>
-        </CloudConnectionProvider>
-      </AppUpdateProvider>
-    </AppEnvironment>
+    <AppUpdateProvider>
+      <CloudConnectionProvider>
+        <AuthProvider>
+          <TelemetryBridge />
+          <TelemetryAgent />
+          <AppShell />
+        </AuthProvider>
+      </CloudConnectionProvider>
+    </AppUpdateProvider>
   )
 }
 
 function AppEnvironment({
   children,
   persistAppearance = true,
-  syncAppearanceFromPreferences = false,
 }: {
   children: ReactNode
   persistAppearance?: boolean
-  syncAppearanceFromPreferences?: boolean
 }) {
   return (
     <AppearanceProvider persist={persistAppearance}>
       <AppPreferencesProvider>
-        {syncAppearanceFromPreferences ? <AppearancePreferenceSync /> : null}
         <LanguagePreferenceInitializer />
         {children}
       </AppPreferencesProvider>
     </AppearanceProvider>
   )
-}
-
-function AppearancePreferenceSync() {
-  const appPreferences = useAppPreferencesState()
-  const { setAppearance } = useAppearance()
-
-  useEffect(() => {
-    if (!appPreferences?.loaded) return
-    setAppearance({ mode: appPreferences.preferences.appearanceMode })
-  }, [appPreferences?.loaded, appPreferences?.preferences.appearanceMode, setAppearance])
-
-  return null
 }
 
 function LanguagePreferenceInitializer() {
@@ -935,13 +927,7 @@ function AppShell() {
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
-  const initialCloudConnection = {
-    apiBaseUrl: cloudConnection.apiBaseUrl,
-    backendUrl: cloudConnection.backendUrl,
-    socketBaseUrl: cloudConnection.socketBaseUrl,
-    isConnected: cloudConnection.isConnected,
-    token: cloudConnection.token,
-  }
+  const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
   const isDesktop = isDesktopRuntime()
@@ -949,6 +935,17 @@ function AppShell() {
   const currentWindowLabel = isElectron ? getDesktopWindowLabel() : null
   const isMainWindow = currentWindowLabel === 'main'
   const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
+  const localExecutorCloudBridge =
+    !isPopoutWindow && !isWorkspaceWindow ? (
+      <LocalExecutorCloudBridge
+        apiBaseUrl={cloudConnection.apiBaseUrl}
+        backendUrl={cloudConnection.backendUrl}
+        socketBaseUrl={cloudConnection.socketBaseUrl}
+        isConnected={cloudConnection.isConnected}
+        token={cloudConnection.token}
+        preferencesLoaded={appPreferences?.loaded ?? false}
+      />
+    ) : null
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
@@ -969,15 +966,18 @@ function AppShell() {
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
-      board: t('workbench.workspace_tab_board', '协作 (Beta)'),
+      board: t('workbench.workspace_tab_board', '协作'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
-      auxiliaryRoutes: Object.fromEntries(
-        registeredRoutes.map(route => [
-          route.path,
-          t(route.titleKey ?? route.id, route.title ?? route.label ?? route.id),
-        ])
-      ),
+      auxiliaryRoutes: {
+        ...Object.fromEntries(
+          registeredRoutes.map(route => [
+            route.path,
+            t(route.titleKey ?? route.id, route.title ?? route.label ?? route.id),
+          ])
+        ),
+        [INTERACTIONS_PATH]: t('interactions.title', '待你处理'),
+      },
     }),
     [registeredRoutes, t]
   )
@@ -1271,10 +1271,8 @@ function AppShell() {
     )
     return (
       <CodexHomeInitializer>
-        <LocalRuntimeInitializer
-          initialCloudConnection={initialCloudConnection}
-          startupReady={workbenchStartupReady}
-        >
+        <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+          {localExecutorCloudBridge}
           {isolatedShell}
         </LocalRuntimeInitializer>
       </CodexHomeInitializer>
@@ -1282,7 +1280,7 @@ function AppShell() {
   }
 
   const shell = (
-    <NotificationTaskSourceProvider key={user.id}>
+    <NotificationTaskSourceProvider key={ownershipKey}>
       <WorkspaceTabsProvider
         pathname={path}
         search={search}
@@ -1292,9 +1290,7 @@ function AppShell() {
         startupTabId={startupWorkspaceTabId}
         restoreSessionTabs={!isMainWindow}
       >
-        <RuntimeInteractionsProvider
-          accountKey={`${cloudConnection.apiBaseUrl ?? 'local'}:${user.id}`}
-        >
+        <RuntimeInteractionsProvider accountKey={ownershipKey}>
           <ElectronWorkbenchTabBridge />
           <WeworkSchemeBridge />
           {isElectron && !isPopoutWindow ? (
@@ -1321,16 +1317,6 @@ function AppShell() {
               />
             )}
             {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
-            {!isPopoutWindow && !isWorkspaceWindow ? (
-              <LocalExecutorCloudBridge
-                apiBaseUrl={cloudConnection.apiBaseUrl}
-                backendUrl={cloudConnection.backendUrl}
-                socketBaseUrl={cloudConnection.socketBaseUrl}
-                isConnected={cloudConnection.isConnected}
-                token={cloudConnection.token}
-                preferencesLoaded={appPreferences?.loaded ?? false}
-              />
-            ) : null}
             {isMainWindow && isElectron ? (
               <>
                 <IdleTaskCoordinator active={workbenchStartupReady} />
@@ -1354,6 +1340,7 @@ function AppShell() {
             </div>
             {!isPopoutWindow && <WeworkDevInstanceBadge />}
             {!isPopoutWindow && !isWorkspaceWindow && <RuntimeInteractionNotice />}
+            {isElectron && !isPopoutWindow && !isWorkspaceWindow && <PluginPythonRuntimeNotice />}
           </div>
         </RuntimeInteractionsProvider>
       </WorkspaceTabsProvider>
@@ -1366,10 +1353,8 @@ function AppShell() {
 
   return (
     <CodexHomeInitializer>
-      <LocalRuntimeInitializer
-        initialCloudConnection={initialCloudConnection}
-        startupReady={workbenchStartupReady}
-      >
+      <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+        {localExecutorCloudBridge}
         {shell}
       </LocalRuntimeInitializer>
     </CodexHomeInitializer>
@@ -1494,7 +1479,7 @@ function WeworkDevInstanceBadge() {
               <button
                 type="button"
                 data-testid="collapse-wework-dev-instance-button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
                 title="Collapse to movable icon"
                 aria-label="Collapse development instance info"
                 onClick={() => setCollapsed(true)}
@@ -1519,7 +1504,7 @@ function WeworkDevInstanceBadge() {
                 <button
                   type="button"
                   data-testid={`copy-wework-dev-${row.key}-button`}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
                   title={`Copy ${row.label}`}
                   aria-label={`Copy ${row.label}`}
                   onClick={() => void copyValue(row.key, row.value)}

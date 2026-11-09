@@ -36,6 +36,7 @@ fn turn(task: &str, id: Value, prompt: &str) -> SpawnTurnRequest {
     request.extra.insert("user_id".to_owned(), json!(7));
     apply_runtime_payload_metadata(&mut request, &payload);
     SpawnTurnRequest {
+        task_kind: None,
         local_task_id: task.to_owned(),
         runtime: "codex".to_owned(),
         request,

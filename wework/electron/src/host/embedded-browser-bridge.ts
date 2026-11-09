@@ -59,7 +59,8 @@ export class EmbeddedBrowserBridge {
 
   constructor(
     private readonly browser: EmbeddedBrowserManager,
-    private readonly executorHome: string
+    private readonly executorHome: string,
+    private readonly fullControlEnabled: () => Promise<boolean> = async () => false
   ) {}
 
   async start(): Promise<string> {
@@ -239,6 +240,14 @@ export class EmbeddedBrowserBridge {
     request: BrowserBridgeRequest,
     signal: AbortSignal
   ): Promise<unknown> {
+    if (isMutatingAction(request.action) && (await this.fullControlEnabled())) {
+      if (signal.aborted) throw new Error('Browser operation cancelled')
+      if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
+      return this.dispatchAction(baseLabel, label, {
+        ...request,
+        options: { ...request.options, riskApproved: true },
+      })
+    }
     const result = await this.dispatchAction(baseLabel, label, request)
     if (
       !isMutatingAction(request.action) ||

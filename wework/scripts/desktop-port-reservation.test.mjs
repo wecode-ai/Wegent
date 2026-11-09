@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { randomInt } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'

@@ -13,6 +13,7 @@ import {
   type ReleaseStore,
 } from './release-store.js'
 import { verifyReleaseSignature } from './release-signature.js'
+import { linkImmutableDirectory } from './immutable-directory.js'
 
 const execute = promisify(execFile)
 let selectedResources: string | undefined
@@ -36,6 +37,31 @@ async function bundleIdentifier(application: string): Promise<string> {
   return stdout.trim()
 }
 
+async function bridgedApplication(
+  store: ReleaseStore,
+  source: DesktopRelease,
+  root: string
+): Promise<string | null> {
+  // Legacy registration copied the host into a slot, but retained the exact
+  // installed executable as its bridge. Verify this owned handoff before
+  // consulting unrelated Launch Services registrations.
+  const bridge = await optionalText(join(store.root, 'bridge'))
+  if (!bridge) return null
+  const candidate = await realpath(macosApplication(bridge))
+  if (contains(root, candidate)) return null
+  await execute('/usr/bin/cmp', [
+    '-s',
+    source.executable,
+    join(candidate, 'Contents', 'MacOS', basename(source.executable)),
+  ])
+  await execute('/usr/bin/cmp', [
+    '-s',
+    join(source.resources, 'app.asar'),
+    join(candidate, 'Contents', 'Resources', 'app.asar'),
+  ])
+  return candidate
+}
+
 async function installedApplication(
   store: ReleaseStore,
   source: DesktopRelease,
@@ -46,6 +72,7 @@ async function installedApplication(
   const sourceBundle = await realpath(macosApplication(source.executable))
   const saved = await optionalText(join(store.root, 'macos-application'))
   let application = !contains(root, sourceBundle) ? sourceBundle : saved
+  if (!application) application = await bridgedApplication(store, source, root)
   if (!application) {
     // Delivered upgrades retained the original installation in previousHealthy.
     // Prefer that transaction-owned URL over unrelated Launch Services copies.
@@ -97,13 +124,25 @@ async function retainLegacySource(
   const id = `macos-source-${createHash('sha256').update(releaseId).digest('hex').slice(0, 40)}`
   const retained = join(store.slot(id), 'host', basename(application))
   const executable = await retainProgram(source.executable, retained)
+  const sourceComponents = join(
+    source.componentDataDirectory ?? store.slot(source.id),
+    'managed-components'
+  )
+  const retainedComponents = join(store.slot(id), 'managed-components')
+  if (existsSync(sourceComponents))
+    await linkImmutableDirectory(
+      retainedComponents,
+      sourceComponents,
+      async path =>
+        existsSync(path) && (await realpath(path)) === (await realpath(sourceComponents))
+    )
   const installedExecutable = join(application, 'Contents', 'MacOS', basename(source.executable))
   const retainedSource: DesktopRelease = {
     ...source,
     id,
     executable: installedExecutable,
     resources: join(application, 'Contents', 'Resources'),
-    componentDataDirectory: source.componentDataDirectory ?? store.slot(source.id),
+    componentDataDirectory: store.slot(id),
     retainedRelease: source.id,
     macosInstallation: { payloadExecutable: executable, bootstrapFromPayload: false },
   }
@@ -112,6 +151,11 @@ async function retainLegacySource(
     prepared.components,
     source.resources,
     join(application, 'Contents', 'Resources')
+  )
+  prepared.components = relocateComponents(
+    prepared.components,
+    sourceComponents,
+    retainedComponents
   )
   await store.save(retainedSource)
   await atomicReleaseWrite(join(store.slot(id), 'prepared.json'), JSON.stringify(prepared))

@@ -48,6 +48,7 @@ pub struct BindingMetadata {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct ItemMetadata {
+    pub milestone_id: Option<String>,
     pub content_revision: Option<serde_json::Value>,
     pub read_revisions: Option<serde_json::Value>,
     pub activity_read_sequences: Option<serde_json::Value>,
@@ -75,6 +76,7 @@ pub struct ItemMetadata {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct AssignmentMetadata {
+    pub automation: Option<serde_json::Value>,
     pub event_type: Option<String>,
     pub action: Option<String>,
     pub assignment_event_id: Option<String>,

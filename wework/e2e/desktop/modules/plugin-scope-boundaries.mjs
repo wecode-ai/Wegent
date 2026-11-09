@@ -24,6 +24,7 @@ import {
 } from './shared.mjs'
 import { waitForTestIdByText } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
+import { signInDesktopCloud } from './desktop-cloud-login.mjs'
 
 const clientBundle = process.env.WEWORK_E2E_SOCKET_IO_CLIENT
 const { decompressFromUTF16 } = createRequire(import.meta.url)(
@@ -189,7 +190,13 @@ export async function verifyPluginScopeBoundaries({
       timeoutMs
     )
     await control.command('fill', testId('composer-plugin-picker-search'), { value: slug })
+    await control.command('waitFor', testId(`composer-plugin-picker-item-plugin:${slug}`), {
+      visible: present,
+      stableMs: 250,
+      timeoutMs,
+    })
     const picker = JSON.parse(await control.command('snapshot', testId('composer-plugin-picker')))
+    observation.picker = picker
     assert.equal(
       picker.testIds.includes(`composer-plugin-picker-item-plugin:${slug}`),
       present,
@@ -229,75 +236,8 @@ export async function verifyPluginScopeBoundaries({
     }
   }
 
-  async function authSessionKeys() {
-    const output = await commandOutputAsync('redis-cli', [
-      '-p',
-      String(cloud.redisPort),
-      '--raw',
-      '--scan',
-      '--pattern',
-      '*wework_auth_session:*',
-    ])
-    return output.split('\n').filter(Boolean)
-  }
-
   async function authorizeAccount(user, token) {
-    await control.command('navigate', 'body', { value: '/settings/connections' })
-    await control.command(
-      'waitFor',
-      `${testId('settings-cloud-disconnect-button')}, ${testId('settings-cloud-connect-button')}`,
-      { visible: true, enabled: true, stableMs: 250 }
-    )
-    if (
-      Number(
-        await control.command('getElementCount', testId('settings-cloud-disconnect-button'), {
-          visible: true,
-        })
-      )
-    ) {
-      await control.command('click', testId('settings-cloud-disconnect-button'), { visible: true })
-    }
-    await control.command('waitFor', testId('settings-cloud-connect-button'), {
-      visible: true,
-      enabled: true,
-      stableMs: 250,
-    })
-    const before = new Set(await authSessionKeys())
-    await control.command('click', testId('settings-cloud-connect-button'))
-    await control.command('waitFor', testId('cloud-backend-url-input'))
-    await control.command('fill', testId('cloud-backend-url-input'), { value: apiProxy.url })
-    await control.command('clickWhenEnabled', testId('cloud-authorization-submit-button'))
-    const key = await until(
-      authSessionKeys,
-      keys => keys.some(value => !before.has(value)),
-      'Real cloud authorization did not create a new Redis session'
-    )
-    const created = key.filter(value => !before.has(value))
-    assert.equal(created.length, 1, 'The account switch created ambiguous authorization sessions')
-    const sessionId = created[0].split('wework_auth_session:').at(-1)
-    assert.match(sessionId, /^[a-f0-9-]{36}$/)
-    const approved = await request(`/auth/wework/sessions/${sessionId}/approve`, {
-      token,
-      method: 'POST',
-    })
-    assert.equal(approved.status, 'approved')
-    await control.command('waitFor', testId('cloud-connection-status-card'), {
-      text: user.user_name,
-      visible: true,
-      timeoutMs,
-    })
-    const connectedCard = await control.command('getText', testId('cloud-connection-status-card'), {
-      visible: true,
-    })
-    assert.ok(
-      connectedCard.includes(user.user_name),
-      'The real connection card has the wrong account'
-    )
-    await control.command('click', testId('settings-back-button'), { visible: true })
-    await control.command('waitFor', testId('desktop-sidebar-account'), {
-      text: user.user_name,
-      visible: true,
-    })
+    await signInDesktopCloud(control, cloud, { backendUrl: apiProxy.url, token, user, timeoutMs })
     if (activeCase) {
       activeCase.lastAuthorizedAccount = {
         id: user.id,
@@ -429,10 +369,8 @@ export async function verifyPluginScopeBoundaries({
           mode: 0o600,
         }
       )
-      const bId = `electron-${randomUUID()}`
-      await writeFile(join(bUserData, 'desktop-device-id'), bId, { flag: 'wx', mode: 0o600 })
       const copiedStorage = []
-      Object.assign(result, { deviceB: bId, copiedStorage })
+      Object.assign(result, { copiedStorage })
       const faultStart = apiProxy.requests.length
       apiProxy.rule = entry =>
         entry.method === 'GET' && entry.path === '/api/plugins/installed'
@@ -488,6 +426,9 @@ export async function verifyPluginScopeBoundaries({
         timeoutMs,
       })
       const status = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+      const bId = (await readFile(join(bUserData, 'desktop-device-id'), 'utf8')).trim()
+      assert.match(bId, /^electron-[0-9a-f]{64}$/)
+      result.deviceB = bId
       assert.equal(status.deviceId, bId)
       assert.notEqual(status.deviceId, deviceId)
       await refreshCatalog()
@@ -666,23 +607,24 @@ export async function verifyPluginScopeBoundaries({
       apiProxy.rule = entry => {
         if (!claimed && entry.method === 'GET' && entry.path === '/api/plugins/installed') {
           claimed = true
+          entry.responseTimingId = randomUUID()
           return 'hold-response'
         }
         return originalRule(entry)
       }
-      const heldStartedAt = Date.now()
       await refreshCatalog()
       const pending = await until(
         () => apiProxy.requests.slice(requestStart).find(entry => entry.committedResponseHeld),
         Boolean,
         'The real account A inventory response was not fully received and held'
       )
-      const heldReadyAt = Date.now()
       assert.equal(pending.status, 200)
+      assert.equal(typeof pending.responseTimingId, 'string')
       result.heldResponse = {
         requestIndex: apiProxy.requests.indexOf(pending),
         status: pending.status,
         fullyReceived: pending.committedResponseHeld,
+        responseTimingId: pending.responseTimingId,
       }
       accountMayHaveChanged = true
       await authorizeAccount(accountB, login.access_token)
@@ -704,15 +646,12 @@ export async function verifyPluginScopeBoundaries({
             await completedApiResourceTimings(control, '/api/plugins/installed')
           ).filter(
             entry =>
-              entry.startedAt >= heldStartedAt &&
-              entry.startedAt <= heldReadyAt &&
-              entry.completedAt >= releasedAt
+              entry.responseTimingId === pending.responseTimingId && entry.completedAt >= releasedAt
           )
-          assert.ok(
-            matching.length <= 1,
-            'A parallel slow request makes old-response timing ambiguous'
-          )
-          return matching[0]
+          // Chromium may reuse one HTTP response for multiple fetch consumers.
+          // The response marker binds every match to the exact held upstream bytes.
+          result.heldResponse.rendererCompletions = matching
+          return matching.at(-1)
         },
         Boolean,
         'The renderer never finished consuming the actual released old-account response'
@@ -757,6 +696,8 @@ export async function verifyPluginScopeBoundaries({
           status: pending.status,
           fullyReceived: pending.committedResponseHeld,
           released: pending.released,
+          responseTimingId: pending.responseTimingId,
+          rendererCompletions: result.heldResponse.rendererCompletions,
           rendererCompleted: consumed,
           stableInventorySamples: stability,
         },

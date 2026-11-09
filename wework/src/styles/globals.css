@@ -1,3 +1,5 @@
+@import './content-themes.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -23,7 +25,9 @@ input.content-find-input:focus-visible {
   box-shadow: none;
 }
 
-body[data-wework-anchor-popover-open] .electron-titlebar-drag-region {
+/* Native drag regions intercept clicks even beneath renderer overlays. */
+body[data-wework-anchor-popover-open] .electron-titlebar-drag-region,
+body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 
@@ -210,7 +214,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 }
 
 .task-description-editor .bn-editor a:not([href^='wegent://attachments/']) {
-  color: rgb(35 121 232);
+  color: rgb(var(--color-link, var(--color-focus)));
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -327,13 +331,13 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: rgb(255 255 255 / 0.16);
-  color: #fff;
+  background: rgb(var(--color-popover));
+  color: rgb(var(--color-text-primary));
   cursor: pointer;
 }
 
 .task-description-attachment-image-lightbox-close:hover {
-  background: rgb(255 255 255 / 0.26);
+  background: rgb(var(--color-muted));
 }
 
 /* Compact description editors do not reserve BlockNote's default side gutter. */
@@ -475,7 +479,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
     transparent,
     rgb(var(--color-focus) / 0.12),
     rgb(var(--color-focus) / 0.42),
-    rgb(255 255 255 / 0.34),
+    rgb(var(--color-text-primary) / 0.34),
     rgb(var(--color-focus) / 0.12),
     transparent
   );
@@ -560,7 +564,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   animation-name: suffix-roll-in-down;
 }
 
-[data-theme='dark'] {
+:root[data-theme='dark'] {
   color-scheme: dark;
   --color-bg-base: 24 24 24;
   --color-bg-surface: 33 33 33;
@@ -628,12 +632,12 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 }
 
 [data-sidebar-translucent='false'] {
-  --color-sidebar: 246 246 246;
+  --color-sidebar: var(--color-bg-surface);
 }
 
 [data-theme='dark'][data-sidebar-translucent='false'],
 [data-theme='dark'] [data-sidebar-translucent='false'] {
-  --color-sidebar: 33 33 33;
+  --color-sidebar: var(--color-bg-surface);
 }
 
 * {
@@ -649,7 +653,8 @@ body,
   overflow: hidden;
 }
 
-body {
+body,
+html[data-appearance-theme] body {
   font-family: var(--font-ui);
   font-size: var(--text-base);
   font-weight: var(--font-weight-ui);
@@ -743,28 +748,28 @@ button:disabled {
   }
 
   .plugin-management-pill-official {
-    background: rgb(241 245 251);
-    color: rgb(53 104 169);
+    background: rgb(var(--color-focus) / 0.12);
+    color: rgb(var(--color-focus));
   }
 
   .plugin-management-pill-workspace {
-    background: rgb(240 246 243);
-    color: rgb(37 112 82);
+    background: rgb(var(--color-success) / 0.12);
+    color: rgb(var(--color-success));
   }
 
   .plugin-management-pill-personal {
-    background: rgb(245 242 250);
-    color: rgb(114 89 163);
+    background: rgb(var(--color-reasoning-ultra-text) / 0.12);
+    color: rgb(var(--color-reasoning-ultra-text));
   }
 
   .plugin-management-pill-external {
-    background: rgb(245 245 245);
-    color: rgb(82 82 82);
+    background: rgb(var(--color-muted));
+    color: rgb(var(--color-text-secondary));
   }
 
   .plugin-management-pill-public {
-    background: rgb(250 245 237);
-    color: rgb(151 103 45);
+    background: rgb(var(--color-warning, var(--color-focus)) / 0.12);
+    color: rgb(var(--color-warning, var(--color-focus)));
   }
 
   .plugin-management-row:hover {
@@ -781,7 +786,7 @@ button:disabled {
     overflow: hidden;
     border: 1px solid rgb(var(--color-border) / 0.3);
     border-radius: 11px;
-    background: rgb(245 245 247);
+    background: rgb(var(--color-bg-surface));
     padding: 8px;
   }
 
@@ -939,8 +944,8 @@ button:disabled {
 }
 
 .plugin-operation-notice-error {
-  border-color: rgb(220 38 38 / 0.2);
-  background: rgb(220 38 38 / 0.07);
+  border-color: rgb(var(--color-destructive) / 0.2);
+  background: rgb(var(--color-destructive) / 0.07);
 }
 
 .plugin-operation-notice-icon {
@@ -1510,7 +1515,7 @@ button.plugin-installed-strip-item:focus-visible::after {
   overflow: hidden;
   border: 1px solid rgb(var(--color-border) / 0.35);
   border-radius: 10px;
-  background-color: rgb(245 245 247);
+  background-color: rgb(var(--color-bg-surface));
   padding: 5px;
 }
 
@@ -1565,8 +1570,8 @@ button.plugin-installed-strip-item:focus-visible::after {
   flex-shrink: 0;
   overflow: hidden;
   border: 1px solid rgb(var(--color-border) / 0.35);
-  background-color: rgb(245 245 247);
-  color: rgb(124 58 237);
+  background-color: rgb(var(--color-bg-surface));
+  color: rgb(var(--color-focus));
 }
 
 .plugin-detail-header-logo {
@@ -2115,7 +2120,7 @@ button.plugin-market-reveal-button:hover {
   margin-left: -6px;
   border: 1px solid rgb(var(--color-border) / 0.48);
   border-radius: 7px;
-  background-color: rgb(245 245 247);
+  background-color: rgb(var(--color-bg-surface));
   padding: 2px;
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.04);
 }
@@ -2158,7 +2163,7 @@ button.plugin-market-card-install:active:not(:disabled) {
 }
 
 button.plugin-market-card-install.is-failed {
-  color: rgb(220 38 38);
+  color: rgb(var(--color-destructive));
 }
 
 button.plugin-market-card-menu {
@@ -2172,7 +2177,7 @@ button.plugin-market-card-menu {
   border-radius: 8px;
   background: transparent;
   padding: 0;
-  color: rgb(76 77 73);
+  color: rgb(var(--color-text-secondary));
   transition:
     background-color 0.12s,
     color 0.12s,
@@ -2195,8 +2200,8 @@ button.plugin-market-card-menu {
 }
 
 button.plugin-market-card-menu:hover {
-  background-color: rgb(236 236 234);
-  color: rgb(21 21 21);
+  background-color: rgb(var(--color-muted));
+  color: rgb(var(--color-text-primary));
   transform: scale(1.04);
 }
 

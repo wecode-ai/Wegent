@@ -1,8 +1,34 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from "../../wework/e2e/desktop/upgrade-suite.mjs";
+import { releaseVerificationChannels } from "../../wework/scripts/lib/upgrade-evidence.mjs";
+
+import {
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
+  UPGRADE_SOURCE_DIAGNOSTICS,
+} from "../../wework/e2e/desktop/upgrade-suite.mjs";
 import { compareVersions } from "../../wework/electron/src/runtime/upgrade-policy.mjs";
+
+export function upgradeVerificationMatrix(channel, sourceVersion = "") {
+  return {
+    include: releaseVerificationChannels(channel, "", sourceVersion).flatMap(
+      (selected) => [
+        {
+          runner: "macos-15",
+          platform: "macos",
+          arch: "arm64",
+          channel: selected,
+        },
+        {
+          runner: "windows-2022",
+          platform: "windows",
+          arch: "x64",
+          channel: selected,
+        },
+      ],
+    ),
+  };
+}
 
 export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const publishedReleaseTag = environment.PUBLISHED_RELEASE_TAG || "";
@@ -14,13 +40,15 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const diagnosticCheckpoint =
     requestedCheckpoint === "all" ? "" : requestedCheckpoint;
   const sourceRunId = environment.VERIFICATION_SOURCE_RUN_ID || "";
+  const requiresSource =
+    UPGRADE_SOURCE_DIAGNOSTICS.includes(diagnosticCheckpoint);
   if (
-    (sourceRunId && diagnosticCheckpoint !== "app-update-refresh") ||
-    (diagnosticCheckpoint === "app-update-refresh" && !sourceRunId) ||
+    (sourceRunId && !requiresSource) ||
+    (requiresSource && !sourceRunId) ||
     (sourceRunId && environment.PUBLISH_RELEASE === "true")
   )
     throw new Error(
-      "A prebuilt source requires a non-publishing app-update-refresh diagnostic",
+      "A prebuilt source requires a non-publishing app-update-refresh or app-update-retry diagnostic",
     );
   if (
     diagnosticCheckpoint &&
@@ -61,12 +89,11 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const jobs = api(`${base}/jobs?filter=latest&per_page=100`, true).flatMap(
     (page) => page.jobs,
   );
-  for (const platform of [
-    "macOS arm64",
-    "macOS x64",
-    "Windows x64",
-    "Linux x64",
-  ]) {
+  // Replays cannot publish and consume only these two platforms' immutable inputs.
+  // Ordinary dry runs and releases retain the complete producer gate.
+  const platforms = ["macOS arm64", "Windows x64"];
+  if (environment.REPLAY !== "true") platforms.push("macOS x64", "Linux x64");
+  for (const platform of platforms) {
     const matches = jobs.filter((job) => job.name === `Build ${platform}`);
     if (matches.length !== 1 || matches[0].conclusion !== "success")
       throw new Error(`Source producer did not succeed: ${platform}`);
@@ -109,6 +136,9 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
     run_id: runId,
     version,
     channel: version.includes("-beta.") ? "beta" : "stable",
+    verification_matrix: JSON.stringify(
+      upgradeVerificationMatrix(version.includes("-beta.") ? "beta" : "stable"),
+    ),
     release_tag: `wework-v${version}`,
     verification_sha: verificationSha,
     diagnostic_checkpoint: diagnosticCheckpoint,
@@ -133,6 +163,9 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
       );
     outputs.source_run_id = source.run_id;
     outputs.source_version = source.version;
+    outputs.verification_matrix = JSON.stringify(
+      upgradeVerificationMatrix(outputs.channel, source.version),
+    );
   }
   return outputs;
 }

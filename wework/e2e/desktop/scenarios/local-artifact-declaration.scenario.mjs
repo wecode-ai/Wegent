@@ -1,8 +1,10 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { waitForRuntimePaneReadyToSend } from '../modules/streaming-text-fixture.mjs'
+import { assertMarkdownPreviewAndSource } from '../modules/markdown-file-preview.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -29,6 +31,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
   let active = false
   let requested = false
   let artifact
+  let declarationDiagnostics = null
 
   async function verifyPreview(control) {
     await control.command('waitFor', CARD, { text: NAME, timeoutMs: uiTimeoutMs })
@@ -37,9 +40,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
     await control.command('waitFor', '[data-testid="workspace-file-path"]', {
       text: artifact.local_path,
     })
-    await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
-      text: 'Generated without a Backend Task.',
-    })
+    await assertMarkdownPreviewAndSource(control, 'Generated without a Backend Task.')
   }
 
   return {
@@ -58,7 +59,8 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       else if (!requestContainsToolOutput(body)) {
         assert.equal(requested, false, 'The declaration command must run only once')
         requested = true
-        const script = String.raw`const fs=require('fs'),p=require('path'),cp=require('child_process'),root=process.env.WEGENT_TASK_WORKSPACE;if(!root||process.env.WEGENT_BACKEND_TASK_ID)throw Error('Expected a runtime-only conversation');fs.mkdirSync(root,{recursive:true});fs.writeFileSync(p.join(root,${JSON.stringify(NAME)}),${JSON.stringify(CONTENT)});const out=cp.execFileSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path',${JSON.stringify(NAME)}],{cwd:root,encoding:'utf8'});const line=out.split(/\r?\n/).find(s=>s.startsWith('[WEGENT_ARTIFACT]'));if(!line)throw Error(out);process.stdout.write('LOCAL_ARTIFACT_RESULT:'+Buffer.from(line.slice('[WEGENT_ARTIFACT]'.length)).toString('base64'));`
+        // The shell can merge startup stderr after stdout; terminate the metadata marker.
+        const script = String.raw`const fs=require('fs'),p=require('path'),cp=require('child_process'),root=process.env.WEGENT_TASK_WORKSPACE;if(!root||process.env.WEGENT_BACKEND_TASK_ID)throw Error('Expected a runtime-only conversation');fs.mkdirSync(root,{recursive:true});fs.writeFileSync(p.join(root,${JSON.stringify(NAME)}),${JSON.stringify(CONTENT)});const out=cp.execFileSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path',${JSON.stringify(NAME)}],{cwd:root,encoding:'utf8'});const line=out.split(/\r?\n/).find(s=>s.startsWith('[WEGENT_ARTIFACT]'));if(!line)throw Error(out);process.stdout.write('LOCAL_ARTIFACT_RESULT:'+Buffer.from(line.slice('[WEGENT_ARTIFACT]'.length)).toString('base64')+'\n');`
         const encoded = Buffer.from(script).toString('base64')
         const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`
         if (requestAdvertisesProgrammaticExec(body)) {
@@ -66,12 +68,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
             body,
             `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 10000 })}))`
           )
-          const event = customToolCall('local-artifact-generate', tool.name, tool.input)
-          event.item.namespace = 'functions'
+          const event = selectedToolCall('local-artifact-generate', { codeMode: tool }).at(-1)
           events = [event]
         } else {
           const tool = selectShellToolCommand(body, command, workspacePath, { yieldTimeMs: 10000 })
-          events = functionCall('local-artifact-generate', tool.name, tool.arguments)
+          events = selectedToolCall('local-artifact-generate', tool)
         }
       } else {
         const outputs = body.input.filter(item =>
@@ -80,7 +81,15 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
         const text = JSON.stringify(outputs)
         const result = text.match(/LOCAL_ARTIFACT_RESULT:([A-Za-z0-9+/=]+)/)
         assert.ok(result, `Real local declaration failed: ${text.slice(0, 4000)}`)
-        artifact = JSON.parse(Buffer.from(result[1], 'base64').toString('utf8'))
+        const decoded = Buffer.from(result[1], 'base64')
+        declarationDiagnostics = {
+          encodedLength: result[1].length,
+          decodedBytes: decoded.length,
+          encodedTail: result[1].slice(-128),
+          decodedTail: decoded.toString('utf8').slice(-160),
+          outputAfterMarker: text.slice(result.index + result[0].length).slice(0, 80),
+        }
+        artifact = JSON.parse(decoded.toString('utf8'))
         assert.equal(artifact.name, NAME)
         assert.equal(artifact.relative_path, NAME)
         assert.equal(artifact.file_size, Buffer.byteLength(CONTENT))
@@ -95,6 +104,10 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       res.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
       return true
+    },
+
+    diagnostics() {
+      return { active, requested, declaration: declarationDiagnostics }
     },
 
     async verify(control) {
@@ -119,9 +132,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       await control.command('waitFor', '[data-testid="workspace-file-path"]', {
         text: artifact.local_path,
       })
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
-        text: 'Generated without a Backend Task.',
-      })
+      await assertMarkdownPreviewAndSource(control, 'Generated without a Backend Task.')
       await verifyPreview(control)
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')

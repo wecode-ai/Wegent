@@ -1,10 +1,13 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+// @vitest-environment node
+
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { extract } from 'tar'
 import { afterEach, expect, test } from 'vitest'
 import { componentReleaseScope, MANAGED_COMPONENT_IDS } from '../desktop-component-release.mjs'
 import { hashComponentPath } from './component-content-hash.mjs'
+import { packBundledComponentArchives } from './bundled-component-archives.mjs'
 import {
   deliveredPackagePaths,
   preparePackagedComponentAssets,
@@ -95,6 +98,43 @@ test('archives delivered signed bytes even after E2E overwrites mutable build re
       component.archiveSha256
     )
   }
+})
+
+test('reuses and verifies the sealed bundled archive when raw small files are not delivered', async () => {
+  const options = await fixture()
+  const component = options.manifest.components.weworkCorePlugins
+  await rename(
+    join(options.resourcesRoot, component.path),
+    join(options.resourcesRoot, 'wework-core-plugins')
+  )
+  component.path = 'wework-core-plugins'
+  await writeFile(options.manifestPath, JSON.stringify(options.manifest))
+  await packBundledComponentArchives(options.resourcesRoot)
+  const packaged = JSON.parse(await readFile(options.manifestPath, 'utf8'))
+  const archive = packaged.components.weworkCorePlugins.archive
+  await packBundledComponentArchives(options.resourcesRoot)
+  expect(
+    JSON.parse(await readFile(options.manifestPath, 'utf8')).components.weworkCorePlugins.archive
+  ).toEqual(archive)
+  await rm(join(options.resourcesRoot, component.path), { recursive: true })
+  await expect(
+    readFile(join(options.resourcesRoot, component.path, 'signed.bin'))
+  ).rejects.toMatchObject({ code: 'ENOENT' })
+  const result = await preparePackagedComponentAssets(options)
+  const delivered = result.components.weworkCorePlugins
+  expect(delivered.archiveSha256).toBe(archive.sha256)
+  expect(delivered.contentSha256).toBe(component.sha256)
+  expect(delivered.entryPath).toBe('.')
+  const unpacked = join(options.root, 'verified-delivery')
+  await mkdir(unpacked)
+  await extract({ file: join(options.output, delivered.assetName), cwd: unpacked })
+  expect(await readFile(join(unpacked, 'signed.bin'), 'utf8')).toBe('signed weworkCorePlugins')
+  const bytes = await readFile(join(options.resourcesRoot, archive.path))
+  bytes[bytes.length - 1] ^= 1
+  await writeFile(join(options.resourcesRoot, archive.path), bytes)
+  await expect(preparePackagedComponentAssets(options)).rejects.toThrow(
+    'archive integrity mismatch'
+  )
 })
 
 test('rejects bytes changed after the delivered manifest was sealed', async () => {

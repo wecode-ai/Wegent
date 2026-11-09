@@ -11,23 +11,51 @@ use crate::state::AppState;
 use crate::user_reader::PublicUserReader;
 use crate::{attachments, config, oidc_callback};
 use anyhow::{Context as _, Result};
+use brz_mysql::MysqlService;
+use brz_redis::RedisService;
 use std::sync::Arc;
 
 pub async fn build(event_reporter: crate::event_reporting::ReporterHandle) -> Result<AppState> {
+    let (mysql, redis) = clients().await?;
+    build_with_clients(mysql, redis, event_reporter).await
+}
+
+pub async fn clients() -> Result<(MysqlService, Option<RedisService>)> {
+    let database =
+        config::DatabaseConfig::from_env().context("failed to load database configuration")?;
+    let redis_config =
+        config::RedisConfig::from_env().context("failed to load redis configuration")?;
+    let mysql = super::mysql::connect_read_write(
+        &database.mysql_url(),
+        database.mysql_slave_url().as_deref(),
+    )?;
+    let redis = match super::redis::shared(&redis_config).await {
+        Ok(service) => Some(service),
+        Err(error) => {
+            tracing::warn!(%error, "failed to connect Redis service; continuing without Redis-backed caches");
+            None
+        }
+    };
+    Ok((mysql, redis))
+}
+
+pub async fn build_with_clients(
+    mysql: MysqlService,
+    redis: Option<RedisService>,
+    event_reporter: crate::event_reporting::ReporterHandle,
+) -> Result<AppState> {
     // `Settings.LOCAL_DEVICE_COMMANDS` is validated while the source process
     // starts; an invalid value fails startup instead of the first command.
     crate::device_commands::init_from_env().context("failed to load LOCAL_DEVICE_COMMANDS")?;
 
     let config = OidcConfig::from_env();
-    let oidc = OidcService::new(&config).context("failed to build OIDC provider client")?;
+    let oidc = Arc::new(OidcService::new(&config).context("failed to build OIDC provider client")?);
 
     // Applications may replace the default callback before routes are assembled.
     let oidc_callback: Arc<dyn oidc_callback::OidcCallbackHandler + Send + Sync> =
         Arc::new(oidc_callback::DefaultOidcCallbackHandler);
 
     let auth = config::AuthConfig::from_env();
-    let database =
-        config::DatabaseConfig::from_env().context("failed to load database configuration")?;
     let redis_config =
         config::RedisConfig::from_env().context("failed to load redis configuration")?;
 
@@ -44,20 +72,6 @@ pub async fn build(event_reporter: crate::event_reporting::ReporterHandle) -> Re
     let decision_http = crate::decisions::provider::build_client()?;
     let url_metadata_http =
         crate::url_metadata::build_client().context("failed to build the url-metadata client")?;
-    let master_url = database.mysql_url();
-    let slave_url = database.mysql_slave_url();
-    let mysql = super::mysql::connect_read_write(&master_url, slave_url.as_deref())
-        .context("failed to connect MySQL service")?;
-    // The source tolerates an unavailable Redis for the endpoints that use
-    // it as a cache (membership/online-info reads degrade to misses); the
-    // connection is therefore best-effort, matching the source deployment.
-    let redis = match super::redis::shared(&redis_config).await {
-        Ok(service) => Some(service),
-        Err(error) => {
-            tracing::warn!(%error, "failed to connect Redis service; continuing without Redis-backed caches");
-            None
-        }
-    };
     // The Celery result consumer keeps its own connection
     // (`celery/backends/redis.py:ResultConsumer.start`). It is best-effort like
     // the shared service: without it an index dispatch fails exactly as an
@@ -84,11 +98,25 @@ pub async fn build(event_reporter: crate::event_reporting::ReporterHandle) -> Re
     // adapter channel once per process. Migrated interactive RPC handlers share
     // that process-owned subscription instead of opening one per request.
     let socketio_rpc = Some(crate::socketio_rpc::SocketIoRpc::start(&redis_config));
+    // `session_manager.subscribe_callback_channel` for the create flow's
+    // HTTP+Callback streaming branch. The SDK opens one dedicated Pub/Sub
+    // connection per `subscribe`, so the provider only retains the service
+    // handle. Without Redis the branch renders the source's subscribe failure
+    // (`RuntimeError("Failed to subscribe to callback stream channel")`).
+    let callback_subscriptions = redis.clone().map(
+        |redis| -> Arc<dyn crate::responses::create::callback_source::CallbackSubscriptions> {
+            Arc::new(
+                crate::responses::create::callback_source::RedisCallbackSubscriptions::new(redis),
+            )
+        },
+    );
     // `GET /api/git/repositories`: the retained provider HTTP client and the
     // process-owned background full-fetch worker are built here so the worker
     // is initialization-owned.
-    let git_repositories = crate::git_repositories::GitRepositoriesService::new(redis.clone())
-        .context("failed to build the repository-service client")?;
+    let git_repositories = Arc::new(
+        crate::git_repositories::GitRepositoriesService::new(redis.clone())
+            .context("failed to build the repository-service client")?,
+    );
 
     Ok(AppState {
         completion_app: std::sync::OnceLock::new(),
@@ -118,6 +146,7 @@ pub async fn build(event_reporter: crate::event_reporting::ReporterHandle) -> Re
         jwt_algorithm,
         mysql,
         redis,
+        callback_subscriptions,
         celery,
         socketio_rpc,
         oidc_config: config,
@@ -136,8 +165,10 @@ pub async fn build(event_reporter: crate::event_reporting::ReporterHandle) -> Re
         executor_version,
         executor_manager: crate::executor_manager::ExecutorManager::from_env()
             .context("failed to build the executor-manager client")?,
-        sites: crate::sites::SitesClient::from_env()
-            .context("failed to build the Sites HTTP client")?,
+        sites: Arc::new(
+            crate::sites::SitesClient::from_env()
+                .context("failed to build the Sites HTTP client")?,
+        ),
         llm_proxy_credentials: Arc::new(crate::llm_proxy::StoredLlmProxyCredentials),
         repository_tokens: Arc::new(crate::repository_tokens::StoredRepositoryTokens),
         git_repositories,

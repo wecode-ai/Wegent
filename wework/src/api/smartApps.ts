@@ -72,8 +72,10 @@ interface SmartAppSubmissionMetadataBase {
   summary: string
   descriptionMd: string
   tags: string[]
-  iconDataUrl: string
-  screenshotDataUrls: string[]
+  /** Omit on a new version to keep the current marketplace icon. */
+  iconDataUrl?: string
+  /** Omit on a new version to keep the current screenshots. */
+  screenshotDataUrls?: string[]
   releaseNotes: string
   extensions?: Record<string, unknown>
   releaseExtensions?: Record<string, unknown>
@@ -83,6 +85,7 @@ interface SmartAppSubmissionMetadataBase {
 export interface SmartAppNewSubmissionMetadata extends SmartAppSubmissionMetadataBase {
   smartAppId?: never
   scope: 'restricted' | 'public'
+  iconDataUrl: string
 }
 
 export interface SmartAppExistingSubmissionMetadata extends SmartAppSubmissionMetadataBase {

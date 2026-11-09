@@ -22,6 +22,7 @@ import {
   THINKING_INDICATOR_SELECTOR,
   waitForBottom,
   getSingleElementMetrics,
+  assertShimmerCopyTracksText,
   assertElementFullyVisible,
   USER_MESSAGE_SELECTOR,
   USER_MESSAGE_E2E_ID,
@@ -95,6 +96,11 @@ export function createStreamingScrollChecks({
       toolDurationSeconds(summaryBeforeSwitch),
       0,
       `The tool summary exposed an aggregate duration: ${summaryBeforeSwitch}`
+    )
+    await assertShimmerCopyTracksText(
+      control,
+      `${ACTIVE_WORKBENCH_SELECTOR} .tool-activity-shimmer`,
+      'The running tool label'
     )
     await capture(control, 'streaming-text-06-running-tool.png')
     await control.command('click', '[data-testid="new-chat-button"]')
@@ -237,6 +243,11 @@ export function createStreamingScrollChecks({
     await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
       timeoutMs: uiTimeoutMs,
     })
+    await assertShimmerCopyTracksText(
+      control,
+      `${THINKING_INDICATOR_SELECTOR} .activity-shimmer-text`,
+      'The waiting assistant indicator'
+    )
     const waitingScrollerMetrics = await waitForBottom(
       control,
       'The conversation scroller while waiting for the assistant',
@@ -290,11 +301,16 @@ export function createStreamingScrollChecks({
       PARTIAL_TEXT,
       'The runtime conversation cache lost or reordered streamed text before rendering'
     )
-    const immediatelyRenderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
+    // Cache publication precedes the pane's animation-frame commit.
+    await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+      text: PARTIAL_TEXT.slice(PARTIAL_TEXT.lastIndexOf('\n') + 1),
+      timeoutMs: uiTimeoutMs,
+    })
+    const renderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
     assert.equal(
-      immediatelyRenderedPartial.replace(/\s+/g, ''),
+      renderedPartial.replace(/\s+/g, ''),
       PARTIAL_TEXT.replace(/\s+/g, ''),
-      `The active conversation displayed only ${immediatelyRenderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
+      `The active conversation displayed only ${renderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
     )
     await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
       text: MARKER,

@@ -12,7 +12,10 @@ workflow_dir = ARGV.fetch(0)
   'ci-cache-warmup.yml' => 'warm-wework-macos-electron'
 }.each do |workflow, job|
   resolver_id = 'macos-source'
-  steps = YAML.load_file(File.join(workflow_dir, workflow)).fetch('jobs').fetch(job).fetch('steps')
+  caller = YAML.load_file(File.join(workflow_dir, workflow)).fetch('jobs').fetch(job)
+  abort "#{workflow}: macOS runner baselines differ" unless caller.fetch('runs-on') == 'macos-15'
+  abort "#{workflow}: missing shared build action" unless caller.fetch('steps').any? { |step| step['uses'] == './.github/actions/build-wework-macos-e2e' }
+  steps = YAML.load_file(File.join(workflow_dir, '../actions/build-wework-macos-e2e/action.yml')).fetch('runs').fetch('steps')
   resolver_index = steps.index { |step| step['id'] == resolver_id }
   abort "#{workflow}: missing early source digest resolver" unless resolver_index
   resolver = steps.fetch(resolver_index)
@@ -132,6 +135,28 @@ printf 'changed shared issue UI\n' >"$repo/packages/collaboration/issue.ts"
 (cd "$repo" && git add packages/collaboration/issue.ts)
 test "$reference_after_collaboration" != "$(resolve_reference)"
 
+mkdir -p "$repo/packages/process-explorer" "$repo/patches"
+printf 'process explorer\n' >"$repo/packages/process-explorer/index.ts"
+(cd "$repo" && git add packages/process-explorer/index.ts)
+reference_after_explorer="$(resolve_reference)"
+test "$reference_after_collaboration" != "$reference_after_explorer"
+printf 'dependency patch\n' >"$repo/patches/runtime.patch"
+(cd "$repo" && git add patches/runtime.patch)
+test "$reference_after_explorer" != "$(resolve_reference)"
+
+reference_before_template_data="$(resolve_reference)"
+mkdir -p "$repo/shared/data"
+printf '{"name":"template"}\n' >"$repo/shared/data/collaboration-templates.json"
+(cd "$repo" && git add shared/data/collaboration-templates.json)
+reference_after_template_data="$(resolve_reference)"
+if [[ "$reference_before_template_data" == "$reference_after_template_data" ]]; then
+  echo 'Shared template data must invalidate the complete macOS App key' >&2
+  exit 1
+fi
+printf '{"name":"changed template"}\n' >"$repo/shared/data/collaboration-templates.json"
+(cd "$repo" && git add shared/data/collaboration-templates.json)
+test "$reference_after_template_data" != "$(resolve_reference)"
+
 (
   cd "$repo"
   GITHUB_OUTPUT=/dev/stdout \
@@ -139,10 +164,10 @@ test "$reference_after_collaboration" != "$(resolve_reference)"
     WECODE-AI \
     executor-source \
     backend-source
-) | grep -Fq 'ghcr.io/wecode-ai/wegent-wework-macos-e2e-build:v1-'
+) | grep -Fq 'ghcr.io/wecode-ai/wegent-wework-macos-e2e-runtime:app-v1-'
 
-ruby -ryaml - "$script_dir/../workflows/wework-e2e.yml" >"$temp_dir/build.sh" <<'RUBY'
-steps = YAML.load_file(ARGV.fetch(0)).fetch('jobs').fetch('wework-desktop-memory-e2e').fetch('steps')
+ruby -ryaml - "$script_dir/../actions/build-wework-macos-e2e/action.yml" >"$temp_dir/build.sh" <<'RUBY'
+steps = YAML.load_file(ARGV.fetch(0)).fetch('runs').fetch('steps')
 build = steps.find { |step| step['name'] == 'Build Wework Electron E2E application' }.fetch('run')
 puts build.sub('$HOME/.cache/wegent/wework-macos-e2e-runtimes', '$TEST_RUNTIME_ROOT')
 RUBY
@@ -187,6 +212,44 @@ for failure in false true; do
   else
     test "$status" -eq 42
     test "$(cat "$events")" = runtimes
+  fi
+done
+
+ruby -ryaml - "$script_dir/../actions/build-wework-macos-e2e/action.yml" >"$temp_dir/dependencies.sh" <<'RUBY'
+steps = YAML.load_file(ARGV.fetch(0)).fetch('runs').fetch('steps')
+puts steps.find { |step| step['name'] == 'Install build and caller dependencies' }.fetch('run')
+RUBY
+cat >"$repo/bin/pnpm" <<'EOF'
+#!/usr/bin/env bash
+echo pnpm >> "$BUILD_EVENTS"
+exit "${FAIL_DEPENDENCIES:-0}"
+EOF
+cat >"$repo/.github/scripts/caller.sh" <<'EOF'
+#!/usr/bin/env bash
+echo caller >> "$BUILD_EVENTS"
+exit "${FAIL_PREPARATION:-0}"
+EOF
+for cache_hit in true false; do
+  events="$temp_dir/dependencies-$cache_hit.events"
+  (
+    cd "$repo"
+    PATH="$repo/bin:$PATH" BUILD_EVENTS="$events" \
+      MACOS_BUILD_CACHE_HIT="$cache_hit" PREPARE_SCRIPT=.github/scripts/caller.sh \
+      bash -e -o pipefail "$temp_dir/dependencies.sh"
+  )
+  test "$(grep -c caller "$events")" -eq 1
+  count="$(grep -c pnpm "$events" || true)"
+  if [[ "$cache_hit" == true ]]; then test "$count" -eq 0; else test "$count" -eq 2; fi
+done
+for failure in FAIL_DEPENDENCIES FAIL_PREPARATION; do
+  if (
+    cd "$repo"
+    env "$failure=1" PATH="$repo/bin:$PATH" BUILD_EVENTS="$temp_dir/failure.events" \
+      MACOS_BUILD_CACHE_HIT=false PREPARE_SCRIPT=.github/scripts/caller.sh \
+      bash -e -o pipefail "$temp_dir/dependencies.sh"
+  ); then
+    echo 'Dependency failure did not stop the shared build' >&2
+    exit 1
   fi
 done
 

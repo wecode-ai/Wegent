@@ -1,0 +1,12 @@
+{
+  "order": 155000,
+  "scenario": "./scenarios/running-plan-history.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 101000,
+      "shard": 1,
+      "position": 15000
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import { act, render } from '@testing-library/react'
 import { beforeEach, describe, expect, test } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
-import { installDshUiTestContributions } from '@/test/setup'
+import { installDshUiTestContributions } from '@/test/setup.dom'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import type { WorkspaceTabsContextValue } from './workspaceTabsContextValue'
 import { RoutingHarness } from './workspaceTabsTestHarness'

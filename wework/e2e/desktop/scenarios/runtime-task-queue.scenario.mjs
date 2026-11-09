@@ -1,3 +1,7 @@
+import { createConcurrencyExecutionVerification } from '../modules/runtime-concurrency-execution.mjs'
+import { createGoalConcurrencyVerification } from '../modules/runtime-goal-concurrency.mjs'
+import { createBoardRefreshVerification } from '../modules/board-refresh-isolation.mjs'
+import { verifyIndependentConcurrencySettings } from '../modules/runtime-concurrency-settings.mjs'
 import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
@@ -140,10 +144,12 @@ async function waitForSnapshot(control, predicate, message, timeoutMs) {
   throw new Error(`${message}; last testIds=${JSON.stringify(lastSnapshot?.testIds ?? [])}`)
 }
 
-async function assertQueuePosition(control, selector, expected, visible, message) {
-  // Queue admission can render before positional metadata reaches the sidebar.
-  await control.command('waitFor', selector, visible ? { visible: true } : {})
-  const text = await control.command('getText', selector, { visible })
+export async function assertQueuePosition(control, selector, expected, visible, message) {
+  // Observe the expected position before a later sidebar render can replace it.
+  const text = await control.command('waitFor', selector, {
+    ...(visible ? { visible: true } : {}),
+    text: expected,
+  })
   const positions = text.split('\n').filter(Boolean)
   assert.ok(positions.length > 0, message ?? `No queue position found for ${selector}`)
   assert.ok(
@@ -215,7 +221,15 @@ async function assertRestoredFollowUps(control, prompts, timeoutMs) {
   }
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workspacePath,
+  resultDir,
+}) {
+  const ownerConcurrency = createConcurrencyExecutionVerification({ workspacePath, uiTimeoutMs })
+  const goalConcurrency = createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs })
+  const boardRefresh = createBoardRefreshVerification({ workspacePath, uiTimeoutMs, resultDir })
   let active = false
   const requests = []
   const cancelledRequests = []
@@ -237,6 +251,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
+      if (await ownerConcurrency.handleBody(body, response)) return true
+      if (await goalConcurrency.handleBody(body, response)) return true
+      if (await boardRefresh.handleBody(body, response)) return true
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS)
         .map(candidate => ({ candidate, index: requestText.lastIndexOf(candidate) }))
@@ -295,17 +312,29 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
-      await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        '[data-testid="general-max-concurrent-tasks-select"]:enabled',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
         value: '1',
       })
+      await control.command(
+        'waitFor',
+        '[data-testid="general-max-concurrent-tasks-select"]:enabled',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       assert.equal(
         await control.command('getValue', '[data-testid="general-max-concurrent-tasks-select"]'),
         '1',
         'The runtime concurrency setting did not update to one'
       )
+      await verifyIndependentConcurrencySettings(control, uiTimeoutMs, captureScreenshot)
       await prepareScreenshot(control, null)
       await captureScreenshot(control, 'runtime-queue-01-limit-one.png', 'body')
       await control.command('click', '[data-testid="settings-back-button"]')
@@ -922,16 +951,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       releases.get(PROMPTS.fifth)?.()
       await waitForCompletedRuntimeTaskThread(control, fifth.taskId, uiTimeoutMs)
+      await ownerConcurrency.verify(control)
+      await goalConcurrency.verify(control)
+      await boardRefresh.verify(control)
       active = false
     },
 
     async cleanup() {
+      ownerConcurrency.cleanup()
+      goalConcurrency.cleanup()
+      boardRefresh.cleanup()
       active = false
       for (const release of releases.values()) release()
     },
 
     diagnostics() {
-      return { active, requests, cancelledRequests }
+      return { active, requests, cancelledRequests, goalConcurrency: goalConcurrency.diagnostics() }
     },
   }
 }

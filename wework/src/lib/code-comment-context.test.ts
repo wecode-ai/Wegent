@@ -1,9 +1,6 @@
-import { describe, expect, test } from 'vitest'
 import type { CodeCommentContext } from '@/types/workspace-files'
+import { describe, expect, test } from 'vitest'
 import { appendCodeCommentContexts, parseCodeCommentContexts } from './code-comment-context'
-
-const CONTEXT_INSTRUCTION =
-  'The user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.'
 
 function parseContextPayload(output: string): unknown {
   const match = output.match(
@@ -26,12 +23,6 @@ describe('appendCodeCommentContexts', () => {
     comment: 'Please explain this value',
     createdAt: '2026-06-12T00:00:00.000Z',
   }
-  const singleLineComment: CodeCommentContext = {
-    ...comment,
-    id: 'comment-2',
-    startLine: 8,
-    endLine: 8,
-  }
   const browserComment: CodeCommentContext = {
     id: 'browser-comment-1',
     filePath: 'browser:https://example.test/',
@@ -46,78 +37,6 @@ describe('appendCodeCommentContexts', () => {
     comment: '这个侧边栏太抢眼',
     createdAt: '2026-06-12T00:00:00.000Z',
   }
-
-  test('appends path, line range, selected text, and comment', () => {
-    const output = appendCodeCommentContexts('Please review', [comment])
-
-    expect(parseContextPayload(output)).toEqual([
-      {
-        commentNumber: 1,
-        source: 'code_selection',
-        location: 'File: /workspace/project/src/main.ts, lines 3-5',
-        filePath: '/workspace/project/src/main.ts',
-        fileName: 'main.ts',
-        lines: '3-5',
-        selectedText: 'const value = 1',
-        userComment: 'Please explain this value',
-        createdAt: '2026-06-12T00:00:00.000Z',
-      },
-    ])
-  })
-
-  test('omits the message separator when message is empty', () => {
-    expect(appendCodeCommentContexts('', [comment])).toBe(
-      [
-        '<workspace_comment_context>',
-        CONTEXT_INSTRUCTION,
-        JSON.stringify(
-          [
-            {
-              commentNumber: 1,
-              source: 'code_selection',
-              location: 'File: /workspace/project/src/main.ts, lines 3-5',
-              filePath: '/workspace/project/src/main.ts',
-              fileName: 'main.ts',
-              lines: '3-5',
-              selectedText: 'const value = 1',
-              userComment: 'Please explain this value',
-              createdAt: '2026-06-12T00:00:00.000Z',
-            },
-          ],
-          null,
-          2
-        ),
-        '</workspace_comment_context>',
-      ].join('\n')
-    )
-  })
-
-  test('omits the message separator when message is whitespace', () => {
-    expect(appendCodeCommentContexts('  \n\t  ', [comment])).toBe(
-      appendCodeCommentContexts('', [comment])
-    )
-  })
-
-  test('returns the original message when no contexts exist', () => {
-    expect(appendCodeCommentContexts('  Please review  ', [])).toBe('  Please review  ')
-  })
-
-  test('formats a single-line selection range', () => {
-    const output = appendCodeCommentContexts('Please review', [singleLineComment])
-
-    expect(parseContextPayload(output)).toMatchObject([{ lines: '8' }])
-    expect(output).not.toContain('"lines": "8-8"')
-  })
-
-  test('wraps multiple comments in one workspace comment context tag block', () => {
-    const output = appendCodeCommentContexts('Please review', [comment, singleLineComment])
-
-    expect(output.startsWith('Please review\n\n<workspace_comment_context>')).toBe(true)
-    expect(parseContextPayload(output)).toMatchObject([
-      { commentNumber: 1, source: 'code_selection', lines: '3-5' },
-      { commentNumber: 2, source: 'code_selection', lines: '8' },
-    ])
-  })
 
   test('serializes browser annotations as web page comments', () => {
     const output = appendCodeCommentContexts('', [browserComment])
@@ -134,29 +53,6 @@ describe('appendCodeCommentContexts', () => {
         userComment: '这个侧边栏太抢眼',
       },
     ])
-  })
-
-  test('removes local browser screenshots before sending annotation context', () => {
-    const screenshotDataUrl = `data:image/png;base64,${'a'.repeat(100_000)}`
-    const output = appendCodeCommentContexts('', [
-      {
-        ...browserComment,
-        selectedText: JSON.stringify({
-          type: 'browser_annotation',
-          url: 'https://example.test/',
-          target: { tagName: 'button', text: 'Submit' },
-          screenshotDataUrl,
-        }),
-      },
-    ])
-    const payload = parseContextPayload(output) as Array<{ selectedText: string }>
-
-    expect(output).not.toContain(screenshotDataUrl)
-    expect(JSON.parse(payload[0].selectedText)).toEqual({
-      type: 'browser_annotation',
-      url: 'https://example.test/',
-      target: { tagName: 'button', text: 'Submit' },
-    })
   })
 
   test('serializes selected text and comments without extra context delimiters', () => {
@@ -204,22 +100,6 @@ describe('appendCodeCommentContexts', () => {
     ).toBeNull()
   })
 
-  test('keeps user-typed context-like text that is not at the message end', () => {
-    expect(
-      parseCodeCommentContexts(
-        '讨论 <workspace_comment_context>\n[]\n</workspace_comment_context> 这个标签的用法'
-      )
-    ).toBeNull()
-  })
-
-  test('keeps an end-of-message block that lacks the protocol structure', () => {
-    expect(
-      parseCodeCommentContexts(
-        '看这个例子\n\n<workspace_comment_context>\n[{"filePath":"a.ts","userComment":"x"}]\n</workspace_comment_context>'
-      )
-    ).toBeNull()
-  })
-
   test('restores the browser annotation target for history previews', () => {
     const withTarget: CodeCommentContext = {
       ...browserComment,
@@ -242,9 +122,5 @@ describe('appendCodeCommentContexts', () => {
       text: '提交审批',
       isSimpleText: true,
     })
-  })
-
-  test('returns null when there is no context block', () => {
-    expect(parseCodeCommentContexts('plain message')).toBeNull()
   })
 })

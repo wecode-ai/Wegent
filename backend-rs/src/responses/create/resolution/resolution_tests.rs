@@ -202,21 +202,19 @@ fn referenced_model_reads_match_the_recorded_statements() {
 }
 
 /// `_find_model_with_namespace`'s public-model gate
-/// (`model_resolver.py:924`) reads the caller with
-/// `db.query(User).filter(User.id == user_id).first()`. The recorded
-/// statement carries the aliased ORM projection and the `.first()` limit,
-/// which is what `team_union_lookups::user_by_id` renders.
+/// (`app/services/chat/config/model_lookup.py:369-383`) reads the caller with
+/// `db.get(User, user_id)`: the recorded a60e1b08 seq23 statement carries the
+/// bare entity columns and no `.first()` limit. The aliased `.first()` shape
+/// belongs to `is_public_model_allowed_for_user_id`
+/// (`app/services/adapters/public_model.py:83-90`), a different adapter.
 #[test]
 fn the_public_model_whitelist_reads_the_recorded_user_statement() {
-    let sql = normalize(&format!(
-        "SELECT {} FROM users WHERE users.id = ? LIMIT 1",
-        crate::teams::teams_repository::USER_COLUMNS
-    ));
-    assert!(sql.starts_with(
-        "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-         users.password_hash AS users_password_hash"
-    ));
-    assert!(sql.contains("WHERE users.id = ? LIMIT 1"));
+    let sql = normalize(crate::user_reader::USER_ENTITY_BY_ID_QUERY);
+    assert!(sql.starts_with("SELECT users.id, users.user_name, users.password_hash"));
+    assert!(!sql.contains(" AS users_"), "{sql}");
+    assert_eq!(sql.matches('?').count(), 1, "{sql}");
+    assert!(sql.contains("WHERE users.id = ?"), "{sql}");
+    assert!(!sql.to_uppercase().contains("LIMIT"), "{sql}");
 }
 
 #[test]
@@ -244,15 +242,87 @@ fn model_selection_follows_the_source_priorities() {
 }
 
 #[test]
-fn model_reads_match_the_source_filters() {
-    let private = normalize(&model_private_statement());
+fn model_reads_match_the_source_named_relation() {
+    // `named_kind_rows` (`resource_lookup_queries.py:30-42`): the requested
+    // names form a derived relation joined on `kinds.name`, the projected
+    // `requested.name` is the dictionary key, rows are ordered by `Kind.id`,
+    // and `capability_lookup.py:139-141` keeps the first row per name.
+    let private = normalize(&model_named_personal_statement(1));
+    assert!(private.starts_with("SELECT anon_1.name AS anon_1_name, kinds.id AS kinds_id"));
+    assert!(private.contains("FROM (SELECT ? AS name) AS anon_1"));
+    assert!(private.contains("INNER JOIN kinds ON kinds.name = anon_1.name"));
     assert!(
-        private.contains("WHERE kinds.kind = 'Model' AND kinds.user_id = ? AND kinds.name = ?")
+        private.contains(
+            "WHERE kinds.is_active IS true AND kinds.kind = 'Model' AND kinds.user_id = ?"
+        )
     );
-    let group = normalize(&model_group_statement(2));
-    assert!(group.contains("AND kinds.namespace IN (?, ?)"));
-    let public = normalize(&model_public_statement());
-    assert!(public.contains("WHERE kinds.user_id = 0 AND kinds.kind = 'Model'"));
+    assert!(private.ends_with("ORDER BY kinds.id"), "{private}");
+    assert!(!private.contains("LIMIT 1"), "the Source fetches every row");
+
+    let group = normalize(&model_named_group_statement(1, 2));
+    assert!(group.contains("AND kinds.namespace IN (?, ?)"), "{group}");
+    assert!(group.ends_with("ORDER BY kinds.id"), "{group}");
+
+    let public = normalize(&model_named_public_statement(2));
+    assert!(public.contains("FROM (SELECT ? AS name UNION ALL SELECT ? AS name) AS anon_1"));
+    assert!(public.contains(
+        "AND kinds.kind = 'Model' AND kinds.user_id = 0 AND kinds.namespace = 'default'"
+    ));
+    assert!(public.ends_with("ORDER BY kinds.id"), "{public}");
+}
+
+#[test]
+fn referenced_listing_matches_the_source_scope_queries() {
+    // Recorded a60e1b08 seq 12: the user-target listing, joined and ordered by
+    // Kind.id, with no name filter and no LIMIT.
+    let user = normalize(&referenced_user_listing_statement("Model"));
+    assert!(user.starts_with(
+        "SELECT resource_members.entity_type AS resource_members_entity_type, \
+         resource_members.entity_id AS resource_members_entity_id, kinds.id AS kinds_id"
+    ));
+    assert!(user.contains(
+        "FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id"
+    ));
+    assert!(user.contains(
+        "WHERE resource_members.resource_type = 'Model' \
+         AND resource_members.status = 'approved' \
+         AND resource_members.entity_type = 'user' \
+         AND resource_members.entity_id IN (?)"
+    ));
+    assert!(
+        user.contains(
+            "AND kinds.kind = 'Model' AND kinds.user_id != 0 AND kinds.is_active IS true"
+        )
+    );
+    assert!(user.ends_with("ORDER BY kinds.id"), "{user}");
+    assert!(!user.contains("LIMIT"), "the listing fetches every row");
+
+    // Recorded seq 21: the group listing uses namespace targets.
+    let group = normalize(&referenced_namespace_listing_statement("Model", 2));
+    assert!(
+        group.contains(
+            "resource_members.entity_type = 'namespace' \
+             AND resource_members.entity_id IN (?, ?)"
+        ),
+        "{group}"
+    );
+
+    // Recorded seq 20: the group targets' namespace ids.
+    let namespaces = normalize(&namespace_ids_by_names_statement(2));
+    assert!(namespaces.contains(
+        "SELECT namespace.id AS namespace_id, namespace.name AS namespace_name FROM namespace"
+    ));
+    assert!(namespaces.contains("WHERE namespace.name IN (?, ?) AND namespace.is_active IS true"));
+
+    // `_match_model_reference_names`: the named relation restricted to the
+    // listed source ids.
+    let matcher = normalize(&named_reference_match_statement(1, 2));
+    assert!(
+        matcher.contains(
+            "WHERE kinds.is_active IS true AND kinds.kind = 'Model' AND kinds.id IN (?, ?)"
+        )
+    );
+    assert!(matcher.ends_with("ORDER BY kinds.id"), "{matcher}");
 }
 
 #[test]

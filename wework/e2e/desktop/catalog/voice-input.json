@@ -1,0 +1,12 @@
+{
+  "order": 98000,
+  "scenario": "./scenarios/voice-input.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 1000,
+      "shard": 4,
+      "position": 10000
+    }
+  }
+}

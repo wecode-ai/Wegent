@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 use crate::agents::CodexAppServerClient;
 
-use super::codex_transcript_page::CodexTranscriptPage;
+use super::codex_transcript_page::{CodexTranscriptError, CodexTranscriptPage};
 use super::util::string_field;
 
 const TURN_CURSOR_PREFIX: &str = "wework-codex-turn:";
@@ -37,9 +37,17 @@ pub(super) const CURSOR_PREFIX: &str = "wework-codex-timeline:";
 
 #[derive(Deserialize, Serialize)]
 struct TimelineCursor {
-    cursor: String,
+    cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    entry_offset: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot_id: Option<String>,
     // A page can cut through a turn, before its completion boundary.
     turns: Vec<Value>,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 pub(super) async fn load_timeline_page(
@@ -49,7 +57,8 @@ pub(super) async fn load_timeline_page(
     cursor: Option<&str>,
     limit: usize,
     full_content: bool,
-) -> Result<CodexTranscriptPage, String> {
+    bounded_items: bool,
+) -> Result<CodexTranscriptPage, CodexTranscriptError> {
     let target = cursor.and_then(|cursor| cursor.strip_prefix(TURN_CURSOR_PREFIX));
     let previous: Option<TimelineCursor> = cursor
         .filter(|_| target.is_none())
@@ -74,28 +83,59 @@ pub(super) async fn load_timeline_page(
         .map(|cursor| cursor.turns.clone())
         .unwrap_or_default();
     turns.extend(metadata["data"].as_array().into_iter().flatten().cloned());
-    let mut next_cursor = previous.as_ref().map(|cursor| cursor.cursor.clone());
+    let mut next_cursor = previous.as_ref().and_then(|cursor| cursor.cursor.clone());
+    let mut entry_offset = previous.as_ref().map_or(0, |cursor| cursor.entry_offset);
+    let mut page_snapshot = previous
+        .as_ref()
+        .and_then(|cursor| cursor.snapshot_id.clone());
+    let directory = super::transcript_transport::native_page_directory(thread_id);
     let mut seen_cursors = HashSet::new();
     let mut entries = Vec::new();
+    let mut page_bytes = 0;
     let budget = limit.clamp(1, 5) * 100;
     loop {
-        if let Some(cursor) = &next_cursor {
-            if !seen_cursors.insert(cursor.clone()) {
-                return Err("thread/timeline/list returned a repeated cursor".to_owned());
-            }
+        if !seen_cursors.insert((next_cursor.clone(), entry_offset)) {
+            return Err("thread/timeline/list returned a repeated cursor".into());
         }
-        let page = client
-            .request(
-                "thread/timeline/list",
-                json!({
-                    "threadId": thread_id, "cursor": next_cursor, "limit": 100,
-                }),
-            )
-            .await?;
-        let page_entries = page["data"]
-            .as_array()
-            .ok_or("timeline page has no data")?
-            .clone();
+        let page = if let Some(snapshot) = page_snapshot.clone() {
+            let directory = directory.clone();
+            super::transcript_work::run(move |cancellation| {
+                super::transcript_transport::read_native_page(&directory, &snapshot, cancellation)
+            })
+            .await?
+        } else {
+            client
+                .request(
+                    "thread/timeline/list",
+                    json!({
+                        "threadId": thread_id, "cursor": next_cursor, "limit": 100,
+                    }),
+                )
+                .await?
+        };
+        let provider_cursor = next_cursor.clone();
+        let (mut page, read_bytes, has_remainder, consumed, retained) =
+            if !bounded_items || full_content || target.is_some() {
+                (page, 0, false, 0, None)
+            } else {
+                let already_has_entries = !entries.is_empty();
+                let directory = directory.clone();
+                let page_snapshot = page_snapshot.clone();
+                super::transcript_work::run(move |cancellation| {
+                    bounded_timeline_page(
+                        page,
+                        entry_offset,
+                        page_bytes,
+                        already_has_entries,
+                        cancellation,
+                        Some((&directory, page_snapshot.as_deref())),
+                    )
+                })
+                .await?
+            };
+        page_snapshot = retained;
+        page_bytes += read_bytes;
+        let page_entries = page["data"].as_array().ok_or("timeline page has no data")?;
         let target_found = target.is_some_and(|target| {
             page_entries.iter().any(|entry| {
                 timeline_entry_turn_id(entry).as_deref() == Some(target)
@@ -104,7 +144,7 @@ pub(super) async fn load_timeline_page(
         });
         // Carry completion metadata when a native page cuts through an older turn.
         turns.extend(
-            timeline_turns(&page, turns.clone())?
+            timeline_metadata(&page, turns.clone())?
                 .into_iter()
                 .map(|mut turn| {
                     turn["items"] = json!([]);
@@ -112,35 +152,59 @@ pub(super) async fn load_timeline_page(
                 }),
         );
         if full_content || target.is_none() || target_found {
+            let page_entries = std::mem::take(page["data"].as_array_mut().unwrap());
             entries.splice(0..0, page_entries);
         }
-        next_cursor = string_field(&page, "nextCursor");
-        if next_cursor.is_none()
+        if has_remainder {
+            next_cursor = provider_cursor;
+            entry_offset += consumed;
+        } else {
+            next_cursor = string_field(&page, "nextCursor");
+            entry_offset = 0;
+        }
+        if next_cursor.is_none() && entry_offset == 0
+            || (!full_content && (has_remainder || page_bytes >= 2 * 1024 * 1024))
             || (!full_content && (target_found || (target.is_none() && entries.len() >= budget)))
         {
             if target.is_some() && !target_found && entries.is_empty() {
-                return Err("Requested turn is no longer present in native history".to_owned());
+                return Err("Requested turn is no longer present in native history".into());
             }
             break;
         }
     }
-    let projected = timeline_turns(&json!({"data": entries}), turns)?;
-    let before_cursor = if full_content { None } else { next_cursor }
-        .map(|cursor| {
-            let turns = projected
-                .iter()
-                .take(1)
-                .cloned()
-                .map(|mut turn| {
-                    turn["items"] = json!([]);
-                    turn
-                })
-                .collect();
-            serde_json::to_string(&TimelineCursor { cursor, turns })
-                .map(|encoded| format!("{CURSOR_PREFIX}{encoded}"))
-                .map_err(|error| error.to_string())
-        })
-        .transpose()?;
+    let projected = super::transcript_work::run(move |cancellation| {
+        cancellation.check()?;
+        let page = Value::Object(serde_json::Map::from_iter([(
+            "data".to_owned(),
+            Value::Array(entries),
+        )]));
+        timeline_turns_checked(&page, turns, Some(cancellation))
+            .map_err(|error| crate::local::app_ipc::AppIpcError::new("codex_error", error))
+    })
+    .await?;
+    let before_cursor = if !full_content && (next_cursor.is_some() || entry_offset > 0) {
+        let turns = projected
+            .iter()
+            .take(1)
+            .cloned()
+            .map(|mut turn| {
+                turn["items"] = json!([]);
+                turn
+            })
+            .collect();
+        Some(
+            serde_json::to_string(&TimelineCursor {
+                cursor: next_cursor,
+                entry_offset,
+                snapshot_id: page_snapshot,
+                turns,
+            })
+            .map(|encoded| format!("{CURSOR_PREFIX}{encoded}"))
+            .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
     thread["turns"] = Value::Array(projected);
     thread["timeline"] = json!(true);
     Ok(CodexTranscriptPage {
@@ -148,6 +212,81 @@ pub(super) async fn load_timeline_page(
         before_cursor,
         after_cursor: None,
     })
+}
+
+fn timeline_metadata(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, String> {
+    let entries = page["data"]
+        .as_array()
+        .ok_or("Timeline page has no data")?
+        .iter()
+        .map(|entry| {
+            if entry["type"] != "item" {
+                return entry.clone();
+            }
+            json!({"type":"item","position":entry["position"],"turnId":entry["turnId"],
+            "item":{"id":entry["item"]["id"],"type":entry["item"]["type"]}})
+        })
+        .collect();
+    timeline_turns(
+        &Value::Object(serde_json::Map::from_iter([(
+            "data".to_owned(),
+            Value::Array(entries),
+        )])),
+        metadata,
+    )
+}
+
+fn bounded_timeline_page(
+    mut page: Value,
+    offset: usize,
+    previous_bytes: usize,
+    previous_items: bool,
+    cancellation: &super::transcript_work::Cancellation,
+    snapshot: Option<(&std::path::Path, Option<&str>)>,
+) -> Result<(Value, usize, bool, usize, Option<String>), crate::local::app_ipc::AppIpcError> {
+    use crate::local::app_ipc::AppIpcError;
+    let entries = page["data"]
+        .as_array()
+        .ok_or_else(|| AppIpcError::new("codex_error", "Timeline page has no data"))?;
+    if offset > entries.len() || entries.len() > 100 {
+        return Err(AppIpcError::new(
+            "codex_error",
+            "Timeline provider page exceeded its item budget or changed beneath its cursor",
+        ));
+    }
+    let mut selected = Vec::new();
+    let mut bytes = 0;
+    for entry in entries.iter().rev().skip(offset) {
+        cancellation.check()?;
+        let size = serde_json::to_vec(entry)
+            .map_err(|error| AppIpcError::new("codex_error", error.to_string()))?
+            .len();
+        if (previous_items || !selected.is_empty())
+            && previous_bytes + bytes + size > 2 * 1024 * 1024
+        {
+            break;
+        }
+        bytes += size;
+        selected.push(entry.clone());
+    }
+    let consumed = selected.len();
+    let remainder = offset + consumed < entries.len();
+    let retained = if remainder {
+        match snapshot {
+            Some((_, Some(id))) => Some(id.to_owned()),
+            Some((directory, None)) => Some(super::transcript_transport::store_native_page(
+                directory,
+                &page,
+                cancellation,
+            )?),
+            None => None,
+        }
+    } else {
+        None
+    };
+    selected.reverse();
+    page["data"] = Value::Array(selected);
+    Ok((page, bytes, remainder, consumed, retained))
 }
 
 fn timeline_entry_turn_id(entry: &Value) -> Option<String> {
@@ -158,6 +297,14 @@ fn timeline_entry_turn_id(entry: &Value) -> Option<String> {
 }
 
 fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, String> {
+    timeline_turns_checked(page, metadata, None)
+}
+
+fn timeline_turns_checked(
+    page: &Value,
+    metadata: Vec<Value>,
+    cancellation: Option<&super::transcript_work::Cancellation>,
+) -> Result<Vec<Value>, String> {
     let mut metadata_by_id = HashMap::<String, Value>::new();
     for turn in metadata {
         let Some(id) = string_field(&turn, "id") else {
@@ -177,6 +324,9 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
     let mut indexes = HashMap::new();
     let mut previous_position = None;
     for entry in entries {
+        if let Some(cancellation) = cancellation {
+            cancellation.check().map_err(|error| error.message)?;
+        }
         let position = entry["position"]
             .as_u64()
             .ok_or("timeline entry has no position")?;
@@ -236,6 +386,87 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn byte_bounded_native_pages_resume_inside_one_provider_page() {
+        let body = "正文🙂".repeat(140_000);
+        let source = json!({"data":[
+            {"position":1,"type":"item","turnId":"turn-1","item":{"id":"one","type":"agentMessage","text":body}},
+            {"position":2,"type":"item","turnId":"turn-1","item":{"id":"two","type":"agentMessage","text":body}},
+            {"position":3,"type":"item","turnId":"turn-1","item":{"id":"three","type":"agentMessage","text":body}},
+        ],"nextCursor":"older-page"});
+        let cancellation = super::super::transcript_work::Cancellation::new();
+        let (first, _, remaining, count, _) =
+            bounded_timeline_page(source.clone(), 0, 0, false, &cancellation, None).unwrap();
+        assert!(remaining);
+        assert_eq!(count, 1);
+        assert_eq!(first["data"][0]["item"]["id"], "three");
+        let (second, _, remaining, count, _) =
+            bounded_timeline_page(source.clone(), 1, 0, false, &cancellation, None).unwrap();
+        assert!(remaining);
+        assert_eq!(count, 1);
+        assert_eq!(second["data"][0]["item"]["id"], "two");
+        let (last, _, remaining, count, _) =
+            bounded_timeline_page(source, 2, 0, false, &cancellation, None).unwrap();
+        assert!(!remaining);
+        assert_eq!(count, 1);
+        assert_eq!(last["data"][0]["item"]["text"], body);
+        assert_eq!(last["nextCursor"], "older-page");
+        let cursor = TimelineCursor {
+            cursor: None,
+            entry_offset: 1,
+            snapshot_id: None,
+            turns: vec![],
+        };
+        let restored: TimelineCursor =
+            serde_json::from_str(&serde_json::to_string(&cursor).unwrap()).unwrap();
+        assert_eq!(restored.entry_offset, 1);
+        assert!(restored.cursor.is_none());
+    }
+
+    #[test]
+    fn an_append_cannot_shift_a_retained_native_timeline_page() {
+        let directory = tempfile::tempdir().unwrap();
+        let body = "正文🙂".repeat(140_000);
+        let source = json!({"data":[
+            {"position":1,"type":"item","turnId":"turn","item":{"id":"one","type":"agentMessage","text":body}},
+            {"position":2,"type":"item","turnId":"turn","item":{"id":"two","type":"agentMessage","text":body}},
+            {"position":3,"type":"item","turnId":"turn","item":{"id":"three","type":"agentMessage","text":body}},
+        ],"nextCursor":"older"});
+        let cancellation = super::super::transcript_work::Cancellation::new();
+        let (first, _, _, _, snapshot) = bounded_timeline_page(
+            source.clone(),
+            0,
+            0,
+            false,
+            &cancellation,
+            Some((directory.path(), None)),
+        )
+        .unwrap();
+        assert_eq!(first["data"][0]["item"]["id"], "three");
+        let snapshot = snapshot.unwrap();
+        let mut appended_provider = source.clone();
+        appended_provider["data"].as_array_mut().unwrap().push(json!({"position":4,"type":"item","turnId":"turn","item":{"id":"appended","type":"agentMessage","text":"new"}}));
+        assert_ne!(appended_provider, source);
+        let retained = super::super::transcript_transport::read_native_page(
+            directory.path(),
+            &snapshot,
+            &cancellation,
+        )
+        .unwrap();
+        assert_eq!(retained, source);
+        let (second, _, _, _, _) = bounded_timeline_page(
+            retained,
+            1,
+            0,
+            false,
+            &cancellation,
+            Some((directory.path(), Some(&snapshot))),
+        )
+        .unwrap();
+        assert_eq!(second["data"][0]["item"]["id"], "two");
+        assert_eq!(second["data"][0]["item"]["text"], body);
+    }
 
     #[test]
     fn a_turn_started_after_metadata_was_read_remains_running() {

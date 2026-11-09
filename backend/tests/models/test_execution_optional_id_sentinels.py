@@ -21,8 +21,10 @@ pytestmark = pytest.mark.unit
 
 def _load_migration() -> ModuleType:
     path = (
-        Path(__file__).parents[2]
-        / "alembic"
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
         / "versions"
         / "20260817_a3b4c5d6e7f8_restore_execution_sentinel_contract.py"
     )

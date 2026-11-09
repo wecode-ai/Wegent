@@ -1,0 +1,12 @@
+{
+  "order": 109000,
+  "groupOrder": 5000,
+  "members": [
+    "plugin-write-coordination",
+    "plugin-registration-coordination",
+    "plugin-uninstall-lost-response",
+    "plugin-uninstall-unknown-result",
+    "plugin-uninstall-restart-recovery",
+    "plugin-uninstall-reinstall-race"
+  ]
+}

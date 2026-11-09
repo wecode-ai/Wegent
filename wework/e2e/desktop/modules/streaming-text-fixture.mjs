@@ -1,5 +1,17 @@
-import { readRequestBody as readJson } from './response-protocol.mjs'
-import { selectE2EModel, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL } from './shared.mjs'
+import { selectedToolCall } from './model-tool-calls.mjs'
+import {
+  readRequestBody as readJson,
+  selectShellToolCommand,
+  selectTool,
+  requestAdvertisesProgrammaticExec,
+} from './response-protocol.mjs'
+import {
+  selectE2EModel,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  WORKBENCH_READY_TIMEOUT_MS,
+} from './shared.mjs'
+import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import assert from 'node:assert/strict'
 
 export const ACTIVE_WORKBENCH_SELECTOR =
@@ -444,7 +456,7 @@ export function reclassifiedCommentaryToolEvents(id, tool) {
         phase: 'commentary',
       },
     },
-    ...functionCall(RECLASSIFIED_COMMENTARY_CALL_ID, tool.name, tool.arguments),
+    ...selectedToolCall(RECLASSIFIED_COMMENTARY_CALL_ID, tool),
     responseCompleted(id),
   ]
 }
@@ -535,12 +547,16 @@ export function orderFollowUpNumber(body) {
 }
 
 export function requestContainsToolOutput(body) {
-  return JSON.stringify(body.input ?? []).includes('function_call_output')
+  return (body.input ?? []).some(item =>
+    ['function_call_output', 'custom_tool_call_output'].includes(item.type)
+  )
 }
 
 export function requestContainsToolOutputForCall(body, callId) {
   return (Array.isArray(body.input) ? body.input : []).some(
-    item => item?.type === 'function_call_output' && item.call_id === callId
+    item =>
+      ['function_call_output', 'custom_tool_call_output'].includes(item?.type) &&
+      item.call_id === callId
   )
 }
 
@@ -580,31 +596,12 @@ export async function waitForRuntimeAssistantText(control, address, expectedText
 }
 
 export function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
-  const tools = Array.isArray(body.tools) ? body.tools : []
-  const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
-  if (names.has('exec_command')) {
-    return {
-      name: 'exec_command',
-      arguments: {
-        cmd: command,
-        workdir: workspacePath,
-        timeout_ms: timeoutMs,
-        yield_time_ms: timeoutMs,
-      },
-    }
-  }
-  assert.ok(names.has('shell_command'), `Real Codex did not advertise a shell tool: ${[...names]}`)
-  return {
-    name: 'shell_command',
-    arguments: {
-      command,
-      workdir: workspacePath,
-      timeout_ms: timeoutMs,
-    },
-  }
+  return selectShellToolCommand(body, command, workspacePath, { yieldTimeMs: timeoutMs })
 }
 
 export function selectImageGenerationTool(body) {
+  if (requestAdvertisesProgrammaticExec(body))
+    return selectTool(body, 'image_gen__imagegen', { prompt: GENERATED_IMAGE_REVISED_PROMPT })
   const tools = Array.isArray(body.tools) ? body.tools : []
   const namespace = tools.find(tool => tool?.type === 'namespace' && tool.name === 'image_gen')
   const tool = namespace?.tools?.find(
@@ -660,6 +657,37 @@ export function toolDurationSeconds(text) {
   return Number(text.match(/(\d+(?:\.\d+)?)s/)?.[1] ?? 0)
 }
 
+async function readPixelValue(control, selector, property) {
+  const raw = await control.command('getComputedStyleValue', selector, { value: property })
+  const value = Number.parseFloat(raw)
+  assert.ok(Number.isFinite(value), `${property} on "${selector}" was not a pixel value: "${raw}"`)
+  return value
+}
+
+export async function assertShimmerCopyTracksText(control, shimmerSelector, description) {
+  const bandSelector = `${shimmerSelector} .activity-shimmer-band`
+  const textMetrics = await getSingleElementMetrics(control, shimmerSelector, description)
+  const shimmerWidth = await readPixelValue(
+    control,
+    shimmerSelector,
+    '--activity-shimmer-text-width'
+  )
+  assert.ok(
+    Math.abs(shimmerWidth - textMetrics.width) <= 0.05,
+    `${description} shimmer width ${shimmerWidth} drifted from the text width ${textMetrics.width}`
+  )
+  const bandWidth = await readPixelValue(control, bandSelector, 'width')
+  assert.ok(
+    Math.abs(bandWidth - textMetrics.width) <= 0.05,
+    `${description} highlight copy width ${bandWidth} drifted from the text width ${textMetrics.width}`
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', shimmerSelector, { value: 'text-overflow' }),
+    'ellipsis',
+    `${description} base text lost its own truncation ellipsis`
+  )
+}
+
 export async function assertComposerDocked(control, scrollerMetrics, description) {
   const composerMetrics = await getSingleElementMetrics(
     control,
@@ -678,9 +706,6 @@ export async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
   const deadline = Date.now() + timeoutMs
   await control.command('waitFor', selector, { timeoutMs })
-  await new Promise(resolve =>
-    setTimeout(resolve, Math.min(minimumSeconds * 1_000, Math.max(0, deadline - Date.now())))
-  )
   let text = ''
   let duration = 0
   while (Date.now() <= deadline) {
@@ -849,6 +874,14 @@ export async function createLocalProject(control, workspacePath, timeoutMs) {
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs,
   })
+  // Native project registration persists Codex state and refreshes executor workspaces.
+  // Wait for that initialization before applying the ordinary UI assertion budget.
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.workbench?.currentProject?.name === 'streaming-navigation',
+    'The streaming project did not finish native workspace initialization',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   await control.command('waitFor', '[data-testid="project-work-button"]', {
     text: 'streaming-navigation',
     timeoutMs,

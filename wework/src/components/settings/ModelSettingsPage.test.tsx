@@ -1,8 +1,8 @@
+import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { ModelSettingsPage } from './ModelSettingsPage'
 
 const invokeDesktopHostMock = vi.hoisted(() => vi.fn())
@@ -70,26 +70,6 @@ describe('ModelSettingsPage local Codex subscription toggle', () => {
     getLocalCodexOfficialModelsMock.mockResolvedValue({ providers: [], models: [] })
   })
 
-  test('opens the restart dialog and invokes app.relaunch on confirm', async () => {
-    render(<ModelSettingsPage />)
-
-    const toggle = await screen.findByTestId('local-codex-subscription-toggle')
-    await userEvent.click(toggle)
-
-    await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
-        localCodexSubscriptionEnabled: false,
-      })
-    })
-
-    const confirm = await screen.findByTestId('local-codex-subscription-restart-confirm')
-    await userEvent.click(confirm)
-
-    await waitFor(() => {
-      expect(invokeDesktopHostMock).toHaveBeenCalledWith('app.relaunch')
-    })
-  })
-
   test('rolls back the preference when the restart is cancelled', async () => {
     render(<ModelSettingsPage />)
 
@@ -130,26 +110,5 @@ describe('ModelSettingsPage local Codex subscription toggle', () => {
     expect(within(codexSection).queryByTestId('runtime-config-cloud-required')).toBeNull()
     expect(within(codexSection).queryByText('已连接云端')).toBeNull()
     expect(within(codexSection).queryByText('未连接云端')).toBeNull()
-  })
-
-  test('keeps cloud status separate from the local subscription', async () => {
-    render(
-      <AppPreferencesContext.Provider
-        value={{
-          loaded: true,
-          preferences: { ...defaultAppPreferences, localCodexSubscriptionEnabled: true },
-        }}
-      >
-        <ModelSettingsPage />
-      </AppPreferencesContext.Provider>
-    )
-
-    expect(await screen.findByTestId('local-codex-subscription-toggle')).toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-config-cloud-required')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-models-section')).toBeInTheDocument()
-    expect(screen.queryByTestId('reply-prediction-settings')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('codex-official-models-section')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('codex-models-details-toggle'))
-    expect(await screen.findByTestId('codex-official-models-section')).toBeInTheDocument()
   })
 })

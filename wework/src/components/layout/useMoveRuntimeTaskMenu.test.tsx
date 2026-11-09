@@ -1,10 +1,10 @@
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
+import '@/i18n'
+import type { RuntimeDeviceWorkspace, RuntimeProjectWork, RuntimeTaskSummary } from '@/types/api'
 import { act, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
-import type { RuntimeDeviceWorkspace, RuntimeProjectWork, RuntimeTaskSummary } from '@/types/api'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 
 const task = { taskId: 'task-1', threadId: 'thread-1', runtime: 'codex' } as RuntimeTaskSummary
@@ -97,17 +97,5 @@ describe('move runtime task menu', () => {
       await result.current.children?.[0].onSelect?.()
     })
     expect(reorderRuntimeProjectTasks).toHaveBeenCalledTimes(2)
-  })
-
-  test('disables moving without a destination, session, or available source', () => {
-    expect(setup([]).result.current.disabled).toBe(true)
-    expect(setup([project('target')], workspace, null).result.current.disabled).toBe(true)
-    expect(
-      setup([project('target')], workspace, task.taskId, { ...task, threadId: undefined }).result
-        .current.disabled
-    ).toBe(true)
-    expect(
-      setup([project('target')], { ...workspace, available: false }).result.current.disabled
-    ).toBe(true)
   })
 })

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeConversationTurn } from '@/types/workbench'
 import {
@@ -115,6 +117,58 @@ describe('runtime conversation hydration settlement', () => {
     expect(getRuntimeConversationTurns(address)).toHaveLength(1)
     expect(listener.mock.calls.map(([action]) => action?.type)).toEqual([undefined])
     unsubscribe()
+  })
+
+  test('keeps a command completion received while the active turn transcript is loading', () => {
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn',
+        status: 'streaming',
+        items: [
+          {
+            id: 'command',
+            type: 'block',
+            block: {
+              id: 'command',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'pending',
+              createdAt: 1,
+              renderPayload: { kind: 'command_execution', status: 'inProgress' },
+            },
+          },
+        ],
+      },
+    ]
+    replaceRuntimeConversationSnapshot(address, snapshot)
+    const token = beginRuntimeConversationHydration(address)
+    applyRuntimeConversationAction(address, {
+      type: 'block_updated',
+      subtaskId: 'turn',
+      blockId: 'command',
+      updates: {
+        status: 'done',
+        completedAt: 2,
+        toolOutput: '/workspace',
+        renderPayload: { kind: 'command_execution', status: 'completed', exitCode: 0 },
+      },
+    })
+    completeRuntimeConversationHydration(address, token, snapshot)
+
+    expect(getRuntimeConversationTurns(address)[0]).toMatchObject({
+      status: 'streaming',
+      items: [
+        {
+          id: 'command',
+          block: {
+            status: 'done',
+            completedAt: 2,
+            toolOutput: '/workspace',
+            renderPayload: { status: 'completed', exitCode: 0 },
+          },
+        },
+      ],
+    })
   })
 
   test.each(['message', 'process-message'])(

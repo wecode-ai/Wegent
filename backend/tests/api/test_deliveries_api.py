@@ -23,6 +23,7 @@ from app.models.cloud_project import CloudProject, LoopItemTaskBinding
 from app.models.delivery import (
     Delivery,
     LoopItem,
+    ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
     ProjectIncomingEvent,
@@ -34,6 +35,8 @@ from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.schemas.delivery import LoopItemTaskBindingResponse
+from app.schemas.workspace import CollaborationGroupCreate
 from app.services import runtime_work_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import (
@@ -41,7 +44,10 @@ from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
 )
 from app.services.loop_items.service import loop_item_service
+from app.services.project_automation_execution import project_automation_execution
 from app.services.project_incoming_hooks import project_incoming_hook_service
+from app.services.workspaces import workspace_service
+from tests.service_results import service_result
 from tests.utils.collaboration import (
     authorize_project,
     authorize_project_agent,
@@ -321,29 +327,39 @@ def test_completed_todo_subtree_can_be_archived_listed_and_restored(
     }
 
 
-def test_incomplete_todo_subtree_cannot_be_archived(
+@pytest.mark.parametrize(
+    "parent_status", ["inbox", "in_progress", "in_review", "completed"]
+)
+def test_editable_todo_subtree_can_be_archived_regardless_of_status(
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
+    parent_status: str,
 ) -> None:
     parent = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Completed parent", "status": "completed"},
+        json={"title": "Editable parent", "status": parent_status},
     ).json()
-    test_client.post(
+    child = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
         json={"title": "Incomplete child", "parent_id": parent["id"]},
-    )
+    ).json()
 
     response = test_client.delete(
         f"/api/v1/loop-items/{parent['id']}",
         headers=_auth(test_token),
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Only completed TODO subtrees can be archived"
+    assert response.status_code == 204
+    restored = test_client.post(
+        f"/api/v1/loop-items/{parent['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert restored.status_code == 200
+    statuses = {item["id"]: item["status"] for item in restored.json()["items"]}
+    assert statuses == {parent["id"]: parent_status, child["id"]: child["status"]}
 
 
 def test_external_loop_items_forward_assignee_filters(
@@ -643,6 +659,7 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
 
 
 def test_board_snapshot_returns_first_screen_dependencies(
+    test_db,
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
@@ -674,8 +691,12 @@ def test_board_snapshot_returns_first_screen_dependencies(
         "modelType": "public",
         "options": {"reasoning": "high"},
     }
-    bindings = test_client.get(
-        f"/api/v1/loop-items/{item['id']}/tasks", headers=headers
+    bindings = service_result(
+        loop_item_service.list_task_bindings,
+        test_db,
+        item["id"],
+        test_user.id,
+        response_model=list[LoopItemTaskBindingResponse],
     )
     assert bindings.status_code == 200
     assert bindings.json() == [binding.json()]
@@ -1345,6 +1366,103 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     wake.assert_awaited_once_with()
 
 
+@pytest.mark.parametrize("assignee_kind", ["agent", "group"])
+def test_assignment_patch_queues_implicit_status_transition(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    assignee_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Start from assignment", "status": "pending"},
+    ).json()
+    if assignee_kind == "group":
+        member = {"kind": "human", "id": str(test_user.id)}
+        group = workspace_service.create_project_collaboration_group(
+            test_db,
+            delivery_project.id,
+            test_user.id,
+            CollaborationGroupCreate(
+                name="Human review group", leader=member, members=[member]
+            ),
+        )
+        assignment = {"assignee_group_id": str(group["id"])}
+    else:
+        device = Kind(
+            kind="Device",
+            name="assignment-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+        test_db.add(device)
+        test_db.flush()
+        authorize_resource(test_db, delivery_project, device)
+        agent = ProjectChatAgent(
+            cloud_project_id=delivery_project.id,
+            title="Assignment Agent",
+            name="Assignment Agent",
+            status="active",
+            created_by_user_id=test_user.id,
+            device_id=device.name,
+            metadata_json={"runtime": "codex", "model": "test-model"},
+        )
+        authorize_project_agent(test_db, agent)
+        test_db.add(agent)
+        test_db.commit()
+        assignment = {"assignee_agent_id": agent.id}
+    rule = ProjectAutomationRule(
+        cloud_project_id=delivery_project.id,
+        title="Started work automation",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {
+                "transition": "any",
+                "statuses": ["in_progress"],
+                "execution_target": "existing_issue",
+            },
+        },
+    )
+    test_db.add(rule)
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background", AsyncMock()
+    )
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], **assignment},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "in_progress"
+    event = (
+        test_db.query(ProjectIncomingEvent).filter_by(title="task.status_changed").one()
+    )
+    assert event.status == "received"
+    assert event.metadata_json["payload"]["previous_status"] == "pending"
+    assert event.metadata_json["payload"]["status"] == "in_progress"
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+
+    assert asyncio.run(project_incoming_hook_service.check_pending(test_db)) == 1
+
+    run = test_db.query(ProjectAutomationRun).one()
+    assert run.parent_id == rule.id
+    assert run.task_id == created["id"]
+    dispatch.assert_awaited_once()
+
+
 @pytest.mark.parametrize(
     "change", ["status", "pending", "execution_config", "same_agent_config"]
 )
@@ -1492,12 +1610,14 @@ def test_runner_rejection_does_not_commit_issue_changes(
 
 def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     test_client: TestClient,
+    test_db: Session,
     test_token: str,
     delivery_project: CloudProject,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rule = SimpleNamespace(id="rule-1")
     ingest = AsyncMock(return_value=1)
+    process = AsyncMock(return_value=1)
     monkeypatch.setattr(
         "app.services.project_automations.project_automation_processor.matching_rules",
         MagicMock(return_value=[rule]),
@@ -1506,6 +1626,9 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
         deliveries_endpoint.project_incoming_hook_service,
         "ingest_internal",
         ingest,
+    )
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service, "process_event", process
     )
 
     response = test_client.post(
@@ -1531,10 +1654,18 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     )
 
     assert updated.status_code == 200
-    assert ingest.await_count == 2
-    status_event = ingest.await_args_list[1].args[1]
-    assert status_event.event_type == "task.status_changed"
-    assert status_event.subject_id == created["id"]
+    ingest.assert_awaited_once()
+    status_event = (
+        test_db.query(ProjectIncomingEvent).filter_by(title="task.status_changed").one()
+    )
+    assert (
+        status_event.metadata_json["normalized_events"][0]["subject"]["id"]
+        == created["id"]
+    )
+    assert status_event.metadata_json["automation_id"] == "rule-1"
+    assert status_event.metadata_json["payload"]["previous_status"] == "inbox"
+    assert status_event.metadata_json["payload"]["status"] == "in_progress"
+    process.assert_awaited_once_with(test_db, str(status_event.id))
 
 
 def test_issue_creation_requires_one_automation_when_multiple_rules_match(
@@ -1578,6 +1709,74 @@ def test_issue_creation_requires_one_automation_when_multiple_rules_match(
         ],
     }
     assert test_db.query(LoopItem).count() == before_count
+
+
+def test_later_status_change_selects_one_automation_before_updating_issue(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Select review automation", "status": "in_progress"},
+    )
+    assert created_response.status_code == 201
+    created = created_response.json()
+    rules = [
+        SimpleNamespace(id="review-1", title="Review one", description=""),
+        SimpleNamespace(id="review-2", title="Review two", description=""),
+    ]
+    matching = MagicMock(return_value=rules)
+    monkeypatch.setattr(
+        deliveries_endpoint.project_automation_processor, "matching_rules", matching
+    )
+    process = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service, "process_event", process
+    )
+    patch = {"version": created["version"], "status": "in_review"}
+
+    selection_required = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}", headers=_auth(test_token), json=patch
+    )
+
+    assert selection_required.status_code == 409
+    assert (
+        selection_required.json()["detail"]["code"] == "automation_selection_required"
+    )
+    test_db.expire_all()
+    assert test_db.get(LoopItem, created["id"]).status == "in_progress"
+    process.assert_not_awaited()
+
+    selected = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={**patch, "automation_rule_id": "review-2"},
+    )
+
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["status"] == "in_review"
+    event = (
+        test_db.query(ProjectIncomingEvent).filter_by(title="task.status_changed").one()
+    )
+    assert event.status == "received"
+    assert event.metadata_json["payload"]["previous_status"] == "in_progress"
+    assert event.metadata_json["payload"]["status"] == "in_review"
+    assert event.metadata_json["automation_id"] == "review-2"
+    process.assert_awaited_once_with(test_db, str(event.id))
+
+    unchanged = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": selected.json()["version"], "status": "in_review"},
+    )
+
+    assert unchanged.status_code == 200
+    assert matching.call_count == 2
+    process.assert_awaited_once_with(test_db, str(event.id))
 
 
 def test_issue_creation_dispatches_only_the_selected_matching_automation(
@@ -2314,12 +2513,3 @@ def test_loop_item_reorder_respects_sibling_scope_across_statuses(
         second["id"]: "completed",
         child["id"]: "completed",
     }
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("issue_tasks",)) as client:
-        yield client

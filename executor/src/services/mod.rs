@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod api_client;
-pub mod capability_activation;
+pub use wegent_plugin_packages::services::api_client;
+pub use wegent_plugin_packages::services::capability_activation;
 pub(crate) mod git_credentials;
-pub mod skill_deployer;
-pub mod turn_file_changes;
+pub(crate) mod github_cli;
+pub use wegent_plugin_packages::services::skill_deployer;
+pub use wegent_workspace::turn_file_changes;
 pub mod updater;
-pub mod workbench;
+pub use wegent_plugin_packages::services::workbench;

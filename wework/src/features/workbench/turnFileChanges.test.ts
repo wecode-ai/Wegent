@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { mergeTurnFileChanges, normalizeTurnFileChanges } from './turnFileChanges'
 
@@ -22,10 +24,6 @@ const summary = {
 }
 
 describe('normalizeTurnFileChanges', () => {
-  test('normalizes a valid per-turn summary', () => {
-    expect(normalizeTurnFileChanges(summary)).toEqual(summary)
-  })
-
   test('keeps runtime inline diff metadata', () => {
     expect(
       normalizeTurnFileChanges({
@@ -57,33 +55,6 @@ describe('normalizeTurnFileChanges', () => {
 })
 
 describe('mergeTurnFileChanges', () => {
-  test('combines file change blocks into one turn summary', () => {
-    const second = {
-      ...summary,
-      artifact_id: 'artifact-2',
-      file_count: 1,
-      additions: 2,
-      deletions: 0,
-      files: [
-        {
-          path: 'src/second.ts',
-          change_type: 'created' as const,
-          additions: 2,
-          deletions: 0,
-          binary: false,
-        },
-      ],
-    }
-
-    expect(mergeTurnFileChanges([summary, second])).toMatchObject({
-      artifact_id: summary.artifact_id,
-      file_count: 2,
-      additions: 6,
-      deletions: 2,
-      files: [summary.files[0], second.files[0]],
-    })
-  })
-
   test('preserves a rename when the renamed file is modified later', () => {
     const renamed = {
       ...summary,

@@ -127,6 +127,8 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
         }
         shell::resolve_shell(
             &state.mysql,
+            &state.entity_resolvers,
+            state.redis.as_ref(),
             team.user_id,
             spec["shellRef"]["name"].as_str().unwrap_or(""),
             spec["shellRef"]["namespace"].as_str().unwrap_or("default"),
@@ -164,6 +166,8 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     let spec = &bot.json.0["spec"];
     let shell = shell::resolve_shell(
         &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
         team.user_id,
         spec["shellRef"]["name"].as_str().unwrap_or(""),
         spec["shellRef"]["namespace"].as_str().unwrap_or("default"),

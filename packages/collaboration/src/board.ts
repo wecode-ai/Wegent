@@ -2,22 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  CollaborationIssue,
-  CollaborationProject,
-  CollaborationStatus,
-} from "./types";
+import {
+  collaborationMessages,
+  localizeStandardStatuses,
+  type CollaborationTranslate,
+} from './i18n'
+
+import type { CollaborationIssue, CollaborationProject, CollaborationStatus } from './types'
 
 export interface CollaborationBoardGroup {
-  id: string;
-  label: string;
-  color?: CollaborationStatus["color"];
-  issues: CollaborationIssue[];
+  id: string
+  label: string
+  color?: CollaborationStatus['color']
+  issues: CollaborationIssue[]
 }
 
 interface TreeItem {
-  id: string;
-  parent_id: string | null;
+  id: string
+  parent_id: string | null
 }
 
 /**
@@ -27,32 +29,25 @@ interface TreeItem {
  */
 export function collectIssueSubtreeIds<T extends TreeItem>(
   items: T[],
-  rootId: string,
+  rootId: string
 ): Set<string> {
-  const subtreeIds = new Set([rootId]);
-  let grew = true;
+  const subtreeIds = new Set([rootId])
+  let grew = true
   while (grew) {
-    grew = false;
+    grew = false
     for (const item of items) {
-      if (
-        item.parent_id &&
-        subtreeIds.has(item.parent_id) &&
-        !subtreeIds.has(item.id)
-      ) {
-        subtreeIds.add(item.id);
-        grew = true;
+      if (item.parent_id && subtreeIds.has(item.parent_id) && !subtreeIds.has(item.id)) {
+        subtreeIds.add(item.id)
+        grew = true
       }
     }
   }
-  return subtreeIds;
+  return subtreeIds
 }
 
-export function removeIssueSubtree<T extends TreeItem>(
-  items: T[],
-  rootId: string,
-): T[] {
-  const subtreeIds = collectIssueSubtreeIds(items, rootId);
-  return items.filter((item) => !subtreeIds.has(item.id));
+export function removeIssueSubtree<T extends TreeItem>(items: T[], rootId: string): T[] {
+  const subtreeIds = collectIssueSubtreeIds(items, rootId)
+  return items.filter(item => !subtreeIds.has(item.id))
 }
 
 function assigneeLabel(issue: CollaborationIssue, unassigned: string): string {
@@ -62,7 +57,7 @@ function assigneeLabel(issue: CollaborationIssue, unassigned: string): string {
     issue.assignee_agent_name ??
     issue.assignee_team_name ??
     unassigned
-  );
+  )
 }
 
 export function groupBoardIssues(
@@ -70,34 +65,54 @@ export function groupBoardIssues(
   issues: CollaborationIssue[],
   statuses: CollaborationStatus[],
   unassigned: string,
-  noTag: string,
+  noTag: string
 ): CollaborationBoardGroup[] {
-  const groupBy = project.board_config?.group_by ?? "status";
-  if (groupBy === "status") {
-    return statuses.map((status) => ({
+  const groupBy = project.board_config?.group_by ?? 'status'
+  if (groupBy === 'status') {
+    return statuses.map(status => ({
       id: status.id,
       label: status.name,
       color: status.color,
-      issues: issues.filter((issue) => issue.status === status.id),
-    }));
+      issues: issues.filter(issue => issue.status === status.id),
+    }))
   }
 
-  const groups = new Map<string, CollaborationIssue[]>();
+  const groups = new Map<string, CollaborationIssue[]>()
   for (const issue of issues) {
     const keys =
-      groupBy === "priority"
+      groupBy === 'priority'
         ? [issue.priority]
-        : groupBy === "assignee"
+        : groupBy === 'assignee'
           ? [assigneeLabel(issue, unassigned)]
           : issue.tags.length > 0
             ? issue.tags
-            : [noTag];
-    for (const key of keys)
-      groups.set(key, [...(groups.get(key) ?? []), issue]);
+            : [noTag]
+    for (const key of keys) groups.set(key, [...(groups.get(key) ?? []), issue])
   }
   return [...groups.entries()].map(([id, groupedIssues]) => ({
     id,
     label: id,
     issues: groupedIssues,
-  }));
+  }))
+}
+
+export function projectStatuses(
+  project: CollaborationProject,
+  messages: (typeof collaborationMessages)['zh-CN'] | (typeof collaborationMessages)['en'],
+  translate: CollaborationTranslate
+): CollaborationStatus[] {
+  const statuses = project.board_config?.statuses
+  return statuses && statuses.length > 0
+    ? localizeStandardStatuses(statuses, translate)
+    : [
+        { id: 'inbox', name: messages.statusInbox, color: 'gray' },
+        { id: 'pending', name: messages.statusPending, color: 'blue' },
+        {
+          id: 'in_progress',
+          name: messages.statusInProgress,
+          color: 'orange',
+        },
+        { id: 'in_review', name: messages.statusInReview, color: 'purple' },
+        { id: 'completed', name: messages.statusCompleted, color: 'green' },
+      ]
 }

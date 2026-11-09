@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { PassThrough } from 'node:stream'

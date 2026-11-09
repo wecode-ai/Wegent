@@ -97,7 +97,6 @@ fn default_for_modes_matches_identity() {
         bots: HashMap::new(),
         group_bots: HashMap::new(),
         shells: HashMap::new(),
-        public_shells: HashMap::new(),
         models: HashMap::new(),
         public_models: HashMap::new(),
         users: HashMap::new(),
@@ -140,7 +139,6 @@ fn own_team_share_status_from_labels() {
         bots: HashMap::new(),
         group_bots: HashMap::new(),
         shells: HashMap::new(),
-        public_shells: HashMap::new(),
         models: HashMap::new(),
         public_models: HashMap::new(),
         users: HashMap::new(),
@@ -159,7 +157,6 @@ fn display_config_drops_undeclared_keys() {
         bots: HashMap::new(),
         group_bots: HashMap::new(),
         shells: HashMap::new(),
-        public_shells: HashMap::new(),
         models: HashMap::new(),
         public_models: HashMap::new(),
         users: HashMap::new(),
@@ -230,9 +227,9 @@ fn bot_summary_uses_public_model_fallback() {
             })),
         },
     );
-    let mut public_shells = HashMap::new();
-    public_shells.insert(
-        "Chat".to_string(),
+    let mut shells = HashMap::new();
+    shells.insert(
+        (0, "Chat".to_string(), "default".to_string()),
         KindRow {
             kinds_id: 4,
             kinds_user_id: 0,
@@ -246,16 +243,79 @@ fn bot_summary_uses_public_model_fallback() {
     let preloaded = Preloaded {
         bots: HashMap::new(),
         group_bots: HashMap::new(),
-        shells: HashMap::new(),
-        public_shells,
+        shells,
         models: HashMap::new(),
         public_models,
         users: HashMap::new(),
     };
-    let summary = bot_summary(&bot, 229, &preloaded);
+    let summary = bot_summary(&bot, 0, &preloaded);
     assert_eq!(summary["shell_type"], "Chat");
     assert_eq!(summary["agent_config"]["bind_model"], "m1");
     assert_eq!(summary["agent_config"]["bind_model_type"], "public");
+}
+
+#[test]
+fn team_shell_lookup_preserves_context_identity_and_reference_namespace() {
+    let timestamp = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
+    for (team_namespace, team_owner, bot_owner) in [("default", 0, 0), ("source-group", 75, 74)] {
+        let bot = KindRow {
+            kinds_id: 2,
+            kinds_user_id: bot_owner,
+            kinds_name: "bot".to_owned(),
+            kinds_namespace: "source-group".to_owned(),
+            kinds_json: stored_json(json!({"spec": {
+                "shellRef": {"name": "code-go", "namespace": "reference-group"}
+            }})),
+        };
+        let team = TeamRow {
+            team_id: 1,
+            team_user_id: team_owner,
+            team_name: "agent".to_owned(),
+            team_namespace: team_namespace.to_owned(),
+            team_json: stored_json(json!({"spec": {"members": [{
+                "botRef": {"name": "bot", "namespace": "source-group"}
+            }]}})),
+            team_created_at: timestamp,
+            team_updated_at: timestamp,
+            share_status: 0,
+            context_user_id: team_owner,
+            restricted_guest_access: 0,
+            access_source: "native".to_owned(),
+        };
+        let key = (
+            bot_owner,
+            "code-go".to_owned(),
+            "reference-group".to_owned(),
+        );
+        let preloaded = Preloaded {
+            bots: HashMap::from([(
+                (bot_owner, "bot".to_owned(), "source-group".to_owned()),
+                bot.clone(),
+            )]),
+            group_bots: HashMap::from([(
+                ("bot".to_owned(), "source-group".to_owned()),
+                bot.clone(),
+            )]),
+            shells: HashMap::from([(
+                key.clone(),
+                KindRow {
+                    kinds_id: 3,
+                    kinds_user_id: 99,
+                    kinds_name: "code-go".to_owned(),
+                    kinds_namespace: "different-source-group".to_owned(),
+                    kinds_json: stored_json(json!({"spec": {"shellType": "ClaudeCode"}})),
+                },
+            )]),
+            models: HashMap::new(),
+            public_models: HashMap::new(),
+            users: HashMap::new(),
+        };
+        let item =
+            crate::json_contract_tests::serialized(super::team_item(&team, &preloaded, &[], 75))
+                .unwrap();
+        assert_eq!(item["bots"][0]["bot"]["shell_type"], "ClaudeCode");
+        assert_eq!(item["agent_type"], "claude");
+    }
 }
 
 #[test]
@@ -294,7 +354,6 @@ fn bot_summary_preserves_custom_model_config() {
         bots: HashMap::new(),
         group_bots: HashMap::new(),
         shells: HashMap::new(),
-        public_shells: HashMap::new(),
         models,
         public_models: HashMap::new(),
         users: HashMap::new(),

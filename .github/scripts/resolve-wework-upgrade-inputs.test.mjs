@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveUpgradeInputs } from "./resolve-wework-upgrade-inputs.mjs";
+import {
+  resolveUpgradeInputs,
+  upgradeVerificationMatrix,
+} from "./resolve-wework-upgrade-inputs.mjs";
 
 function fixture() {
   const environment = {
@@ -47,7 +50,92 @@ test("reuses successful producers even when an earlier test driver failed", () =
     verification_sha: "a".repeat(40),
     diagnostic_checkpoint: "",
     published_release_tag: "",
+    verification_matrix: JSON.stringify(upgradeVerificationMatrix("beta")),
   });
+});
+
+test("stable verification partitions both channels while beta verification cannot add stable jobs", () => {
+  const pairs = (channel, sourceVersion = "") =>
+    upgradeVerificationMatrix(channel, sourceVersion).include.map((item) => [
+      item.platform,
+      item.arch,
+      item.channel,
+    ]);
+  assert.deepEqual(pairs("stable"), [
+    ["macos", "arm64", "stable"],
+    ["windows", "x64", "stable"],
+    ["macos", "arm64", "beta"],
+    ["windows", "x64", "beta"],
+  ]);
+  assert.deepEqual(pairs("beta"), [
+    ["macos", "arm64", "beta"],
+    ["windows", "x64", "beta"],
+  ]);
+  assert.deepEqual(pairs("stable", "0.6.4-beta.5"), pairs("beta"));
+  assert.deepEqual(pairs("stable", "0.6.3"), [
+    ["macos", "arm64", "stable"],
+    ["windows", "x64", "stable"],
+  ]);
+  assert.throws(
+    () => upgradeVerificationMatrix("nightly"),
+    /Invalid release channel/,
+  );
+});
+
+test("non-publishing replay only requires the producers whose packages it verifies", () => {
+  const value = fixture();
+  value.run.conclusion = "failure";
+  for (const job of value.jobs) {
+    if (["Build macOS x64", "Build Linux x64"].includes(job.name))
+      job.conclusion = "failure";
+  }
+  assert.equal(
+    resolveUpgradeInputs(value.environment, value.execute).version,
+    "0.6.4-beta.4",
+  );
+});
+
+for (const platform of ["macOS arm64", "Windows x64"]) {
+  test(`replay still requires exactly one successful ${platform} producer`, () => {
+    for (const failure of [
+      "failure",
+      "cancelled",
+      "pending",
+      "missing",
+      "duplicate",
+    ]) {
+      const value = fixture();
+      const job = value.jobs.find((item) => item.name === `Build ${platform}`);
+      if (failure === "missing") value.jobs.splice(value.jobs.indexOf(job), 1);
+      else if (failure === "duplicate") value.jobs.push({ ...job });
+      else job.conclusion = failure === "pending" ? null : failure;
+      assert.throws(
+        () => resolveUpgradeInputs(value.environment, value.execute),
+        new RegExp(`Source producer did not succeed: ${platform}`),
+      );
+    }
+  });
+}
+
+test("normal dry runs and publication still require all four producers", () => {
+  for (const platform of [
+    "macOS arm64",
+    "macOS x64",
+    "Windows x64",
+    "Linux x64",
+  ]) {
+    for (const publish of ["false", "true"]) {
+      const value = fixture();
+      value.environment.REPLAY = "false";
+      value.environment.PUBLISH_RELEASE = publish;
+      value.jobs.find((job) => job.name === `Build ${platform}`).conclusion =
+        "failure";
+      assert.throws(
+        () => resolveUpgradeInputs(value.environment, value.execute),
+        new RegExp(`Source producer did not succeed: ${platform}`),
+      );
+    }
+  }
 });
 
 test("selects a matching immutable published target only for a replay", () => {
@@ -73,11 +161,11 @@ test("selects a matching immutable published target only for a replay", () => {
 
 test("a focused diagnostic is limited to a non-publishing replay", () => {
   const value = fixture();
-  value.environment.VERIFICATION_CHECKPOINT = "app-upgrade";
+  value.environment.VERIFICATION_CHECKPOINT = "app-rollback";
   assert.equal(
     resolveUpgradeInputs(value.environment, value.execute)
       .diagnostic_checkpoint,
-    "app-upgrade",
+    "app-rollback",
   );
   value.environment.REPLAY = "false";
   assert.throws(
@@ -90,7 +178,7 @@ test("a focused diagnostic is limited to a non-publishing replay", () => {
     () => resolveUpgradeInputs(value.environment, value.execute),
     /requires an existing build replay/,
   );
-  value.environment.VERIFICATION_CHECKPOINT = "app-upgrade";
+  value.environment.VERIFICATION_CHECKPOINT = "app-rollback";
   value.environment.PUBLISH_RELEASE = "true";
   assert.throws(
     () => resolveUpgradeInputs(value.environment, value.execute),
@@ -121,6 +209,9 @@ test("a refresh diagnostic resolves a separate immutable source without publishi
     published_release_tag: "",
     source_run_id: "124",
     source_version: "0.6.4-beta.3",
+    verification_matrix: JSON.stringify(
+      upgradeVerificationMatrix("beta", "0.6.4-beta.3"),
+    ),
   });
   assert.throws(
     () => resolveUpgradeInputs(value.environment, value.execute),
@@ -140,6 +231,42 @@ test("a refresh diagnostic resolves a separate immutable source without publishi
   assert.throws(
     () => resolveUpgradeInputs(value.environment, execute),
     /producer did not succeed/,
+  );
+});
+
+test("retry diagnostics require an independent source and run on macOS and Windows", () => {
+  const value = fixture();
+  Object.assign(value.environment, {
+    VERIFICATION_CHECKPOINT: "app-update-retry",
+    VERIFICATION_SOURCE_RUN_ID: "124",
+  });
+  const execute = (command, args) => {
+    const result = value.execute(command, args);
+    return args.at(-1).includes("/runs/124/")
+      ? result.replaceAll("0.6.4-beta.4", "0.6.4-beta.3")
+      : result;
+  };
+  const resolved = resolveUpgradeInputs(value.environment, execute);
+  assert.equal(resolved.diagnostic_checkpoint, "app-update-retry");
+  assert.equal(resolved.source_run_id, "124");
+  assert.deepEqual(
+    JSON.parse(resolved.verification_matrix).include.map(
+      (item) => item.platform,
+    ),
+    ["macos", "windows"],
+  );
+  for (const change of [
+    { VERIFICATION_SOURCE_RUN_ID: "" },
+    { PUBLISH_RELEASE: "true" },
+    { VERIFICATION_CHECKPOINT: "all" },
+  ]) {
+    assert.throws(() =>
+      resolveUpgradeInputs({ ...value.environment, ...change }, execute),
+    );
+  }
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, value.execute),
+    /must be newer/,
   );
 });
 

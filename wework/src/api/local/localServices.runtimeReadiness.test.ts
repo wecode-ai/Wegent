@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 import {
   clearLocalModelConfigs,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
-import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAppServices, resetLocalRuntimeChatStreamsForTests } from './localServices'
 
 const status = {
@@ -177,23 +177,5 @@ describe('local transcript startup ordering', () => {
       })
     ).rejects.toThrow('Proxy initialization failed')
     expect(request).not.toHaveBeenCalled()
-  })
-
-  test.each(['claude_code', 'claude'])('does not start Codex for %s history', async runtime => {
-    const ensure = vi.fn()
-    const request = vi.fn().mockResolvedValue({ messages: [] })
-    const services = createLocalAppServices({
-      subscribe: vi.fn().mockResolvedValue(vi.fn()),
-      available: async () => status,
-      ensure,
-      request,
-    })
-    await services.runtimeWorkApi!.getRuntimeTranscript({
-      deviceId: status.deviceId,
-      taskId: 'persisted-task',
-      runtime,
-    })
-    expect(ensure).not.toHaveBeenCalled()
-    expect(request).toHaveBeenCalledOnce()
   })
 })

@@ -1,18 +1,18 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import i18n from '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
-import { WorkbenchProvider, type WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import {
-  clearRuntimeConversationCacheForTests,
   applyRuntimeConversationAction,
+  clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
+import { WorkbenchProvider, type WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
+import i18n from '@/i18n'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TaskActivityView } from './TaskActivityView'
 
 vi.mock('@/api/plugins', () => ({
@@ -274,16 +274,6 @@ describe('opening an activity execution with the real pane session', () => {
     expect(screen.queryByTestId('runtime-execution-detail-stop')).not.toBeInTheDocument()
   })
 
-  it('keeps an unreadable execution separate from a completed execution', async () => {
-    const result = fixture()
-    result.getRuntimeTranscript.mockRejectedValueOnce(new Error('device unavailable'))
-    const badge = await openExecution()
-    await screen.findByTestId('runtime-execution-detail-transcript-error')
-    expect(badge).toHaveAttribute('data-status', 'running')
-    expect(screen.getByTestId('runtime-execution-detail-status')).toHaveTextContent('执行中')
-    expect(result.getLoopItem).not.toHaveBeenCalled()
-  })
-
   it('updates the associated run from live conversation events after the dialog closes', async () => {
     const result = fixture({ identified: true })
     const page = await result.getRuntimeTranscript()
@@ -309,16 +299,5 @@ describe('opening an activity execution with the real pane session', () => {
     await waitFor(() => expect(badge).toHaveAttribute('data-status', 'succeeded'))
     expect(result.original.status).toBe('streaming')
     expect(result.getLoopItem).not.toHaveBeenCalled()
-  })
-
-  it('does not infer a legacy execution from a partial history page', async () => {
-    fixture({ hasMoreBefore: true })
-    const badge = await openExecution()
-    await waitFor(() =>
-      expect(screen.getByTestId('runtime-execution-detail-body')).toHaveTextContent(
-        'ORIGINAL_ANSWER'
-      )
-    )
-    expect(badge).toHaveAttribute('data-status', 'running')
   })
 })

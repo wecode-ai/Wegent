@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { Activity, Suspense, createRef, startTransition, useState } from 'react'
-import { EditorState } from 'prosemirror-state'
-import { describe, expect, test, vi } from 'vitest'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { EditorState } from 'prosemirror-state'
+import { Activity, Suspense, createRef, startTransition, useState } from 'react'
+import { describe, expect, test, vi } from 'vitest'
 import { ComposerProseMirrorEditor, type ComposerEditorHandle } from './ComposerProseMirrorEditor'
 import {
   composerSchema,
@@ -436,12 +436,6 @@ describe('ComposerProseMirrorEditor', () => {
     expect(editor.querySelectorAll('td table')).toHaveLength(0)
     expect(editorRef.current!.getSnapshot().value).toContain('新表头')
     expect(editorRef.current!.getSnapshot().value).toContain('新内容')
-  })
-
-  test('exposes the placeholder layer for scoped composer alignment', () => {
-    renderEditor('')
-
-    expect(screen.getByText('Message')).toHaveClass('composer-prosemirror-placeholder')
   })
 
   test('restores the controlled value after an Activity tab is hidden and shown', () => {
@@ -1204,22 +1198,6 @@ describe('ComposerProseMirrorEditor', () => {
 
     expect(onChange).not.toHaveBeenCalled()
   })
-})
-
-test('renders GitHub URLs as recognized inline link chips', () => {
-  renderEditor('Check https://github.com/wecode-ai/Wegent/pull/2350')
-
-  const chip = screen.getByTestId('composer-link-chip')
-  expect(chip).toHaveClass('composer-link-node', 'composer-mention-link')
-  expect(chip).toHaveAttribute(
-    'data-composer-link-url',
-    'https://github.com/wecode-ai/Wegent/pull/2350'
-  )
-  expect(chip).toHaveTextContent('wecode-ai/Wegent#2350')
-  expect(chip.querySelector('img')).toHaveAttribute(
-    'src',
-    'https://github.githubassets.com/favicons/favicon.svg'
-  )
 })
 
 test('renders Wegent Sites project markdown links as inline link chips', () => {

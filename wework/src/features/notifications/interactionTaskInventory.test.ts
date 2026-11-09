@@ -1,12 +1,49 @@
+// @vitest-environment node
+
 import { expect, it, vi } from 'vitest'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { interactionTask } from './runtimeInteractions.fixtures'
 import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversation-api'
 
+it('discovers healthy local task requests when the cloud device catalog calls this device offline', async () => {
+  const list = vi.fn(async ({ deviceId }) => ({
+    localIssueQuestionsPending: deviceId === 'device',
+    projects: [],
+    chats: [{ ...interactionTask.workspace, deviceId, tasks: [interactionTask.task] }],
+    totalTasks: 1,
+  }))
+  const inventory = await readInteractionTaskInventory({
+    items: [],
+    devices: [
+      { device_id: 'device', status: 'offline' },
+      { device_id: 'remote', status: 'online' },
+    ],
+    services: {
+      getLocalRuntimeSidebarIdentity: async () => ({
+        deviceId: 'device',
+        runtimeInstanceId: 'local',
+        provenance: 'local-ipc',
+      }),
+      runtimeWorkApi: { listRuntimeWork: list },
+    },
+  } as unknown as TaskSource)
+  expect(list).toHaveBeenCalledWith({ pendingOnly: true, preferCached: true, deviceId: 'device' })
+  expect(new Set(inventory.items.map(item => item.address.deviceId))).toEqual(
+    new Set(['device', 'remote'])
+  )
+  expect(inventory.failedDevices.has('device')).toBe(false)
+  expect(inventory.localIssueQuestionsPending).toBe(true)
+})
+
 it('discovers authorized device requests independently and isolates a failed device', async () => {
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {})
   const list = vi.fn(async ({ deviceId }) => {
-    if (deviceId === 'unavailable') throw new Error('Device offline')
+    if (deviceId === 'unavailable')
+      throw Object.assign(new Error('Device offline', { cause: new Error('Connection closed') }), {
+        code: 'DEVICE_UNAVAILABLE',
+        status: 503,
+      })
     return {
       projects: [],
       chats: [{ ...interactionTask.workspace, deviceId, tasks: [interactionTask.task] }],
@@ -28,8 +65,61 @@ it('discovers authorized device requests independently and isolates a failed dev
     new Set(['device', 'remote'])
   )
   expect(inventory.failedDevices).toEqual(new Set(['unavailable', 'offline']))
+  expect(inventory.failedRequests).toEqual(new Set(['unavailable']))
   expect(list).toHaveBeenCalledTimes(3)
-  expect(list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: 'remote' })
+  expect(list).toHaveBeenCalledWith({ pendingOnly: true, preferCached: true, deviceId: 'remote' })
+  expect(log).toHaveBeenCalledWith(
+    '[Wework] Runtime task create diagnostic',
+    expect.stringContaining('"stage":"pending-interaction-load-failed"')
+  )
+  const entry = JSON.parse(
+    log.mock.calls.find(
+      ([, value]) => typeof value === 'string' && value.includes('pending-interaction-load-failed')
+    )![1] as string
+  )
+  expect(entry).toMatchObject({
+    operation: 'inventory',
+    deviceId: 'unavailable',
+    error: {
+      name: 'Error',
+      message: 'Device offline',
+      stack: expect.any(String),
+      code: 'DEVICE_UNAVAILABLE',
+      status: '503',
+      cause: 'Connection closed',
+    },
+  })
+  log.mockRestore()
+})
+
+it('logs local identity failures without blocking device inventory discovery', async () => {
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const list = vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+  try {
+    await readInteractionTaskInventory({
+      items: [],
+      services: {
+        getLocalRuntimeSidebarIdentity: async () => {
+          throw { message: 'IPC unavailable', code: 'IPC_CLOSED', request: 'private payload' }
+        },
+        runtimeWorkApi: { listRuntimeWork: list },
+      },
+    } as unknown as TaskSource)
+    expect(list).toHaveBeenCalledWith({
+      pendingOnly: true,
+      preferCached: true,
+      deviceId: undefined,
+    })
+    expect(log).toHaveBeenCalledWith(
+      '[Wework] Runtime task create diagnostic',
+      expect.stringContaining('"operation":"local-identity"')
+    )
+    const entry = JSON.parse(log.mock.calls[0][1] as string)
+    expect(entry.error).toEqual({ message: 'IPC unavailable', code: 'IPC_CLOSED' })
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private payload')
+  } finally {
+    log.mockRestore()
+  }
 })
 
 it('preserves per-device isolation through the canonical HTTP adapter', async () => {

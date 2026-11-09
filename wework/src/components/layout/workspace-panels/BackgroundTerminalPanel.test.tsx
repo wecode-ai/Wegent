@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import { readNativeTerminalViewport } from '@/e2e/native-key-observation'
+import type { NativeTerminalElement } from '@/e2e/native-terminal-diagnostics'
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { BackgroundTerminalPanel } from './BackgroundTerminalPanel'
 
@@ -9,6 +11,9 @@ const records = vi.hoisted(() => ({
     write: ReturnType<typeof vi.fn>
     reset: ReturnType<typeof vi.fn>
     dispose: ReturnType<typeof vi.fn>
+    scrollDispose: ReturnType<typeof vi.fn>
+    onScroll: ReturnType<typeof vi.fn>
+    attachCustomKeyEventHandler: ReturnType<typeof vi.fn>
     options: Record<string, unknown>
   }[],
 }))
@@ -18,8 +23,13 @@ vi.mock('@xterm/xterm', () => ({
     write = vi.fn()
     reset = vi.fn()
     dispose = vi.fn()
+    scrollDispose = vi.fn()
+    onScroll = vi.fn(() => ({ dispose: this.scrollDispose }))
+    attachCustomKeyEventHandler = vi.fn()
     open = vi.fn()
     loadAddon = vi.fn()
+    buffer = { active: { viewportY: 10, baseY: 20, length: 65 } }
+    rows = 45
     constructor(public options: Record<string, unknown>) {
       records.instances.push(this)
     }
@@ -55,8 +65,40 @@ function terminal(output: string): BackgroundTerminal {
 beforeEach(() => {
   records.instances = []
 })
+afterEach(() => vi.unstubAllEnvs())
 
 describe('BackgroundTerminalPanel', () => {
+  test('exposes only a read-only viewport snapshot in E2E builds and removes it on disposal', () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const { container, unmount } = render(
+      <BackgroundTerminalPanel terminal={terminal('ready\n')} active />
+    )
+    const region = container.querySelector<NativeTerminalElement>('[role="region"]')!
+    expect(region.__weworkViewportForE2E?.()).toEqual({
+      viewportY: 10,
+      baseY: 20,
+      length: 65,
+      rows: 45,
+    })
+    expect(readNativeTerminalViewport(region)).toBe('11')
+    expect(records.instances[0].onScroll).toHaveBeenCalledOnce()
+    expect(records.instances[0].attachCustomKeyEventHandler).toHaveBeenCalledOnce()
+    unmount()
+    expect(region.__weworkViewportForE2E).toBeUndefined()
+    expect(() => readNativeTerminalViewport(region)).toThrow('unavailable')
+    expect(records.instances[0].scrollDispose).toHaveBeenCalledOnce()
+  })
+
+  test('does not expose the diagnostic bridge in normal builds', () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'false')
+    const { container } = render(<BackgroundTerminalPanel terminal={terminal('ready\n')} active />)
+    expect(
+      container.querySelector<NativeTerminalElement>('[role="region"]')?.__weworkViewportForE2E
+    ).toBeUndefined()
+    expect(records.instances[0].onScroll).not.toHaveBeenCalled()
+    expect(records.instances[0].attachCustomKeyEventHandler).not.toHaveBeenCalled()
+  })
+
   test('appends live output once across tab switches and resets when the bounded output changes', () => {
     const { rerender, unmount } = render(
       <BackgroundTerminalPanel terminal={terminal('ready\n')} active />

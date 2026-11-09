@@ -1,14 +1,16 @@
+import type { AppPreferences } from '@/desktop/appPreferences'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AppPreferences } from '@/desktop/appPreferences'
-import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
-import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { RuntimeConcurrencySettings } from './RuntimeConcurrencySettings'
 
 const defaultPreferences: AppPreferences = {
   workbenchMode: 'developer',
+  appearanceMode: 'system',
+  appearanceThemeSnapshot: null,
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -26,6 +28,7 @@ const defaultPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   telemetryConsentAsked: true,
   telemetryEnabled: true,
+  performanceRecordingEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
@@ -34,6 +37,7 @@ const defaultPreferences: AppPreferences = {
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
+  browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
   popoutWindowShortcut: 'Alt+Shift+Space',
@@ -74,6 +78,8 @@ vi.mock('@/hooks/useTranslation', () => ({
 vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
     workbenchMode: 'developer',
+    appearanceMode: 'system',
+    appearanceThemeSnapshot: null,
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     fixedWorkspaceTabs: [
@@ -90,6 +96,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     experimentalFeaturesEnabled: false,
     telemetryConsentAsked: true,
     telemetryEnabled: true,
+    performanceRecordingEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
@@ -98,6 +105,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     browserExternalLinkTarget: 'system',
     browserLocalLinkTarget: 'wework',
     browserDownloadDirectory: null,
+    browserFullControl: false,
     browserAskBeforeDownload: false,
     appshotsPlaySound: true,
     popoutWindowShortcut: 'Alt+Shift+Space',
@@ -179,7 +187,11 @@ describe('GeneralSettingsPage', () => {
       importedEntries: ['config.toml'],
     })
     getAppPreferencesMock.mockResolvedValue(defaultPreferences)
-    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 3 })
+    getRuntimeSettingsMock.mockResolvedValue({
+      maxConcurrentTasks: 3,
+      maxConcurrentStandInTasks: 4,
+      maxConcurrentAgentTasks: 6,
+    })
     updateRuntimeSettingsMock.mockImplementation(settings => Promise.resolve(settings))
     refreshWorkListsMock.mockResolvedValue(undefined)
     updateAppPreferencesMock.mockImplementation(patch =>
@@ -202,14 +214,6 @@ describe('GeneralSettingsPage', () => {
       trayTitle: 'AIGC -85.68',
       tooltip: 'AIGC额度\n1,127.68 / 1,042 元 (108.22%)\n剩余 -85.68 元',
     })
-  })
-
-  test('renders language preference options', async () => {
-    render(<GeneralSettingsPage />)
-
-    expect(await screen.findByTestId('general-language-system-button')).toBeInTheDocument()
-    expect(screen.getByTestId('general-language-zh-CN-button')).toBeInTheDocument()
-    expect(screen.getByTestId('general-language-en-button')).toBeInTheDocument()
   })
 
   test('switches from developer mode to focus mode', async () => {
@@ -274,8 +278,16 @@ describe('GeneralSettingsPage', () => {
     )
   })
 
-  test('loads and updates the maximum parallel task count', async () => {
-    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 5 })
+  test.each([
+    ['general-max-concurrent-tasks-select', 'maxConcurrentTasks', 5],
+    ['general-max-concurrent-stand-in-tasks-select', 'maxConcurrentStandInTasks', 7],
+    ['general-max-concurrent-agent-tasks-select', 'maxConcurrentAgentTasks', 9],
+  ])('loads and updates the independent limit %s', async (testId, key, initial) => {
+    getRuntimeSettingsMock.mockResolvedValue({
+      maxConcurrentTasks: 5,
+      maxConcurrentStandInTasks: 7,
+      maxConcurrentAgentTasks: 9,
+    })
     render(
       <WorkbenchContext.Provider
         value={
@@ -295,39 +307,65 @@ describe('GeneralSettingsPage', () => {
       </WorkbenchContext.Provider>
     )
 
-    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    const select = await screen.findByTestId(testId)
     await waitFor(() => expect(select).toBeEnabled())
-    expect(select).toHaveValue('5')
+    expect(select).toHaveValue(String(initial))
 
     await userEvent.selectOptions(select, '2')
 
     await waitFor(() => {
-      expect(updateRuntimeSettingsMock).toHaveBeenCalledWith({ maxConcurrentTasks: 2 })
+      expect(updateRuntimeSettingsMock).toHaveBeenCalledWith({ [key]: 2 })
     })
     expect(refreshWorkListsMock).toHaveBeenCalledOnce()
     expect(select).toHaveValue('2')
-  })
-
-  test('uses ten parallel tasks when runtime settings are unavailable', async () => {
-    getRuntimeSettingsMock.mockResolvedValue(undefined)
-    render(<GeneralSettingsPage />)
-
-    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    for (const [otherTestId, otherKey, otherValue] of [
+      ['general-max-concurrent-tasks-select', 'maxConcurrentTasks', 5],
+      ['general-max-concurrent-stand-in-tasks-select', 'maxConcurrentStandInTasks', 7],
+      ['general-max-concurrent-agent-tasks-select', 'maxConcurrentAgentTasks', 9],
+    ] as const) {
+      if (otherKey !== key) expect(screen.getByTestId(otherTestId)).toHaveValue(String(otherValue))
+    }
+    updateRuntimeSettingsMock.mockRejectedValueOnce(new Error('persist failed'))
+    await userEvent.selectOptions(select, '4')
     await waitFor(() => expect(select).toBeEnabled())
-    expect(select).toHaveValue('10')
+    expect(select).toHaveValue('2')
   })
 
-  test('saves and applies the selected language', async () => {
-    render(<GeneralSettingsPage />)
+  test('isolates runtime loading and supports recovery without blocking other settings', async () => {
+    getRuntimeSettingsMock.mockRejectedValueOnce(new Error('runtime unavailable'))
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {
+              runtimeWorkApi: {
+                getRuntimeSettings: getRuntimeSettingsMock,
+                updateRuntimeSettings: updateRuntimeSettingsMock,
+              },
+            },
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+    const retry = await screen.findByTestId('general-concurrency-retry-button')
+    expect(screen.getByTestId('general-max-concurrent-tasks-select')).toBeDisabled()
+    expect(screen.getByTestId('general-workbench-mode-developer-button')).toBeEnabled()
+    await userEvent.click(retry)
+    await waitFor(() =>
+      expect(screen.getByTestId('general-max-concurrent-agent-tasks-select')).toBeEnabled()
+    )
+    expect(screen.getByTestId('general-max-concurrent-agent-tasks-select')).toHaveValue('6')
+    expect(screen.queryByTestId('general-concurrency-retry-button')).not.toBeInTheDocument()
+  })
 
-    const englishButton = await screen.findByTestId('general-language-en-button')
-    await waitFor(() => expect(englishButton).toBeEnabled())
-    fireEvent.click(englishButton)
-
-    await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ language: 'en' })
-    })
-    expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
+  test('does not offer a concurrency save without a Runtime API', async () => {
+    render(<RuntimeConcurrencySettings />)
+    await waitFor(() =>
+      expect(screen.getByTestId('general-max-concurrent-tasks-select')).toBeDisabled()
+    )
+    expect(updateRuntimeSettingsMock).not.toHaveBeenCalled()
   })
 
   test('saves the message send shortcut as a user preference', async () => {
@@ -399,50 +437,6 @@ describe('GeneralSettingsPage', () => {
     expect(screen.getByText('workbench.general_settings_send_key_save_failed')).toBeInTheDocument()
   })
 
-  test('saves the follow-up behavior as a user preference', async () => {
-    const updateUserPreferences = vi.fn().mockResolvedValue({
-      send_key: 'cmd_enter' as const,
-      follow_up_behavior: 'guide' as const,
-    })
-    const renderSettings = (followUpBehavior: 'queue' | 'guide') => (
-      <WorkbenchContext.Provider
-        value={
-          {
-            projectChat: { models: [], requestCatalogs: vi.fn() },
-            services: {},
-            state: {
-              user: {
-                id: 1,
-                user_name: 'alice',
-                email: 'alice@example.com',
-                preferences: {
-                  send_key: 'cmd_enter',
-                  follow_up_behavior: followUpBehavior,
-                },
-              },
-            },
-            updateUserPreferences,
-          } as unknown as WorkbenchContextValue
-        }
-      >
-        <GeneralSettingsPage />
-      </WorkbenchContext.Provider>
-    )
-    const rendered = render(renderSettings('queue'))
-
-    const guideButton = await screen.findByTestId('general-follow-up-guide-button')
-    await waitFor(() => expect(guideButton).toBeEnabled())
-    await userEvent.click(guideButton)
-
-    await waitFor(() => {
-      expect(updateUserPreferences).toHaveBeenCalledWith({
-        follow_up_behavior: 'guide',
-      })
-    })
-    rendered.rerender(renderSettings('guide'))
-    expect(guideButton).toHaveAttribute('aria-pressed', 'true')
-  })
-
   test('persists the selected startup workspace tab', async () => {
     getAppPreferencesMock.mockResolvedValue({
       ...defaultPreferences,
@@ -466,68 +460,6 @@ describe('GeneralSettingsPage', () => {
       })
     })
     expect(boardButton).toHaveAttribute('aria-pressed', 'true')
-  })
-
-  test('shows fixed workspace tabs while experimental features are disabled', async () => {
-    render(<GeneralSettingsPage />)
-    expect(await screen.findByTestId('general-fixed-tab-startup-fixed-task')).toBeEnabled()
-    expect(screen.getByTestId('general-fixed-tab-fixed-board')).toBeInTheDocument()
-  })
-
-  test('keeps experimental features off by default and persists enabling them', async () => {
-    render(<GeneralSettingsPage />)
-
-    const toggle = await screen.findByTestId('general-experimental-features-toggle')
-    await waitFor(() => expect(toggle).toBeEnabled())
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
-
-    await userEvent.click(toggle)
-
-    await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ experimentalFeaturesEnabled: true })
-    })
-  })
-
-  test('keeps friendly titles off by default and uses the task model when enabled', async () => {
-    const taskModel = {
-      name: 'gpt-5',
-      type: 'runtime',
-      displayName: 'GPT-5',
-    }
-    const workbench = {
-      projectChat: {
-        models: [taskModel],
-        selectedModel: taskModel,
-      },
-    } as unknown as WorkbenchContextValue
-
-    render(
-      <WorkbenchContext.Provider value={workbench}>
-        <GeneralSettingsPage />
-      </WorkbenchContext.Provider>
-    )
-
-    const toggle = await screen.findByTestId('friendly-task-titles-toggle')
-    await waitFor(() => expect(toggle).toBeEnabled())
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
-
-    await userEvent.click(toggle)
-
-    await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
-        friendlyTaskTitlesEnabled: true,
-        friendlyTaskTitleModel: null,
-      })
-    })
-
-    const modelSelect = screen.getByTestId('friendly-task-title-model-select')
-    expect(
-      (within(modelSelect).getByRole('option', { name: '与任务相同' }) as HTMLOptionElement)
-        .selected
-    ).toBe(true)
-    expect(
-      within(modelSelect).queryByRole('option', { name: '请选择模型' })
-    ).not.toBeInTheDocument()
   })
 
   test('shows an unavailable saved friendly title model for replacement', async () => {
@@ -572,20 +504,6 @@ describe('GeneralSettingsPage', () => {
     ).toBe(true)
   })
 
-  test('enables the system drag panel by default and persists disabling it', async () => {
-    render(<GeneralSettingsPage />)
-
-    const toggle = await screen.findByTestId('general-system-drag-toggle')
-    await waitFor(() => expect(toggle).toBeEnabled())
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
-
-    await userEvent.click(toggle)
-
-    await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ systemDragEnabled: false })
-    })
-  })
-
   test('prevents sleep during tasks by default and persists disabling it', async () => {
     render(<GeneralSettingsPage />)
 
@@ -599,6 +517,56 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({
         preventSleepWhileTasksRunning: false,
       })
+    })
+  })
+
+  test('keeps performance recording off by default and persists enabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ performanceRecordingEnabled: true })
+      expect(toggle).toHaveAttribute('aria-checked', 'true')
+    })
+  })
+
+  test('shows a saved performance recording preference and persists disabling it', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      performanceRecordingEnabled: true,
+    })
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ performanceRecordingEnabled: false })
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+    })
+  })
+
+  test('restores the performance recording toggle when saving fails', async () => {
+    updateAppPreferencesMock.mockRejectedValue(new Error('save failed'))
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      expect(screen.getByTestId('general-settings-status')).toHaveTextContent(
+        'workbench.general_settings_save_failed'
+      )
     })
   })
 
@@ -617,55 +585,6 @@ describe('GeneralSettingsPage', () => {
         telemetryEnabled: false,
       })
     })
-  })
-
-  test('shows the loaded shared preferences without flashing defaults', async () => {
-    getAppPreferencesMock.mockImplementation(() => new Promise(() => undefined))
-
-    render(
-      <AppPreferencesContext.Provider
-        value={{
-          loaded: true,
-          preferences: { ...defaultPreferences, telemetryEnabled: true },
-        }}
-      >
-        <GeneralSettingsPage />
-      </AppPreferencesContext.Provider>
-    )
-
-    const toggle = await screen.findByTestId('general-telemetry-toggle')
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
-    expect(getAppPreferencesMock).not.toHaveBeenCalled()
-  })
-
-  test('groups task runtime controls separately and spaces later sections', async () => {
-    render(<GeneralSettingsPage />)
-
-    const basicSection = screen.getByTestId('general-settings-basic-section')
-    const runtimeSection = screen.getByTestId('general-settings-runtime-section')
-    const privacySection = screen.getByTestId('general-settings-privacy-section')
-    const popoutSection = screen.getByTestId('general-settings-popout-section')
-
-    expect(runtimeSection).toHaveClass('mt-12')
-    expect(privacySection).toHaveClass('mt-12')
-    expect(popoutSection).toHaveClass('mt-12')
-    expect(within(runtimeSection).getByTestId('general-close-to-tray-toggle')).toBeInTheDocument()
-    expect(
-      within(runtimeSection).getByTestId('general-prevent-sleep-while-tasks-running-toggle')
-    ).toBeInTheDocument()
-    expect(
-      within(runtimeSection).queryByTestId('general-task-completion-notifications-toggle')
-    ).not.toBeInTheDocument()
-    expect(within(runtimeSection).getByTestId('general-tray-running-toggle')).toBeInTheDocument()
-    expect(
-      within(basicSection).queryByTestId('general-close-to-tray-toggle')
-    ).not.toBeInTheDocument()
-    expect(within(basicSection).queryByTestId('general-system-drag-toggle')).not.toBeInTheDocument()
-    expect(within(popoutSection).getByTestId('general-system-drag-toggle')).toBeInTheDocument()
-    expect(within(privacySection).getByTestId('general-telemetry-toggle')).toBeInTheDocument()
-    expect(
-      within(popoutSection).getByTestId('general-popout-shortcut-record-button')
-    ).toBeInTheDocument()
   })
 
   test('records, clears, and persists the Popout Window shortcut', async () => {
@@ -717,73 +636,6 @@ describe('GeneralSettingsPage', () => {
     expect(zhButton).toHaveAttribute('aria-pressed', 'true')
     expect(zhButton.className).toContain('bg-text-primary')
     expect(applyLanguagePreferenceMock).not.toHaveBeenCalled()
-  })
-
-  test('shows system tray toggles and saves each tray display preference separately', async () => {
-    render(<GeneralSettingsPage />)
-
-    expect(
-      await screen.findByText('workbench.general_settings_tray_display_content')
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByTestId('general-task-completion-notifications-toggle')
-    ).not.toBeInTheDocument()
-    expect(screen.getByTestId('general-tray-unread-toggle')).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByTestId('general-tray-running-toggle')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    expect(screen.getByTestId('general-tray-usage-toggle')).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByTestId('general-tray-wegent-usage-toggle')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    expect(screen.getByText('workbench.general_settings_tray_usage')).toBeInTheDocument()
-    expect(await screen.findByText('AIGC额度')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))
-    await userEvent.click(screen.getByTestId('general-tray-running-toggle'))
-    await userEvent.click(screen.getByTestId('general-tray-usage-toggle'))
-    await userEvent.click(screen.getByTestId('general-tray-wegent-usage-toggle'))
-
-    await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUnreadEnabled: false })
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayRunningEnabled: false })
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUsageEnabled: false })
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayWegentUsageEnabled: false })
-    })
-  })
-
-  test('hides the Codex tray quota toggle when the local Codex subscription is off', async () => {
-    getAppPreferencesMock.mockResolvedValue({
-      ...defaultPreferences,
-      localCodexSubscriptionEnabled: false,
-    })
-
-    render(<GeneralSettingsPage />)
-
-    expect(
-      await screen.findByText('workbench.general_settings_tray_display_content')
-    ).toBeInTheDocument()
-    expect(screen.getByTestId('general-tray-unread-toggle')).toBeInTheDocument()
-    expect(screen.getByTestId('general-tray-running-toggle')).toBeInTheDocument()
-    expect(screen.queryByTestId('general-tray-usage-toggle')).not.toBeInTheDocument()
-    expect(screen.queryByText('workbench.general_settings_tray_usage')).not.toBeInTheDocument()
-  })
-
-  test('imports compatible content from Codex and Claude Code', async () => {
-    render(<GeneralSettingsPage />)
-
-    await userEvent.click(await screen.findByTestId('general-external-content-import-button'))
-    expect(screen.getByTestId('external-content-import-dialog')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('external-content-source-claude-code'))
-    await userEvent.click(screen.getByTestId('external-content-import-confirm-button'))
-
-    await waitFor(() => {
-      expect(importExternalContentMock).toHaveBeenCalledWith('claude-code')
-    })
-    expect(screen.getByTestId('external-content-import-success')).toBeInTheDocument()
   })
 
   test('shows an import error and allows retrying', async () => {

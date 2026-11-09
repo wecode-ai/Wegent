@@ -16,6 +16,7 @@ export interface ProjectBoardParentRowsProps<T> {
   translate: CollaborationTranslate
   getParentTitle(item: T): string
   getParentKey(item: T): string
+  renderParentMetadata?(item: T): ReactNode
   onOpenParent(item: T): void
   onEnterParent(item: T): void
 }
@@ -26,6 +27,7 @@ export function ProjectBoardParentRows<T>({
   translate: t,
   getParentTitle,
   getParentKey,
+  renderParentMetadata,
   onOpenParent,
   onEnterParent,
   columns,
@@ -144,6 +146,7 @@ export function ProjectBoardParentRows<T>({
                     >
                       {getParentTitle(row.parent)}
                     </button>
+                    {renderParentMetadata?.(row.parent)}
                     <span
                       className="text-xs text-text-muted"
                       title={t('todo.parent_board_progress_hint')}

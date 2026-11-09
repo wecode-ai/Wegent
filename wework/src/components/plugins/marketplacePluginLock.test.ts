@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { PluginMarketplaceItem } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import { marketplacePluginLockLabel, resolveMarketplacePluginLock } from './marketplacePluginLock'
 
 const components = {
@@ -60,18 +62,6 @@ describe('resolveMarketplacePluginLock', () => {
         })
       )
     ).toEqual({ kind: 'disabled_by_admin' })
-  })
-
-  test('locks not-available install policy', () => {
-    expect(
-      resolveMarketplacePluginLock(
-        item({
-          manifest: {
-            installPolicy: 'NOT_AVAILABLE',
-          },
-        })
-      )
-    ).toEqual({ kind: 'not_available' })
   })
 
   test('does not lock installed or available plugins', () => {

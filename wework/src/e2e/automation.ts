@@ -1,9 +1,17 @@
+import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
+import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
+import {
+  getProviderConfigurationState,
+  reloadProviderConfiguration,
+} from '@/features/model-settings/providerModelConfiguration'
 import { rendererCrashStore } from './rendererCrashStore'
+import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
+import { readElementVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -22,7 +30,6 @@ import {
   normalizeStoredCloudConnection,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
-import { EditorView } from '@codemirror/view'
 import {
   listLegacyLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
@@ -32,14 +39,29 @@ import { getProviderModelConfigs } from '@/features/model-settings/providerModel
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
+import { composeDesktopInput } from './input-composition'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { getPlatform } from '@/lib/platform'
 import { decodeDesktopControlImage } from './desktop-control-image'
+import {
+  getNativeTerminalDiagnostics,
+  recordNativeTerminalKey,
+} from './native-terminal-diagnostics'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import {
+  getRuntimeStreamDiagnostics,
+  startRuntimeStreamDiagnostics,
+  stopRuntimeStreamDiagnostics,
+} from '@/stream/runtimeStreamDiagnostics'
 import { hasInFlightPluginDeviceSync } from '@/features/plugins/pluginDeviceAutoSync'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  getDesktopControlDiagnostics,
+  recordDesktopControlPhase,
+} from './desktop-control-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
@@ -71,7 +93,8 @@ import {
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
-import { selectDesktopControlOption } from './desktop-control-select'
+import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
+import { cloudIdentityFailure } from './cloud-identity-diagnostics'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
   getAppPreferences,
@@ -116,10 +139,134 @@ import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
+  E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
+
+type E2ERuntimeEvent = { event: string; payload: Record<string, unknown> }
+
+const runtimeCleanupEvents = new Map<string, Record<string, unknown>>()
+const runtimeCleanupTaskIds = new Set<string>()
+const runtimeCleanupWaiters = new Set<{
+  taskIds: string[]
+  resolve: (value: string) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof globalThis.setTimeout>
+}>()
+let runtimeCleanupListenerSet: Set<(event: E2ERuntimeEvent) => void> | null = null
+let runtimeCleanupRecorder: ((event: E2ERuntimeEvent) => void) | null = null
+
+function runtimeCleanupPayload(taskIds: string[]) {
+  return {
+    cleanupByTaskId: Object.fromEntries(
+      taskIds
+        .filter(taskId => runtimeCleanupEvents.has(taskId))
+        .map(taskId => [taskId, runtimeCleanupEvents.get(taskId)])
+    ),
+  }
+}
+
+function resolveRuntimeCleanupWaiters() {
+  for (const waiter of [...runtimeCleanupWaiters]) {
+    if (!waiter.taskIds.every(taskId => runtimeCleanupEvents.has(taskId))) continue
+    globalThis.clearTimeout(waiter.timer)
+    runtimeCleanupWaiters.delete(waiter)
+    waiter.resolve(JSON.stringify(runtimeCleanupPayload(waiter.taskIds)))
+  }
+}
+
+function ensureRuntimeCleanupRecorder(): void {
+  const root = globalThis as typeof globalThis & {
+    [E2E_RUNTIME_EVENT_LISTENERS_KEY]?: Set<(event: E2ERuntimeEvent) => void>
+  }
+  const listeners = (root[E2E_RUNTIME_EVENT_LISTENERS_KEY] ??= new Set())
+  if (!runtimeCleanupRecorder) {
+    runtimeCleanupRecorder = (event: E2ERuntimeEvent) => {
+      if (event.event !== 'runtime.work.changed') return
+      const taskId = typeof event.payload.taskId === 'string' ? event.payload.taskId.trim() : ''
+      if (!runtimeCleanupTaskIds.has(taskId)) return
+      const data = event.payload.data
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return
+      const cleanup = (data as Record<string, unknown>).archiveCleanup
+      if (!cleanup || typeof cleanup !== 'object' || Array.isArray(cleanup)) return
+      runtimeCleanupEvents.set(taskId, cleanup as Record<string, unknown>)
+      resolveRuntimeCleanupWaiters()
+    }
+  }
+  if (runtimeCleanupListenerSet !== listeners) {
+    runtimeCleanupListenerSet?.delete(runtimeCleanupRecorder)
+    listeners.add(runtimeCleanupRecorder)
+    runtimeCleanupListenerSet = listeners
+  }
+}
+
+function runtimeCleanupTaskIdList(command: DesktopControlCommand): string[] {
+  const request = JSON.parse(command.value ?? '{}') as {
+    taskIds?: unknown
+  }
+  const taskIds = Array.isArray(request.taskIds)
+    ? [
+        ...new Set(
+          request.taskIds.filter(
+            (taskId): taskId is string => typeof taskId === 'string' && taskId.trim() !== ''
+          )
+        ),
+      ]
+    : []
+  if (taskIds.length === 0) {
+    throw new Error('Runtime cleanup event tracking requires at least one taskId')
+  }
+  return taskIds
+}
+
+function startRuntimeCleanupRecorder(command: DesktopControlCommand): string {
+  const taskIds = runtimeCleanupTaskIdList(command)
+  for (const taskId of taskIds) {
+    runtimeCleanupTaskIds.add(taskId)
+    runtimeCleanupEvents.delete(taskId)
+  }
+  ensureRuntimeCleanupRecorder()
+  return JSON.stringify({ started: true, taskIds })
+}
+
+function waitForRuntimeCleanupEvents(command: DesktopControlCommand): Promise<string> {
+  const taskIds = runtimeCleanupTaskIdList(command)
+  const request = JSON.parse(command.value ?? '{}') as {
+    timeoutMs?: unknown
+  }
+  const timeoutMs = Number(request.timeoutMs ?? command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS)
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('waitForRuntimeCleanupEvents requires a positive timeout')
+  }
+  for (const taskId of taskIds) runtimeCleanupTaskIds.add(taskId)
+  ensureRuntimeCleanupRecorder()
+  if (taskIds.every(taskId => runtimeCleanupEvents.has(taskId))) {
+    return Promise.resolve(JSON.stringify(runtimeCleanupPayload(taskIds)))
+  }
+
+  return new Promise((resolve, reject) => {
+    const waiter = {
+      taskIds,
+      resolve,
+      reject,
+      timer: globalThis.setTimeout(() => {
+        runtimeCleanupWaiters.delete(waiter)
+        const missing = taskIds.filter(taskId => !runtimeCleanupEvents.has(taskId))
+        reject(
+          new Error(
+            `Runtime cleanup did not finish for ${missing.join(', ')}; received=${JSON.stringify(
+              runtimeCleanupPayload(taskIds)
+            )}`
+          )
+        )
+      }, timeoutMs),
+    }
+    runtimeCleanupWaiters.add(waiter)
+    resolveRuntimeCleanupWaiters()
+  })
+}
 
 function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sourceReads']) {
   return Object.fromEntries(
@@ -437,10 +584,10 @@ function createBridge(): WeworkAutomationBridge {
 export function seedDesktopE2ELocalModels(
   runtimeConfig: DesktopE2ERuntimeConfig,
   modelServerUrl: string
-): void {
+): boolean {
   const seedLocalModels =
     runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
-  if (!seedLocalModels) return
+  if (!seedLocalModels) return false
   const localModelsCatalogReady =
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
@@ -536,6 +683,7 @@ export function seedDesktopE2ELocalModels(
       options: {},
     },
   })
+  return true
 }
 
 function resolveDesktopE2ECloudBackendUrl(runtimeConfig: DesktopE2ERuntimeConfig) {
@@ -571,7 +719,7 @@ async function seedDesktopE2ECloudConnection(
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10000),
   })
-  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+  if (!response.ok) throw await cloudIdentityFailure(response, `${config.apiBaseUrl}/users/me`)
   const user = await response.json()
   const connection = {
     ...config,
@@ -593,7 +741,13 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
   const modelServerUrl = resolveDesktopE2EModelServerUrl(runtimeConfig, backendUrl)
   if (modelServerUrl) {
-    seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
+    if (seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)) {
+      // Seeding occurs after normal bootstrap. Await the real migration save and
+      // native Executor synchronization before advertising automation readiness.
+      await reloadProviderConfiguration()
+      const configurationError = getProviderConfigurationState().error
+      if (configurationError) throw new Error(configurationError)
+    }
   }
   await seedDesktopE2ECloudConnection(runtimeConfig, true)
 }
@@ -661,15 +815,32 @@ function desktopControlElementText(selector: string, visible = false): string {
     .join('\n')
 }
 
-function desktopControlElementMetrics(selector: string): string {
+function desktopControlElementMetrics(
+  selector: string,
+  includeText = false,
+  attributeNames: readonly string[] = []
+): string {
   const elements = findDesktopControlElements(selector)
   return JSON.stringify(
     elements.map(element => {
       const rect = element.getBoundingClientRect()
       return {
+        ...(includeText
+          ? { testId: element.dataset.testid ?? null, text: element.textContent?.trim() ?? '' }
+          : {}),
+        ...(attributeNames.length
+          ? {
+              attributes: Object.fromEntries(
+                attributeNames.map(name => [name, element.getAttribute(name)])
+              ),
+              rendered: desktopControlElementRendered(element),
+              visible: desktopControlElementVisible(element),
+            }
+          : {}),
         bottom: rect.bottom,
         clientHeight: element.clientHeight,
         clientWidth: element.clientWidth,
+        devicePixelRatio: window.devicePixelRatio,
         height: rect.height,
         left: rect.left,
         right: rect.right,
@@ -679,7 +850,10 @@ function desktopControlElementMetrics(selector: string): string {
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
         top: rect.top,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
         width: rect.width,
+        ...readElementVisibility(element),
       }
     })
   )
@@ -1193,6 +1367,7 @@ async function pressNativeDesktopControlKey(
   measurement?: { selector: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
+  recordNativeTerminalKey('focus-requested', key, findDesktopControlElements(selector)[0] ?? null)
   const startedAt = Date.now()
   const trace = (stage: string) =>
     console.info(
@@ -1207,7 +1382,7 @@ async function pressNativeDesktopControlKey(
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
-  if (document.activeElement !== element) {
+  if (desktopControlDeepActiveElement() !== element) {
     throw new Error(
       `Keyboard target could not receive focus: ${JSON.stringify({
         selector,
@@ -1217,10 +1392,11 @@ async function pressNativeDesktopControlKey(
         overflowY: getComputedStyle(element).overflowY,
         clientHeight: element.clientHeight,
         scrollHeight: element.scrollHeight,
-        activeTagName: document.activeElement?.tagName,
+        activeTagName: desktopControlDeepActiveElement()?.tagName,
       })}`
     )
   }
+  recordNativeTerminalKey('target-focused', key, element)
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
   const expectedKey = parseDesktopControlKey(key).key
   const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null
@@ -1229,6 +1405,7 @@ async function pressNativeDesktopControlKey(
     ? createNativeKeyObservation(element, () => readNativeTerminalViewport(viewportTarget))
     : null
   const recordKey = (event: KeyboardEvent) => {
+    recordNativeTerminalKey('native-event', key, element, event)
     if (event.key === expectedKey) observation?.record(event)
   }
   window.addEventListener(eventType, recordKey, true)
@@ -1237,6 +1414,8 @@ async function pressNativeDesktopControlKey(
     await sendNativeKeyAndWait(element, phase, () =>
       invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
     )
+    recordNativeTerminalKey('host-acknowledged', key, element)
+    recordNativeTerminalKey('after-native-key', key, element)
     trace('key-observed')
   } finally {
     window.removeEventListener(eventType, recordKey, true)
@@ -1246,7 +1425,7 @@ async function pressNativeDesktopControlKey(
         viewportBefore: observation.result(),
         viewportAfter: readNativeTerminalViewport(viewportTarget),
       })
-    : (document.activeElement?.getAttribute('data-testid') ?? '')
+    : (desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? '')
 }
 
 let activeDesktopControlPointer: {
@@ -1531,6 +1710,34 @@ async function doubleClickDesktopControlElement(selector: string): Promise<strin
   return secondElement.textContent?.trim() ?? ''
 }
 
+function desktopControlElementValue(element: HTMLElement): string {
+  if (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+  ) {
+    return element.value
+  }
+  const declaredValue =
+    element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
+  if (declaredValue !== null && declaredValue !== undefined) return declaredValue
+  if (element.isContentEditable) {
+    const propertyValue = (element as HTMLElement & { value?: unknown }).value
+    if (
+      typeof propertyValue === 'string' &&
+      element.classList.contains('composer-prosemirror-editor')
+    ) {
+      return desktopControlComposerDisplayValue(element, propertyValue)
+    }
+    const blockValues = Array.from(
+      element.querySelectorAll<HTMLElement>('.bn-block-content[data-content-type]')
+    ).map(block => desktopControlTextWithLineBreaks(block).trim())
+    if (blockValues.length > 0) return blockValues.join('\n').trim()
+    return element.innerText.replace(/\r\n?/g, '\n').trim()
+  }
+  return element.textContent?.trim() ?? ''
+}
+
 async function waitForDesktopControlElement(
   command: DesktopControlCommand,
   onMatch?: (element: HTMLElement) => string
@@ -1578,6 +1785,8 @@ async function waitForDesktopControlElement(
       dataPresentation: element.dataset.presentation ?? null,
       hidden: element.hidden,
       ariaHidden: element.getAttribute('aria-hidden'),
+      enabled: desktopControlElementEnabled(element),
+      state: { ...element.dataset },
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
       rect: element.getBoundingClientRect().toJSON(),
@@ -1592,18 +1801,6 @@ async function waitForDesktopControlElement(
 
 export async function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
-
-  const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
-  const codeMirrorView = codeMirrorRoot ? EditorView.findFromDOM(codeMirrorRoot) : null
-  if (codeMirrorView) {
-    codeMirrorView.dispatch({
-      changes: { from: 0, to: codeMirrorView.state.doc.length, insert: value },
-      selection: { anchor: value.length },
-      scrollIntoView: true,
-    })
-    codeMirrorView.focus()
-    return
-  }
 
   const ownValueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
   if (element instanceof HTMLSelectElement) {
@@ -1620,25 +1817,25 @@ export async function fillDesktopControlElement(element: HTMLElement, value: str
     ownValueSetter.call(element, value)
     return
   } else if (element.isContentEditable) {
-    const selection = window.getSelection()
-    const range = document.createRange()
-    range.selectNodeContents(element)
-    selection?.removeAllRanges()
-    selection?.addRange(range)
+    const windowLabel = getDesktopWindowLabel()
+    await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
+      windowLabel,
+    })
+    element.focus()
+    const pressKey = (key: string) =>
+      sendNativeKeyAndWait(element, 'press', () =>
+        invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase: 'press', focus: false })
+      )
+    // Native editors own their selection state as well as the rendered DOM.
+    await pressKey(`${getPlatform() === 'mac' ? 'Meta' : 'Control'}+A`)
     if (!value) {
-      document.execCommand('delete', false)
+      await pressKey('Backspace')
       return
     }
-    const windowLabel = getDesktopWindowLabel()
     const lines = value.replace(/\r\n?/g, '\n').split('\n')
     for (const [index, line] of lines.entries()) {
       if (index > 0) {
-        await invokeDesktopHost('e2e.pressKey', {
-          windowLabel,
-          key: 'Enter',
-          phase: 'press',
-        })
-        await waitForDesktopControlTick()
+        await pressKey('Enter')
       }
       if (!line) continue
       await invokeDesktopHost('e2e.insertText', { windowLabel, text: line })
@@ -1969,7 +2166,11 @@ async function dispatchDesktopControlPaths(
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   const getWindowFocusSnapshot = () =>
     invokeDesktopHost<Record<string, unknown>>('e2e.getWindowFocusSnapshot').then(snapshot =>
-      JSON.stringify(snapshot)
+      JSON.stringify({
+        ...snapshot,
+        documentFocused: document.hasFocus(),
+        tracker: getMainWindowFocusDiagnostics(),
+      })
     )
 
   const verificationResult = await executeVerificationControlCommand(command, {
@@ -2270,6 +2471,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
+    case 'waitForRuntimeCleanupEvents':
+      return waitForRuntimeCleanupEvents(command)
+    case 'startRuntimeCleanupRecorder':
+      return startRuntimeCleanupRecorder(command)
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
@@ -2516,6 +2721,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       window.dispatchEvent(new Event(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT))
       return ''
     }
+    case 'getNativeModelFixtureConfigs':
+      return JSON.stringify(readNativeModelFixtures())
+    case 'setNativeModelFixtureConfigs':
+      await writeNativeModelFixtures(JSON.parse(command.value ?? '[]'))
+      return ''
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {
@@ -2667,6 +2877,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
         height?: number
+        maximized?: boolean
       }
       if (
         !Number.isFinite(nextSize.width) ||
@@ -2676,10 +2887,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         throw new Error('setMainWindowSize requires positive width and height')
       }
+      if (nextSize.maximized !== undefined && typeof nextSize.maximized !== 'boolean') {
+        throw new Error('setMainWindowSize maximized must be a boolean')
+      }
       return JSON.stringify(
         await invokeDesktopHost('e2e.setMainWindowSize', {
           width: Number(nextSize.width),
           height: Number(nextSize.height),
+          maximized: nextSize.maximized ?? false,
         })
       )
     }
@@ -2767,8 +2982,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return JSON.stringify({ observed: maxCount > 0, maxCount, samples })
     }
-    case 'getElementMetrics':
-      return desktopControlElementMetrics(command.selector)
+    case 'getElementMetrics': {
+      if (!command.value?.startsWith('{'))
+        return desktopControlElementMetrics(command.selector, command.value === 'includeText')
+      const options = JSON.parse(command.value) as {
+        includeText?: boolean
+        attributeNames?: string[]
+        waitForMatch?: boolean
+      }
+      if (
+        options.attributeNames !== undefined &&
+        (!Array.isArray(options.attributeNames) ||
+          options.attributeNames.some(name => typeof name !== 'string' || !name.trim()))
+      )
+        throw new Error('getElementMetrics attributeNames must contain explicit attribute names')
+      const snapshot = () =>
+        desktopControlElementMetrics(
+          command.selector,
+          options.includeText === true,
+          options.attributeNames ?? []
+        )
+      return options.waitForMatch === true
+        ? waitForDesktopControlElement(command, snapshot)
+        : snapshot()
+    }
     case 'decodeImage': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -2952,34 +3189,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!property) throw new Error('getInlineStyle requires a CSS property name')
       return element.style.getPropertyValue(property)
     }
+    case 'getValueWhenReady':
+      // Read in the matching turn, before React can replace the detail between IPC calls.
+      return waitForDesktopControlElement(command, desktopControlElementValue)
     case 'getValue': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
-      if (
-        element instanceof HTMLInputElement ||
-        element instanceof HTMLTextAreaElement ||
-        element instanceof HTMLSelectElement
-      ) {
-        return element.value
-      }
-      const declaredValue =
-        element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
-      if (declaredValue !== null && declaredValue !== undefined) return declaredValue
-      if (element.isContentEditable) {
-        const propertyValue = (element as HTMLElement & { value?: unknown }).value
-        if (
-          typeof propertyValue === 'string' &&
-          element.classList.contains('composer-prosemirror-editor')
-        ) {
-          return desktopControlComposerDisplayValue(element, propertyValue)
-        }
-        const blockValues = Array.from(
-          element.querySelectorAll<HTMLElement>('.bn-block-content[data-content-type]')
-        ).map(block => desktopControlTextWithLineBreaks(block).trim())
-        if (blockValues.length > 0) return blockValues.join('\n').trim()
-        return element.innerText.replace(/\r\n?/g, '\n').trim()
-      }
-      return element.textContent?.trim() ?? ''
+      return desktopControlElementValue(element)
     }
     case 'getSelectionOffset': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -3226,6 +3442,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return element.textContent?.trim() ?? ''
       })
     }
+    case 'chooseWhenEnabled': {
+      return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
+        chooseDesktopControlOption(element, command.value ?? '')
+      )
+    }
     case 'setExpanded': {
       const expected = command.value
       if (expected !== 'true' && expected !== 'false') {
@@ -3332,6 +3553,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
+    case 'composeInput': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const values: unknown = JSON.parse(command.value ?? '[]')
+      if (!Array.isArray(values) || !values.every(value => typeof value === 'string')) {
+        throw new Error('composeInput values must be an array of strings')
+      }
+      return JSON.stringify(await composeDesktopInput(element, values, waitForDesktopControlTick))
+    }
     case 'finishAnimations': {
       let finishedCount = 0
       for (const animation of document.getAnimations()) {
@@ -3344,10 +3574,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return String(finishedCount)
     }
+    case 'startRuntimeStreamDiagnostics':
+      startRuntimeStreamDiagnostics()
+      return 'started'
+    case 'stopRuntimeStreamDiagnostics':
+      stopRuntimeStreamDiagnostics()
+      return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
       performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        conversationRendering: await collectConversationRenderingDiagnostics(capability =>
+          invokeDesktopHost(capability)
+        ),
+        runtimeStream: getRuntimeStreamDiagnostics(),
+        desktopControlTransport: getDesktopControlDiagnostics(),
+        nativeTerminalKeys: getNativeTerminalDiagnostics(),
         timeOrigin: performance.timeOrigin,
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
@@ -3363,6 +3605,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             responseStart: timing.responseStart,
             responseEnd: timing.responseEnd,
             nextHopProtocol: timing.nextHopProtocol,
+            serverTiming: timing.serverTiming.map(({ name, description }) => ({
+              name,
+              description,
+            })),
           }
         }),
         ...(command.value
@@ -3679,11 +3925,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'up')
     }
     case 'select': {
-      const element = findDesktopControlElements(command.selector)[0]
-      if (!(element instanceof HTMLSelectElement)) {
-        throw new Error(`Selector "${command.selector}" is not a select element`)
-      }
-      return selectDesktopControlOption(element, command.value ?? '', command.by)
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        if (!(element instanceof HTMLSelectElement)) {
+          throw new Error(`Selector "${command.selector}" is not a select element`)
+        }
+        return selectDesktopControlOption(element, command.value ?? '', command.by)
+      })
     }
     case 'submit': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -3795,11 +4042,13 @@ async function postDesktopControlStarted(
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
-  const pollForCommand = () =>
-    fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
+  const pollForCommand = () => {
+    recordDesktopControlPhase('poll-started')
+    return fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
       cache: 'no-store',
       headers: desktopControlHeaders(),
     })
+  }
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
@@ -3815,6 +4064,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   while (true) {
     try {
       const response = await commandRequest
+      recordDesktopControlPhase('poll-headers-received')
       if (response.status === 410) return
       if (response.status === 204) {
         commandRequest = pollForCommand()
@@ -3824,15 +4074,26 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      recordDesktopControlPhase('command-decoded', command)
       const diagnostic = { commandId: command.id, action: command.action, clientId }
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
       await postDesktopControlStarted(url, command, clientId)
+      recordDesktopControlPhase('start-acknowledged', command)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
       const completion = completeDesktopControlCommand(
         command,
         clientId,
-        executeDesktopControlCommand,
-        result => postDesktopControlResult(url, result)
+        async command => {
+          try {
+            return await executeDesktopControlCommand(command)
+          } finally {
+            recordDesktopControlPhase('action-completed', command)
+          }
+        },
+        async result => {
+          await postDesktopControlResult(url, result)
+          recordDesktopControlPhase('result-acknowledged', command)
+        }
       )
       if (command.action === 'fetchLocalRuntime') {
         // Runtime RPCs may wait on each other; keep polling so the controller
@@ -3870,6 +4131,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       }
       commandRequest = pollForCommand()
     } catch (error) {
+      recordDesktopControlPhase('client-error')
       console.error('[Wework] Desktop E2E control client failed:', error)
       await waitForDesktopControlTick()
       commandRequest = pollForCommand()

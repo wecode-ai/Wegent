@@ -65,7 +65,16 @@ import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
-import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
+import {
+  gitCloneFailureReason,
+  isGitCloneDeviceMissing,
+} from '@/components/projects/gitCloneProjectRecovery'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  consumeNewChatComposerRequest,
+  requestWorkbenchComposerFocus,
+  WORKBENCH_NEW_CHAT_FOCUS_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -163,6 +172,7 @@ function routePathname(route: string): string {
   return searchIndex >= 0 ? route.slice(0, searchIndex) : route
 }
 
+/** Hosts task, board and personal stand-in surfaces using the active workspace route. */
 export function DesktopWorkbenchLayout({
   routeActive = true,
   surfaceKind,
@@ -297,6 +307,20 @@ export function DesktopWorkbenchLayout({
   const standInContentRoute =
     ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
   const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
+  const [standInVisited, setStandInVisited] = useState(standInOpen)
+  const [standInEntryKey, setStandInEntryKey] = useState(0)
+  const standInWasOpen = useRef(standInOpen)
+  const retainedStandInRoute = useRef(standInContentRoute)
+  useEffect(() => {
+    if (standInOpen) {
+      setStandInVisited(true)
+      if (!standInWasOpen.current || retainedStandInRoute.current !== standInContentRoute) {
+        setStandInEntryKey(value => value + 1)
+      }
+      retainedStandInRoute.current = standInContentRoute
+    }
+    standInWasOpen.current = standInOpen
+  }, [standInOpen, standInContentRoute])
   const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
@@ -312,6 +336,7 @@ export function DesktopWorkbenchLayout({
     null
   )
   const [gitCloneOperations, setGitCloneOperations] = useState<GitCloneProjectOperation[]>([])
+  const [gitCloneRecovery, setGitCloneRecovery] = useState<GitCloneProjectOperation | null>(null)
   const runGitCloneOperation = useCallback(
     (
       operation: GitCloneProjectOperation,
@@ -335,6 +360,12 @@ export function DesktopWorkbenchLayout({
       )
       void (async () => {
         let stage: 'clone' | 'open' = resumeOpening ? 'open' : 'clone'
+        logRuntimeTaskCreateStage('git-project-operation-started', {
+          operationId: operation.id,
+          deviceId: operation.deviceId,
+          targetPath: operation.targetPath,
+          operationStage: stage,
+        })
         try {
           if (options.refreshDevice) {
             await onRefreshDevices?.()
@@ -355,12 +386,13 @@ export function DesktopWorkbenchLayout({
           await onOpenStandaloneWorkspace(operation.deviceId, operation.targetPath, operation.name)
           setGitCloneOperations(current => current.filter(item => item.id !== operation.id))
         } catch (error) {
-          console.error('[Wework project] Git project operation failed', {
-            stage,
+          const failureReason = gitCloneFailureReason(error, stage)
+          logRuntimeTaskCreateStage('git-project-operation-failed', {
+            operationId: operation.id,
+            operationStage: stage,
             deviceId: operation.deviceId,
             targetPath: operation.targetPath,
-            error:
-              error instanceof Error ? { name: error.name, message: error.message } : String(error),
+            failureReason,
           })
           setGitCloneOperations(current =>
             current.map(item =>
@@ -369,12 +401,7 @@ export function DesktopWorkbenchLayout({
                     ...item,
                     status: 'failed',
                     failureStage: stage,
-                    failureReason:
-                      error instanceof Error && error.message.includes('executor-offline:')
-                        ? 'executor-offline'
-                        : stage === 'clone'
-                          ? 'clone-failed'
-                          : 'open-failed',
+                    failureReason,
                     error:
                       error instanceof Error
                         ? error.message
@@ -390,14 +417,6 @@ export function DesktopWorkbenchLayout({
     },
     [onCloneGitRepository, onOpenStandaloneWorkspace, onRefreshDevices]
   )
-  const retryGitCloneOperation = useCallback(
-    (operation: GitCloneProjectOperation) => {
-      runGitCloneOperation(operation, {
-        refreshDevice: operation.failureReason === 'executor-offline',
-      })
-    },
-    [runGitCloneOperation]
-  )
   const startGitCloneProject = useCallback(
     (deviceId: string, input: CloneGitRepositoryInput) => {
       const name = input.targetPath.split(/[\\/]/).filter(Boolean).at(-1) || 'repository'
@@ -408,10 +427,14 @@ export function DesktopWorkbenchLayout({
         name,
         status: 'cloning',
       }
-      setGitCloneOperations(current => [operation, ...current])
+      setGitCloneOperations(current => [
+        operation,
+        ...current.filter(item => item.id !== gitCloneRecovery?.id),
+      ])
+      setGitCloneRecovery(null)
       runGitCloneOperation(operation)
     },
-    [runGitCloneOperation]
+    [gitCloneRecovery, runGitCloneOperation]
   )
   const dismissGitCloneOperation = useCallback((operationId: string) => {
     setGitCloneOperations(current => current.filter(item => item.id !== operationId))
@@ -470,22 +493,37 @@ export function DesktopWorkbenchLayout({
   const activeItem = standInOpen ? 'stand-in' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const toggleMyWork = useCallback(() => {
+    if (standInOpen) {
+      navigateTo(defaultProjectSpaceContentRoute())
+      return
+    }
     setTaskView(currentView =>
       currentView === 'default-work-items' ? 'workbench' : 'default-work-items'
     )
-  }, [])
+  }, [standInOpen])
+  const activateBlankComposer = useCallback(() => {
+    setTaskView('workbench')
+    setActiveLocalHarnessSessionId(null)
+    activateSplitPane(blankPaneKey)
+  }, [activateSplitPane, blankPaneKey])
+  useEffect(() => {
+    const activateRequestedComposer = () => {
+      if (consumeNewChatComposerRequest(workspaceTabId)) activateBlankComposer()
+    }
+    activateRequestedComposer()
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, activateRequestedComposer)
+    return () => {
+      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, activateRequestedComposer)
+    }
+  }, [activateBlankComposer, workspaceTabId])
   const startNewChatOutsideHarness = useCallback(() => {
-    setTaskView('workbench')
-    setActiveLocalHarnessSessionId(null)
-    activateSplitPane(blankPaneKey)
+    activateBlankComposer()
     onNewChat()
-  }, [activateSplitPane, blankPaneKey, onNewChat])
+  }, [activateBlankComposer, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
-    setTaskView('workbench')
-    setActiveLocalHarnessSessionId(null)
-    activateSplitPane(blankPaneKey)
+    activateBlankComposer()
     onStartStandaloneChat()
-  }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
+  }, [activateBlankComposer, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
       setTaskView('workbench')
@@ -722,9 +760,11 @@ export function DesktopWorkbenchLayout({
     async (
       mode: StandaloneWorkspaceDialogMode,
       intent: StandaloneRemoteDialogIntent = 'project',
-      options: ProjectCreateRequestOptions | null = null
+      options: ProjectCreateRequestOptions | null = null,
+      cloneRecovery: GitCloneProjectOperation | null = null
     ) => {
       setBlankProjectDialogOpen(false)
+      setGitCloneRecovery(cloneRecovery)
       setProjectWorkEditProject(null)
       setStandaloneRemoteDialogIntent(intent)
       scopedProjectCreateRequestRef.current = options
@@ -749,11 +789,25 @@ export function DesktopWorkbenchLayout({
   )
 
   const closeStandaloneFolderProject = useCallback(() => {
+    setGitCloneRecovery(null)
     scopedProjectCreateRequestRef.current = null
     setStandaloneWorkspaceDialogMode(null)
     setStandaloneRemoteDialogIntent('project')
     setStandalonePreferNativeLocalPicker(true)
   }, [])
+
+  const retryGitCloneOperation = useCallback(
+    (operation: GitCloneProjectOperation) => {
+      if (isGitCloneDeviceMissing(operation)) {
+        void openStandaloneFolderProject('remote', 'project', null, operation)
+        return
+      }
+      runGitCloneOperation(operation, {
+        refreshDevice: operation.failureReason === 'executor-offline',
+      })
+    },
+    [openStandaloneFolderProject, runGitCloneOperation]
+  )
 
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode, options?: ProjectCreateRequestOptions) => {
@@ -996,6 +1050,8 @@ export function DesktopWorkbenchLayout({
       devices={state.devices}
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
+      runtimeWorkLoad={state.runtimeWorkLoad}
+      onRetryRuntimeWork={refreshWorkLists}
       gitCloneOperations={gitCloneOperations}
       currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
       splitGroupMemberships={splitGroups.memberships}
@@ -1007,7 +1063,7 @@ export function DesktopWorkbenchLayout({
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
       activeItem={activeItem}
-      taskView={taskView}
+      taskView={taskBoardOpen ? 'default-work-items' : 'workbench'}
       localHarnessSessions={localHarnessSessions}
       activeLocalHarnessSessionId={activeLocalHarnessSessionId}
       collapsed={collapsed}
@@ -1125,16 +1181,24 @@ export function DesktopWorkbenchLayout({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {standInOpen && (
-            <PersonalStandInWorkspace
-              contentRoute={standInContentRoute}
-              services={services}
-              user={state.user ?? LOCAL_USER}
-              devices={state.devices}
-              active={routeActive && !settingsOpen}
-              onClose={() => navigateTo('/')}
-              onOpenTask={openRuntimeTaskOutsideHarness}
-            />
+          {(standInOpen || standInVisited) && (
+            <div
+              className="min-h-0 min-w-0 flex-1 flex-col"
+              style={{ display: standInOpen ? 'flex' : 'none' }}
+              aria-hidden={!standInOpen}
+              inert={!standInOpen}
+            >
+              <PersonalStandInWorkspace
+                contentRoute={standInOpen ? standInContentRoute : retainedStandInRoute.current}
+                entryRequestKey={standInEntryKey}
+                services={services}
+                user={state.user ?? LOCAL_USER}
+                devices={state.devices}
+                active={standInOpen && routeActive && !settingsOpen}
+                onClose={() => navigateTo('/')}
+                onOpenTask={openRuntimeTaskOutsideHarness}
+              />
+            </div>
           )}
           {taskBoardOpen && routeActive && !settingsOpen ? (
             <>
@@ -1210,15 +1274,10 @@ export function DesktopWorkbenchLayout({
                     })
                   }}
                   onActiveProjectChange={project => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id ||
-                      !project
-                    ) {
+                    if (!workspaceTabs || ownedWorkspaceTab?.kind !== 'board' || !project) {
                       return
                     }
-                    workspaceTabs.updateActiveTab({
+                    workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                       title: project.name,
                       contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
                     })
@@ -1392,21 +1451,17 @@ export function DesktopWorkbenchLayout({
                     })
                   }}
                   onActiveProjectChange={project => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
-                    ) {
+                    if (!workspaceTabs || ownedWorkspaceTab?.kind !== 'board') {
                       return
                     }
                     if (!project) {
-                      workspaceTabs.updateActiveTab({
-                        title: t('workbench.workspace_tab_board', '协作 (Beta)'),
+                      workspaceTabs.updateTab(ownedWorkspaceTab.id, {
+                        title: t('workbench.workspace_tab_board', '协作'),
                         contentRoute: '/todo',
                       })
                       return
                     }
-                    workspaceTabs.updateActiveTab({
+                    workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                       title: project.name,
                       contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
                     })
@@ -1456,10 +1511,11 @@ export function DesktopWorkbenchLayout({
         onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
       />
       <StandaloneFolderProjectDialog
-        key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
+        key={gitCloneRecovery?.id ?? standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
         open={standaloneWorkspaceDialogMode !== null}
         mode={standaloneWorkspaceDialogMode ?? 'existing'}
         remoteIntent={standaloneRemoteDialogIntent}
+        initialGitClone={gitCloneRecovery}
         preferNativeLocalPicker={standalonePreferNativeLocalPicker}
         devices={state.devices}
         preferredDeviceId={

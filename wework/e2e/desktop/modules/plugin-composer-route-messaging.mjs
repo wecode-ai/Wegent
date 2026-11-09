@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { inputUserMessageTexts, requestContainsSkillLocator } from './desktop-server.mjs'
@@ -22,9 +23,30 @@ import {
 const INVENTORY_EXPIRY_MS = 31_000
 const INVENTORY_EXPIRY_TIMEOUT_MS = 90_000
 
-export function createPluginComposerRouteMessaging({ executorHome, timeoutMs }) {
+export function createPluginComposerRouteMessaging({ executorHome, executorLogPath, timeoutMs }) {
   const evidence = []
   let activeMessage = null
+
+  async function appCatalogRequestCount(officialPlugins = false) {
+    const logs = await Promise.all(
+      ['', '.1', '.2', '.3'].map(async suffix => {
+        try {
+          return await readFile(`${executorLogPath}${suffix}`, 'utf8')
+        } catch (error) {
+          if (suffix && error.code === 'ENOENT') return ''
+          throw error
+        }
+      })
+    )
+    return logs
+      .join('\n')
+      .split('\n')
+      .filter(line =>
+        officialPlugins
+          ? line.includes('codex plugin catalog read started') && line.includes('local_only=false')
+          : line.includes('codex app catalog read started')
+      ).length
+  }
 
   async function openPicker(control) {
     await control.command('click', testId('new-chat-button'))
@@ -159,6 +181,13 @@ export function createPluginComposerRouteMessaging({ executorHome, timeoutMs }) 
   }
 
   return {
+    async assertLocalRefreshDoesNotReadOfficialCatalog(action) {
+      const before = await appCatalogRequestCount(true)
+      await action()
+      const after = await appCatalogRequestCount(true)
+      assert.equal(after, before, 'A non-official marketplace refresh requested the remote catalog')
+      evidence.push({ case: 'non-official-refresh-keeps-remote-catalog-idle', before, after })
+    },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -196,6 +225,8 @@ export function createPluginComposerRouteMessaging({ executorHome, timeoutMs }) 
     },
 
     async verify(control, fixture, { proxy, transport, routeId, stableDeviceId }) {
+      const appCatalogReads = await appCatalogRequestCount()
+      const officialCatalogReads = await appCatalogRequestCount(true)
       await send(control, 'ORDINARY_MESSAGE')
       await send(control, 'SELECTED_PLUGIN_MESSAGE', fixture)
       await waitForInventoryExpiry(proxy)
@@ -300,6 +331,21 @@ export function createPluginComposerRouteMessaging({ executorHome, timeoutMs }) 
         reads,
         response: { status: response.status, delivered: response.delivered },
         inventory: state,
+      })
+      assert.equal(
+        await appCatalogRequestCount(),
+        appCatalogReads,
+        'Opening, sending, expiring and recovering composer inventory must not paginate the global Codex app directory'
+      )
+      assert.equal(
+        await appCatalogRequestCount(true),
+        officialCatalogReads,
+        'Chat must not load the official plugin directory'
+      )
+      evidence.push({
+        case: 'composer-never-reads-global-app-directory',
+        appCatalogReads,
+        officialCatalogReads,
       })
       await control.command('click', testId('composer-plugin-picker-button'))
     },

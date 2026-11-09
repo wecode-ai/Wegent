@@ -12,6 +12,7 @@ import { scheduleIdleTask } from '@/features/idle-tasks/idleTaskScheduler'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import { createSocketClient } from '@wegent/chat-core'
 import { runCurrentDevicePluginAutoUpdate } from './pluginAutoUpdate'
+import { createLocalDevicePluginApi, resolveLocalPluginDeviceRouteId } from './pluginDeviceApi'
 
 export const PLUGIN_RELEASE_AVAILABLE_EVENT = 'plugin:release_available'
 export const PLUGIN_AUTO_UPDATE_COMPLETED_EVENT = 'wework:plugin-auto-update-completed'
@@ -56,14 +57,18 @@ export function PluginAutoUpdateCoordinator() {
     }
 
     const token = cloud.token
-    const cloudPluginApi = createPluginApi(
-      createHttpClient({
-        baseUrl: cloud.apiBaseUrl,
-        getToken: () => token,
-        redirectOnUnauthorized: false,
-        signal: controller.signal,
-      }),
-      cloud.apiBaseUrl
+    const profile = { apiBaseUrl: cloud.apiBaseUrl, token }
+    const cloudPluginApi = createLocalDevicePluginApi(
+      createPluginApi(
+        createHttpClient({
+          baseUrl: cloud.apiBaseUrl,
+          getToken: () => token,
+          redirectOnUnauthorized: false,
+          signal: controller.signal,
+        }),
+        cloud.apiBaseUrl
+      ),
+      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
     )
     const socketClient = createSocketClient({
       socketBaseUrl: () => cloud.socketBaseUrl || '',
@@ -83,8 +88,7 @@ export function PluginAutoUpdateCoordinator() {
     const runUpdatePass = async (): Promise<boolean> => {
       const result = await runCurrentDevicePluginAutoUpdate({
         signal: waiting.signal,
-        listLocalInstalledPlugins: () =>
-          localPluginApi.listInstalledPlugins({ refresh: true, shareInflight: true }),
+        listLocalInstalledPlugins: () => localPluginApi.listInstalledPlugins({ refresh: true }),
         listMarketplacePlugins: deviceId => cloudPluginApi.listMarketplacePlugins({ deviceId }),
         updateBatch: () => cloudPluginApi.autoUpdateInstalledPlugins(),
         syncPlugin: (deviceId, installedPluginId) =>

@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT=${WEGENT_REPOSITORY_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}
-BACKEND_DIR="$REPOSITORY_ROOT/backend"
+BACKEND_DIR=${WEGENT_PYTHON_BACKEND_DIR:-$REPOSITORY_ROOT/backend}
 BACKEND_RS_DIR=${WEGENT_RS_PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}
 RS_BINARY_NAME=${WEGENT_RS_BINARY_NAME:-wegent-backend-rs}
 RS_BINARY_PATH=${WEGENT_RS_BINARY_PATH:-}
@@ -23,6 +23,7 @@ PYTHON_UPSTREAM_PORT=${WEGENT_PYTHON_UPSTREAM_PORT:-8004}
 RS_TARGET_DIR=${WEGENT_RS_TARGET_DIR:-$BACKEND_RS_DIR/target}
 ROUTES_FILE=${WEGENT_RS_ROUTES_FILE:-$BACKEND_RS_DIR/config/routes.toml}
 PYTHON_UVICORN=${WEGENT_PYTHON_UVICORN:-$BACKEND_DIR/.venv/bin/uvicorn}
+PYTHON_RELOAD=${WEGENT_PYTHON_RELOAD:-true}
 STATE_FILE=${WEGENT_HYBRID_STATE_FILE:-}
 # Dotenv file the Rust gateway reads. An explicit value is respected as given;
 # otherwise prefer the Backend's real configuration, falling back to the
@@ -54,6 +55,9 @@ Options:
 
 Environment:
   WEGENT_REPOSITORY_ROOT       Wegent repository containing the Python Backend
+  WEGENT_PYTHON_BACKEND_DIR    Python working directory (default: repository/backend)
+  WEGENT_PYTHON_UVICORN        Uvicorn executable (default: Backend .venv)
+  WEGENT_PYTHON_RELOAD         true for local development, false for containers
   WEGENT_PYTHON_UPSTREAM_PORT  Loopback Python port (default: 8004)
   WEGENT_RS_ROUTES_FILE        TOML route selection file
   WEGENT_RS_PROJECT_DIR        Rust Backend project directory
@@ -110,6 +114,13 @@ if [ "$PUBLIC_PORT" = "$PYTHON_UPSTREAM_PORT" ]; then
     echo "Error: public gateway and Python upstream ports must differ" >&2
     exit 2
 fi
+case "$PYTHON_RELOAD" in
+    true|false) ;;
+    *)
+        echo "Error: WEGENT_PYTHON_RELOAD must be true or false" >&2
+        exit 2
+        ;;
+esac
 
 if [ -z "$RS_BINARY_PATH" ] && ! command -v cargo >/dev/null 2>&1; then
     echo "Error: cargo is required for hybrid Backend mode" >&2
@@ -222,48 +233,6 @@ else
     fi
 fi
 
-echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
-(
-    cd "$BACKEND_DIR"
-    # brz-http-gateway 0.1.4 does not install hyper-util's pool timer. Keep
-    # upstream sockets alive beyond the longest CI job so its pooled client
-    # cannot reuse a socket that Uvicorn expired during the run.
-    exec "$PYTHON_UVICORN" app.main:app \
-        --reload \
-        --reload-dir . \
-        --reload-dir ../shared \
-        --reload-exclude '.venv/*' \
-        --reload-exclude '__pycache__/*' \
-        --reload-exclude '*.pyc' \
-        --reload-exclude '.git/*' \
-        --host 127.0.0.1 \
-        --port "$PYTHON_UPSTREAM_PORT" \
-        --timeout-keep-alive 2400 \
-        --log-level debug
-) &
-PYTHON_PID=$!
-write_state
-
-wait_for_python() {
-    local timeout=${WEGENT_PYTHON_READY_TIMEOUT:-180}
-    local deadline=$((SECONDS + timeout))
-    while kill -0 "$PYTHON_PID" 2>/dev/null; do
-        if (exec 3<>"/dev/tcp/127.0.0.1/$PYTHON_UPSTREAM_PORT") 2>/dev/null; then
-            return 0
-        fi
-        if [ "$SECONDS" -ge "$deadline" ]; then
-            echo "Error: Python upstream did not become ready within ${timeout}s" >&2
-            return 1
-        fi
-        sleep 3
-    done
-    wait "$PYTHON_PID" || true
-    echo "Error: Python upstream exited before becoming ready" >&2
-    return 1
-}
-
-wait_for_python
-
 echo "Starting Rust gateway on http://$PUBLIC_HOST:$PUBLIC_PORT"
 echo "Fallback upstream: http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 echo "Route config: $ROUTES_FILE"
@@ -304,6 +273,52 @@ wait_for_rust() {
 }
 
 wait_for_rust
+
+echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
+(
+    cd "$BACKEND_DIR"
+    export DB_INITIALIZATION_OWNER=rust
+    # brz-http-gateway 0.1.4 does not install hyper-util's pool timer. Keep
+    # upstream sockets alive beyond the longest CI job so its pooled client
+    # cannot reuse a socket that Uvicorn expired during the run.
+    python_args=("${WEGENT_PYTHON_APP:-app.main:app}" \
+        --host 127.0.0.1 \
+        --port "$PYTHON_UPSTREAM_PORT" \
+        --timeout-keep-alive 2400)
+    if [ "$PYTHON_RELOAD" = "true" ]; then
+        python_args+=(--reload --reload-dir . --reload-dir ../shared \
+            --reload-exclude '.venv/*' --reload-exclude '__pycache__/*' \
+            --reload-exclude '*.pyc' --reload-exclude '.git/*' --log-level debug)
+    else
+        python_args+=(--workers 1 \
+            --timeout-graceful-shutdown "${GRACEFUL_SHUTDOWN_TIMEOUT:-600}" \
+            --log-level info)
+    fi
+    exec "$PYTHON_UVICORN" "${python_args[@]}"
+) &
+PYTHON_PID=$!
+write_state
+
+wait_for_python() {
+    local timeout=${WEGENT_PYTHON_READY_TIMEOUT:-180}
+    local deadline=$((SECONDS + timeout))
+    while kill -0 "$PYTHON_PID" 2>/dev/null; do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$PYTHON_UPSTREAM_PORT") 2>/dev/null; then
+            return 0
+        fi
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "Error: Python upstream did not become ready within ${timeout}s" >&2
+            return 1
+        fi
+        sleep 3
+    done
+    wait "$PYTHON_PID" || true
+    echo "Error: Python upstream exited before becoming ready" >&2
+    return 1
+}
+
+wait_for_python
+
 
 while kill -0 "$PYTHON_PID" 2>/dev/null && kill -0 "$RUST_PID" 2>/dev/null; do
     sleep 1

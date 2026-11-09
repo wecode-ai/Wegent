@@ -1,0 +1,56 @@
+{
+  "revision": "c8d9e0f1a2b3",
+  "parents": [
+    "b7c6d5e4f3a2"
+  ],
+  "source": "20260813_c8d9e0f1a2b3_generalize_wework_execution_profiles.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN executor_owner_user_id INTEGER NOT NULL COMMENT 'User whose Wework runtime owns this execution' DEFAULT '0'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN automation_run_id VARCHAR(64) NOT NULL COMMENT 'Owning project automation run id' DEFAULT ''"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_item_executions AS execution LEFT JOIN loop_items AS agent ON agent.id = execution.agent_id SET execution.executor_owner_user_id = COALESCE(agent.created_by_user_id, execution.assigner_user_id, 0)"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_items\nSET metadata = JSON_REMOVE(\n        JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.assignment_mode', 'manual'),\n        '$.manager_type',\n        '$.executor_type'\n    ),\n    version = version + 1,\n    updated_at = CURRENT_TIMESTAMP\nWHERE resource_type = 'automation_rule'\n  AND deleted_at IS NULL\n  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.assignment_mode')) IS NULL\n  AND COALESCE(assignee_agent_id, '') <> ''"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_items\nSET status = 'disabled',\n    metadata = JSON_SET(\n        COALESCE(metadata, JSON_OBJECT()),\n        '$.migration_error',\n        'Legacy automation has no valid assignment configuration; choose an assignment mode.'\n    ),\n    version = version + 1,\n    updated_at = CURRENT_TIMESTAMP\nWHERE resource_type = 'automation_rule'\n  AND deleted_at IS NULL\n  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.assignment_mode')) IS NULL\n  AND COALESCE(assignee_agent_id, '') = ''"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_automation_run_id ON loop_item_executions (automation_run_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_exec_automation_run_id ON loop_item_executions"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN automation_run_id"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN executor_owner_user_id"
+      ]
+    }
+  ]
+}

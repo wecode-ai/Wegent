@@ -1,3 +1,7 @@
+import {
+  openStandInSettings,
+  openStandInActivity,
+} from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
@@ -5,9 +9,12 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTaskRowByText } from '../modules/task-state-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
+  handleModelMaintenanceRequest,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
   readRequestBody,
@@ -35,6 +42,13 @@ export function createDesktopScenario({
   let createdTaskId
   let intake
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  const meetingStory = createMeetingUserStory({
+    rpc,
+    executorHome,
+    workspacePath,
+    modelResponseTimeoutMs,
+    captureScreenshot,
+  })
   async function waitFor(read, ready, timeoutMs) {
     const deadline = Date.now() + timeoutMs
     let latest
@@ -45,15 +59,52 @@ export function createDesktopScenario({
     }
     assert.fail(`Silent processing did not reach its expected state: ${JSON.stringify(latest)}`)
   }
+  async function verifyQueuedAssignmentReceipt(control, projectId) {
+    const issue = await rpc(control, 'todos.create', {
+      project_id: projectId,
+      todo: { title: 'Queued assignment reception', assignee_user_id: USER },
+    })
+    try {
+      const receipts = await waitFor(
+        () =>
+          rpc(control, 'todos.assignment_receipts', { project_id: projectId, task_id: issue.id }),
+        rows => rows.length === 1 && rows[0].stand_in_received_at,
+        uiTimeoutMs
+      )
+      assert.equal(receipts[0].human_read_at, null)
+      const bindings = await rpc(control, 'todos.bindings', { task_id: issue.id })
+      assert.equal(bindings.length, 1, 'Receipt retains recipient-owned task authority')
+      const task = await rpc(control, 'runtime.tasks.get', { taskId: bindings[0].task_id })
+      assert.equal(
+        task.code,
+        'task_not_found',
+        'Background intake acknowledges before starting a model'
+      )
+      assert.equal(workCalls, 0)
+      assert.equal(coordinatorCalls, 0)
+    } finally {
+      const latest = await rpc(control, 'todos.get', { project_id: projectId, task_id: issue.id })
+      await rpc(control, 'todos.update', {
+        project_id: projectId,
+        task_id: issue.id,
+        todo: { version: latest.version, status: 'completed', assignee_user_id: null },
+      })
+      await rpc(control, 'todos.archive', { project_id: projectId, task_id: issue.id })
+    }
+  }
   return {
     async handleHttp(req, response, url) {
+      if (await meetingStory.handleHttp(req, response, url)) return true
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
+      if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
-      let events
-      if (input.includes('Review this silent intake batch')) {
+      let events = delegatedTaskResultEvents(body)
+      if (events) {
+        // A result wake is a new host turn, even when its history quotes the original request.
+      } else if (input.includes('Review this silent intake batch')) {
         coordinatorCalls++
         const readId = `silent-read-${round}`
         const actionId = `silent-action-${round}`
@@ -195,15 +246,24 @@ export function createDesktopScenario({
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-        await control.command('click', '[data-testid="stand-in-connections-open"]')
+        await openStandInSettings(control)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
         await control.command(
           'click',
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
         )
         const timing = `[data-testid="stand-in-project-policy-${project.id}"]`
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-processing-settings-toggle"]'
+        )
         await control.command('waitFor', timing)
-        assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'checkbox')
+        assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'button')
+        assert.equal(await control.command('getAttribute', timing, { value: 'role' }), 'switch')
+        assert.equal(
+          await control.command('getAttribute', timing, { value: 'aria-checked' }),
+          'false'
+        )
         await control.command('click', timing)
         await control.command('click', timing)
         assert.equal(
@@ -219,6 +279,27 @@ export function createDesktopScenario({
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.immediate, false)
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.askBeforeAct, true)
         assert.equal(configured.processing, undefined)
+        await verifyQueuedAssignmentReceipt(control, project.id)
+        // Direct source routing is explicit; completion feedback still uses the silent window.
+        await openStandInSettings(control)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
+        await control.command(
+          'click',
+          `[data-testid="stand-in-connection-project-local-${project.id}"]`
+        )
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-processing-settings-toggle"]'
+        )
+        await control.command('click', timing)
+        assert.equal(
+          await control.command('getAttribute', timing, { value: 'aria-checked' }),
+          'true'
+        )
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-saved"]')
+        await control.command('click', '[data-testid="stand-in-cancel"]')
+        await control.command('waitFor', '[data-testid="stand-in-save"]', { visible: false })
         const issue = await rpc(control, 'todos.create', {
           project_id: project.id,
           todo: { title: MARKER, assignee_user_id: USER },
@@ -246,12 +327,15 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         assert.equal(scheduled.running, false)
-        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
-          timeoutMs: 20000,
-        })
+        assert.equal(
+          await control.command('getElementCount', '[data-testid="stand-in-processing-notice"]'),
+          '0',
+          'Scheduled background feedback without a question or failure must not interrupt the user'
+        )
         await captureScreenshot(control, 'silent-02-feedback-without-extra-work.png')
         // Collaboration executions belong to the stand-in work list, not the ordinary task sidebar.
         const workCard = `[data-testid="stand-in-activity-task-${taskId}"]`
+        await openStandInActivity(control)
         await control.command('waitFor', workCard)
         await control.command('click', workCard)
         await control.command('click', '[data-testid="stand-in-preview-open"]')
@@ -262,15 +346,31 @@ export function createDesktopScenario({
         const threadId = first.task.runtimeHandle.threadId
         assert.ok(threadId)
         // Advance this isolated source's receive window, never a removed global coordinator deadline.
-        const dueAt = Date.now() + 1000
+        let dueAt
         const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
         try {
+          database.exec('PRAGMA busy_timeout = 10000')
+          // Completion precedes the coordinator's observation tick. Other intake
+          // can satisfy pendingCount, so wait for this task's durable completion.
+          const feedbackWhere =
+            "resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.taskId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending' AND json_extract(metadata,'$.state[3]')='done'"
+          const feedback = database.prepare(
+            `SELECT COUNT(*) AS count FROM loop_items WHERE ${feedbackWhere}`
+          )
+          await waitFor(
+            () => feedback.get(USER, taskId).count,
+            count => count > 0,
+            uiTimeoutMs
+          )
+          database.exec('BEGIN IMMEDIATE')
+          dueAt = Date.now() + 1000
           const changed = database
             .prepare(
-              "UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending'"
+              `UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE ${feedbackWhere}`
             )
-            .run(new Date(dueAt - 5 * 60000).toISOString(), USER)
+            .run(new Date(dueAt - 5 * 60000).toISOString(), USER, taskId)
           assert.ok(changed.changes > 0, 'The real completed work must produce durable feedback')
+          database.exec('COMMIT')
         } finally {
           database.close()
         }
@@ -303,7 +403,7 @@ export function createDesktopScenario({
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         const history = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
         assert.ok(history.actions.some(action => action.status === 'succeeded'))
-        await control.command('waitFor', '[data-testid="stand-in-settings-open"]:not(:disabled)')
+        await control.command('waitFor', '[data-testid="stand-in-details-open"]:not(:disabled)')
         await captureScreenshot(control, 'silent-05-return-to-stand-in.png')
         // Establish an ordinary user task through the real public task API.
         const ordinary = await rpc(control, 'runtime.tasks.create', {
@@ -368,6 +468,7 @@ export function createDesktopScenario({
           text: 'ORDINARY_FOLLOWUP_DONE',
         })
         await captureScreenshot(control, 'silent-07-primary-continues-ordinary-task.png')
+        await meetingStory.verify(control, model)
       } finally {
         const current = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
         await rpc(control, 'runtime.stand_in.personal.save', {

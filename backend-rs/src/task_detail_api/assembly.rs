@@ -54,14 +54,6 @@ pub(crate) struct TaskDetailOutcome {
     pub body: TaskDetailResponse,
 }
 
-#[derive(Default, serde::Deserialize)]
-#[serde(default)]
-struct PromptBlock {
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    text: Option<String>,
-}
-
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum ModelOptionInput {
@@ -80,21 +72,7 @@ impl ModelOptionInput {
     }
 }
 
-/// `parse_prompt_blocks` (shared/prompts/constants.py): plain text passes
-/// through; JSON block lists keep only the user-visible text.
-pub(crate) fn extract_display_prompt(prompt: Option<&str>) -> Option<String> {
-    let prompt = prompt?;
-    if let Ok(JsonProjection {
-        value: Some(blocks),
-    }) = serde_json::from_str::<JsonProjection<Vec<Option<PromptBlock>>>>(prompt)
-    {
-        return Some(parse_block_list(&blocks, prompt));
-    }
-    if prompt.contains("[User Question]:") {
-        return Some(extract_user_question(prompt).to_owned());
-    }
-    Some(prompt.to_owned())
-}
+pub(crate) use wegent_task_store::prompt::extract_display_prompt;
 
 /// `get_bots_for_subtasks` (task_detail_helpers.py) renders `bind_model_type`
 /// from the resolved model row: `public` only for a row whose `user_id` is 0,
@@ -105,40 +83,6 @@ fn bind_model_type(model_owner: Option<i64>) -> &'static str {
         "public"
     } else {
         "user"
-    }
-}
-
-fn parse_block_list(blocks: &[Option<PromptBlock>], raw_prompt: &str) -> String {
-    let mut user_text: Option<String> = None;
-    for block in blocks.iter().filter_map(|block| block.as_ref()) {
-        let block_type = block.kind.as_deref().unwrap_or("");
-        if block_type != "text" && block_type != "input_text" {
-            continue;
-        }
-        let text = block.text.as_deref().unwrap_or("");
-        let stripped = text.trim_start();
-        if stripped.starts_with("<system-reminder>") {
-            continue;
-        }
-        if stripped.starts_with("[User Question]:") && user_text.is_none() {
-            user_text = Some(extract_user_question(stripped).to_owned());
-            continue;
-        }
-        if stripped.starts_with("<attachment>") || stripped.starts_with("<selected_documents>") {
-            continue;
-        }
-        if user_text.is_none() {
-            user_text = Some(text.to_owned());
-        }
-    }
-    user_text.unwrap_or_else(|| raw_prompt.to_owned())
-}
-
-fn extract_user_question(text: &str) -> &str {
-    if let Some((_, after)) = text.split_once("[User Question]:") {
-        after.trim_start_matches('\n').trim()
-    } else {
-        text.trim()
     }
 }
 
@@ -171,10 +115,8 @@ pub(crate) fn sanitize_client_payload(payload: Value) -> Value {
 
 /// `ShellSpec.shellType`: accepts `spec.runtime` as the backward-compatible
 /// validation alias (`AliasChoices("shellType", "runtime")`).
-pub(crate) fn shell_type_of(
-    shell: &crate::remote_workspace_tree::kinds::KindRecord,
-) -> Option<&str> {
-    let spec = shell.json.0.get("spec")?;
+pub(crate) fn shell_type_of(shell: &Value) -> Option<&str> {
+    let spec = shell.get("spec")?;
     spec.get("shellType")
         .or_else(|| spec.get("runtime"))
         .and_then(|value| value.as_str())
@@ -341,6 +283,7 @@ pub(crate) async fn build_task_detail(
                                 erp: state.erp.as_ref(),
                                 redis: state.redis.as_ref(),
                             },
+                            &state.entity_resolvers,
                             user_id,
                             team.id,
                             team.user_id,
@@ -457,14 +400,26 @@ pub(crate) async fn build_task_detail(
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let mut bot_summaries = Vec::new();
-    // `model_cache` / `shell_type_cache`: per-call memoization keyed by
-    // `(bot.user_id, namespace, name)`; a repeated ref resolves once. The
+    // The model cache is keyed by `(bot.user_id, namespace, name)`. The
     // model cache keeps `None` for a ref that resolved to no row, which is
     // distinct from a public model owned by user 0.
     let mut model_cache: std::collections::HashMap<(i64, String, String), Option<i64>> =
         std::collections::HashMap::new();
-    let mut shell_type_cache: std::collections::HashMap<(i64, String, String), String> =
-        std::collections::HashMap::new();
+    let shell_refs: Vec<_> = bots
+        .iter()
+        .filter_map(|bot| {
+            let crd = CrdDocument::project(&bot.json.0);
+            let (name, namespace) = crd.spec.as_ref()?.shell_ref.as_ref()?.nonempty_parts()?;
+            Some((bot.user_id, name, namespace))
+        })
+        .collect();
+    let shells = crate::responses::create::shell::resolve_shells(
+        mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+        &shell_refs,
+    )
+    .await?;
     for bot in &bots {
         let bot_crd = CrdDocument::project(&bot.json.0);
         let bot_spec = bot_crd.spec.as_ref();
@@ -500,22 +455,11 @@ pub(crate) async fn build_task_detail(
             .and_then(|spec| spec.shell_ref.as_ref())
             .and_then(|reference| reference.nonempty_parts())
         {
-            let key = (bot.user_id, namespace.clone(), name.clone());
-            if let Some(cached) = shell_type_cache.get(&key) {
-                shell_type = cached.clone();
-            } else {
-                let shell = kinds
-                    .get_by_name_and_namespace(bot.user_id, "Shell", &namespace, &name)
-                    .await
-                    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-                let resolved = shell
-                    .as_ref()
-                    .and_then(shell_type_of)
-                    .unwrap_or_default()
-                    .to_owned();
-                shell_type_cache.insert(key, resolved.clone());
-                shell_type = resolved;
-            }
+            shell_type = shells
+                .get(&(bot.user_id, name, namespace))
+                .and_then(|shell| shell_type_of(&shell.json.0))
+                .unwrap_or_default()
+                .to_owned();
         }
         bot_summaries.push(SubtaskBotResponse {
             id: bot.id,
@@ -530,7 +474,8 @@ pub(crate) async fn build_task_detail(
     }
 
     let subtasks_value =
-        subtask_responses(&subtasks, &contexts, &bot_summaries, &inherited_task_ids);
+        subtask_responses(&subtasks, &contexts, &bot_summaries, &inherited_task_ids)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
 
     // `add_group_chat_info_to_task`.
     let member_count = count_approved_members(mysql, task_id).await?;
@@ -929,7 +874,7 @@ mod tests {
                 created_at: chrono::NaiveDateTime::default(),
                 updated_at: chrono::NaiveDateTime::default(),
             };
-            shell_type_of(&record).map(str::to_owned)
+            shell_type_of(&record.json.0).map(str::to_owned)
         }
         assert_eq!(
             shell_with(json!({"spec": {"runtime": "ClaudeCode"}})),

@@ -43,51 +43,58 @@ pub(super) async fn create(
     );
     let model = &wiki.json.0["spec"]["executionModelRef"];
     let model_name = model["name"].as_str().filter(|s| !s.is_empty());
-    let mut setup_sql: &brz_mysql::MysqlService = &app.mysql;
-    let setup = session::setup_chat_session(
-        app.task_store.as_ref(),
-        &mut setup_sql,
-        &session::SetupChatSessionInput {
-            user_id: runner,
-            owner_user_id: runner.try_into()?,
-            continuation: None,
-            team_id: team.id,
-            bot_ids: &bots.bot_ids,
-            input_text: prompt,
-            crd: TaskCrdInput {
-                task_id: 0,
-                team_name: &team.name,
-                team_namespace: &team.namespace,
-                team_user_id: team.user_id,
-                message: prompt,
-                title: Some(&title),
-                task_type: Some("code"),
-                source: "code_wiki",
-                project_id: 0,
-                api_key_name: None,
-                model_id: model_name,
-                force_override_bot_model: model_name.is_some(),
-                is_group_chat: false,
-                is_api_call: false,
-                auto_delete_executor: Some("false"),
-                omit_mcp_binary_output: false,
-                device_id: None,
-                git_workspace: true,
-                created_at: &now,
-                updated_at: &now,
-            },
-            repository: WorkspaceRepository {
-                git_url: source["sourceUrl"].as_str().unwrap_or(""),
-                git_repo: source["projectName"].as_str().unwrap_or(""),
-                git_domain: source["sourceDomain"].as_str().unwrap_or(""),
-                ..Default::default()
-            },
-            client_origin: "frontend",
+    let setup_input = session::SetupChatSessionInput {
+        user_id: runner,
+        owner_user_id: runner.try_into()?,
+        continuation: None,
+        team_id: team.id,
+        bot_ids: &bots.bot_ids,
+        input_text: prompt,
+        crd: TaskCrdInput {
+            task_id: 0,
+            team_name: &team.name,
+            team_namespace: &team.namespace,
+            team_user_id: team.user_id,
+            message: prompt,
+            title: Some(&title),
+            task_type: Some("code"),
+            source: "code_wiki",
             project_id: 0,
+            api_key_name: None,
+            model_id: model_name,
+            force_override_bot_model: model_name.is_some(),
+            is_group_chat: false,
+            is_api_call: false,
+            auto_delete_executor: Some("false"),
+            omit_mcp_binary_output: false,
+            device_id: None,
+            git_workspace: true,
             created_at: &now,
             updated_at: &now,
-            completed_at: "1970-01-01 00:00:00",
         },
+        repository: WorkspaceRepository {
+            git_url: source["sourceUrl"].as_str().unwrap_or(""),
+            git_repo: source["projectName"].as_str().unwrap_or(""),
+            git_domain: source["sourceDomain"].as_str().unwrap_or(""),
+            ..Default::default()
+        },
+        client_origin: "frontend",
+        project_id: 0,
+        created_at: &now,
+        updated_at: &now,
+        completed_at: "1970-01-01 00:00:00",
+    };
+    // The Source's `SessionLocal` runs the whole session setup in one
+    // transaction and commits it when setup returns; `brz-mysql` owns the
+    // savepoints, so that transaction is explicit here.
+    let setup = crate::transaction_outcome::run(
+        &app.mysql,
+        async |transaction| {
+            session::setup_chat_session(app.task_store.as_ref(), transaction, &setup_input)
+                .await
+                .map(crate::transaction_outcome::Completion::Commit)
+        },
+        crate::http_compat::FastApiError::internal,
     )
     .await
     .map_err(|e| anyhow::anyhow!("Could not start the wiki task: {e:?}"))?;

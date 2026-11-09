@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { BookOpen, Code2, Database, User, Building2, Users, FileText } from 'lucide-react'
+import { BookOpen, Code2, Database, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -47,6 +47,7 @@ import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTask
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { KnowledgeCreateSpaceSelect } from './KnowledgeCreateSpaceSelect'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
@@ -84,19 +85,6 @@ interface CreateKnowledgeBaseDialogProps {
   defaultGroupId?: string
   /** Whether to show group selector (true when creating from "All" page) */
   showGroupSelector?: boolean
-}
-
-/** Get icon for group type */
-function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' }) {
-  switch (type) {
-    case 'personal':
-      return <User className="w-4 h-4" />
-    case 'organization':
-      return <Building2 className="w-4 h-4" />
-    case 'group':
-    default:
-      return <Users className="w-4 h-4" />
-  }
 }
 
 /** Documents are uploaded and organised; code is generated from a repository. */
@@ -250,6 +238,10 @@ export function CreateKnowledgeBaseDialog({
 
   const handleSubmit = async () => {
     setError('')
+    if (showGroupSelector && (!selectedGroup || !selectedGroup.canCreate)) {
+      setError(t('knowledge:document.creation.spaceUnavailable'))
+      return
+    }
     setSummaryModelError('')
     setExecutionModelError('')
     clearMultimodalError()
@@ -448,7 +440,11 @@ export function CreateKnowledgeBaseDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
+        className="w-[calc(100%_-_1rem)] max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col"
+        closeButtonProps={{
+          className: 'right-2 top-2 flex h-11 w-11 items-center justify-center',
+          'data-testid': 'close-create-kb',
+        }}
         data-testid="create-kb-dialog"
       >
         <DialogHeader>
@@ -491,6 +487,22 @@ export function CreateKnowledgeBaseDialog({
               </button>
             ))}
           </div>
+          {showGroupSelector && (!selectedGroup || !selectedGroup.canCreate) && (
+            <div role="alert" className="text-sm text-error">
+              {t('knowledge:document.creation.spaceUnavailable')}
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="create-in-personal-space"
+                onClick={() => {
+                  setSelectedGroupId('personal')
+                }}
+              >
+                {t('knowledge:document.creation.choosePersonal')}
+              </Button>
+            </div>
+          )}
           <KnowledgeBaseForm
             advancedExtras={
               kind === 'code' ? (
@@ -726,33 +738,23 @@ export function CreateKnowledgeBaseDialog({
                   <SimpleConfigRow
                     label={
                       <>
-                        {t('knowledge:document.knowledgeBase.targetGroup', '归属')}{' '}
+                        {t('knowledge:document.navigation.space')}{' '}
                         <span className="text-red-400">*</span>
                       </>
                     }
                   >
-                    <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                      <SelectTrigger data-testid="group-selector" className="bg-base">
-                        <SelectValue
-                          placeholder={t(
-                            'knowledge:document.knowledgeBase.selectGroup',
-                            '选择分组'
-                          )}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableGroups
-                          .filter(g => g.canCreate)
-                          .map(group => (
-                            <SelectItem key={group.id} value={group.id}>
-                              <div className="flex items-center gap-2">
-                                <GroupTypeIcon type={group.type} />
-                                <span>{group.displayName}</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="min-w-0 w-full space-y-2">
+                      <KnowledgeCreateSpaceSelect
+                        spaces={availableGroups}
+                        value={selectedGroupId}
+                        onValueChange={setSelectedGroupId}
+                      />
+                      {selectedGroup?.type === 'group' && selectedGroup.canCreate && (
+                        <p role="status" className="text-xs text-text-muted">
+                          {t('knowledge:document.creation.inheritsTeam')}
+                        </p>
+                      )}
+                    </div>
                   </SimpleConfigRow>
                 )}
               </>
@@ -835,7 +837,9 @@ export function CreateKnowledgeBaseDialog({
           <Button
             onClick={handleSubmit}
             variant="primary"
-            disabled={loading}
+            disabled={
+              loading || (showGroupSelector && (!selectedGroup || !selectedGroup.canCreate))
+            }
             className="h-11 min-w-[44px]"
             data-testid="submit-create-kb"
           >

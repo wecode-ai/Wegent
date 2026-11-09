@@ -53,6 +53,7 @@ use super::dispatch::{self, ExecutionRequest};
 /// explicit lets a focused test drive the real consumer through the worker with
 /// recording MySQL/Redis doubles.
 pub(crate) struct ConsumerContext<'a, M: Mysql, R: Redis> {
+    pub package_mode: bool,
     pub mysql: &'a M,
     pub redis: Option<&'a R>,
     pub tables: Tables,
@@ -66,6 +67,7 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
     /// request (the synchronous create branch and the background job paths).
     pub(crate) fn from_app(state: &'a AppState) -> Self {
         Self {
+            package_mode: false,
             mysql: &state.mysql,
             redis: state.redis.as_ref(),
             tables: crate::internal_callback::tables(state),
@@ -119,6 +121,19 @@ impl Failure {
             error_code: None,
         }
     }
+
+    /// A transport failure the dispatcher's `except` branch persists as
+    /// FAILED with the Source's classified error code
+    /// (`ExecutionDispatcher`'s `classify_error` returns `network_error` for
+    /// a connection failure, which `collect_completed_result` writes into
+    /// `result.error_type`).
+    fn network(message: String) -> Self {
+        Self {
+            message,
+            persist: true,
+            error_code: Some("network_error"),
+        }
+    }
 }
 
 /// Consume one chat-shell event stream for the synchronous create branch.
@@ -139,8 +154,11 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     let mut emitter =
         StatusUpdatingEmitter::new(redis.clone(), request.task_id, request.subtask_id);
     let cancel_key = format!("{CANCEL_KEY_PREFIX}{}", request.subtask_id);
-    // `register_stream`: clear a stale cross-worker cancellation flag.
-    let _ = redis.del(cancel_key.as_str()).await;
+    // A package job starts after the public request has returned or subscribed.
+    // Clearing its flag here could erase a cancellation admitted while queued.
+    if !ctx.package_mode {
+        let _ = redis.del(cancel_key.as_str()).await;
+    }
 
     let result = read_stream(
         ctx,
@@ -269,7 +287,9 @@ async fn read_stream<M: Mysql, R: Redis>(
             // The Source still creates `stream_open_task` before waiting on the
             // race and then drops it through `_cancel_sse_stream_open`; start
             // the request so an in-flight open is not skipped.
-            let _ = poll_once(open.as_mut()).await;
+            if !ctx.package_mode {
+                let _ = poll_once(open.as_mut()).await;
+            }
             None
         } else {
             // `asyncio.wait({stream_task, cancel_task})`: the Source prefers the
@@ -333,15 +353,15 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     let client = HttpClient::builder()
         .read_timeout(STREAM_TIMEOUT)
         .build()
-        .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
+        .map_err(|_| Failure::network("Connection error.".to_string()))?;
     let payload = dispatch::assemble(request, true, false);
     let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
     let http_request = stream_request(&client, &url, &body, request_id)
-        .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
+        .map_err(|_| Failure::network("Connection error.".to_string()))?;
     let mut response = client
         .execute(http_request)
         .await
-        .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
+        .map_err(|_| Failure::network("Connection error.".to_string()))?;
 
     if !response.status().is_success() {
         return Err(Failure::persisted(format!(
@@ -400,7 +420,7 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                     // `StatusUpdatingEmitter`'s terminal branch flushes the
                     // buffered stream content before completing the task.
                     emitter.close().await;
-                    complete(ctx, &parsed).await;
+                    complete(ctx, &parsed).await?;
                     if parsed.event_type == "error" {
                         // The FAILED state is already persisted; the caller
                         // drains the framing tail before reporting it.
@@ -416,6 +436,8 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                             },
                         ));
                     }
+                } else if ctx.package_mode {
+                    emit_package_event(ctx, &parsed).await?;
                 } else if let Err(error) = emitter.emit_persist_only(&mut parsed).await {
                     tracing::warn!(%error, "chat-shell stream persistence failed");
                 }
@@ -434,7 +456,9 @@ async fn open_and_consume<M: Mysql, R: Redis>(
             "Chat Shell SSE stream ended without terminal event after {event_count} events"
         ),
         persist: true,
-        error_code: Some("sse_stream_no_terminal"),
+        // `classify_error` falls back to `generic_error` for an exception it
+        // cannot match by type or message (`shared/utils/error_classifier.py`).
+        error_code: Some("generic_error"),
     })
 }
 
@@ -451,13 +475,16 @@ pub(super) fn stream_request(
     let request = client
         .post(url)?
         .header("content-type", "application/json")
-        .header("accept", dispatch::OPENAI_ACCEPT)
-        .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
+        .header("accept", super::openai_client::OPENAI_ACCEPT)
         .header("X-Request-ID", request_id)
         .json(body);
     // The Source client identity (`AsyncOpenAI`) on the streaming path; the
     // executor-manager dispatch applies the same shared set.
-    dispatch::apply_openai_client_headers(request).build()
+    super::package_runtime::authorize(
+        super::openai_client::apply_openai_client_headers(request),
+        url,
+    )
+    .build()
 }
 
 /// `_drain_terminal_stream`: finish the HTTP response framing after a
@@ -504,13 +531,41 @@ async fn drain_with_cancel_poll<F: Future<Output = ()>>(
     true
 }
 
+/// Package execution fans out to Socket.IO and callback subscribers just like
+/// the in-process Python emitter, through the same handler as executor events.
+async fn emit_package_event<M: Mysql, R: Redis>(
+    ctx: &ConsumerContext<'_, M, R>,
+    event: &ExecutionEvent,
+) -> Result<(), Failure> {
+    let app = ctx
+        .app
+        .ok_or_else(|| Failure::persisted("Package dispatch lost application state".to_owned()))?;
+    crate::internal_callback::process_execution_event(
+        app,
+        event.clone(),
+        Some("inprocess-chat"),
+        Some("standalone"),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(task_id = event.task_id, error = ?error, "package event processing failed");
+        Failure::persisted("Package event processing failed".to_owned())
+    })
+}
+
 /// `StatusUpdatingEmitter`'s terminal branch: collect, persist, publish.
-async fn complete<M: Mysql, R: Redis>(ctx: &ConsumerContext<'_, M, R>, event: &ExecutionEvent) {
+async fn complete<M: Mysql, R: Redis>(
+    ctx: &ConsumerContext<'_, M, R>,
+    event: &ExecutionEvent,
+) -> Result<(), Failure> {
+    if ctx.package_mode {
+        return emit_package_event(ctx, event).await;
+    }
     let Some(redis) = ctx.redis else {
-        return;
+        return Ok(());
     };
     let Some(status) = completion::terminal_status(&event.event_type) else {
-        return;
+        return Ok(());
     };
     let completion = completion::Completion {
         app: ctx.app,
@@ -534,6 +589,7 @@ async fn complete<M: Mysql, R: Redis>(ctx: &ConsumerContext<'_, M, R>, event: &E
         None,
     )
     .await;
+    Ok(())
 }
 
 /// The dispatcher's `except` branch: `emit_error` persists FAILED.
@@ -542,6 +598,19 @@ async fn complete_failure<M: Mysql, R: Redis>(
     request: &ExecutionRequest,
     failure: &Failure,
 ) {
+    if ctx.package_mode {
+        let mut event = ExecutionEvent::new(EventType::Error, request.task_id, request.subtask_id);
+        event.error = Some(failure.message.clone());
+        event.error_code = failure.error_code.map(str::to_owned);
+        event.result = failure_result(failure);
+        if emit_package_event(ctx, &event).await.is_err() {
+            tracing::error!(
+                task_id = request.task_id,
+                "package terminal failure could not be delivered"
+            );
+        }
+        return;
+    }
     let Some(redis) = ctx.redis else {
         return;
     };
@@ -552,18 +621,31 @@ async fn complete_failure<M: Mysql, R: Redis>(
         tables: ctx.tables,
         executor_manager: ctx.executor_manager,
     };
+    // `collect_completed_result` (`chat/trigger/lifecycle.py:590-591`) sets
+    // `result.error_type` from the classified error code, so the persisted
+    // terminal row carries the Source's result payload instead of a NULL one.
+    let result = failure_result(failure);
     completion::complete_terminal_event(
         &completion,
         request.task_id,
         request.subtask_id,
         "FAILED",
-        None,
+        result.as_ref(),
         Some(&failure.message),
         failure.error_code,
         None,
         None,
     )
     .await;
+}
+
+/// The `result` payload `collect_completed_result` builds for a persisted
+/// failure: `{"error_type": <classified code>}` when the failure carries one,
+/// and no result otherwise.
+fn failure_result(failure: &Failure) -> Option<Value> {
+    failure
+        .error_code
+        .map(|code| serde_json::json!({ "error_type": code }))
 }
 
 /// `dispatch_sse` emits a cancelled terminal event and stops reading;
@@ -576,7 +658,7 @@ async fn finish_cancelled<M: Mysql, R: Redis>(
 ) -> Result<Collected, Failure> {
     let event = ExecutionEvent::new(EventType::Cancelled, request.task_id, request.subtask_id);
     emitter.close().await;
-    complete(ctx, &event).await;
+    complete(ctx, &event).await?;
     Ok(Collected {
         content: content.to_string(),
     })
@@ -643,6 +725,30 @@ fn parse_frame(frame: &[u8]) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Recorded a4130073 seq95: the dispatcher's `except` branch persists a
+    /// transport failure as `result='{"error_type": "network_error"}'`
+    /// (`classify_error` + `collect_completed_result`), not a NULL result.
+    #[test]
+    fn a_persisted_failure_carries_the_classified_error_type() {
+        let network = Failure::network("Connection error.".to_string());
+        assert_eq!(
+            failure_result(&network),
+            Some(serde_json::json!({"error_type": "network_error"}))
+        );
+        // A terminal error event was already persisted by its emitter, and a
+        // failure without a classified code writes no result column.
+        let already_persisted = Failure {
+            message: "terminal error".to_string(),
+            persist: false,
+            error_code: None,
+        };
+        assert_eq!(failure_result(&already_persisted), None);
+        assert_eq!(
+            failure_result(&Failure::persisted("boom".to_string())),
+            None
+        );
+    }
 
     #[test]
     fn splits_frames_on_both_delimiters() {

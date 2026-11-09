@@ -1,3 +1,4 @@
+import { insertMissingOrderedEntries } from "./ordered-conversation-entries";
 import {
   processingBlocks,
   assistantTextContent,
@@ -5,7 +6,10 @@ import {
   completeRuntimeTurnTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
-import { commandExecutionPayload } from "./command-execution";
+import {
+  commandExecutionPayload,
+  mergeCommandExecutionPayload,
+} from "./command-execution";
 
 import {
   getLatestThinkingContent,
@@ -33,7 +37,7 @@ export function mergeRuntimeConversationTurn(
   const preserveLocalTerminal =
     isTerminalTurnStatus(local.status) &&
     isUnsettledTurnStatus(snapshot.status);
-  const items =
+  let items =
     snapshot.itemMerge === "prepend"
       ? prependRuntimeConversationItems(
           local.items,
@@ -45,6 +49,12 @@ export function mergeRuntimeConversationTurn(
           snapshot.items,
           preserveLocalTerminal,
         );
+  if (local.id !== null && local.id === snapshot.id) {
+    const previousById = new Map(local.items.map((item) => [item.id, item]));
+    items = items.map((item) =>
+      preserveCompletedImageArtifact(previousById.get(item.id), item),
+    );
+  }
   const preserveLocalFailure =
     local.status === "failed" && Boolean(local.error) && !snapshot.error;
   const preserveStreamingThinking =
@@ -109,6 +119,67 @@ export function mergeRuntimeConversationTurn(
         ? getLatestThinkingContent(processingBlocks(items))
         : snapshot.streamingThinkingContent,
   };
+}
+
+/** Optional artifact references omitted by a snapshot cannot retract a completed image. */
+function preserveCompletedImageArtifact(
+  previous: RuntimeConversationItem | undefined,
+  incoming: RuntimeConversationItem,
+): RuntimeConversationItem {
+  if (previous?.type !== "block" || incoming.type !== "block") return incoming;
+  const local = previous.block;
+  const snapshot = incoming.block;
+  if (
+    local.type !== "tool" ||
+    snapshot.type !== "tool" ||
+    local.toolName !== "image_generation" ||
+    snapshot.toolName !== local.toolName ||
+    local.status !== "done" ||
+    snapshot.status !== "done"
+  )
+    return incoming;
+  const artifact = local.renderPayload;
+  const payload = snapshot.renderPayload;
+  if (
+    !artifact ||
+    typeof artifact !== "object" ||
+    Array.isArray(artifact) ||
+    Reflect.get(artifact, "kind") !== "image_generation"
+  )
+    return incoming;
+  if (
+    payload !== undefined &&
+    (!payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload) ||
+      Reflect.get(payload, "kind") !== "image_generation" ||
+      Object.hasOwn(payload, "source") ||
+      Object.hasOwn(payload, "imageBase64"))
+  )
+    return incoming;
+  if (!hasGeneratedImageArtifact(artifact)) return incoming;
+  return {
+    ...incoming,
+    block: { ...snapshot, renderPayload: { ...artifact, ...payload } },
+  };
+}
+
+function hasGeneratedImageArtifact(payload: object): boolean {
+  const source = Reflect.get(payload, "source");
+  const inline = Reflect.get(payload, "imageBase64");
+  return (
+    (typeof inline === "string" && inline.trim().length > 0) ||
+    Boolean(
+      source &&
+      typeof source === "object" &&
+      !Array.isArray(source) &&
+      Reflect.get(source, "type") === "workspace_file" &&
+      ["deviceId", "workspacePath", "path"].every((key) => {
+        const value = Reflect.get(source, key);
+        return typeof value === "string" && value.trim().length > 0;
+      }),
+    )
+  );
 }
 
 export function prependRuntimeConversationItems(
@@ -274,7 +345,7 @@ export function mergeRuntimeConversationItems(
   const mergedLocalItems = canonicalLocalItems.map(
     (item) => snapshotById.get(item.id) ?? item,
   );
-  const items = insertMissingSnapshotItems(
+  const items = insertMissingOrderedEntries(
     mergedLocalItems,
     mergedSnapshotItems,
   );
@@ -487,101 +558,6 @@ export function consumeAssistantTextCandidate(
   while (queue.consumedIndexes.has(queue.cursor)) queue.cursor += 1;
 }
 
-export interface RuntimeConversationItemNode {
-  item: RuntimeConversationItem;
-  previous: RuntimeConversationItemNode | null;
-  next: RuntimeConversationItemNode | null;
-}
-
-export function insertMissingSnapshotItems(
-  localItems: RuntimeConversationItem[],
-  snapshotItems: RuntimeConversationItem[],
-): RuntimeConversationItem[] {
-  const list = runtimeConversationItemList(localItems);
-  const initialIds = new Set(list.firstById.keys());
-  const nextInitialId = nextInitialSnapshotItemIds(snapshotItems, initialIds);
-  let previousSnapshotNode: RuntimeConversationItemNode | null = null;
-  snapshotItems.forEach((item, index) => {
-    const existing = list.firstById.get(item.id);
-    if (existing) {
-      previousSnapshotNode = existing;
-      return;
-    }
-    const nextNode = list.firstById.get(nextInitialId[index] ?? "");
-    const node = insertRuntimeConversationItemNode(
-      list,
-      item,
-      nextNode ?? null,
-      nextNode ? null : (previousSnapshotNode ?? list.tail),
-    );
-    list.firstById.set(item.id, node);
-    previousSnapshotNode = node;
-  });
-  return runtimeConversationItemsFromList(list.head);
-}
-
-export function nextInitialSnapshotItemIds(
-  snapshotItems: RuntimeConversationItem[],
-  initialIds: Set<string>,
-): Array<string | null> {
-  const nextIds = Array<string | null>(snapshotItems.length).fill(null);
-  let nextId: string | null = null;
-  for (let index = snapshotItems.length - 1; index >= 0; index -= 1) {
-    nextIds[index] = nextId;
-    const id = snapshotItems[index]?.id;
-    if (id && initialIds.has(id)) nextId = id;
-  }
-  return nextIds;
-}
-
-export function runtimeConversationItemList(items: RuntimeConversationItem[]): {
-  head: RuntimeConversationItemNode | null;
-  tail: RuntimeConversationItemNode | null;
-  firstById: Map<string, RuntimeConversationItemNode>;
-} {
-  const list = {
-    head: null as RuntimeConversationItemNode | null,
-    tail: null as RuntimeConversationItemNode | null,
-    firstById: new Map<string, RuntimeConversationItemNode>(),
-  };
-  items.forEach((item) => {
-    const node = insertRuntimeConversationItemNode(list, item, null, list.tail);
-    if (!list.firstById.has(item.id)) list.firstById.set(item.id, node);
-  });
-  return list;
-}
-
-export function insertRuntimeConversationItemNode(
-  list: {
-    head: RuntimeConversationItemNode | null;
-    tail: RuntimeConversationItemNode | null;
-  },
-  item: RuntimeConversationItem,
-  before: RuntimeConversationItemNode | null,
-  after: RuntimeConversationItemNode | null,
-): RuntimeConversationItemNode {
-  const previous = before?.previous ?? after;
-  const next = before ?? after?.next ?? null;
-  const node = { item, previous, next };
-  if (previous) previous.next = node;
-  else list.head = node;
-  if (next) next.previous = node;
-  else list.tail = node;
-  return node;
-}
-
-export function runtimeConversationItemsFromList(
-  head: RuntimeConversationItemNode | null,
-): RuntimeConversationItem[] {
-  const items: RuntimeConversationItem[] = [];
-  let node = head;
-  while (node) {
-    items.push(node.item);
-    node = node.next;
-  }
-  return items;
-}
-
 export function isEquivalentAssistantTextRepresentation(
   local: RuntimeConversationItem,
   snapshot: RuntimeConversationItem,
@@ -647,8 +623,10 @@ export function mergeRuntimeConversationItem(
     ])[0];
   }
 
+  // A command can exit while its containing model turn is still streaming.
+  const localCommand = commandExecutionPayload(local.block);
   if (
-    preserveLocalTerminal &&
+    (preserveLocalTerminal || localCommand) &&
     isTerminalProcessingBlockStatus(local.block.status) &&
     !isTerminalProcessingBlockStatus(snapshotBlock.status)
   ) {
@@ -656,6 +634,13 @@ export function mergeRuntimeConversationItem(
       ...snapshot,
       block: {
         ...snapshotBlock,
+        ...(localCommand &&
+          snapshotBlock.type === "tool" && {
+            renderPayload: mergeCommandExecutionPayload(
+              snapshotBlock.renderPayload,
+              localCommand,
+            ),
+          }),
         status: local.block.status,
         completedAt: local.block.completedAt,
         durationMs: local.block.durationMs,

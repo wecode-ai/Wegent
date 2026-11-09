@@ -44,6 +44,11 @@ export function TemplatePreview({
           </p>
         )}
       </div>
+      {!!document.spec.resources.collaboration.agents?.length && (
+        <p data-testid="template-preview-agents" className="collaboration-template-muted">
+          {m.embeddedAgents}
+        </p>
+      )}
       {document.spec.resources.collaboration.groups.map(group => (
         <section key={group.key}>
           <h3>{group.name}</h3>
@@ -51,9 +56,13 @@ export function TemplatePreview({
             {group.roles.map(role => (
               <div key={role.key}>
                 <strong>{role.name}</strong>
-                {role.defaultKind === 'agent' && (
+                {(role.agentKey || role.defaultKind === 'agent') && (
                   <span className="collaboration-template-meta">
-                    {locale === 'zh-CN' ? ' · 默认智能体' : ' · Agent by default'}
+                    {role.agentKey
+                      ? ` · ${m.autoCreate}`
+                      : locale === 'zh-CN'
+                        ? ' · 默认智能体'
+                        : ' · Agent by default'}
                   </span>
                 )}
                 <p>{role.responsibility}</p>

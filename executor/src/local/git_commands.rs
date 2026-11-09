@@ -614,7 +614,7 @@ pub async fn worktree_remove(
 
 /// Locate `gh` or `glab` using the executor PATH with Windows PATHEXT
 /// handling, mirroring `shutil.which` in the removed Python detection script.
-pub(super) fn resolve_cli_executable(tool: &str, env: &HashMap<String, String>) -> Option<PathBuf> {
+pub(crate) fn resolve_cli_executable(tool: &str, env: &HashMap<String, String>) -> Option<PathBuf> {
     let path = env.get("PATH").map(String::as_str).unwrap_or_default();
     #[cfg(windows)]
     let extensions = env
@@ -711,6 +711,22 @@ pub async fn hosting_cli_status(
                 );
             }
         };
+    if tool == "gh" {
+        let health =
+            crate::services::github_cli::health(&process_env, timeout, "code_hosting").await;
+        if health["errorCode"] == "gh_health_timeout" {
+            return cli_timeout_result(tool, &executable, started_at, version_value);
+        }
+        return cli_result(
+            tool,
+            &executable,
+            started_at,
+            health["status"] == "ok",
+            version_value,
+            health["errorCode"].as_str().map(str::to_owned),
+            String::new(),
+        );
+    }
     let auth_output =
         match run_cli_probe(&executable, &process_env, &["auth", "status"], timeout).await {
             Ok(output) => output,

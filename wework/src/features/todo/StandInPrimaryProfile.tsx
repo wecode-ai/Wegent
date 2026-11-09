@@ -1,12 +1,31 @@
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
-import { ArrowLeft, ChevronRight, X } from 'lucide-react'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+  type ReactNode,
+} from 'react'
 import { dequal } from 'dequal'
-import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
+import {
+  connectionChangeEnablesIdentity,
+  newStandInRole,
+  type PersonalStandInSettings,
+} from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { CollaborationProject } from '@wegent/collaboration'
-import { StandInConnectionSettings } from './StandInConnectionSettings'
+import {
+  StandInConnectionSettings,
+  type StandInConnectionNavigationHandle,
+} from './StandInConnectionSettings'
+import {
+  StandInSettingsHeader,
+  StandInSettingsActions,
+  StandInSettingsEntry,
+} from './StandInSettingsLayout'
 import { StandInComposer } from './StandInComposer'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -15,8 +34,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
-import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
 
+/** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
   settings,
   saving,
@@ -32,6 +51,9 @@ export function StandInPrimaryProfile({
   onSelectDevice,
   initialCalendar = false,
   onCalendarViewChange,
+  onReload,
+  management,
+  footerLeading,
 }: {
   settings: PersonalStandInSettings
   saving: boolean
@@ -47,19 +69,36 @@ export function StandInPrimaryProfile({
   onSelectDevice(deviceId: string): void
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
+  onReload?(): void
+  management?: ReactNode
+  footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
+  const defaultCollaboration = {
+    ...newStandInRole(settings.executionDeviceId).collaboration,
+    policy: { automatic: true, askBeforeAct: true, immediate: false },
+  }
   // Consolidate the old two-field profile without dropping either saved value.
   const original = {
     ...saved,
+    collaboration: saved.collaboration ?? defaultCollaboration,
+    calendar: saved.calendar,
+    connections: saved.connections ?? [],
     prompt: '',
     preferences: [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
   }
   const [draft, setDraft] = useState(original)
+  const [baseline, setBaseline] = useState(original)
+  if (!dequal(baseline, original)) {
+    setBaseline(original)
+    if (dequal(draft, baseline)) setDraft(original)
+  }
   const [connections, setConnections] = useState(initialCalendar)
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
+  const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
+  const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
   const calendarViewChanged = useCallback(
     (open: boolean) => {
       setCalendarOpen(open)
@@ -83,7 +122,10 @@ export function StandInPrimaryProfile({
         }
       })
       .catch(cause => {
-        if (active) setRuntimeError(getStandInErrorMessage(cause))
+        if (active) {
+          reportStandInError('load_environment', cause, settings.executionDeviceId)
+          setRuntimeError(getStandInErrorMessage(cause, 'load_environment_failed'))
+        }
       })
     return () => {
       active = false
@@ -91,15 +133,15 @@ export function StandInPrimaryProfile({
   }, [services.runtimeWorkApi, settings.executionDeviceId, reload])
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const dirty = !dequal(original, draft) || scheduleDirty
+
   const role = {
-    ...newStandInRole(settings.executionDeviceId, 'primary'),
+    ...newStandInRole(settings.executionDeviceId, '@primary'),
     ...draft,
-    collaboration: draft.collaboration ?? newStandInRole(settings.executionDeviceId).collaboration,
   }
   const navigation = useStandInPanelNavigation(!dequal(original, draft), saving, () =>
     setDiscard(true)
   )
-  const connectionRef = useRef<AutomationNavigationHandle>(null)
+  const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
   const requestLeave = (action: () => void) => {
     if (connectionRef.current)
       connectionRef.current.requestLeave(() => navigation.requestLeave(action))
@@ -111,92 +153,107 @@ export function StandInPrimaryProfile({
   return (
     <div
       ref={dialogRef}
-      className="flex min-h-full flex-col px-5"
+      className={`flex h-full min-h-0 flex-col px-5 ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
       data-testid="stand-in-primary-profile"
     >
-      <header className="sticky top-0 z-10 mb-5 flex items-center gap-3 border-b border-border bg-background py-4">
-        {connections && !calendarOpen && (
-          <button
-            type="button"
-            data-testid="stand-in-primary-back-to-settings"
-            aria-label={t('standIn.settings')}
-            onClick={() => {
-              setCalendarEntry(false)
-              setConnections(false)
-            }}
-            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
+      <StandInSettingsHeader
+        path={[
+          {
+            label: t('standIn.workspace.primary_profile'),
+            testId: 'stand-in-path-settings',
+            onClick: connections
+              ? () => {
+                  const back = () => {
+                    setCalendarEntry(false)
+                    setConnections(false)
+                  }
+                  if (connectionRef.current) connectionRef.current.requestLeave(back)
+                  else back()
+                }
+              : undefined,
+          },
+          ...(connections
+            ? [
+                {
+                  label: t('standIn.workspace.connections'),
+                  testId: 'stand-in-path-connections',
+                  onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
+                },
+              ]
+            : []),
+          ...(connections && connectionTitle
+            ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
+            : []),
+        ]}
+        title={t(
+          connections ? 'standIn.workspace.connections' : 'standIn.workspace.primary_profile'
         )}
-        <h2 className="heading-sm flex-1">
-          {t(connections ? 'standIn.workspace.connections' : 'standIn.workspace.primary_profile')}
-        </h2>
-        <button
-          type="button"
-          data-testid="stand-in-primary-profile-close"
-          aria-label={t('standIn.close')}
-          disabled={saving}
-          onClick={close}
-          className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </header>
+        disabled={saving}
+        back={
+          connections
+            ? {
+                testId: connectionDetailOpen
+                  ? 'stand-in-connections-back'
+                  : 'stand-in-primary-back-to-settings',
+                onClick: () => {
+                  if (connectionDetailOpen) {
+                    connectionRef.current?.back()
+                    return
+                  }
+                  setCalendarEntry(false)
+                  setConnections(false)
+                },
+              }
+            : { testId: 'stand-in-primary-back', onClick: close }
+        }
+        close={{ testId: 'stand-in-primary-profile-close', onClick: close }}
+      />
       {!connections && (
         <>
-          <label className="mb-5 flex min-h-9 items-center justify-between gap-3">
-            <span>{t('standIn.workspace.receive_new')}</span>
-            <input
-              type="checkbox"
-              data-testid="stand-in-primary-enabled"
-              checked={draft.enabled}
-              disabled={saving}
-              onChange={event => setDraft({ ...draft, enabled: event.target.checked })}
-              className="accent-text-primary"
-            />
-          </label>
-          <p className="mb-5 text-xs text-text-muted">{t('standIn.workspace.pause_help')}</p>
           <label className="grid gap-2">
             <span>{t('standIn.workspace.profile_instructions')}</span>
-            <textarea
-              data-testid="stand-in-preferences"
-              value={draft.preferences}
-              disabled={saving}
-              onChange={event => setDraft({ ...draft, preferences: event.target.value })}
-              placeholder={t('standIn.workspace.profile_instructions_placeholder')}
-              rows={5}
-              className="w-full resize-y rounded-lg border border-border bg-transparent p-3 text-sm"
-            />
+            <div className="rounded-lg border border-solid border-border bg-background focus-within:border-text-tertiary focus-within:ring-1 focus-within:ring-focus/20">
+              <textarea
+                data-testid="stand-in-preferences"
+                value={draft.preferences}
+                disabled={saving}
+                onChange={event => setDraft({ ...draft, preferences: event.target.value })}
+                placeholder={t('standIn.workspace.profile_instructions_placeholder')}
+                rows={5}
+                className="block w-full resize-y appearance-none rounded-lg border-0 bg-transparent p-3 text-sm outline-none"
+              />
+            </div>
             <span className="text-xs text-text-muted">
               {t('standIn.workspace.profile_instructions_help')}
             </span>
           </label>
-          <button
-            type="button"
-            data-testid="stand-in-primary-connections-open"
-            onClick={() => setConnections(true)}
-            className="mt-6 flex min-h-11 w-full items-center gap-3 border-t border-border py-4 text-left"
-          >
-            <span className="flex-1">
-              <span className="block font-medium">{t('standIn.workspace.connections')}</span>
-              <span className="mt-1 block text-sm text-text-muted">
-                {t('standIn.workspace.connections_help')}
-              </span>
-            </span>
-            <ChevronRight className="h-4 w-4" />
-          </button>
+          <div className="mt-6">
+            <StandInSettingsEntry
+              label={t('standIn.workspace.connections')}
+              description={t('standIn.workspace.connections_help')}
+              testId="stand-in-primary-connections-open"
+              disabled={saving}
+              onClick={() => setConnections(true)}
+            />
+          </div>
         </>
       )}
       {connections && (
-        <div>
+        <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'flex flex-1 flex-col'}>
           <StandInConnectionSettings
             ref={connectionRef}
             onNavigate={navigation.requestLeave}
             hideHeading
             initialCalendar={calendarEntry}
             onCalendarViewChange={calendarViewChanged}
+            onDetailViewChange={setConnectionDetailOpen}
+            onDetailTitleChange={setConnectionTitle}
             role={role}
+            savedConfiguration={{
+              connections: original.connections,
+              collaboration: original.collaboration,
+              calendar: original.calendar,
+            }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
             onScheduleDirtyChange={setScheduleDirty}
             projects={projects}
@@ -207,8 +264,10 @@ export function StandInPrimaryProfile({
             onChange={value =>
               setDraft({
                 ...draft,
+                enabled: original.enabled || connectionChangeEnablesIdentity(original, value),
                 collaboration: value.collaboration,
-                connections: value.connections,
+                calendar: value.calendar,
+                connections: value.connections ?? [],
               })
             }
           />
@@ -228,7 +287,6 @@ export function StandInPrimaryProfile({
           <StandInComposer
             draft={role}
             showPrompt={false}
-            controls={null}
             onChange={update => {
               setDraft(current => {
                 const next = typeof update === 'function' ? update({ ...role, ...current }) : update
@@ -272,11 +330,6 @@ export function StandInPrimaryProfile({
           )}
         </section>
       )}
-      {error && (
-        <p role="alert" className="mt-4 text-sm text-error">
-          {error}
-        </p>
-      )}
       <ConfirmDialog
         open={discard}
         destructive
@@ -295,27 +348,33 @@ export function StandInPrimaryProfile({
           navigation.confirmLeave(onClose)
         }}
       />
-      {!calendarOpen && (
-        <footer className="sticky bottom-0 z-10 mt-6 flex justify-end gap-2 border-t border-border bg-background py-4">
-          <button
-            type="button"
-            data-testid="stand-in-primary-cancel"
-            disabled={saving}
-            onClick={close}
-            className="min-h-9 rounded-lg px-3 text-sm hover:bg-muted"
-          >
-            {t('standIn.cancel')}
-          </button>
-          <button
-            type="button"
-            data-testid="stand-in-primary-save"
-            disabled={saving || !dirty || scheduleDirty}
-            onClick={() => void onSave({ ...settings, primary: draft })}
-            className="min-h-9 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50"
-          >
-            {t('standIn.save')}
-          </button>
-        </footer>
+      {!connections && management}
+      {!scheduleDirty && (
+        <StandInSettingsActions
+          prefix="stand-in-primary"
+          leading={footerLeading}
+          disabled={saving}
+          saveDisabled={saving || !dirty || scheduleDirty}
+          onCancel={close}
+          onSave={() => void onSave({ ...settings, primary: draft })}
+        >
+          {error && (
+            <div role="alert" className="w-full text-sm text-destructive">
+              <p>{error}</p>
+              {onReload && (
+                <button
+                  type="button"
+                  data-testid="stand-in-primary-settings-retry"
+                  disabled={saving}
+                  onClick={onReload}
+                  className="min-h-8 underline"
+                >
+                  {t('standIn.reload')}
+                </button>
+              )}
+            </div>
+          )}
+        </StandInSettingsActions>
       )}
     </div>
   )

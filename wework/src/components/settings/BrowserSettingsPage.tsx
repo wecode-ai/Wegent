@@ -155,6 +155,19 @@ export function BrowserSettingsPage() {
         </h2>
         <SettingsGroup>
           <SettingsRow
+            label={t('workbench.browser_settings_full_control')}
+            description={t('workbench.browser_settings_full_control_description')}
+            control={
+              <SettingsSwitch
+                data-testid="browser-full-control-toggle"
+                checked={preferences.browserFullControl}
+                disabled={controlsDisabled}
+                onCheckedChange={checked => void savePreferences({ browserFullControl: checked })}
+                aria-label={t('workbench.browser_settings_full_control')}
+              />
+            }
+          />
+          <SettingsRow
             label={t('workbench.browser_settings_external_links')}
             description={t('workbench.browser_settings_external_links_description')}
             control={
@@ -273,7 +286,7 @@ export function BrowserSettingsPage() {
         <div
           data-testid="browser-settings-status"
           className={`mt-4 flex items-center gap-2 text-xs ${
-            error ? 'text-red-500' : 'text-text-secondary'
+            error ? 'text-destructive' : 'text-text-secondary'
           }`}
         >
           {(loading || saving) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

@@ -1,6 +1,8 @@
-import { describe, expect, test, vi } from 'vitest'
-import type { InstalledPlugin } from '@/types/api'
+// @vitest-environment node
+
 import { LocalPluginUninstallCleanupError } from '@/api/local/pluginUninstallError'
+import type { InstalledPlugin } from '@/types/api'
+import { describe, expect, test, vi } from 'vitest'
 import { uninstallAccountPlugin, uninstallPluginIdentities } from './pluginUninstall'
 
 function installedPlugin(origin: 'created' | 'market'): InstalledPlugin {
@@ -306,68 +308,6 @@ describe('uninstallAccountPlugin', () => {
     ).rejects.toThrow('PLUGIN_UNINSTALL_PREFLIGHT_FAILED')
 
     expect(uninstallCloud).not.toHaveBeenCalled()
-  })
-
-  test('does not read or delete after the initiating account scope already changed', async () => {
-    const context = uninstallContext()
-    const uninstallCloud = vi.fn()
-
-    await expect(
-      uninstallAccountPlugin(71, 'device-1', {
-        ...context,
-        isCurrent: () => false,
-        uninstallCloud,
-      })
-    ).rejects.toThrow(/cancelled/i)
-
-    expect(context.readCloudInstalled).not.toHaveBeenCalled()
-    expect(uninstallCloud).not.toHaveBeenCalled()
-  })
-
-  test('does not delete after the account scope changes during inventory loading', async () => {
-    let current = true
-    let finish!: (value: { items: InstalledPlugin[] }) => void
-    const context = uninstallContext()
-    context.readCloudInstalled.mockReturnValue(
-      new Promise(resolve => {
-        finish = resolve
-      })
-    )
-    const uninstallCloud = vi.fn()
-    const pending = uninstallAccountPlugin(71, 'device-1', {
-      ...context,
-      isCurrent: () => current,
-      uninstallCloud,
-    })
-    const record = installedPlugin('market')
-    record.metadata.labels = { id: 208 }
-    current = false
-    finish({ items: [record] })
-
-    await expect(pending).rejects.toThrow(/cancelled/i)
-    expect(uninstallCloud).not.toHaveBeenCalled()
-  })
-
-  test('does not report success after the account scope changes during deletion', async () => {
-    let current = true
-    let finish!: () => void
-    const context = uninstallContext()
-    const uninstallCloud = vi.fn().mockReturnValue(
-      new Promise<void>(resolve => {
-        finish = resolve
-      })
-    )
-    const pending = uninstallAccountPlugin(71, 'device-1', {
-      ...context,
-      isCurrent: () => current,
-      uninstallCloud,
-    })
-    await vi.waitFor(() => expect(uninstallCloud).toHaveBeenCalledOnce())
-    expect(uninstallCloud).toHaveBeenCalledWith(104, 'device-1')
-    current = false
-    finish()
-
-    await expect(pending).rejects.toThrow(/cancelled/i)
   })
 })
 

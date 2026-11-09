@@ -1,7 +1,7 @@
-import { APIRequestContext, expect, test } from '@playwright/test'
+import { APIRequestContext } from '@playwright/test'
+import { test, expect, EXECUTOR_USER, executorMockUrl } from '../../fixtures/executor-test'
 import { execFileSync } from 'node:child_process'
 import { gunzipSync } from 'node:zlib'
-import { ADMIN_USER } from '../../config/test-users'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 import {
   Roots,
@@ -14,7 +14,7 @@ import {
 
 const API = process.env.E2E_API_URL || 'http://localhost:8000'
 const MANAGER = `${process.env.EXECUTOR_MANAGER_URL || 'http://localhost:8001'}/executor-manager`
-const MOCK = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
+const MOCK = executorMockUrl()
 const IMAGE = process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const TIMEOUT = 120_000
 
@@ -39,7 +39,10 @@ test.describe('Pipeline native session archive and continuation', () => {
         const followup = `ARCHIVE_RESUME_WITH_NATIVE_HISTORY_${prefix}`
         const interrupted = `CANCEL_FIRST_NATIVE_CLAUDE_TURN_${prefix}`
         const cleanup: Array<[string, string]> = []
-        const login = await createApiClient(request).login(ADMIN_USER.username, ADMIN_USER.password)
+        const login = await createApiClient(request).login(
+          EXECUTOR_USER.username,
+          EXECUTOR_USER.password
+        )
         expect(login.data?.access_token).toBeTruthy()
         const headers = createBackendRequestHeaders(login.data!.access_token)
         const internalToken =
@@ -51,15 +54,15 @@ test.describe('Pipeline native session archive and continuation', () => {
         let runtime: Runtime | undefined
         let sandboxCreated = false
         try {
-          // This suite has one worker; discard large requests from earlier specs.
+          // Discard only this worker's captured requests from earlier cases.
           await postJson(request, `${MOCK}/clear-requests`, {})
           const model = `${prefix}-model`
           const shell = `${prefix}-shell`
           const team = `${prefix}-team`
           const provider =
             engine === 'ClaudeCode'
-              ? process.env.E2E_CLAUDE_MODEL_SERVER_URL || MOCK
-              : process.env.E2E_CODEX_MODEL_SERVER_URL || MOCK
+              ? executorMockUrl(process.env.E2E_CLAUDE_MODEL_SERVER_URL)
+              : executorMockUrl(process.env.E2E_CODEX_MODEL_SERVER_URL)
           await postJson(
             request,
             `${API}/api/v1/namespaces/default/models`,
@@ -149,7 +152,7 @@ test.describe('Pipeline native session archive and continuation', () => {
               matchText: interrupted,
               responseContent: `INTERRUPTED_${prefix}`,
               chunkDelayMs: 0,
-              doneDelayMs: 180_000,
+              holdResponse: true,
             })
           }
           const task = await postJson(

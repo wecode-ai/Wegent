@@ -23,10 +23,13 @@ export async function withShortConversationViewport(control, description, verify
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
         `${description}: resized viewport`
       )
-      if (viewport.clientHeight >= 1000 && viewport.scrollHeight <= viewport.clientHeight) break
+      if (viewport.viewportWidth === 1280 && viewport.scrollHeight <= viewport.clientHeight) break
       await new Promise(resolve => setTimeout(resolve, 100))
     } while (Date.now() < deadline)
-    assert.ok(viewport.clientHeight >= 1000, `${description}: the tall viewport did not resize`)
+    assert.ok(
+      viewport.viewportWidth === 1280,
+      `${description}: the viewport did not resize to the requested width: ${JSON.stringify(viewport)}`
+    )
     assert.ok(
       viewport.scrollHeight <= viewport.clientHeight,
       `${description}: the short-conversation fixture overflows (${viewport.scrollHeight}px / ${viewport.clientHeight}px)`

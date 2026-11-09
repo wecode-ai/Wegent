@@ -343,7 +343,7 @@ describe('DocumentList summary header', () => {
     mockGetDocumentProtection
       .mockResolvedValueOnce({
         original_download_allowed: true,
-        watermark_text: null,
+        watermark_text: 'reader 220750',
       })
       .mockReturnValueOnce(protectedKnowledgeBase)
 
@@ -367,7 +367,7 @@ describe('DocumentList summary header', () => {
     await act(async () => {
       resolveProtectedKnowledgeBase!({
         original_download_allowed: true,
-        watermark_text: null,
+        watermark_text: 'reader 220750',
       })
     })
 

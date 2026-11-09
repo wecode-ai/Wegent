@@ -16,6 +16,10 @@ Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互�
 
 Executor 启动 Codex 时会注入 browser MCP server 配置。模型调用浏览器工具时，MCP server 读取当前 bridge identity，向 Wework 进程内的 loopback bridge 发送受控请求。bridge 再在主线程调度 Electron browser view 的导航、页面检查、DOM 动作、等待和截图。
 
+历史读取、上下文压缩和 MCP App 操作也可能通过 `thread/resume` 冷恢复 Codex 会话。恢复时必须复用正常启动的任务级 MCP 配置，包括浏览器的任务 label、认证环境变量以及项目空间上下文，同时保留会话已有的模型设置。原生 Goal 可以在恢复后立即续跑；若只恢复 shell 环境而遗漏 MCP，浏览器面板仍可能显示页面，但模型拿不到浏览器工具。`embedded-browser` 桌面检查点会重启真实 app-server、刷新历史，并验证同一线程的浏览器和项目空间 MCP 均已连接，无需再发送用户消息。 检查点为浏览器所属的本机 Executor 创建独立任务，并等待在途历史读取结束后，空闲重启实际获准。
+
+后台任务的页面检查和 DOM 操作统一通过 Chromium `Runtime.evaluate` 返回结果，复用现有 debugger session 租约。隐藏 guest 中 Electron `executeJavaScript` 的脚本可能已经执行，但 isolated world 的回复 Promise 仍不完成；不得通过再次执行原操作唤醒回复，以免重复修改页面。求值必须等待页面 Promise、按值返回结果、传播异常，并保留已有 inspector 的连接。
+
 每个 Wework 进程启动时都会绑定独立的随机本地桥接端口，并把 bridge identity 原子写入当前 Executor home 的 `runtime/embedded-browser-bridge.json`。identity 包含 schema 版本、进程 PID、loopback 地址、认证 token 和启动时间。文件目录权限应限制为当前用户可读写，token 不得写入日志。MCP server 每次请求前读取最新 identity，并只接受 loopback 地址，避免同时运行的多个 Wework 实例把浏览器请求发送到错误窗口。
 
 Electron 启动 bridge 后必须把 runtime 文件路径传给托管 Executor。Executor 生成 Codex browser MCP 配置时只传递该文件路径，不得把当前 bridge URL 或 token 固化到配置中；否则 Electron 使用随机端口或 bridge 重启后，MCP 会继续连接过期地址，并绕过 runtime identity 的刷新机制。
@@ -185,7 +189,7 @@ Electron 的嵌入页面必须由 React renderer 挂载 `<webview>`，并放在�
 
 仍使用独立原生 WebView 的桌面实现不能依赖 React `z-index`。当主界面浮层与这类浏览器区域相交时，浏览器面板必须把原生 WebView 设为不可见，并在浮层移除或不再相交后恢复。自定义浮层无法通过语义 role 或共享层级类识别时，应添加 `data-embedded-browser-occlusion`，不要在各业务组件中重复调用原生显示命令。
 
-页面状态轮询维护的是浏览器真实 URL，地址栏维护的是用户输入草稿。地址栏聚焦期间，轮询可以更新页面 URL、标题和图标，但不得覆盖输入草稿；失焦时再恢复真实 URL。新增导航或页面状态同步路径时必须保留这条边界。
+页面状态轮询维护的是浏览器真实 URL，地址栏维护的是用户输入草稿。地址栏聚焦期间，轮询可以更新页面 URL、标题和图标，但不得覆盖输入草稿；输入焦点真正离开地址栏时再恢复真实 URL。窗口失活产生的 `blur` 若仍保留该输入框的 DOM 焦点，不得清空编辑状态或回写旧 URL。新增导航或页面状态同步路径时必须保留这条边界。
 
 ## WebView 兼容性
 

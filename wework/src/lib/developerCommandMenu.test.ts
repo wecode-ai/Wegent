@@ -1,7 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
-import { fireEvent } from '@testing-library/react'
 import { installDeveloperCommandMenu } from './developerCommandMenu'
-import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 
 const desktopInvokeMock = vi.hoisted(() => vi.fn())
 const requestLocalExecutorMock = vi.hoisted(() => vi.fn())
@@ -45,19 +43,6 @@ describe('developerCommandMenu', () => {
     vi.clearAllMocks()
   })
 
-  test('opens the command menu with the developer shortcut', () => {
-    dispatchDeveloperShortcut()
-
-    expect(screenCommand('reload')).toBeInTheDocument()
-    expect(screenCommand('open-debug-panel')).toBeInTheDocument()
-    expect(screenCommand('simulate-app-update')).toBeInTheDocument()
-    expect(screenCommand('toggle-performance-diagnostics')).toBeInTheDocument()
-    expect(screenCommand('toggle-stream-logs')).toBeInTheDocument()
-    expect(screenCommand('print-performance-snapshot')).toBeInTheDocument()
-    expect(screenCommand('open-log-directory')).toBeInTheDocument()
-    expect(screenCommand('open-web-inspector')).toBeInTheDocument()
-  })
-
   test('toggles Codex stream logs through the local executor', async () => {
     requestLocalExecutorMock
       .mockResolvedValueOnce({ enabled: false })
@@ -88,102 +73,50 @@ describe('developerCommandMenu', () => {
     expect(localStorage.getItem('wework:debug-runtime-chat-stream')).toBeNull()
   })
 
-  test('dispatches an event to simulate an app update', () => {
-    const listener = vi.fn()
-    window.addEventListener(APP_UPDATE_SIMULATE_EVENT, listener)
-    dispatchDeveloperShortcut()
-
-    screenCommand('simulate-app-update').click()
-
-    expect(listener).toHaveBeenCalledTimes(1)
-    window.removeEventListener(APP_UPDATE_SIMULATE_EVENT, listener)
-  })
-
-  test('opens the app log directory through Electron', () => {
-    dispatchDeveloperShortcut()
-
-    screenCommand('open-log-directory').click()
-
-    expect(desktopInvokeMock).toHaveBeenCalledWith('developer.openLogDirectory')
-  })
-
-  test('opens the main WebView inspector through Electron', () => {
-    dispatchDeveloperShortcut()
-
-    screenCommand('open-web-inspector').click()
-
-    expect(desktopInvokeMock).toHaveBeenCalledWith('developer.openDevTools')
-  })
-
-  test('opens the debug panel with active task state and debug logs', () => {
-    dispatchDeveloperShortcut()
-
-    screenCommand('open-debug-panel').click()
-
-    expect(document.getElementById('wework-debug-panel')).toBeInTheDocument()
-    expect(document.body).toHaveTextContent('Active Task State (taskKnown=true')
-    expect(document.body).toHaveTextContent('Memory Diagnostics')
-    expect(document.body).toHaveTextContent('Transcript vs Streaming Style')
-    expect(document.body).toHaveTextContent('"taskId": "task-1"')
-    expect(document.body).toHaveTextContent('"toolOutputApproxChars": 128')
-    expect(document.body).toHaveTextContent('Transcript Loaded')
-    expect(document.body).toHaveTextContent('Current Streaming')
-    expect(document.body).toHaveTextContent('loaded transcript response')
-    expect(document.body).toHaveTextContent('streaming response')
-    expect(document.body).toHaveTextContent('[Wework] sample debug')
-  })
-
-  test('collapses and expands the debug panel', () => {
+  test('keeps debug actions usable across refresh, collapse, reopen and close', () => {
     dispatchDeveloperShortcut()
     screenCommand('open-debug-panel').click()
 
-    screenButton('Collapse').click()
+    const expandedPanelSelector = '#wework-debug-panel [role="dialog"]'
+    expect(document.querySelector(expandedPanelSelector)).not.toBeNull()
 
-    expect(screenCollapsedDebugPanel()).toBeInTheDocument()
-    expect(screenCollapsedDebugPanel()).toHaveClass('h-8', 'group')
-    expect(screenCollapsedDebugPanel()).toHaveTextContent('Debug')
-    expect(screenCollapsedDebugPanel()).toHaveAttribute(
-      'title',
-      expect.stringContaining('Debug Panel - taskKnown=true')
-    )
-    expect(document.body).not.toHaveTextContent('Transcript vs Streaming Style')
+    getWorkbenchDebugSnapshotMock.mockClear()
+    screenDebugAction('refresh').click()
+    expect(getWorkbenchDebugSnapshotMock).toHaveBeenCalledOnce()
 
-    screenCollapsedDebugPanel().click()
+    screenDebugAction('clear-logs').click()
+    expect(clearWorkbenchDebugLogsMock).toHaveBeenCalledOnce()
 
-    expect(document.body).toHaveTextContent('Transcript vs Streaming Style')
-    expect(document.body).toHaveTextContent('Collapse')
-    expect(document.getElementById('wework-debug-panel')).not.toHaveAttribute('style')
+    screenDebugAction('collapse').click()
+    expect(document.querySelector(expandedPanelSelector)).toBeNull()
+
+    screenDebugAction('collapsed').click()
+    expect(document.querySelector(expandedPanelSelector)).not.toBeNull()
+
+    screenDebugAction('close').click()
+    expect(document.getElementById('wework-debug-panel')).toBeNull()
   })
 
-  test('drags the collapsed debug button without expanding it', () => {
+  test('restores the collapsed panel after Escape or a backdrop click', () => {
     dispatchDeveloperShortcut()
     screenCommand('open-debug-panel').click()
-    screenButton('Collapse').click()
 
-    const root = document.getElementById('wework-debug-panel')
-    const button = screenCollapsedDebugPanel()
-    vi.spyOn(root!, 'getBoundingClientRect').mockReturnValue({
-      left: 900,
-      top: 700,
-      width: 32,
-      height: 32,
-      right: 932,
-      bottom: 732,
-      x: 900,
-      y: 700,
-      toJSON: () => ({}),
-    })
+    const panel = document.getElementById('wework-debug-panel')!
+    panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(document.querySelector('#wework-debug-panel [role="dialog"]')).toBeNull()
 
-    fireEvent.pointerDown(button, { button: 0, clientX: 916, clientY: 716 })
-    fireEvent.pointerMove(window, { clientX: 816, clientY: 616 })
-    fireEvent.pointerUp(window)
-    fireEvent.click(button)
-
-    expect(root).toHaveStyle({ left: '800px', top: '600px' })
-    expect(screenCollapsedDebugPanel()).toBeInTheDocument()
-    expect(document.body).not.toHaveTextContent('Transcript vs Streaming Style')
+    screenDebugAction('collapsed').click()
+    panel.click()
+    expect(document.querySelector('#wework-debug-panel [role="dialog"]')).toBeNull()
+    expect(screenDebugAction('collapsed')).not.toBeNull()
   })
 })
+
+function screenDebugAction(action: string): HTMLButtonElement {
+  const element = document.querySelector<HTMLButtonElement>(`[data-testid="debug-panel-${action}"]`)
+  if (!element) throw new Error(`Debug panel action was not found: ${action}`)
+  return element
+}
 
 function dispatchDeveloperShortcut() {
   window.dispatchEvent(
@@ -203,23 +136,6 @@ function screenCommand(commandId: string): HTMLElement {
   )
   if (!element) {
     throw new Error(`Command was not found: ${commandId}`)
-  }
-  return element
-}
-
-function screenButton(label: string): HTMLButtonElement {
-  const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-  const button = buttons.find(item => item.textContent === label)
-  if (!button) {
-    throw new Error(`Button was not found: ${label}`)
-  }
-  return button
-}
-
-function screenCollapsedDebugPanel(): HTMLElement {
-  const element = document.querySelector<HTMLElement>('[data-testid="debug-panel-collapsed"]')
-  if (!element) {
-    throw new Error('Collapsed debug panel was not found')
   }
   return element
 }
@@ -411,6 +327,7 @@ function createDebugSnapshot() {
         hasMoreBefore: false,
         loadingMoreBefore: false,
         turnNavigationCount: 0,
+        beforeCursor: null,
         loadedRanges: [{ start: 0, end: 50 }],
       },
       subagentStatuses: [],

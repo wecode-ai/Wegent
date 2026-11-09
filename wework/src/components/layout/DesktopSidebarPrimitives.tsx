@@ -16,7 +16,7 @@ export function DesktopSidebarHeader({
 }: DesktopSidebarHeaderProps) {
   return (
     <div className="mb-1 flex h-9 shrink-0 items-center justify-between px-2">
-      <span className="min-w-0 truncate text-heading-sm font-semibold leading-6 text-[rgb(var(--color-sidebar-text-primary))]">
+      <span className="min-w-0 truncate text-heading-sm font-medium leading-6 text-[rgb(var(--color-sidebar-text-primary))]">
         {title}
       </span>
       {actions && (
@@ -32,16 +32,19 @@ interface DesktopSidebarNavItemProps {
   icon?: ComponentType<LucideProps>
   iconElement?: ReactNode
   label: string
+  badge?: ReactNode
   onClick: MouseEventHandler<HTMLButtonElement>
   selected?: boolean
   testId?: string
   onPointerEnter?: () => void
 }
 
+/** Renders a sidebar destination with an optional non-interactive status badge. */
 export function DesktopSidebarNavItem({
   icon: Icon,
   iconElement,
   label,
+  badge,
   onClick,
   selected,
   testId,
@@ -63,6 +66,7 @@ export function DesktopSidebarNavItem({
     >
       {iconElement ?? (Icon ? <Icon className="h-4 w-4 text-current" /> : null)}
       <span>{label}</span>
+      {badge}
     </button>
   )
 }

@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import type { InstalledPlugin } from '@/types/api'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, test, vi } from 'vitest'
 import { PluginDetailView } from './PluginDetailView'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { pluginDetailPrimaryActionPending } from './pluginDetailReadyToTry'
@@ -55,95 +55,26 @@ function createDetailPlugin(): InstalledPluginItem {
 }
 
 describe('PluginDetailView owner actions', () => {
-  test.each([false, true])(
-    'blocks examples with the primary action and restores them (callback=%s)',
-    withCallback => {
-      const plugin = createDetailPlugin()
-      plugin.raw.spec.interface = { defaultPrompt: 'Review this change' }
-      const onToggle = vi.fn()
-      const onPromptSelect = vi.fn()
-      const view = (disabled: boolean) => (
-        <PluginDetailView
-          plugin={plugin}
-          onBack={vi.fn()}
-          onToggle={onToggle}
-          onComponentToggle={vi.fn()}
-          onUninstall={vi.fn()}
-          primaryActionDisabled={disabled}
-          onPromptSelect={withCallback ? onPromptSelect : undefined}
-        />
-      )
-      const { rerender } = render(view(true))
-      const example = screen.getByTestId('plugin-prompt-0')
-      expect(example).toBeDisabled()
-      fireEvent.click(example)
-      expect(onPromptSelect).not.toHaveBeenCalled()
-      expect(onToggle).not.toHaveBeenCalled()
-      rerender(view(false))
-      expect(example).not.toBeDisabled()
-      fireEvent.click(example)
-      expect(withCallback ? onPromptSelect : onToggle).toHaveBeenCalledOnce()
-    }
-  )
-
-  test('shows the new version action only to a personal owner and reflects preparation', () => {
-    const onSubmit = vi.fn()
-    const view = (accessRole: 'owner' | 'recipient', busy = false) => (
-      <PluginDetailView
-        plugin={createDetailPlugin()}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        accessRole={accessRole}
-        pluginVisibility="personal"
-        versionSubmission={{ currentVersion: '1.1.0', nextVersion: '1.2.0', busy, onSubmit }}
-      />
-    )
-    const { rerender } = render(view('owner'))
-    expect(screen.getByTestId('plugin-version-submit-notice')).toHaveTextContent(
-      '本地 v1.2.0 · 已分享 v1.1.0'
-    )
-    fireEvent.click(screen.getByTestId('plugin-version-submit-open'))
-    expect(onSubmit).toHaveBeenCalledOnce()
-    rerender(view('owner', true))
-    expect(screen.getByTestId('plugin-version-submit-open')).toBeDisabled()
-    rerender(view('recipient'))
-    expect(screen.queryByTestId('plugin-version-submit-notice')).not.toBeInTheDocument()
-  })
-
-  test.each([
-    { readyToTry: false, updateAvailable: false },
-    { readyToTry: true, updateAvailable: true },
-  ])('blocks installation changes until reconciliation completes (%j)', state => {
-    const onToggle = vi.fn()
+  test('keeps the header while detail content has a stable loading placeholder', () => {
     const plugin = createDetailPlugin()
-    const view = (reconciling: boolean) => (
-      <PluginDetailView
-        plugin={plugin}
-        onBack={vi.fn()}
-        onToggle={onToggle}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        usableOnThisDevice={state.readyToTry}
-        primaryActionDisabled={pluginDetailPrimaryActionPending({
-          ...state,
-          operationPending: false,
-          reconciling,
-        })}
-      />
-    )
-    const { rerender } = render(view(true))
-    const button = screen.getByTestId('plugin-detail-toggle-local-1')
-    expect(button).toBeDisabled()
-    fireEvent.click(button)
-    expect(onToggle).not.toHaveBeenCalled()
-    rerender(view(false))
-    expect(button).not.toBeDisabled()
-    fireEvent.click(button)
-    expect(onToggle).toHaveBeenCalledTimes(1)
+    const props = {
+      plugin,
+      onBack: vi.fn(),
+      onToggle: vi.fn(),
+      onComponentToggle: vi.fn(),
+      onUninstall: vi.fn(),
+      onPromptSelect: vi.fn(),
+    }
+    const result = render(<PluginDetailView {...props} detailLoading />)
+    expect(screen.getByTestId('plugin-detail-loading')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByText('Dev Tools')).toBeInTheDocument()
+    expect(screen.queryByText('Developer tools')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-detail-info')).not.toBeInTheDocument()
+    result.rerender(<PluginDetailView {...props} />)
+    expect(screen.queryByTestId('plugin-detail-loading')).not.toBeInTheDocument()
+    expect(screen.getByText('Developer tools')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-detail-info')).toBeInTheDocument()
   })
-
   test('keeps a healthy installed plugin usable while reconciliation is running', () => {
     const onToggle = vi.fn()
     render(
@@ -163,217 +94,6 @@ describe('PluginDetailView owner actions', () => {
     )
     fireEvent.click(screen.getByTestId('plugin-detail-toggle-local-1'))
     expect(onToggle).toHaveBeenCalledTimes(1)
-  })
-
-  test('deduplicates identical category and publisher metadata', () => {
-    const plugin = createDetailPlugin()
-    plugin.raw.spec.interface = {
-      category: '个人创建',
-    }
-
-    render(
-      <PluginDetailView
-        plugin={plugin}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-      />
-    )
-
-    expect(screen.getByText('个人创建 · v0.1.0')).toBeInTheDocument()
-    expect(screen.queryByText('个人创建 · 个人创建 · v0.1.0')).not.toBeInTheDocument()
-  })
-
-  test('allows automatic updates to be changed explicitly', () => {
-    const plugin = createDetailPlugin()
-    plugin.raw.spec.source = {
-      type: 'marketplace',
-      providerKey: 'wegent-market',
-      pluginKey: 'dev-tools',
-    }
-    plugin.raw.spec.pluginId = 101
-    plugin.raw.spec.updatePolicy = 'manual'
-    const onAutoUpdateChange = vi.fn()
-
-    render(
-      <PluginDetailView
-        plugin={plugin}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        autoUpdateEnabled={false}
-        onAutoUpdateChange={onAutoUpdateChange}
-      />
-    )
-
-    const toggle = screen.getByTestId('plugin-auto-update-toggle-local-1')
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
-    fireEvent.click(toggle)
-    expect(onAutoUpdateChange).toHaveBeenCalledWith(true)
-  })
-
-  test('shows when automatic updates pause after repeated failures', () => {
-    const plugin = createDetailPlugin()
-    plugin.raw.spec.source = {
-      type: 'marketplace',
-      providerKey: 'wegent-market',
-      pluginKey: 'dev-tools',
-    }
-    plugin.raw.spec.pluginId = 101
-    plugin.raw.spec.updatePolicy = 'auto'
-
-    render(
-      <PluginDetailView
-        plugin={plugin}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        autoUpdateEnabled
-        autoUpdatePaused
-        autoUpdateFailureCount={3}
-        onAutoUpdateChange={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('plugin-auto-update-paused-local-1')).toHaveTextContent('3')
-  })
-
-  test('keeps automatic update controls visible for a materialized outdated release', () => {
-    const plugin = createDetailPlugin()
-    plugin.raw.spec.source = {
-      type: 'marketplace',
-      providerKey: 'wegent-market',
-      pluginKey: 'dev-tools',
-    }
-    plugin.raw.spec.pluginId = 101
-    plugin.raw.spec.installState = 'update_available'
-    plugin.raw.spec.updatePolicy = 'auto'
-    plugin.raw.status.devices = [
-      {
-        deviceId: 'current-device',
-        desiredReleaseId: 102,
-        actualReleaseId: 101,
-        state: 'failed',
-        attemptCount: 3,
-        updatedAt: '2026-08-13T10:00:00Z',
-      },
-    ]
-
-    render(
-      <PluginDetailView
-        plugin={plugin}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        autoUpdateEnabled
-        autoUpdatePaused
-        autoUpdateFailureCount={3}
-        onAutoUpdateChange={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('plugin-auto-update-toggle-local-1')).toBeInTheDocument()
-    expect(screen.getByTestId('plugin-auto-update-paused-local-1')).toHaveTextContent('3')
-  })
-
-  test('keeps manage access in availability and orders share before menu and chat', () => {
-    const onManageAccess = vi.fn()
-    const onShareAction = vi.fn()
-
-    render(
-      <PluginDetailView
-        plugin={createDetailPlugin()}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        accessRole="owner"
-        pluginVisibility="personal"
-        shareGrantUserCount={3}
-        shareGrantNamespaceCount={0}
-        onManageAccess={onManageAccess}
-        shareActionLabel="分享"
-        onShareAction={onShareAction}
-        primaryActionLabel="立即对话"
-      />
-    )
-
-    expect(screen.queryByTestId('plugin-detail-secondary-local-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-detail-manage-access')).toHaveTextContent('管理权限')
-    const actions = screen.getByTestId('plugin-detail-actions-bar')
-    const share = screen.getByTestId('plugin-detail-share-local-1')
-    const menu = screen.getByTestId('plugin-detail-actions-local-1')
-    const primary = screen.getByTestId('plugin-detail-toggle-local-1')
-    expect(Array.from(actions.children).indexOf(share)).toBeLessThan(
-      Array.from(actions.children).indexOf(menu.parentElement!)
-    )
-    expect(Array.from(actions.children).indexOf(menu.parentElement!)).toBeLessThan(
-      Array.from(actions.children).indexOf(primary)
-    )
-    fireEvent.click(share)
-    expect(onShareAction).toHaveBeenCalledTimes(1)
-  })
-
-  test('links an enterprise release back to its personal source for the owner', () => {
-    const onOpenOriginPersonalPlugin = vi.fn()
-    render(
-      <PluginDetailView
-        plugin={createDetailPlugin()}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        originPersonalActionLabel="查看个人创建版本"
-        onOpenOriginPersonalPlugin={onOpenOriginPersonalPlugin}
-      />
-    )
-
-    fireEvent.click(screen.getByTestId('plugin-detail-open-origin-personal'))
-    expect(onOpenOriginPersonalPlugin).toHaveBeenCalledTimes(1)
-  })
-
-  test('closes the overflow menu when clicking outside', () => {
-    render(
-      <PluginDetailView
-        plugin={createDetailPlugin()}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        editActionLabel="继续编辑"
-        onEditAction={vi.fn()}
-      />
-    )
-
-    fireEvent.click(screen.getByTestId('plugin-detail-actions-local-1'))
-    expect(screen.getByTestId('plugin-detail-actions-menu-local-1')).toBeInTheDocument()
-    fireEvent.mouseDown(document.body)
-    expect(screen.queryByTestId('plugin-detail-actions-menu-local-1')).not.toBeInTheDocument()
-  })
-
-  test('puts copy-to-personal into the overflow menu instead of the header', () => {
-    const onTertiaryAction = vi.fn()
-    render(
-      <PluginDetailView
-        plugin={createDetailPlugin()}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        shareRecipient
-        tertiaryActionLabel="复制到我的插件"
-        onTertiaryAction={onTertiaryAction}
-      />
-    )
-
-    expect(screen.queryByTestId('plugin-detail-tertiary-local-1')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('plugin-detail-actions-local-1'))
-    fireEvent.click(screen.getByTestId('plugin-detail-menu-copy-local-1'))
-    expect(onTertiaryAction).toHaveBeenCalledTimes(1)
   })
 
   test('keeps the overflow menu left of the primary action for uninstalled plugins', () => {

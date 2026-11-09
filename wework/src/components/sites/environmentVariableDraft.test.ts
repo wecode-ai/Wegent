@@ -1,10 +1,8 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { EnvironmentSnapshot } from '@/api/sites'
-import {
-  buildEnvironmentPatchOperations,
-  createEnvironmentDraft,
-  validateEnvironmentDraft,
-} from './environmentVariableDraft'
+import { describe, expect, test } from 'vitest'
+import { buildEnvironmentPatchOperations, createEnvironmentDraft } from './environmentVariableDraft'
 
 const snapshot: EnvironmentSnapshot = {
   revision_id: 'env-1',
@@ -52,14 +50,5 @@ describe('environment variable draft', () => {
         value: 'https://new.example.test',
       },
     ])
-  })
-
-  test('validates duplicate, reserved, and malformed keys before saving', () => {
-    const rows = createEnvironmentDraft(snapshot)
-    expect(validateEnvironmentDraft([{ ...rows[0], key: 'bad-key' }])).toBe('invalid_key')
-    expect(validateEnvironmentDraft([{ ...rows[0], key: 'WEGENT_TOKEN' }])).toBe('reserved_key')
-    expect(validateEnvironmentDraft([rows[0], { ...rows[1], key: rows[0].key }])).toBe(
-      'duplicate_key'
-    )
   })
 })

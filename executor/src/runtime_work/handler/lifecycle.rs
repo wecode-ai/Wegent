@@ -11,6 +11,92 @@ use crate::runtime_work::{
 use crate::runtime_work::lifecycle::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn native_task_holds_capacity(&self, task_id: &str) -> bool {
+        self.store
+            .read_task(task_id, |link| {
+                link.runtime == "codex"
+                    && native_execution_state(link).is_some_and(|state| {
+                        state.process_generation.is_some()
+                            && state.phase != NativeExecutionPhase::Idle
+                            && !state.awaits_admission()
+                    })
+            })
+            .unwrap_or(false)
+    }
+
+    pub(super) fn release_settled_native_capacity(
+        &self,
+        task_id: &str,
+        state: &NativeExecutionState,
+    ) {
+        if state.phase != NativeExecutionPhase::Idle || self.is_active_local_task(task_id) {
+            return;
+        }
+        if !self
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .active_task_ids
+            .contains_key(task_id)
+        {
+            return;
+        }
+        let handler = self.clone();
+        let task_id = task_id.to_owned();
+        let revision = state.revision.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let operation = handler.turn_queue_operation.clone().lock_owned().await;
+                // Recheck after admission: a newer local or native turn may now
+                // own this task, so an older completion must not free its slot.
+                let still_settled = handler.store.read_task(&task_id, |link| {
+                    native_execution_state(link).is_some_and(|state| {
+                        state.phase == NativeExecutionPhase::Idle && state.revision == revision
+                    })
+                }) == Some(true);
+                if still_settled && !handler.is_active_local_task(&task_id) {
+                    handler
+                        .finish_scheduled_turn_locked(&task_id, operation)
+                        .await;
+                }
+            });
+        }
+    }
+
+    pub(super) fn bind_native_turn_start(
+        &self,
+        task_id: &str,
+        request: &ExecutionRequest,
+        execution_id: u64,
+        thread_id: &str,
+        turn_id: &str,
+    ) {
+        let mut changed = false;
+        let link = self.store.update_task(task_id, |link| {
+            let Some(mut state) = native_execution_state(link) else {
+                return;
+            };
+            if !self.is_current_local_task_execution(task_id, execution_id)
+                || link.thread_id.as_deref() != Some(thread_id)
+                || state.phase != NativeExecutionPhase::Starting
+                || state.turn_id.is_some()
+            {
+                return;
+            }
+            state.phase = NativeExecutionPhase::Running;
+            state.turn_id = Some(turn_id.to_owned());
+            state.latest_turn_id = Some(turn_id.to_owned());
+            state.request_turn_id = Some(turn_id.to_owned());
+            state.revision = next_runtime_event_sequence().to_string();
+            state.updated_at = now_ms();
+            project_native_execution(link, &state);
+            changed = true;
+        });
+        if let Some(link) = link.filter(|_| changed) {
+            self.publish_native_execution(task_id, request, link);
+        }
+    }
+
     pub(super) fn sync_native_queue_admissions(
         &self,
         mut previous: HashSet<String>,
@@ -33,7 +119,7 @@ impl RuntimeWorkRpcHandler {
             let mut changed = false;
             self.store.update_task(&task_id, |link| {
                 let before = native_execution_state(link);
-                if active.contains(&task_id) {
+                if active.contains_key(&task_id) {
                     if before
                         .as_ref()
                         .is_some_and(|state| state.awaits_admission())
@@ -252,9 +338,12 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
             if started
-                && previous
-                    .as_ref()
-                    .is_some_and(|state| state.latest_turn_id.as_ref() == Some(&turn_id))
+                && previous.as_ref().is_some_and(|state| {
+                    state.latest_turn_id.as_ref() == Some(&turn_id)
+                        && (state.process_generation.is_some()
+                            || state.phase != NativeExecutionPhase::Running
+                            || state.outcome.is_some())
+                })
             {
                 return;
             }
@@ -430,6 +519,7 @@ impl RuntimeWorkRpcHandler {
         let Some(state) = native_execution_state(&link) else {
             return;
         };
+        self.release_settled_native_capacity(task_id, &state);
         self.project_runtime_link_status_now(&link);
         let turn_id = state.latest_turn_id.clone();
         let event_request = self.request_for_codex_event(task_id, request, turn_id.as_deref());

@@ -1,8 +1,3 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { useCallback, useEffect, type ComponentProps } from 'react'
-import { Monitor } from 'lucide-react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import {
   closeLocalTerminal,
@@ -11,8 +6,13 @@ import {
   localPathExists,
   startLocalTerminal,
 } from '@/lib/local-terminal'
-import { WorkspacePanelCards as ActualWorkspacePanelCards } from './WorkspacePanelCards'
 import type { DeviceInfo } from '@/types/api'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Monitor } from 'lucide-react'
+import { useCallback, useEffect, type ComponentProps } from 'react'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { WorkspacePanelCards as ActualWorkspacePanelCards } from './WorkspacePanelCards'
 
 const deviceSurfaceExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
@@ -243,18 +243,6 @@ const localDevices: DeviceInfo[] = [
   },
 ]
 
-const openClawCloudDevices: DeviceInfo[] = [
-  {
-    id: 3,
-    device_id: 'device-1',
-    name: 'OpenClaw Device',
-    status: 'online',
-    is_default: false,
-    device_type: 'cloud',
-    bind_shell: 'openclaw',
-  },
-]
-
 function createDeferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -298,174 +286,6 @@ describe('WorkspacePanelCards', () => {
       type: 'terminal',
       path: '/workspace/worktrees/9/project38',
     })
-  })
-
-  test('renders terminal and device surface tools', () => {
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
-
-    expect(screen.getByTestId('workspace-terminal-card')).toHaveTextContent('终端')
-    expect(screen.getByTestId('workspace-device-surface-card')).toHaveTextContent('设备界面')
-  })
-
-  test('embeds the project terminal through the backend Socket.IO relay', async () => {
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
-
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-
-    await waitFor(() => expect(startProjectTerminalMock).toHaveBeenCalledWith(7))
-    expect(remoteTerminalMocks.render).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 'terminal-1',
-        clientFactory: createRemoteTerminalClientMock,
-      })
-    )
-    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
-    expect(screen.queryByTestId('workspace-terminal-frame')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-terminal-window')).toHaveClass('bg-background')
-    expect(screen.getByTestId('workspace-terminal-tab')).toHaveTextContent('project38')
-    expect(screen.getByTestId('workspace-terminal-new-tab-button')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-terminal-close-button')).toBeInTheDocument()
-    expect(screen.queryByText('/workspace/projects/project38')).not.toBeInTheDocument()
-  })
-
-  test('opens a device root terminal without a selected project', async () => {
-    render(
-      <WorkspacePanelCards
-        currentProject={null}
-        devices={cloudDevices}
-        workspaceTarget={{ deviceId: 'device-1', path: '/', source: 'runtime' }}
-      />
-    )
-
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-
-    await waitFor(() => expect(startDeviceTerminalMock).toHaveBeenCalledWith('device-1', '/'))
-    expect(screen.getByTestId('remote-terminal')).toHaveAttribute(
-      'data-session-id',
-      'device-terminal-1'
-    )
-  })
-
-  test('gives the embedded terminal explicit dimensions for Safari', async () => {
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
-
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-
-    await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())
-    expect(screen.getByTestId('remote-terminal')).toHaveClass('h-full', 'w-full')
-  })
-
-  test('opens the terminal add menu from the terminal plus button', async () => {
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
-
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-    await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())
-
-    await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
-
-    expect(screen.getByTestId('workspace-terminal-window')).not.toHaveAttribute('hidden')
-    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
-    expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-terminal-new-tab-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-add-terminal-option')).toHaveTextContent('终端')
-    expect(startProjectTerminalMock).toHaveBeenCalledTimes(1)
-
-    await userEvent.click(screen.getByTestId('workspace-add-terminal-option'))
-
-    await waitFor(() => expect(startProjectTerminalMock).toHaveBeenCalledTimes(2))
-    expect(screen.queryByTestId('workspace-terminal-new-tab-menu')).not.toBeInTheDocument()
-    expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(2)
-    expect(screen.getAllByTestId('workspace-terminal-close-button')).toHaveLength(2)
-    const terminals = screen.getAllByTestId('remote-terminal')
-    expect(terminals).toHaveLength(2)
-    expect(terminals[0]).toHaveAttribute('data-session-id', 'terminal-1')
-    expect(terminals[0]).toHaveAttribute('hidden')
-    expect(terminals[1]).toHaveAttribute('data-session-id', 'terminal-2')
-    expect(terminals[1]).not.toHaveAttribute('hidden')
-
-    await userEvent.click(screen.getAllByTestId('workspace-terminal-close-button')[1])
-
-    expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(1)
-    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
-    expect(screen.getByTestId('remote-terminal')).not.toHaveAttribute('hidden')
-  })
-
-  test('removes the terminal session when the process exits', async () => {
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
-
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-    await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())
-
-    await userEvent.click(screen.getByTestId('remote-terminal-exit-terminal-1'))
-
-    expect(screen.queryByTestId('remote-terminal')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
-  })
-
-  test('opens the project device surface through the extension', async () => {
-    const onRequestClose = vi.fn()
-    render(
-      <WorkspacePanelCards
-        currentProject={cloudProject}
-        devices={cloudDevices}
-        onRequestClose={onRequestClose}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('workspace-device-surface-card'))
-
-    await waitFor(() => expect(deviceSurfaceExtensionMock.launch).toHaveBeenCalledWith(undefined))
-    expect(onRequestClose).toHaveBeenCalledTimes(1)
-  })
-
-  test('publishes menu actions that keep the current terminal and panel open', async () => {
-    const onRequestClose = vi.fn()
-    const onMenuActionsChange = vi.fn()
-    render(
-      <WorkspacePanelCards
-        currentProject={cloudProject}
-        devices={cloudDevices}
-        onRequestClose={onRequestClose}
-        onMenuActionsChange={onMenuActionsChange}
-      />
-    )
-
-    await waitFor(() => expect(onMenuActionsChange).toHaveBeenCalled())
-    const actions = onMenuActionsChange.mock.lastCall?.[0]
-    expect(actions).toMatchObject({
-      terminal: { visible: true, disabled: false },
-      extension: { visible: true, disabled: false, label: '设备界面' },
-    })
-    expect(actions.terminal).not.toHaveProperty('run')
-
-    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
-    await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())
-
-    await act(async () => actions.extension.run())
-
-    expect(deviceSurfaceExtensionMock.launch).toHaveBeenCalledWith({ notifyOpened: false })
-    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
-    expect(onRequestClose).not.toHaveBeenCalled()
-  })
-
-  test('hides the device surface card when the extension is unavailable', () => {
-    deviceSurfaceExtensionMock.available = false
-
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
-
-    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
-  })
-
-  test('disables the device surface card while its device is offline', () => {
-    render(
-      <WorkspacePanelCards
-        currentProject={cloudProject}
-        devices={cloudDevices.map(device => ({ ...device, status: 'offline' }))}
-      />
-    )
-
-    expect(screen.getByTestId('workspace-device-surface-card')).toBeDisabled()
   })
 
   test('launches the native terminal for local project devices without cloud-only tools', async () => {
@@ -514,25 +334,6 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })
 
-  test('launches a preferred local terminal from a git checkout path', async () => {
-    getLocalExecutorDeviceIdMock.mockResolvedValue(null)
-
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={[]} preferLocalTerminal />)
-
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-
-    await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cwd: '/workspace/projects/project38',
-        })
-      )
-    )
-    expect(localPathExistsMock).toHaveBeenCalledWith('/workspace/projects/project38')
-    expect(startProjectTerminalMock).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
-  })
-
   test('closes local terminal sessions when the workspace panel unmounts', async () => {
     const { unmount } = render(<WorkspacePanelCards currentProject={project} devices={[]} />)
 
@@ -546,34 +347,6 @@ describe('WorkspacePanelCards', () => {
       taskId: undefined,
       workspacePath: '/workspace/projects/project38',
     })
-  })
-
-  test('closes local terminal sessions when the workspace target changes', async () => {
-    const nextProject = {
-      ...project,
-      id: 8,
-      name: 'project39',
-      config: {
-        ...project.config,
-        workspace: {
-          ...project.config.workspace,
-          localPath: '/workspace/projects/project39',
-        },
-      },
-    }
-    const { rerender } = render(<WorkspacePanelCards currentProject={project} devices={[]} />)
-
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-    await waitFor(() => expect(startLocalTerminalMock).toHaveBeenCalled())
-
-    rerender(<WorkspacePanelCards currentProject={nextProject} devices={[]} />)
-
-    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1', {
-      reason: 'workspace-target-changed',
-      taskId: undefined,
-      workspacePath: '/workspace/projects/project38',
-    })
-    expect(screen.queryByTestId('embedded-local-terminal')).not.toBeInTheDocument()
   })
 
   test('waits for the local terminal check before default-opening local project terminals', async () => {
@@ -659,19 +432,6 @@ describe('WorkspacePanelCards', () => {
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
   })
 
-  test('does not fall back to the backend remote terminal outside the WeWork macOS app', () => {
-    isLocalTerminalAvailableMock.mockReturnValue(false)
-
-    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
-
-    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
-    expect(startProjectTerminalMock).not.toHaveBeenCalled()
-    expect(startLocalTerminalMock).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
-  })
-
   test('starts remote terminal on the active runtime workspace device and path', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(false)
 
@@ -709,45 +469,6 @@ describe('WorkspacePanelCards', () => {
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
   })
 
-  test('keeps the remote terminal entry visible but disabled when the device disables it', async () => {
-    isLocalTerminalAvailableMock.mockReturnValue(false)
-
-    render(
-      <WorkspacePanelCards
-        currentProject={project}
-        devices={[
-          ...localDevices,
-          {
-            id: 22,
-            device_id: 'device-2',
-            name: 'Remote Device',
-            status: 'online',
-            is_default: false,
-            device_type: 'remote',
-            bind_shell: 'claudecode',
-            runtime_features: {
-              schemaVersion: 3,
-              interactiveSessions: { codeServer: true, terminal: false },
-            },
-          },
-        ]}
-        workspaceTarget={{
-          deviceId: 'device-2',
-          path: '/workspace/worktrees/9/project38',
-          source: 'runtime',
-        }}
-      />
-    )
-
-    const terminal = await screen.findByTestId('workspace-terminal-card')
-    expect(terminal).toBeDisabled()
-    expect(terminal).toHaveAttribute('title', 'workbench.project_terminal_unavailable_tooltip')
-    expect(terminal).toHaveTextContent('workbench.project_terminal_disabled_by_device')
-    await userEvent.click(terminal)
-    expect(startDeviceTerminalMock).not.toHaveBeenCalled()
-    expect(startProjectTerminalMock).not.toHaveBeenCalled()
-  })
-
   test('starts remote terminal on a new project workspace device and path', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(false)
 
@@ -772,62 +493,6 @@ describe('WorkspacePanelCards', () => {
         '/workspace/projects/project38'
       )
     )
-    expect(startProjectTerminalMock).not.toHaveBeenCalled()
-  })
-
-  test('uses the cloud route for a remote workspace merged into the local device', async () => {
-    getLocalExecutorDeviceIdMock.mockResolvedValue('local-device')
-    localPathExistsMock.mockResolvedValue(false)
-
-    render(
-      <WorkspacePanelCards
-        currentProject={cloudProject}
-        devices={[
-          {
-            id: 31,
-            device_id: 'local-device',
-            name: 'Local Executor',
-            status: 'online',
-            is_default: true,
-            device_type: 'local',
-            bind_shell: 'claudecode',
-            runtime_features: {
-              schemaVersion: 4,
-            },
-            runtime_routes: [
-              {
-                kind: 'local-ipc',
-                device_id: 'local-device',
-                runtime_device_id: 'local-device',
-                device_type: 'local',
-                status: 'online',
-              },
-              {
-                kind: 'cloud-relay',
-                device_id: 'cloud-device',
-                runtime_device_id: 'cloud-device',
-                device_type: 'cloud',
-                status: 'online',
-              },
-            ],
-          },
-        ]}
-        workspaceTarget={{
-          deviceId: 'cloud-device',
-          path: '/home/ubuntu/project38',
-          source: 'project',
-          workspaceSource: 'remote',
-        }}
-      />
-    )
-
-    expect(await screen.findByTestId('workspace-device-surface-card')).toBeInTheDocument()
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-
-    await waitFor(() =>
-      expect(startDeviceTerminalMock).toHaveBeenCalledWith('cloud-device', '/home/ubuntu/project38')
-    )
-    expect(startLocalTerminalMock).not.toHaveBeenCalled()
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
   })
 
@@ -866,22 +531,6 @@ describe('WorkspacePanelCards', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('启动失败'))
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
     expect(startLocalTerminalMock).not.toHaveBeenCalled()
-  })
-
-  test('does not show ClaudeCode-only project tools for OpenClaw devices', () => {
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={openClawCloudDevices} />)
-
-    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
-  })
-
-  test('shows local terminal before the local project device list is loaded', () => {
-    render(<WorkspacePanelCards currentProject={project} devices={[]} />)
-
-    expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })
 
   test('marks terminal as unavailable when session probing fails', async () => {

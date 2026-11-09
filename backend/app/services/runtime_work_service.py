@@ -108,6 +108,10 @@ from app.services.im.session_service import (
     im_session_service,
 )
 from app.services.object_storage import object_storage_presign_service
+from app.services.runtime_continuation import (
+    authorize_execution_origin,
+    resolve_continuation_address,
+)
 from app.services.runtime_transcript_reader import (
     RuntimeTranscriptTransferError,
     read_complete_transcript,
@@ -452,6 +456,8 @@ async def get_runtime_transcript(
     db: Session,
     user_id: int,
     address: RuntimeTranscriptRequest | RuntimeTaskAddress,
+    allow_app_device_task_reading: bool = False,
+    identity_only: bool = False,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read a session transcript, assembling device chunks for legacy HTTP callers."""
 
@@ -472,6 +478,8 @@ async def get_runtime_transcript(
             user_id=packet_user_id,
             address=request,
             normalized_address=normalized_address,
+            allow_app_device_task_reading=allow_app_device_task_reading,
+            identity_only=identity_only,
         )
 
     if address.transcript_protocol_version == 2:
@@ -515,9 +523,13 @@ async def _get_runtime_transcript_packet(
     user_id: int,
     address: RuntimeTranscriptRequest,
     normalized_address: RuntimeTaskAddress,
+    allow_app_device_task_reading: bool = False,
+    identity_only: bool = False,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read one authorized packet without holding its permission transaction open."""
     payload = _runtime_transcript_payload(address, normalized_address)
+    if identity_only:
+        payload["identityOnly"] = True
     started_at = time.perf_counter()
     logger.info(
         "[RuntimeWork] Requesting runtime transcript: user_id=%s device_id=%s local_task_id=%s workspace_path=%s limit=%s before_cursor=%s include_full_content=%s",
@@ -538,7 +550,8 @@ async def _get_runtime_transcript_packet(
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
             **(
                 {"allow_app_device_task_reading": True}
-                if getattr(address, "project_session", None) is not None
+                if allow_app_device_task_reading
+                or getattr(address, "project_session", None) is not None
                 else {}
             ),
         )
@@ -756,6 +769,7 @@ async def revert_runtime_file_changes(
     )
 
 
+@trace_async(span_name="runtime_work.send", tracer_name="backend.runtime_work")
 async def send_runtime_message(
     *,
     db: Session,
@@ -772,6 +786,8 @@ async def send_runtime_message(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    if request.queue_if_busy:
+        payload["queueIfBusy"] = True
     _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
@@ -859,6 +875,13 @@ async def _dispatch_runtime_send(
     spawn a new turn, so they intentionally omit ``executionRequest``.
     """
     if request.request_user_input_response is None:
+        address = await resolve_continuation_address(
+            db=db,
+            user_id=user_id,
+            address=address,
+            allow_app_device_task_messaging=allow_app_device_task_messaging,
+        )
+        payload.update(_runtime_task_address_payload(address))
         try:
             execution_request = _build_runtime_send_execution_request(
                 db=db,
@@ -1457,6 +1480,7 @@ async def create_runtime_task(
     return await _dispatch_compiled_runtime_task(
         user_id=user_id,
         compiled=compiled,
+        compile_on_device=request.compile_on_device,
     )
 
 
@@ -1464,6 +1488,7 @@ async def _dispatch_compiled_runtime_task(
     *,
     user_id: int,
     compiled: CompiledRuntimeTaskCreate,
+    compile_on_device: bool = False,
 ) -> RuntimeTaskCreateResponse:
     """Dispatch one already compiled runtime task."""
 
@@ -1471,7 +1496,11 @@ async def _dispatch_compiled_runtime_task(
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=compiled.target.device_id,
-            method="runtime.tasks.create",
+            method=(
+                "runtime.tasks.create_from_intent"
+                if compile_on_device
+                else "runtime.tasks.create"
+            ),
             payload=compiled.payload,
             timeout_seconds=RUNTIME_CREATE_TIMEOUT_SECONDS,
         )
@@ -1522,16 +1551,14 @@ def materialize_runtime_task_create(
 ) -> CompiledRuntimeTaskCreate:
     """Compile the canonical Executor payload without choosing its transport."""
 
+    target = _resolve_runtime_task_target(db, user_id, request)
     if request.wegent_team_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="wegentTeamId is required for runtime materialization",
-        )
+        _ensure_owned_device(db, user_id, target.device_id)
     return _compile_runtime_task_create(
         db=db,
         user_id=user_id,
         request=request,
-        target=_resolve_runtime_task_target(db, user_id, request),
+        target=target,
     )
 
 
@@ -1544,10 +1571,21 @@ def _compile_runtime_task_create(
 ) -> CompiledRuntimeTaskCreate:
     """Compile one already resolved runtime target."""
 
+    identity_request = request
+    if request.compile_on_device and request.model_type == RUNTIME_MODEL_TYPE:
+        # Native model credentials and provider configuration belong to the target device.
+        identity_request = request.model_copy(
+            update={
+                "model_id": None,
+                "model_type": None,
+                "model_options": {},
+                "model_selection": None,
+            }
+        )
     execution_request = _build_runtime_execution_request(
         db=db,
         user_id=user_id,
-        request=request,
+        request=identity_request,
         target=target,
     )
     return CompiledRuntimeTaskCreate(
@@ -1640,12 +1678,18 @@ def _runtime_task_create_payload(
             exclude_none=True,
         )
     if request.initial_supervisor:
-        payload["initialSupervisor"] = _materialize_initial_supervisor(
-            db=db,
-            user_id=user_id,
-            runtime=runtime,
-            supervisor=request.initial_supervisor,
+        payload["initialSupervisor"] = (
+            request.initial_supervisor.model_dump(by_alias=True, exclude_none=True)
+            if request.compile_on_device
+            else _materialize_initial_supervisor(
+                db=db,
+                user_id=user_id,
+                runtime=runtime,
+                supervisor=request.initial_supervisor,
+            )
         )
+        if request.compile_on_device:
+            payload["initialSupervisor"]["modelConfig"] = {}
     if request.side_source:
         payload["sideSource"] = request.side_source.model_dump(
             by_alias=True,
@@ -4029,6 +4073,7 @@ def _runtime_transcript_payload(
     for name, alias in (
         ("refresh", "refresh"),
         ("navigation_only", "navigationOnly"),
+        ("reconcile_client_user_message_ids", "reconcileClientUserMessageIds"),
         ("transcript_protocol_version", "transcriptProtocolVersion"),
     ):
         value = getattr(request, name, None)
@@ -4266,6 +4311,7 @@ def _build_runtime_execution_request(
     target: RuntimeTaskTarget,
 ):
     """Compile a Wework task intent without resolving Wegent CRDs."""
+    authorize_execution_origin(db, user_id, request.origin, request.cloud_project_id)
     if request.wegent_team_id is not None:
         return _build_team_runtime_execution_request(
             db=db,
@@ -4464,7 +4510,7 @@ def _build_direct_wework_runtime_execution_request(
         enable_tools=True,
         enable_web_search=False,
         enable_deep_thinking=False,
-        new_session=True,
+        new_session=bool(getattr(request, "new_session", True)),
         collaboration_model="single",
         mode="code",
         task_mode="code",
@@ -5039,6 +5085,7 @@ def _build_runtime_send_execution_request(
         workspace_source="local_path",
     )
     team_id = _runtime_address_team_id(address)
+    handle = address.runtime_handle or {}
     request = RuntimeTaskMaterializeRequest(
         schemaVersion=3 if team_id is not None else 2,
         wegentTeamId=team_id,
@@ -5046,13 +5093,15 @@ def _build_runtime_send_execution_request(
         taskId=address.local_task_id,
         deviceId=address.device_id,
         workspacePath=address.workspace_path,
-        runtime="codex",
+        runtime=handle.get("runtime", "codex"),
         message=message,
         modelId=model_selection.model_name if model_selection else None,
         modelType=model_selection.model_type if model_selection else None,
         modelOptions=model_selection.options if model_selection else {},
         attachmentIds=attachment_ids,
         additionalContext=additional_context,
+        origin=handle.get("origin"),
+        cloudProjectId=handle.get("cloudProjectId"),
     )
     execution_request = _build_runtime_execution_request(
         db=db,

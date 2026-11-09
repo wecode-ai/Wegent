@@ -45,6 +45,7 @@ export class ProcessExplorerService implements ProcessExplorerClient {
   private lastCollectedAt = 0
   private inFlight = new Map<SystemProcessTableResult | null, Promise<ProcessSnapshot>>()
   private pendingSystemTableRead: Promise<SystemProcessTableResult> | null = null
+  private boundedSystemTableRead: Promise<SystemProcessTableResult> | null = null
   private systemTableResult: SystemProcessTableResult | null = null
   private systemTableRefresh: Promise<void> | null = null
   private cachedMetrics: readonly ElectronProcessMetric[] | null = null
@@ -157,20 +158,20 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       .then(() => systemTable.read())
       .finally(() => {
         this.pendingSystemTableRead = null
+        this.boundedSystemTableRead = null
       })
 
-    try {
-      return await withTimeout(
-        this.pendingSystemTableRead,
-        timeoutMs,
-        'System process table read timed out'
-      )
-    } catch (error) {
-      return {
-        processes: [],
-        degraded: [{ code: 'system-process-table-failed', detail: describeError(error) }],
-      }
-    }
+    // Reuse the timeout result until the raw read settles, so later samples do
+    // not attach more waiters or timers to the same hung process collector.
+    this.boundedSystemTableRead ??= withTimeout(
+      this.pendingSystemTableRead,
+      timeoutMs,
+      'System process table read timed out'
+    ).catch(error => ({
+      processes: [],
+      degraded: [{ code: 'system-process-table-failed', detail: describeError(error) }],
+    }))
+    return this.boundedSystemTableRead
   }
 }
 

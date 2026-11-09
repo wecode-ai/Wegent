@@ -257,7 +257,6 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
         ? () =>
             localPluginApi.listInstalledPlugins({
               refresh: true,
-              shareInflight: true,
               requireComplete: true,
             })
         : undefined,

@@ -6,6 +6,20 @@ sidebar_position: 39
 
 Wework can start an isolated development verification session so an AI can operate and assert against the real Electron application. It reuses the desktop E2E WebView control channel, never drives an external Chrome window, and does not attach to a developer's everyday Wework window.
 
+## Idle Executor request regression
+
+`idle-executor-requests` uses isolated real Electron and Executor instances with no tasks and no cloud connection. It reuses the shared runner's initial telemetry refusal, reloads the main window, and observes requests. Worktree capability discovery, telemetry configuration, and the shared SSE subscription must each occur once after reload. Foreground and close-to-background observation windows each last 6.5 seconds, crossing the five-second poll interval: pending-interaction discovery and Runtime identity checks must continue, without full task-catalog polling or repeated startup configuration. Known asynchronous bootstrap requests, such as plugin initialization, may finish; a fixed delay is not used to infer startup readiness.
+
+Identity descriptions share only not-yet-dispatched requests within the same synchronous batch; post-operation identity checks still fetch fresh descriptions. Confirmed local Runtime telemetry policy is not rewritten on idle polls. Runtime, account, API, or policy changes resynchronize it, and failed writes retry. Work-list changes refresh task data only; device events and explicit refresh retain device discovery. Work events preserve an in-flight full cloud sync and coalesce into one fresh work read afterward. Bootstrap device and team synchronization is not discarded when the task-read revision changes.
+
+Last-project restoration waits until the initial local work-list load settles; an earlier cloud-composed list must not consume that restoration attempt. Device and cloud catalogs may publish independently, without implying that local projects are ready.
+
+```bash
+pnpm --filter wework e2e:desktop --segment idle-executor-requests
+```
+
+The independent checkpoint is registered in an existing Core CI shard and does not require earlier scenarios. Local macOS arm64 verification took approximately 52 seconds including startup and cleanup, excluding the shared build. Its result directory contains `idle-executor-requests.json` with method names, timestamps, statuses, and necessary boolean flags only, never request parameters, headers, or query strings. Do not commit logs or screenshots.
+
 ## Periodic plugin recovery E2E
 
 The `plugin-periodic-reconcile` checkpoint uses real Electron, Executor, Socket.IO, database, and plugin package storage. It discards one real plugin change notification, then verifies timer-driven recovery, persisted acknowledgements, device identity, and unchanged unrelated plugin content. Its isolated instances set `LOCAL_PLUGIN_RECONCILE_INTERVAL=90` and `LOCAL_PLUGIN_RECONCILE_JITTER=18` (seconds), with the existing `LOCAL_HEARTBEAT_INTERVAL=1` configuration preserving the assertion of at least 10 heartbeats. The 90-second base period leaves room for plugin setup after registration before the first reconciliation.
@@ -16,6 +30,34 @@ Without overrides, production retains a 600-second base period plus a stable per
 pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 ```
 
+The plugin account late-response E2E uses a unique `Server-Timing` diagnostic marker on the selected fault-proxy response while preserving its real upstream body bytes. Verification identifies the renderer's actual consumption of that response before checking stable current-account inventory. Browsers may record multiple fetch consumers for one HTTP response, so a time window containing exactly one entry cannot establish response identity. Protocol tests protect byte preservation and coalesced-consumer correlation; the existing desktop checkpoint still verifies real account/device boundaries.
+
+## Conversation model restoration diagnostics
+
+When full task data is selected, the feedback bundle's `context/task.json` includes `modelSelection`: `configured` is the configuration supplied to the model selector, `effective` is the configuration after default resolution, and `selected` is the current composer model. Missing snapshots remain `null`. Snapshots contain only model identity, resource ownership and a diagnostic fingerprint; arbitrary model options and authentication configuration are excluded.
+
+The `workbench.selection_restored`, `workbench.selection_changed` and `workbench.selection_seeded` events in `logs/app/model-loading.log` correlate scopes and models through numeric fingerprints. Fingerprints are diagnostic identifiers. The executor's `runtime task model selection updated` event records an in-memory assignment. The `runtime task get resolved link` and `runtime task transcript resolved link` events record the owning task's current model identity on reads. Assignment does not prove that a disk write succeeded.
+
+`configured` is not the raw on-disk task record. Existing conversations receive configuration from the task summary or runtime handle; new conversations can receive project configuration or user preferences.
+
+1. Export feedback before restarting.
+2. Restart the app.
+3. Export feedback before the first send.
+4. Check the model identity read by the executor.
+5. Compare the composer's configured, effective and selected models to distinguish missing records, default substitution and composer changes.
+
+## Prepare desktop E2E prerequisites before startup
+
+Write configuration that Codex caches, including model catalog overrides, in the scenario's `prepareApp` before launching the app and shared app-server. `human-interactions` declares `request_user_input_async` at this stage. Updating the configuration or deleting the disk cache in `verify` can leave the running process using the old catalog.
+
+Windows CI runs desktop tests under a standard account. Compile the DingTalk protocol fixture into the workspace before switching accounts and pass it through `WEWORK_E2E_DWS_FIXTURE_BIN` for the stand-in scenarios to reuse, without relying on that account's Rust toolchain. Local runs without a prebuilt fixture still compile it during scenario preparation. This is protocol integration coverage; real DingTalk compatibility remains unverified.
+
+## Shared Codex startup protection
+
+The shared app-server startup watchdog must account for active turns and turns still preparing native threads. A peer waiting for `thread/start` does not yet have a thread ID, but must still be protected from restart. A client-scoped preparation lifetime is released on initialization, failure, or cancellation; active-thread records continue protection during model execution. This does not increase startup timeouts or resubmit existing turns.
+
+The process-level protocol regression in `executor/tests/codex_app_server_contract/startup.rs` holds the second thread response behind observable file gates, crosses the real watchdog deadline, then releases it and verifies both turns complete. Executor and child-process IPC remain real while the Codex protocol service is synthetic; real Codex compatibility with the same fault injection remains unverified.
+
 ## Start a session
 
 During builds, `prepare-codex-binary.mjs` downloads the locked version through native Node HTTP/HTTPS streams, follows redirects, and removes failed temporary files. Archives are extracted for use only after integrity verification. The download stream does not depend on the Undici parser used by Node's built-in Fetch, avoiding parser crashes that terminate the build process.
@@ -24,7 +66,13 @@ During builds, `prepare-codex-binary.mjs` downloads the locked version through n
 pnpm --filter wework ai:verify start
 ```
 
-The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Electron app-data namespace, and diagnostics directory, then starts the real `dev-mac-app.sh`. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
+The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Electron app-data namespace, and diagnostics directory, then starts real Electron from the source application directory. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
+
+When the user explicitly selects their local Codex account, set `WEWORK_E2E_NATIVE_CODEX_HOME` to that signed-in native Codex directory. The existing native account mechanism supplies authentication to the isolated instance; never read, print or manually copy authentication contents. To reuse your own isolated data, `--executor-home` must be absolute, and `--device-id` explicitly retains that Home's device identity.
+
+Before launching the app, new sessions record the actual auth path, whether an entry already exists and the native managed marker's metadata. Normal stop, controller shutdown and failed startup share ownership-aware cleanup: only newly created managed links or copies whose marker and file identity still match are removed. Native source accounts, pre-existing auth and user replacements remain intact. Legacy sessions without ownership records retain default private-Home cleanup; explicit reused Homes are conservatively preserved. An older link can be cleaned by stopping the original default session that owns it.
+
+The native creator writes a versioned ownership marker binding the session nonce to file metadata, without auth contents. Session state uses a cross-process lock and atomic replacement; cleanup rereads the latest state so concurrent observers and stale snapshots cannot overwrite cleanup results. Unknown ownership protocols conservatively preserve auth.
 
 ## Shared desktop E2E runtime images
 
@@ -100,3 +148,53 @@ The desktop CI `workspace-tabs` checkpoint covers detaching a fixed tab and rest
 ## AI workflow
 
 An AI should start with `snapshot` to confirm the route and available `data-testid` values, make the smallest required interaction, and use `wait-for` plus `snapshot` or `text` to verify the result. Always call `stop` when finished. On failure, keep the session directory and inspect `app.log`.
+
+## General DevTools access and performance analysis
+
+Isolated verification instances expose authenticated CDP through the Electron main process. Commands remain available while the renderer is paused at a breakpoint. Ordinary application instances do not register this endpoint. Enumerate targets and substitute a returned `id` for `ID`:
+
+```bash
+pnpm --filter wework ai:verify start
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"targets"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Schema.getDomains"}'
+pnpm --filter wework ai:verify performance-start --session SESSION --target ID
+# Reproduce the interaction using existing click, fill, press and wait-for commands.
+pnpm --filter wework ai:verify performance-stop --session SESSION --target ID --output report.json
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"detach","target":ID}'
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+The `devtools` command accepts any `Domain.command` supported by the instance, `params`, and an optional child `sessionId`. There is no domain allowlist. Use Network response bodies and request data, Runtime object properties, Debugger sources and breakpoints, DOM, CSS, HeapProfiler, Tracing, or other CDP domains directly. Obtain worker/frame sessions through `Target.setAutoAttach` or `Target.attachToTarget`. Availability depends on the bundled Chromium/Electron version; this transport does not implement the DevTools panel UI or its extensions. See the [Electron Debugger API](https://www.electronjs.org/docs/latest/api/debugger).
+
+Use `--file request.json` for JSON input and `--output result.json` for large responses. Enable the desired domains, then read protocol events with a non-destructive cursor:
+
+```bash
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Network.enable"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Runtime.enable"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"events","target":ID,"after":0,"limit":1000}' --output events.json
+```
+
+Pass `next` as the next `after`; `latest` identifies the current end. Each target retains up to 20,000 events or 32 MiB. `lost` reports events evicted since the supplied cursor. Drain frequently for high-volume capture. For large traces, use `Tracing.start` with `ReturnAsStream`, followed by `IO.read` and `IO.close`. Unexpected detachment retains buffered events and the `Inspector.detached` reason; explicitly detach before reconnecting. Opening the target's DevTools panel may detach Electron's debugger.
+
+The performance convenience commands use this same transport to capture CPU sampling, timeline, network, console, exceptions and scripts. Stopping automatically writes:
+
+- `report.json`: sampled self/inclusive CPU costs with source locations, long tasks and timeline totals per process/thread, slow requests with initiator stacks, redirects/failures/pending requests, console, exceptions and before/after metrics.
+- `report.json.evidence.json`: the original CPU profile, Chromium trace and protocol events for further investigation.
+
+Script-declared source maps resolve generated CPU locations to original files, lines and columns. Isolated E2E builds generate source maps; normal builds do not expose source as a result of this change. Inline, file and network source maps are supported, with network maps loaded through CDP. Mapping failures retain generated locations and report errors; use `Debugger.getScriptSource` to investigate further. CPU costs are sampled. Never add parent/child inclusive costs or nested trace durations. Nonzero `lostEvents` or `traceDataLoss` means incomplete evidence; shorten capture or adjust generic collection. Convenience recording profiles the root target; profile worker sessions separately using CDP.
+
+Retrieve network bodies and console remote-object properties on demand using CDP; the report does not expand them automatically. Events are captured after their domains are enabled. Diagnostics may include sensitive request headers, payloads and logs. Keep them local and out of Git. Release sessions with `detach` and always clean up the isolated application with `stop`.
+
+### User story coverage
+
+The `devtools-performance` checkpoint runs in real Electron: discover a target, record and reproduce a known CPU hotspot, map it to original source, capture real HTTP/console/exception evidence, inspect DOM, command a worker child session, resume a paused renderer, then detach and reconnect. Invalid protocol commands and duplicate recording must fail without corrupting the connection. It is included in an existing core CI shard without adding a CI job.
+
+```bash
+pnpm --filter wework e2e:desktop --segment devtools-performance
+```
+
+Once CPU profiling stops successfully, trace collection, parsing or report-write failures release recording state while preserving the original error, so another recording can start. A failure to stop the profiler retains unconsumed state. The `devtools-performance` checkpoint also triggers a real output-directory write failure and verifies that a subsequent recording starts and completes.
+
+A successful explicit `detach` discards unfinished recording state for that target, allowing cancellation or recovery after an unexpected disconnect. Failed detaches retain state. The real Electron checkpoint also detaches during a recording, then starts another recording and generates its report.
+
+All desktop checkpoints use a `desktop-control` registry within their result directory for on-demand diagnosis of their isolated instance. Native macOS process snapshots read PID parent relationships first, then collect detailed metrics and command lines only for the Electron process tree, keeping unrelated process arguments out of the collection buffer.

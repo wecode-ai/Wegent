@@ -10,8 +10,10 @@ from sqlalchemy import Column
 
 def _load_migration() -> ModuleType:
     path = (
-        Path(__file__).parents[2]
-        / "alembic"
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
         / "versions"
         / "20261010_f3a7c9e1b2d4_add_loop_item_start_at.py"
     )

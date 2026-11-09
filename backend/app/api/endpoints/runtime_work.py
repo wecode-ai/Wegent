@@ -803,7 +803,7 @@ async def materialize_runtime_task_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Compile a Team task for direct dispatch by a local runtime."""
+    """Compile an authorized task for direct dispatch by a local runtime."""
 
     compiled = runtime_work_service.materialize_runtime_task_create(
         db=db,
@@ -812,12 +812,14 @@ async def materialize_runtime_task_endpoint(
     )
     return RuntimeTaskMaterializeResponse(
         payload=compiled.payload,
-        runtimeHandle={"wegentTeam": {"id": compiled.team_id}},
+        runtimeHandle=(
+            {"wegentTeam": {"id": compiled.team_id}}
+            if compiled.team_id is not None
+            else None
+        ),
     )
 
 
-# MIGRATION-CANDIDATE(api="POST /api/runtime-work/llm-responses-proxy/responses"): remove after final confirmation.
-# @router.post("/llm-responses-proxy/responses")
 @router.post("/llm-responses-proxy/chat/completions")
 @router.post("/llm-responses-proxy/messages")
 @router.post("/llm-responses-proxy/v1/messages")

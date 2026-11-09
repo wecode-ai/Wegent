@@ -48,6 +48,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
         state: CommandState::AwaitingUser,
         accepted_at: 1,
         turn: SpawnTurnRequest {
+            task_kind: None,
             local_task_id: task_id(7),
             runtime: "codex".into(),
             request,
@@ -58,6 +59,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
             resume_thread_id: None,
             initial_thread_goal: None,
         },
+        owner_resolution: None,
         native: None,
     };
     handler
@@ -105,7 +107,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
 }
 
 #[test]
-fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
+fn unavailable_work_history_does_not_remove_authorized_inventory_or_consume_intake() {
     let _lock = crate::test_env::lock();
     let environment = tempfile::tempdir().unwrap();
     let _env: Vec<_> = [
@@ -158,13 +160,10 @@ fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
         .transcript(json!({"taskId":work_id,"limit":3}))
         .await
         .is_err());
-    assert_eq!(
-        handler
-            .coordination_works(&store, 7, &settings)
-            .await
-            .unwrap(),
-        Vec::<Value>::new()
-    );
+    let inventory=handler.coordination_works(&store,7,&settings).await.unwrap();
+    assert_eq!(inventory.len(),1);
+    assert_eq!(inventory[0]["taskId"],work_id);
+    assert!(inventory[0].get("transcript").is_none());
     let snapshot = handler
         .coordination_snapshot_for_test(&store, 7)
         .await
@@ -282,6 +281,56 @@ async fn waiting_work_never_accepts_an_automatic_reply_and_foreign_tasks_are_rej
             .runtime_handle
             .get("userMessagePresentations")
             .is_none()));
+}
+
+#[test]
+fn configuration_starts_observation_before_fast_work_completes() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let mut state = store.stand_in_processing_state(7).unwrap();
+    let since = state["observedSince"]
+        .as_i64()
+        .expect("configuration establishes the observation boundary");
+    for (id, created_at) in [("historical", since - 10), ("new-fast-work", since + 1)] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.into(), status: "done".into(), turn_status: Some("completed".into()),
+            created_at, completed_at: Some(since + 2),
+            runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+            ..Default::default()
+        });
+    }
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["taskId"], "new-fast-work");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "unstarted".into(), status: "active".into(), created_at: since + 1,
+        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    });
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "status-only-completion".into(),
+        status: "done".into(), created_at: since + 1,
+        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    });
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(events
+        .iter()
+        .any(|event| event["taskId"] == "status-only-completion"));
 }
 
 #[test]
@@ -683,4 +732,265 @@ async fn primary_created_work_feedback_stays_owned_and_requires_semantic_assessm
         snapshot["events"][0]["binding"].is_null(),
         "Completion feedback must not echo an automatic continuation into itself"
     );
+}
+
+#[tokio::test]
+async fn direct_connection_intake_supplies_a_native_dispatch_without_starting_assessment() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    settings["roles"][0]["prompt"] =
+        json!("Prepare answers to deployment questions from this connected group.");
+    settings["roles"][0]["connections"][0]["policy"]["immediate"] = json!(true);
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    store
+        .enqueue_stand_in_event(7, json!("direct-input"), connection_event())
+        .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot["events"][0]["dispatch"],
+        json!({"roleId":"default"})
+    );
+    assert_eq!(snapshot["events"][0]["processingMode"], "immediate");
+    assert!(handler.local_task_links(true).is_empty());
+    assert!(store.stand_in_actions(7).unwrap().is_empty());
+    assert!(store.stand_in_processing_state(7).unwrap()["batchId"].is_null());
+}
+
+#[test]
+fn intake_rechecks_collection_partition_without_changing_resource_authority() {
+    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let source = json!({"providerId":"example/events","profile":"account","kind":"resource","id":"shared","collectionKey":"selected:v1","enabledAfter":"2026-11-04T00:00:00Z","policy":{"automatic":true,"askBeforeAct":true}});
+    let role = json!({"id":"selected","connections":[source]});
+    let mut event = json!({"kind":"connection","roleIds":["selected"],"source":source,"message":{"at":"2026-11-05T00:00:00Z"}});
+    assert!(handler.validate_intake_role(&role, &event).is_ok());
+    event["source"]["collectionKey"] = json!("another:v1");
+    assert_eq!(
+        handler
+            .validate_intake_role(&role, &event)
+            .unwrap_err()
+            .code,
+        "source_removed"
+    );
+    event["source"]
+        .as_object_mut()
+        .unwrap()
+        .remove("collectionKey");
+    assert_eq!(
+        handler
+            .validate_intake_role(&role, &event)
+            .unwrap_err()
+            .code,
+        "source_removed"
+    );
+    assert!(stand_in_connection(&role, &event["source"]).is_some());
+}
+
+#[tokio::test]
+async fn deferred_backlog_does_not_starve_new_due_events_or_lose_the_earliest_future_wake() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, settings) = fixture(root.path());
+    let now = chrono::Utc::now();
+    let mut earliest = Value::Null;
+    for index in 0..120 {
+        let mut event = connection_event();
+        event["message"]["id"] = json!(format!("future-{index}"));
+        event["notBefore"] = json!((now
+            + chrono::Duration::hours(1)
+            + chrono::Duration::seconds(120 - index))
+        .to_rfc3339());
+        earliest = store
+            .enqueue_stand_in_event(7, json!(["future", index]), event)
+            .unwrap();
+    }
+    let due = store
+        .enqueue_stand_in_event(7, json!("new-due"), connection_event())
+        .unwrap();
+    let mut elapsed = connection_event();
+    elapsed["notBefore"] = json!((now - chrono::Duration::minutes(1)).to_rfc3339());
+    let elapsed = store
+        .enqueue_stand_in_event(7, json!("elapsed"), elapsed)
+        .unwrap();
+    let events = handler
+        .authorized_coordination_events(&store, 7, &settings)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 100);
+    assert_eq!(events[0]["id"], due["id"]);
+    assert_eq!(events[1]["id"], elapsed["id"]);
+    assert_eq!(events[2]["id"], earliest["id"]);
+    assert_eq!(events[2]["notBefore"], earliest["notBefore"]);
+    assert!(events[2..]
+        .windows(2)
+        .all(|pair| pair[0]["notBefore"].as_str() <= pair[1]["notBefore"].as_str()));
+    assert_eq!(store.stand_in_events(7).unwrap().len(), 122);
+    assert!(store
+        .stand_in_events(7)
+        .unwrap()
+        .iter()
+        .all(|event| event["status"] == "pending"));
+}
+
+#[tokio::test]
+async fn paused_and_removed_source_backlogs_do_not_occupy_the_eligible_event_budget() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    let mut paused = settings["roles"][0].clone();
+    paused["id"] = json!("paused");
+    paused["enabled"] = json!(false);
+    settings["roles"].as_array_mut().unwrap().push(paused);
+    let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    for index in 0..120 {
+        let mut invalid = connection_event();
+        invalid["source"]["id"] = json!("removed-source");
+        store
+            .enqueue_stand_in_event(7, json!(["removed", index]), invalid)
+            .unwrap();
+        let mut paused = connection_event();
+        paused["roleIds"] = json!(["paused"]);
+        store
+            .enqueue_stand_in_event(7, json!(["paused", index]), paused)
+            .unwrap();
+    }
+    let due = store
+        .enqueue_stand_in_event(7, json!("valid-after-backlog"), connection_event())
+        .unwrap();
+    let events = handler
+        .authorized_coordination_events(&store, 7, &settings)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["id"], due["id"]);
+    let stored = store.stand_in_events(7).unwrap();
+    assert_eq!(
+        stored
+            .iter()
+            .filter(|event| event["status"] == "cancelled")
+            .count(),
+        120
+    );
+    assert_eq!(
+        stored
+            .iter()
+            .filter(|event| event["status"] == "pending")
+            .count(),
+        121
+    );
+    assert!(store.stand_in_actions(7).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn authorized_inventory_survives_read_capacity_and_conversations_are_read_on_demand() {
+    use super::super::tests::{install_native_history, isolated_runtime_work_handler};
+    use crate::task_runtime::mcp::StandInMcpIdentity;
+    let (mut handler, root) = isolated_runtime_work_handler("coordinator-metadata-inventory");
+    handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut settings = store.personal_stand_in(7, "device-1").unwrap();
+    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
+    let settings = store
+        .save_personal_stand_in(7, "device-1", settings)
+        .unwrap();
+    let target = "authorized-delegate";
+    for (id, user) in [(target, 7), ("unlisted-owned", 7), ("foreign", 8)] {
+        handler.upsert_local_task(RuntimeTaskLink {local_task_id:id.into(),runtime:"codex".into(),thread_id:Some("thread-1".into()),status:"done".into(),title:"Existing delegated work".into(),runtime_handle:json!({"origin":{"type":"stand_in_task","initiatedBy":"stand_in","userId":user,"deviceId":"device-1","standInId":"@primary","sourceTaskId":"stand-in-chat-7-primary"},"executionRequest":{"user_id":user}}),..Default::default()});
+    }
+    install_native_history(
+        &mut handler,
+        &root,
+        vec![
+            json!({"id":"original-turn","status":"completed","startedAt":chrono::Utc::now().timestamp(),"items":[{"id":"answer","type":"agentMessage","phase":"final_answer","text":"Verified delegated result","createdAt":chrono::Utc::now().timestamp()}]}),
+        ],
+        None,
+    );
+    let permits = handler
+        .transcript_test_workers
+        .as_ref()
+        .unwrap()
+        .clone()
+        .acquire_many_owned(2)
+        .await
+        .unwrap();
+    let inventory = handler
+        .coordination_works(&store, 7, &settings)
+        .await
+        .unwrap();
+    assert!(
+        inventory.iter().any(|work| work["taskId"] == target),
+        "Read capacity must not remove an authorized work from the batch inventory"
+    );
+    assert!(inventory
+        .iter()
+        .all(|work| work.get("transcript").is_none()));
+    assert!(
+        !root.join("requests.jsonl").exists(),
+        "Inventory must not issue eager native transcript RPCs"
+    );
+    handler.upsert_local_task(RuntimeTaskLink {local_task_id:task_id(7),runtime_handle:json!({"origin":{"type":"stand_in_coordinator","userId":7,"deviceId":"device-1","batchId":"current"},"executionRequest":{"user_id":7}}),..Default::default()});
+    let mut state = json!({"batchId":"current","snapshot":{"works":inventory.into_iter().filter(|work|work["taskId"]==target).collect::<Vec<_>>()}});
+    store.save_stand_in_processing_state(7, &state).unwrap();
+    let identity = StandInMcpIdentity {
+        task_id: task_id(7),
+        user: 7,
+        device: "device-1".into(),
+        role: None,
+        work: None,
+        project: None,
+        review: false,
+        memory_review: false,
+        readonly_worker: false,
+        ask_before_act: false,
+        coordinator_batch: Some("current".into()),
+    };
+    let args = json!({"taskId":target,"limit":3});
+    let mut queued = Box::pin(handler.read_stand_in_conversations(&identity, "read_task", &args));
+    assert!(futures_util::poll!(queued.as_mut()).is_pending());
+    assert_eq!(
+        handler
+            .read_stand_in_conversations(
+                &identity,
+                "read_task",
+                &json!({"taskId":"unlisted-owned"})
+            )
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    drop(permits);
+    let page = queued.await.unwrap();
+    assert!(page["messages"]
+        .to_string()
+        .contains("Verified delegated result"));
+    state["snapshot"]["works"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"taskId":"foreign"}));
+    store.save_stand_in_processing_state(7, &state).unwrap();
+    assert_eq!(
+        handler
+            .read_stand_in_conversations(&identity, "read_task", &json!({"taskId":"foreign"}))
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    state["batchId"] = json!("replaced");
+    store.save_stand_in_processing_state(7, &state).unwrap();
+    assert_eq!(
+        handler
+            .read_stand_in_conversations(&identity, "read_task", &args)
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    fs::remove_dir_all(root).unwrap();
 }

@@ -1,0 +1,6 @@
+{
+  "order": 36000,
+  "scenario": "./scenarios/stand-in-delegation-context.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": ["wework/e2e/desktop/modules/stand-in-instance-flows.mjs"]
+}

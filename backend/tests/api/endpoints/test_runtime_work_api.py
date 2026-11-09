@@ -265,17 +265,19 @@ def test_create_runtime_task_rejects_team_on_old_request_version(
 
 
 @pytest.mark.parametrize("new_session", [True, False])
+@pytest.mark.parametrize("team_id", [42, None])
 def test_materialize_runtime_task_returns_v2_executor_payload(
     test_client,
     test_token,
     monkeypatch,
     new_session,
+    team_id,
 ) -> None:
     from app.api.endpoints import runtime_work
 
     service_mock = MagicMock(
         return_value=MagicMock(
-            team_id=42,
+            team_id=team_id,
             payload={
                 "schemaVersion": 2,
                 "runtime": "codex",
@@ -285,7 +287,7 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
                 "taskId": "task-1",
                 "executionRequest": {
                     "task_id": "task-1",
-                    "team_id": 42,
+                    "team_id": team_id or 0,
                     "new_session": new_session,
                     "model_config": {
                         "model_id": "deepseek-v4-pro",
@@ -305,8 +307,8 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
         "/api/runtime-work/materialize",
         headers=_auth_headers(test_token),
         json={
-            "schemaVersion": 3,
-            "wegentTeamId": 42,
+            "schemaVersion": 3 if team_id else 2,
+            "wegentTeamId": team_id,
             "newSession": new_session,
             "deviceId": "local-device-1",
             "workspacePath": "/repo",
@@ -325,9 +327,12 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
         "protocol": "openai-responses",
     }
     assert payload["executionRequest"]["new_session"] is new_session
-    assert response.json()["runtimeHandle"] == {"wegentTeam": {"id": 42}}
+    if team_id:
+        assert response.json()["runtimeHandle"] == {"wegentTeam": {"id": team_id}}
+    else:
+        assert "runtimeHandle" not in response.json()
     request = service_mock.call_args.kwargs["request"]
-    assert request.wegent_team_id == 42
+    assert request.wegent_team_id == team_id
     assert request.new_session is new_session
 
 
@@ -1167,7 +1172,7 @@ def test_runtime_task_im_notification_unsubscribe_endpoint_dispatches_address(
     assert address.local_task_id == "codex-1"
 
 
-@pytest.mark.parametrize("endpoint", ["responses", "chat/completions", "messages"])
+@pytest.mark.parametrize("endpoint", ["chat/completions", "messages", "v1/messages"])
 def test_llm_responses_proxy_endpoint_streams_from_provider(
     test_client,
     test_token,
@@ -1206,7 +1211,7 @@ def test_llm_responses_proxy_endpoint_streams_from_provider(
     assert call_args.args[2].id > 0
 
 
-@pytest.mark.parametrize("endpoint", ["responses", "chat/completions", "messages"])
+@pytest.mark.parametrize("endpoint", ["chat/completions", "messages", "v1/messages"])
 def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
     test_client, endpoint
 ):
@@ -1217,12 +1222,3 @@ def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
     )
 
     assert response.status_code == 401
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("llm_responses",)) as client:
-        yield client

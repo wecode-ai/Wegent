@@ -18,15 +18,23 @@ export function IssueHierarchySummary({
 }) {
   const [expanded, setExpanded] = useState(true)
   const related = allItems.filter(
-    candidate =>
-      candidate.can_view_detail !== false && candidate.cloud_project_id === item.cloud_project_id
+    (candidate) =>
+      candidate.can_view_detail !== false &&
+      candidate.cloud_project_id === item.cloud_project_id,
   )
-  const parent = related.find(candidate => candidate.id === item.parent_id)
-  const children = related.filter(candidate => candidate.parent_id === item.id)
-  const completed = children.filter(child => child.status === 'completed').length
+  const parent = related.find((candidate) => candidate.id === item.parent_id)
+  const children = related.filter(
+    (candidate) => candidate.parent_id === item.id,
+  )
+  const completed = children.filter(
+    (child) => child.status === 'completed',
+  ).length
   if (!parent && children.length === 0 && !onAddChild) return null
   return (
-    <section data-testid="issue-hierarchy-summary" className="mb-4 space-y-2">
+    <section
+      data-testid="issue-hierarchy-summary"
+      className="mb-4 mt-6 space-y-2"
+    >
       {parent ? (
         <button
           type="button"
@@ -42,38 +50,54 @@ export function IssueHierarchySummary({
         </button>
       ) : null}
       {children.length || onAddChild ? (
-        <div className="rounded-xl border border-border px-3 py-2">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              data-testid="issue-children-toggle"
-              aria-expanded={expanded}
-              onClick={() => setExpanded(value => !value)}
-              className="flex min-w-0 items-center gap-1 rounded-md py-1 text-xs text-text-secondary hover:bg-muted max-md:min-h-11"
-            >
-              {expanded ? (
-                <ChevronDown className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5" />
-              )}
-              {t('todo.parent_board_children')}
-              <span data-testid="issue-children-progress" className="ml-1 text-text-muted">
-                {t('todo.parent_board_progress', undefined, {
-                  completed,
-                  total: children.length,
-                })}
-              </span>
-            </button>
-            {onAddChild ? (
+        <div>
+          <div className="task-detail-workspace-section-head">
+            {children.length > 0 ? (
               <button
                 type="button"
-                data-testid="issue-hierarchy-add-child"
-                onClick={onAddChild}
-                className="ml-auto flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted max-md:h-11"
+                data-testid="issue-children-toggle"
+                aria-expanded={expanded}
+                onClick={() => setExpanded((value) => !value)}
+                className="task-detail-workspace-section-title flex min-h-8 min-w-0 items-center gap-2 rounded-lg text-left hover:bg-muted max-md:min-h-11"
               >
-                <Plus className="h-3.5 w-3.5" />
-                {t('todo.parent_board_add_child')}
+                {t('todo.parent_board_children')}
+                {children.length > 0 ? (
+                  <span
+                    data-testid="issue-children-progress"
+                    className="ml-1 text-text-muted"
+                  >
+                    {t('todo.parent_board_progress', undefined, {
+                      completed,
+                      total: children.length,
+                    })}
+                  </span>
+                ) : null}
+                {expanded ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
               </button>
+            ) : (
+              <>
+                <h3 className="task-detail-workspace-section-title">
+                  {t('todo.parent_board_children')}
+                </h3>
+                <span className="task-detail-workspace-count">0</span>
+              </>
+            )}
+            {onAddChild ? (
+              <div className="task-detail-workspace-section-actions">
+                <button
+                  type="button"
+                  data-testid="issue-hierarchy-add-child"
+                  onClick={onAddChild}
+                  className="task-detail-workspace-ghost-action"
+                >
+                  <Plus className="h-4 w-4" />
+                  {t('todo.parent_board_add_child')}
+                </button>
+              </div>
             ) : null}
           </div>
           {expanded ? (
@@ -81,7 +105,7 @@ export function IssueHierarchySummary({
               data-testid="issue-hierarchy-children-list"
               className="max-h-56 overflow-y-auto overscroll-y-contain"
             >
-              {children.map(child => (
+              {children.map((child) => (
                 <button
                   key={child.id}
                   type="button"
@@ -95,7 +119,9 @@ export function IssueHierarchySummary({
                   />
                   <span className="min-w-0 flex-1 truncate">{child.title}</span>
                   <span className="max-w-24 truncate text-xs text-text-muted">
-                    {child.assignee_agent_name ?? child.assignee_team_name ?? child.assignee_name}
+                    {child.assignee_agent_name ??
+                      child.assignee_team_name ??
+                      child.assignee_name}
                   </span>
                   <span className="shrink-0 text-xs text-text-muted">
                     {t(`todo.status_${child.status}`, child.status)}

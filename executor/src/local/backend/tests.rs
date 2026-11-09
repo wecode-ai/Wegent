@@ -162,7 +162,9 @@ impl RuntimeWorkHandler for BlockingCapacityRuntimeWorkHandler {
                         self.first_capacity_started.notify_one();
                         self.release_first_capacity.notified().await;
                     }
-                    Ok(json!({"limit": 1, "active": 0, "queued": 0}))
+                    Ok(
+                        json!({"limit": 1, "active": 1, "queued": 5, "categories": {"agent": {"limit": 1, "active": 0, "queued": 0}}}),
+                    )
                 }
                 Some("runtime.tasks.create") => {
                     self.create_calls.fetch_add(1, AtomicOrdering::AcqRel);
@@ -547,7 +549,9 @@ impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
         Box::pin(async move {
             match data["method"].as_str() {
                 Some("runtime.runner.catalog") => Ok(json!({"models": []})),
-                Some("runtime.capacity.get") => Ok(json!({"limit": 1, "active": 0, "queued": 0})),
+                Some("runtime.capacity.get") => Ok(
+                    json!({"limit": 1, "active": 1, "queued": 5, "categories": {"agent": {"limit": 1, "active": 0, "queued": 0}}}),
+                ),
                 method => panic!("unexpected runtime method: {method:?}"),
             }
         })

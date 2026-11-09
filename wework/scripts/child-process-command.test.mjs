@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'

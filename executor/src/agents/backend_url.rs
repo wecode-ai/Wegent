@@ -51,14 +51,10 @@ pub(crate) fn bind_backend_model_gateway(request: &mut ExecutionRequest, backend
         if !current.path().trim_end_matches('/').ends_with(GATEWAY_PATH) {
             continue;
         }
-        let mut gateway = backend.clone();
-        gateway.set_path(&format!(
-            "{}{GATEWAY_PATH}",
-            backend.path().trim_end_matches('/')
-        ));
-        gateway.set_query(None);
-        gateway.set_fragment(None);
-        config.insert(key.to_owned(), serde_json::Value::String(gateway.into()));
+        let Ok(gateway) = super::runtime_capabilities::api_url(backend_url, GATEWAY_PATH) else {
+            return;
+        };
+        config.insert(key.to_owned(), serde_json::Value::String(gateway));
     }
 }
 
@@ -296,5 +292,23 @@ mod tests {
             request.model_config["ANTHROPIC_AUTH_TOKEN"],
             "execution-user-token"
         );
+    }
+
+    #[test]
+    fn gateway_normalizes_api_root_after_repeated_connection_refreshes() {
+        for backend in [
+            "https://backend.example.com/wegent",
+            "https://backend.example.com/wegent/api/",
+        ] {
+            let mut request =
+                request_with_gateway("http://stale.invalid/api/runtime-work/llm-responses-proxy");
+            for _ in 0..2 {
+                bind_backend_model_gateway(&mut request, backend);
+            }
+            assert_eq!(
+                request.model_config["base_url"],
+                "https://backend.example.com/wegent/api/runtime-work/llm-responses-proxy"
+            );
+        }
     }
 }

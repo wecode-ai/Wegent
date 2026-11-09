@@ -1,3 +1,4 @@
+import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
@@ -43,7 +44,11 @@ import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+  pendingRequestUserInputResponses,
+} from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
@@ -390,13 +395,13 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               )}
             </header>
             <ScrollableMessageArea
-              workspacePath={workspaceTarget?.path}
               messages={paneMessages}
               loading={paneSession.transcriptLoading}
               isWaitingForAssistant={
                 !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
               }
               hasMoreBefore={paneSession.transcriptHasMoreBefore}
+              beforeCursor={paneSession.transcriptBeforeCursor}
               onSearchTranscript={paneSession.searchTranscript}
               onEnsureSearchMatch={paneSession.ensureSearchMatch}
               searchPage={paneSession.searchPage}
@@ -484,67 +489,91 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       }}
                       onCancel={connectorAuthRecovery.clearPending}
                     />
-                  ) : pendingRequestUserInput ? (
-                    <RequestUserInputCard
-                      key={
-                        requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
-                      }
-                      payload={pendingRequestUserInput}
-                      onSubmit={response => {
-                        const isImplementationPlanRequest =
-                          isImplementationPlanRequestUserInput(pendingRequestUserInput)
-                        const shouldImplementPlan =
-                          isImplementationPlanRequest &&
-                          isImplementationPlanConfirmationResponse(response)
-                        return paneSession.sendRequestUserInputResponse(response, {
-                          appendUserMessage: isImplementationPlanRequest,
-                          forceDefaultCollaborationMode: shouldImplementPlan,
-                        })
-                      }}
-                      onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
-                    />
                   ) : (
-                    <BufferedChatInput
-                      value={paneSession.input}
-                      onChange={paneSession.setInput}
-                      onDraftEdit={paneSession.clearError}
-                      onSubmit={submitPaneInput}
-                      disabled={composerDisabled}
-                      submitDisabled={paneSession.status.isSubmitting}
-                      error={paneSession.error}
-                      disabledReason={inlineComposerDisabledReason}
-                      placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                      projectChat={projectChatWithModelSelectorSignal}
-                      modelSelectorOverride={null}
-                      projectWork={effectiveProjectWork}
-                      workspaceTarget={workspaceTarget}
-                      workspaceFileApi={workspaceFileApi}
-                      queuedMessages={paneQueuedMessages}
-                      guidanceMessages={paneGuidanceMessages}
-                      codeComments={paneSession.codeCommentContexts}
-                      isStreaming={paneIsBusy}
-                      onPause={() => void paneSession.pauseCurrentResponse()}
-                      onCompactContext={
-                        currentRuntimeUsesCodex
-                          ? () => void paneSession.compactContext()
-                          : undefined
+                    <RequestUserInputComposer
+                      payload={pendingRequestUserInput}
+                      source={currentRuntimeTask}
+                      renderQuestion={onCollapse =>
+                        pendingRequestUserInput ? (
+                          <RequestUserInputCard
+                            key={
+                              requestUserInputPayloadKey(pendingRequestUserInput) ??
+                              'implementation-plan'
+                            }
+                            payload={pendingRequestUserInput}
+                            source={currentRuntimeTask}
+                            messages={paneMessages}
+                            onCollapse={onCollapse}
+                            onSubmit={response => {
+                              const isImplementationPlanRequest =
+                                isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                              const shouldImplementPlan =
+                                isImplementationPlanRequest &&
+                                isImplementationPlanConfirmationResponse(response)
+                              return paneSession.sendRequestUserInputResponse(response, {
+                                requestUserInputResponses: pendingRequestUserInputResponses(
+                                  response,
+                                  paneMessages,
+                                  paneSession.answeredRequestUserInputIds
+                                ),
+                                appendUserMessage: isImplementationPlanRequest,
+                                forceDefaultCollaborationMode: shouldImplementPlan,
+                              })
+                            }}
+                            onIgnore={() =>
+                              paneSession.ignoreRequestUserInput(
+                                pendingRequestUserInputPayloads(
+                                  paneMessages,
+                                  paneSession.answeredRequestUserInputIds
+                                )
+                              )
+                            }
+                          />
+                        ) : null
                       }
-                      taskPlan={paneSession.taskPlan}
-                      onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                      onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
-                      onReorderQueuedMessages={paneSession.reorderQueuedMessages}
-                      queuePaused={paneSession.queuedMessagesPaused}
-                      onResumeQueue={paneSession.resumeQueuedMessages}
-                      onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
-                      onClearQueue={paneSession.clearQueuedMessages}
-                      onSendQueuedAsGuidance={
-                        currentRuntimeUsesCodex ? paneSession.sendQueuedAsGuidance : undefined
-                      }
-                      onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
-                      onEditQueuedMessage={paneSession.editQueuedMessage}
-                      onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                      onClearCodeComments={paneSession.clearCodeComments}
-                    />
+                    >
+                      <BufferedChatInput
+                        value={paneSession.input}
+                        onChange={paneSession.setInput}
+                        onDraftEdit={paneSession.clearError}
+                        onSubmit={submitPaneInput}
+                        disabled={composerDisabled}
+                        submitDisabled={paneSession.status.isSubmitting}
+                        error={paneSession.error}
+                        disabledReason={inlineComposerDisabledReason}
+                        placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
+                        projectChat={projectChatWithModelSelectorSignal}
+                        modelSelectorOverride={null}
+                        projectWork={effectiveProjectWork}
+                        workspaceTarget={workspaceTarget}
+                        workspaceFileApi={workspaceFileApi}
+                        queuedMessages={paneQueuedMessages}
+                        guidanceMessages={paneGuidanceMessages}
+                        codeComments={paneSession.codeCommentContexts}
+                        isStreaming={paneIsBusy}
+                        onPause={() => void paneSession.pauseCurrentResponse()}
+                        onCompactContext={
+                          currentRuntimeUsesCodex
+                            ? () => void paneSession.compactContext()
+                            : undefined
+                        }
+                        taskPlan={paneSession.taskPlan}
+                        onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                        onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
+                        onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                        queuePaused={paneSession.queuedMessagesPaused}
+                        onResumeQueue={paneSession.resumeQueuedMessages}
+                        onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                        onClearQueue={paneSession.clearQueuedMessages}
+                        onSendQueuedAsGuidance={
+                          currentRuntimeUsesCodex ? paneSession.sendQueuedAsGuidance : undefined
+                        }
+                        onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
+                        onEditQueuedMessage={paneSession.editQueuedMessage}
+                        onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                        onClearCodeComments={paneSession.clearCodeComments}
+                      />
+                    </RequestUserInputComposer>
                   )}
                 </div>
               </div>
@@ -652,6 +681,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         devices={state.devices}
         projects={state.projects}
         runtimeWork={state.runtimeWork}
+        runtimeWorkLoad={state.runtimeWorkLoad}
         currentProjectId={activeConversationProject?.id}
         currentRuntimeTask={currentRuntimeTask}
         unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}

@@ -4334,6 +4334,7 @@
 
 .collaboration-issue-table-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
@@ -4345,6 +4346,8 @@
   width: min(320px, 35vw);
   height: 32px;
   flex: 0 1 320px;
+  min-width: min(220px, 100%);
+  max-width: 100%;
   align-items: center;
   gap: 8px;
   border: 1px solid rgb(var(--color-border));
@@ -4372,21 +4375,29 @@
 
 .collaboration-issue-table-toolbar > .collaboration-primary-button {
   margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .collaboration-issue-table-batch {
   display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
 .collaboration-issue-table-batch strong {
+  flex-shrink: 0;
+  white-space: nowrap;
   color: rgb(var(--color-text-primary));
   font-size: 12px;
 }
 
 .collaboration-issue-table-batch select,
 .collaboration-issue-table-batch button {
+  flex-shrink: 0;
+  white-space: nowrap;
   height: 32px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
@@ -4395,6 +4406,13 @@
   background: rgb(var(--color-bg-base));
   font: inherit;
   font-size: 12px;
+}
+
+.collaboration-issue-table-batch-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .collaboration-issue-table-batch button:not(:disabled) {
@@ -4753,6 +4771,17 @@
     overflow-y: auto;
     padding: 0;
     border-bottom: 0;
+  }
+
+  .collaboration-platform-sidebar-full {
+    max-height: min(25dvh, 160px);
+    align-items: stretch;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .collaboration-platform-sidebar-full > * {
+    flex-shrink: 0;
   }
 
   .collaboration-platform-brand {

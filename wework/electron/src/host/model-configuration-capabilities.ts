@@ -10,20 +10,27 @@ export function registerModelConfigurationCapabilities(
   router: HostCapabilityRouter,
   window: () => BrowserWindow | null,
   secrets: SecureValueStore,
-  events: DesktopHostEventBroker
+  events: DesktopHostEventBroker,
+  configuration?: ModelConfigurationStore,
+  syncRuntime?: () => Promise<void>
 ): void {
-  let instance: ModelConfigurationStore | null = null
+  let instance: ModelConfigurationStore | null = configuration ?? null
   /** Lazily share one serialized model configuration service across host capability requests. */
   const store = () =>
     (instance ??= new ModelConfigurationStore(
       join(app.getPath('userData'), 'model-connections'),
       secrets
     ))
-  router.register('modelConfiguration.read', () => store().read())
+  router.register('modelConfiguration.read', async () => {
+    const result = await store().read()
+    await syncRuntime?.()
+    return result
+  })
   router.register('modelConfiguration.runtime', params => store().runtime(params.provider))
   router.register('modelConfiguration.save', async params => {
     if (typeof params.revision !== 'string') throw new Error('Configuration revision is required')
     const result = await store().save(params.revision, params.providers)
+    await syncRuntime?.()
     events.publish('model-configuration.changed', { revision: result.revision })
     return result
   })
@@ -38,6 +45,7 @@ export function registerModelConfigurationCapabilities(
       : await dialog.showOpenDialog(options)
     if (selected.canceled || !selected.filePaths[0]) return null
     const result = await store().bind(selected.filePaths[0])
+    await syncRuntime?.()
     events.publish('model-configuration.changed', { revision: result.revision })
     return result
   })

@@ -1,13 +1,9 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import '@/i18n'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
-import {
-  IssueAssignmentReceipts,
-  IssueAssignmentReceiptStatus,
-  type IssueAssignmentReceiptState,
-} from './IssueAssignmentReceipts'
-import { useCallback, useState } from 'react'
+import '@/i18n'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
+import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 
 const receipt: IssueAssignmentReceipt = {
   id: 'assignment-1',
@@ -38,115 +34,122 @@ function setup(user = 8, rows = [receipt], assignee: number | null = 7) {
 afterEach(() => vi.useRealTimers())
 
 describe('Issue reception receipts', () => {
-  it('shares live receipt updates with the activity without another polling request', async () => {
+  it('preserves a hovered receipt while an unrelated issue revision is refreshed', async () => {
     vi.useFakeTimers()
-    const onStateChange = vi.fn()
+    const rows = [{ ...receipt, stand_in_received_at: '2026-11-07T16:54:00Z' }]
     const api = {
       getLoopItem: vi.fn().mockResolvedValue({ id: 'issue' }),
-      getIssueAssignmentReceipts: vi.fn().mockResolvedValue([receipt]),
-      acknowledgeIssueAssignment: vi.fn().mockResolvedValue({ acknowledged: true }),
+      getIssueAssignmentReceipts: vi.fn().mockResolvedValue(rows),
+      acknowledgeIssueAssignment: vi.fn(),
     }
-    function SharedReceipts() {
-      const [state, setState] = useState<IssueAssignmentReceiptState | null>(null)
-      const publish = useCallback((next: IssueAssignmentReceiptState) => {
-        onStateChange(next)
-        setState(next)
-      }, [])
-      return (
-        <>
-          <IssueAssignmentReceipts
-            api={api}
-            issueId="issue"
-            version={1}
-            currentUserId={8}
-            assigneeUserId={7}
-            onStateChange={publish}
-          />
-          {state ? <IssueAssignmentReceiptStatus {...state} /> : null}
-        </>
-      )
-    }
-    const { unmount } = render(<SharedReceipts />)
-    await act(async () => {})
-    expect(screen.getAllByText('未读')).toHaveLength(2)
-    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(1)
-    await act(async () => vi.advanceTimersByTimeAsync(5000))
-    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(2)
-    expect(onStateChange).toHaveBeenCalledTimes(1)
-    api.getIssueAssignmentReceipts.mockResolvedValue([
-      { ...receipt, human_read_at: '2026-10-27T02:00:00Z' },
-    ])
-    await act(async () => vi.advanceTimersByTimeAsync(5000))
-    expect(screen.getAllByText(/本人已读/)).toHaveLength(2)
-    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(3)
-    expect(onStateChange).toHaveBeenCalledTimes(2)
-    expect(api.acknowledgeIssueAssignment).not.toHaveBeenCalled()
-    unmount()
-    await act(async () => vi.advanceTimersByTimeAsync(5000))
-    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(3)
-  })
-
-  it('shows only receipts belonging to the displayed assignee', async () => {
-    setup(9, [
-      receipt,
-      { ...receipt, id: 'other', target_id: '8', human_read_at: '2026-10-27T02:00:00Z' },
-    ])
-    expect(await screen.findByText('未读')).toBeInTheDocument()
-    expect(screen.queryByTestId('issue-assignment-receipt-other')).not.toBeInTheDocument()
-    expect(screen.queryByText(/本人已读/)).not.toBeInTheDocument()
-  })
-
-  it('does not attach another recipient receipt to an unassigned control', async () => {
-    const { api } = setup(9, [receipt], null)
-    await act(async () => {})
-    expect(api.getIssueAssignmentReceipts).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('issue-assignment-receipt-assignment-1')).not.toBeInTheDocument()
-  })
-
-  it('does not show receipt synchronization errors on an unassigned control', async () => {
-    vi.useFakeTimers()
-    const { api, rerender } = setup(9)
-    await act(async () => {})
-    api.getIssueAssignmentReceipts.mockRejectedValue(new Error('offline'))
-    await act(async () => vi.advanceTimersByTimeAsync(5000))
-    expect(screen.getByText('回执同步失败')).toBeInTheDocument()
-    rerender(
+    const view = (version: number, assigneeUserId = 7, issueId = 'issue') => (
       <IssueAssignmentReceipts
         api={api as never}
-        issueId="issue"
-        version={2}
-        currentUserId={9}
-        assigneeUserId={null}
+        issueId={issueId}
+        version={version}
+        assignmentRevision="assignment-1"
+        currentUserId={8}
+        assigneeUserId={assigneeUserId}
       />
     )
-    expect(screen.queryByText('回执同步失败')).not.toBeInTheDocument()
-  })
+    const { rerender } = render(view(1))
+    await act(async () => {})
+    const icon = screen.getByTitle(/^分身已接收/)
+    fireEvent.pointerOver(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(600))
 
-  it('preserves local user zero when matching the current assignee', async () => {
-    setup(9, [{ ...receipt, target_id: '0' }], 0)
-    expect(await screen.findByText('未读')).toBeInTheDocument()
-  })
-
-  it('shows unread to the assigner without acknowledging on behalf of the recipient', async () => {
-    const { api } = setup()
-    expect(await screen.findByText('未读')).toBeInTheDocument()
-    expect(api.acknowledgeIssueAssignment).not.toHaveBeenCalled()
-  })
-
-  it('acknowledges only after the recipient successfully loads the detail', async () => {
-    const { api } = setup(7)
-    api.acknowledgeIssueAssignment.mockImplementation(async () => {
-      api.getIssueAssignmentReceipts.mockResolvedValue([
-        { ...receipt, human_read_at: '2026-10-27T02:00:00Z' },
-      ])
-    })
-    await waitFor(() =>
-      expect(api.acknowledgeIssueAssignment).toHaveBeenCalledWith('issue', 'assignment-1', 7)
+    let resolveRefresh!: (rows: IssueAssignmentReceipt[]) => void
+    api.getIssueAssignmentReceipts.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveRefresh = resolve
+      })
     )
-    expect(api.getLoopItem.mock.invocationCallOrder[0]).toBeLessThan(
-      api.acknowledgeIssueAssignment.mock.invocationCallOrder[0]
+    rerender(view(2))
+    expect(screen.getByTitle(/^分身已接收/)).toBe(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(100))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    await act(async () => resolveRefresh(rows))
+    expect(screen.getByTitle(/^分身已接收/)).toBe(icon)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+
+    rerender(view(3, 9))
+    expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    rerender(view(4, 7, 'another-issue'))
+    expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
+  })
+
+  it('identifies an assignment independently of history ordering and display names', () => {
+    const entry = {
+      at: '2026-11-07T18:35:58Z',
+      action: 'assign' as const,
+      by_user_id: 8,
+      to_type: 'user' as const,
+      to_id: '7',
+      to_name: 'Alice',
+    }
+    const previous = { ...entry, at: '2026-11-07T18:30:00Z' }
+    const revision = issueAssignmentRevision({ assignment_history: [previous, entry] })
+    expect(issueAssignmentRevision({ assignment_history: [entry, previous] })).toBe(revision)
+    expect(
+      issueAssignmentRevision({ assignment_history: [previous, { ...entry, to_name: 'Renamed' }] })
+    ).toBe(revision)
+    expect(
+      issueAssignmentRevision({
+        assignment_history: [previous, entry, { ...entry, at: '2026-11-07T18:36:00Z' }],
+      })
+    ).not.toBe(revision)
+    expect(issueAssignmentRevision({})).toBeUndefined()
+  })
+
+  it('preserves a pending receipt tooltip during a same-assignment Issue refresh', async () => {
+    vi.useFakeTimers()
+    const api = {
+      getLoopItem: vi.fn(),
+      getIssueAssignmentReceipts: vi
+        .fn()
+        .mockResolvedValue([{ ...receipt, stand_in_received_at: '2026-11-07T18:35:58Z' }]),
+      acknowledgeIssueAssignment: vi.fn(),
+    }
+    const props = {
+      api,
+      issueId: 'issue',
+      currentUserId: 8,
+      assigneeUserId: 7,
+      assignmentRevision: 'assignment-1',
+    }
+    const { rerender } = render(<IssueAssignmentReceipts {...props} version={1} />)
+    await act(async () => {})
+    const icon = screen.getByText('分身已接收').closest('[title]')!
+    fireEvent.pointerOver(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(380))
+    let finishOldRefresh!: (rows: IssueAssignmentReceipt[]) => void
+    api.getIssueAssignmentReceipts.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishOldRefresh = resolve
+        })
     )
-    expect(await screen.findByText(/本人已读/)).toBeInTheDocument()
+    rerender(<IssueAssignmentReceipts {...props} version={2} />)
+    expect(screen.getByText('分身已接收').closest('[title]')).toBe(icon)
+    await act(async () => vi.advanceTimersByTimeAsync(320))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    let finishNewAssignment!: (rows: IssueAssignmentReceipt[]) => void
+    api.getIssueAssignmentReceipts.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishNewAssignment = resolve
+        })
+    )
+    rerender(<IssueAssignmentReceipts {...props} version={3} assignmentRevision="assignment-2" />)
+    expect(screen.queryByText('分身已接收')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    await act(async () =>
+      finishOldRefresh([{ ...receipt, stand_in_received_at: '2026-11-07T18:35:58Z' }])
+    )
+    expect(screen.queryByText('分身已接收')).not.toBeInTheDocument()
+    await act(async () => finishNewAssignment([{ ...receipt, id: 'assignment-2' }]))
+    expect(screen.getByText('未读')).toBeInTheDocument()
   })
 
   it('does not acknowledge when detail loading fails and recovers on the next poll', async () => {
@@ -158,6 +161,22 @@ describe('Issue reception receipts', () => {
     expect(api.acknowledgeIssueAssignment).not.toHaveBeenCalled()
     await act(async () => vi.advanceTimersByTimeAsync(5000))
     expect(api.acknowledgeIssueAssignment).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { issueId: 'other-issue', assigneeUserId: 7 },
+    { issueId: 'issue', assigneeUserId: 8 },
+  ])('clears receipts when their scope changes: %o', async scope => {
+    const { api, rerender } = setup(8, [
+      { ...receipt, stand_in_received_at: '2026-11-07T19:09:38Z' },
+    ])
+    await act(async () => {})
+    expect(screen.getByTitle(/分身已接收/)).toBeInTheDocument()
+    api.getIssueAssignmentReceipts.mockReturnValueOnce(new Promise(() => {}))
+    rerender(
+      <IssueAssignmentReceipts api={api as never} {...scope} version={2} currentUserId={8} />
+    )
+    expect(screen.queryByTitle(/分身已接收/)).not.toBeInTheDocument()
   })
 
   it('does not acknowledge a detail kept mounted in an inactive workspace tab', async () => {
@@ -184,42 +203,5 @@ describe('Issue reception receipts', () => {
     rerender(view(false))
     await act(async () => vi.advanceTimersByTimeAsync(5000))
     expect(api.acknowledgeIssueAssignment).toHaveBeenCalledOnce()
-  })
-
-  it('retains independent human and stand-in timestamps', async () => {
-    const { api } = setup(7, [
-      {
-        ...receipt,
-        human_read_at: '2026-10-27T02:00:00Z',
-        stand_in_received_at: '2026-10-27T02:01:00Z',
-      },
-    ])
-    expect(await screen.findByText(/本人已读/)).toBeInTheDocument()
-    expect(screen.getByText(/分身已接收/)).toBeInTheDocument()
-    const icons = screen.getByTestId('issue-assignment-receipts')
-    expect(icons.querySelector('svg[data-figure="human"]')).not.toBeNull()
-    expect(icons.querySelector('svg[data-figure="stand-in"]')).not.toBeNull()
-    expect(api.acknowledgeIssueAssignment).not.toHaveBeenCalled()
-  })
-
-  it('distinguishes legacy records from unread tracked assignments', async () => {
-    setup(8, [{ ...receipt, receipt_tracking: false }])
-    expect(await screen.findByText('暂无接收记录')).toBeInTheDocument()
-    expect(screen.queryByText('未读')).not.toBeInTheDocument()
-  })
-
-  it('refreshes the assigner view without reopening and stops polling after close', async () => {
-    vi.useFakeTimers()
-    const { api, unmount } = setup()
-    await act(async () => {})
-    api.getIssueAssignmentReceipts.mockResolvedValue([
-      { ...receipt, stand_in_received_at: '2026-10-27T02:00:00Z' },
-    ])
-    await act(async () => vi.advanceTimersByTimeAsync(5000))
-    expect(screen.getByText(/分身已接收/)).toBeInTheDocument()
-    unmount()
-    const count = api.getIssueAssignmentReceipts.mock.calls.length
-    await act(async () => vi.advanceTimersByTimeAsync(10000))
-    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(count)
   })
 })

@@ -19,6 +19,37 @@ fn lifecycle_events_are_skipped() {
 }
 
 #[test]
+fn completed_callback_keeps_cumulative_and_turn_file_changes_separate() {
+    let parser = parser::ResponsesApiEventParser::default();
+    let turn = json!({
+        "status": "active", "files": [{"path": "b.ts"}], "diff": "turn patch"
+    });
+    for cumulative in [
+        json!({"status": "active", "files": [{"path": "a.ts"}, {"path": "b.ts"}], "diff": "task patch"}),
+        json!({"status": "active", "files": [], "diff": ""}),
+        json!({"status": "error", "files": [], "diff": ""}),
+    ] {
+        let event = parser
+            .parse(
+                10,
+                20,
+                None,
+                "response.completed",
+                &json!({"response": {
+                    "file_changes": turn,
+                    "task_file_changes": cumulative,
+                }}),
+            )
+            .expect("parse")
+            .expect("event");
+        assert_eq!(event.event_type, "done");
+        let result = event.result.expect("completed result");
+        assert_eq!(result["file_changes"], turn);
+        assert_eq!(result["task_file_changes"], cumulative);
+    }
+}
+
+#[test]
 fn response_created_maps_to_start_with_shell_type() {
     let data = json!({"shell_type": "claudecode", "type": "response.created"});
     let event = parser::shared()

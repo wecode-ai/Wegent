@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 const workflow = JSON.parse(
@@ -17,6 +19,114 @@ const workflow = JSON.parse(
   ),
 );
 const { jobs } = workflow;
+
+function sparseCheckout(t, checkout, trackedOnly = false) {
+  const root = mkdtempSync(join(tmpdir(), "wework-upgrade-resolver-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = new URL("../../", import.meta.url);
+  const selections = checkout["sparse-checkout"]
+    .trim()
+    .split("\n")
+    .map((selection) => selection.replace(/^\//, "").replace(/\/$/, ""));
+  const paths = trackedOnly
+    ? execFileSync("git", ["ls-files", "-z", "--", ...selections], {
+        cwd: repository,
+        encoding: "utf8",
+      })
+        .split("\0")
+        .filter(Boolean)
+    : selections;
+  for (const path of paths) {
+    const destination = join(root, path);
+    mkdirSync(dirname(destination), { recursive: true });
+    cpSync(new URL(path, repository), destination, { recursive: true });
+  }
+  return root;
+}
+
+test("source sparse checkout imports the actual desktop entry graph and release scenario", (t) => {
+  const checkout = jobs["verify-upgrades"].steps.find(
+    (step) => step.uses === "actions/checkout@v4",
+  ).with;
+  const root = sparseCheckout(t, checkout, true);
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    await import('./wework/e2e/desktop/modules/task-flow-main.mjs');
+    await import('./wework/e2e/desktop/scenarios/retained-upgrade-baseline.scenario.mjs');
+    await import('./wework/scripts/lib/packaged-runtime-preparation.mjs');
+    await import('./wework/scripts/lib/upgrade-source-prefetch.mjs');
+  `,
+    ],
+    { cwd: root, stdio: "pipe" },
+  );
+});
+
+test("input resolution pins its source once and its sparse checkout contains all imports", (t) => {
+  const steps = jobs["prepare-upgrade-inputs"].steps;
+  const checkouts = steps.filter((step) => step.uses === "actions/checkout@v4");
+  assert.equal(checkouts.length, 1);
+  const resolveInputs = steps.find((step) => step.id === "inputs");
+  const checkout = checkouts[0].with;
+  assert.equal(checkout.ref, resolveInputs.env.VERIFICATION_SHA);
+  assert.equal(checkout["sparse-checkout-cone-mode"], false);
+  const root = sparseCheckout(t, checkout);
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    const resolver = await import('./.github/scripts/resolve-wework-upgrade-inputs.mjs');
+    if (resolver.upgradeVerificationMatrix('stable').include.length !== 4) throw new Error('Invalid matrix');
+    await import('./wework/scripts/lib/upgrade-verification-shards.mjs');
+    await import('./wework/scripts/lib/published-upgrade-policies.mjs');
+  `,
+    ],
+    { cwd: root, stdio: "pipe" },
+  );
+});
+
+test("sparse aggregation loads its policy and rejects missing independent platform evidence", (t) => {
+  const checkout = jobs["aggregate-upgrades"].steps.find(
+    (step) => step.uses === "actions/checkout@v4",
+  ).with;
+  const root = sparseCheckout(t, checkout);
+  for (const directory of ["plans", "shards"]) mkdirSync(join(root, directory));
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          "wework/scripts/aggregate-release-upgrades.mjs",
+          "plans",
+          "shards",
+          "policies",
+        ],
+        { cwd: root, stdio: "pipe" },
+      ),
+    (error) => {
+      assert.match(
+        error.stderr.toString(),
+        /Both independent package platforms require frozen upgrade plans/,
+      );
+      return true;
+    },
+  );
+});
+
+test("build-only inputs cannot publish or start the serial upgrade verifier", () => {
+  assert.match(jobs["prepare-upgrade-inputs"].if, /!inputs.build_only/);
+  assert.match(jobs.publish.if, /!inputs.build_only/);
+  const rejection = jobs["prepare-release"].steps.find(
+    (step) => step.name === "Reject publishing unverified diagnostic inputs",
+  );
+  assert.equal(rejection.if, "inputs.build_only && inputs.publish_release");
+  assert.match(rejection.run, /exit 1/);
+});
 
 test("Intel ticket delivery uses TCP before signing while preserving every notarization gate", () => {
   const steps = jobs.build.steps;
@@ -42,6 +152,11 @@ test("Intel ticket delivery uses TCP before signing while preserving every notar
   assert.doesNotMatch(
     transport.run,
     /stapler|retry|attempt|timeout|notarytool/,
+  );
+  assert.equal(
+    steps.find((step) => step.name === "Build signed Electron release").env
+      .WEWORK_CUSTOM_MACOS_NOTARIZATION,
+    "${{ matrix.platform == 'macos' && 'true' || '' }}",
   );
 });
 
@@ -75,7 +190,9 @@ test("release creation waits for every candidate build and validation", () => {
   assert.deepEqual(jobs.publish.needs, [
     "prepare-release",
     "build",
+    "prepare-upgrade-inputs",
     "verify-upgrades",
+    "aggregate-upgrades",
   ]);
   assert.doesNotMatch(jobs.publish.if, /always\(\)/);
   const names = jobs.publish.steps.map((step) => step.name);
@@ -84,6 +201,7 @@ test("release creation waits for every candidate build and validation", () => {
     "Download release builds",
     "Reuse verified arm64 upgrade paths for macOS x64",
     "Generate desktop update manifests",
+    "Report completed upgrade duration before publication",
   ])
     assert.ok(names.indexOf(name) >= 0 && names.indexOf(name) < create, name);
   assert.ok(create < names.indexOf("Upload formal release assets"));
@@ -134,16 +252,23 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
     (step) => step.name === "Reuse verified arm64 upgrade paths for macOS x64",
   );
   assert.match(reuse.run, /mirror-macos-upgrade-policy.mjs/);
-  assert.deepEqual(
-    jobs["verify-upgrades"].strategy.matrix.include.map((item) => [
-      item.platform,
-      item.arch,
-    ]),
-    [
-      ["macos", "arm64"],
-      ["windows", "x64"],
-    ],
+  assert.equal(
+    jobs["verify-upgrades"].strategy.matrix,
+    "${{ fromJSON(needs.prepare-upgrade-inputs.outputs.verification_matrix) }}",
   );
+  assert.equal(jobs["verify-upgrades"].strategy["max-parallel"], 8);
+  assert.equal(jobs["verify-upgrades"]["timeout-minutes"], 15);
+  assert.equal(jobs.build["timeout-minutes"], 90);
+  const step = jobs["verify-upgrades"].steps.find(
+    (step) =>
+      step.name ===
+      "Verify declared upgrade and rollback edges on real release packages",
+  );
+  assert.equal(step.env.WEWORK_UPGRADE_VERIFY_CHANNEL, "${{ matrix.channel }}");
+  const upload = jobs["verify-upgrades"].steps.find(
+    (step) => step.name === "Upload verified release upgrade evidence",
+  );
+  assert.match(upload.with.name, /matrix.channel/);
 });
 
 test("upgrade verification only consumes release artifacts and has no signing credentials", () => {
@@ -190,7 +315,7 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   );
   assert.equal(
     jobs["prepare-release"].if,
-    "inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''",
+    `inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''`,
   );
   const source = verification.steps.find(
     (step) => step.name === "Download immutable diagnostic source",
@@ -216,12 +341,139 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(
     workflow.concurrency.group,
-    /verification_checkpoint == 'app-update-refresh'.*!inputs.publish_release/,
+    /app-update-refresh.*app-update-retry.*!inputs.publish_release/,
   );
   assert.ok(
     workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(
       "app-update-refresh",
     ),
   );
+  assert.ok(
+    workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(
+      "app-update-retry",
+    ),
+  );
   assert.match(verification.if, /!cancelled\(\)/);
+});
+
+test("retry without producer IDs routes only to the non-publishing native regression workflow", () => {
+  const retry = jobs["retry-regression"];
+  assert.equal(retry.uses, "./.github/workflows/wework-upgrade-regression.yml");
+  assert.equal(retry.permissions.contents, "read");
+  assert.match(retry.if, /verification_checkpoint == 'app-update-retry'/);
+  assert.match(retry.if, /verification_source_run_id == ''/);
+  assert.match(retry.if, /verification_run_id == ''/);
+  assert.match(retry.if, /!inputs.publish_release/);
+  assert.match(
+    jobs["prepare-upgrade-inputs"].if,
+    /!\(inputs.verification_checkpoint == 'app-update-retry'/,
+  );
+});
+
+test("source runners consume one frozen plan and complete aggregation gates publication", () => {
+  const prepare = jobs["prepare-upgrade-inputs"];
+  assert.match(
+    prepare.outputs.verification_matrix,
+    /steps.plan.outputs.matrix/,
+  );
+  assert.ok(
+    prepare.steps.some((step) =>
+      step.run?.includes("plan-wework-upgrade-shards.mjs"),
+    ),
+  );
+  const runner = jobs["verify-upgrades"];
+  const execute = runner.steps.find((step) =>
+    step.run?.includes("verify-release-upgrades.mjs"),
+  );
+  assert.equal(
+    execute.env.WEWORK_UPGRADE_VERIFY_SOURCE,
+    "${{ matrix.source_version }}",
+  );
+  assert.match(execute.env.WEWORK_UPGRADE_PLAN_DIRECTORY, /upgrade-plan/);
+  assert.match(runner.name, /matrix.source_version/);
+  const aggregate = jobs["aggregate-upgrades"];
+  assert.deepEqual(aggregate.needs, [
+    "prepare-upgrade-inputs",
+    "verify-upgrades",
+  ]);
+  assert.match(aggregate.if, /diagnostic_checkpoint == ''/);
+  assert.ok(
+    aggregate.steps.some((step) =>
+      step.run?.includes("aggregate-release-upgrades.mjs"),
+    ),
+  );
+  assert.match(
+    aggregate.steps.at(-1).run,
+    /verify-wework-upgrade-duration.mjs/,
+  );
+  assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
+});
+
+test("baseline exclusions require explicit dispatch confirmation without bypassing aggregation", () => {
+  const inputs = (workflow.on ?? workflow.true).workflow_dispatch.inputs;
+  assert.equal(inputs.approved_baseline_exclusions.default, "");
+  const aggregate = jobs["aggregate-upgrades"].steps.find((step) =>
+    step.run?.includes("aggregate-release-upgrades.mjs"),
+  );
+  assert.equal(
+    aggregate.env.WEWORK_APPROVED_BASELINE_EXCLUSIONS,
+    "${{ inputs.approved_baseline_exclusions }}",
+  );
+  assert.equal(aggregate["continue-on-error"], undefined);
+  assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
+});
+
+test("duration remains observable without blocking the verified release", () => {
+  for (const name of ["verify-upgrades", "aggregate-upgrades", "publish"]) {
+    const timing = jobs[name].steps.filter((step) =>
+      step.run?.includes("verify-wework-upgrade-duration.mjs"),
+    );
+    assert.ok(timing.length > 0, name);
+    for (const step of timing) {
+      assert.match(step.run, /--report-only/);
+      assert.equal(step["continue-on-error"], undefined);
+      if (name === "publish") assert.match(step.run, /--completed/);
+    }
+  }
+});
+
+test("lightweight host updates reject both loose component trees and sealed archives", () => {
+  const step = jobs.build.steps.find(
+    (step) => step.name === "Verify componentized macOS update package",
+  );
+  const pattern = new RegExp(step.run.match(/grep -E '([^']+)'/)[1]);
+  for (const entry of [
+    "WeWork.app/Contents/Resources/bin/wegent-executor",
+    "WeWork.app/Contents/Resources/wework-core-plugins/wework-app/package.json",
+    "WeWork.app/Contents/Resources/wework-core-plugins.tar.gz",
+    "WeWork.app/Contents/Resources/wework-app-static.tar.gz",
+    "WeWork.app/Contents/Resources/bundled-plugins.tar.gz",
+  ])
+    assert.match(entry, pattern);
+  assert.doesNotMatch("WeWork.app/Contents/Resources/icons/icon.png", pattern);
+  const guard = step.run
+    .split("\n")
+    .find((line) => line.includes("if unzip -Z1"));
+  const status = execFileSync(
+    "bash",
+    [
+      "-c",
+      `
+set -o pipefail
+unzip() { printf '%s\\n' 'WeWork.app/Contents/Resources/wework-core-plugins.tar.gz'; seq 1 100000; }
+zip=fixture.zip
+${guard}
+  echo rejected
+else
+  echo accepted
+fi
+`,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(
+    status.trim(),
+    "rejected",
+    "A long ZIP listing must not bypass the gate through SIGPIPE",
+  );
 });

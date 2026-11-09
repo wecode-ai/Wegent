@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, it, vi } from 'vitest'
 import type { DeliveryApi } from '@/api/deliveries'
 import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'

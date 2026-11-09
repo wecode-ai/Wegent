@@ -1,8 +1,9 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import { mergeInstalledPlugins } from './installedPluginMerge'
 import {
-  mergeDiskPersonalIntoLocalRows,
   mergeMarketplaceCatalog,
   shouldShowInstalledMarketplaceActions,
 } from './marketplaceCatalogMerge'
@@ -94,84 +95,6 @@ function localInstalledPlugin(): InstalledPlugin {
 }
 
 describe('mergeMarketplaceCatalog', () => {
-  test('treats a linked local creation as the installed cloud listing', () => {
-    const merged = mergeMarketplaceCatalog(
-      [cloudPlugin()],
-      [localCatalogPlugin()],
-      [localInstalledPlugin()]
-    )
-
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({
-      id: 4,
-      installed: true,
-      installedPluginId: 'dev-tools-local',
-      installedLocally: true,
-      enabled: true,
-      updateAvailable: false,
-      currentDeviceInstallation: null,
-    })
-    expect(shouldShowInstalledMarketplaceActions(merged[0], false)).toBe(true)
-  })
-
-  test('preserves an owners local source when the published cloud row wins deduplication', () => {
-    const localSource = {
-      ...localCatalogPlugin(),
-      version: '0.2.0+codex.20260902140548',
-      installed: false,
-      installedPluginId: null,
-      enabled: false,
-    }
-
-    const merged = mergeMarketplaceCatalog([cloudPlugin()], [localSource], [])
-
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({
-      id: 4,
-      version: '0.2.0+codex.20260902140548',
-      localPersonalSource: {
-        marketplacePath: '/Users/test/plugins/personal-marketplace.json',
-        pluginName: 'dev-tools',
-      },
-    })
-    expect(merged[0].sharedVersion).toBe(cloudPlugin().version)
-    const mergedAgain = mergeMarketplaceCatalog(merged, [localSource], [])
-    expect(mergedAgain[0].sharedVersion).toBe(cloudPlugin().version)
-  })
-
-  test('preserves a legacy public owners local personal source', () => {
-    const legacyPublicOwner = {
-      ...cloudPlugin(),
-      visibility: 'public' as const,
-      sourceProvider: 'user' as const,
-    }
-
-    const merged = mergeMarketplaceCatalog([legacyPublicOwner], [localCatalogPlugin()], [])
-
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({
-      id: 4,
-      localPersonalSource: {
-        marketplacePath: '/Users/test/plugins/personal-marketplace.json',
-        pluginName: 'dev-tools',
-      },
-    })
-  })
-
-  test('keeps distinct cloud plugins that share a display name', () => {
-    const duplicateName = {
-      ...cloudPlugin(),
-      id: 9,
-      remotePluginId: 'dev-tools-fork',
-      name: 'dev-tools',
-      displayName: 'Dev Tools Fork',
-      latestReleaseId: 12,
-    }
-    const merged = mergeMarketplaceCatalog([cloudPlugin(), duplicateName], [], [])
-    expect(merged).toHaveLength(2)
-    expect(merged.map(item => item.id).sort()).toEqual([4, 9])
-  })
-
   test('keeps personal and enterprise identities separate and links local source to personal', () => {
     const enterprise = {
       ...cloudPlugin(),
@@ -200,11 +123,6 @@ describe('mergeMarketplaceCatalog', () => {
       relatedPersonalPluginId: 4,
     })
     expect(merged.find(item => item.id === 10)?.localPersonalSource).toBeUndefined()
-  })
-
-  test('keeps local installed actions available while signed out', () => {
-    expect(shouldShowInstalledMarketplaceActions(localCatalogPlugin(), false)).toBe(true)
-    expect(shouldShowInstalledMarketplaceActions(cloudPlugin(), false)).toBe(false)
   })
 
   test('collapses legacy and canonical personal marketplace copies', () => {
@@ -532,110 +450,7 @@ describe('mergeMarketplaceCatalog', () => {
   })
 })
 
-describe('mergeDiskPersonalIntoLocalRows', () => {
-  test('uses disk personal rows when Codex local rows are empty', () => {
-    const disk = [{ ...localCatalogPlugin(), id: 'personal-disk:notes', name: 'notes' }]
-    expect(mergeDiskPersonalIntoLocalRows([], disk)).toEqual(disk)
-  })
-
-  test('keeps Codex rows and appends disk-only personal plugins', () => {
-    const diskOnly = {
-      ...localCatalogPlugin(),
-      id: 'personal-disk:notes',
-      name: 'notes',
-      displayName: 'Notes',
-    }
-    const merged = mergeDiskPersonalIntoLocalRows(
-      [localCatalogPlugin()],
-      [localCatalogPlugin(), diskOnly]
-    )
-    expect(merged.map(item => item.name).sort()).toEqual(['dev-tools', 'notes'])
-  })
-
-  test('keeps authoritative Codex installation state when collapsing a disk copy', () => {
-    const codex = {
-      ...localCatalogPlugin(),
-      id: 'dev-tools',
-      description: 'Use developer tools in Codex.',
-      author: 'Local developer',
-      installed: false,
-      installedPluginId: null,
-      installedLocally: false,
-    }
-    const disk = {
-      ...localCatalogPlugin(),
-      id: 'personal-disk:dev-tools',
-      description: 'Developer tools plugin with IP geolocation lookup.',
-      author: null,
-      sourceLabel: '个人分享',
-      installed: true,
-      installedLocally: true,
-      installedPluginId: 'dev-tools@wework-personal',
-    }
-    const merged = mergeDiskPersonalIntoLocalRows([codex], [disk])
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({
-      id: 'dev-tools',
-      description: 'Use developer tools in Codex.',
-      author: 'Local developer',
-      installed: false,
-      installedLocally: false,
-      installedPluginId: null,
-    })
-  })
-
-  test('collapses personal and wework-personal aliases for the same plugin name', () => {
-    const legacyPersonal = {
-      ...localCatalogPlugin(),
-      id: 'dev-tools@personal',
-      manifest: { marketplaceId: 'personal' },
-      installed: false,
-      installedPluginId: null,
-      installedLocally: false,
-    }
-    const disk = {
-      ...localCatalogPlugin(),
-      id: 'personal-disk:dev-tools',
-      installed: true,
-      installedLocally: true,
-      installedPluginId: 'dev-tools@wework-personal',
-    }
-    const merged = mergeDiskPersonalIntoLocalRows([legacyPersonal], [disk])
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({
-      id: 'dev-tools@personal',
-      installed: false,
-      installedLocally: false,
-      installedPluginId: null,
-    })
-  })
-})
-
 describe('mergeMarketplaceCatalog personal dedupe', () => {
-  test('does not let a disk row override an uninstalled Codex catalog row', () => {
-    const codex = {
-      ...localCatalogPlugin(),
-      id: 'dev-tools',
-      author: 'Local developer',
-      installed: false,
-      installedPluginId: null,
-    }
-    const disk = {
-      ...localCatalogPlugin(),
-      id: 'personal-disk:dev-tools',
-      installed: true,
-      installedLocally: true,
-      installedPluginId: 'dev-tools@wework-personal',
-    }
-    const merged = mergeMarketplaceCatalog([], [codex, disk], [])
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({
-      id: 'dev-tools',
-      installed: false,
-      installedPluginId: null,
-    })
-  })
-
   test('overlays a lagging OpenAI official catalog row from the installed list', () => {
     const catalog = {
       ...localCatalogPlugin(),

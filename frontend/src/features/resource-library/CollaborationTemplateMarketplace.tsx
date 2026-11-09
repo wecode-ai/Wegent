@@ -4,12 +4,14 @@
 'use client'
 
 import { useRouter, usePathname } from 'next/navigation'
-import { CollaborationTemplatePage } from '@wegent/collaboration/templates'
+import { useState } from 'react'
+import { CollaborationTemplatePage, type TemplateRecord } from '@wegent/collaboration/templates'
 import { CollaborationTheme, useDocumentTheme } from '@wegent/collaboration/theme'
 import '@wegent/collaboration/styles.css'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ResourceTypeFilter } from './components/ResourceTypeFilter'
 import { useCollaborationTemplates } from './useCollaborationTemplates'
+import { TemplateDestinationDialog } from './TemplateDestinationDialog'
 
 export function CollaborationTemplateMarketplace() {
   const { t, i18n } = useTranslation('resource-library')
@@ -17,6 +19,7 @@ export function CollaborationTemplateMarketplace() {
   const pathname = usePathname()
   const theme = useDocumentTheme()
   const store = useCollaborationTemplates()
+  const [selected, setSelected] = useState<{ scope: string; record: TemplateRecord } | null>(null)
   return (
     <main
       className="h-full overflow-y-auto bg-base text-text-primary"
@@ -40,7 +43,17 @@ export function CollaborationTemplateMarketplace() {
               store={store}
               locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
               mode="marketplace"
+              onUse={record => setSelected({ scope: store.library.scope, record })}
             />
+            {selected?.scope === store.library.scope && (
+              <TemplateDestinationDialog
+                key={`destination:${store.library.scope}`}
+                record={selected.record}
+                ownerId={store.library.ownerId}
+                locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
+                onClose={() => setSelected(null)}
+              />
+            )}
           </CollaborationTheme>
         )}
       </div>

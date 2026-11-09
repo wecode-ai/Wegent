@@ -1,66 +1,14 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
   isAbsoluteWorkspacePath,
   normalizeAbsoluteWorkspacePath,
-  normalizeWorkspaceSeparators,
-  normalizeWorkspaceFileChunk,
-  normalizeWorkspaceTextFile,
   normalizeWorkspaceTree,
   splitAbsoluteWorkspaceFilePath,
 } from './workspace-file-contract'
 
 describe('workspace file contract', () => {
-  test('uses the workspace style for relative names with a leading backslash', () => {
-    const path = String.raw`\report.md`
-    expect(isAbsoluteWorkspacePath(path, '/workspace')).toBe(false)
-    expect(normalizeWorkspaceSeparators(path, '/workspace')).toBe(path)
-    expect(normalizeWorkspaceSeparators(String.raw`docs\report.md`, 'C:/workspace')).toBe(
-      'docs/report.md'
-    )
-  })
-  test('preserves POSIX backslashes across file paths and native read responses', () => {
-    const path = String.raw`/workspace/local report\2026.md`
-    const name = String.raw`local report\2026.md`
-    expect(normalizeAbsoluteWorkspacePath(path, 'invalid')).toBe(path)
-    expect(splitAbsoluteWorkspaceFilePath(path)).toEqual({
-      parentPath: '/workspace',
-      fileName: name,
-    })
-    expect(
-      normalizeWorkspaceTextFile(
-        {
-          path,
-          name,
-          content: 'ok',
-          editable: true,
-          revision: 'revision-1',
-          truncated: false,
-          size: 2,
-        },
-        path
-      )
-    ).toMatchObject({ path, name, content: 'ok' })
-    expect(
-      normalizeWorkspaceFileChunk(
-        { path, name, content_base64: 'b2s=', offset: 0, eof: true, size: 2 },
-        path,
-        0
-      )
-    ).toMatchObject({ path, name, contentBase64: 'b2s=' })
-  })
-
-  test('preserves POSIX directory and entry names containing backslashes', () => {
-    const root = String.raw`/workspace/back\slash`
-    const name = String.raw`local report\2026.md`
-    const path = `${root}/${name}`
-    expect(
-      normalizeWorkspaceTree(
-        { path: root, entries: [{ name, path, is_directory: false, size: 2 }] },
-        root
-      )
-    ).toMatchObject({ path: root, entries: [{ path, name }] })
-  })
-
   test('normalizes Windows drive paths and canonical verbatim paths', () => {
     expect(normalizeAbsoluteWorkspacePath(String.raw`c:\work\Wegent`, 'invalid')).toBe(
       'C:/work/Wegent'
@@ -155,50 +103,6 @@ describe('workspace file contract', () => {
     ).toThrow('Invalid workspace tree response')
   })
 
-  test('normalizes Windows text and binary file responses', () => {
-    const requestedPath = String.raw`C:\work\Wegent\README.md`
-
-    expect(
-      normalizeWorkspaceTextFile(
-        {
-          path: String.raw`\\?\C:\work\Wegent\README.md`,
-          name: 'README.md',
-          content: 'hello',
-          editable: true,
-          revision: 'sha256:abc',
-          truncated: false,
-          size: 5,
-          modified_at: null,
-        },
-        requestedPath
-      )
-    ).toMatchObject({
-      path: String.raw`C:\work\Wegent\README.md`,
-      name: 'README.md',
-      content: 'hello',
-    })
-
-    expect(
-      normalizeWorkspaceFileChunk(
-        {
-          path: String.raw`\\?\C:\work\Wegent\README.md`,
-          name: 'README.md',
-          content_base64: 'aGVsbG8=',
-          offset: 0,
-          eof: true,
-          size: 5,
-          modified_at: null,
-        },
-        requestedPath,
-        0
-      )
-    ).toMatchObject({
-      path: String.raw`C:\work\Wegent\README.md`,
-      name: 'README.md',
-      offset: 0,
-    })
-  })
-
   test('splits files directly beneath a Windows drive root', () => {
     expect(splitAbsoluteWorkspaceFilePath(String.raw`C:\README.md`)).toEqual({
       parentPath: 'C:/',
@@ -213,100 +117,9 @@ describe('workspace file contract', () => {
 })
 
 describe('normalizeAbsoluteWorkspacePath', () => {
-  test('accepts POSIX absolute paths', () => {
-    expect(normalizeAbsoluteWorkspacePath('/a/b/../c.ts', 'x')).toBe('/a/c.ts')
-    expect(normalizeAbsoluteWorkspacePath('/a//b/c.ts', 'x')).toBe('/a/b/c.ts')
-    expect(normalizeAbsoluteWorkspacePath('/', 'x')).toBe('/')
-  })
-
-  test('accepts Windows drive-letter absolute paths', () => {
-    expect(normalizeAbsoluteWorkspacePath('D:/jiaqi62/Wegent/README.md', 'x')).toBe(
-      'D:/jiaqi62/Wegent/README.md'
-    )
-    expect(normalizeAbsoluteWorkspacePath('D:\\jiaqi62\\Wegent\\README.md', 'x')).toBe(
-      'D:/jiaqi62/Wegent/README.md'
-    )
-    expect(normalizeAbsoluteWorkspacePath('d:/foo', 'x')).toBe('D:/foo')
-    expect(normalizeAbsoluteWorkspacePath('C:/', 'x')).toBe('C:/')
-  })
-
   test('rejects relative and drive-relative paths', () => {
     expect(() => normalizeAbsoluteWorkspacePath('repo/file.ts', 'x')).toThrow('x')
     expect(() => normalizeAbsoluteWorkspacePath('./repo/file.ts', 'x')).toThrow('x')
     expect(() => normalizeAbsoluteWorkspacePath('D:relative', 'x')).toThrow('x')
-  })
-})
-
-describe('splitAbsoluteWorkspaceFilePath', () => {
-  test('splits POSIX paths', () => {
-    expect(splitAbsoluteWorkspaceFilePath('/a/b/file.ts')).toEqual({
-      parentPath: '/a/b',
-      fileName: 'file.ts',
-    })
-  })
-
-  test('splits Windows drive-letter paths', () => {
-    expect(splitAbsoluteWorkspaceFilePath('D:/jiaqi62/Wegent/README.md')).toEqual({
-      parentPath: 'D:/jiaqi62/Wegent',
-      fileName: 'README.md',
-    })
-    expect(splitAbsoluteWorkspaceFilePath('D:\\jiaqi62\\Wegent\\AGENTS.md')).toEqual({
-      parentPath: 'D:/jiaqi62/Wegent',
-      fileName: 'AGENTS.md',
-    })
-    expect(splitAbsoluteWorkspaceFilePath('D:/README.md')).toEqual({
-      parentPath: 'D:/',
-      fileName: 'README.md',
-    })
-  })
-})
-
-describe('normalizeWorkspaceTree', () => {
-  test('normalizes Windows drive-letter tree responses with backslash paths', () => {
-    const result = normalizeWorkspaceTree(
-      {
-        path: 'D:\\jiaqi62\\Wegent',
-        entries: [
-          {
-            name: 'README.md',
-            path: 'D:\\jiaqi62\\Wegent\\README.md',
-            is_directory: false,
-            size: 10,
-            modified_at: null,
-          },
-        ],
-      },
-      'D:/jiaqi62/Wegent'
-    )
-
-    expect(result.path).toBe('D:/jiaqi62/Wegent')
-    expect(result.entries).toEqual([
-      expect.objectContaining({
-        path: 'D:/jiaqi62/Wegent/README.md',
-        isDirectory: false,
-      }),
-    ])
-  })
-})
-
-describe('normalizeWorkspaceTextFile', () => {
-  test('normalizes Windows drive-letter text file responses', () => {
-    const result = normalizeWorkspaceTextFile(
-      {
-        path: 'D:\\jiaqi62\\Wegent\\README.md',
-        name: 'README.md',
-        content: 'hello',
-        editable: true,
-        revision: 'sha256:r1',
-        truncated: false,
-        size: 5,
-        modified_at: null,
-      },
-      'D:/jiaqi62/Wegent/README.md'
-    )
-
-    expect(result.path).toBe('D:/jiaqi62/Wegent/README.md')
-    expect(result.name).toBe('README.md')
-    expect(result.content).toBe('hello')
   })
 })

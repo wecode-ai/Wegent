@@ -49,6 +49,7 @@ import {
   TOOL_DETAIL_PERSISTENCE_CALL_ID,
   TOOL_DETAIL_PERSISTENCE_OUTPUT,
   TOOL_DETAIL_PERSISTENCE_COMPLETION,
+  assertShimmerCopyTracksText,
 } from './streaming-text-fixture.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
@@ -160,7 +161,10 @@ export function createStreamingToolChecks({
     )
     assert.ok(
       Number(
-        await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .hljs-keyword`)
+        await control.command(
+          'getElementCount',
+          `${LONG_CODE_SCROLL_SELECTOR} [data-syntax-token="keyword"]`
+        )
       ) > 0,
       'The completed long code block did not render highlighted keyword nodes'
     )
@@ -649,6 +653,11 @@ export function createStreamingToolChecks({
       text: `正在思考 · ${REASONING_PREVIEW}`,
       timeoutMs: modelResponseTimeoutMs,
     })
+    await assertShimmerCopyTracksText(
+      control,
+      `${TOOL_THINKING_INDICATOR_SELECTOR} .activity-shimmer-text`,
+      'The streaming tool reasoning summary'
+    )
     await capture(control, 'streaming-text-01-live-reasoning-summary.png')
     releaseToolCompletion()
     await toolFinalTextStarted

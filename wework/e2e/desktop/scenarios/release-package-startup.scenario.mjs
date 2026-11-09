@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
+import { packagedComponentRoots } from '../modules/packaged-component-resources.mjs'
 
 const PROFILE_NAME = 'wework-core'
 const NATIVE_PROVIDER = '@wework-e2e/native-dsh-provider'
@@ -151,7 +152,7 @@ export function apply(ctx) {
   )
 }
 
-async function assertReleasePackageResources() {
+async function assertReleasePackageResources(resultDir) {
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
   const resourcesRoot =
     process.platform === 'darwin'
@@ -190,20 +191,18 @@ async function assertReleasePackageResources() {
     `Release startup E2E was not given a formal release binary: ${appBinary}`
   )
   if (process.platform === 'darwin') await assertMacosMicrophoneSigning(appBinary)
+  const roots = await packagedComponentRoots({
+    appBinary,
+    resourcesRoot,
+    components: components.components,
+    resultDir,
+  })
   await Promise.all([
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
-    readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
-    readFile(join(resourcesRoot, 'wework-app-static', 'wasm', 'data', 'sql-wasm.wasm')),
-    readFile(
-      join(
-        resourcesRoot,
-        'bundled-plugins',
-        'wework-personal',
-        '.claude-plugin',
-        'marketplace.json'
-      )
-    ),
+    readFile(join(roots.weworkCorePlugins, 'wework-app', 'package.json')),
+    readFile(join(roots.weworkAppStatic, 'wasm', 'data', 'sql-wasm.wasm')),
+    readFile(join(roots.bundledPlugins, 'wework-personal', '.claude-plugin', 'marketplace.json')),
     readFile(
       join(
         resourcesRoot,
@@ -314,7 +313,7 @@ export async function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
-  const packagedComponents = await assertReleasePackageResources()
+  const packagedComponents = await assertReleasePackageResources(resultDir)
   const hostUpdateCompression = await assertCompressedHostUpdatePackage(
     packagedComponents.appVersion
   )
@@ -335,7 +334,6 @@ export async function createDesktopScenario({
 
   return {
     usesReleasePackageRuntimeAssets: true,
-    usesColdPackageStartup: true,
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {

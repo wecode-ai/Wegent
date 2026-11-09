@@ -25,7 +25,7 @@ export interface ReleasePreparationStage {
 
 export async function preparationStep<T>(
   log: Pick<RotatingLog, 'write'>,
-  release: DesktopRelease,
+  release: Pick<DesktopRelease, 'id' | 'version'>,
   stage: string,
   run: () => Promise<T>,
   onProgress?: (event: ReleasePreparationStage) => void
@@ -106,6 +106,10 @@ export async function prepareReleaseEnvironment(
   await step('runtimes', () =>
     materializeBundledRuntimes(components.coreDsh, release.runtimeRoot, ['core', 'workbench'], {
       fetch: bundledAssetsOnly,
+      // This stable program store is outside prunable release slots. Each slot
+      // keeps its own mutable catalog and profile, including during rollback.
+      reuseRoot: join(dirname(request.storeRoot), 'managed-runtimes', 'dsh'),
+      immutableRoot: join(dirname(request.storeRoot), 'managed-runtimes', 'dsh', '.prepared'),
     })
   )
   const preparationHome = join(store.slot(release.id), 'preparation')

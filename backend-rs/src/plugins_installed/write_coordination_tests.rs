@@ -60,12 +60,59 @@ fn database_failures_match_the_python_unhandled_exception_contract() {
 #[derive(Default)]
 struct LeaseRedis {
     owners: Mutex<HashMap<String, String>>,
+    replica_owners: Option<HashMap<String, String>>,
     commands: Mutex<Vec<Vec<String>>>,
     fail: bool,
     stall: bool,
     stall_eval: bool,
     release_after_contention: bool,
     stall_after_claim: bool,
+    evalsha_error_kind: Option<brz_redis::ErrorKind>,
+    script_load_fails: bool,
+    script_loaded: Mutex<bool>,
+}
+
+#[tokio::test]
+async fn cancelling_auto_update_response_keeps_transaction_and_unlock_owned() {
+    let redis = std::sync::Arc::new(LeaseRedis::default());
+    let operation_redis = redis.clone();
+    let (entered, entered_rx) = tokio::sync::oneshot::channel();
+    let (finish, finish_rx) = tokio::sync::oneshot::channel();
+    let (released, released_rx) = tokio::sync::oneshot::channel();
+    let response = tokio::spawn(async move {
+        super::super::auto_update::complete_auto_update(async move {
+            let lease = PluginWriteLease::acquire(Some(operation_redis.as_ref()), 23).await?;
+            entered.send(()).unwrap();
+            finish_rx.await.unwrap();
+            lease.release().await;
+            released.send(()).unwrap();
+            Ok(())
+        })
+        .await
+    });
+    entered_rx.await.unwrap();
+    response.abort();
+    assert!(response.await.unwrap_err().is_cancelled());
+    assert!(
+        redis
+            .owners
+            .lock()
+            .unwrap()
+            .contains_key("wegent:plugin-write:23")
+    );
+    finish
+        .send(())
+        .expect("response cancellation must retain the in-flight transaction");
+    tokio::time::timeout(Duration::from_secs(1), released_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(redis.owners.lock().unwrap().is_empty());
+    PluginWriteLease::acquire(Some(redis.as_ref()), 23)
+        .await
+        .unwrap()
+        .release()
+        .await;
 }
 
 impl LeaseRedis {
@@ -95,6 +142,40 @@ impl LeaseRedis {
                     Value::Nil
                 }
             },
+            "GET" => {
+                let readable_owners = if command.is_readonly() {
+                    self.replica_owners.as_ref().unwrap_or(&owners)
+                } else {
+                    &owners
+                };
+                match readable_owners.get(&args[1]) {
+                    Some(value) => Value::BulkString(value.clone().into_bytes().into()),
+                    None => Value::Nil,
+                }
+            }
+            "SCRIPT" => {
+                if self.script_load_fails {
+                    return Err(brz_redis::RedisError::new(
+                        brz_redis::ErrorKind::ResponseError,
+                        "load failed",
+                    ));
+                }
+                *self.script_loaded.lock().unwrap() = true;
+                Value::BulkString(RELEASE_SHA.as_bytes().to_vec().into())
+            }
+            "EVALSHA" => {
+                if let Some(kind) = self.evalsha_error_kind
+                    && (kind != brz_redis::ErrorKind::NoScript
+                        || !*self.script_loaded.lock().unwrap())
+                {
+                    return Err(brz_redis::RedisError::new(kind, "evalsha failed"));
+                }
+                let matches = owners.get(&args[3]) == Some(&args[4]);
+                if matches {
+                    owners.remove(&args[3]);
+                }
+                Value::Int(i64::from(matches))
+            }
             "EVAL" => {
                 let matches = owners.get(&args[3]) == Some(&args[4]);
                 if matches && args[1] == RELEASE_SCRIPT {
@@ -138,12 +219,30 @@ impl Redis for LeaseRedis {
         self.run(command)
     }
 
-    async fn get<K, T>(&self, _: K) -> RedisResult<Option<T>>
+    async fn get<K, T>(&self, key: K) -> RedisResult<Option<T>>
     where
         K: EncodeRedisArg + Send,
         T: FromRedisBulk + Send,
     {
-        panic!("lease checks must run atomically on the writer")
+        let mut command = cmd("GET");
+        command.mark_readonly();
+        command.arg_encoded(key)?;
+        let raw: Option<brz_redis::RedisBytes> = self.run(command)?;
+        raw.map(T::from_redis_bulk).transpose()
+    }
+
+    async fn evalsha<D, K, A, T>(&self, digest: D, keys: K, arguments: A) -> RedisResult<T>
+    where
+        D: EncodeRedisArg + Send,
+        K: EncodeRedisArgs + Send,
+        A: EncodeRedisArgs + Send,
+        T: FromRedisValue + Send,
+    {
+        let mut command = cmd("EVALSHA");
+        command.arg_encoded(digest)?.arg_encoded(keys.num_args())?;
+        keys.encode_args(&mut command)?;
+        arguments.encode_args(&mut command)?;
+        self.run(command)
     }
 
     async fn set<K, V>(&self, _: K, _: V) -> RedisResult<()>
@@ -270,7 +369,7 @@ async fn lease_uses_shared_key_nx_and_bounded_expiry() {
     assert_eq!(commands[0][0], "SET");
     assert_eq!(commands[0][1], "wegent:plugin-write:23");
     assert_eq!(commands[0][2].len(), 32);
-    assert_eq!(&commands[0][3..], ["EX", "30", "NX"]);
+    assert_eq!(&commands[0][3..], ["PX", "30000", "NX"]);
     assert!(lease.deadline < Instant::now() + Duration::from_secs(30));
 }
 
@@ -360,14 +459,48 @@ async fn acquisition_deadline_prevents_another_set_after_the_last_wait() {
 }
 
 #[tokio::test]
+async fn primary_lease_remains_valid_when_the_replica_is_behind() {
+    let key = "wegent:plugin-write:23";
+    for replica_owner in [None, Some("previous-owner")] {
+        let redis = LeaseRedis {
+            replica_owners: Some(
+                replica_owner
+                    .map(|owner| (key.to_string(), owner.to_string()))
+                    .into_iter()
+                    .collect(),
+            ),
+            ..LeaseRedis::default()
+        };
+        let lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
+
+        assert_eq!(
+            redis.get::<_, String>(key).await.unwrap().as_deref(),
+            replica_owner
+        );
+        lease.verify_owned().await.unwrap();
+        lease.release().await;
+    }
+}
+
+#[tokio::test]
 async fn stale_owner_cannot_validate_or_release_the_successor_lease() {
-    let redis = LeaseRedis::default();
-    let lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
+    let key = "wegent:plugin-write:23";
+    let redis = LeaseRedis {
+        replica_owners: Some(HashMap::from([(key.into(), "previous-owner".into())])),
+        ..LeaseRedis::default()
+    };
+    let lease = PluginWriteLease::acquire_token(&redis, 23, "previous-owner".into(), ACQUIRE_WAIT)
+        .await
+        .unwrap();
     redis
         .owners
         .lock()
         .unwrap()
         .insert(lease.key.clone(), "successor".into());
+    assert_eq!(
+        redis.get::<_, String>(key).await.unwrap().as_deref(),
+        Some("previous-owner")
+    );
     let error = lease.verify_owned().await.unwrap_err();
     assert_eq!(
         http_error(error).detail_message(),
@@ -375,7 +508,7 @@ async fn stale_owner_cannot_validate_or_release_the_successor_lease() {
     );
     lease.release().await;
     assert_eq!(
-        redis.owners.lock().unwrap().get("wegent:plugin-write:23"),
+        redis.owners.lock().unwrap().get(key),
         Some(&"successor".to_string())
     );
 }
@@ -398,12 +531,20 @@ async fn changed_parent_revision_rejects_commit_even_if_redis_still_matches() {
         Some("plugin_write_conflict")
     );
     assert_eq!(transaction.statements.len(), 1);
-    assert!(transaction.statements[0].contains("UPDATE kinds SET json = JSON_SET"));
     assert!(
         transaction.statements[0]
-            .contains("COALESCE(JSON_EXTRACT(json, '$.spec.revision'), 0) = ?")
+            .contains("UPDATE kinds SET json=json_set(kinds.json, '$.spec.revision', ?)")
     );
-    assert!(transaction.statements[0].contains("name = 'account' AND is_active IS true"));
+    // The source compares `Kind.json["spec"]["revision"].as_integer()`, which
+    // renders as a nested json_extract normalized by CASE/CAST before coalesce.
+    assert!(transaction.statements[0].contains(
+        "coalesce(CASE JSON_EXTRACT(JSON_EXTRACT(kinds.json, '$.\"spec\"'), \
+         '$.\"revision\"') WHEN 'null' THEN NULL ELSE"
+    ));
+    assert!(transaction.statements[0].contains("CAST(JSON_EXTRACT(JSON_EXTRACT(kinds.json"));
+    assert!(transaction.statements[0].contains("AS SIGNED INTEGER) END, 0) = ?"));
+    assert!(transaction.statements[0].contains("kinds.is_active IS true"));
+    assert!(transaction.statements[0].contains("kinds.user_id = ?"));
     assert_eq!(transaction.next_revision, Some(7));
 }
 
@@ -601,4 +742,63 @@ async fn first_policy_creation_reads_the_real_parent_before_inserting() {
         assert!(!sql.contains("FOR UPDATE"));
         assert!(!sql.contains("ON DUPLICATE KEY"));
     }
+}
+
+fn lease_redis(kind: Option<brz_redis::ErrorKind>, load_fails: bool) -> LeaseRedis {
+    LeaseRedis {
+        evalsha_error_kind: kind,
+        script_load_fails: load_fails,
+        ..LeaseRedis::default()
+    }
+}
+
+#[tokio::test]
+async fn release_loads_the_script_only_after_noscript() {
+    let redis = lease_redis(Some(brz_redis::ErrorKind::NoScript), false);
+    let lease = super::PluginWriteLease::acquire(Some(&redis), 1)
+        .await
+        .unwrap();
+    redis.commands.lock().unwrap().clear();
+    lease.release().await;
+    let commands = redis.commands.lock().unwrap().clone();
+    let names: Vec<&str> = commands.iter().map(|c| c[0].as_str()).collect();
+    assert_eq!(names, ["EVALSHA", "SCRIPT", "EVALSHA"], "{commands:?}");
+    assert_eq!(commands[1][1], "LOAD");
+    assert_eq!(commands[1][2], RELEASE_SCRIPT);
+}
+
+#[tokio::test]
+async fn a_failed_script_load_does_not_retry() {
+    let redis = lease_redis(Some(brz_redis::ErrorKind::NoScript), true);
+    let lease = super::PluginWriteLease::acquire(Some(&redis), 1)
+        .await
+        .unwrap();
+    redis.commands.lock().unwrap().clear();
+    lease.release().await;
+    let names: Vec<String> = redis
+        .commands
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|c| c[0].clone())
+        .collect();
+    assert_eq!(names, ["EVALSHA", "SCRIPT"]);
+}
+
+#[tokio::test]
+async fn ordinary_errors_do_not_load_the_script() {
+    let redis = lease_redis(Some(brz_redis::ErrorKind::ResponseError), false);
+    let lease = super::PluginWriteLease::acquire(Some(&redis), 1)
+        .await
+        .unwrap();
+    redis.commands.lock().unwrap().clear();
+    lease.release().await;
+    let names: Vec<String> = redis
+        .commands
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|c| c[0].clone())
+        .collect();
+    assert_eq!(names, ["EVALSHA"]);
 }

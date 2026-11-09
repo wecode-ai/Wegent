@@ -53,6 +53,11 @@ async fn create_response(
         .unwrap_or_else(|| format!("ip:{client_ip}"));
     let limit = RateLimit::create_response();
 
+    // `openapi_responses.py:498-500`: a Wework request never reaches the
+    // Wegent `namespace#team_name` model parse.
+    if super::wework::is_wework_request(&body) {
+        return super::wework::create_response(state, principal, body, limit, &limit_key).await;
+    }
     let input: ResponseCreateInput = serde_json::from_value(body).map_err(invalid_body)?;
     create_response_flow(
         state,
@@ -143,7 +148,7 @@ async fn deferred_api_key_name_for(
 /// authenticating user's `users` row before any business statement, so an
 /// API-key principal resolves both here instead of on a pooled connection. A
 /// rejection ends the transaction before anything writes.
-async fn resolve_principal_on(
+pub(super) async fn resolve_principal_on(
     user_reader: &dyn crate::user_reader::UserByIdReader,
     sql: &mut dyn crate::request_sql::RequestSql,
     principal: DeferredResponsesUser,
@@ -199,7 +204,7 @@ async fn resolve_create_scope(
     user: ResponsesUser,
     input: &ResponseCreateInput,
     model: &crate::responses::create::model::ModelString,
-    sql: &mut dyn crate::request_sql::RequestSql,
+    transaction: &mut brz_mysql::MysqlTransactionService,
     api_key_name: Option<&str>,
     input_text: &str,
     row_timestamp: &str,
@@ -214,7 +219,7 @@ async fn resolve_create_scope(
         Some(previous) => {
             super::continuation::resolve(
                 state.task_store.as_ref(),
-                sql,
+                &mut *transaction,
                 previous,
                 user.id,
                 crd_timestamp,
@@ -230,7 +235,12 @@ async fn resolve_create_scope(
         resolvers: Some(&state.entity_resolvers),
     };
     let team = kinds_cache
-        .resolve_team_on(sql, user_id, &model.namespace, &model.team_name)
+        .resolve_team_on(
+            &mut *transaction,
+            user_id,
+            &model.namespace,
+            &model.team_name,
+        )
         .await
         .map_err(dependency)?;
     let Some(team) = team.map(kinds_row) else {
@@ -248,7 +258,7 @@ async fn resolve_create_scope(
     // Model, and without one every team member's Bot is read and validated.
     let model_type = model_selection::resolve_model_selection_on(
         &kinds_cache,
-        sql,
+        &mut *transaction,
         user_id,
         &model.namespace,
         &model.team_name,
@@ -260,7 +270,7 @@ async fn resolve_create_scope(
     let task_type = model_selection::model_task_type(model_type.as_deref());
 
     // `get_bot_ids_from_team`: one `kindReader` read per member.
-    let bots = resolve_team_bots_on(sql, &kinds_cache, team.user_id, &team.json.0)
+    let bots = resolve_team_bots_on(&mut *transaction, &kinds_cache, team.user_id, &team.json.0)
         .await
         .map_err(dependency)?;
     if bots.bot_ids.is_empty() {
@@ -274,7 +284,7 @@ async fn resolve_create_scope(
     // `kindReader` read.
     let bot = kinds_cache
         .get_by_name_and_namespace_row_on(
-            sql,
+            &mut *transaction,
             team.user_id,
             "Bot",
             &bots.first_bot_namespace,
@@ -294,7 +304,7 @@ async fn resolve_create_scope(
     // reuse skips task creation, so the source resolves no group.
     let project_id = if input.previous_response_id.is_none() {
         crate::task_source_group::get_or_create_task_source_group_on(
-            sql,
+            &mut *transaction,
             state.redis.as_ref(),
             user_id,
             "frontend",
@@ -311,7 +321,7 @@ async fn resolve_create_scope(
     // request transaction, which is committed once when setup returns.
     let setup = setup_chat_session(
         state.task_store.as_ref(),
-        sql,
+        transaction,
         &SetupChatSessionInput {
             user_id,
             owner_user_id: user.id,
@@ -335,7 +345,7 @@ async fn resolve_create_scope(
                 is_group_chat: false,
                 is_api_call: true,
                 auto_delete_executor,
-                omit_mcp_binary_output: false,
+                omit_mcp_binary_output: input.omit_mcp_binary_output,
                 device_id: None,
                 git_workspace: false,
                 created_at: crd_timestamp,
@@ -416,7 +426,7 @@ async fn create_response_flow(
                 user,
                 &input,
                 &model,
-                &mut sql,
+                &mut *sql,
                 api_key_name.as_deref(),
                 &input_text,
                 &row_timestamp,

@@ -194,7 +194,7 @@ function FileChangeLineStats({
       className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums"
       data-testid="file-change-line-stats"
     >
-      <span className="inline-flex items-center text-green-600">
+      <span className="inline-flex items-center text-[rgb(var(--color-diff-added,22_163_74))]">
         +
         <AnimatedChangeNumber
           key={`${streamId}:additions`}
@@ -202,7 +202,7 @@ function FileChangeLineStats({
           deltaPrefix="+"
         />
       </span>
-      <span className="inline-flex items-center text-red-500">
+      <span className="inline-flex items-center text-[rgb(var(--color-diff-removed,239_68_68))]">
         -
         <AnimatedChangeNumber
           key={`${streamId}:deletions`}
@@ -340,20 +340,30 @@ function FileEditDurationText({
   const durationIsRunning = duration
     ? duration.completedAt === undefined
     : isRunning;
-  const text = useToolDuration(
-    duration?.startedAt ?? fallbackStartedAt,
-    duration?.completedAt ?? fallbackCompletedAt,
-    durationIsRunning,
-  );
-
   return (
     <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">
-      {text}
+      <ToolDurationText
+        startedAt={duration?.startedAt ?? fallbackStartedAt}
+        fallbackEndAt={duration?.completedAt ?? fallbackCompletedAt}
+        isRunning={durationIsRunning}
+      />
     </span>
   );
 }
 
-export function useToolDuration(
+export function ToolDurationText({
+  startedAt,
+  fallbackEndAt,
+  isRunning,
+}: {
+  startedAt: number
+  fallbackEndAt: number | undefined
+  isRunning: boolean
+}) {
+  return useToolDuration(startedAt, fallbackEndAt, isRunning)
+}
+
+function useToolDuration(
   startedAt: number,
   fallbackEndAt: number | undefined,
   isRunning: boolean,

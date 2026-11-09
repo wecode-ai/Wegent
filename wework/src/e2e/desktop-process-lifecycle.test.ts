@@ -1,4 +1,7 @@
+// @vitest-environment node
+
 import { spawn, type ChildProcess } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -16,6 +19,10 @@ interface ProcessLifecycle {
   stopProcessGroup: (child: ChildProcess) => Promise<void>
   crashOwnedProcessTree: (child: ChildProcess, snapshot: unknown) => Promise<void>
   windowsTaskkillArguments: (processId: number) => string[]
+  waitForOwnedProcessExit: (
+    snapshot: unknown,
+    options: { timeoutMs?: number; isAlive: (pid: number) => boolean }
+  ) => Promise<void>
 }
 
 interface LocalHarnessCli {
@@ -91,6 +98,28 @@ afterEach(() => {
 })
 
 describe('desktop process lifecycle', () => {
+  test('shutdown waits for owned writers even after the application exited', async () => {
+    const { waitForOwnedProcessExit } = await loadProcessLifecycle()
+    const snapshot = {
+      applicationPid: 101,
+      platform: process.platform,
+      capturedAt: Date.now(),
+      degraded: [],
+      processes: [
+        { pid: 101, parentPid: 1, startedAt: Date.now() - 1_000 },
+        { pid: 102, parentPid: 101, startedAt: Date.now() - 1_000 },
+      ],
+    }
+    let observations = 0
+    await waitForOwnedProcessExit(snapshot, {
+      isAlive: pid => pid === 102 && observations++ === 0,
+    })
+    expect(observations).toBe(2)
+    await expect(
+      waitForOwnedProcessExit(snapshot, { timeoutMs: 0, isAlive: pid => pid === 102 })
+    ).rejects.toThrow('Owned application processes survived shutdown: 102')
+  })
+
   test('distinguishes a surviving executor from a new process that reused its PID', async () => {
     const { processInstanceMatches } = await loadProcessLifecycle()
     const original = {
@@ -297,6 +326,51 @@ describe('desktop process lifecycle', () => {
       kill.mockRestore()
     }
   })
+
+  test.each([true, false])(
+    'requires a native exit after a macOS teardown signal is denied: exits=%s',
+    async exits => {
+      const { stopProcessGroup } = await loadProcessLifecycle()
+      const processId = process.pid
+      const child = Object.assign(new EventEmitter(), {
+        pid: processId,
+        exitCode: null as number | null,
+        signalCode: null,
+      })
+      const denied = Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      let signalDenied = false
+      vi.useFakeTimers()
+      const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid === -processId && signal === 'SIGKILL') {
+          signalDenied = true
+          if (exits) {
+            setTimeout(() => {
+              child.exitCode = 0
+              child.emit('exit', 0, null)
+            }, 1)
+          }
+          throw denied
+        }
+        if (pid === -processId && signal === 0) throw denied
+        if (pid === processId && signal === 0 && signalDenied)
+          throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+        return true
+      })
+      try {
+        const result = stopProcessGroup(child as unknown as ChildProcess).then(
+          () => undefined,
+          (error: unknown) => error
+        )
+        await vi.advanceTimersByTimeAsync(20_100)
+        expect(await result).toBe(exits ? undefined : denied)
+        expect(kill).toHaveBeenCalledWith(-processId, 'SIGKILL')
+        expect(child.listenerCount('exit')).toBe(0)
+      } finally {
+        kill.mockRestore()
+        vi.useRealTimers()
+      }
+    }
+  )
 
   test('stops descendants that inherit an owned process group', async () => {
     const { stopProcessGroup } = await loadProcessLifecycle()

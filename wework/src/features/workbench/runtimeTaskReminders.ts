@@ -19,7 +19,10 @@ import {
   getRuntimeTaskAddress,
   getRuntimeTaskWorkspaceTitle,
 } from '@/components/layout/runtimeTaskSidebarHelpers'
-import { getRuntimeTaskNotificationText } from './runtimeTaskNotificationContent'
+import {
+  getRuntimeTaskNotificationText,
+  runtimeTaskNotificationCategory,
+} from './runtimeTaskNotificationContent'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { standInOrigin } from '@/features/notifications/standInNotifications'
@@ -220,26 +223,25 @@ export function useRuntimeTaskReminders({
   const visibleUnreadTaskKeys = useMemo(
     () =>
       getVisibleRuntimeTaskUnreadKeys(
-        listedItems.filter(item => notificationPreferences.tasks.in_app || standInOrigin(item)),
+        listedItems.filter(
+          item =>
+            notificationPreferences[runtimeTaskNotificationCategory(item)].in_app ||
+            standInOrigin(item)
+        ),
         lifecycleSnapshot.unreadTaskKeys
       ),
-    [listedItems, lifecycleSnapshot.unreadTaskKeys, notificationPreferences.tasks.in_app]
+    [listedItems, lifecycleSnapshot.unreadTaskKeys, notificationPreferences]
   )
 
   useEffect(() => {
-    if (notificationPreferences.tasks.in_app) return
     for (const item of items) {
       if (standInOrigin(item)) continue
+      if (notificationPreferences[runtimeTaskNotificationCategory(item)].in_app) continue
       if (lifecycleSnapshot.unreadTaskKeys.has(item.key)) {
         lifecycleStore.markRead(item.address)
       }
     }
-  }, [
-    items,
-    lifecycleSnapshot.unreadTaskKeys,
-    lifecycleStore,
-    notificationPreferences.tasks.in_app,
-  ])
+  }, [items, lifecycleSnapshot.unreadTaskKeys, lifecycleStore, notificationPreferences])
 
   useEffect(() => {
     const previousUnreadTaskKeys = previousUnreadTaskKeysRef.current
@@ -253,10 +255,10 @@ export function useRuntimeTaskReminders({
     for (const key of lifecycleSnapshot.runningTaskKeys) {
       notifiedTaskKeysRef.current.delete(key)
     }
-    if (!notificationPreferences.tasks.system) return
     if (windowFocusedRef.current) return
     for (const item of newlyUnreadItems) {
       if (standInOrigin(item)) continue
+      if (!notificationPreferences[runtimeTaskNotificationCategory(item)].system) continue
       if (item.lifecycle?.interactionStatus || item.task.interactionStatus) continue
       if (notifiedTaskKeysRef.current.has(item.key)) continue
       notifiedTaskKeysRef.current.add(item.key)
@@ -276,7 +278,7 @@ export function useRuntimeTaskReminders({
     itemsByKey,
     lifecycleSnapshot.runningTaskKeys,
     lifecycleSnapshot.unreadTaskKeys,
-    notificationPreferences.tasks.system,
+    notificationPreferences,
   ])
 
   return useMemo(

@@ -41,7 +41,7 @@ pub(crate) async fn reply(
     .into_iter()
     .map(str::to_owned)
     .collect::<Vec<_>>();
-    super::local_connector_auth::run_plugin_tool("dingtalk", "dingtalk", &args).await
+    super::local_connector_auth::run_declared_plugin_tool("dingtalk", "dws", &args).await
 }
 
 fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, AppIpcError> {

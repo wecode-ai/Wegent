@@ -1,6 +1,7 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import type { ModelSelectionDiagnostics } from './modelSelectionDiagnostics'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
@@ -91,6 +92,7 @@ export type ArchiveRuntimeTaskResult = {
 
 export type RefreshWorkLists = (options?: {
   syncCloud?: boolean
+  refreshDevices?: boolean
   unarchivedTasks?: RuntimeTaskAddress[]
 }) => Promise<void>
 
@@ -215,11 +217,14 @@ export interface WorkbenchContextValue {
   projectChat: {
     scopeKey: string
     inputByScope: Readonly<Record<string, string>>
+    goalDraftActiveByScope: Readonly<Record<string, boolean>>
+    setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
     activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
+    modelSelectionDiagnostics?: ModelSelectionDiagnostics
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean
     onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
@@ -505,6 +510,7 @@ export type WorkbenchPaneState = Pick<
   | 'projects'
   | 'devices'
   | 'runtimeWork'
+  | 'runtimeWorkLoad'
   | 'standaloneDeviceId'
   | 'standaloneWorkspacePath'
   | 'selectedDeviceWorkspaceId'

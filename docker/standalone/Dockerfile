@@ -38,6 +38,7 @@ RUN corepack enable \
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
 COPY shared/assets/codex-models ./shared/assets/codex-models
+COPY shared/data ./shared/data
 COPY frontend ./frontend
 
 # App version injected at build time (e.g. "0.1.5")
@@ -78,6 +79,8 @@ RUN corepack enable \
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
 COPY shared/assets ./shared/assets
+COPY shared/protocol ./shared/protocol
+COPY shared/data ./shared/data
 COPY wework ./wework
 
 ARG WEWORK_APP_BASE_PATH="/wework"
@@ -172,11 +175,14 @@ RUN dnf install -y gcc gcc-c++ cmake make ca-certificates openssl-devel \
 ENV PATH=/root/.cargo/bin:${PATH}
 
 COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY executor/crates /app/executor/crates
+COPY shared/rust /app/shared/rust
 COPY executor/vendor /app/executor/vendor
 COPY executor/src /app/executor/src
 COPY sdk/plugin-auth /app/sdk/plugin-auth
 COPY sdk/plugin-creator /app/sdk/plugin-creator
 COPY shared/assets /app/shared/assets
+COPY shared/protocol /app/shared/protocol
 RUN cd /app/executor && APP_VERSION="${APP_VERSION}" cargo build --release --locked
 
 COPY backend-rs /app/backend-rs
@@ -227,6 +233,7 @@ RUN cd /app/backend && uv pip install --system --no-cache -r pyproject.toml
 # Copy backend application code
 COPY backend/app /app/backend/app
 COPY backend/alembic /app/backend/alembic
+COPY backend-rs/migrations/reference/versions /app/backend-rs/migrations/reference/versions
 COPY backend/alembic.ini /app/backend/alembic.ini
 
 # Copy frontend build (standalone output)
@@ -241,7 +248,7 @@ COPY --from=wework-builder /app/wework/dist /app/wework/dist
 COPY docker/standalone/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copy init_data directory with default resources and skills
-COPY backend/init_data /app/init_data
+COPY backend-rs/init_data /app/init_data
 
 # Copy startup script
 COPY docker/standalone/start.sh /app/start.sh

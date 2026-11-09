@@ -1,0 +1,12 @@
+{
+  "order": 89000,
+  "scenario": "./scenarios/workbench-mode.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 80000,
+      "shard": 5,
+      "position": 10000
+    }
+  }
+}

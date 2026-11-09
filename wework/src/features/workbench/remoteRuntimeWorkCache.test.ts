@@ -6,7 +6,11 @@ import {
   readCachedRemoteRuntimeWork,
   reconcileCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
+  workbenchCacheScope,
 } from './remoteRuntimeWorkCache'
+
+const OWNER = workbenchCacheScope('https://backend.example/api', 7)
+const CACHE_KEY = `wework.workbench.remoteRuntimeWork.v4.${encodeURIComponent(OWNER)}`
 
 function workspace(
   deviceId: string,
@@ -105,8 +109,8 @@ describe('remote runtime work cache', () => {
         ],
       },
     })
-    writeCachedRemoteRuntimeWork(7, input, [device('remote-a', 'online')])
-    const restored = readCachedRemoteRuntimeWork(7)
+    writeCachedRemoteRuntimeWork(OWNER, input, [device('remote-a', 'online')])
+    const restored = readCachedRemoteRuntimeWork(OWNER)
     expect(restored.projects[0].project).toMatchObject({
       appearance: input.projects[0].project.appearance,
       ownerDeviceId: 'remote-a',
@@ -149,10 +153,10 @@ describe('remote runtime work cache', () => {
     }
     input.projects[0].project.sidebarOrder = 4
 
-    writeCachedRemoteRuntimeWork(7, input, [
+    writeCachedRemoteRuntimeWork(OWNER, input, [
       device('remote-a', 'online', { client_ip: '10.201.3.200' }),
     ])
-    const restored = readCachedRemoteRuntimeWork(7)
+    const restored = readCachedRemoteRuntimeWork(OWNER)
     const restoredWorkspace = restored.projects[0].deviceWorkspaces[0]
     const restoredTask = restoredWorkspace.tasks[0]
 
@@ -188,15 +192,9 @@ describe('remote runtime work cache', () => {
     expect(restoredTask).not.toHaveProperty('modelSelection')
     expect(restoredTask).not.toHaveProperty('parent')
     expect(restoredTask).not.toHaveProperty('children')
-    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.7')).not.toContain(
-      'must-not-persist'
-    )
-    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.7')).not.toContain(
-      'full conversation'
-    )
-    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.7')).not.toContain(
-      'cachedProjection'
-    )
+    expect(localStorage.getItem(CACHE_KEY)).not.toContain('must-not-persist')
+    expect(localStorage.getItem(CACHE_KEY)).not.toContain('full conversation')
+    expect(localStorage.getItem(CACHE_KEY)).not.toContain('cachedProjection')
   })
 
   test('does not persist terminal lifecycle fields either', () => {
@@ -270,20 +268,41 @@ describe('remote runtime work cache', () => {
   })
 
   test('isolates cache entries by user and ignores malformed data', () => {
-    writeCachedRemoteRuntimeWork(7, runtimeWork(workspace('remote-a', 'task-a')))
+    writeCachedRemoteRuntimeWork(OWNER, runtimeWork(workspace('remote-a', 'task-a')))
 
-    expect(readCachedRemoteRuntimeWork(8)).toEqual({
+    expect(
+      readCachedRemoteRuntimeWork(workbenchCacheScope('https://backend.example/api', 8))
+    ).toEqual({
       projects: [],
       chats: [],
       totalTasks: 0,
     })
 
-    localStorage.setItem('wework.workbench.remoteRuntimeWork.v3.7', '{')
-    expect(readCachedRemoteRuntimeWork(7)).toEqual({
+    localStorage.setItem(CACHE_KEY, '{')
+    expect(readCachedRemoteRuntimeWork(OWNER)).toEqual({
       projects: [],
       chats: [],
       totalTasks: 0,
     })
+  })
+
+  test('isolates identical user IDs on different backends without reading legacy entries', () => {
+    const otherOwner = workbenchCacheScope('https://other.example/api', 7)
+    const first = runtimeWork(workspace('remote-a', 'task-a'))
+    writeCachedRemoteRuntimeWork(OWNER, first)
+    localStorage.setItem(
+      'wework.workbench.remoteRuntimeWork.v3.7',
+      JSON.stringify({ version: 3, runtimeWork: first })
+    )
+
+    expect(readCachedRemoteRuntimeWork(otherOwner).totalTasks).toBe(0)
+    writeCachedRemoteRuntimeWork(otherOwner, runtimeWork(workspace('remote-b', 'task-b')))
+    expect(readCachedRemoteRuntimeWork(OWNER).projects[0].deviceWorkspaces[0].tasks[0].taskId).toBe(
+      'task-a'
+    )
+    writeCachedRemoteRuntimeWork(otherOwner, { projects: [], chats: [], totalTasks: 0 })
+    expect(readCachedRemoteRuntimeWork(OWNER).totalTasks).toBe(1)
+    expect(readCachedRemoteRuntimeWork(otherOwner).totalTasks).toBe(0)
   })
 
   test('preserves offline hosts while replacing an online host with live tasks', () => {

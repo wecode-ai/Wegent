@@ -110,7 +110,7 @@ impl HttpApp {
         let server = wegent_backend_rs::http_server::Server::bind_with_authenticator_and_config(
             "127.0.0.1:0".parse().unwrap(),
             application.routes,
-            AppAuthenticator::new(state),
+            AppAuthenticator::new(state.authentication_services()),
             ServerConfig {
                 request_timeout: origin_budget,
                 ..Default::default()

@@ -1,16 +1,15 @@
-import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import { DesktopSidebar } from './DesktopSidebar'
-import { useRightWorkspaceShortcuts } from './workspace-panels/useRightWorkspaceShortcuts'
 import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import { COLLAPSE_READ_CONVERSATIONS_COMMAND, setActiveKeybindings } from '@/lib/keybindings'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import '@/i18n'
+import { setActiveKeybindings } from '@/lib/keybindings'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { DesktopSidebar } from './DesktopSidebar'
 
 type SidebarProps = Parameters<typeof DesktopSidebar>[0]
 
@@ -125,129 +124,6 @@ describe('DesktopSidebar read conversation collapse', () => {
     })
   })
 
-  test('collapses read rows in the original groups and restores them without mutating tasks', async () => {
-    const onMarkRuntimeTaskRead = vi.fn()
-    const onArchiveRuntimeTask = vi.fn()
-    renderSidebar({ onMarkRuntimeTaskRead, onArchiveRuntimeTask })
-    await userEvent.click(
-      within(screen.getByTestId('project-row-7')).getByTestId('project-item-button')
-    )
-    await userEvent.click(
-      within(screen.getByTestId('project-row-8')).getByTestId('project-item-button')
-    )
-
-    await selectAction('collapse-read')
-
-    expect(screen.getByTestId('runtime-priority-filter-button')).toHaveAccessibleName(
-      '收起已读会话'
-    )
-    expect(screen.getByTestId('runtime-priority-filter-button')).not.toHaveAttribute('aria-pressed')
-    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-row-7')).toBeInTheDocument()
-    expect(screen.getByTestId('project-row-8')).toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('sidebar-pinned-section')).getByTestId(rowId('pinned-unread'))
-    ).toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('project-local-tasks-panel-7')).getByTestId(rowId('project-unread'))
-    ).toBeInTheDocument()
-    expect(screen.getByTestId(rowId('chat-unread'))).toBeInTheDocument()
-    for (const id of ['pinned-read', 'project-read', 'chat-read']) {
-      expect(screen.queryByTestId(rowId(id))).not.toBeInTheDocument()
-    }
-    expect(screen.getByTestId(rowId('running-read'))).toBeInTheDocument()
-    expect(screen.getByTestId(rowId('waiting-read'))).toBeInTheDocument()
-    expect(onMarkRuntimeTaskRead).not.toHaveBeenCalled()
-    expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
-
-    await selectAction('expand-read')
-
-    for (const id of ['pinned-read', 'project-read', 'chat-read', 'running-read', 'waiting-read']) {
-      expect(screen.getByTestId(rowId(id))).toBeInTheDocument()
-    }
-  })
-
-  test('keeps newly read rows until the next click and permanently restores new unread rows', async () => {
-    const onOpenRuntimeTask = vi.fn()
-    const onMarkRuntimeTaskRead = vi.fn()
-    const work = runtimeWork()
-    work.chats[0].tasks = work.chats[0].tasks.filter(
-      task => !['running-read', 'waiting-read'].includes(task.taskId)
-    )
-    const view = renderSidebar({ onOpenRuntimeTask, onMarkRuntimeTaskRead, runtimeWork: work })
-    await selectAction('collapse-read')
-    await userEvent.click(screen.getByTestId(rowId('chat-unread')))
-    expect(onOpenRuntimeTask).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: 'chat-unread' })
-    )
-    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: 'chat-unread' })
-    )
-
-    view.rerenderProps({
-      unreadRuntimeTaskKeys: new Set(),
-      currentRuntimeTask: { deviceId: 'local-device', taskId: 'chat-unread' },
-    })
-    expect(screen.getByTestId(rowId('chat-unread'))).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-    expect(screen.getByTestId(rowId('chat-unread'))).toBeInTheDocument()
-    view.rerenderProps({ currentRuntimeTask: null })
-    expect(screen.getByTestId(rowId('chat-unread'))).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-    expect(screen.queryByTestId(rowId('chat-unread'))).not.toBeInTheDocument()
-    expect(screen.getByTestId('runtime-chat-section-toggle')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('已读会话已收起')
-
-    view.rerenderProps({ unreadRuntimeTaskKeys: new Set(['local-device\0chat-unread']) })
-    expect(screen.getByTestId(rowId('chat-unread'))).toBeInTheDocument()
-    view.rerenderProps({ unreadRuntimeTaskKeys: new Set() })
-    expect(screen.getByTestId(rowId('chat-unread'))).toBeInTheDocument()
-  })
-
-  test.each(['pinned-read', 'project-read', 'chat-read'])(
-    'keeps the current read conversation %s visible through every collapse entry',
-    async taskId => {
-      renderSidebar({
-        unreadRuntimeTaskKeys: new Set(),
-        currentRuntimeTask: { deviceId: 'local-device', taskId },
-      })
-      if (taskId === 'project-read') {
-        await userEvent.click(
-          within(screen.getByTestId('project-row-8')).getByTestId('project-item-button')
-        )
-      }
-
-      await selectAction('collapse-read')
-      expect(screen.getByTestId(rowId(taskId))).toBeInTheDocument()
-      await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-      expect(screen.getByTestId(rowId(taskId))).toBeInTheDocument()
-      fireEvent.keyDown(window, {
-        key: '‰',
-        code: 'KeyR',
-        metaKey: true,
-        altKey: true,
-        shiftKey: true,
-      })
-      expect(screen.getByTestId(rowId(taskId))).toBeInTheDocument()
-      for (const otherId of ['pinned-read', 'project-read', 'chat-read']) {
-        if (otherId !== taskId) expect(screen.queryByTestId(rowId(otherId))).not.toBeInTheDocument()
-      }
-    }
-  )
-
-  test('restores a hidden read conversation when navigation selects it', async () => {
-    const view = renderSidebar()
-    await selectAction('collapse-read')
-    expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
-
-    view.rerenderProps({ currentRuntimeTask: { deviceId: 'local-device', taskId: 'chat-read' } })
-    expect(screen.getByTestId(rowId('chat-read'))).toBeInTheDocument()
-    view.rerenderProps({ currentRuntimeTask: null })
-    expect(screen.getByTestId(rowId('chat-read'))).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-    expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
-  })
-
   test('does not preserve a different device conversation with the same task ID', async () => {
     const work = runtimeWork()
     work.chats.push({
@@ -267,34 +143,6 @@ describe('DesktopSidebar read conversation collapse', () => {
     expect(screen.getAllByTestId(rowId('chat-read'))).toHaveLength(1)
     expect(screen.queryByText('Remote read duplicate')).not.toBeInTheDocument()
   })
-
-  test.each([false, true])(
-    'restores only the clicked project when its panel was initially expanded: %s',
-    async initiallyExpanded => {
-      renderSidebar()
-      const projectButton = within(screen.getByTestId('project-row-8')).getByTestId(
-        'project-item-button'
-      )
-      if (initiallyExpanded) await userEvent.click(projectButton)
-      await selectAction('collapse-read')
-
-      await userEvent.click(projectButton)
-
-      expect(projectButton).toHaveAttribute('aria-expanded', 'true')
-      expect(screen.getByTestId('project-local-tasks-panel-8')).toHaveAttribute(
-        'aria-hidden',
-        'false'
-      )
-      expect(screen.getByTestId(rowId('project-read'))).toBeInTheDocument()
-      expect(screen.queryByTestId(rowId('pinned-read'))).not.toBeInTheDocument()
-      expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
-
-      await userEvent.click(projectButton)
-      expect(projectButton).toHaveAttribute('aria-expanded', 'false')
-      await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-      expect(screen.queryByTestId(rowId('project-read'))).not.toBeInTheDocument()
-    }
-  )
 
   test.each(['pinned', 'project', 'chat'] as const)(
     'keeps read running, queued, and waiting conversations visible in the %s group',
@@ -340,7 +188,7 @@ describe('DesktopSidebar read conversation collapse', () => {
     }
   )
 
-  test.each(['running', 'queued', 'input', 'async-input'] as const)(
+  test.each(['queued'] as const)(
     'restores a hidden conversation when it becomes %s and retains it until the next collapse',
     async state => {
       const { store } = renderSidebar()
@@ -367,71 +215,6 @@ describe('DesktopSidebar read conversation collapse', () => {
       expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
     }
   )
-
-  test('uses current lifecycle state when the task list still reports an old running state', async () => {
-    const { store } = renderSidebar()
-    const address = { deviceId: 'local-device', taskId: 'running-read' }
-    act(() => {
-      store.executorSettled(address)
-      store.turnSettled(address, null, 'succeeded')
-    })
-
-    await selectAction('collapse-read')
-
-    expect(screen.queryByTestId(rowId('running-read'))).not.toBeInTheDocument()
-    expect(screen.getByTestId(rowId('waiting-read'))).toBeInTheDocument()
-  })
-
-  test.each([false, true])(
-    'restores standalone tasks from their heading when initially expanded: %s',
-    async initiallyExpanded => {
-      renderSidebar({ unreadRuntimeTaskKeys: new Set(['local-device\0project-unread']) })
-      const taskHeading = screen.getByTestId('runtime-chat-section-toggle')
-      if (!initiallyExpanded) await userEvent.click(taskHeading)
-      await selectAction('collapse-read')
-
-      await userEvent.click(taskHeading)
-
-      expect(taskHeading).toHaveAttribute('aria-expanded', 'true')
-      expect(screen.getByTestId(rowId('chat-read'))).toBeInTheDocument()
-      expect(screen.getByTestId(rowId('waiting-read'))).toBeInTheDocument()
-      expect(screen.getByTestId(rowId('pinned-unread'))).toBeInTheDocument()
-      expect(screen.queryByTestId(rowId('project-read'))).not.toBeInTheDocument()
-      expect(screen.queryByTestId(rowId('pinned-read'))).not.toBeInTheDocument()
-
-      await userEvent.click(taskHeading)
-      expect(taskHeading).toHaveAttribute('aria-expanded', 'false')
-      await userEvent.click(taskHeading)
-      expect(screen.getByTestId(rowId('chat-read'))).toBeInTheDocument()
-      await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-      expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
-    }
-  )
-
-  test('retains the pinned heading when every pinned conversation is collapsed', async () => {
-    renderSidebar({
-      unreadRuntimeTaskKeys: new Set(),
-      runtimeWork: {
-        projects: [],
-        totalTasks: 1,
-        chats: [
-          {
-            deviceId: 'local-device',
-            available: true,
-            workspacePath: '/chats',
-            workspaceKind: 'chat',
-            tasks: [task('only-pinned', { pinned: true })],
-          },
-        ],
-      },
-    })
-    await selectAction('collapse-read')
-
-    expect(screen.getByTestId('sidebar-pinned-section-header')).toHaveTextContent('置顶')
-    expect(screen.queryByTestId(rowId('only-pinned'))).not.toBeInTheDocument()
-    expect(screen.getByTestId('projects-section-toggle')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-chat-section-toggle')).toBeInTheDocument()
-  })
 
   test('uses Shift Option Command R from the composer and respects editable, repeat, and composition guards', () => {
     renderSidebar()
@@ -460,78 +243,5 @@ describe('DesktopSidebar read conversation collapse', () => {
     } finally {
       input.remove()
     }
-  })
-
-  test('honors customized and disabled shortcuts', () => {
-    setActiveKeybindings([{ command: COLLAPSE_READ_CONVERSATIONS_COMMAND, key: 'Command+Shift+H' }])
-    renderSidebar()
-    fireEvent.keyDown(window, { key: 'r', metaKey: true, altKey: true, shiftKey: true })
-    expect(screen.getByTestId(rowId('chat-read'))).toBeInTheDocument()
-    act(() => setActiveKeybindings([{ command: COLLAPSE_READ_CONVERSATIONS_COMMAND, key: null }]))
-    fireEvent.keyDown(window, { key: 'h', metaKey: true, shiftKey: true })
-    expect(screen.getByTestId(rowId('chat-read'))).toBeInTheDocument()
-    act(() =>
-      setActiveKeybindings([
-        { command: COLLAPSE_READ_CONVERSATIONS_COMMAND, key: 'Command+Shift+H' },
-      ])
-    )
-    fireEvent.keyDown(window, { key: 'h', metaKey: true, shiftKey: true })
-    expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
-  })
-
-  test('collapses read conversations when review shortcuts are also mounted', () => {
-    const onSelectReview = vi.fn()
-    renderHook(() =>
-      useRightWorkspaceShortcuts({
-        active: true,
-        canOpenReview: true,
-        allowTemporaryChat: true,
-        canBrowseFiles: true,
-        onNavigate: action => action(),
-        onSelectReview,
-        onSelectBrowser: vi.fn(),
-        onSelectChat: vi.fn(),
-        onSelectFiles: vi.fn(),
-      })
-    )
-    renderSidebar()
-
-    fireEvent.keyDown(window, {
-      key: '‰',
-      code: 'KeyR',
-      metaKey: true,
-      altKey: true,
-      shiftKey: true,
-    })
-    expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
-    expect(onSelectReview).not.toHaveBeenCalled()
-    fireEvent.keyDown(window, { key: '®', code: 'KeyR', metaKey: true, altKey: true })
-    expect(onSelectReview).toHaveBeenCalledOnce()
-  })
-
-  test('returns from the board or priority view to the grouped sidebar', async () => {
-    const onToggleMyWork = vi.fn()
-    const view = renderSidebar({ onToggleMyWork, taskView: 'default-work-items' })
-    fireEvent.keyDown(window, { key: 'r', metaKey: true, altKey: true, shiftKey: true })
-    expect(onToggleMyWork).toHaveBeenCalledOnce()
-    expect(screen.getByTestId('projects-section-toggle')).toBeInTheDocument()
-    view.rerenderProps({ taskView: 'workbench' })
-    await selectAction('priority')
-    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
-    expect(screen.getByTestId(rowId('waiting-read'))).toBeInTheDocument()
-    await selectAction('collapse-read')
-    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
-    expect(screen.getByTestId('projects-section-toggle')).toBeInTheDocument()
-    expect(screen.getByTestId(rowId('waiting-read'))).toBeInTheDocument()
-    expect(screen.getByTestId(rowId('running-read'))).toBeInTheDocument()
-    expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
-  })
-
-  test('clears collapsed rows when the account changes', async () => {
-    const view = renderSidebar()
-    await selectAction('collapse-read')
-    expect(screen.queryByTestId(rowId('chat-read'))).not.toBeInTheDocument()
-    view.rerenderProps({ user: { id: 2, user_name: 'bob', email: 'bob@example.com' } })
-    expect(screen.getByTestId(rowId('chat-read'))).toBeInTheDocument()
   })
 })

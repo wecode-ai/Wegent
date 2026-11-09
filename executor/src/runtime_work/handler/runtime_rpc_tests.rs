@@ -5,6 +5,76 @@
 use super::*;
 
 #[test]
+fn python_demand_rpc_rechecks_enabled_and_uninstalled_packages_without_starting_work() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _codex = ScalarEnv::set("WEGENT_CODEX_HOME", root.path().to_str().unwrap());
+    let _workbench = ScalarEnv::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    let capabilities = root.path().join("capabilities");
+    let _capabilities = ScalarEnv::set("WEGENT_CAPABILITIES_HOME", capabilities.to_str().unwrap());
+    let package = root.path().join("plugins/cache/test/python/1.0");
+    fs::create_dir_all(package.join(".codex-plugin")).unwrap();
+    fs::write(
+        package.join(".codex-plugin/plugin.json"),
+        r#"{"name":"python","runtimeRequirements":{"python":{}}}"#,
+    )
+    .unwrap();
+    assert!(!should_resume_persisted_turns_before_rpc(
+        "runtime.python.has_demand"
+    ));
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let handler = RuntimeWorkRpcHandler::new("python-demand", "unused-codex-binary");
+            for (config, expected) in [
+                ("[plugins.'python@test']\nenabled = true\n", true),
+                ("[plugins.'python@test']\nenabled = false\n", false),
+                ("[plugins.'python@test']\nenabled = true\n", true),
+                ("", false),
+            ] {
+                fs::write(root.path().join("config.toml"), config).unwrap();
+                let response = handler
+                    .handle_runtime_rpc(json!({"method":"runtime.python.has_demand","payload":{}}))
+                    .await
+                    .unwrap();
+                assert_eq!(response, json!({"demanded":expected}));
+            }
+        });
+}
+
+#[test]
+fn runtime_rpc_dispatch_retains_control_creation_routes() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+            let handler = RuntimeWorkRpcHandler::new("creation-routes", "unused-codex-binary");
+            let response = handler
+                .handle_runtime_rpc(json!({
+                    "method":"runtime.models.sync_creation_profiles", "payload":{"profiles":[]}
+                }))
+                .await
+                .unwrap();
+            assert_eq!(response, json!({"success":true,"count":0}));
+
+            let error = handler
+                .handle_runtime_rpc(json!({
+                    "method":"runtime.tasks.create_from_intent", "payload":{}
+                }))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "invalid_request");
+        });
+}
+
+#[test]
 fn runtime_rpc_dispatch_fits_a_bounded_worker_stack() {
     let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();
@@ -83,4 +153,95 @@ fn remote_app_server_rpc_requires_inner_method() {
             assert_eq!(error.code, "bad_request");
             assert_eq!(error.message, "method is required");
         });
+}
+
+#[test]
+fn marketplace_mutations_wait_for_bundled_configuration_reconciliation() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut handler = RuntimeWorkRpcHandler::new("device-1", "unused-codex-binary");
+            let native = root.path().join("native");
+            install_native_history(&mut handler, &native, vec![], None);
+            let expected = json!({"marketplaceName":"connection-fixture"});
+            for method in [
+                "marketplace_add",
+                "marketplace_remove",
+                "marketplace_upgrade",
+            ] {
+                fs::write(native.join(format!("{method}.json")), expected.to_string()).unwrap();
+            }
+            fs::write(native.join("plugin_list.json"), r#"{"marketplaces":[]}"#).unwrap();
+            handler.codex_app_server.ensure_started().await.unwrap();
+            for method in [
+                "marketplace/add",
+                "marketplace/remove",
+                "marketplace/upgrade",
+            ] {
+                assert_marketplace_mutation_serialized(&handler, method, &expected).await;
+            }
+            handler
+                .codex_app_server
+                .request("test/stop", json!({}))
+                .await
+                .unwrap();
+        });
+}
+
+async fn assert_marketplace_mutation_serialized(
+    handler: &RuntimeWorkRpcHandler,
+    method: &str,
+    expected: &Value,
+) {
+    let guard = handler
+        .bundled_plugin_marketplace_reconciliation
+        .lock()
+        .await;
+    let mutation = handler.handle_codex_app_server_rpc(json!({"method":method,"params":{}}));
+    tokio::pin!(mutation);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), &mut mutation)
+            .await
+            .is_err(),
+        "{method} was admitted during a full bundled configuration rewrite"
+    );
+    let read = handler.handle_codex_app_server_rpc(json!({"method":"plugin/list","params":{}}));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), read)
+            .await
+            .unwrap()
+            .unwrap(),
+        json!({"marketplaces":[]}),
+        "Catalog reads must remain independent of the configuration mutation gate"
+    );
+    drop(guard);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), &mut mutation)
+            .await
+            .unwrap()
+            .unwrap(),
+        *expected
+    );
+}
+
+#[tokio::test]
+async fn codex_plugin_discovery_waits_for_app_server_restart() {
+    let (handler, root) = isolated_runtime_work_handler("plugin-restart-serialization");
+    let restart_guard = codex_app_server_restart_gate().lock().await;
+    for method in ["plugin/installed", "plugin/list", "app/list"] {
+        let discovery = handler.handle_codex_app_server_rpc(json!({
+            "method": method,
+            "params": {},
+        }));
+        tokio::pin!(discovery);
+        let waiting = tokio::time::timeout(Duration::from_millis(100), &mut discovery).await;
+        assert!(waiting.is_err(), "{method} bypassed the restart gate");
+    }
+    drop(restart_guard);
+    let _ = fs::remove_dir_all(root);
 }

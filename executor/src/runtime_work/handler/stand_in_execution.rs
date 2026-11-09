@@ -1,7 +1,44 @@
 //! Shared task lifecycle decisions for automatic and explicit Stand-in dispatch.
 use super::*;
 
+pub(super) fn accepted_stand_in_result(result: Value) -> Result<Value, AppIpcError> {
+    if result["success"] == false || result["accepted"] == false {
+        return Err(AppIpcError::new(
+            result["code"].as_str().unwrap_or("stand_in_start_failed"),
+            result["error"]
+                .as_str()
+                .unwrap_or("Stand-in execution was not accepted"),
+        ));
+    }
+    Ok(result)
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(super) fn has_pending_stand_in_assignment(
+        &self,
+        config: &Value,
+        issue: &Value,
+        binding: &Value,
+    ) -> Result<bool, AppIpcError> {
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        Ok(store
+            .stand_in_events(config["userId"].as_i64().unwrap_or_default())
+            .map_err(super::stand_in::settings_error)?
+            .iter()
+            .any(|event| {
+                event["kind"] == "assignment"
+                    && event["status"] == "pending"
+                    && event["projectId"] == config["projectId"]
+                    && event["projectStore"] == config["projectStore"]
+                    && event["issueId"] == issue["id"]
+                    && event["assignmentId"] == binding["assignmentId"]
+                    && event["roleIds"]
+                        .as_array()
+                        .is_some_and(|roles| roles.contains(&config["id"]))
+            }))
+    }
+
     pub(super) async fn dispatch_stand_in_task(
         &self,
         payload: Value,
@@ -30,18 +67,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             Box::pin(self.create_task(payload)).await
         };
-        result.and_then(|result| {
-            if result["success"] == false || result["accepted"] == false {
-                Err(AppIpcError::new(
-                    "stand_in_start_failed",
-                    result["error"]
-                        .as_str()
-                        .unwrap_or("Stand-in execution was not accepted"),
-                ))
-            } else {
-                Ok(result)
-            }
-        })
+        result.and_then(accepted_stand_in_result)
     }
 
     pub(super) fn stand_in_task_is_handled(
@@ -80,6 +106,30 @@ impl RuntimeWorkRpcHandler {
                 "task_already_exists",
                 json!({"taskId":task_id}),
             );
+            return Ok(());
+        }
+        if config["manual"] != true
+            && config["intakeRouted"] != true
+            && !crate::task_runtime::personal_stand_in::immediate_policy(&config["handlingPolicy"])
+        {
+            let store = LocalTaskStore::open(self.task_store_path.as_ref())
+                .map_err(super::stand_in::settings_error)?;
+            let user = config["userId"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("permission_denied", "Missing assignment owner"))?;
+            let assignment = if config["projectStore"] == "local" {
+                &binding["humanAssignmentId"]
+            } else {
+                &binding["assignmentId"]
+            };
+            self.accept_stand_in_assignment(config, issue, binding)
+                .await?;
+            store.enqueue_stand_in_event(user, json!(["assignment",config["projectStore"],config["projectId"],issue["id"],assignment,config["id"]]), json!({
+                "kind":"assignment","roleScoped":true,"roleIds":[config["id"]],
+                "projectId":config["projectId"],"projectStore":config["projectStore"],
+                "issueId":issue["id"],"assignmentId":assignment,"issue":issue,
+                "source":{"providerId":"project","id":config["projectId"],"name":issue["title"]}
+            })).map_err(super::stand_in::settings_error)?;
             return Ok(());
         }
         let result = async {

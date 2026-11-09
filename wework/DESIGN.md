@@ -168,12 +168,12 @@ such as an animated transition between two heading roles. Third-party content
 that cannot inherit Wework variables requires a narrow documented exception.
 
 The primary Electron UI weight is `445`, matching ChatGPT's platform-adjusted
-normal weight. Explicit `font-normal` content remains `400`, while emphasis and
-headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
+normal weight. Ordinary UI and conversation text inherit this weight instead of forcing
+`font-normal` (`400`) on their containers. Emphasis and headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
 
 Entered composer text uses the primary text color so it reads as content. Normal
 menu labels and composer actions such as the quick-phrase trigger also use the
-primary text color, but remain at regular weight so they stay crisp without
+primary text color, but inherit the UI weight so they stay crisp without
 appearing bold. Descriptions, metadata, and shortcuts use secondary or tertiary
 text colors.
 
@@ -253,6 +253,16 @@ composer shadow `0 18px 44px`; it is not the Codex recipe.
 
 ## 4. Color system
 
+The neutral Codex reference below defines the default theme. Users may explicitly
+choose a named appearance theme, including colored surface and accent palettes.
+In that case, the selected theme's semantic tokens replace these reference
+colors across all Wework-owned surfaces, content-renderer controls, portals,
+and auxiliary windows. Layout, density, typography, contrast, focus visibility,
+and non-color status cues remain mandatory. Never hardcode the neutral reference
+into a component to override a user's selected theme. The remote Wegent Agent
+page keeps its own theme; Wework chrome around it still follows appearance.
+Startup flow and startup colors continue to use the upstream implementation.
+
 ### 4.1 Neutral palette and surfaces
 
 The Codex neutral reference palette is:
@@ -319,6 +329,10 @@ reserved for a feature with explicit semantic meaning. Status must always have
 a non-color cue such as text, icon, shape, or accessible label.
 
 ### 4.3 Absolute green/teal restriction
+
+This restriction applies to the default product theme. An explicitly selected
+named theme such as Matrix or Everforest may use its authored green palette;
+components must consume that palette through semantic tokens.
 
 Wework must not look green or teal. The current legacy Wework `primary` and
 `hover` tokens are teal-based and therefore are not Codex visual tokens. Do not
@@ -506,6 +520,13 @@ The active-conversation capture is also normative:
 - User messages are right-aligned compact neutral bubbles. Assistant content is
   left-aligned prose, not wrapped in a card. Turn metadata and feedback actions
   are quiet and subordinate.
+- Conversation prose and tool-process rows inherit the primary UI `445` weight; chat
+  headings, strong text, and table headings use `500`. Keep document-preview
+  typography separate. Tool summaries use tertiary text and expandable details,
+  without a full-width divider. Optional MCP App discovery failures do not
+  create app UI. Confirmed app initialization failures use a borderless error
+  row with retry and close; only loaded applications need an app container and
+  display-mode controls.
 - The compact turn-navigation rail reflects every conversation turn intersecting
   the viewport. A turn includes its user messages and assistant responses, so
   assistant-only viewport content still activates the corresponding marker and
@@ -569,6 +590,15 @@ recipe closely:
 - attachment inset is `8px`, with the nested radius derived from the outer
   composer radius rather than chosen independently;
 - footer controls use compact `4px–8px` gaps and `28px` actions;
+- In an active thread, work-item and goal context belongs inside the input
+  surface before the editor, not in a separate bordered rail. Context-bearing
+  composers remain expanded so context and model recovery stay reachable.
+  Keep contextual actions and input-leading chips independent.
+- 目标与协作上下文同时出现时保持左右分栏，为右侧协作区域保留宽度；长目标在左侧截断，
+  不得把协作入口挤出输入框。
+  When goal and collaboration context are both present, keep them in separate
+  left and right columns with reserved width for collaboration. Truncate long
+  goals within the left column so collaboration controls remain inside the composer.
 - desktop project, quick-phrase, model, execution-mode, and branch selectors
   use the same `text-sm` role at regular weight; mobile variants may retain
   their larger touch-oriented typography;
@@ -615,6 +645,48 @@ recipe closely:
 - While the scrollbar is held, its pointer owns the viewport and measured height
   changes keep the grabbed thumb point under that pointer. Disable both row and
   text compensation during the drag; release samples the new reading position.
+
+切换任务只恢复该任务的视口，不播放滚动动画。离开时正在阅读历史内容，切回后保持同一
+文字在视口中的位置，主动回到底部后才继续跟随；离开时已经贴底，则切回后保持贴底。
+实时阅读和切换恢复共用消息、运行时条目与 Markdown 分块内的文字锚点。占位文本与实际
+Markdown 的字符数不同，不能把整段内容中的字符偏移当作稳定阅读位置。
+后台在同一段尾追加文字时，保留已采样文字的字符位置。
+
+Task switching restores the task's viewport without scroll animation. Preserve a
+reader's text position until they explicitly return to the bottom; restore bottom
+pinning when the task was already pinned. Live reading and saved restoration use
+the same text anchor within its message, runtime item and Markdown chunk. A
+whole-item character offset is unstable when chunks switch between raw Markdown
+placeholders and rendered markup.
+Appending to the anchored paragraph preserves its sampled character position.
+
+虚拟列表的排版输入来自稳定的正文样式和根字号，不能从当前已挂载的消息段落取样。
+计划预览等紧凑卡片有不同的行高；滚动导致它们成为首个段落时，不得清空整份列表的
+测量缓存，否则会形成估算、挂载和滚动相互触发的布局循环，使输入框也离开底部。
+
+Virtual layout inputs come from stable body styles and the root font size, never
+from whichever message paragraph happens to be mounted. Compact plan previews
+use another line height. Their appearance in the virtual range must not invalidate
+all row measurements and create an estimate, mount and scroll feedback loop that
+also displaces the composer.
+
+恢复任务或挂载 Markdown 时，行高在布局阶段用同一测量函数提交给 TanStack，再注册
+后续尺寸观察。原生滚动事件尚未结束不代表行高可以延迟到下一帧，否则短回复会先以
+流式估算高度出现，再把文字推回实际位置。
+
+Restore and Markdown mount commit actual row sizes through the same measurement
+function and TanStack writer in the layout phase, then register ongoing observation.
+An outstanding native scroll event must not defer the initial size until another
+frame and expose a streaming estimate in place of a short reply.
+
+已挂载的消息行保持在正常文档流中，估算高度仅为未挂载内容留位。不能用缓存行高
+绝对定位可见消息或固定整个列表高度，否则列宽变化后，真实换行会越过旧行坐标，
+造成叠字，并让输入框进入正文区域。
+
+Mounted message rows stay in normal document flow; estimates reserve space only
+for unmounted content. Cached heights must not absolutely position visible rows
+or fix the entire list height: wrapping after a column resize can cross stale
+coordinates, overlap messages and put the composer inside the transcript.
 
 跟随动画从实际滚动位置开始，持有连续位置计算下一帧；浏览器取整后的显示位置
 不能覆盖未完成的亚像素进度。内容缩短时将连续位置限制到新的实际底部，弹簧收敛后
@@ -1059,6 +1131,39 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     Desktop --> Services
     Services --> Markdown
     Content --> Composer
+  ```
+
+  桌面端数学公式由共享 `AssistantMarkdown` 统一排版。参考 Codex 的
+  KaTeX 路径，支持 `\(…\)`、`\[…\]`、`$…$`、`$$…$$` 和 `math`
+  代码块。解析器先识别真正的数学节点，再将 TeX 分隔符转换为 Streamdown
+  支持的美元分隔符；保留引用、列表缩进、代码示例与链接目标。单美元公式
+  不接受两端空白或紧随数字的结束符，避免将常见金额识别为公式。
+  展示公式只在可容纳块的 Markdown 容器中展开；表格、标题、强调与链接
+  标签中的公式保留行内形式，不能插入换行破坏容器。
+  KaTeX 使用其开源发行包的专用数学字体、HTML 与 MathML 输出；禁用可信
+  HTML 命令。长行间公式在消息内横向滚动，原始消息及复制内容保持不变。
+
+  Desktop math belongs to shared `AssistantMarkdown`. Like Codex, it uses
+  KaTeX for inline and display TeX, dollar delimiters and `math` fences. Only
+  parsed math nodes have their TeX delimiters normalized before Streamdown's
+  block splitting and streaming completion. Quotes, list indentation, code,
+  link destinations and common currency text retain their Markdown meaning.
+  Display delimiters expand only in block-capable Markdown containers. Table
+  cells, headings, emphasis and link labels retain inline math without inserted
+  line breaks.
+  KaTeX's open-source math fonts, HTML and MathML are bundled locally, with
+  trusted HTML commands disabled. Display equations scroll horizontally within
+  the message; stored messages and message-copy content remain unchanged.
+
+  ```mermaid
+  flowchart LR
+    Source[Original message] --> Parse[Markdown parser with math delimiters]
+    Parse --> Normalize[Normalize parsed TeX using block and inline container boundaries]
+    Normalize --> Streamdown[Streamdown blocks and streaming completion]
+    Streamdown --> Math[Remark math nodes]
+    Math --> Sanitize[Existing HTML sanitization]
+    Sanitize --> KaTeX[KaTeX HTML and MathML]
+    Parse --> Literal[Code, links and escaped text remain literal]
   ```
 
   `RuntimeExecutionDetails` owns the desktop execution dialog chrome, status
@@ -2005,6 +2110,14 @@ implementation and WCAG conflict.
 - Native title-bar drag regions must not geometrically overlap visible
   interactive controls. Explicitly carve controls out of the drag region even
   when they declare `no-drag`.
+- 标题栏内绝对定位的拖拽区必须以标题栏为定位边界；调试面板展开时停用
+  底下的原生拖拽区，收起或关闭后恢复。
+- Anchor absolutely positioned title-bar drag regions to the title bar. Disable
+  underlying native drag regions while the debug panel is expanded, and restore
+  them when it collapses or closes.
+- 刷新期间收到的原生工作区菜单操作必须在工作区挂载后执行一次。
+- Replay native workspace-menu actions received during refresh once the workspace
+  mounts, without executing consumed actions again after a remount.
 - Respect macOS traffic-light safe areas, Windows controls, system scaling, and
   actual platform shortcuts.
 - Use the platform modifier in both behavior and visible shortcut labels.

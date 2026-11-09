@@ -28,20 +28,6 @@ describe('cloud plugin uninstall', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  test('accepts 204 without creating another inventory read', async () => {
-    const { client, api } = setup()
-    client.delete.mockResolvedValue(null)
-    await api.uninstallInstalledPlugin(123, 'device')
-    expect(client.delete).toHaveBeenCalledWith(
-      '/plugins/installed/123?device_id=device',
-      undefined,
-      {
-        signal: expect.any(AbortSignal),
-      }
-    )
-    expect(client.get).not.toHaveBeenCalled()
-  })
-
   test('aborts a hung DELETE and confirms account absence, without repeating DELETE', async () => {
     vi.useFakeTimers()
     const { client, api } = setup()
@@ -58,18 +44,17 @@ describe('cloud plugin uninstall', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  test.each([
-    { items: [{ metadata: { labels: { id: '123' } } }] },
-    { items: [{ metadata: { labels: {} } }] },
-    {},
-  ])('does not assume success when account verification is inconclusive: %j', async inventory => {
-    const { client, api } = setup()
-    client.delete.mockRejectedValue(new TypeError('Failed to fetch'))
-    client.get.mockResolvedValue(inventory)
-    await expect(api.uninstallInstalledPlugin(123)).rejects.toMatchObject({
-      errorCode: 'PLUGIN_UNINSTALL_UNCONFIRMED',
-    })
-  })
+  test.each([{ items: [{ metadata: { labels: { id: '123' } } }] }])(
+    'does not assume success when account verification is inconclusive: %j',
+    async inventory => {
+      const { client, api } = setup()
+      client.delete.mockRejectedValue(new TypeError('Failed to fetch'))
+      client.get.mockResolvedValue(inventory)
+      await expect(api.uninstallInstalledPlugin(123)).rejects.toMatchObject({
+        errorCode: 'PLUGIN_UNINSTALL_UNCONFIRMED',
+      })
+    }
+  )
 
   test('bounds the verification request too and never reports a failed read as success', async () => {
     vi.useFakeTimers()

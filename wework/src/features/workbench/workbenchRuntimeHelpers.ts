@@ -407,14 +407,14 @@ export function getCommandStdoutObject(stdout: unknown): Record<string, unknown>
   return isRecord(stdout) ? stdout : null
 }
 
-function getLastProjectStorageKey(userId: number) {
-  return `wework.lastProjectId.${userId}`
+function getLastProjectStorageKey(ownershipKey: string) {
+  return `wework.lastProjectId.${ownershipKey}`
 }
 
-export function writeLastProjectId(userId: number, projectId: number | null) {
+export function writeLastProjectId(ownershipKey: string, projectId: number | null) {
   try {
     window.localStorage.setItem(
-      getLastProjectStorageKey(userId),
+      getLastProjectStorageKey(ownershipKey),
       projectId === null ? 'none' : String(projectId)
     )
   } catch {
@@ -422,9 +422,9 @@ export function writeLastProjectId(userId: number, projectId: number | null) {
   }
 }
 
-export function readLastProjectId(userId: number): number | null | undefined {
+export function readLastProjectId(ownershipKey: string): number | null | undefined {
   try {
-    const storedValue = window.localStorage.getItem(getLastProjectStorageKey(userId))
+    const storedValue = window.localStorage.getItem(getLastProjectStorageKey(ownershipKey))
     if (storedValue === null) return undefined
     if (storedValue === 'none') return null
     const value = Number(storedValue)

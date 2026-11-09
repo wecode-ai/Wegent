@@ -7,6 +7,7 @@ import {
   createOfficialSource,
   requestJson,
   RECIPIENT_NAME,
+  SMART_APP_ICON_DATA_URL,
   STRANGER_NAME,
   USER_PASSWORD,
 } from '../modules/harness-app-fixture.mjs'
@@ -48,6 +49,35 @@ export async function createDesktopScenario({
     archiveName: 'dsh-e2e-shared-0.0.9',
     version: '0.0.9',
   })
+  const smartAppLifecyclePackages =
+    checkpoint === 'harness-app-lifecycle'
+      ? {
+          seedAssets: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.0.10',
+            version: '0.0.10',
+          }),
+          replaceIcon: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.1',
+            version: '0.2.1',
+          }),
+          replaceScreenshots: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.2',
+            version: '0.2.2',
+          }),
+          cancel: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.3',
+            version: '0.2.3',
+          }),
+          fail: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.4',
+            version: '0.2.4',
+          }),
+          clearScreenshots: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.5',
+            version: '0.2.5',
+          }),
+        }
+      : null
   const officialSource = await createOfficialSource(resultDir, packagePath)
   const archiveRegression =
     checkpoint === 'harness-app-lifecycle' ? await createSmartAppArchiveRegression(resultDir) : null
@@ -56,6 +86,8 @@ export async function createDesktopScenario({
   await mkdir(downloadsPath, { recursive: true })
   let sharedSmartAppId = null
   let ownerRequest
+  let smartAppBackendUrl = ''
+  let smartAppAuthToken = ''
   return {
     requiresCloudEnvironment: true,
     // Reproduce a workbench launched from a DSH-backed terminal. Legacy apps must
@@ -73,6 +105,8 @@ export async function createDesktopScenario({
     },
 
     async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {
+      smartAppBackendUrl = backendUrl
+      smartAppAuthToken = authToken
       await publishOfficialSmartApp(officialSource)
       if (archiveRegression) {
         await publishOfficialSmartApp(archiveRegression.sources[0])
@@ -132,8 +166,7 @@ export async function createDesktopScenario({
           summary: 'Shared desktop E2E Smart app',
           descriptionMd: '# Shared desktop E2E Smart app',
           tags: ['data_analysis'],
-          iconDataUrl:
-            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          iconDataUrl: SMART_APP_ICON_DATA_URL,
           screenshotDataUrls: [],
           releaseNotes: 'Initial shared E2E release',
           extensions: {
@@ -294,6 +327,9 @@ export async function createDesktopScenario({
           importedPackagePath,
           sharedSmartAppId,
           ownerRequest,
+          backendUrl: smartAppBackendUrl,
+          authToken: smartAppAuthToken,
+          smartAppLifecyclePackages,
           downloadsPath,
           resultDir,
           legacyRuntimeCache,

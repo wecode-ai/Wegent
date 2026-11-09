@@ -82,8 +82,10 @@ export async function assertInstallButton(control, fixture, timeoutMs = 10_000) 
   assert.match(label.trim(), /^(Install|安装)$/)
 }
 
-export async function inventory(control) {
-  return JSON.parse(await control.command('getComposerPluginInventoryDiagnostics', 'body'))
+export async function inventory(control, timeoutMs) {
+  return JSON.parse(
+    await control.command('getComposerPluginInventoryDiagnostics', 'body', { timeoutMs })
+  )
 }
 
 export async function completedApiResourceTimings(control, path) {
@@ -95,12 +97,16 @@ export async function completedApiResourceTimings(control, path) {
       resource =>
         ['fetch', 'xmlhttprequest'].includes(resource.initiatorType) && resource.path === path
     )
-    .map(resource => ({
-      path,
-      startedAt: snapshot.timeOrigin + resource.startTime,
-      completedAt: snapshot.timeOrigin + resource.startTime + resource.duration,
-      durationMs: resource.duration,
-    }))
+    .map(resource => {
+      const marker = resource.serverTiming?.find(timing => timing.name === 'wework-e2e-response')
+      return {
+        path,
+        startedAt: snapshot.timeOrigin + resource.startTime,
+        completedAt: snapshot.timeOrigin + resource.startTime + resource.duration,
+        durationMs: resource.duration,
+        ...(marker ? { responseTimingId: marker.description } : {}),
+      }
+    })
 }
 
 export async function requestPluginExecutor(control, method, params = {}) {
@@ -130,7 +136,7 @@ export async function assertInventory(control, slug, present, timeoutMs = 10_000
   try {
     await until(
       async () => {
-        lastState = await inventory(control)
+        lastState = await inventory(control, timeoutMs)
         return lastState
       },
       state =>
@@ -178,12 +184,14 @@ export async function assertSurfaces(control, fixture, present, timeoutMs = 10_0
   await control.command('click', testId('composer-plugin-picker-button'), { visible: true })
 }
 
-export async function installFixture(cloud, control, slug, deviceId, timeoutMs) {
-  const release = await cloud.publishPluginRelease({
-    slug,
-    version: '1.0.0',
-    skills: { [slug]: `Use ${slug} for desktop regression verification` },
-  })
+export async function installFixture(cloud, control, slug, deviceId, timeoutMs, providedRelease) {
+  const release =
+    providedRelease ??
+    (await cloud.publishPluginRelease({
+      slug,
+      version: '1.0.0',
+      skills: { [slug]: `Use ${slug} for desktop regression verification` },
+    }))
   await pluginApi(
     cloud,
     `/plugins/marketplace/${release.pluginId}/install?device_id=${encodeURIComponent(deviceId)}`,

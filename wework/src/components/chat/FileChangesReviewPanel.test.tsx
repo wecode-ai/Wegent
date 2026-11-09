@@ -1,8 +1,13 @@
 import '@/i18n'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { FileChangesReviewPanel } from './FileChangesReviewPanel'
+import type { ReactNode } from 'react'
+
+vi.mock('@/components/code/PierreCodeProvider', () => ({
+  PierreCodeProvider: ({ children }: { children: ReactNode }) => children,
+}))
 
 class ResizeObserverMock {
   observe() {}
@@ -11,10 +16,19 @@ class ResizeObserverMock {
 }
 
 vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+vi.stubGlobal(
+  'IntersectionObserver',
+  class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+)
 
 beforeEach(() => {
   document.documentElement.dataset.theme = 'light'
   Element.prototype.scrollIntoView = vi.fn()
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600)
 })
 
 function getRenderedDiffText() {
@@ -22,6 +36,18 @@ function getRenderedDiffText() {
     .map(container => container.shadowRoot?.textContent ?? '')
     .join('\n')
 }
+
+const largeDiff = Array.from({ length: 13 }, (_, index) => {
+  const fileIndex = index + 1
+  return [
+    `diff --git a/src/file-${fileIndex}.ts b/src/file-${fileIndex}.ts`,
+    `--- a/src/file-${fileIndex}.ts`,
+    `+++ b/src/file-${fileIndex}.ts`,
+    '@@ -1 +1 @@',
+    `-old ${fileIndex}`,
+    `+new ${fileIndex}`,
+  ].join('\n')
+}).join('\n')
 
 const twoFileDiff = [
   'diff --git a/src/alpha.ts b/src/alpha.ts',
@@ -68,304 +94,7 @@ const treeDiff = [
   '+new chinese',
 ].join('\n')
 
-const largeDiff = Array.from({ length: 13 }, (_, index) => {
-  const fileIndex = index + 1
-  return [
-    `diff --git a/src/file-${fileIndex}.ts b/src/file-${fileIndex}.ts`,
-    `--- a/src/file-${fileIndex}.ts`,
-    `+++ b/src/file-${fileIndex}.ts`,
-    '@@ -1 +1 @@',
-    `-old ${fileIndex}`,
-    `+new ${fileIndex}`,
-  ].join('\n')
-}).join('\n')
-
 describe('FileChangesReviewPanel', () => {
-  test('uses the application dark theme for review diffs', async () => {
-    document.documentElement.dataset.theme = 'dark'
-
-    render(<FileChangesReviewPanel loading={false} diff={twoFileDiff} />)
-
-    expect(screen.getByTestId('file-changes-review-panel')).toHaveAttribute('data-theme', 'dark')
-    expect(screen.getAllByTestId('file-changes-review-file-diff-body')[0]).toHaveAttribute(
-      'data-theme',
-      'dark'
-    )
-    await waitFor(() => expect(getRenderedDiffText()).toContain('new alpha'))
-  })
-
-  test('keeps every changed file diff visible when a file is selected', async () => {
-    render(
-      <FileChangesReviewPanel
-        loading={false}
-        diff={twoFileDiff}
-        branchName="human/dingo-20260624-023038"
-        targetBranchName="origin/main"
-      />
-    )
-
-    const toolbar = screen.getByTestId('file-changes-review-toolbar')
-    expect(within(toolbar).getByText(/Branch|分支/)).toBeInTheDocument()
-    expect(within(toolbar).getByText('+2')).toBeInTheDocument()
-    expect(within(toolbar).getByText('-2')).toBeInTheDocument()
-    expect(within(toolbar).getByText('human/dingo-20260624-023038')).toBeInTheDocument()
-    expect(within(toolbar).getByText('origin/main')).toBeInTheDocument()
-
-    expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
-    await waitFor(() => {
-      const diffText = getRenderedDiffText()
-      expect(diffText).toContain('new alpha')
-      expect(diffText).toContain('new beta')
-    })
-
-    const fileToggles = screen.getAllByTestId('file-changes-review-file-diff-toggle')
-    expect(fileToggles).toHaveLength(2)
-    expect(fileToggles[0]).toHaveTextContent('src/alpha.ts')
-    expect(fileToggles[1]).toHaveTextContent('src/beta.ts')
-
-    fireEvent.click(fileToggles[0])
-    expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'false')
-    await waitFor(() => {
-      const diffText = getRenderedDiffText()
-      expect(diffText).not.toContain('new alpha')
-      expect(diffText).toContain('new beta')
-    })
-
-    fireEvent.click(fileToggles[0])
-    expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'true')
-    await waitFor(() => {
-      const diffText = getRenderedDiffText()
-      expect(diffText).toContain('new alpha')
-      expect(diffText).toContain('new beta')
-    })
-  })
-
-  test('renders changed files as a tree on the right side', async () => {
-    render(<FileChangesReviewPanel loading={false} diff={treeDiff} />)
-
-    const content = screen.getByTestId('file-changes-review-content')
-    expect(content.children[0]).toHaveAttribute('data-testid', 'file-changes-review-diff')
-    expect(content.children[1]).toHaveAttribute('data-testid', 'file-changes-review-file-tree')
-
-    const tree = screen.getByTestId('file-changes-review-file-tree')
-    expect(within(tree).getByTestId('file-changes-review-file-search-input')).toBeInTheDocument()
-    expect(within(tree).getByTestId('pierre-file-tree')).toBeInTheDocument()
-
-    await waitFor(() => {
-      const diffText = getRenderedDiffText()
-      expect(diffText).toContain('new test')
-      expect(diffText).toContain('new component')
-      expect(diffText).toContain('new english')
-      expect(diffText).toContain('new chinese')
-      expect(diffText.indexOf('new test')).toBeLessThan(diffText.indexOf('new component'))
-      expect(diffText.indexOf('new component')).toBeLessThan(diffText.indexOf('new english'))
-      expect(diffText.indexOf('new english')).toBeLessThan(diffText.indexOf('new chinese'))
-    })
-  })
-
-  test('shows only the selected file when the diff is large', async () => {
-    const { rerender } = render(
-      <FileChangesReviewPanel
-        loading={false}
-        diff={largeDiff}
-        reviewTitle="上轮对话"
-        defaultFileTreeVisible={false}
-      />
-    )
-
-    expect(screen.getByText(/This diff is large|此差异较大/)).toBeInTheDocument()
-    expect(screen.getByTestId('file-changes-review-toolbar')).toHaveTextContent('上轮对话')
-    expect(screen.getByTestId('file-changes-review-file-tree')).not.toBeVisible()
-    expect(screen.getByTestId('toggle-file-tree-button')).toHaveAttribute('aria-pressed', 'false')
-
-    const diff = screen.getByTestId('file-changes-review-diff')
-    await waitFor(() => {
-      expect(diff).toBeInTheDocument()
-      expect(getRenderedDiffText()).toContain('new 1')
-      expect(getRenderedDiffText()).not.toContain('new 2')
-    })
-
-    rerender(
-      <FileChangesReviewPanel
-        loading={false}
-        diff={largeDiff}
-        reviewTitle="上轮对话"
-        defaultFileTreeVisible={false}
-        focusFilePath="src/file-13.ts"
-      />
-    )
-
-    await waitFor(() => {
-      expect(getRenderedDiffText()).not.toContain('new 2')
-      expect(getRenderedDiffText()).toContain('new 13')
-    })
-  })
-
-  test('merges multiple diff blocks for the same file into one section', async () => {
-    const duplicatePathDiff = [
-      'diff --git a/src/env.ts b/src/env.ts',
-      '--- a/src/env.ts',
-      '+++ b/src/env.ts',
-      '@@ -1 +1 @@',
-      '-old staged',
-      '+new staged',
-      'diff --git a/src/env.ts b/src/env.ts',
-      '--- a/src/env.ts',
-      '+++ b/src/env.ts',
-      '@@ -5 +5 @@',
-      '-old unstaged',
-      '+new unstaged',
-    ].join('\n')
-
-    render(<FileChangesReviewPanel loading={false} diff={duplicatePathDiff} />)
-
-    expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
-
-    const diff = screen.getByTestId('file-changes-review-diff')
-    await waitFor(() => {
-      expect(diff).toBeInTheDocument()
-      expect(getRenderedDiffText()).toContain('new staged')
-      expect(getRenderedDiffText()).toContain('new unstaged')
-    })
-  })
-
-  test('keeps the review toolbar available when the selected view has no diff', async () => {
-    const onSelectPreviousTurn = vi.fn()
-
-    render(
-      <FileChangesReviewPanel
-        loading={false}
-        diff=""
-        reviewTitle="提交"
-        viewOptions={[
-          {
-            id: 'commit',
-            label: '提交',
-            active: true,
-            onSelect: vi.fn(),
-          },
-          {
-            id: 'previous-turn',
-            label: '上轮对话',
-            active: false,
-            onSelect: onSelectPreviousTurn,
-          },
-        ]}
-      />
-    )
-
-    expect(screen.getByTestId('file-changes-review-toolbar')).toHaveTextContent('提交')
-    expect(screen.getByTestId('file-changes-review-empty')).toHaveTextContent(
-      /No text changes|没有可展示/
-    )
-
-    await userEvent.click(screen.getByTestId('review-view-switcher-button'))
-    await userEvent.click(screen.getByRole('menuitemradio', { name: '上轮对话' }))
-
-    expect(onSelectPreviousTurn).toHaveBeenCalledTimes(1)
-  })
-
-  test('closes the review view menu on Escape and outside clicks', async () => {
-    render(
-      <FileChangesReviewPanel
-        loading={false}
-        diff={treeDiff}
-        reviewTitle="未暂存"
-        viewOptions={[
-          { id: 'unstaged', label: '未暂存', active: true, onSelect: vi.fn() },
-          { id: 'staged', label: '已暂存', active: false, onSelect: vi.fn() },
-        ]}
-      />
-    )
-
-    const switcherButton = screen.getByTestId('review-view-switcher-button')
-
-    await userEvent.click(switcherButton)
-    expect(screen.getByTestId('review-view-switcher-menu')).toBeInTheDocument()
-    await userEvent.keyboard('{Escape}')
-    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
-    expect(switcherButton).toHaveAttribute('aria-expanded', 'false')
-    expect(switcherButton).toHaveFocus()
-
-    await userEvent.click(switcherButton)
-    expect(screen.getByTestId('review-view-switcher-menu')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('file-changes-review-diff-lines'))
-    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
-
-    await userEvent.click(switcherButton)
-    await userEvent.click(switcherButton)
-    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
-  })
-
-  test('supports review toolbar actions', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
-
-    const onRefresh = vi.fn()
-
-    render(<FileChangesReviewPanel loading={false} diff={treeDiff} onRefresh={onRefresh} />)
-
-    await userEvent.click(screen.getByTestId('refresh-review-diff-button'))
-    expect(onRefresh).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('file-changes-review-file-tree')).toBeInTheDocument()
-
-    const searchInput = screen.getByTestId('file-changes-review-file-search-input')
-    await userEvent.type(searchInput, 'alpha')
-    await userEvent.click(screen.getByTestId('toggle-file-tree-button'))
-    expect(screen.getByTestId('file-changes-review-file-tree')).not.toBeVisible()
-    await userEvent.click(screen.getByTestId('toggle-file-tree-button'))
-    expect(screen.getByTestId('file-changes-review-file-tree')).toBeVisible()
-    expect(searchInput).toHaveValue('alpha')
-
-    await userEvent.click(screen.getByTestId('toggle-diff-style-button'))
-    expect(screen.getByTestId('file-changes-review-diff-lines')).toHaveAttribute(
-      'data-diff-style',
-      'split'
-    )
-
-    await userEvent.click(screen.getByTestId('toggle-line-wrap-button'))
-    expect(screen.getByTestId('file-changes-review-diff-lines')).toHaveAttribute(
-      'data-wrap',
-      'true'
-    )
-
-    await userEvent.click(screen.getByTestId('collapse-all-diff-hunks-button'))
-    expect(screen.getByTestId('collapse-all-diff-hunks-button')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-
-    await userEvent.click(screen.getByTestId('copy-git-apply-command-button'))
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("git apply <<'PATCH'"))
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(treeDiff))
-  })
-
-  test('shows transient feedback after refreshing and copying', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
-
-    render(<FileChangesReviewPanel loading={false} diff={treeDiff} onRefresh={vi.fn()} />)
-
-    const refreshButton = screen.getByTestId('refresh-review-diff-button')
-    const copyButton = screen.getByTestId('copy-git-apply-command-button')
-    const copyLabel = copyButton.getAttribute('aria-label')
-    expect(refreshButton.querySelector('svg')).not.toHaveClass('animate-spin')
-
-    await userEvent.click(refreshButton)
-    expect(refreshButton.querySelector('svg')).toHaveClass('animate-spin')
-    await waitFor(() => expect(refreshButton.querySelector('svg')).not.toHaveClass('animate-spin'))
-
-    await userEvent.click(copyButton)
-    await waitFor(() => expect(copyButton).toHaveAttribute('aria-label', '已复制'))
-    await waitFor(() => expect(copyButton).toHaveAttribute('aria-label', copyLabel), {
-      timeout: 2500,
-    })
-  })
-
   test('keeps the copy label when writing to the clipboard fails', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('denied'))
     Object.assign(navigator, {
@@ -380,32 +109,6 @@ describe('FileChangesReviewPanel', () => {
 
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
     expect(copyButton).toHaveAttribute('aria-label', copyLabel)
-  })
-
-  test('positions the requested file and opens its source location', async () => {
-    const onOpenSourceFile = vi.fn()
-
-    render(
-      <FileChangesReviewPanel
-        loading={false}
-        diff={twoFileDiff}
-        focusFilePath="src/beta.ts"
-        onOpenSourceFile={onOpenSourceFile}
-      />
-    )
-
-    const betaSection = screen
-      .getAllByTestId('file-changes-review-file-diff-section')
-      .find(section => section.getAttribute('data-review-path') === 'src/beta.ts')
-    expect(betaSection).toBeDefined()
-    await waitFor(() =>
-      expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(betaSection)
-    )
-
-    await userEvent.click(
-      within(betaSection as HTMLElement).getByTestId('file-changes-review-open-source-button')
-    )
-    expect(onOpenSourceFile).toHaveBeenCalledWith('src/beta.ts', 1, 1)
   })
 
   test('supports file-level staging and reverting in unstaged review', async () => {
@@ -455,25 +158,64 @@ describe('FileChangesReviewPanel', () => {
       expect.stringContaining('diff --git a/src/alpha.ts b/src/alpha.ts')
     )
   })
+  test('keeps all files in the virtualized review when the diff is large', async () => {
+    const { rerender } = render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={largeDiff}
+        reviewTitle="上轮对话"
+        defaultFileTreeVisible={false}
+      />
+    )
 
-  test('applies only the selected hunk', async () => {
+    expect(screen.queryByText(/This diff is large|此差异较大/)).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('file-changes-review-file-diff-section')).toHaveLength(13)
+    expect(screen.getByTestId('file-changes-review-toolbar')).toHaveTextContent('上轮对话')
+    expect(screen.getByTestId('file-changes-review-file-tree')).not.toBeVisible()
+    expect(screen.getByTestId('toggle-file-tree-button')).toHaveAttribute('aria-pressed', 'false')
+
+    const diff = screen.getByTestId('file-changes-review-diff')
+    await waitFor(() => {
+      expect(diff).toBeInTheDocument()
+      expect(getRenderedDiffText()).toContain('new 1')
+      expect(getRenderedDiffText()).toContain('new 2')
+    })
+
+    rerender(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={largeDiff}
+        reviewTitle="上轮对话"
+        defaultFileTreeVisible={false}
+        focusFilePath="src/file-13.ts"
+      />
+    )
+
+    await waitFor(() => {
+      const lastSection = screen.getAllByTestId('file-changes-review-file-diff-section').at(-1)
+      expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(lastSection)
+    })
+  })
+
+  test('keeps multi-hunk files in one renderer and stages only the requested hunk', async () => {
     const onApplyPatch = vi.fn().mockResolvedValue(undefined)
-
     render(
       <FileChangesReviewPanel
         loading={false}
-        diff={twoFileDiff}
+        diff={treeDiff}
         reviewMode="unstaged"
         onApplyPatch={onApplyPatch}
       />
     )
-
-    await userEvent.click(screen.getAllByTestId('file-changes-review-stage-hunk-button')[0])
-
-    expect(onApplyPatch).toHaveBeenCalledWith(
-      'stage',
-      expect.stringContaining('diff --git a/src/alpha.ts b/src/alpha.ts')
+    await waitFor(() =>
+      expect(screen.getAllByTestId('file-changes-review-stage-hunk-button')).toHaveLength(5)
     )
-    expect(onApplyPatch.mock.calls[0]?.[1]).not.toContain('diff --git a/src/beta.ts b/src/beta.ts')
+    expect(document.querySelectorAll('diffs-container')).toHaveLength(4)
+    await userEvent.click(screen.getAllByTestId('file-changes-review-stage-hunk-button')[2])
+    const patch = onApplyPatch.mock.calls[0]?.[1]
+    expect(patch).toContain('@@ -20 +20 @@')
+    expect(patch).toContain('+new second hunk')
+    expect(patch).not.toContain('+new component')
+    expect(patch).not.toContain('+new test')
   })
 })

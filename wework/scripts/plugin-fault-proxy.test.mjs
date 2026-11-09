@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { createServer, request } from 'node:http'
@@ -11,13 +13,14 @@ import { TransportFaultProxy } from '../e2e/desktop/modules/transport-fault-prox
 import { until } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
 import { verifyCatalogDiskGeneration } from '../e2e/desktop/modules/plugin-late-response-resilience.mjs'
 
-async function fixture(t) {
+async function fixture(t, responseHeaders = {}) {
   const received = []
   const server = createServer((request, response) => {
     received.push({ method: request.method, url: request.url })
     request.resume()
     response.writeHead(request.method === 'DELETE' ? 204 : 200, {
       'Content-Type': 'text/plain',
+      ...responseHeaders,
     })
     response.end(request.method === 'DELETE' ? undefined : 'real-upstream-body')
   })
@@ -62,6 +65,27 @@ test(
     assert.ok(!JSON.stringify(proxy.requests).includes('private'))
   }
 )
+
+test('correlates a held response in browser timings without changing upstream bytes', async t => {
+  const { proxy, received } = await fixture(t, { 'Server-Timing': 'upstream;dur=3' })
+  proxy.rule = () => 'hold-response'
+  const pending = fetch(`${proxy.url}/api/plugins/installed`, {
+    headers: { Origin: 'http://renderer.example' },
+  })
+  await until(() => proxy.requests[0]?.committedResponseHeld, Boolean, 'Response was not held')
+  const entry = proxy.requests[0]
+  entry.responseTimingId = 'held-inventory-response'
+  assert.equal(await entry.release(), true)
+  const response = await pending
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), 'real-upstream-body')
+  assert.equal(
+    response.headers.get('server-timing'),
+    'upstream;dur=3, wework-e2e-response;desc="held-inventory-response"'
+  )
+  assert.equal(response.headers.get('timing-allow-origin'), 'http://renderer.example')
+  assert.equal(received.length, 1)
+})
 
 test(
   'held request is not forwarded, including after abort and fault release',
@@ -902,3 +926,47 @@ test('ordinary fault proxy connections preserve WebSocket extension negotiation'
     'The ordinary proxy changed the real upstream frame'
   )
 })
+
+test(
+  'does not inject an idle disconnect between healthy package requests',
+  { timeout: 15_000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    const socket = connect(new URL(proxy.url).port, '127.0.0.1')
+    t.onTestFinished(() => socket.destroy())
+    await once(socket, 'connect')
+    let bytes = ''
+    socket.setEncoding('utf8')
+    socket.on('data', chunk => {
+      bytes += chunk
+    })
+    socket.write('GET /package.zip HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n')
+    await until(
+      () => bytes,
+      text => text.includes('real-upstream-body'),
+      'First package response missing'
+    )
+
+    // Observe beyond Node 24's default 5-second idle timeout and 1-second buffer.
+    const idleOutcome = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve('open'), 6500)
+      socket.once('close', () => {
+        clearTimeout(timer)
+        resolve('closed')
+      })
+    })
+    assert.equal(
+      idleOutcome,
+      'open',
+      'An unconfigured proxy idle timeout closed a healthy package connection'
+    )
+    socket.write('GET /package.zip HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n')
+    await until(
+      () => bytes.match(/real-upstream-body/g)?.length ?? 0,
+      count => count === 2,
+      'Second package response missing'
+    )
+    assert.equal(received.length, 2)
+    assert.ok(proxy.requests.every(entry => entry.fault === null && entry.delivered))
+  }
+)

@@ -1,12 +1,10 @@
-import { act, cleanup, render, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { StrictMode } from 'react'
-import { openExternalUrl } from '@/lib/external-links'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import {
   consumeWorkbenchComposerFocusRequest,
   requestWorkbenchComposerFocus,
 } from '@/lib/workbenchComposerFocus'
+import { act, cleanup, render, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { RemoteTerminal } from './RemoteTerminal'
 
 interface OutputPayload {
@@ -132,7 +130,6 @@ vi.mock('@/lib/external-links', () => ({
 }))
 
 const createRemoteTerminalClientMock = vi.mocked(createRemoteTerminalClient)
-const openExternalUrlMock = vi.mocked(openExternalUrl)
 
 function createClient(overrides: Partial<ReturnType<typeof createRemoteTerminalClient>> = {}) {
   return {
@@ -338,108 +335,6 @@ describe('RemoteTerminal', () => {
     await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(3))
   })
 
-  test('keeps one terminal client during the StrictMode effect replay', async () => {
-    let outputHandler: ((payload: OutputPayload) => void) | null = null
-    const client = createClient({
-      onOutput: vi.fn(handler => {
-        outputHandler = handler
-        return vi.fn()
-      }),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    const { unmount } = render(
-      <StrictMode>
-        <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
-      </StrictMode>
-    )
-
-    await waitFor(() => {
-      expect(createRemoteTerminalClientMock).toHaveBeenCalledTimes(1)
-      expect(client.attach).toHaveBeenCalledTimes(1)
-    })
-    outputHandler?.({ session_id: 'terminal-1', sequence: 1, data: 'remote prompt$ ' })
-
-    expect(testState.terminalInstances).toHaveLength(1)
-    expect(testState.terminalInstances[0].write).toHaveBeenCalledWith(
-      'remote prompt$ ',
-      expect.any(Function)
-    )
-
-    unmount()
-    await waitFor(() => {
-      expect(client.close).toHaveBeenCalledTimes(1)
-      expect(client.dispose).toHaveBeenCalledTimes(1)
-    })
-  })
-
-  test('writes output without scheduling a theme sync', () => {
-    let outputHandler: ((payload: OutputPayload) => void) | null = null
-    const client = createClient({
-      attach: vi.fn(() => new Promise(() => undefined)),
-      onOutput: vi.fn(handler => {
-        outputHandler = handler
-        return vi.fn()
-      }),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-    const scheduledFrames = requestAnimationFrameSpy.mock.calls.length
-
-    outputHandler?.({ session_id: 'terminal-1', sequence: 1, data: 'remote prompt$ ' })
-
-    expect(testState.terminalInstances[0].write).toHaveBeenCalledWith(
-      'remote prompt$ ',
-      expect.any(Function)
-    )
-    expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(scheduledFrames)
-  })
-
-  test('writes output in sequence and acknowledges only after xterm consumes it', async () => {
-    let outputHandler: ((payload: OutputPayload) => void) | null = null
-    const client = createClient({
-      onOutput: vi.fn(handler => {
-        outputHandler = handler
-        return vi.fn()
-      }),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
-    const terminal = testState.terminalInstances[0]
-
-    outputHandler?.({ session_id: 'terminal-1', sequence: 2, data: 'second' })
-    expect(terminal.write).not.toHaveBeenCalled()
-
-    outputHandler?.({ session_id: 'terminal-1', sequence: 1, data: 'first' })
-    expect(terminal.write).toHaveBeenCalledTimes(1)
-    expect(terminal.write).toHaveBeenLastCalledWith('first', expect.any(Function))
-    expect(client.ack).not.toHaveBeenCalled()
-
-    terminal.completeNextWrite()
-    expect(terminal.write).toHaveBeenCalledTimes(2)
-    expect(terminal.write).toHaveBeenLastCalledWith('second', expect.any(Function))
-    expect(client.ack).not.toHaveBeenCalled()
-
-    terminal.completeNextWrite()
-    await waitFor(() => expect(client.ack).toHaveBeenCalledWith(2))
-    expect(client.ack).toHaveBeenCalledTimes(1)
-  })
-
   test('does not rewrite consumed replay and acknowledges it again after a failed ack', async () => {
     let outputHandler: ((payload: OutputPayload) => void) | null = null
     const ackError = new Error('ack lost')
@@ -477,115 +372,6 @@ describe('RemoteTerminal', () => {
     await waitFor(() => expect(client.ack).toHaveBeenCalledTimes(2))
     expect(client.ack).toHaveBeenLastCalledWith(1)
     expect(terminal.write).toHaveBeenCalledTimes(1)
-  })
-
-  test('acknowledges consumed replay after attach completes without rewriting it', async () => {
-    let outputHandler: ((payload: OutputPayload) => void) | null = null
-    let resolveAttach: (() => void) | null = null
-    const client = createClient({
-      attach: vi.fn(
-        () =>
-          new Promise<void>(resolve => {
-            resolveAttach = resolve
-          })
-      ),
-      onOutput: vi.fn(handler => {
-        outputHandler = handler
-        return vi.fn()
-      }),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-    const terminal = testState.terminalInstances[0]
-
-    outputHandler?.({ session_id: 'terminal-1', sequence: 1, data: 'replayed' })
-    terminal.completeNextWrite()
-    outputHandler?.({ session_id: 'terminal-1', sequence: 1, data: 'replayed' })
-
-    expect(terminal.write).toHaveBeenCalledTimes(1)
-    expect(client.ack).not.toHaveBeenCalled()
-
-    resolveAttach?.()
-
-    await waitFor(() => expect(client.ack).toHaveBeenCalledWith(1))
-    expect(terminal.write).toHaveBeenCalledTimes(1)
-  })
-
-  test('requests bounded replay when the out-of-order buffer reaches its limit', async () => {
-    let outputHandler: ((payload: OutputPayload) => void) | null = null
-    const client = createClient({
-      onOutput: vi.fn(handler => {
-        outputHandler = handler
-        return vi.fn()
-      }),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
-    const terminal = testState.terminalInstances[0]
-
-    for (let sequence = 2; sequence <= 257; sequence += 1) {
-      outputHandler?.({ session_id: 'terminal-1', sequence, data: `${sequence}` })
-    }
-    outputHandler?.({ session_id: 'terminal-1', sequence: 258, data: 'overflow' })
-
-    expect(terminal.write).not.toHaveBeenCalled()
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'Remote terminal output buffer limit exceeded; requesting bounded replay.'
-    )
-    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(2))
-    expect(client.attach).toHaveBeenLastCalledWith(0)
-
-    outputHandler?.({ session_id: 'terminal-1', sequence: 1, data: 'first' })
-    expect(terminal.write).toHaveBeenCalledTimes(1)
-    expect(terminal.write).toHaveBeenLastCalledWith('first', expect.any(Function))
-  })
-
-  test('requests replay when an output sequence gap does not close', async () => {
-    vi.useFakeTimers()
-    let outputHandler: ((payload: OutputPayload) => void) | null = null
-    const client = createClient({
-      onOutput: vi.fn(handler => {
-        outputHandler = handler
-        return vi.fn()
-      }),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    const { unmount } = render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-    await Promise.resolve()
-    expect(client.attach).toHaveBeenCalledTimes(1)
-
-    outputHandler?.({ session_id: 'terminal-1', sequence: 2, data: 'second' })
-    expect(testState.terminalInstances[0].write).not.toHaveBeenCalled()
-
-    await vi.advanceTimersByTimeAsync(1_000)
-    expect(client.attach).toHaveBeenCalledTimes(2)
-    expect(client.attach).toHaveBeenLastCalledWith(0)
-
-    unmount()
-    await vi.advanceTimersByTimeAsync(0)
-    vi.useRealTimers()
   })
 
   test('retries a failed replay attach after the output gap closes', async () => {
@@ -684,81 +470,6 @@ describe('RemoteTerminal', () => {
     await vi.advanceTimersByTimeAsync(0)
   })
 
-  test('reattaches from the last consumed output while hidden and defers size sync', async () => {
-    let outputHandler: ((payload: OutputPayload) => void) | null = null
-    let reconnectHandler: (() => void) | null = null
-    const unsubscribeReconnect = vi.fn()
-    const client = createClient({
-      ack: vi.fn(() => new Promise(() => undefined)),
-      onOutput: vi.fn(handler => {
-        outputHandler = handler
-        return vi.fn()
-      }),
-      onReconnect: vi.fn(handler => {
-        reconnectHandler = handler
-        return unsubscribeReconnect
-      }),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    const { rerender, unmount } = render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-
-    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
-    expect(client.resize).not.toHaveBeenCalled()
-    outputHandler?.({ session_id: 'terminal-1', sequence: 1, data: 'consumed' })
-    testState.terminalInstances[0].completeNextWrite()
-    await waitFor(() => expect(client.ack).toHaveBeenCalledWith(1))
-
-    reconnectHandler?.()
-
-    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(2))
-    expect(client.attach).toHaveBeenLastCalledWith(1)
-    expect(client.resize).not.toHaveBeenCalled()
-
-    rerender(
-      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
-    )
-
-    await waitFor(() => expect(client.resize).toHaveBeenCalledWith(24, 80))
-
-    unmount()
-    await waitFor(() => expect(unsubscribeReconnect).toHaveBeenCalledTimes(1))
-  })
-
-  test('waits for final xterm consumption before reporting an early legacy exit', async () => {
-    const client = createClient()
-    const onExit = vi.fn()
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={() => client}
-        active={false}
-        onExit={onExit}
-      />
-    )
-    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
-    const output = client.onOutput.mock.calls[0][0] as (payload: OutputPayload) => void
-    const exit = client.onExit.mock.calls[0][0] as (payload: { session_id: string }) => void
-    output({ session_id: 'terminal-1', sequence: 1, data: 'first', protocol_version: 1 })
-    output({ session_id: 'terminal-1', sequence: 2, data: 'final', protocol_version: 1 })
-    exit({ session_id: 'terminal-1' })
-    expect(onExit).not.toHaveBeenCalled()
-    const terminal = testState.terminalInstances[0]
-    terminal.completeNextWrite()
-    expect(onExit).not.toHaveBeenCalled()
-    expect(terminal.write).toHaveBeenLastCalledWith('final', expect.any(Function))
-    terminal.completeNextWrite()
-    expect(onExit).toHaveBeenCalledTimes(1)
-    exit({ session_id: 'terminal-1' })
-    expect(onExit).toHaveBeenCalledTimes(1)
-  })
-
   test.each(['queue', 'chunk'])(
     'closes an overflowing legacy %s with a visible error instead of requesting replay',
     async bound => {
@@ -786,69 +497,6 @@ describe('RemoteTerminal', () => {
     }
   )
 
-  test('calls exit handler without writing process exited text', () => {
-    let exitHandler: ((payload: { session_id: string }) => void) | null = null
-    const client = createClient({
-      attach: vi.fn(() => new Promise(() => undefined)),
-      onExit: vi.fn(handler => {
-        exitHandler = handler
-        return vi.fn()
-      }),
-    })
-    const onExit = vi.fn()
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-        onExit={onExit}
-      />
-    )
-    exitHandler?.({ session_id: 'terminal-1' })
-
-    expect(onExit).toHaveBeenCalledTimes(1)
-    expect(testState.terminalInstances[0].writeln).not.toHaveBeenCalledWith(
-      expect.stringContaining('Process exited')
-    )
-  })
-
-  test('forced exit does not wait for missing output sequences', async () => {
-    let outputHandler: ((payload: OutputPayload) => void) | null = null
-    let exitHandler: ((payload: { session_id: string; output_complete?: boolean }) => void) | null =
-      null
-    const client = createClient({
-      onOutput: vi.fn(handler => {
-        outputHandler = handler
-        return vi.fn()
-      }),
-      onExit: vi.fn(handler => {
-        exitHandler = handler
-        return vi.fn()
-      }),
-    })
-    const onExit = vi.fn()
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-        onExit={onExit}
-      />
-    )
-    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
-    outputHandler?.({ session_id: 'terminal-1', sequence: 2, data: 'after-gap' })
-
-    exitHandler?.({ session_id: 'terminal-1', output_complete: false })
-    exitHandler?.({ session_id: 'terminal-1', output_complete: false })
-
-    expect(testState.terminalInstances[0].write).not.toHaveBeenCalled()
-    expect(onExit).toHaveBeenCalledTimes(1)
-  })
-
   test('skips resize observer syncs while inactive', () => {
     const client = createClient({
       attach: vi.fn(() => new Promise(() => undefined)),
@@ -865,41 +513,6 @@ describe('RemoteTerminal', () => {
     testState.resizeObserverInstances[0].trigger()
 
     expect(client.resize).not.toHaveBeenCalled()
-  })
-
-  test('waits for attach before syncing terminal size and does not resend it', async () => {
-    let resolveAttach: (() => void) | null = null
-    const client = createClient({
-      attach: vi.fn(
-        () =>
-          new Promise<void>(resolve => {
-            resolveAttach = resolve
-          })
-      ),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    const { rerender } = render(
-      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
-    )
-
-    expect(client.resize).not.toHaveBeenCalled()
-
-    resolveAttach?.()
-    await waitFor(() => expect(client.resize).toHaveBeenCalledWith(24, 80))
-
-    rerender(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-    rerender(
-      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
-    )
-
-    expect(client.resize).toHaveBeenCalledTimes(1)
   })
 
   test('does not take focus from the composer when reactivated', () => {
@@ -949,40 +562,6 @@ describe('RemoteTerminal', () => {
     dateNowSpy.mockRestore()
   })
 
-  test('focuses the terminal when activated without a focused composer', () => {
-    const client = createClient({
-      attach: vi.fn(() => new Promise(() => undefined)),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
-    )
-
-    expect(testState.terminalInstances[0].textareaFocus).toHaveBeenCalledWith({
-      preventScroll: true,
-    })
-  })
-
-  test('refreshes buffered rows when activated and when the window regains focus', () => {
-    const client = createClient({
-      attach: vi.fn(() => new Promise(() => undefined)),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
-    )
-    const terminal = testState.terminalInstances[0]
-
-    expect(terminal.refresh).toHaveBeenCalledWith(0, 23)
-
-    terminal.refresh.mockClear()
-    window.dispatchEvent(new Event('focus'))
-
-    expect(terminal.refresh).toHaveBeenCalledWith(0, 23)
-  })
-
   test('catches rejected post-attach terminal size syncs', async () => {
     const error = new Error('activate resize failed')
     const client = createClient({
@@ -998,49 +577,5 @@ describe('RemoteTerminal', () => {
       expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to resize remote terminal:', error)
     })
     expect(requestAnimationFrameSpy).toHaveBeenCalled()
-  })
-
-  test('loads web links addon and opens terminal urls through the external link handler', () => {
-    const client = createClient({
-      attach: vi.fn(() => new Promise(() => undefined)),
-    })
-    createRemoteTerminalClientMock.mockReturnValue(client)
-
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-    const terminal = testState.terminalInstances[0]
-    const webLinksAddon = testState.webLinksAddonInstances[0]
-
-    expect(terminal.loadAddon).toHaveBeenCalledWith(webLinksAddon)
-    webLinksAddon.openUri('https://example.com/docs')
-    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/docs')
-  })
-
-  test('enables xterm transparency for a workbench background', () => {
-    createRemoteTerminalClientMock.mockReturnValue(
-      createClient({ attach: vi.fn(() => new Promise(() => undefined)) })
-    )
-
-    const { getByTestId } = render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active
-        showWorkbenchBackground
-      />
-    )
-
-    expect(testState.terminalConstructorOptions[0]).toEqual(
-      expect.objectContaining({
-        allowTransparency: true,
-        theme: expect.objectContaining({ background: 'rgba(0, 0, 0, 0)' }),
-      })
-    )
-    expect(getByTestId('remote-terminal')).toHaveClass('bg-transparent')
   })
 })

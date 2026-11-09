@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test, vi } from 'vitest'
 import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
 

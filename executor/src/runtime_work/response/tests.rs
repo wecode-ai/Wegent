@@ -7,6 +7,23 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn list_summary_projects_only_the_current_turn_source_without_private_content() {
+    let mut handle = json!({"lastTurnId":"turn-2","userMessagePresentations":[
+        {"turnId":"turn-1","source":{"source":"stand_in_activity"},"content":"old finding"},
+        {"turnId":"turn-2","source":{"source":"manual","sender_id":"private"},"content":"private request"}
+    ]});
+    let summary = runtime_handle_list_summary_map(&handle);
+    assert_eq!(
+        summary["latestUserMessageSource"],
+        json!({"source":"manual","turnId":"turn-2"})
+    );
+    assert!(!summary.contains_key("userMessagePresentations"));
+    assert!(!serde_json::to_string(&summary).unwrap().contains("private"));
+    handle["lastTurnId"] = json!("turn-3");
+    assert!(!runtime_handle_list_summary_map(&handle).contains_key("latestUserMessageSource"));
+}
+
+#[test]
 fn lifecycle_snapshot_carries_the_selected_model_without_client_enrichment() {
     let selection = json!({"modelName": "local-model:fixture", "modelType": "runtime",
         "options": {"permissionMode": "read-only"}});
@@ -228,6 +245,56 @@ fn active_thread_keeps_previous_completion_time_for_sorting() {
     );
 
     assert_eq!(link.completed_at, Some(1_780_000_000_000));
+}
+
+#[test]
+fn running_task_wire_summary_clears_previous_completion_but_retains_internal_ordering() {
+    let link = RuntimeTaskLink::from_thread_metadata(
+        &json!({
+            "id": "thread-1",
+            "status": {"type": "active"},
+            "updatedAt": 1_792_773_818_072_i64,
+            "recencyAt": 1_792_773_818_000_i64,
+            "turns": [{"id": "correction", "status": "inProgress"}],
+        }),
+        Some(RuntimeTaskLink {
+            completed_at: Some(1_792_773_817_910),
+            updated_at: 1_792_773_817_910,
+            ..RuntimeTaskLink::default()
+        }),
+        "/workspace/project".to_owned(),
+        true,
+    );
+    assert!(link.running);
+    assert_eq!(link.completed_at, Some(1_792_773_817_910));
+
+    for task in [link.clone(), link.list_summary()] {
+        let payload = local_task_json(task);
+        assert_eq!(payload["running"], true);
+        assert_eq!(payload["updatedAt"], 1_792_773_818_072_i64);
+        assert_eq!(payload["recencyAt"], 1_792_773_818_000_i64);
+        assert_eq!(payload.get("completedAt"), Some(&Value::Null));
+        let mut cached_task = json!({"completedAt": 1_792_773_817_910_i64});
+        cached_task
+            .as_object_mut()
+            .unwrap()
+            .extend(payload.as_object().unwrap().clone());
+        assert_eq!(cached_task["completedAt"], Value::Null);
+    }
+}
+
+#[test]
+fn settled_task_wire_summary_retains_completion() {
+    for status in ["done", "failed", "cancelled"] {
+        let payload = local_task_json(RuntimeTaskLink {
+            status: status.to_owned(),
+            running: false,
+            completed_at: Some(1_792_773_817_910),
+            ..RuntimeTaskLink::default()
+        });
+        assert_eq!(payload["completedAt"], 1_792_773_817_910_i64);
+        assert_eq!(payload["status"], status);
+    }
 }
 
 #[test]

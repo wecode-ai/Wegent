@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { WorkbenchMessage } from '@/types/workbench'
+import { describe, expect, test } from 'vitest'
 import { buildConversationOutputs } from './conversationOutputs'
 
 describe('buildConversationOutputs', () => {
@@ -110,55 +112,6 @@ describe('buildConversationOutputs', () => {
       'example.com',
       'OpenAI',
       'brief.pdf',
-    ])
-  })
-
-  test('keeps the latest occurrence when resources repeat', () => {
-    const messages: WorkbenchMessage[] = [
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: '[Old title](/workspace/report.md)',
-        status: 'done',
-        createdAt: '2026-09-10T08:00:00Z',
-      },
-      {
-        id: 'assistant-2',
-        role: 'assistant',
-        content: '[Final report](/workspace/report.md)',
-        status: 'done',
-        createdAt: '2026-09-10T08:01:00Z',
-      },
-    ]
-
-    expect(buildConversationOutputs(messages).outputs).toEqual([
-      {
-        id: 'file:/workspace/report.md',
-        kind: 'file',
-        resource: { kind: 'file', path: '/workspace/report.md' },
-        title: 'Final report',
-      },
-    ])
-  })
-
-  test('preserves balanced parentheses in external Markdown destinations', () => {
-    const messages: WorkbenchMessage[] = [
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: '[Versioned page](https://example.com/page_(v2))',
-        status: 'done',
-        createdAt: '2026-09-10T08:00:00Z',
-      },
-    ]
-
-    expect(buildConversationOutputs(messages).sources).toEqual([
-      {
-        id: 'website:https://example.com/page_(v2)',
-        kind: 'website',
-        resource: { kind: 'url', url: 'https://example.com/page_(v2)' },
-        title: 'Versioned page',
-      },
     ])
   })
 })

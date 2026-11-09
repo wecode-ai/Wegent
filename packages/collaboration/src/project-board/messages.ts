@@ -4,6 +4,14 @@
 
 export const boardSortMessages: Record<'zh-CN' | 'en', Record<string, string>> = {
   'zh-CN': {
+    'todo.board_all_tags': '全部标签',
+    'todo.board_search_tags': '搜索标签',
+    'todo.board_no_matching_tags': '没有匹配的标签',
+    'todo.board_filter_tag': '按标签筛选',
+    'todo.board_clear_tag_filter': '清除标签筛选',
+    'todo.card_children_progress': '子任务 {{completed}}/{{total}}',
+    'todo.card_children_progress_hint':
+      '已完成 {{completed}}/{{total}} 个子任务，点击进入子任务看板',
     'todo.parent_board_layout': '按父事项',
     'todo.parent_board_summary': '{{parents}} 个父事项 · {{standalone}} 个独立事项',
     'todo.parent_board_nested_summary': '{{parents}} 个父事项 · {{children}} 个直属子事项',
@@ -37,6 +45,14 @@ export const boardSortMessages: Record<'zh-CN' | 'en', Record<string, string>> =
     'todo.board_sort_manual': '手动排序',
   },
   en: {
+    'todo.board_all_tags': 'All tags',
+    'todo.board_search_tags': 'Search tags',
+    'todo.board_no_matching_tags': 'No matching tags',
+    'todo.board_filter_tag': 'Filter by tag',
+    'todo.board_clear_tag_filter': 'Clear tag filter',
+    'todo.card_children_progress': 'Sub-issues {{completed}}/{{total}}',
+    'todo.card_children_progress_hint':
+      '{{completed}} of {{total}} sub-issues completed. Open the sub-issue board',
     'todo.parent_board_layout': 'By parent',
     'todo.parent_board_summary': '{{parents}} parent issues · {{standalone}} standalone issues',
     'todo.parent_board_nested_summary':

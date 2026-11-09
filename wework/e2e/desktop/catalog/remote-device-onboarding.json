@@ -1,0 +1,10 @@
+{
+  "order": 3000,
+  "ci": {
+    "core": {
+      "order": 2000,
+      "shard": 6,
+      "position": 2000
+    }
+  }
+}

@@ -237,6 +237,11 @@ export function createDesktopScenario({
         .filter(
           line => line.includes('response: POST /api/v1/responses ') && line.includes(' 200 ')
         ).length
+    const rustPosts = log =>
+      log
+        .split('\n')
+        .filter(line => line.includes('[API] POST /api/v1/responses ') && line.includes(' 200 '))
+        .length
     await until(
       async () => ({
         python: await readFile(environment.backendLogPath, 'utf8'),
@@ -246,16 +251,22 @@ export function createDesktopScenario({
         ),
       }),
       logs =>
-        pythonPosts(logs.python) === 2 &&
+        pythonPosts(logs.python) === 0 &&
+        rustPosts(logs.rust) === 2 &&
         logs.rust.includes(`[API] GET /api/v1/responses/${responseId} `),
-      'The real Python POST and Rust GET ownership was not observed in process logs'
+      'The real Rust POST and GET ownership was not observed in process logs'
     )
     const python = await readFile(environment.backendLogPath, 'utf8')
     assert.ok(
       !python.includes(`request : GET /api/v1/responses/${responseId} `),
       'The follow-up GET fell back to Python'
     )
-    evidence.routing = { successfulPythonPosts: 2, rustGet: responseId, pythonGet: false }
+    evidence.routing = {
+      successfulRustPosts: 2,
+      successfulPythonPosts: 0,
+      rustGet: responseId,
+      pythonGet: false,
+    }
   }
 
   return {

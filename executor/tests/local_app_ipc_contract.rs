@@ -599,7 +599,8 @@ async fn app_ipc_imports_external_codex_content() {
     let native_codex_home = home.join(".codex");
     let codex_home = root.path().join("wework-codex");
     fs::create_dir_all(native_codex_home.join("skills/example")).unwrap();
-    fs::write(native_codex_home.join("config.toml"), "model = \"gpt-5\"\n").unwrap();
+    let source_config = "model = \"gpt-5\"\npersonality = \"friendly\"\n";
+    fs::write(native_codex_home.join("config.toml"), source_config).unwrap();
     fs::write(native_codex_home.join("skills/example/SKILL.md"), "example").unwrap();
     let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
     let _e2e = EnvGuard::set("VITE_WEWORK_E2E", "true");
@@ -625,7 +626,11 @@ async fn app_ipc_imports_external_codex_content() {
     assert_eq!(result["importedEntries"], json!(["config.toml", "skills"]));
     assert_eq!(
         fs::read_to_string(codex_home.join("config.toml")).unwrap(),
-        "model = \"gpt-5\"\n"
+        "personality = \"friendly\"\n"
+    );
+    assert_eq!(
+        fs::read_to_string(native_codex_home.join("config.toml")).unwrap(),
+        source_config
     );
     assert_eq!(
         fs::read_to_string(codex_home.join("skills/example/SKILL.md")).unwrap(),
@@ -849,14 +854,43 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .unwrap_err();
     assert_eq!(conflict.code, "version_conflict");
 
-    let incomplete_archive = server
+    server
         .dispatch(
             "todos.archive",
             json!({"project_id": project_id, "task_id": parent_id}),
         )
         .await
-        .unwrap_err();
-    assert_eq!(incomplete_archive.code, "bad_request");
+        .unwrap();
+    let hidden = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert!(hidden.as_array().unwrap().is_empty());
+    let initially_restored = server
+        .dispatch(
+            "todos.restore",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
+    let restored_child = initially_restored
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == child["id"])
+        .unwrap();
+    assert_eq!(restored_child["status"], child["status"]);
+    let restored_parent = initially_restored
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == parent_id)
+        .unwrap();
+    assert_eq!(restored_parent["status"], "completed");
+    assert_eq!(
+        restored_parent["metadata"]["due_at"],
+        rescheduled["metadata"]["due_at"]
+    );
 
     let completed_child = server
         .dispatch(
@@ -865,7 +899,7 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
                 "project_id": project_id,
                 "task_id": child["id"],
                 "todo": {
-                    "version": child["version"],
+                    "version": restored_child["version"],
                     "status": "completed"
                 }
             }),
@@ -1485,6 +1519,27 @@ async fn app_ipc_resolves_configured_device_command() {
         })
     );
     assert_eq!(response["result"]["stdout"], json!(["src"]));
+}
+
+#[tokio::test]
+async fn app_ipc_native_directory_listing_preserves_directory_projection() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("visible")).unwrap();
+    fs::create_dir(root.path().join(".hidden")).unwrap();
+    fs::write(root.path().join("file.txt"), "file").unwrap();
+    let response = AppIpcServer::new()
+        .handle_line(
+            &json!({
+                "type": "request", "id": "native-directories", "method": "device.execute_command",
+                "params": { "command_key": "ls_dirs", "path": root.path(),
+                    "env": { "PATH": root.path() } }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response["result"]["success"], true);
+    assert_eq!(response["result"]["stdout"], json!([".hidden", "visible"]));
 }
 
 #[tokio::test]

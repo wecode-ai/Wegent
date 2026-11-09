@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { AppBridge, type McpUiDisplayMode } from '@modelcontextprotocol/ext-apps/app-bridge'
-import { Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
 import { dequal } from 'dequal'
 import type {
   McpAppDescriptor,
@@ -404,7 +404,7 @@ export function McpAppHost({
     const observer = new MutationObserver(updateContext)
     observer.observe(window.document.documentElement, {
       attributes: true,
-      attributeFilter: ['class'],
+      attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme'],
     })
     return () => {
       active = false
@@ -438,22 +438,46 @@ export function McpAppHost({
   const metadata = record(descriptor?.resource.contents[0]?._meta)
   const prefersBorder =
     (record(metadata.ui).prefersBorder ?? metadata['openai/widgetPrefersBorder']) !== false
+  const discoveryFailed = !descriptor && Boolean(failure)
   return (
     <section
       data-testid="mcp-app"
       data-mcp-call-id={block.id}
       data-display-mode={mode}
       className={
-        mode === 'fullscreen' && !closed && !panelDismissed
-          ? 'flex h-full min-h-0 flex-1 flex-col bg-background text-text-primary'
-          : mode === 'pip' && !closed
-            ? 'fixed bottom-4 right-4 z-critical w-96 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-lg'
-            : `my-2 overflow-hidden bg-background text-text-primary ${prefersBorder ? 'rounded-lg shadow-sm outline-1 -outline-offset-1 outline-border' : ''}`
+        discoveryFailed
+          ? 'my-1 min-w-0 text-sm font-normal text-text-muted'
+          : mode === 'fullscreen' && !closed && !panelDismissed
+            ? 'flex h-full min-h-0 flex-1 flex-col bg-background text-text-primary'
+            : mode === 'pip' && !closed
+              ? 'fixed bottom-4 right-4 z-critical w-96 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-lg'
+              : `my-2 overflow-hidden bg-background text-text-primary ${prefersBorder ? 'rounded-lg shadow-sm outline-1 -outline-offset-1 outline-border' : ''}`
       }
     >
       {(mode !== 'fullscreen' || closed || panelDismissed || failure || !document) && (
-        <div className="flex h-9 items-center gap-2 border-b border-border px-3">
-          <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
+        <div
+          className={
+            discoveryFailed
+              ? 'flex min-h-7 items-start gap-1.5'
+              : 'flex h-9 items-center gap-2 border-b border-border px-3'
+          }
+        >
+          {discoveryFailed && <AlertCircle className="mt-1.5 size-4 shrink-0" aria-hidden="true" />}
+          <span
+            className={
+              discoveryFailed
+                ? 'min-w-0 flex-1 py-1 leading-5 [overflow-wrap:anywhere]'
+                : 'min-w-0 flex-1 truncate text-sm'
+            }
+          >
+            {discoveryFailed ? (
+              <span role="alert">
+                {title} · {failure}
+              </span>
+            ) : (
+              title
+            )}
+          </span>
           {failure && (
             <Button
               variant="ghost"
@@ -474,39 +498,41 @@ export function McpAppHost({
               <RefreshCw className="size-4" />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-text-secondary"
-            data-testid="mcp-app-expand"
-            disabled={!closed && !panelDismissed && availableModes.length < 2}
-            title={t('mcp_apps.expand')}
-            aria-label={t('mcp_apps.expand')}
-            onClick={() => {
-              if (closed) {
-                discovered.current = false
-                setApp(undefined)
-                setDescriptor(undefined)
-                setFailure(undefined)
-                setAttempt(value => value + 1)
-              }
-              setClosed(false)
-              setPanelDismissed(false)
-              setMode(value =>
-                value === 'fullscreen'
-                  ? (availableModes.find(mode => mode !== value) ?? value)
-                  : availableModes.includes('fullscreen')
-                    ? 'fullscreen'
-                    : (availableModes.find(mode => mode !== value) ?? value)
-              )
-            }}
-          >
-            {mode === 'fullscreen' && !panelDismissed && !closed ? (
-              <Minimize2 className="size-4" />
-            ) : (
-              <Maximize2 className="size-4" />
-            )}
-          </Button>
+          {!discoveryFailed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-text-secondary"
+              data-testid="mcp-app-expand"
+              disabled={!closed && !panelDismissed && availableModes.length < 2}
+              title={t('mcp_apps.expand')}
+              aria-label={t('mcp_apps.expand')}
+              onClick={() => {
+                if (closed) {
+                  discovered.current = false
+                  setApp(undefined)
+                  setDescriptor(undefined)
+                  setFailure(undefined)
+                  setAttempt(value => value + 1)
+                }
+                setClosed(false)
+                setPanelDismissed(false)
+                setMode(value =>
+                  value === 'fullscreen'
+                    ? (availableModes.find(mode => mode !== value) ?? value)
+                    : availableModes.includes('fullscreen')
+                      ? 'fullscreen'
+                      : (availableModes.find(mode => mode !== value) ?? value)
+                )
+              }}
+            >
+              {mode === 'fullscreen' && !panelDismissed && !closed ? (
+                <Minimize2 className="size-4" />
+              ) : (
+                <Maximize2 className="size-4" />
+              )}
+            </Button>
+          )}
           {!closed && (
             <Button
               variant="ghost"
@@ -525,7 +551,7 @@ export function McpAppHost({
           )}
         </div>
       )}
-      {failure && (
+      {failure && !discoveryFailed && (
         <p role="alert" className="p-3 text-sm text-text-secondary">
           {failure}
         </p>

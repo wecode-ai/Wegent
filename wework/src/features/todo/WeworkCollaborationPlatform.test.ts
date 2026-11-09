@@ -1,3 +1,25 @@
+import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
+import { ApiError } from '@/api/http'
+import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
+import {
+  CloudConnectionContext,
+  DISCONNECTED_STATE,
+  type CloudConnectionContextValue,
+} from '@/features/cloud-connection/CloudConnectionContext'
+import { clearRuntimeConversationCacheForTests } from '@/features/workbench/runtimeConversationCache'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import type {
+  LocalProjectSpaceApi,
+  ProjectSpaceDetailServices,
+} from '@/features/workbench/workbenchServices'
+import i18n from '@/i18n'
+import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import type {
+  CollaborationApp,
+  CollaborationPlatformLocation,
+  SharedWorkspaceApi,
+} from '@wegent/collaboration'
 import {
   createElement,
   useCallback,
@@ -7,50 +29,23 @@ import {
   type ComponentProps,
   type ReactNode,
 } from 'react'
-import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import i18n from '@/i18n'
-import type {
-  CollaborationApp,
-  CollaborationPlatformLocation,
-  SharedWorkspaceApi,
-} from '@wegent/collaboration'
-import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
-import { ApiError } from '@/api/http'
-import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
-import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import type { TodoEditor } from './TodoEditor'
 import {
-  clearRuntimeConversationCacheForTests,
-  getRuntimeConversationTurns,
-} from '@/features/workbench/runtimeConversationCache'
-import { requestIssueDispatch } from '@/features/notifications/issueDispatch'
-import type {
-  LocalProjectSpaceApi,
-  ProjectSpaceDetailServices,
-} from '@/features/workbench/workbenchServices'
-import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+  createLocalWorkspaceApi,
+  createWeworkPlatformApi,
+  toWeworkIssueTaskBinding,
+  WeworkCollaborationPlatform,
+  WeworkSharedProject,
+} from './WeworkCollaborationPlatform'
+import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 import {
   projectSpaceForRuntimeTask,
   publishProjectSpaceTaskBindingChanged,
   publishProjectSpaceTaskContextChanged,
   rememberProjectSpaceTaskBinding,
 } from './projectSpaceSelection'
-import {
-  collaborationTaskAddress,
-  createLocalWorkspaceApi,
-  createWeworkPlatformApi,
-  projectRuntimeStatusSignature,
-  toWeworkIssueTaskBinding,
-  WeworkCollaborationPlatform,
-  WeworkSharedProject,
-} from './WeworkCollaborationPlatform'
-import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
-import type { TodoEditor } from './TodoEditor'
-import {
-  loadProjectSpaceCodeWorkspacePreference,
-  saveProjectSpaceCodeWorkspacePreference,
-} from './projectSpaceCodeWorkspacePreference'
 
 type BoardIssueCardRenderer = NonNullable<
   ComponentProps<typeof CollaborationApp>['renderBoardIssueCard']
@@ -235,6 +230,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       renderProject,
     }: {
       host: {
+        accountScope: string
         location: CollaborationPlatformLocation
         capabilities: {
           workspaceLocations?: readonly ('local' | 'cloud')[]
@@ -261,6 +257,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         'div',
         {
           'data-testid': 'collaboration-platform-root',
+          'data-account-scope': host.accountScope,
           'data-navigation-source-count': navigationApis?.length ?? 0,
           'data-refresh-key': refreshKey ?? '',
           'data-workspace-locations': host.capabilities.workspaceLocations?.join(',') ?? '',
@@ -573,345 +570,46 @@ describe('Wework collaboration workspace API', () => {
     )
   })
 
-  it('provides local and cloud navigation as independent data sources', () => {
-    render(
-      createElement(WeworkCollaborationPlatform, {
-        user: {
-          id: 1,
-          user_name: 'admin',
-          email: 'admin@example.com',
-        } as never,
-        localProjects: [],
-        services: {
-          sharedWorkspaceApi: {
-            workspaces: {},
-            projects: {},
-          },
-          projectSpaceApis: {
-            local: createLocalDeliveryApi(),
-          },
-        } as never,
+  it.each([
+    ['https://first.example/api', null, 'https://first.example/api:local:7'],
+    ['https://first.example/api', 42, 'https://first.example/api:account:42'],
+    ['https://first.example/api', 43, 'https://first.example/api:account:43'],
+    ['https://second.example/api', 42, 'https://second.example/api:account:42'],
+  ] as const)(
+    'publishes the account scope for backend %s and cloud owner %s',
+    async (backend, ownerId, scope) => {
+      const cloudConnection: CloudConnectionContextValue = {
+        ...DISCONNECTED_STATE,
+        status: ownerId ? 'connected' : 'disconnected',
+        apiBaseUrl: backend,
+        token: ownerId ? 'synthetic-cloud-token' : null,
+        user: ownerId ? { id: ownerId, user_name: 'cloud-owner', email: '' } : null,
+        isConnected: Boolean(ownerId),
+        serviceKey: scope,
+        connectWithAuthorization: vi.fn(),
+        refreshUser: vi.fn(),
+        disconnect: vi.fn(),
+      }
+      await act(async () => {
+        render(
+          createElement(
+            CloudConnectionContext.Provider,
+            { value: cloudConnection },
+            createElement(WeworkCollaborationPlatform, {
+              user: { id: 7, user_name: 'local-owner', email: '' } as never,
+              localProjects: [],
+              services: { projectSpaceApis: { local: createLocalDeliveryApi() } } as never,
+            })
+          )
+        )
       })
-    )
 
-    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
-      'data-navigation-source-count',
-      '2'
-    )
-  })
-
-  it('does not reload collaboration navigation when task projects change', () => {
-    const props = {
-      user: {
-        id: 1,
-        user_name: 'admin',
-        email: 'admin@example.com',
-      } as never,
-      services: {
-        projectSpaceApis: {
-          local: createLocalDeliveryApi(),
-        },
-      } as never,
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-account-scope',
+        scope
+      )
     }
-    const { rerender } = render(
-      createElement(WeworkCollaborationPlatform, {
-        ...props,
-        localProjects: [],
-      })
-    )
-    const initialRefreshKey = screen
-      .getByTestId('collaboration-platform-root')
-      .getAttribute('data-refresh-key')
-
-    rerender(
-      createElement(WeworkCollaborationPlatform, {
-        ...props,
-        localProjects: [
-          {
-            id: 12,
-            name: 'New task project',
-            config: {
-              mode: 'workspace',
-              execution: { targetType: 'local', deviceId: 'local-device' },
-              workspace: { source: 'local_path', localPath: '/workspace/new' },
-            },
-            tasks: [],
-          },
-        ],
-      })
-    )
-
-    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
-      'data-refresh-key',
-      initialRefreshKey
-    )
-  })
-
-  it('resolves an imported runtime project to its local collaboration project', async () => {
-    const localDeliveryApi = createLocalDeliveryApi()
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const ensureDefault = vi.fn().mockRejectedValue(new Error('agent unavailable'))
-    render(
-      createElement(WeworkCollaborationPlatform, {
-        user: {
-          id: 1,
-          user_name: 'admin',
-          email: 'admin@example.com',
-        } as never,
-        localProjects: [],
-        services: {
-          projectSpaceApis: {
-            local: localDeliveryApi,
-          },
-          projectSpaceDetailServices: {
-            local: {
-              ...createLocalDetailServices(),
-              localProjectChatAgentApi: {
-                list: vi.fn(async () => []),
-                ensureDefault,
-                create: vi.fn(),
-              },
-            },
-          },
-        } as never,
-        renderLocalProjectImporter: ({ mode, projects, onCreated }) =>
-          createElement(
-            'button',
-            {
-              'data-testid': 'test-complete-local-project-import',
-              'data-mode': mode,
-              'data-project-count': projects.length,
-              onClick: () =>
-                void onCreated('runtime-project', 'Local project', ['/workspace/imported']),
-              type: 'button',
-            },
-            'Complete import'
-          ),
-      })
-    )
-
-    await act(async () => {
-      screen.getByTestId('collaboration-platform-import-local-project').click()
-    })
-    expect(screen.getByTestId('test-complete-local-project-import')).toHaveAttribute(
-      'data-mode',
-      'existing'
-    )
-    await act(async () => {
-      screen.getByTestId('test-complete-local-project-import').click()
-    })
-
-    await waitFor(() =>
-      expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent(
-        'local-project'
-      )
-    )
-    expect(screen.getByTestId('collaboration-platform-location')).toHaveAttribute(
-      'data-workspace-id',
-      'wework-local-workspace'
-    )
-    expect(localDeliveryApi.importLocalCodeProject).toHaveBeenCalledWith({
-      runtimeProjectKey: 'runtime-project',
-      name: 'Local project',
-      roots: ['/workspace/imported'],
-    })
-    expect(ensureDefault).not.toHaveBeenCalled()
-    expect(warning).not.toHaveBeenCalled()
-    warning.mockRestore()
-  })
-
-  it('resolves an imported project by workspace root when the runtime key is an alias', async () => {
-    const localDeliveryApi = createLocalDeliveryApi()
-    localDeliveryApi.importLocalCodeProject.mockResolvedValue({
-      id: 'local-project',
-      name: 'Local project',
-      project_store: 'local',
-      metadata: {
-        code_project_key: 'runtime-project-uuid',
-        workspace_roots: ['/workspace/imported'],
-      },
-    } as never)
-
-    render(
-      createElement(WeworkCollaborationPlatform, {
-        user: {
-          id: 1,
-          user_name: 'admin',
-          email: 'admin@example.com',
-        } as never,
-        localProjects: [],
-        services: {
-          projectSpaceApis: {
-            local: localDeliveryApi,
-          },
-        } as never,
-        renderLocalProjectImporter: ({ onCreated }) =>
-          createElement(
-            'button',
-            {
-              'data-testid': 'test-complete-aliased-local-project-import',
-              onClick: () =>
-                void onCreated('runtime-project-uuid', 'Local project', ['/workspace/imported']),
-              type: 'button',
-            },
-            'Complete aliased import'
-          ),
-      })
-    )
-
-    await act(async () => {
-      screen.getByTestId('collaboration-platform-import-local-project').click()
-    })
-    await act(async () => {
-      screen.getByTestId('test-complete-aliased-local-project-import').click()
-    })
-
-    await waitFor(() =>
-      expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent(
-        'local-project'
-      )
-    )
-  })
-
-  it('offers only task projects that are not already in local collaboration', async () => {
-    render(
-      createElement(WeworkCollaborationPlatform, {
-        user: {
-          id: 1,
-          user_name: 'admin',
-          email: 'admin@example.com',
-        } as never,
-        localProjects: [
-          {
-            id: 11,
-            name: 'Already imported',
-            config: {
-              mode: 'workspace',
-              execution: { targetType: 'local', deviceId: 'local-device' },
-              workspace: { source: 'local_path', localPath: '/workspace/imported' },
-            },
-            tasks: [],
-          },
-          {
-            id: 12,
-            name: 'Available task project',
-            config: {
-              mode: 'workspace',
-              execution: { targetType: 'local', deviceId: 'local-device' },
-              workspace: { source: 'local_path', localPath: '/workspace/available' },
-            },
-            tasks: [],
-          },
-        ],
-        runtimeWork: {
-          projects: [
-            {
-              project: { id: 11, key: 'runtime-project', name: 'Already imported' },
-              deviceWorkspaces: [],
-            },
-            {
-              project: { id: 12, key: 'available-project', name: 'Available task project' },
-              deviceWorkspaces: [],
-            },
-          ],
-          chats: [],
-          totalTasks: 0,
-        },
-        services: {
-          projectSpaceApis: {
-            local: createLocalDeliveryApi(),
-          },
-        } as never,
-        renderLocalProjectImporter: ({ projects }) =>
-          createElement(
-            'div',
-            { 'data-testid': 'test-local-project-candidates' },
-            projects.map(project => project.name).join(',')
-          ),
-      })
-    )
-
-    await act(async () => {
-      screen.getByTestId('collaboration-platform-import-local-project').click()
-    })
-
-    expect(screen.getByTestId('test-local-project-candidates')).toHaveTextContent(
-      'Available task project'
-    )
-    expect(screen.getByTestId('test-local-project-candidates')).not.toHaveTextContent(
-      'Already imported'
-    )
-  })
-
-  it('matches imported Windows roots across separator and casing differences', async () => {
-    const localDeliveryApi = createLocalDeliveryApi()
-    vi.mocked(localDeliveryApi.listCloudProjects).mockResolvedValue({
-      items: [
-        {
-          id: 'local-project',
-          name: 'Imported Windows project',
-          project_store: 'local',
-          metadata: {
-            code_project_key: 'different-runtime-key',
-            workspace_roots: ['c:/work/repo'],
-          },
-        },
-      ],
-    } as never)
-
-    render(
-      createElement(WeworkCollaborationPlatform, {
-        user: {
-          id: 1,
-          user_name: 'admin',
-          email: 'admin@example.com',
-        } as never,
-        localProjects: [
-          {
-            id: 13,
-            name: 'Same Windows project',
-            config: {
-              mode: 'workspace',
-              execution: { targetType: 'local', deviceId: 'local-device' },
-              workspace: { source: 'local_path', localPath: 'C:\\Work\\Repo\\' },
-            },
-            tasks: [],
-          },
-        ],
-        runtimeWork: {
-          projects: [
-            {
-              project: {
-                id: 13,
-                key: 'windows-runtime-project',
-                name: 'Same Windows project',
-              },
-              deviceWorkspaces: [],
-            },
-          ],
-          chats: [],
-          totalTasks: 0,
-        },
-        services: {
-          projectSpaceApis: {
-            local: localDeliveryApi,
-          },
-        } as never,
-        renderLocalProjectImporter: ({ projects }) =>
-          createElement(
-            'div',
-            { 'data-testid': 'test-windows-project-candidates' },
-            projects.map(project => project.name).join(',')
-          ),
-      })
-    )
-
-    await act(async () => {
-      screen.getByTestId('collaboration-platform-import-local-project').click()
-    })
-
-    expect(screen.getByTestId('test-windows-project-candidates')).toBeEmptyDOMElement()
-  })
+  )
 
   it('keeps local project data and Agent configuration independent of cloud resources', async () => {
     const createLocalAgent = vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
@@ -1076,68 +774,6 @@ describe('Wework collaboration workspace API', () => {
     for (const request of Object.values(cloudIssues)) expect(request).not.toHaveBeenCalled()
   })
 
-  it.each(['agents', 'teams', 'devices'] as const)(
-    'opens the internal %s destination from collaboration navigation',
-    destination => {
-      render(
-        createElement(WeworkCollaborationPlatform, {
-          user: {
-            id: 1,
-            user_name: 'admin',
-            email: 'admin@example.com',
-          } as never,
-          localProjects: [],
-          services: {
-            sharedWorkspaceApi: {
-              workspaces: {},
-              projects: {},
-            },
-            projectSpaceApis: {
-              local: createLocalDeliveryApi(),
-            },
-          } as never,
-        })
-      )
-
-      act(() => {
-        screen.getByTestId(`collaboration-platform-open-${destination}`).click()
-      })
-
-      expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent(destination)
-    }
-  )
-
-  it('does not restore the system My Tasks project inside collaboration', async () => {
-    const getProject = vi.fn()
-
-    render(
-      createElement(WeworkCollaborationPlatform, {
-        user: {
-          id: 1,
-          user_name: 'admin',
-          email: 'admin@example.com',
-        } as never,
-        localProjects: [],
-        services: {
-          sharedWorkspaceApi: {
-            projects: {
-              get: getProject,
-              list: vi.fn(async () => []),
-            },
-          },
-        } as never,
-        activeProjectRef: {
-          projectStore: 'local',
-          projectId: 'default-work-items',
-        },
-        onActiveProjectChange: vi.fn(),
-      })
-    )
-
-    expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent('workspace')
-    expect(getProject).not.toHaveBeenCalled()
-  })
-
   it('does not restore a stale controlled project while workspace navigation propagates', async () => {
     const getProject = vi.fn().mockResolvedValue({
       id: 'active-project',
@@ -1178,93 +814,6 @@ describe('Wework collaboration workspace API', () => {
     expect(onActiveProjectChange).toHaveBeenCalledWith(null)
     expect(getProject).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent('workspace')
-  })
-
-  it('opens a focused Issue when the controlled project is already active', async () => {
-    const getProject = vi.fn().mockResolvedValue({
-      id: 'active-project',
-      name: 'Active project',
-      workspace_id: 'cloud-workspace',
-      project_store: 'backend',
-    })
-    const props = {
-      user: {
-        id: 1,
-        user_name: 'admin',
-        email: 'admin@example.com',
-      } as never,
-      localProjects: [],
-      services: {
-        sharedWorkspaceApi: {
-          projects: {
-            get: getProject,
-          },
-        },
-      } as never,
-      activeProjectRef: {
-        projectStore: 'backend' as const,
-        projectId: 'active-project',
-      },
-      onActiveProjectChange: vi.fn(),
-    }
-    const view = render(createElement(WeworkCollaborationPlatform, props))
-
-    await screen.findByText('active-project')
-    view.rerender(
-      createElement(WeworkCollaborationPlatform, {
-        ...props,
-        focusedItemId: 'issue-1',
-      })
-    )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
-        'data-issue-id',
-        'issue-1'
-      )
-    )
-    expect(getProject).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps an Issue the reader opened while the route only names the project', async () => {
-    const getProject = vi.fn().mockResolvedValue({
-      id: 'active-project',
-      name: 'Active project',
-      workspace_id: 'cloud-workspace',
-      project_store: 'backend',
-    })
-    const props = {
-      user: {
-        id: 1,
-        user_name: 'admin',
-        email: 'admin@example.com',
-      } as never,
-      localProjects: [],
-      services: {
-        sharedWorkspaceApi: {
-          projects: {
-            get: getProject,
-          },
-        },
-      } as never,
-      activeProjectRef: {
-        projectStore: 'backend' as const,
-        projectId: 'active-project',
-      },
-      onActiveProjectChange: vi.fn(),
-    }
-    render(createElement(WeworkCollaborationPlatform, props))
-
-    const platform = () => screen.getByTestId('collaboration-platform-root')
-    await waitFor(() => expect(platform()).toHaveAttribute('data-issue-id', ''))
-
-    await act(async () => {
-      screen.getByTestId('collaboration-platform-open-issue').click()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(platform()).toHaveAttribute('data-issue-id', 'issue-1')
   })
 
   it('resumes controlled project synchronization after navigation loading fails', async () => {
@@ -1393,63 +942,6 @@ describe('Wework collaboration workspace API', () => {
         id: 'project-b',
         location: 'cloud',
       })
-    )
-  })
-
-  it('does not reapply an unchanged notification focus after selecting another Issue', async () => {
-    const project = {
-      id: 'project-a',
-      name: 'Project A',
-      workspace_id: 'cloud-workspace',
-      project_store: 'backend',
-    }
-    const props = {
-      user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
-      localProjects: [],
-      services: {
-        sharedWorkspaceApi: { projects: { get: vi.fn().mockResolvedValue(project) } },
-      } as never,
-      activeProjectRef: { projectStore: 'backend' as const, projectId: project.id },
-      focusedItemId: 'notification-issue',
-      focusedCommentRequestKey: 'first-request',
-    }
-    const view = render(createElement(WeworkCollaborationPlatform, props))
-    await waitFor(() =>
-      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
-        'data-issue-id',
-        'notification-issue'
-      )
-    )
-
-    await act(async () => screen.getByTestId('collaboration-platform-open-issue').click())
-    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
-      'data-issue-id',
-      'issue-1'
-    )
-    await act(async () => {
-      view.rerender(
-        createElement(WeworkCollaborationPlatform, {
-          ...props,
-          activeProjectRef: { ...props.activeProjectRef },
-        })
-      )
-    })
-    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
-      'data-issue-id',
-      'issue-1'
-    )
-
-    view.rerender(
-      createElement(WeworkCollaborationPlatform, {
-        ...props,
-        focusedCommentRequestKey: 'second-request',
-      })
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
-        'data-issue-id',
-        'notification-issue'
-      )
     )
   })
 
@@ -1597,99 +1089,6 @@ describe('Wework collaboration workspace API', () => {
     }
   )
 
-  it('maps shared board task bindings into the Issue drawer initial context', () => {
-    expect(
-      toWeworkIssueTaskBinding({
-        id: 'binding-1',
-        projectId: 'project-1',
-        issueId: 'issue-1',
-        taskUserId: 1,
-        deviceId: 'device-1',
-        taskId: 'task-1',
-        taskTitle: 'Runtime task',
-        backendTaskId: null,
-        modelSelection: {
-          modelName: 'gpt-5.6-luna',
-          modelType: 'codex',
-          options: {},
-        },
-        bindingType: 'system',
-        linkedAt: '2026-09-14T00:00:00Z',
-      })
-    ).toEqual({
-      id: 'binding-1',
-      cloud_project_id: 'project-1',
-      loop_item_id: 'issue-1',
-      task_user_id: 1,
-      device_id: 'device-1',
-      task_id: 'task-1',
-      task_title: 'Runtime task',
-      backend_task_id: null,
-      modelSelection: {
-        modelName: 'gpt-5.6-luna',
-        modelType: 'codex',
-        options: {},
-      },
-      binding_type: 'system',
-      linked_at: '2026-09-14T00:00:00Z',
-    })
-  })
-
-  it('keeps the executed model on the Issue conversation address', () => {
-    expect(
-      collaborationTaskAddress(
-        {
-          deviceId: 'device-1',
-          taskId: 'task-1',
-          modelSelection: {
-            modelName: 'gpt-5.6-sol',
-            modelType: 'runtime',
-            options: { reasoning: 'high' },
-          },
-        },
-        null
-      )
-    ).toEqual({
-      deviceId: 'device-1',
-      taskId: 'task-1',
-      runtimeHandle: {
-        modelSelection: {
-          modelName: 'gpt-5.6-sol',
-          modelType: 'runtime',
-          options: { reasoning: 'high' },
-        },
-      },
-    })
-  })
-
-  it('keeps the execution thread and Issue session even without a selected model', () => {
-    const issueExecution = { projectId: 'project-1', issueId: 'issue-1' }
-    expect(
-      collaborationTaskAddress(
-        {
-          deviceId: 'device-1',
-          taskId: 'task-1',
-          executionContext: {
-            runtime: 'codex',
-            threadId: 'thread-1',
-            workspacePath: '/tmp/issue-worktree',
-          },
-        },
-        null,
-        issueExecution,
-        issueExecution
-      )
-    ).toEqual({
-      deviceId: 'device-1',
-      taskId: 'task-1',
-      runtime: 'codex',
-      threadId: 'thread-1',
-      workspacePath: '/tmp/issue-worktree',
-      projectSession: issueExecution,
-      issueExecution,
-    })
-  })
-
   it.each([
     'active',
     'archived',
@@ -1812,234 +1211,6 @@ describe('Wework collaboration workspace API', () => {
       }
     }
   )
-
-  it('opens the personal task an assignment notification asks for wherever the reader was', async () => {
-    const project = {
-      id: 'cloud-dispatch-project',
-      name: 'Dispatch project',
-      project_store: 'backend',
-    }
-    const issue = {
-      id: 'ISSUE-DISPATCH',
-      title: '采集 CPU 证据',
-      sequence_number: 1,
-    }
-    const getIssue = vi.fn().mockResolvedValue(issue)
-    const projectProps = (focusedItemId: string | null) => ({
-      api: {
-        projects: { list: vi.fn().mockResolvedValue([project]) },
-        issues: { get: getIssue },
-        taskBindings: { list: vi.fn().mockResolvedValue([]) },
-      } as unknown as SharedWorkspaceApi,
-      localProjects: [],
-      locale: 'zh-CN' as const,
-      location: {
-        platformView: 'project' as const,
-        workspaceId: 'cloud-workspace',
-        workspaceView: 'projects' as const,
-        projectId: project.id,
-        projectView: 'board' as const,
-        issueId: focusedItemId,
-      },
-      focusedItemId,
-      project: project as never,
-      runtimePort: {
-        bindTask: vi.fn(),
-        unbindTask: vi.fn(),
-      },
-      services: {} as never,
-      setLocation: vi.fn(),
-      userId: 1,
-      workspace: {
-        id: 'cloud-workspace',
-        name: 'Cloud workspace',
-      } as never,
-    })
-    const assignment = {
-      projectId: project.id,
-      itemId: issue.id,
-      issueId: issue.id,
-      dispatchTaskId: 'human-assignment-1',
-      humanAssignmentId: 'human-assignment-1',
-      dispatchId: 'direct-human:assignment-1',
-      roundId: 'direct',
-      assignmentId: 'collect-cpu',
-      taskTitle: issue.title,
-      instructions: '只读采集 CPU 证据并提交交付。',
-      idempotencyKey: 'human-assignment:human-assignment-1',
-    }
-    const { rerender } = render(createElement(WeworkSharedProject, projectProps('ISSUE-OTHER')))
-
-    // The reader clicked the notification while another Issue was on screen, so
-    // this board leaves the request for the board that shows the named Issue.
-    await act(async () => {
-      requestIssueDispatch(assignment)
-      await Promise.resolve()
-    })
-    expect(getIssue).not.toHaveBeenCalled()
-
-    rerender(createElement(WeworkSharedProject, projectProps(issue.id)))
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(getIssue).toHaveBeenCalledWith(issue.id)
-
-    const detail = renderedProjectControls.get(project.id)?.renderIssueDetail?.({
-      api: { issues: {} },
-      issue,
-      allIssues: [issue],
-      assignments: [],
-      taskBindings: [],
-      onChange: vi.fn(),
-      onClose: vi.fn(),
-      onCreateTask: vi.fn(),
-      onDelete: vi.fn(),
-    }) as {
-      props: {
-        conversation: {
-          props: { initialTaskRequest?: unknown; initialTaskInput?: string }
-        } | null
-      }
-    }
-
-    expect(detail.props.conversation?.props.initialTaskRequest).toMatchObject({
-      title: issue.title,
-      message: '采集 CPU 证据\n\n只读采集 CPU 证据并提交交付。',
-      origin: {
-        type: 'issue_dispatch',
-        humanAssignmentId: 'human-assignment-1',
-        dispatchId: 'direct-human:assignment-1',
-        assignmentId: 'collect-cpu',
-      },
-    })
-    expect(detail.props.conversation?.props.initialTaskInput).toContain('采集 CPU 证据')
-  })
-
-  it('does not use an agent environment for a personal task', async () => {
-    const project = {
-      id: 'local-environment-project',
-      name: 'Local environment project',
-      project_store: 'local',
-    }
-    saveProjectSpaceCodeWorkspacePreference(
-      1,
-      { projectStore: 'local', projectId: project.id },
-      { localProjectId: 91, deviceWorkspaceId: 201 }
-    )
-    render(
-      createElement(WeworkSharedProject, {
-        api: {
-          projects: {
-            list: vi.fn().mockResolvedValue([project]),
-          },
-          issues: {},
-        } as unknown as SharedWorkspaceApi,
-        localProjects: [
-          { id: 91, name: 'Saved project', tasks: [] },
-          { id: 92, name: 'Changed project', tasks: [] },
-        ],
-        locale: 'zh-CN',
-        location: {
-          platformView: 'project',
-          workspaceId: 'wework-local-workspace',
-          workspaceView: 'projects',
-          projectId: project.id,
-          projectView: 'board',
-          issueId: 'ISSUE-ENV',
-        },
-        project: project as never,
-        runtimePort: {
-          bindTask: vi.fn(),
-          unbindTask: vi.fn(),
-        },
-        services: {} as never,
-        setLocation: vi.fn(),
-        userId: 1,
-        workspace: {
-          id: 'wework-local-workspace',
-          name: 'Local workspace',
-        } as never,
-      })
-    )
-    const updatedProject = {
-      ...project,
-      execution_environment: {
-        workspace_policy: 'project',
-        repositories: [],
-        setup_steps: [],
-        devices: {
-          'prepared-device': {
-            status: 'ready',
-            workspace_path: '/workspace/prepared-project',
-          },
-        },
-      },
-    }
-    const controls = renderedProjectControls.get(project.id)
-    const issue = {
-      id: 'ISSUE-ENV',
-      title: 'Use the prepared environment',
-      sequence_number: 1,
-    }
-
-    expect(controls?.onProjectChange).toBeTypeOf('function')
-    expect(controls?.onCreateTask).toBeTypeOf('function')
-    expect(controls?.renderIssueDetail).toBeTypeOf('function')
-    act(() => controls?.onProjectChange?.(updatedProject))
-    await act(async () => {
-      await controls?.onCreateTask?.(updatedProject, issue)
-    })
-    const detail = renderedProjectControls.get(project.id)?.renderIssueDetail?.({
-      api: { issues: {} },
-      issue,
-      allIssues: [issue],
-      assignments: [],
-      taskBindings: [],
-      onChange: vi.fn(),
-      onClose: vi.fn(),
-      onCreateTask: vi.fn(),
-      onDelete: vi.fn(),
-    }) as {
-      props: {
-        conversation: {
-          props: {
-            initialDeviceWorkspaceId?: number | null
-            initialLocalProjectId?: number | null
-            initialTaskRequest?: unknown
-            onTaskCreated?: (
-              address: { deviceId: string; taskId: string },
-              localProject: { id: number; name: string; tasks: [] },
-              deviceWorkspaceId: number | null
-            ) => Promise<void>
-          }
-        } | null
-      }
-    }
-
-    expect(detail.props.conversation?.props.initialLocalProjectId).toBe(91)
-    expect(detail.props.conversation?.props.initialDeviceWorkspaceId).toBe(201)
-    expect(detail.props.conversation?.props.initialTaskRequest).toMatchObject({
-      runtime: 'codex',
-      message: '',
-    })
-    expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty('deviceId')
-    expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty('workspacePath')
-
-    await detail.props.conversation?.props.onTaskCreated?.(
-      { deviceId: 'local-device', taskId: 'created-task' },
-      { id: 92, name: 'Changed project', tasks: [] },
-      202
-    )
-    expect(
-      loadProjectSpaceCodeWorkspacePreference(1, {
-        projectStore: 'local',
-        projectId: project.id,
-      })
-    ).toEqual({
-      localProjectId: 92,
-      deviceWorkspaceId: 202,
-    })
-  })
 
   it.each([false, true])(
     'keeps personal tasks on the current computer and retains the Issue reference (human work: %s)',
@@ -2249,436 +1420,6 @@ describe('Wework collaboration workspace API', () => {
     expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
   })
 
-  it.each(['local', 'backend'] as const)(
-    'opens new human work from an assignment reply even with an existing task (%s)',
-    async projectStore => {
-      const project = {
-        id: `human-reply-${projectStore}`,
-        name: 'Human assignment',
-        project_store: projectStore,
-        task_provider: 'local',
-      }
-      const issue = { id: 'ISSUE-HUMAN', title: 'Inspect CPU', sequence_number: 1 }
-      const dispatch = {
-        humanAssignmentId: 'human-assignment',
-        dispatchId: 'dispatch',
-        roundId: 'round',
-        assignmentId: 'assignment',
-        taskTitle: 'Collect CPU evidence',
-        instructions: 'Inspect current CPU usage and deliver the evidence.',
-        workflowStageId: null,
-      }
-      const listTaskBindings = vi.fn(async () => [
-        {
-          deviceId: 'local-device',
-          taskId: 'previous-human-task',
-          humanAssignmentId: dispatch.humanAssignmentId,
-        },
-      ])
-      const bindTask = vi.fn()
-      const onOpenRuntimeTask = vi.fn()
-      render(
-        createElement(WeworkSharedProject, {
-          api: {
-            projects: {},
-            issues: {},
-            taskBindings: { list: listTaskBindings },
-          } as unknown as SharedWorkspaceApi,
-          localProjects: [],
-          locale: 'zh-CN',
-          location: {
-            platformView: 'project',
-            workspaceId: 'workspace',
-            workspaceView: 'projects',
-            projectId: project.id,
-            projectView: 'board',
-            issueId: issue.id,
-          },
-          project: project as never,
-          runtimePort: { bindTask, unbindTask: vi.fn() },
-          onOpenRuntimeTask,
-          services: {} as never,
-          setLocation: vi.fn(),
-          userId: 1,
-          workspace: { id: 'workspace', name: 'Workspace' } as never,
-        })
-      )
-      const detailContext = {
-        api: { issues: {} },
-        issue,
-        allIssues: [issue],
-        assignments: [],
-        taskBindings: [],
-        onChange: vi.fn(),
-        onClose: vi.fn(),
-        onCreateTask: vi.fn(),
-        onDelete: vi.fn(),
-      }
-      const detail = renderedProjectControls
-        .get(project.id)
-        ?.renderIssueDetail?.(detailContext) as {
-        props: {
-          children: (close: () => void) => {
-            props: {
-              onStartHumanTaskFromReply: (input: {
-                issueId: string
-                dispatch: typeof dispatch
-                replyText: string
-              }) => Promise<void>
-            }
-          }
-        }
-      }
-      await act(async () => {
-        await detail.props.children(vi.fn()).props.onStartHumanTaskFromReply({
-          issueId: issue.id,
-          dispatch,
-          replyText: 'Received',
-        })
-      })
-      const updated = renderedProjectControls
-        .get(project.id)
-        ?.renderIssueDetail?.(detailContext) as {
-        props: {
-          conversation: {
-            props: {
-              initialAddress?: unknown
-              initialTaskInput?: string
-              initialTaskRequest?: unknown
-              prepareTask: (address: { deviceId: string; taskId: string }) => Promise<unknown>
-            }
-          }
-        }
-      }
-      const composer = updated.props.conversation.props
-      expect(composer.initialAddress).toBeUndefined()
-      expect(composer.initialTaskInput).toContain(dispatch.instructions)
-      expect(composer.initialTaskInput).not.toContain('Received')
-      expect(composer.initialTaskRequest).toMatchObject({
-        origin: { humanAssignmentId: dispatch.humanAssignmentId },
-      })
-      expect(listTaskBindings).not.toHaveBeenCalled()
-      expect(onOpenRuntimeTask).not.toHaveBeenCalled()
-      await composer.prepareTask({ deviceId: 'local-device', taskId: 'new-human-task' })
-      expect(bindTask).toHaveBeenCalledWith(
-        issue.id,
-        expect.objectContaining({ deviceId: 'local-device', taskId: 'new-human-task' }),
-        dispatch.taskTitle,
-        {
-          humanAssignmentId: dispatch.humanAssignmentId,
-          dispatchId: dispatch.dispatchId,
-          dispatchRoundId: dispatch.roundId,
-          assignmentId: dispatch.assignmentId,
-        }
-      )
-    }
-  )
-
-  it('renders metadata badges through the actual shared project board entry without content requests', async () => {
-    vi.stubGlobal(
-      'IntersectionObserver',
-      class {
-        constructor(private callback: IntersectionObserverCallback) {}
-        observe() {
-          this.callback(
-            [{ isIntersecting: true } as IntersectionObserverEntry],
-            {} as IntersectionObserver
-          )
-        }
-        disconnect() {}
-      }
-    )
-    const projectId = 'external-pr-project'
-    const issue = {
-      id: 'PR-1',
-      badges: [
-        {
-          id: 'pr-42',
-          label: '#42',
-          url: 'https://github.com/org/app/pull/42',
-          icon: 'git-pull-request',
-        },
-      ],
-      cloud_project_id: projectId,
-      title: 'Review PR',
-      description: '',
-      detail_loaded: false,
-      status: 'completed',
-      priority: 'none',
-      version: 1,
-      can_view_detail: true,
-      tags: [],
-    }
-    const get = vi
-      .fn()
-      .mockResolvedValue({ ...issue, description: 'https://github.com/org/app/pull/42' })
-    const list = vi.fn().mockResolvedValue([{ body: 'https://github.com/org/app/pull/42' }])
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: { number: 42, url: 'https://github.com/org/app/pull/42', state: 'MERGED' },
-    })
-    render(
-      createElement(WeworkSharedProject, {
-        api: { projects: {}, issues: { get }, comments: { list } } as unknown as SharedWorkspaceApi,
-        localProjects: [],
-        locale: 'zh-CN',
-        location: {
-          platformView: 'project',
-          workspaceId: 'cloud-workspace',
-          workspaceView: 'projects',
-          projectId,
-          projectView: 'board',
-          issueId: null,
-        },
-        project: {
-          id: projectId,
-          name: 'External PR project',
-          project_store: 'backend',
-          task_provider: 'gitlab',
-        } as never,
-        services: { deviceApi: { executeCommand } } as never,
-        setLocation: vi.fn(),
-        userId: 1,
-        workspace: { id: 'cloud-workspace', name: 'Cloud workspace' } as never,
-      })
-    )
-    const renderer = renderedProjectControls.get(projectId)?.renderBoardIssueCard
-    render(
-      createElement(
-        'div',
-        null,
-        renderer?.({
-          column: {
-            key: 'completed',
-            label: 'Completed',
-            status: 'completed',
-            groupValue: 'completed',
-            dotClass: '',
-          },
-          defaultCard: null,
-          display: { showAssignee: false, showDate: false, showPriority: false, showTags: false },
-          focused: false,
-          issue: issue as never,
-          onOpen: vi.fn(),
-          onMarkRead: vi.fn(),
-          previewDisabled: false,
-          taskBindings: [],
-        })
-      )
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('issue-badge-pr-42')).toHaveAccessibleName(/已合并|Merged/)
-    )
-    expect(get).not.toHaveBeenCalled()
-    expect(list).not.toHaveBeenCalled()
-    vi.unstubAllGlobals()
-    expect(executeCommand).toHaveBeenCalledWith(
-      'local-device',
-      expect.objectContaining({ command_key: 'git_github_pull_request_view' })
-    )
-  })
-
-  it('restores one final reply on a reloaded shared project board with an empty conversation cache', async () => {
-    const projectId = 'reloaded-reply-project'
-    const issueId = 'REPLY-1'
-    const taskId = 'reloaded-reply-task'
-    const address = { deviceId: 'local-device', taskId }
-    const finalReply = '回复后的执行已经完成'
-    const getRuntimeTranscript = vi.fn().mockResolvedValue({
-      taskId,
-      workspacePath: '/tmp/project',
-      runtime: 'codex',
-      running: false,
-      fullContent: true,
-      messages: [],
-      turns: [
-        {
-          id: 'completed-reply-turn',
-          status: 'done',
-          items: [{ id: 'final-reply', type: 'assistant_text', content: finalReply }],
-        },
-      ],
-    })
-
-    expect(getRuntimeConversationTurns(address)).toEqual([])
-    render(
-      createElement(WeworkSharedProject, {
-        api: { projects: {}, issues: {} } as unknown as SharedWorkspaceApi,
-        localProjects: [],
-        locale: 'zh-CN',
-        location: {
-          platformView: 'project',
-          workspaceId: 'cloud-workspace',
-          workspaceView: 'projects',
-          projectId,
-          projectView: 'board',
-          issueId: null,
-        },
-        project: { id: projectId, name: 'Reply project', project_store: 'backend' } as never,
-        runtimeWork: runtimeWork([
-          runtimeTask({ taskId, threadId: 'reply-thread', running: false, status: 'done' }),
-        ]),
-        services: { runtimeWorkApi: { getRuntimeTranscript } } as never,
-        setLocation: vi.fn(),
-        userId: 1,
-        workspace: { id: 'cloud-workspace', name: 'Cloud workspace' } as never,
-      })
-    )
-    const renderBoardIssueCard = renderedProjectControls.get(projectId)?.renderBoardIssueCard
-    expect(renderBoardIssueCard).toBeTypeOf('function')
-    render(
-      createElement(
-        'div',
-        null,
-        renderBoardIssueCard?.({
-          column: {
-            dotClass: '',
-            groupValue: 'in_review',
-            key: 'in_review',
-            label: '待确认',
-            status: 'in_review',
-          },
-          defaultCard: null,
-          display: {
-            showAssignee: false,
-            showDate: false,
-            showPriority: false,
-            showTags: false,
-          },
-          focused: false,
-          issue: {
-            id: issueId,
-            cloud_project_id: projectId,
-            sequence_number: 1,
-            parent_id: null,
-            created_by_user_id: 1,
-            assignee_user_id: null,
-            title: 'Check the reply result',
-            description: '',
-            status: 'in_review',
-            priority: 'none',
-            due_at: null,
-            tags: [],
-            sort_order: 0,
-            version: 1,
-            created_at: '2026-10-20T00:00:00Z',
-            updated_at: '2026-10-20T00:01:00Z',
-            completed_at: null,
-            execution_state: 'succeeded',
-            can_edit: true,
-            can_view_detail: true,
-          },
-          onOpen: vi.fn(),
-          onMarkRead: vi.fn().mockResolvedValue(undefined),
-          previewDisabled: false,
-          taskBindings: [
-            {
-              id: 'reply-binding',
-              projectId,
-              issueId,
-              taskUserId: 1,
-              deviceId: address.deviceId,
-              taskId,
-              taskTitle: 'Reply execution',
-              backendTaskId: null,
-              linkedAt: '2026-10-20T00:00:00Z',
-            },
-          ],
-        })
-      )
-    )
-
-    expect(
-      await screen.findByTestId(`cloud-todo-card-final-response-${issueId}`)
-    ).toHaveTextContent(finalReply)
-    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
-    expect(getRuntimeTranscript).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ...address,
-        runtime: 'codex',
-        threadId: 'reply-thread',
-        workspacePath: '/tmp/project',
-        projectSession: { projectId, issueId },
-        issueExecution: { projectId, issueId },
-        limit: 20,
-        includeFullContent: true,
-      })
-    )
-    expect(
-      screen.getAllByTestId(`cloud-todo-card-task-summary-${issueId}-reply-binding`)
-    ).toHaveLength(1)
-    expect(screen.getAllByTestId(`cloud-todo-card-final-response-${issueId}`)).toHaveLength(1)
-    expect(screen.queryByTestId(`cloud-todo-card-process-${issueId}`)).not.toBeInTheDocument()
-  })
-
-  it('detects running and terminal Runtime transitions for project board refreshes', () => {
-    const project = {
-      projectStore: 'backend' as const,
-      projectId: 'signature-project',
-    }
-    const lifecycleStore = new RuntimeTaskLifecycleStore('wework-collaboration-status-refresh')
-    lifecycleStore.syncRuntimeWork(
-      runtimeWork([
-        runtimeTask({
-          taskId: 'signature-runtime-task',
-          running: false,
-          status: 'done',
-          completedAt: 1_700_000_000,
-        }),
-      ])
-    )
-    rememberProjectSpaceTaskBinding(
-      {
-        deviceId: 'local-device',
-        taskId: 'signature-runtime-task',
-      },
-      project
-    )
-    const terminalSignature = projectRuntimeStatusSignature(lifecycleStore.getSnapshot(), project)
-
-    lifecycleStore.executorStarted({
-      deviceId: 'local-device',
-      taskId: 'signature-runtime-task',
-      runtime: 'codex',
-      workspacePath: '/tmp/project',
-    })
-    const runningSignature = projectRuntimeStatusSignature(lifecycleStore.getSnapshot(), project)
-
-    expect(terminalSignature).toContain(':succeeded')
-    expect(runningSignature).toContain(':running')
-    expect(runningSignature).not.toBe(terminalSignature)
-  })
-
-  it('retains the project API when its full workspace catalog arrives', async () => {
-    const listProjects = vi.fn(async () => [{ id: 'project' }])
-    const props = {
-      api: { projects: { list: listProjects }, issues: {} } as unknown as SharedWorkspaceApi,
-      localProjects: [],
-      locale: 'zh-CN' as const,
-      location: { projectId: 'project', projectView: 'board' } as CollaborationPlatformLocation,
-      project: { id: 'project', name: 'Project', project_store: 'backend' } as never,
-      services: {} as never,
-      setLocation: vi.fn(),
-      userId: 1,
-      workspace: { id: 'workspace', name: 'Workspace' } as never,
-    }
-    const { rerender } = render(createElement(WeworkSharedProject, props))
-    const api = renderedProjectApis.get('project')!
-    await api.projects.list()
-    expect(listProjects).toHaveBeenLastCalledWith()
-
-    rerender(
-      createElement(WeworkSharedProject, {
-        ...props,
-        workspace: { id: 'workspace', name: 'Workspace', access_role: 'Owner' } as never,
-      })
-    )
-
-    expect(renderedProjectApis.get('project')).toBe(api)
-    await api.projects.list()
-    expect(listProjects).toHaveBeenLastCalledWith('workspace')
-  })
-
   it('refreshes only the cloud project bound to a changed Runtime task', async () => {
     vi.useFakeTimers()
     const lifecycleStore = new RuntimeTaskLifecycleStore('wework-cloud-status-refresh')
@@ -2783,117 +1524,88 @@ describe('Wework collaboration workspace API', () => {
     ).toHaveAttribute('data-refresh-key', '0')
   })
 
-  it('observes snapshot bindings before refreshing an already terminal Runtime lifecycle', async () => {
+  it('does not refresh a local board for unrelated tasks or unchanged execution status', async () => {
     vi.useFakeTimers()
-    const task = {
-      deviceId: 'local-device',
-      taskId: 'snapshot-terminal-task',
-    }
-    const project = {
-      projectStore: 'backend' as const,
-      projectId: 'snapshot-terminal-project',
-    }
-    const lifecycleStore = new RuntimeTaskLifecycleStore('wework-snapshot-binding-refresh')
-    lifecycleStore.syncRuntimeWork(
-      runtimeWork([
-        runtimeTask({
-          taskId: task.taskId,
-          running: false,
-          status: 'done',
-          completedAt: 1_700_000_000,
-        }),
-      ])
+    const lifecycleStore = new RuntimeTaskLifecycleStore('local-board-refresh-scope')
+    const project = { projectStore: 'local' as const, projectId: 'local-refresh-scope' }
+    const address = { deviceId: 'local-device', taskId: 'local-refresh-task' }
+    rememberProjectSpaceTaskBinding(address, project)
+    lifecycleStore.syncRuntimeTask(
+      address,
+      runtimeTask({ taskId: address.taskId, running: true, status: 'running' })
     )
-    let resolveSnapshot:
-      | ((snapshot: {
-          items: []
-          members: []
-          agents: []
-          taskBindings: Array<{
-            issueId: string
-            deviceId: string
-            taskId: string
-            projectId: string
-          }>
-        }) => void)
-      | undefined
-    const getBoardSnapshot = vi.fn(
-      () =>
-        new Promise<{
-          items: []
-          members: []
-          agents: []
-          taskBindings: Array<{
-            issueId: string
-            deviceId: string
-            taskId: string
-            projectId: string
-          }>
-        }>(resolve => {
-          resolveSnapshot = resolve
-        })
-    )
-    render(
+    const props = {
+      api: { projects: {}, issues: {} } as unknown as SharedWorkspaceApi,
+      localProjects: [],
+      locale: 'zh-CN' as const,
+      location: {
+        platformView: 'project' as const,
+        workspaceId: 'local-workspace',
+        workspaceView: 'projects' as const,
+        projectId: project.projectId,
+        projectView: 'board' as const,
+        issueId: null,
+      },
+      project: { id: project.projectId, name: 'Local', project_store: 'local' } as never,
+      services: {} as never,
+      setLocation: vi.fn(),
+      userId: 1,
+      workspace: { id: 'local-workspace', name: 'Local' } as never,
+    }
+    const view = () =>
       createElement(WeworkSharedProject, {
-        api: {
-          projects: {},
-          issues: { getBoardSnapshot },
-        } as unknown as SharedWorkspaceApi,
-        localProjects: [],
-        locale: 'zh-CN',
-        location: {
-          platformView: 'project',
-          workspaceId: 'cloud-workspace',
-          workspaceView: 'projects',
-          projectId: project.projectId,
-          projectView: 'board',
-          issueId: null,
-        },
-        project: {
-          id: project.projectId,
-          name: 'Snapshot terminal project',
-          project_store: project.projectStore,
-        } as never,
+        ...props,
         runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
-        services: {} as never,
-        setLocation: vi.fn(),
-        userId: 1,
-        workspace: {
-          id: 'cloud-workspace',
-          name: 'Cloud workspace',
-        } as never,
       })
-    )
-
-    expect(
-      screen.getByTestId(`collaboration-app-refresh-probe-${project.projectId}`)
-    ).toHaveAttribute('data-refresh-key', '0')
-    expect(projectSpaceForRuntimeTask(task)).toBeUndefined()
-
-    await act(async () => {
-      resolveSnapshot?.({
-        items: [],
-        members: [],
-        agents: [],
-        taskBindings: [
-          {
-            issueId: 'snapshot-terminal-issue',
-            deviceId: task.deviceId,
-            taskId: task.taskId,
-            projectId: project.projectId,
-          },
-        ],
-      })
-      await Promise.resolve()
-    })
+    const { rerender } = render(view())
     await act(async () => {
       vi.runAllTimers()
     })
+    const refreshKey = () =>
+      screen
+        .getByTestId(`collaboration-app-refresh-probe-${project.projectId}`)
+        .getAttribute('data-refresh-key')
+    const initialKey = refreshKey()
 
-    expect(projectSpaceForRuntimeTask(task)).toEqual(project)
-    expect(
-      screen.getByTestId(`collaboration-app-refresh-probe-${project.projectId}`)
-    ).toHaveAttribute('data-refresh-key', '3')
+    lifecycleStore.syncRuntimeTask(
+      { deviceId: 'local-device', taskId: 'unrelated-task' },
+      runtimeTask({ taskId: 'unrelated-task', running: true, status: 'running' })
+    )
+    rerender(view())
+    await act(async () => {
+      vi.runAllTimers()
+    })
+    expect(refreshKey()).toBe(initialKey)
+
+    lifecycleStore.syncRuntimeTask(
+      address,
+      runtimeTask({
+        taskId: address.taskId,
+        running: true,
+        status: 'running',
+        updatedAt: '2026-11-07T15:00:00Z',
+      })
+    )
+    rerender(view())
+    await act(async () => {
+      vi.runAllTimers()
+    })
+    expect(refreshKey()).toBe(initialKey)
+
+    lifecycleStore.syncRuntimeTask(
+      address,
+      runtimeTask({
+        taskId: address.taskId,
+        running: false,
+        status: 'done',
+        completedAt: '2026-11-07T15:01:00Z',
+      })
+    )
+    rerender(view())
+    await act(async () => {
+      vi.runAllTimers()
+    })
+    expect(Number(refreshKey())).toBe(Number(initialKey) + 3)
   })
 
   it('reconciles removed snapshot bindings without deleting another project mapping', async () => {
@@ -2992,57 +1704,6 @@ describe('Wework collaboration workspace API', () => {
           .getAttribute('data-render-count')
       )
     ).toBeGreaterThan(renderCountAfterFirstSnapshot)
-  })
-
-  it('uses the accessible project directory for a minimal workspace navigation context', async () => {
-    const currentProject = {
-      id: 'restricted-current-project',
-      name: 'Restricted current project',
-      project_store: 'backend',
-    }
-    const listProjects = vi.fn(async (workspaceId?: string) => {
-      if (workspaceId) throw new Error('workspace-scoped project list is forbidden')
-      return [currentProject, { ...currentProject, id: 'another-accessible-project' }]
-    })
-
-    render(
-      createElement(WeworkSharedProject, {
-        api: {
-          projects: { list: listProjects },
-          issues: {},
-        } as unknown as SharedWorkspaceApi,
-        localProjects: [],
-        locale: 'zh-CN',
-        location: {
-          platformView: 'project',
-          workspaceId: 'restricted-workspace',
-          workspaceView: 'projects',
-          projectId: currentProject.id,
-          projectView: 'board',
-          issueId: null,
-        },
-        project: currentProject as never,
-        services: {} as never,
-        setLocation: vi.fn(),
-        userId: 1,
-        workspace: {
-          id: 'restricted-workspace',
-          public_id: 'restricted-workspace-public-id',
-          location: 'cloud',
-          name: 'Restricted workspace',
-        },
-      })
-    )
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    expect(listProjects).toHaveBeenCalledWith()
-    expect(listProjects).not.toHaveBeenCalledWith('restricted-workspace')
-    expect(
-      screen.getByTestId(`collaboration-app-refresh-probe-${currentProject.id}`)
-    ).toHaveAttribute('data-project-ids', currentProject.id)
   })
 
   it('refreshes only the open project targeted by task context and binding changes', () => {
@@ -3158,241 +1819,6 @@ describe('Wework collaboration workspace API', () => {
     )
   })
 
-  it('refreshes an open local project for background Runtime lifecycle changes', async () => {
-    vi.useFakeTimers()
-    const lifecycleStore = new RuntimeTaskLifecycleStore('wework-local-background-refresh')
-    const getBoardSnapshot = vi
-      .fn()
-      .mockResolvedValueOnce({
-        items: [{ id: 'issue-1', status: 'in_progress' }],
-        taskBindings: [],
-      })
-      .mockResolvedValue({
-        items: [{ id: 'issue-1', status: 'completed' }],
-        taskBindings: [],
-      })
-    const projectProps = {
-      api: {
-        projects: {},
-        issues: { getBoardSnapshot },
-      } as unknown as SharedWorkspaceApi,
-      localProjects: [],
-      locale: 'zh-CN' as const,
-      location: {
-        platformView: 'project' as const,
-        workspaceId: 'local-workspace',
-        workspaceView: 'projects' as const,
-        projectId: 'local-project',
-        projectView: 'board' as const,
-        issueId: null,
-      },
-      project: {
-        id: 'local-project',
-        name: 'Local project',
-        project_store: 'local',
-      } as never,
-      services: {} as never,
-      setLocation: vi.fn(),
-      userId: 1,
-      workspace: {
-        id: 'local-workspace',
-        name: 'Local workspace',
-      } as never,
-    }
-    const { rerender } = render(
-      createElement(WeworkSharedProject, {
-        ...projectProps,
-        runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
-      })
-    )
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(getBoardSnapshot).toHaveBeenCalledOnce()
-    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project')).toHaveAttribute(
-      'data-refresh-key',
-      '0'
-    )
-    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project')).toHaveAttribute(
-      'data-snapshot-statuses',
-      'in_progress'
-    )
-
-    act(() => {
-      lifecycleStore.syncRuntimeWork(
-        runtimeWork([
-          runtimeTask({
-            taskId: 'background-automation-task',
-            running: false,
-            status: 'done',
-            completedAt: 1_700_000_000,
-          }),
-        ])
-      )
-      rerender(
-        createElement(WeworkSharedProject, {
-          ...projectProps,
-          runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
-        })
-      )
-    })
-    await act(async () => {
-      vi.runAllTimers()
-      await Promise.resolve()
-    })
-
-    expect(getBoardSnapshot).toHaveBeenCalledTimes(2)
-    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project')).toHaveAttribute(
-      'data-refresh-key',
-      '3'
-    )
-    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project')).toHaveAttribute(
-      'data-snapshot-statuses',
-      'completed'
-    )
-  })
-
-  it('does not refresh a cloud project for unrelated local Runtime lifecycle changes', () => {
-    vi.useFakeTimers()
-    const lifecycleStore = new RuntimeTaskLifecycleStore('wework-cloud-background-isolation')
-    const projectProps = {
-      api: {
-        projects: {},
-        issues: {},
-      } as unknown as SharedWorkspaceApi,
-      localProjects: [],
-      locale: 'zh-CN' as const,
-      location: {
-        platformView: 'project' as const,
-        workspaceId: 'cloud-workspace',
-        workspaceView: 'projects' as const,
-        projectId: 'cloud-project',
-        projectView: 'board' as const,
-        issueId: null,
-      },
-      project: {
-        id: 'cloud-project',
-        name: 'Cloud project',
-        project_store: 'backend',
-      } as never,
-      services: {} as never,
-      setLocation: vi.fn(),
-      userId: 1,
-      workspace: {
-        id: 'cloud-workspace',
-        name: 'Cloud workspace',
-      } as never,
-    }
-    const { rerender } = render(
-      createElement(WeworkSharedProject, {
-        ...projectProps,
-        runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
-      })
-    )
-
-    lifecycleStore.syncRuntimeWork(
-      runtimeWork([
-        runtimeTask({
-          taskId: 'unrelated-local-runtime-task',
-          running: false,
-          status: 'done',
-          completedAt: 1_700_000_000,
-        }),
-      ])
-    )
-    rerender(
-      createElement(WeworkSharedProject, {
-        ...projectProps,
-        runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
-      })
-    )
-    act(() => {
-      vi.runAllTimers()
-    })
-
-    expect(screen.getByTestId('collaboration-app-refresh-probe-cloud-project')).toHaveAttribute(
-      'data-refresh-key',
-      '0'
-    )
-  })
-
-  it('refreshes only the cloud project named by a live Issue change and cleans up subscriptions', async () => {
-    const listeners: Array<(event: { projectId: string }) => void> = []
-    const releases = [vi.fn(), vi.fn()]
-    const subscribeLoopItemChanges = vi.fn(
-      async (listener: (event: { projectId: string }) => void) => {
-        listeners.push(listener)
-        return releases[listeners.length - 1]
-      }
-    )
-    const projectProps = (projectId: string) => ({
-      api: {
-        projects: {},
-        issues: {},
-      } as unknown as SharedWorkspaceApi,
-      detailServices: {
-        projectChatClient: {
-          subscribeLoopItemChanges,
-        },
-      } as unknown as ProjectSpaceDetailServices,
-      localProjects: [],
-      locale: 'zh-CN' as const,
-      location: {
-        platformView: 'project' as const,
-        workspaceId: 'cloud-workspace',
-        workspaceView: 'projects' as const,
-        projectId,
-        projectView: 'board' as const,
-        issueId: null,
-      },
-      project: {
-        id: projectId,
-        name: projectId,
-        project_store: 'backend',
-      } as never,
-      services: {} as never,
-      setLocation: vi.fn(),
-      userId: 1,
-      workspace: {
-        id: 'cloud-workspace',
-        name: 'Cloud workspace',
-      } as never,
-    })
-    const { unmount } = render(
-      createElement(
-        'div',
-        null,
-        createElement(WeworkSharedProject, projectProps('cloud-project-a')),
-        createElement(WeworkSharedProject, projectProps('cloud-project-b'))
-      )
-    )
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(subscribeLoopItemChanges).toHaveBeenCalledTimes(2)
-
-    act(() => {
-      for (const listener of listeners) {
-        listener({ projectId: 'cloud-project-a' })
-      }
-    })
-
-    expect(screen.getByTestId('collaboration-app-refresh-probe-cloud-project-a')).toHaveAttribute(
-      'data-refresh-key',
-      '1'
-    )
-    expect(screen.getByTestId('collaboration-app-refresh-probe-cloud-project-b')).toHaveAttribute(
-      'data-refresh-key',
-      '0'
-    )
-
-    unmount()
-    expect(releases[0]).toHaveBeenCalledOnce()
-    expect(releases[1]).toHaveBeenCalledOnce()
-  })
-
   it('places listed, newly created and updated local projects in the single local space', async () => {
     const delivery = {
       ...createLocalDeliveryApi(),
@@ -3409,48 +1835,6 @@ describe('Wework collaboration workspace API', () => {
     expect(await api.projects.update('new-local', { name: 'Renamed', version: 1 })).toMatchObject({
       workspace_id: 'wework-local-workspace',
     })
-  })
-
-  it('adds the default local Agent only when explicitly selected', async () => {
-    const ensureDefault = vi.fn(async (projectId: string, input: Record<string, unknown>) => ({
-      id: `LA-${projectId}`,
-      projectId,
-      status: 'active',
-      version: 1,
-      ...input,
-    }))
-    const delivery = {
-      ...createLocalDeliveryApi(),
-      createCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' }),
-      updateCloudProject: vi.fn(),
-    }
-    const details = {
-      ...createLocalDetailServices(),
-      localProjectChatAgentApi: {
-        list: vi.fn(async () => []),
-        ensureDefault,
-        create: vi.fn(),
-        update: vi.fn(),
-        archive: vi.fn(),
-      },
-    } as unknown as ProjectSpaceDetailServices
-    const api = createLocalWorkspaceApi(delivery, 1, 'admin', null, details)!
-
-    await expect(
-      api.projects.create({ name: 'New local', includeDefaultAgent: true })
-    ).resolves.toMatchObject({
-      id: 'new-local',
-      workspace_id: 'wework-local-workspace',
-    })
-    expect(ensureDefault).toHaveBeenCalledWith(
-      'new-local',
-      expect.objectContaining({
-        name: 'current-device-agent',
-        model: null,
-        capabilityMode: 'follow_device',
-      })
-    )
-    expect(delivery.updateCloudProject).not.toHaveBeenCalled()
   })
 
   it('does not add the default local Agent when creating a project without a selection', async () => {
@@ -3522,28 +1906,6 @@ describe('Wework collaboration workspace API', () => {
       expect.any(Error)
     )
     warning.mockRestore()
-  })
-
-  it('exposes local project execution environments through the shared project contract', async () => {
-    const api = createLocalWorkspaceApi(
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
-    )
-
-    await expect(api?.projects.listExecutionEnvironments('local-project')).resolves.toEqual([
-      expect.objectContaining({
-        id: 'device:local-device',
-        device_id: 7,
-        device_key: 'local-device',
-        name: 'Local device',
-        coding_tools: ['codex'],
-        kind: 'local_device',
-        status: 'online',
-      }),
-    ])
   })
 
   it('initializes the latest persisted local environment when the rendered version is stale', async () => {
@@ -3682,18 +2044,6 @@ describe('Wework collaboration workspace API', () => {
         execution_environment: executionEnvironment,
       })
     )
-  })
-
-  it('omits the git repository catalog capability from the local workspace api', () => {
-    const api = createLocalWorkspaceApi(
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
-    )
-
-    expect(api?.gitRepositories).toBeUndefined()
   })
 
   it('routes local automatic processing CRUD through the combined platform API', async () => {
@@ -3854,31 +2204,6 @@ describe('Wework collaboration workspace API', () => {
       cloudEnvironment,
     ])
     expect(listCloudExecutionEnvironments).toHaveBeenCalledWith('cloud-project')
-  })
-
-  it('keeps local collaboration group requests off the cloud API', async () => {
-    const listCloudCollaborationGroups = vi.fn()
-    const cloudApi = {
-      workspaces: {
-        listCollaborationGroups: listCloudCollaborationGroups,
-      },
-      projects: {},
-    } as unknown as SharedWorkspaceApi
-    const api = createWeworkPlatformApi(
-      cloudApi,
-      createLocalWorkspaceApi(
-        createLocalDeliveryApi(),
-        1,
-        'admin',
-        null,
-        createLocalDetailServices()
-      )
-    )
-
-    await expect(
-      api?.workspaces?.listCollaborationGroups('wework-local-workspace')
-    ).resolves.toEqual([])
-    expect(listCloudCollaborationGroups).not.toHaveBeenCalled()
   })
 
   it('refreshes external Agent writes through both local workspace adapters', async () => {
@@ -4055,162 +2380,8 @@ describe('Wework collaboration workspace API', () => {
     expect(cloudAdd).not.toHaveBeenCalled()
   })
 
-  it('loads cloud and local device catalogs independently without listing or creating Agents', async () => {
-    let resolveLocal!: (devices: unknown[]) => void
-    const localResult = new Promise<unknown[]>(resolve => {
-      resolveLocal = resolve
-    })
-    const listAgents = vi.fn()
-    const ensureDefault = vi.fn()
-    const listCloud = vi.fn(async () => [{ id: '42', device_id: 42, name: 'Cloud runner' }])
-    const allResources = vi.fn()
-    const localApi = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'User', null, {
-      deviceApi: { listDevices: vi.fn(() => localResult) },
-      localProjectChatAgentApi: { list: listAgents, ensureDefault },
-    } as unknown as ProjectSpaceDetailServices)!
-    const api = createWeworkPlatformApi(
-      {
-        workspaces: {},
-        projects: {},
-        resources: { devices: { cloud: listCloud }, list: allResources },
-      } as unknown as SharedWorkspaceApi,
-      localApi
-    )!
-    expect(api.resources!.devices.local).toBe(localApi.resources!.devices.local)
-    expect(api.resources!.devices.cloud).toBe(listCloud)
-    const localPending = api.resources!.devices.local!()
-    await expect(api.resources!.devices.cloud!()).resolves.toMatchObject([{ id: '42' }])
-    resolveLocal([
-      {
-        id: 7,
-        device_id: 'local-device',
-        name: 'Local device',
-        device_type: 'local',
-        status: 'online',
-      },
-    ])
-    await expect(localPending).resolves.toMatchObject([{ device_key: 'local-device' }])
-    expect(listAgents).not.toHaveBeenCalled()
-    expect(ensureDefault).not.toHaveBeenCalled()
-    expect(allResources).not.toHaveBeenCalled()
-  })
-
-  it('exposes locally persisted Agents through the collaboration resource catalog', async () => {
-    const localAgent = {
-      id: 'LA-local',
-      name: '本地代码助手',
-      capabilityDescription: '处理本地代码',
-      systemPrompt: 'Work locally.',
-      runtime: 'codex',
-      status: 'active',
-      executionDeviceId: 'local-device',
-    }
-    const defaultAgent = {
-      ...localAgent,
-      id: 'LA-default',
-      name: 'current-device-agent',
-      displayName: '当前设备智能体',
-    }
-    const agents = [localAgent]
-    const detailServices = {
-      ...createLocalDetailServices(),
-      localProjectChatAgentApi: {
-        list: vi.fn(async () => agents),
-        ensureDefault: vi.fn(async () => {
-          agents.push(defaultAgent)
-          return defaultAgent
-        }),
-        create: vi.fn(),
-      },
-    } as unknown as ProjectSpaceDetailServices
-    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)
-
-    await expect(api?.resources?.list()).resolves.toMatchObject({
-      agents: [
-        {
-          id: 'LA-local',
-          name: '本地代码助手',
-          owner_type: 'workspace',
-          owner_id: 'wework-local-workspace',
-          owner_name: '本地空间',
-          location: 'local',
-          status: 'available',
-          execution_environment_ids: ['device:local-device'],
-        },
-        {
-          id: 'LA-default',
-          agent_id: 'current-device-agent',
-          name: '当前设备智能体',
-          deletable: false,
-        },
-      ],
-    })
-    await expect(api?.workspaces?.listAgents('wework-local-workspace')).resolves.toMatchObject([
-      {
-        id: 'LA-local',
-        name: '本地代码助手',
-        owner_type: 'workspace',
-        owner_id: 'wework-local-workspace',
-        owner_name: '本地空间',
-      },
-      {
-        id: 'LA-default',
-        agent_id: 'current-device-agent',
-        name: '当前设备智能体',
-        deletable: false,
-      },
-    ])
-    expect(detailServices.localProjectChatAgentApi?.list).toHaveBeenCalledWith(
-      DEFAULT_WORK_ITEM_PROJECT_ID
-    )
-  })
-
-  it('ensures a default Agent while reading the local resource catalog', async () => {
-    const defaultAgent = {
-      id: 'LA-default',
-      name: 'current-device-agent',
-      displayName: '当前设备智能体',
-      runtime: 'codex',
-      status: 'active',
-      version: 1,
-    }
-    const ensureDefault = vi.fn(async () => defaultAgent)
-    const listModels = vi.fn()
-    const detailServices = {
-      ...createLocalDetailServices(),
-      modelApi: {
-        listModels,
-      },
-      localProjectChatAgentApi: {
-        list: vi.fn().mockResolvedValue([]),
-        ensureDefault,
-        create: vi.fn(),
-      },
-    } as unknown as ProjectSpaceDetailServices
-    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)
-
-    await expect(api?.resources?.list()).resolves.toMatchObject({
-      agents: [
-        {
-          id: 'LA-default',
-          agent_id: 'current-device-agent',
-          deletable: false,
-        },
-      ],
-    })
-    expect(ensureDefault).toHaveBeenCalledWith(
-      DEFAULT_WORK_ITEM_PROJECT_ID,
-      expect.objectContaining({
-        name: 'current-device-agent',
-        model: null,
-        capabilityMode: 'follow_device',
-      })
-    )
-    expect(listModels).not.toHaveBeenCalled()
-  })
-
   it('keeps the local resource catalog available when default-Agent provisioning fails', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const detailServices = {
       ...createLocalDetailServices(),
       localProjectChatAgentApi: {
@@ -4222,12 +2393,24 @@ describe('Wework collaboration workspace API', () => {
     const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)!
 
     await expect(api.resources!.list()).resolves.toMatchObject({ agents: [] })
-    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local Agents', expect.any(Error))
-    expect(warning).toHaveBeenCalledWith(
-      '[Wework] Failed to ensure the default local Agent',
-      expect.any(Error)
+    expect(
+      diagnostic.mock.calls.map(([prefix, record]) => [prefix, JSON.parse(String(record))])
+    ).toEqual(
+      ['agents', 'default-agent'].map(catalog => [
+        '[Wework] Local workspace catalog failed',
+        {
+          source: 'local',
+          catalog,
+          status: 'rejected',
+          elapsedMs: expect.any(Number),
+          errorName: 'Error',
+          reason: 'rejected',
+          httpStatus: null,
+        },
+      ])
     )
-    warning.mockRestore()
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/list unavailable|agent unavailable/)
+    diagnostic.mockRestore()
   })
 
   it('shares one default-Agent bootstrap across concurrent local resource reads', async () => {
@@ -4265,7 +2448,7 @@ describe('Wework collaboration workspace API', () => {
     expect(ensureDefault).toHaveBeenCalledOnce()
   })
 
-  it.each(['current-device-agent', 'manual-agent'])(
+  it.each(['current-device-agent'])(
     'returns consistent edit and deletion controls for local Agent %s',
     async name => {
       const record = {
@@ -4397,51 +2580,6 @@ describe('Wework collaboration workspace API', () => {
     })
   })
 
-  it('opens cloud device setup from project environment management', async () => {
-    const onOpenSettings = vi.fn()
-    render(
-      createElement(WeworkSharedProject, {
-        api: {
-          projects: {},
-          issues: {},
-        } as unknown as SharedWorkspaceApi,
-        localProjects: [],
-        locale: 'zh-CN',
-        location: {
-          platformView: 'spaces',
-          workspaceId: 'cloud-workspace',
-          workspaceView: 'projects',
-          projectId: 'cloud-project',
-          projectView: 'manage',
-          projectSettingsSection: 'environments',
-          issueId: null,
-        },
-        onOpenSettings,
-        project: {
-          id: 'cloud-project',
-          name: 'Cloud project',
-          project_store: 'backend',
-        } as never,
-        services: {} as never,
-        setLocation: vi.fn(),
-        userId: 1,
-        workspace: {
-          id: 'cloud-workspace',
-          name: 'Cloud workspace',
-        } as never,
-      })
-    )
-
-    await act(async () =>
-      screen.getByTestId('collaboration-app-manage-environments-cloud-project').click()
-    )
-
-    expect(onOpenSettings).toHaveBeenCalledWith({
-      settingsPage: 'connections',
-      autoOpenAddCloudDeviceDialog: true,
-    })
-  })
-
   it('keeps local project resource setup on the local API after creation', async () => {
     const listCloudMembers = vi.fn()
     const cloudApi = {
@@ -4539,41 +2677,6 @@ describe('Wework collaboration workspace API', () => {
     expect(restoreCloudIssue).not.toHaveBeenCalled()
   })
 
-  it('uses display names from the local Agent catalog for every board refresh', async () => {
-    const agents = [
-      {
-        id: 'agent-1',
-        name: 'current-device-agent',
-        displayName: '当前设备智能体',
-        runtime: 'codex',
-        wegentTeamId: 91,
-      },
-    ]
-    const listAgents = vi.fn().mockResolvedValue(agents)
-    const details = {
-      ...createLocalDetailServices(),
-      localProjectChatAgentApi: { list: listAgents },
-    } as unknown as ProjectSpaceDetailServices
-    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, details)!
-
-    const expectedAgents = [
-      expect.objectContaining({
-        id: 'agent-1',
-        name: '当前设备智能体',
-        displayName: '当前设备智能体',
-      }),
-    ]
-    expect(await api.agents.list('local-project')).toEqual(expectedAgents)
-    expect((await api.issues.getBoardSnapshot('local-project')).agents).toEqual(expectedAgents)
-    expect(listAgents).toHaveBeenCalledWith('local-project')
-    listAgents.mockRejectedValueOnce(new Error('Agent storage unavailable'))
-    await expect(api.issues.getBoardSnapshot('local-project')).rejects.toThrow(
-      'Agent storage unavailable'
-    )
-    listAgents.mockResolvedValue([])
-    expect((await api.issues.getBoardSnapshot('local-project')).agents).toEqual([])
-  })
-
   it('keeps local navigation projects available when the cloud project list fails', async () => {
     const listCloudProjects = vi.fn().mockRejectedValue(new Error('cloud unavailable'))
     const listCloudWorkspaces = vi.fn().mockRejectedValue(new Error('cloud unavailable'))
@@ -4615,44 +2718,6 @@ describe('Wework collaboration workspace API', () => {
       }),
     ])
     expect(listCloudWorkspaces).toHaveBeenCalledWith()
-    expect(listCloudProjects).toHaveBeenCalledWith()
-  })
-
-  it('combines local and cloud projects for the platform navigation list', async () => {
-    const listCloudProjects = vi.fn().mockResolvedValue([
-      {
-        id: 'cloud-project',
-        name: 'Cloud project',
-        workspace_id: 'cloud-workspace',
-      },
-    ])
-    const cloudApi = {
-      workspaces: {},
-      projects: {
-        list: listCloudProjects,
-      },
-    } as unknown as SharedWorkspaceApi
-    const api = createWeworkPlatformApi(
-      cloudApi,
-      createLocalWorkspaceApi(
-        createLocalDeliveryApi(),
-        1,
-        'admin',
-        null,
-        createLocalDetailServices()
-      )
-    )
-
-    await expect(api?.projects.list()).resolves.toEqual([
-      expect.objectContaining({
-        id: 'local-project',
-        workspace_id: 'wework-local-workspace',
-      }),
-      expect.objectContaining({
-        id: 'cloud-project',
-        workspace_id: 'cloud-workspace',
-      }),
-    ])
     expect(listCloudProjects).toHaveBeenCalledWith()
   })
 

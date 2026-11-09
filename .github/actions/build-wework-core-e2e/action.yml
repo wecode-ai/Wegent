@@ -16,6 +16,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Restore published Electron and Codex downloads
+      shell: bash
+      run: .github/scripts/restore-ci-downloads.sh
+
     - name: Set up Node workspace
       uses: ./.github/actions/setup-node-workspace
       with:
@@ -50,28 +54,22 @@ runs:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
-        restore_runtime() (
-          image="$1" source_path="$2" artifact_name="$3" binary="$4"
-          destination=".ci-artifacts/$binary"
+        restore_runtime() {
+          local component="$1" artifact="$2" binary="$3" image="$4" image_path="$5"
           if [[ "$RUNTIME_ARTIFACTS" == "true" ]]; then
-            artifact_directory="$(mktemp -d ".ci-artifacts/$binary-download.XXXXXX")"
-            trap 'rm -rf "$artifact_directory"' EXIT
             ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml \
               ACTIONS_ARTIFACT_HEAD_SHA="$RUNTIME_HEAD_SHA" \
               ACTIONS_ARTIFACT_WAIT_SECONDS=1800 \
-              .github/scripts/download-actions-artifact.sh \
-                "$artifact_name" "$artifact_directory"
-            test -f "$artifact_directory/$binary"
-            chmod 0755 "$artifact_directory/$binary"
-            mv "$artifact_directory/$binary" "$destination"
+              .github/scripts/restore-actions-runtime.sh \
+                "$artifact" "$component" "$binary" "$image" ".ci-artifacts/$binary"
           else
             .github/scripts/restore-oci-runtime-binary.sh \
-              "$image" "$source_path" "$destination"
+              "$image" "$image_path" ".ci-artifacts/$binary"
           fi
-        )
-        restore_runtime "$EXECUTOR_IMAGE" /app/executor executor-e2e-binary wegent-executor &
+        }
+        restore_runtime executor executor-e2e-binary wegent-executor "$EXECUTOR_IMAGE" /app/executor &
         executor_pid=$!
-        restore_runtime "$BACKEND_RS_IMAGE" /app/wegent-backend-rs backend-rs-e2e-runtime wegent-backend-rs &
+        restore_runtime backend-rs backend-rs-e2e-runtime wegent-backend-rs "$BACKEND_RS_IMAGE" /app/wegent-backend-rs &
         backend_pid=$!
 
         status=0
@@ -82,6 +80,7 @@ runs:
           oras logout ghcr.io
         fi
         unset GITHUB_TOKEN
+        printf '[wework-build] phase=package-start\n'
         pnpm --filter wework ai:verify:electron:build || status=$?
         if [[ "$RUNTIME_ARTIFACTS" != "true" ]]; then
           if ! wait "$executor_pid"; then status=1; fi

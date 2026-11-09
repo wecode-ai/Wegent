@@ -18,7 +18,7 @@ use crate::task_creation::{
     self, TaskCrdInput, WorkspaceRepository, build_task_crd, build_workspace_payload, task_name,
 };
 use crate::task_store::{
-    CreateSubtasksRequest, CreateTaskShellRequest, NewSubtaskRow, TaskStore, WorkspacePayload,
+    CreateSubtasksRequest, CreateTaskShellRequest, TaskStore, WorkspacePayload,
 };
 
 use super::continuation;
@@ -87,88 +87,9 @@ pub struct SetupChatSessionInput<'a> {
     pub completed_at: &'a str,
 }
 
-/// The next subtask message id and the parent it replies to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MessageIds {
-    pub next_message_id: i64,
-    pub parent_id: i64,
-}
-
-/// `task_fork_history_resolver.get_next_message_id` for an empty/continued
-/// task: the next message id after `existing_max` and the parent message id.
-pub fn next_message_ids(existing_max: Option<i64>) -> MessageIds {
-    let next_message_id = existing_max.map_or(1, |max| max + 1);
-    let parent_id = if next_message_id > 1 {
-        next_message_id - 1
-    } else {
-        0
-    };
-    MessageIds {
-        next_message_id,
-        parent_id,
-    }
-}
-
-/// The paired user/assistant subtask rows (`create_user_and_assistant_subtasks`
-/// values) for `ids`.
-pub fn subtask_rows<'a>(
-    user_id: i64,
-    task_id: i64,
-    team_id: i64,
-    bot_ids: &'a str,
-    input_text: &'a str,
-    completed_at: &'a str,
-    ids: MessageIds,
-) -> (NewSubtaskRow<'a>, NewSubtaskRow<'a>) {
-    let user_subtask = NewSubtaskRow {
-        id: 0,
-        user_id,
-        task_id,
-        team_id,
-        title: "User message",
-        bot_ids,
-        role: "USER",
-        executor_namespace: "",
-        executor_name: "",
-        executor_deleted_at: 0,
-        prompt: input_text,
-        message_id: ids.next_message_id,
-        parent_id: ids.parent_id,
-        status: "COMPLETED",
-        progress: 100,
-        // `build_user_subtask_result` with no video/image/source config.
-        result: "null",
-        error_message: "",
-        completed_at,
-        sender_type: "USER",
-        sender_user_id: user_id,
-        reply_to_subtask_id: 0,
-    };
-    let assistant_subtask = NewSubtaskRow {
-        id: 0,
-        user_id,
-        task_id,
-        team_id,
-        title: "Assistant response",
-        bot_ids,
-        role: "ASSISTANT",
-        executor_namespace: "",
-        executor_name: "",
-        executor_deleted_at: 0,
-        prompt: "",
-        message_id: ids.next_message_id + 1,
-        parent_id: ids.next_message_id,
-        status: "PENDING",
-        progress: 0,
-        result: "null",
-        error_message: "",
-        completed_at,
-        sender_type: "TEAM",
-        sender_user_id: 0,
-        reply_to_subtask_id: 0,
-    };
-    (user_subtask, assistant_subtask)
-}
+#[cfg(test)]
+use wegent_task_store::message_pair::MessageIds;
+use wegent_task_store::message_pair::{next_message_ids, subtask_rows};
 
 /// `_merge_project_workspace`'s project selector: the Task's physical
 /// `project_id` wins; otherwise `metadata.labels.projectId` counts only when
@@ -196,9 +117,13 @@ pub(crate) fn resumed_project_id(column: Option<i64>, task_json: &serde_json::Va
 
 /// `setup_chat_session`: create the Task + Workspace, rewrite the Task CRD, and
 /// insert the paired subtasks through the task store.
+///
+/// The request transaction is passed concretely because the Source's two
+/// `begin_nested()` blocks become nested `with_transaction` scopes on it;
+/// `brz-mysql`'s `ai-strict` owns all transaction control statements.
 pub async fn setup_chat_session(
     store: &dyn TaskStore,
-    sql: &mut dyn crate::request_sql::RequestSql,
+    transaction: &mut brz_mysql::MysqlTransactionService,
     input: &SetupChatSessionInput<'_>,
 ) -> Result<ChatSessionSetup, FastApiError> {
     let pending_name = task_creation::pending_task_name();
@@ -231,7 +156,7 @@ pub async fn setup_chat_session(
         // (`lifecycle.py:287`) re-reads the resumed Task on the request
         // session; its row is what the pending CRD rewrite flushes.
         let row = store
-            .get_active_task_owned_on(sql, continuation.task_id, input.owner_user_id)
+            .get_active_task_owned_on(&mut *transaction, continuation.task_id, input.owner_user_id)
             .await
             .map_err(internal)?
             .ok_or_else(|| {
@@ -260,11 +185,10 @@ pub async fn setup_chat_session(
         // caller so the builder sees the resumed Task, not a fresh CRD.
         return append_subtasks(
             store,
-            sql,
+            transaction,
             input,
             continuation.task_id,
             0,
-            "sa_savepoint_1",
             None,
             Some(&payload),
             task_json,
@@ -275,7 +199,7 @@ pub async fn setup_chat_session(
     }
 
     let (task_id, workspace_id) = store
-        .create_task_shell_with_workspace(sql, &shell)
+        .create_task_shell_with_workspace(transaction, &shell)
         .await
         .map_err(internal)?;
 
@@ -292,11 +216,10 @@ pub async fn setup_chat_session(
 
     append_subtasks(
         store,
-        sql,
+        transaction,
         input,
         task_id,
         workspace_id,
-        "sa_savepoint_2",
         rename,
         None,
         task_json,
@@ -312,11 +235,10 @@ pub async fn setup_chat_session(
 #[allow(clippy::too_many_arguments)]
 async fn append_subtasks(
     store: &dyn TaskStore,
-    sql: &mut dyn crate::request_sql::RequestSql,
+    transaction: &mut brz_mysql::MysqlTransactionService,
     input: &SetupChatSessionInput<'_>,
     task_id: i64,
     workspace_id: i64,
-    savepoint: &str,
     rename: Option<(String, String)>,
     json_update: Option<&str>,
     task_json: serde_json::Value,
@@ -328,7 +250,7 @@ async fn append_subtasks(
     // task's subtasks in `message_id, created_at` order before the next
     // message id is computed. A new task has none.
     let existing_subtasks = store
-        .list_subtasks_by_task_ordered_on(sql, task_id, input.user_id)
+        .list_subtasks_by_task_ordered_on(&mut *transaction, task_id, input.user_id)
         .await
         .map_err(internal)?
         .rows;
@@ -337,11 +259,11 @@ async fn append_subtasks(
     // before it breaks on `fork is None`. It is a distinct business read from
     // the qs23 owner guard even though the SQL shape is the same.
     let _lineage_task = store
-        .lineage_task_on(sql, task_id, input.user_id)
+        .lineage_task_on(&mut *transaction, task_id, input.user_id)
         .await
         .map_err(internal)?;
     let existing_max = store
-        .max_subtask_message_id(sql, task_id)
+        .max_subtask_message_id(&mut *transaction, task_id)
         .await
         .map_err(internal)?;
     let ids = next_message_ids(existing_max);
@@ -349,7 +271,7 @@ async fn append_subtasks(
     // `create_assistant_subtask` resolves the executor reference in the same
     // transaction as the insert (qs27/28).
     let executor = store
-        .resolve_task_executor_on(sql, task_id)
+        .resolve_task_executor_on(&mut *transaction, task_id)
         .await
         .map_err(internal)?;
 
@@ -358,7 +280,7 @@ async fn append_subtasks(
     if let Some((name, payload)) = rename {
         store
             .rename_and_update_task_json(
-                sql,
+                &mut *transaction,
                 task_id,
                 input.user_id,
                 &name,
@@ -374,7 +296,13 @@ async fn append_subtasks(
     // flushes the pending CRD when `begin_nested()` starts.
     if let Some(payload) = json_update {
         store
-            .update_task_json_on(sql, task_id, input.user_id, payload, input.updated_at)
+            .update_task_json_on(
+                &mut *transaction,
+                task_id,
+                input.user_id,
+                payload,
+                input.updated_at,
+            )
             .await
             .map_err(internal)?;
     }
@@ -394,8 +322,7 @@ async fn append_subtasks(
     // assistant subtask's executor fields from the inserted row.
     let inserted = store
         .create_subtasks_with_executor(
-            sql,
-            savepoint,
+            transaction,
             &CreateSubtasksRequest {
                 user_subtask,
                 assistant_subtask,

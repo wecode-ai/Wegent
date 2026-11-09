@@ -12,6 +12,7 @@ import {
   inCollaborationSidebar,
   reloadMainWindow,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
@@ -130,12 +131,18 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     await control.command('click', sortSelector(lane))
   }
 
+  async function selectBoard(control, timeoutMs) {
+    const tab = scoped('[data-testid="collaboration-tab-board"]')
+    const picker = scoped('[data-testid="collaboration-project-view-select"]')
+    await control.command('waitFor', `${tab}, ${picker}`, {
+      timeoutMs,
+    })
+    await selectCollaborationProjectView(control, CONTENT, 'board')
+  }
+
   async function openBoard(control) {
     await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
-    await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
-      timeoutMs: workbenchReadyTimeoutMs,
-    })
-    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    await selectBoard(control, workbenchReadyTimeoutMs)
     await control.command('waitFor', scoped('[data-testid="board-view-picker"]'), {
       timeoutMs: uiTimeoutMs,
     })
@@ -241,7 +248,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         `${laneSelector(column)} [data-testid="cloud-todo-card-${issue.id}"]`,
         { timeoutMs: uiTimeoutMs }
       )
-    await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'manage')
     await control.command('click', scoped('[data-testid="collaboration-project-settings-project"]'))
     await control.command('click', scoped('[data-testid="cloud-project-manage-tags-toggle"]'))
     await control.command('waitFor', scoped('[data-testid="cloud-project-tag-beta"]'))
@@ -284,7 +291,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     await selectCollaborationDomain(control, CONTENT, 'local')
     await createLocalCollaborationProject(control, CONTENT, name)
     await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    await selectBoard(control, uiTimeoutMs)
     const first = await createCollaborationBoardIssue(
       control,
       'Older local card',
@@ -314,10 +321,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         { text: name, value: 'local-sorting-project', timeoutMs: uiTimeoutMs }
       )
       await control.command('click', '[data-e2e-anchor-id="local-sorting-project"]')
-      await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+      await selectBoard(control, uiTimeoutMs)
     }
     await expectRules(control, 'pending', 'priority-desc')
     await editRules(control, 'pending', ['manual'])

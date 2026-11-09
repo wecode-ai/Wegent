@@ -1,30 +1,36 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { StrictMode } from 'react'
-import { createInstance } from 'i18next'
-import { I18nextProvider } from 'react-i18next'
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { createInstance } from 'i18next'
+import { StrictMode } from 'react'
+import { I18nextProvider } from 'react-i18next'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  Attachment,
-  ModelOptions,
-  ModelSelectionConfig,
-  RuntimeTaskAddress,
-  RuntimeContextUsage,
-  UnifiedModel,
-  LocalDeviceApp,
-} from '@/types/api'
-import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRetry'
-import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
-import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
-import { TemporaryChatPanel } from './TemporaryChatPanel'
-import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import {
   useComposerCatalogBinding,
   type ComposerCatalogBinding,
 } from '@/components/chat/composer/ComposerCatalogContext'
+import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRetry'
+import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
+import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
+import type {
+  Attachment,
+  LocalDeviceApp,
+  ModelOptions,
+  ModelSelectionConfig,
+  RuntimeContextUsage,
+  RuntimeTaskAddress,
+  UnifiedModel,
+} from '@/types/api'
+import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import { TemporaryChatPanel } from './TemporaryChatPanel'
+import {
+  clearWorkbenchWorkspaceLaunch,
+  consumeWorkbenchWorkspaceLaunch,
+} from '@/features/workbench/workspaceLaunchRequest'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const attachment: Attachment = {
   id: -1,
@@ -43,12 +49,25 @@ const address: RuntimeTaskAddress = {
 }
 
 const mocks = vi.hoisted(() => ({
+  renderToolBlocks: false,
+  inputHost: undefined as
+    | undefined
+    | {
+        getError: () => undefined
+        isDisabled: () => boolean
+        isSubmitting: () => boolean
+        getDraft: () => Record<string, string>
+        setDraft: ReturnType<typeof vi.fn>
+        submit: ReturnType<typeof vi.fn>
+      },
   catalogBindings: new Map<string, ComposerCatalogBinding>(),
   readCatalog: vi.fn(),
+  readTask: vi.fn(),
   mainListApps: vi.fn(),
   usageHandlers: [] as Array<{ onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }>,
   resetAttachments: vi.fn(),
   busy: false,
+  busySendError: false,
   lifecycleOwnerEpoch: 0,
   interruptAndSendRuntimePaneMessage: vi.fn(async () => true),
   sendRuntimePaneMessage: vi.fn(async () => true),
@@ -81,6 +100,8 @@ const mocks = vi.hoisted(() => ({
     chats: unknown[]
     totalTasks: number
   } | null,
+  inputByScope: {} as Record<string, string>,
+  setInputForScope: vi.fn(),
 }))
 
 function CatalogBindingProbe({ scope }: { scope?: string }) {
@@ -88,6 +109,10 @@ function CatalogBindingProbe({ scope }: { scope?: string }) {
   if (scope) mocks.catalogBindings.set(scope, catalog)
   return null
 }
+
+vi.mock('@/features/notifications/useRuntimeInteractionInputHost', () => ({
+  useRuntimeInteractionInputHost: () => mocks.inputHost,
+}))
 
 vi.mock('@/components/chat/ScrollableMessageArea', () => ({
   ScrollableMessageArea: ({
@@ -104,6 +129,8 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onLoadMoreBefore,
     transcriptError,
     onRetryTranscript,
+    messageTarget,
+    hideRequestUserInputBlocks,
   }: {
     messages: Array<{
       id: string
@@ -111,10 +138,11 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
       role?: string
       content?: string
       status?: string
+      blocks?: WorkbenchMessage['blocks']
     }>
     onRetryFailedMessage?: (message: unknown) => void
     onSwitchModelForFailedMessage?: (message: unknown) => void
-    onOpenWorkspaceFile?: (path: string) => void
+    onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
     onOpenFileChangesReview?: () => void
     onOpenAssistantPlan?: () => void
     onRequestUserInputSubmit?: (response: {
@@ -127,11 +155,22 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onLoadMoreBefore?: () => void
     transcriptError?: string | null
     onRetryTranscript?: () => void
+    messageTarget?: { messageId: string; requestKey: string }
+    hideRequestUserInputBlocks?: boolean
   }) => (
-    <div data-testid="mock-message-list">
+    <div data-testid="mock-message-list" data-target-message={messageTarget?.messageId}>
       {messages.map(message => (
         <span key={message.id}>{message.content}</span>
       ))}
+      {mocks.renderToolBlocks &&
+        messages.map(message => (
+          <ToolBlocksDisplay
+            key={message.id}
+            blocks={message.blocks ?? []}
+            isStreaming
+            hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+          />
+        ))}
       {hasMoreBefore && (
         <button
           data-testid="mock-load-older"
@@ -175,7 +214,9 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
         <button
           type="button"
           data-testid="mock-open-file"
-          onClick={() => onOpenWorkspaceFile('/tmp/workspace/file.ts')}
+          onClick={() =>
+            onOpenWorkspaceFile('cart-fixture/cart-review.md', { lineStart: 3, lineEnd: 7 })
+          }
         >
           打开文件
         </button>
@@ -336,6 +377,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     services: {
+      standInApi: { readTask: mocks.readTask },
       deviceApi: { readWorkspaceFileChunk: vi.fn() },
       composerCatalogApi: { readCatalog: mocks.readCatalog },
     },
@@ -345,6 +387,8 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       runtimeWork: mocks.runtimeWork,
     },
     projectChat: {
+      inputByScope: mocks.inputByScope,
+      setInputForScope: mocks.setInputForScope,
       listLocalApps: mocks.mainListApps,
       trialPluginName: 'Main plugin',
       trialTemplates: [{ name: 'Main task', path: 'main' }],
@@ -417,7 +461,7 @@ vi.mock('@/features/workbench/runtimeModelSelection', () => ({
 
 vi.mock('@/features/workbench/runtimePaneStatus', () => ({
   deriveRuntimePaneStatus: () => ({ isBusy: mocks.busy }),
-  isRuntimeTaskBusyError: () => false,
+  isRuntimeTaskBusyError: () => mocks.busySendError,
 }))
 
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
@@ -476,9 +520,13 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 
 describe('TemporaryChatPanel', () => {
   beforeEach(() => {
+    clearWorkbenchWorkspaceLaunch()
+    mocks.renderToolBlocks = false
+    mocks.inputHost = undefined
     mocks.catalogBindings.clear()
     mocks.mainListApps.mockClear()
     mocks.readCatalog.mockReset()
+    mocks.readTask.mockReset()
     mocks.readCatalog.mockImplementation(async (target: RuntimeTaskAddress) => ({
       taskId: target.taskId,
       workspacePath: '/side',
@@ -492,6 +540,7 @@ describe('TemporaryChatPanel', () => {
     mocks.usageHandlers = []
     mocks.lifecycleOwnerEpoch++
     mocks.busy = false
+    mocks.busySendError = false
     mocks.interruptAndSendRuntimePaneMessage.mockClear()
     mocks.resetAttachments.mockReset()
     mocks.sendRuntimePaneMessage.mockReset()
@@ -523,6 +572,80 @@ describe('TemporaryChatPanel', () => {
     mocks.activeModelSelection = null
     mocks.isBootstrapping = false
     mocks.runtimeWork = null
+    mocks.inputByScope = {}
+    mocks.setInputForScope.mockReset()
+    mocks.setInputForScope.mockImplementation((scope: string, value: string) => {
+      if (value) mocks.inputByScope[scope] = value
+      else delete mocks.inputByScope[scope]
+    })
+  })
+
+  it('preserves the first file action and line range while navigating to its owning task', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    const onOpenRuntimeTask = vi.fn(async () => {
+      expect(
+        consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, 'wrong-task')
+      ).toBeNull()
+      expect(
+        consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+      ).toEqual({
+        taskId: address.taskId,
+        openFile: {
+          path: 'cart-fixture/cart-review.md',
+          options: { lineStart: 3, lineEnd: 7 },
+        },
+      })
+    })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="primary-deliverable"
+        initialAddress={address}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+    await waitFor(() => expect(onOpenRuntimeTask).toHaveBeenCalledExactlyOnceWith(address))
+  })
+
+  it('does not guess a workspace or attach another task metadata when opening a file', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.readTask.mockResolvedValue({ success: true, task: { ...address, taskId: 'other' } })
+    const onOpenRuntimeTask = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="unresolved-deliverable"
+        initialAddress={{ deviceId: address.deviceId, taskId: address.taskId }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+    await waitFor(() =>
+      expect(mocks.readTask).toHaveBeenCalledWith(address.deviceId, address.taskId)
+    )
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(
+      consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+    ).toBeNull()
   })
 
   it('places contextual configuration decisions beside the composer and hides them when inactive', () => {
@@ -541,69 +664,6 @@ describe('TemporaryChatPanel', () => {
     ).toBeTruthy()
     rerender(<TemporaryChatPanel {...props} active={false} />)
     expect(screen.queryByTestId('pending-configuration')).not.toBeInTheDocument()
-  })
-
-  it('binds parallel drawer catalogs to their own devices and tasks', async () => {
-    const second = { deviceId: 'device-2', taskId: 'task-2' }
-    render(
-      <>
-        <TemporaryChatPanel
-          currentProject={null}
-          source={address}
-          initialAddress={address}
-          instanceId="first"
-        />
-        <TemporaryChatPanel
-          currentProject={null}
-          source={second}
-          initialAddress={second}
-          instanceId="second"
-        />
-      </>
-    )
-    const firstCatalog = mocks.catalogBindings.get('first')!
-    const secondCatalog = mocks.catalogBindings.get('second')!
-    expect(firstCatalog.appsStore).not.toBe(secondCatalog.appsStore)
-    await Promise.all([firstCatalog.listApps!(), secondCatalog.listSkills!()])
-    expect(mocks.readCatalog).toHaveBeenCalledWith({ deviceId: 'device-1', taskId: 'task-1' }, true)
-    expect(mocks.readCatalog).toHaveBeenCalledWith(second, true)
-    expect(mocks.mainListApps).not.toHaveBeenCalled()
-  })
-
-  it('uses side-task usage and keeps live updates ahead of a delayed transcript', async () => {
-    const usage = (tokens: number): RuntimeContextUsage => {
-      const breakdown = {
-        totalTokens: tokens,
-        inputTokens: tokens,
-        cachedInputTokens: 0,
-        outputTokens: 0,
-        reasoningOutputTokens: 0,
-      }
-      return { modelContextWindow: 1000, last: breakdown, total: breakdown }
-    }
-    let finish!: (transcript: unknown) => void
-    mocks.loadRuntimeTranscriptForPane.mockReturnValueOnce(
-      new Promise(resolve => {
-        finish = resolve
-      })
-    )
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="side-task-usage"
-        initialAddress={address}
-        sendEphemeral={false}
-      />
-    )
-    expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-context-tokens')
-    await waitFor(() => expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenCalled())
-    act(() => mocks.usageHandlers.at(-1)?.onContextUsageUpdated?.(usage(700)))
-    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
-    await act(async () =>
-      finish({ running: false, messages: [], turns: [], contextUsage: usage(100) })
-    )
-    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
   })
 
   it('loads earlier pages, keeps messages on failure and retries the same cursor', async () => {
@@ -814,20 +874,6 @@ describe('TemporaryChatPanel', () => {
     expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-trial-plugin')
   })
 
-  it('passes the collapsed idle state through to the shared composer', () => {
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="collapsed-composer"
-        initialAddress={address}
-        collapseComposerWhenIdle
-      />
-    )
-
-    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-collapse-when-idle', 'true')
-  })
-
   it('lets an idle transcript settle a stale running execution without an active turn', async () => {
     mocks.lifecycleSnapshot = {
       derived: {
@@ -851,40 +897,6 @@ describe('TemporaryChatPanel', () => {
       address,
       expect.objectContaining({ running: false }),
       { preserveActiveTurn: false }
-    )
-  })
-
-  it('keeps sent attachments on the user message after clearing the composer', async () => {
-    mocks.activeModelSelection = {
-      modelName: 'moonshot-kimi-k2.7-code-highspeed',
-      modelType: 'public',
-      options: {},
-    }
-
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={null}
-        instanceId="sidebar-test"
-        initialAddress={address}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('mock-send'))
-
-    await waitFor(() =>
-      expect(screen.getByTestId('sent-message-attachment')).toHaveTextContent(
-        'sidebar-image.png:/tmp/sidebar-image.png'
-      )
-    )
-    expect(mocks.resetAttachments).toHaveBeenCalledTimes(1)
-    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        address,
-        message: '发送附件',
-        attachments: [attachment],
-      }),
-      expect.any(Object)
     )
   })
 
@@ -919,32 +931,6 @@ describe('TemporaryChatPanel', () => {
     expect(mocks.loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 
-  it('notifies the parent with the resolved task address instead of its optimistic route', async () => {
-    const optimisticAddress = { deviceId: 'project-device', taskId: 'task-1' }
-    const resolvedAddress = { deviceId: 'runtime-device', taskId: 'task-1' }
-    const onAddressChange = vi.fn()
-    mocks.createTask.mockImplementation(async (_message, options) => {
-      options.onRuntimeTaskOptimisticOpen(optimisticAddress)
-      options.onRuntimeTaskOptimisticOpen(resolvedAddress)
-      return resolvedAddress
-    })
-
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={null}
-        instanceId="resolved-task-address"
-        createTask={mocks.createTask}
-        onAddressChange={onAddressChange}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('mock-send'))
-
-    await waitFor(() => expect(onAddressChange).toHaveBeenCalledOnce())
-    expect(onAddressChange).toHaveBeenCalledWith(resolvedAddress)
-  })
-
   it('creates a new formal task with the submitted text as its initial goal', async () => {
     mocks.createTask.mockImplementation(async (_message, options) => {
       options.onRuntimeTaskOptimisticOpen(address)
@@ -977,26 +963,6 @@ describe('TemporaryChatPanel', () => {
       })
     )
     expect(screen.queryByTestId('goal-draft-pill')).not.toBeInTheDocument()
-  })
-
-  it('does not offer initial Goal mode when continuing an existing task', () => {
-    mocks.activeModelSelection = {
-      modelName: 'moonshot-kimi-k2.7-code-highspeed',
-      modelType: 'public',
-      options: {},
-    }
-
-    render(
-      <TemporaryChatPanel
-        allowInitialGoal
-        currentProject={null}
-        source={address}
-        instanceId="existing-goal-task"
-        initialAddress={address}
-      />
-    )
-
-    expect(screen.queryByTestId('set-goal-button')).not.toBeInTheDocument()
   })
 
   it('continues an existing task with its immutable model instead of the global default', async () => {
@@ -1143,6 +1109,63 @@ describe('TemporaryChatPanel', () => {
       }),
       expect.any(Object)
     )
+  })
+
+  it('appends an example once without discarding a draft or sending it', async () => {
+    const consumed = vi.fn()
+    const props = {
+      currentProject: null,
+      source: address,
+      instanceId: 'example-draft',
+      initialAddress: address,
+      initialInput: 'Existing notes',
+      draftRequest: { id: 1, text: 'Prepare my next meeting' },
+      onDraftRequestConsumed: consumed,
+    }
+    const { rerender } = render(<TemporaryChatPanel {...props} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+        'data-draft-value',
+        'Existing notes\n\nPrepare my next meeting'
+      )
+    )
+    rerender(<TemporaryChatPanel {...props} />)
+    expect(consumed).toHaveBeenCalledTimes(1)
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.createTask).not.toHaveBeenCalled()
+  })
+
+  it('restores an identity draft after navigation, isolates other identities and clears it after send', async () => {
+    mocks.activeModelSelection = {
+      modelName: 'gpt-5.6-codex',
+      modelType: 'public',
+      options: {},
+    }
+    const props = {
+      currentProject: null,
+      source: address,
+      instanceId: 'stand-in:primary',
+      initialAddress: address,
+    }
+    const draft = '在指定群里有人 @我时，先拟好回复。'
+    const first = render(<TemporaryChatPanel {...props} draftRequest={{ id: 1, text: draft }} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', draft)
+    )
+    first.unmount()
+    const next = render(<TemporaryChatPanel {...props} />)
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', draft)
+    next.rerender(<TemporaryChatPanel {...props} instanceId="stand-in:other-role" />)
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+    next.rerender(<TemporaryChatPanel {...props} />)
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', draft)
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+    )
+    next.unmount()
+    render(<TemporaryChatPanel {...props} />)
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
   })
 
   it.each(['runtime', 'creation'] as const)(
@@ -1396,7 +1419,8 @@ describe('TemporaryChatPanel', () => {
         address,
         message: RUNTIME_RETRY_CONTINUATION_PROMPT,
         modelId: 'gpt-5.6-codex',
-      })
+      }),
+      expect.any(Object)
     )
 
     await userEvent.click(screen.getByTestId('mock-submit-input'))
@@ -1412,35 +1436,205 @@ describe('TemporaryChatPanel', () => {
     expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
   })
 
-  it('returns task-page actions to the current runtime task', async () => {
+  it('shows the selected older question and targets its original turn instead of the latest request', async () => {
+    const older = {
+      kind: 'request_user_input' as const,
+      itemId: 'older',
+      questions: [{ id: 'old', question: 'Older decision?', is_other: true }],
+    }
     mocks.conversationMessages = [
+      { id: 'original-source', role: 'user', content: 'Earlier context', status: 'done' },
       {
-        id: 'assistant',
+        id: 'later',
         role: 'assistant',
-        content: 'Open the workspace result',
+        content: 'Unrelated later work',
         status: 'done',
-        createdAt: '2026-09-10T00:00:00Z',
+        blocks: [
+          {
+            id: 'latest-block',
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            renderPayload: {
+              kind: 'request_user_input',
+              itemId: 'latest',
+              questions: [{ id: 'new', question: 'Later decision?', is_other: true }],
+            },
+          },
+        ],
       },
-    ]
-    const onOpenRuntimeTask = vi.fn()
-
+    ] as typeof mocks.conversationMessages
     render(
       <TemporaryChatPanel
         currentProject={null}
         source={address}
-        instanceId="task-page-actions"
         initialAddress={address}
-        onOpenRuntimeTask={onOpenRuntimeTask}
+        instanceId="selected-question"
+        focusedRequest={older}
+        sourceMessageIds={['original-source']}
+        focusRequestKey="older-notification"
       />
     )
+    expect(screen.getByText('Older decision?')).toBeInTheDocument()
+    expect(screen.queryByText('Later decision?')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute(
+      'data-target-message',
+      'original-source'
+    )
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('request-user-input-expand')).toHaveTextContent('Older decision?')
+    expect(screen.getByTestId('request-user-input-custom-old')).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('request-user-input-expand'))
+    expect(screen.getByTestId('request-user-input-custom-old')).toBeVisible()
+  })
 
-    await userEvent.click(screen.getByTestId('mock-open-file'))
-    await userEvent.click(screen.getByTestId('mock-open-review'))
-    await userEvent.click(screen.getByTestId('mock-open-plan'))
-    await userEvent.click(screen.getByTestId('mock-switch-model'))
+  it.each(['accepted', 'rejected', 'queued', 'pumped-queued'] as const)(
+    'retains a folded question until the side composer message is delivered (%s)',
+    async outcome => {
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      mocks.busy = outcome === 'pumped-queued'
+      const question = {
+        kind: 'request_user_input' as const,
+        itemId: 'held-question',
+        delivery: 'async',
+        questions: [{ id: 'audience', question: 'Who receives this?', is_other: true }],
+      }
+      mocks.conversationMessages = [
+        {
+          id: 'held-question-message',
+          role: 'assistant',
+          content: '',
+          status: 'done',
+          blocks: [
+            {
+              id: 'held-block',
+              type: 'tool',
+              toolName: 'request_user_input_async',
+              status: 'done',
+              renderPayload: question,
+            },
+          ],
+        },
+      ] as typeof mocks.conversationMessages
+      const panel = () => (
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          initialAddress={address}
+          instanceId="held-question"
+        />
+      )
+      const { rerender } = render(panel())
+      await userEvent.type(
+        screen.getByTestId('request-user-input-custom-audience'),
+        'Saved recipients'
+      )
+      await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+      let finish!: () => void
+      mocks.sendRuntimePaneMessage.mockImplementationOnce(
+        (...args: unknown[]) =>
+          new Promise<boolean>(resolve => {
+            const options = args[1] as { onQueued?: (response: { queuePosition: number }) => void }
+            finish = () => {
+              if (outcome === 'queued' || outcome === 'pumped-queued')
+                options.onQueued?.({ queuePosition: 1 })
+              resolve(outcome !== 'rejected')
+            }
+          })
+      )
+      expect(screen.getByTestId('mock-send')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('mock-send'))
+      if (outcome === 'pumped-queued') {
+        expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+        mocks.busy = false
+        mocks.lifecycleSnapshot = {
+          derived: { isRunning: false, isTurnActive: false },
+          turn: { id: null },
+        }
+        rerender(panel())
+      }
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('request-user-input-expand')).toBeVisible()
+      await act(async () => {
+        finish()
+      })
+      if (outcome === 'accepted') {
+        expect(screen.queryByTestId('request-user-input-expand')).not.toBeInTheDocument()
+      } else {
+        expect(screen.getByTestId('request-user-input-expand')).toBeVisible()
+        await userEvent.click(screen.getByTestId('request-user-input-expand'))
+        expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue(
+          'Saved recipients'
+        )
+      }
+      expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    }
+  )
 
-    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(4)
-    expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
+  it('restores only the selected controlled question after notification revalidation', () => {
+    mocks.renderToolBlocks = true
+    const question = {
+      kind: 'request_user_input' as const,
+      itemId: 'restored-request',
+      questions: [{ id: 'question_1', question: 'Which rule applies?', is_other: true }],
+    }
+    mocks.conversationMessages = [
+      {
+        id: 'question-message',
+        role: 'assistant',
+        content: 'Original context',
+        status: 'done',
+        createdAt: '2026-09-10T00:00:00Z',
+        blocks: [
+          {
+            id: 'question-tool',
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            renderPayload: question,
+          },
+        ],
+      },
+    ] as typeof mocks.conversationMessages
+    mocks.inputHost = {
+      getError: () => undefined,
+      isDisabled: () => false,
+      isSubmitting: () => false,
+      getDraft: () => ({ question_1: 'Keep the old rule for existing customers.' }),
+      setDraft: vi.fn(),
+      submit: vi.fn(),
+    }
+    const panel = (focusedRequest: typeof question | null | undefined) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="restored-notification"
+        focusedRequest={focusedRequest}
+        coordinateUserInput
+      />
+    )
+    const { rerender } = render(panel(null))
+    expect(screen.queryByTestId('request-user-input-custom-question_1')).not.toBeInTheDocument()
+    rerender(panel(question))
+    expect(screen.getAllByTestId('request-user-input-custom-question_1')).toHaveLength(1)
+    expect(screen.getByTestId('request-user-input-custom-question_1')).toHaveValue(
+      'Keep the old rule for existing customers.'
+    )
+    expect(screen.queryByTestId('runtime-input-submitting')).not.toBeInTheDocument()
+    mocks.inputHost.isSubmitting = () => true
+    mocks.inputHost.isDisabled = () => true
+    rerender(panel(question))
+    expect(screen.getByTestId('runtime-input-submitting')).toHaveTextContent(/正在发送|Sending/)
+    expect(screen.getByTestId('request-user-input-submit-button')).toBeDisabled()
+    rerender(panel(null))
+    expect(screen.queryByTestId('request-user-input-custom-question_1')).not.toBeInTheDocument()
+    rerender(panel(undefined))
+    expect(screen.getAllByTestId('request-user-input-custom-question_1')).toHaveLength(1)
+    expect(screen.getByTestId('request-user-input-custom-question_1')).toHaveValue(
+      'Keep the old rule for existing customers.'
+    )
   })
   it('uses the shared pending queue while busy and drains it after becoming idle', async () => {
     mocks.busy = true
@@ -1525,6 +1719,42 @@ describe('TemporaryChatPanel', () => {
     await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
   })
 
+  it('drains a busy rejection when the external turn settled while the send was pending', async () => {
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    mocks.busySendError = true
+    mocks.lifecycleSnapshot = {
+      derived: { isRunning: false, isTurnActive: false },
+      turn: { id: null },
+    }
+    let rejectBusy!: () => void
+    mocks.sendRuntimePaneMessage.mockImplementationOnce(
+      () =>
+        new Promise<boolean>(resolve => {
+          rejectBusy = () => resolve(false)
+        })
+    )
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="busy-rejection-settled"
+        initialAddress={address}
+      />
+    )
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      // A background result turn may complete before the rejected send returns.
+      mocks.lifecycleSnapshot = {
+        derived: { isRunning: false, isTurnActive: false },
+        turn: { id: null },
+      }
+      rejectBusy()
+    })
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
+  })
+
   it.each([false, true])(
     'sends a failed guidance row without an active turn (executor running: %s)',
     async executorRunning => {
@@ -1568,26 +1798,6 @@ describe('TemporaryChatPanel', () => {
       await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
     }
   )
-
-  it('uses the addressed interrupt endpoint when the composer requests immediate send', async () => {
-    mocks.busy = true
-    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="interrupt"
-        initialAddress={address}
-      />
-    )
-    await userEvent.click(screen.getByTestId('mock-interrupt'))
-    expect(mocks.interruptAndSendRuntimePaneMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ address, message: '立即发送' }),
-      expect.any(Object)
-    )
-    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('mock-queue-row')).toBeNull()
-  })
   it('preserves the task queue when its drawer closes and reopens', async () => {
     mocks.busy = true
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }

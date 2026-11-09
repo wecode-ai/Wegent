@@ -5,6 +5,7 @@
 """Keep Rust-owned routes out of the Python public API router."""
 
 import tomllib
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -89,6 +90,83 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
 
 
 @pytest.mark.parametrize(
+    ("module", "names"),
+    [
+        ("deliveries", ("list_issue_assignments", "list_loop_item_tasks")),
+        ("internal.robot_queue", ("emit_runtime_rpc",)),
+        ("loop_item_executions", ("execution_statuses",)),
+        ("wework_transcripts", ("release_lease_endpoint",)),
+        ("groups", ("list_groups",)),
+        (
+            "adapter.attachments",
+            ("upload_attachment", "get_attachment", "download_attachment"),
+        ),
+        ("cloud_projects", ("list_cloud_project_members",)),
+        ("kind.skills", ("list_unified_skills", "UnifiedSkillResponse")),
+        ("connector_runtime", ("list_connector_tools",)),
+        (
+            "internal.workspace_archives",
+            ("restore_sandbox_workspace", "SandboxRestoreResponse"),
+        ),
+        ("projects", ("list_projects",)),
+        ("adapter.tasks", ("get_tasks",)),
+        ("workspaces", ("list_workspaces",)),
+    ],
+)
+def test_retired_handler_bodies_are_removed(
+    module: str, names: tuple[str, ...]
+) -> None:
+    endpoint = import_module(f"app.api.endpoints.{module}")
+    for name in names:
+        assert not hasattr(
+            endpoint, name
+        ), f"Retired Python handler {module}.{name} returned"
+
+
+def test_url_metadata_cleanup_preserves_shared_ssrf_validation() -> None:
+    from app.services import url_metadata
+
+    assert not (ROUTES_FILE.parents[2] / "backend/app/api/endpoints/utils.py").exists()
+    assert not hasattr(url_metadata, "fetch_url_metadata")
+    assert callable(url_metadata._validate_url_for_ssrf)
+
+
+def test_execution_callback_retains_shared_python_implementation() -> None:
+    from app.api.endpoints.internal import callback
+
+    assert ("POST", "/internal/callback") not in PYTHON_ROUTES
+    assert ("POST", "/api/internal/callback") in _rust_owned_routes()
+    assert callable(callback.handle_callback)
+    route = next(
+        route
+        for route in api_router.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/internal/callback/batch"
+        and "POST" in route.methods
+    )
+    assert route.endpoint is callback.handle_batch_callback
+    assert route.response_model is callback.CallbackResponse
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_subscription_mcp_retains_python_owner(
+    method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi import FastAPI
+
+    from app.core.config import settings
+    from app.mcp_server.server import register_mcp_apps
+
+    assert (method, "/api/mcp/subscription/sse") not in _rust_owned_routes()
+    monkeypatch.setattr(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", False)
+    app = FastAPI()
+    register_mcp_apps(app, "/api")
+    mount = next(route for route in app.routes if route.path == "/api/mcp/subscription")
+    transport = next(route for route in mount.app.routes if route.path == "/sse")
+    assert method in transport.methods
+
+
+@pytest.mark.parametrize(
     ("method", "path"),
     [
         ("POST", "/internal/callback"),
@@ -109,6 +187,21 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
         ("POST", "/v1/responses"),
         ("GET", "/connector-runtime/tools"),
         ("GET", "/sites/{siteid}/analytics"),
+        ("POST", "/internal/callback/batch"),
+        ("GET", "/internal/robot-queue/device-status"),
+        ("POST", "/runtime-work/llm-responses-proxy/chat/completions"),
+        ("POST", "/runtime-work/llm-responses-proxy/messages"),
+        ("POST", "/runtime-work/llm-responses-proxy/v1/messages"),
+        ("GET", "/attachments/{attachment_id}/preview"),
+        ("GET", "/attachments/{attachment_id}/playback"),
+        ("POST", "/attachments/{attachment_id}/download-token"),
+        ("POST", "/attachments/{attachment_id}/public-share"),
+        ("GET", "/attachments/download/shared"),
+        ("DELETE", "/attachments/{attachment_id}"),
+        ("POST", "/v1/attachments/upload"),
+        ("GET", "/v1/attachments/{attachment_id}/download"),
+        ("POST", "/connector-runtime/call"),
+        ("PUT", "/wework-transcripts/{transcript_id}/lease/{fencing_token}"),
     ],
 )
 def test_sibling_ownership_matches_active_route_table(method: str, path: str) -> None:

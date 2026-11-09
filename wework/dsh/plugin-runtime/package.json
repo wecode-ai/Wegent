@@ -25,7 +25,8 @@
     "connections.js",
     "connections.d.ts",
     "connection-dependencies.js",
-    "connection-tools.js"
+    "connection-tools.js",
+    "connection-schema.js"
   ],
   "dsh": {
     "bundle": {
@@ -36,6 +37,8 @@
     "@deepseek-ai/cordis": "~4.0.4"
   },
   "dependencies": {
-    "semver": "7.8.5"
+    "semver": "7.8.5",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
   }
 }
