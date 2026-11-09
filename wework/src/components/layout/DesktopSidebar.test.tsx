@@ -1104,6 +1104,21 @@ describe('DesktopSidebar', () => {
     expect(onOpenStandIn).toHaveBeenCalledTimes(2)
   })
 
+  test.each([0, 3, 105])(
+    'shows the stand-in unread count %i with a capped visible badge',
+    count => {
+      renderSidebar({ onOpenStandIn: vi.fn(), standInUnreadCount: count })
+      if (count === 0) {
+        expect(screen.queryByTestId('personal-stand-in-unread-count')).not.toBeInTheDocument()
+      } else {
+        const badge = screen.getByTestId('personal-stand-in-unread-count')
+        expect(badge).toHaveTextContent(count > 99 ? '99+' : String(count))
+        expect(badge).toHaveAttribute('aria-label', `${count} 条未读`)
+      }
+      expect(screen.getByTestId('personal-stand-in-beta')).toBeVisible()
+    }
+  )
+
   test('opens independent schedules from the sidebar when experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
     renderSidebar()

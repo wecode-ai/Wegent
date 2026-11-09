@@ -147,6 +147,13 @@ it('does not report another account while the instance binding is still unknown'
   expect(await screen.findByTestId('retained-role-draft')).toBeVisible()
 })
 
+it('does not open a notification conversation under a different bound owner', async () => {
+  const f = fixture()
+  render(f.workspace({ contentRoute: '/stand-in?deviceId=mac&userId=999&profileId=@primary' }))
+  await screen.findByRole('alert')
+  expect(screen.queryByTestId('retained-role-draft')).not.toBeInTheDocument()
+})
+
 it('discovers account and local profiles concurrently before selecting the initial owner', async () => {
   const f = fixture({ version: 0, status: 'unbound', target: null })
   let finish!: () => void

@@ -10,6 +10,9 @@ import type { RuntimeTaskAddress } from '@/types/api'
 const mocks = vi.hoisted(() => ({
   initialAddress: undefined as RuntimeTaskAddress | null | undefined,
   hideProcessing: false,
+  assistantMessageStyle: undefined as string | undefined,
+  markReadWhenActive: false,
+  nativeConversation: false,
   createTask: undefined as
     | undefined
     | ((message: string, options: RuntimeTaskComposerCreateOptions) => Promise<unknown>),
@@ -19,10 +22,16 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     createTask: typeof mocks.createTask
     initialAddress?: RuntimeTaskAddress | null
     hideProcessing?: boolean
+    assistantMessageStyle?: string
+    markReadWhenActive?: boolean
+    nativeConversation?: boolean
   }) => {
     mocks.createTask = props.createTask
     mocks.initialAddress = props.initialAddress
     mocks.hideProcessing = props.hideProcessing ?? false
+    mocks.assistantMessageStyle = props.assistantMessageStyle
+    mocks.markReadWhenActive = props.markReadWhenActive ?? false
+    mocks.nativeConversation = props.nativeConversation ?? false
     return <div data-testid="conversation-pane" />
   },
 }))
@@ -43,6 +52,9 @@ it('retains the persisted owner workspace when reopening the primary conversatio
   await screen.findByTestId('conversation-pane')
   expect(mocks.initialAddress).toEqual({ deviceId: 'device', ...task })
   expect(mocks.hideProcessing).toBe(true)
+  expect(mocks.assistantMessageStyle).toBe('bubble')
+  expect(mocks.markReadWhenActive).toBe(true)
+  expect(mocks.nativeConversation).toBe(true)
 })
 
 it('returns failure to the pane rollback path and permits retrying the same conversation', async () => {

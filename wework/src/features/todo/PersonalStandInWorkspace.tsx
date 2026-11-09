@@ -65,11 +65,13 @@ function AccountStandInWorkspace({
   const { binding, localDeviceId, busy } = instance
   const target = binding?.target
   const ownerId = target?.userId ?? Number(user.id)
+  const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
   const ownerAvailable =
-    binding?.status === 'stopped' ||
-    ownerId === LOCAL_USER.id ||
-    (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? ''))
+    notificationOwnerMatches &&
+    (binding?.status === 'stopped' ||
+      ownerId === LOCAL_USER.id ||
+      (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? '')))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)

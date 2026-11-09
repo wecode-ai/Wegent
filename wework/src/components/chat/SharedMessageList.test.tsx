@@ -1,5 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import type {
+  RuntimeConversationTurn,
+  WorkbenchMessage,
+} from '@wegent/chat-core/runtime-conversation'
+import { projectRuntimeConversationTurns } from '@wegent/chat-core/runtime-conversation-turns'
+import { conversationOutcomePresentation } from '@/components/layout/workspace-panels/conversationOutcomePresentation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
   ConversationTranslationProvider,
@@ -52,6 +57,170 @@ function editMessage() {
 }
 
 describe('full shared message list in a browser host', () => {
+  test.each([
+    ['stand-in', 'streaming'],
+    ['stand-in', 'done'],
+    ['stand-in', 'failed'],
+    ['task', 'streaming'],
+    ['task', 'done'],
+    ['task', 'failed'],
+  ] as const)(
+    'preserves the %s message boundaries and execution presentation when %s',
+    (surface, status) => {
+      const turn: RuntimeConversationTurn = {
+        id: 'native',
+        status,
+        ...(status === 'failed' ? { error: 'Connection lost' } : {}),
+        ...(status !== 'streaming' ? { completedAt: Date.now(), durationMs: 5000 } : {}),
+        startedAt: Date.now() - 5000,
+        items: [
+          { id: 'user', type: 'user_message', message: { ...userMessage, id: 'user' } },
+          {
+            id: 'ack',
+            type: 'assistant_text',
+            content: 'I will check in the background.',
+            createdAt: assistantMessage.createdAt!,
+          },
+          {
+            id: 'child',
+            type: 'block',
+            block: {
+              id: 'child',
+              type: 'subagent',
+              subtaskId: 'native',
+              status: 'done',
+              title: 'Background investigation',
+              createdAt: Date.now() - 4000,
+            },
+          },
+          {
+            id: 'result',
+            type: 'assistant_text',
+            content: 'Here is the finished result.',
+            createdAt: assistantMessage.createdAt!,
+          },
+        ],
+      }
+      const presentation =
+        surface === 'stand-in'
+          ? conversationOutcomePresentation([], [turn])
+          : { messages: projectRuntimeConversationTurns([turn]), turns: [turn] }
+      renderList({
+        ...presentation,
+        ...(surface === 'stand-in'
+          ? { assistantMessageStyle: 'bubble', showProcessingStatus: false }
+          : {}),
+      })
+      const replies = screen.getAllByTestId('message-assistant')
+      if (status === 'failed') expect(screen.getByText('Connection lost')).toBeInTheDocument()
+      if (surface === 'stand-in') {
+        expect(replies).toHaveLength(2)
+        expect(replies[0]).toHaveTextContent('I will check in the background.')
+        expect(replies[0]).not.toHaveTextContent('Here is the finished result.')
+        expect(replies[1]).toHaveTextContent('Here is the finished result.')
+        expect(screen.queryByTestId('processing-duration-label')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+        for (const content of screen.getAllByTestId('assistant-message-content'))
+          expect(content).toHaveClass('rounded-3xl', 'bg-muted')
+      } else {
+        expect(replies).toHaveLength(1)
+        expect(screen.getByTestId('processing-duration-label')).toBeInTheDocument()
+        for (const content of screen.getAllByTestId('assistant-message-content'))
+          expect(content).not.toHaveClass('bg-muted')
+      }
+    }
+  )
+
+  test('stand-in guidance remains a user message rather than an execution block', () => {
+    const turn: RuntimeConversationTurn = {
+      id: 'guidance-turn',
+      status: 'streaming',
+      startedAt: Date.now() - 5000,
+      items: [
+        { id: 'user', type: 'user_message', message: { ...userMessage, id: 'user' } },
+        { id: 'ack', type: 'assistant_text', content: 'First acknowledgement.', createdAt: '' },
+        {
+          id: 'next',
+          type: 'user_message',
+          message: {
+            ...userMessage,
+            id: 'next',
+            content: 'Another thing.',
+            runtimeGuidance: true,
+          },
+        },
+        { id: 'reply', type: 'assistant_text', content: 'Second acknowledgement.', createdAt: '' },
+      ],
+    }
+    renderList({
+      ...conversationOutcomePresentation([], [turn]),
+      assistantMessageStyle: 'bubble',
+      showProcessingStatus: false,
+    })
+    expect(screen.getAllByTestId('message-user')).toHaveLength(2)
+    expect(screen.getAllByTestId('message-assistant')).toHaveLength(2)
+    expect(screen.queryByTestId('processing-duration-label')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/引导对话|Guiding conversation|Guide conversation/i)
+    ).not.toBeInTheDocument()
+  })
+
+  test('stand-in outcome presentation retains actionable questions without execution timing', () => {
+    const turn: RuntimeConversationTurn = {
+      id: 'question-turn',
+      status: 'streaming',
+      startedAt: Date.now() - 5000,
+      items: [
+        {
+          id: 'question',
+          type: 'block',
+          block: {
+            id: 'question',
+            type: 'tool',
+            toolName: 'request_user_input',
+            subtaskId: 'question-turn',
+            status: 'pending',
+            createdAt: Date.now(),
+            renderPayload: {
+              kind: 'request_user_input',
+              questions: [
+                {
+                  id: 'source',
+                  header: 'Source',
+                  question: 'Choose a source',
+                  options: [{ label: 'Release page', description: 'Read published versions' }],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    }
+    renderList({
+      ...conversationOutcomePresentation([], [turn]),
+      assistantMessageStyle: 'bubble',
+      showProcessingStatus: false,
+      onRequestUserInputSubmit: vi.fn(),
+    })
+    expect(screen.getByTestId('request-user-input-card')).toBeInTheDocument()
+    expect(screen.getByText('Choose a source')).toBeInTheDocument()
+    expect(screen.queryByTestId('processing-duration-label')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+  })
+  test.each(['plain', 'bubble'] as const)(
+    'renders assistant text using the %s presentation',
+    assistantMessageStyle => {
+      renderList({ assistantMessageStyle })
+      const content = screen.getByTestId('assistant-message-content')
+      expect(content).toHaveTextContent('The answer')
+      if (assistantMessageStyle === 'bubble') {
+        expect(content).toHaveClass('rounded-3xl', 'bg-muted', 'px-4', 'py-3')
+      } else {
+        expect(content).not.toHaveClass('bg-muted')
+      }
+      expect(screen.getByTestId('message-user')).toHaveTextContent('Original prompt')
+    }
+  )
   const activity: WorkbenchMessage = {
     ...userMessage,
     id: 'host-activity',

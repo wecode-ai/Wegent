@@ -5441,6 +5441,15 @@
     "im_target": "设置 IM 接收会话"
   },
   "standIn": {
+    "native_input_pending": "请先通过当前问题或权限确认卡片完成确认，再发送新消息。",
+    "desktop_notifications": {
+      "title": "开启桌面分身通知",
+      "description": "分身有新消息或需要你处理时接收通知；请在系统和 Wework 通知设置中允许。",
+      "enable": "打开通知设置",
+      "never": "不再提示",
+      "dismiss": "暂时关闭",
+      "error": "无法打开或保存通知设置，请重试。"
+    },
     "project_coordinator": {
       "open": "负责人对话",
       "title": "{{project}} · 负责人",

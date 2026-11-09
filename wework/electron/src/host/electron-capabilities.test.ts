@@ -287,6 +287,23 @@ describe('showElectronNotification', () => {
     expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('opens only the fixed platform notification settings destination', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.shellOpenExternal.mockClear()
+    const result = await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.openSettings', {
+      url: 'https://untrusted.invalid',
+    })
+    const expected =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : null
+    expect(result).toEqual({ supported: Boolean(expected) })
+    if (expected) expect(electronMocks.shellOpenExternal).toHaveBeenCalledExactlyOnceWith(expected)
+    else expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
+  })
+
   test('uses the production click action for desktop regression activation', async () => {
     const { router, notificationNavigation } = createIsolatedClipboardRouter()
     const url = 'wework://tasks/device-1/task-1'

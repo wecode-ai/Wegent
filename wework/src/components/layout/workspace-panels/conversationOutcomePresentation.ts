@@ -14,6 +14,48 @@ function keepOutcomeBlock(block: ProcessingBlock): boolean {
   )
 }
 
+function outcomeReplies(
+  message: WorkbenchMessage,
+  timestamps: ReadonlyMap<string, string>
+): WorkbenchMessage[] {
+  if (message.role !== 'assistant') return [message]
+  const blocks = message.blocks?.filter(keepOutcomeBlock) ?? []
+  const blocksById = new Map(blocks.map(block => [block.id, block]))
+  const items = message.runtimeDisplayItems?.filter(item =>
+    item.type === 'block' ? blocksById.has(item.id) : Boolean(item.content.trim())
+  )
+  const clean = {
+    ...message,
+    blocks,
+    runtimeDisplayItems: items,
+    streamingThinkingContent: undefined,
+  }
+  const text = message.runtimeDisplayItems?.flatMap(item =>
+    item.type === 'assistant_text' ? [item.content] : []
+  )
+  if (!items?.length || !text?.length || text.join('\n\n') !== message.content) return [clean]
+  return items.map((item, index) => ({
+    ...clean,
+    id: `runtime-outcome:${message.turnId ?? message.id}:${item.id}`,
+    content: item.type === 'assistant_text' ? item.content : '',
+    blocks: item.type === 'block' ? [blocksById.get(item.id)!] : [],
+    runtimeDisplayItems: [item],
+    createdAt: timestamps.get(item.id) ?? message.createdAt,
+    ...(index < items.length - 1
+      ? {
+          status: 'done' as const,
+          runtimeStatus: 'done' as const,
+          error: undefined,
+          errorType: undefined,
+          stoppedNotice: undefined,
+          fileChanges: undefined,
+          references: undefined,
+          memoryCitations: undefined,
+        }
+      : {}),
+  }))
+}
+
 /** Change only the view: native history, approvals and input coordination stay intact. */
 export function conversationOutcomePresentation(
   messages: WorkbenchMessage[],
@@ -49,17 +91,15 @@ export function conversationOutcomePresentation(
           : item
       ),
   }))
-  const visibleMessages = turns.length
-    ? projectRuntimeConversationTurns(visibleTurns)
-    : messages.map(message => ({
-        ...message,
-        blocks: message.blocks?.filter(keepOutcomeBlock),
-        runtimeDisplayItems: message.runtimeDisplayItems?.filter(
-          item =>
-            item.type !== 'block' ||
-            message.blocks?.some(block => block.id === item.id && keepOutcomeBlock(block))
-        ),
-        streamingThinkingContent: undefined,
-      }))
+  const projectedMessages = turns.length ? projectRuntimeConversationTurns(visibleTurns) : messages
+  const timestamps = new Map(
+    visibleTurns.flatMap(turn =>
+      turn.items.flatMap(item =>
+        item.type === 'assistant_text' ? [[item.id, item.createdAt] as const] : []
+      )
+    )
+  )
+  // Native projection synthesizes guidance blocks, so apply the outcome view afterward.
+  const visibleMessages = projectedMessages.flatMap(message => outcomeReplies(message, timestamps))
   return { messages: visibleMessages, turns: visibleTurns }
 }

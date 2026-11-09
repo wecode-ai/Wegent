@@ -419,7 +419,11 @@ function ConnectedNotificationCenter({
     [taskSource]
   )
   const cloudUnreadCount = collaboration.unreadCount + (inboxes.general?.unread_count ?? 0)
-  const unreadCount = unreadTasks.length + cloudUnreadCount
+  const unreadCount =
+    unreadTasks.reduce(
+      (total, item) => total + (taskSource?.unreadMessageCounts?.get(item.key) ?? 1),
+      0
+    ) + cloudUnreadCount
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main') return
     syncNotificationUnreadCount(unreadCount)
