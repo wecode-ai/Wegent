@@ -232,6 +232,7 @@ interface DesktopSidebarProps {
   standaloneWorkspacePath?: string | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
+  standInUnreadCount?: number
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation' | 'stand-in'
   taskView?: 'workbench' | 'default-work-items'
@@ -2942,6 +2943,7 @@ export function DesktopSidebar({
   standaloneWorkspacePath,
   imNotificationSettings,
   unreadRuntimeTaskKeys,
+  standInUnreadCount = 0,
   preferredDeviceId,
   activeItem = 'chat',
   taskView = 'workbench',
@@ -4127,7 +4129,20 @@ export function DesktopSidebar({
                 icon={UserRound}
                 label={t('standIn.title')}
                 testId="personal-stand-in-button"
-                badge={<BetaBadge testId="personal-stand-in-beta" />}
+                badge={
+                  <>
+                    <BetaBadge testId="personal-stand-in-beta" />
+                    {standInUnreadCount > 0 && (
+                      <span
+                        data-testid="personal-stand-in-unread-count"
+                        aria-label={t('notifications.total_unread', { count: standInUnreadCount })}
+                        className="ml-auto min-w-5 rounded-full bg-text-primary px-1.5 text-center text-xs tabular-nums text-background"
+                      >
+                        {standInUnreadCount > 99 ? '99+' : standInUnreadCount}
+                      </span>
+                    )}
+                  </>
+                }
                 selected={activeItem === 'stand-in'}
                 onClick={onOpenStandIn}
               />

@@ -79,6 +79,8 @@ const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
     "features.default_mode_request_user_input=true";
 const CODEX_DISABLE_MULTI_AGENT_OVERRIDE: &str = "features.multi_agent=false";
 const CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=false";
+const CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=true";
+const CODEX_DISABLE_AGENTS_OVERRIDE: &str = "agents.enabled=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
@@ -4923,9 +4925,21 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
 fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     if codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single")) {
         return vec![
+            // Feature toggles alone do not override a resumed thread's persisted agent family.
+            CODEX_DISABLE_AGENTS_OVERRIDE.to_owned(),
             CODEX_DISABLE_MULTI_AGENT_OVERRIDE.to_owned(),
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
         ];
+    }
+    if request
+        .extra
+        .get("origin")
+        .and_then(|origin| origin.get("type"))
+        .and_then(Value::as_str)
+        == Some("stand_in_identity")
+    {
+        // Stand-in chat needs the native mailbox wait that also wakes on user input.
+        return vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned()];
     }
     Vec::new()
 }

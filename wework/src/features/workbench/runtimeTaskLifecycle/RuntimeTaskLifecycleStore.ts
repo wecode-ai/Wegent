@@ -7,9 +7,12 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
+import { RuntimeMessageReceipts } from './RuntimeMessageReceipts'
+import { readStoredTaskKeys, serializeTaskKeys } from './taskKeyStorage'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
+  emptyRuntimeTaskSummary,
   isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
   isRuntimeTaskConfirmedActive,
@@ -55,6 +58,8 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
 ])
 
 export class RuntimeTaskLifecycleStore {
+  readonly messageReceipts: RuntimeMessageReceipts
+  readonly notificationScope: string
   private readonly machines = new Map<string, RuntimeTaskMachine>()
   private readonly deviceAliases = new Map<string, string>()
   private readonly unreadStateByTask: Map<string, TaskUnreadState>
@@ -72,6 +77,8 @@ export class RuntimeTaskLifecycleStore {
 
   constructor(userId: number | string | null | undefined) {
     const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
+    this.notificationScope = storageScope
+    this.messageReceipts = new RuntimeMessageReceipts(`${storageScope}.messages.v1`)
     this.unreadStorageKey = `${storageScope}.unread.v2`
     this.runningStorageKey = `${storageScope}.running.v2`
     // Task snapshots may arrive separately, after device aliases and other events.
@@ -434,6 +441,7 @@ export class RuntimeTaskLifecycleStore {
   }
 
   markRead(address: RuntimeTaskAddress): void {
+    this.messageReceipts.markRead(getRuntimeTaskLifecycleKey(this.canonicalizeAddress(address)))
     this.dispatch(address, { type: 'marked_read' })
   }
 
@@ -716,6 +724,7 @@ export class RuntimeTaskLifecycleStore {
   }
 
   private movePersistedTaskState(previousKey: string, nextKey: string): boolean {
+    this.messageReceipts.merge(previousKey, nextKey)
     const previousUnread = this.unreadStateByTask.get(previousKey)
     const nextUnread = this.unreadStateByTask.get(nextKey)
     let changed = this.unreadStateByTask.delete(previousKey)
@@ -983,30 +992,5 @@ function getRuntimeTaskAddress(
     threadId: task.threadId,
     workspacePath: task.workspacePath || workspace.workspacePath,
     runtimeHandle: task.runtimeHandle,
-  }
-}
-
-function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummary {
-  return {
-    taskId: address.taskId,
-    threadId: address.threadId,
-    workspacePath: address.workspacePath ?? '',
-    title: address.taskId,
-    runtime: address.runtime ?? 'codex',
-    runtimeHandle: address.runtimeHandle,
-  }
-}
-
-function serializeTaskKeys(keys: ReadonlySet<string>): string {
-  return JSON.stringify([...keys].slice(-200))
-}
-
-function readStoredTaskKeys(storageKey: string): Set<string> {
-  if (typeof window === 'undefined') return new Set()
-  try {
-    const value = JSON.parse(window.localStorage.getItem(storageKey) ?? '[]')
-    return new Set(Array.isArray(value) ? value.filter(item => typeof item === 'string') : [])
-  } catch {
-    return new Set()
   }
 }
