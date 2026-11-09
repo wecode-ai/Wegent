@@ -30,7 +30,8 @@ export function createDesktopScenario(options) {
     async verify(control) {
       // Reuse real project creation, device aliases and project authorization checks.
       await fixture.verify(control)
-      const route = new URL(await control.command('getRoute', 'body'), 'http://localhost')
+      const snapshot = JSON.parse(await control.command('snapshot'))
+      const route = new URL(snapshot.location)
       const projectId = route.searchParams.get('projectId')
       assert.ok(projectId, 'The existing cloud project must remain selected')
       const before = await agents(projectId)
