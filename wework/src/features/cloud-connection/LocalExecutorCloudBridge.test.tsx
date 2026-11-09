@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { LocalExecutorCloudBridge } from './LocalExecutorCloudBridge'
+import { connectedCloudBridge } from './localExecutorCloudBridgeFixture'
 import {
   resetLocalExecutorCloudConnectionStatus,
   useLocalExecutorCloudConnectionStatus,
@@ -125,14 +126,7 @@ describe('LocalExecutorCloudBridge', () => {
   test('publishes whether the executor WebSocket connection succeeded', async () => {
     const view = render(
       <>
-        <LocalExecutorCloudBridge
-          preferencesLoaded
-          apiBaseUrl="https://backend.example.com/api"
-          backendUrl="https://backend.example.com"
-          socketBaseUrl="wss://socket.example.com"
-          isConnected
-          token="token-a"
-        />
+        {connectedCloudBridge()}
         <ConnectionStatusProbe />
       </>
     )
@@ -168,14 +162,7 @@ describe('LocalExecutorCloudBridge', () => {
   test('publishes a later WebSocket disconnect', async () => {
     render(
       <>
-        <LocalExecutorCloudBridge
-          preferencesLoaded
-          apiBaseUrl="https://backend.example.com/api"
-          backendUrl="https://backend.example.com"
-          socketBaseUrl="wss://socket.example.com"
-          isConnected
-          token="token-a"
-        />
+        {connectedCloudBridge()}
         <ConnectionStatusProbe />
       </>
     )
@@ -200,14 +187,7 @@ describe('LocalExecutorCloudBridge', () => {
   test('clears the published connection when the bridge unmounts', async () => {
     const view = render(
       <>
-        <LocalExecutorCloudBridge
-          preferencesLoaded
-          apiBaseUrl="https://backend.example.com/api"
-          backendUrl="https://backend.example.com"
-          socketBaseUrl="wss://socket.example.com"
-          isConnected
-          token="token-a"
-        />
+        {connectedCloudBridge()}
         <ConnectionStatusProbe />
       </>
     )
@@ -227,16 +207,7 @@ describe('LocalExecutorCloudBridge', () => {
   })
 
   test('updates backend connection whenever the cloud target changes', async () => {
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge())
 
     await waitFor(() => {
       expect(mocks.connect).toHaveBeenCalledWith({
@@ -269,32 +240,14 @@ describe('LocalExecutorCloudBridge', () => {
   })
 
   test('waits for preferences before registering the executor', async () => {
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded={false}
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge({ preferencesLoaded: false }))
 
     await flushAsyncEffects()
     expect(mocks.runtimeTokenPost).not.toHaveBeenCalled()
     expect(mocks.connect).not.toHaveBeenCalled()
     expect(mocks.disconnect).not.toHaveBeenCalled()
 
-    view.rerender(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    view.rerender(connectedCloudBridge())
 
     await waitFor(() =>
       expect(mocks.connect).toHaveBeenCalledWith(expect.objectContaining({ deviceType: 'app' }))
@@ -305,16 +258,7 @@ describe('LocalExecutorCloudBridge', () => {
   test('does not update backend connection when runtime token issuing fails', async () => {
     mocks.runtimeTokenPost.mockRejectedValue(new Error('runtime token unavailable'))
 
-    render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    render(connectedCloudBridge())
 
     await waitFor(() => {
       expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(1)
@@ -337,16 +281,7 @@ describe('LocalExecutorCloudBridge', () => {
         expires_in: 86400,
       })
 
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge())
 
     try {
       await flushAsyncEffects()
@@ -388,16 +323,7 @@ describe('LocalExecutorCloudBridge', () => {
           : { changed: false }
       )
     )
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge())
     try {
       await flushAsyncEffects()
       expect(mocks.connect).toHaveBeenCalledTimes(1)
@@ -441,16 +367,7 @@ describe('LocalExecutorCloudBridge', () => {
           }
         : { changed: false }
     )
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge({ apiBaseUrl: '/api' }))
     try {
       await flushAsyncEffects()
       explicitlyDisconnected = true
@@ -478,16 +395,7 @@ describe('LocalExecutorCloudBridge', () => {
       configured = true
       return { running: true, ready: true }
     })
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge({ apiBaseUrl: '/api' }))
     try {
       await flushAsyncEffects()
       configured = false
@@ -534,16 +442,7 @@ describe('LocalExecutorCloudBridge', () => {
       configured = true
       return { running: true, ready: true }
     })
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge({ apiBaseUrl: '/api' }))
     try {
       await flushAsyncEffects()
       configured = false
@@ -574,16 +473,7 @@ describe('LocalExecutorCloudBridge', () => {
       expires_in: 2,
     })
 
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge())
 
     try {
       await flushAsyncEffects()
