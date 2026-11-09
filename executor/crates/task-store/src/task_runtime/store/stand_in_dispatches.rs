@@ -4,7 +4,10 @@ use sha2::{Digest, Sha256};
 
 impl LocalTaskStore {
     pub fn queue_stand_in_dispatch(&self, intent: &Value) -> Result<String, TaskRuntimeError> {
-        let id = format!("stand-in-dispatch:{:x}", Sha256::digest(intent.to_string().as_bytes()));
+        let id = format!(
+            "stand-in-dispatch:{:x}",
+            Sha256::digest(intent.to_string().as_bytes())
+        );
         self.connection()?.execute(
             "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_dispatch',?2,?3,?3) ON CONFLICT(id) DO NOTHING",
             params![id, intent.to_string(), now()],
@@ -22,13 +25,19 @@ impl LocalTaskStore {
         })?;
         rows.map(|row| {
             let (id, raw) = row?;
-            Ok((id, serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?))
-        }).collect()
+            Ok((
+                id,
+                serde_json::from_str(&raw)
+                    .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?,
+            ))
+        })
+        .collect()
     }
 
     pub fn complete_stand_in_dispatch(&self, id: &str) -> Result<(), TaskRuntimeError> {
         self.connection()?.execute(
-            "DELETE FROM loop_items WHERE id=?1 AND resource_type='stand_in_dispatch'", [id],
+            "DELETE FROM loop_items WHERE id=?1 AND resource_type='stand_in_dispatch'",
+            [id],
         )?;
         Ok(())
     }
@@ -52,13 +61,19 @@ mod tests {
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let own = store.queue_stand_in_dispatch(&json!({"userId":7})).unwrap();
         let other = store.queue_stand_in_dispatch(&json!({"userId":8})).unwrap();
-        store.transition_personal_stand_in(7, "mac", "stop").unwrap();
+        store
+            .transition_personal_stand_in(7, "mac", "stop")
+            .unwrap();
         let pending = store.pending_stand_in_dispatches().unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].0, other);
         assert_ne!(pending[0].0, own);
-        store.transition_personal_stand_in(7, "mac", "stopped").unwrap();
-        store.transition_personal_stand_in(7, "mac", "start").unwrap();
+        store
+            .transition_personal_stand_in(7, "mac", "stopped")
+            .unwrap();
+        store
+            .transition_personal_stand_in(7, "mac", "start")
+            .unwrap();
         assert_eq!(store.pending_stand_in_dispatches().unwrap().len(), 1);
     }
 }
