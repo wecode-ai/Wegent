@@ -6,7 +6,10 @@ import {
   assertFullscreenIssueComposerColumnAtWindowSize,
 } from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
-import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
+import {
+  verifyNewTaskBoardAssociation,
+  waitForViewedIssueRead,
+} from './new-task-board-association.mjs'
 import {
   waitForProjectIdentity,
   selectCollaborationProjectView,
@@ -1860,6 +1863,8 @@ async function verifyExistingTaskBoardAssociation(
       movedBoardContentSelector
     )
   }
+  // Finish the previous detail's read before comparing unrelated draft mutations.
+  await waitForViewedIssueRead(control, targetProjectName, 'WEWORK_DESKTOP_E2E_TASK')
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
