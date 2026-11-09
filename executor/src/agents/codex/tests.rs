@@ -4299,6 +4299,9 @@ fn single_collaboration_mode_disables_codex_native_subagents() {
 
     assert!(launch_config
         .config_overrides
+        .contains(&"agents.enabled=false".to_owned()));
+    assert!(launch_config
+        .config_overrides
         .contains(&"features.multi_agent=false".to_owned()));
     assert!(launch_config
         .config_overrides
@@ -4335,6 +4338,7 @@ fn single_stand_in_identity_still_disables_both_native_agent_families() {
     assert_eq!(
         codex_collaboration_config_overrides(&request),
         vec![
+            CODEX_DISABLE_AGENTS_OVERRIDE,
             CODEX_DISABLE_MULTI_AGENT_OVERRIDE,
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE
         ]

@@ -13,7 +13,7 @@ sidebar_position: 12
 
 This presentation applies only to primary and role conversations on the **My Stand-in** page. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
-Only stand-in identity conversations enable native subagent v2 for mailbox waits that wake on new user input. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents. Native permission, source-scope and approval constraints remain unchanged.
+Only stand-in identity conversations enable native subagent v2 for mailbox waits that wake on new user input. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents, including when resuming an existing v2 conversation. Native permission, source-scope and approval constraints remain unchanged.
 
 Open **Left sidebar → My Stand-in**, then select the primary identity or a scenario role. AI replies use left-aligned bubbles and your messages appear on the right. While native subagents work in the background, send another message in the same main conversation without cancelling the children or waiting in the ordinary task queue. Failed sends retain their content and attachments. Resolve pending questions and permission requests through their original cards; chat messages never substitute for authorization. Independently tracked tasks are reserved for work that actually needs a separate conversation, workspace or lifecycle, not merely to keep chat available.
 
