@@ -8,17 +8,41 @@ impl RuntimeWorkRpcHandler {
         configs: &[Value],
         issue: &Value,
     ) -> Result<Vec<String>, AppIpcError> {
-        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        let backend = self
-            .backend_connection_snapshot()?
-            .map(|connection| connection.backend_url);
-        configs
-            .iter()
+        let binding = &issue["human_task_binding"];
+        // Invalid hints must reach normal assignment validation, not create intent.
+        if binding["humanAssignmentId"].as_str().is_none()
+            || super::stand_in::issue_assignment_event_id(binding).is_err()
+        {
+            return Ok(Vec::new());
+        }
+        let matching = if configs
+            .first()
+            .is_some_and(|config| config["manual"] == true)
+        {
+            configs.iter().collect()
+        } else {
+            super::personal_stand_in::matching_personal_roles(configs, issue)
+        };
+        let pending: Vec<&Value> = matching
+            .into_iter()
             .filter(|config| {
-                let task_id = self.stand_in_task_id(config, &issue["human_task_binding"]);
+                let task_id = self.stand_in_task_id(config, binding);
                 self.local_task_link(&task_id).is_none()
                     && !self.store.is_deleted_archived_task_id(&task_id)
             })
+            .collect();
+        if pending.is_empty() {
+            return Ok(Vec::new());
+        }
+        let backend = self
+            .backend_connection_snapshot()?
+            .ok_or_else(|| {
+                AppIpcError::new("cloud_unavailable", "Cloud connection is unavailable")
+            })?
+            .backend_url;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        pending
+            .into_iter()
             .map(|config| {
                 store.queue_stand_in_dispatch(&json!({
             "backendUrl":backend,"deviceId":self.device_id,"userId":config["userId"],
@@ -30,33 +54,43 @@ impl RuntimeWorkRpcHandler {
             .collect()
     }
 
-    pub(super) fn settle_stand_in_dispatches(
-        &self,
-        ids: &[String],
-        error: Option<&AppIpcError>,
-    ) -> Result<(), AppIpcError> {
-        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        for id in ids {
-            match error {
-                Some(error)
-                    if matches!(
-                        error.code.as_str(),
-                        "cloud_unavailable"
-                            | "cloud_request_failed"
-                            | "cloud_response_invalid"
-                            | "permission_denied"
-                    ) =>
-                {
-                    store
-                        .defer_stand_in_dispatch(id, &error.code)
-                        .map_err(settings_error)?;
-                }
-                _ => store
-                    .complete_stand_in_dispatch(id)
-                    .map_err(settings_error)?,
-            }
+    pub(super) fn settle_stand_in_dispatches(&self, ids: &[String], error: Option<&AppIpcError>) {
+        if ids.is_empty() {
+            return;
         }
-        Ok(())
+        let settle = || -> Result<(), AppIpcError> {
+            let store =
+                LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+            for id in ids {
+                match error {
+                    Some(error)
+                        if matches!(
+                            error.code.as_str(),
+                            "cloud_unavailable"
+                                | "cloud_request_failed"
+                                | "cloud_response_invalid"
+                                | "permission_denied"
+                        ) =>
+                    {
+                        store
+                            .defer_stand_in_dispatch(id, &error.code)
+                            .map_err(settings_error)?;
+                    }
+                    _ => store
+                        .complete_stand_in_dispatch(id)
+                        .map_err(settings_error)?,
+                }
+            }
+            Ok(())
+        };
+        // Settlement is maintenance of an already durable intent. A temporary
+        // failure must neither erase intent nor replace the original dispatch result.
+        if let Err(error) = settle() {
+            log_executor_event(
+                "Stand-in dispatch settlement deferred",
+                &[("code", error.code)],
+            );
+        }
     }
 
     pub(super) async fn flush_stand_in_dispatches(&self) -> Result<(), AppIpcError> {
@@ -95,7 +129,7 @@ impl RuntimeWorkRpcHandler {
                     ),
                 ],
             );
-            self.settle_stand_in_dispatches(&[id], result.as_ref().err())?;
+            self.settle_stand_in_dispatches(&[id], result.as_ref().err());
         }
         Ok(())
     }

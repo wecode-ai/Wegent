@@ -18,7 +18,7 @@ impl RuntimeWorkRpcHandler {
             }))
             .map_err(settings_error)?;
         let result = self.process_stand_in_assignment(payload).await;
-        self.settle_stand_in_dispatches(&[id], result.as_ref().err())?;
+        self.settle_stand_in_dispatches(&[id], result.as_ref().err());
         result
     }
 

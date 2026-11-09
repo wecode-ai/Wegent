@@ -477,7 +477,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(), AppIpcError> {
         let intents = self.queue_stand_in_dispatches(configs, issue)?;
         let result = self.start_cloud_stand_in_attempt(configs, issue).await;
-        self.settle_stand_in_dispatches(&intents, result.as_ref().err())?;
+        self.settle_stand_in_dispatches(&intents, result.as_ref().err());
         result
     }
 

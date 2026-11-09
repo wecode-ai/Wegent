@@ -2,6 +2,49 @@ use super::*;
 use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
+#[test]
+fn settlement_failure_preserves_intent_until_storage_recovers() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let id = store.queue_stand_in_dispatch(&json!({"userId":7})).unwrap();
+    let connection = rusqlite::Connection::open(handler.task_store_path.as_ref()).unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_settlement BEFORE DELETE ON loop_items WHEN OLD.resource_type='stand_in_dispatch' BEGIN SELECT RAISE(ABORT, 'storage unavailable'); END;").unwrap();
+    handler.settle_stand_in_dispatches(std::slice::from_ref(&id), None);
+    assert_eq!(store.pending_stand_in_dispatches().unwrap().len(), 1);
+    connection
+        .execute_batch("DROP TRIGGER reject_settlement")
+        .unwrap();
+    handler.settle_stand_in_dispatches(&[id], None);
+    assert!(store.pending_stand_in_dispatches().unwrap().is_empty());
+}
+
+#[test]
+fn dispatch_intent_requires_backend_scope_and_ignores_unmatched_roles() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let config = json!({"id":"review","tags":["review"]});
+    let mut issue =
+        json!({"human_task_binding":{"humanAssignmentId":"human","assignmentId":"event"}});
+    assert!(handler
+        .queue_stand_in_dispatches(std::slice::from_ref(&config), &issue)
+        .unwrap()
+        .is_empty());
+    issue["tags"] = json!(["review"]);
+    assert_eq!(
+        handler
+            .queue_stand_in_dispatches(&[config], &issue)
+            .unwrap_err()
+            .code,
+        "cloud_unavailable"
+    );
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    assert!(store.pending_stand_in_dispatches().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     let root = tempfile::tempdir().unwrap();
@@ -147,7 +190,8 @@ async fn stand_in_dispatch_does_not_replay_accepted_or_deleted_work() {
     handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     let config = json!({"id":"review","manual":true,"recoveringDispatch":true});
-    let issue = json!({"human_task_binding":{"humanAssignmentId":"human"}});
+    let issue =
+        json!({"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
     for status in ["running", "done", "failed", "cancelled", "archived"] {
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "stand-in-human-review".into(),
