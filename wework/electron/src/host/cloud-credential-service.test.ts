@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 
 describe('CloudCredentialService', () => {
-  test('keeps an encrypted empty record on sign-out for compatible bridge rollback', async () => {
+  test('clears credentials without OS access while retaining v3 for compatible rollback', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
     roots.push(root)
     const path = join(root, 'cloud-credentials.json')
@@ -26,16 +26,22 @@ describe('CloudCredentialService', () => {
       path,
       JSON.stringify({ version: 3, ciphertext: await protection.encrypt('null') })
     )
-    const service = new CloudCredentialService(root, vi.fn(), protection)
+    const unavailable = {
+      encrypt: vi.fn().mockRejectedValue(new Error('OS storage unavailable')),
+      decrypt: vi.fn().mockRejectedValue(new Error('OS storage unavailable')),
+    }
+    const service = new CloudCredentialService(root, vi.fn(), unavailable)
     await service.clear()
     const envelope = JSON.parse(await readFile(path, 'utf8'))
     expect(envelope.version).toBe(3)
-    expect(JSON.parse(await protection.decrypt(envelope.ciphertext))).toBeNull()
+    expect(envelope.ciphertext).toBeNull()
     await expect(
       service.prepareAuthorization('https://cloud.example.com/api')
     ).resolves.toMatchObject({
       publicKey: { kty: 'EC', crv: 'P-256' },
     })
+    expect(unavailable.encrypt).not.toHaveBeenCalled()
+    expect(unavailable.decrypt).not.toHaveBeenCalled()
   })
 
   beforeEach(() => {

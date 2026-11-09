@@ -61,7 +61,7 @@ A minimum version never proves compatibility. The client follows tested edges to
 
 ## Credential migration through a compatible bridge
 
-Credentials are excluded from migration snapshots. Release a bridge that reads v2/v3 before releasing the security update that migrates to v3. The bridge preserves the current format and never migrates v2 on read. After rollback encounters v3 it continues writing v3, including after clearing values or signing out; encrypted empty records prevent a later downgrade.
+Credentials are excluded from migration snapshots. Release a bridge that reads v2/v3 before releasing the security update that migrates to v3. The bridge preserves the current format and never migrates v2 on read. After rollback encounters v3 it continues writing v3, including after clearing values or signing out; empty v3 records prevent a later downgrade. Empty records contain no secret, so signing out does not require OS key access.
 
 The bridge declares `weworkCredentialStorageVersion: 2` and `weworkReadableCredentialStorageVersions: [2, 3]` in its signed package metadata. The security target declares write version 3. Target preparation reads the actual rollback package's declaration and rejects a source without v3 support. The planned releases are bridge 0.6.7 followed by security update 0.6.8. Successful exact-package evidence determines the security target’s minimum source; an actual v3-compatible bridge must exist first. Preparation fails for an older reader. A version floor grants no upgrade permission: both stages require CI evidence for exact delivered packages, and the bridge archives remain available.
 

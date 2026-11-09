@@ -279,7 +279,9 @@ export class CloudCredentialService {
       if (!envelope) return null
       const value =
         envelope.version === 3
-          ? JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
+          ? envelope.ciphertext === null
+            ? null
+            : JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
           : envelope
       const credential = normalizeStoredCredential(value)
       if (credential && envelope.version === 2) {
@@ -300,7 +302,8 @@ export class CloudCredentialService {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const temporary = `${path}.${process.pid}.tmp`
     try {
-      const ciphertext = await this.protection.encrypt(JSON.stringify(credential))
+      const ciphertext =
+        credential === null ? null : await this.protection.encrypt(JSON.stringify(credential))
       await writeFile(temporary, `${JSON.stringify({ version: 3, ciphertext })}\n`, { mode: 0o600 })
       beforeRename()
       await rename(temporary, path)
@@ -309,13 +312,15 @@ export class CloudCredentialService {
     }
   }
 
-  private async readEnvelope(): Promise<{ version?: number; ciphertext?: string } | null> {
+  private async readEnvelope(): Promise<{ version?: number; ciphertext?: string | null } | null> {
     try {
       const envelope = JSON.parse(await readFile(this.path(), 'utf8'))
       if (
         !envelope ||
         ![2, 3].includes(envelope.version) ||
-        (envelope.version === 3 && typeof envelope.ciphertext !== 'string')
+        (envelope.version === 3 &&
+          envelope.ciphertext !== null &&
+          typeof envelope.ciphertext !== 'string')
       ) {
         throw new CloudCredentialError(
           'credentials_unavailable',
