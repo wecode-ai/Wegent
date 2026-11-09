@@ -181,6 +181,10 @@ Refreshing an Issue's status or other properties preserves receipt icons and pen
 
 Stand-ins save the recipient-owned device task binding and reception receipt before starting execution. Background handling records reception when the assignment enters its pending queue. Reception does not imply successful execution, and a later launch failure does not revoke it. Cloud acknowledgements still validate the active assignment, owned device and task binding; rejection diagnostics do not relax these checks.
 
+Cloud assignment dispatch intents persist on their owning Executor. Transient cloud request failures recover with backoff, including after restart. A binding without a local task resumes the same task without depending on a successful binding deletion. Recovery revalidates the backend, account, current assignment, role and device; reassigned or disconnected project work is not replayed. Locally accepted tasks are not executed again by startup reconciliation. Model failures still use the original task's retry action, and configuration errors require human correction.
+
+The desktop retries failed notification delivery with backoff until the Executor accepts it. When a restarted Executor reports missing cloud configuration, the desktop reapplies the current signed-in connection and connector authorization. Ordinary network disconnects remain owned by the Executor's existing reconnect loop.
+
 ## Calendar arrangements and project leaders
 
 ### Project lead conversation and auto-handling
