@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { waitForUpdatePreparation } from './update-preparation-progress.mjs'
+import { confirmPendingUpdateRetry } from './failed-upgrade-retry.mjs'
 
 /** Reuse the delivered target after rollback and prove credentials written by the bridge survive. */
 export async function reupgradeAfterRollback({
@@ -21,6 +22,7 @@ export async function reupgradeAfterRollback({
     await control.command('waitFor', '[data-testid="about-update-status"]', { text: version })
     await control.command('clickWhenEnabled', button)
   }
+  await confirmPendingUpdateRetry(control, version)
   await waitForUpdatePreparation(async () =>
     JSON.parse(await control.command('getAppUpdateProgress', 'body'))
   )
