@@ -45,11 +45,13 @@ Click **Board** in the Tasks sidebar, or select **Board** from its task view men
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.
 
+<a id="conversational-configuration"></a>
+
 ## Manual and conversational configuration
 
 Edit responsibilities and shared preferences in the primary profile, and role responsibilities and sources in the role profile. Preferences can be edited or deleted. Changes take effect only after saving.
 
-You can also describe a role or configuration change in conversation. After AI creates a proposal, open **Pending settings** in the **Stand-in details** popover to review the affected roles, source scopes, and handling policies. Explicitly confirm before applying. Closing the dialog only collapses the proposal; it neither accepts nor rejects it. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
+You can also describe a role or configuration change in conversation. The confirmation card appears directly in that conversation with the affected roles, source scopes, and handling policies. Choose **Confirm and apply** to save and activate the changes. After success, the conversation shows **Settings applied** and the actual changes; failure retains the card and an error. A group's addition to a role updates that role's connections, not the primary identity's source scope; switch to that role's settings to inspect it. **Stand-in details → Pending settings** opens the same proposal. Closing that dialog neither accepts nor rejects it, and the conversation card remains available. Continue discussing to revise it, or choose **Dismiss**. A stale proposal cannot overwrite newer settings.
 
 The main surface keeps the conversation, composer, identity switcher and adjacent **＋**, with **Stand-in details** at the top right. Connection or processing issues appear as one compact status entry; open **Connection and processing status** for complete records and retry. The question-mark icon at the top right of the details popover opens **Usage examples**; the arrow beside Recent activity opens all activity. Settings show **Memory** directly, without those extra entries. Stopping is separate at the bottom left of the settings panel. Settings, Connections and source details have explicit entry and parent-return controls; clickable **Settings navigation** paths return to Settings or Connections without bypassing unsaved-change confirmation. Proactive background updates retain their own marker.
 
@@ -145,6 +147,8 @@ Reading a notification, dismissing a reminder, or marking it read does not resol
 
 Use **Stop stand-in** at the bottom left of settings and confirm to stop. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 
+Executor read timeouts during source collection retry automatically with backoff, without saving the connection again. Sources previously stopped by this timeout also resume from their original cursor. Automatic recovery applies only to reads, never replaying sends or other actions. Expired authentication, permission denials, and invalid responses still require correction before retrying.
+
 ## Issue human handoffs
 
 Issue cards right-align an icon and the actor's name in the existing reference/status row above the title, without adding a row. Icons distinguish agent handling, stand-in handling and waiting for a person. Waiting uses a person with a small clock and a “Waiting for [person]” tooltip; only the name is visible as text. Confirmed running executions show the agent or stand-in, while outstanding questions prioritize their recipients. Otherwise the assigned person handles the Issue; when no person is assigned, its creator takes responsibility. There is no third handling state such as awaiting assignment. Business states remain independent, and execution details retain queued, failed and offline progress.
@@ -178,6 +182,10 @@ Assigners and recipients can view the receipts, which refresh while details rema
 Refreshing an Issue's status or other properties preserves receipt icons and pending hover tooltips for the same assignment. Reassignment, including assigning the same person again, immediately hides old receipts until the new assignment's results arrive.
 
 Stand-ins save the recipient-owned device task binding and reception receipt before starting execution. Background handling records reception when the assignment enters its pending queue. Reception does not imply successful execution, and a later launch failure does not revoke it. Cloud acknowledgements still validate the active assignment, owned device and task binding; rejection diagnostics do not relax these checks.
+
+Cloud assignment dispatch intents persist on their owning Executor. Transient cloud request failures recover with backoff, including after restart. A binding without a local task resumes the same task without depending on a successful binding deletion. Recovery revalidates the backend, account, current assignment, role and device; reassigned or disconnected project work is not replayed. Locally accepted tasks are not executed again by startup reconciliation. Model failures still use the original task's retry action, and configuration errors require human correction.
+
+The desktop retries failed notification delivery with backoff until the Executor accepts it. When a restarted Executor reports missing cloud configuration, the desktop reapplies the current signed-in connection and connector authorization. Ordinary network disconnects remain owned by the Executor's existing reconnect loop.
 
 ## Calendar arrangements and project leaders
 

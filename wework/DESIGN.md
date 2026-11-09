@@ -253,6 +253,16 @@ composer shadow `0 18px 44px`; it is not the Codex recipe.
 
 ## 4. Color system
 
+The neutral Codex reference below defines the default theme. Users may explicitly
+choose a named appearance theme, including colored surface and accent palettes.
+In that case, the selected theme's semantic tokens replace these reference
+colors across all Wework-owned surfaces, content-renderer controls, portals,
+and auxiliary windows. Layout, density, typography, contrast, focus visibility,
+and non-color status cues remain mandatory. Never hardcode the neutral reference
+into a component to override a user's selected theme. The remote Wegent Agent
+page keeps its own theme; Wework chrome around it still follows appearance.
+Startup flow and startup colors continue to use the upstream implementation.
+
 ### 4.1 Neutral palette and surfaces
 
 The Codex neutral reference palette is:
@@ -319,6 +329,10 @@ reserved for a feature with explicit semantic meaning. Status must always have
 a non-color cue such as text, icon, shape, or accessible label.
 
 ### 4.3 Absolute green/teal restriction
+
+This restriction applies to the default product theme. An explicitly selected
+named theme such as Matrix or Everforest may use its authored green palette;
+components must consume that palette through semantic tokens.
 
 Wework must not look green or teal. The current legacy Wework `primary` and
 `hover` tokens are teal-based and therefore are not Codex visual tokens. Do not

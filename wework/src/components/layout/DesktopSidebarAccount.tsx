@@ -122,7 +122,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
       className={cn(
         'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
         errorSummary
-          ? 'text-red-500 hover:bg-red-500/10'
+          ? 'text-destructive hover:bg-destructive/10'
           : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
       )}
     >
@@ -137,7 +137,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
         <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
       )}
       {errorSummary && (
-        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
+        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
       )}
     </button>
   )
@@ -162,7 +162,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
             <div
               data-testid="sidebar-app-update-error"
               style={errorTooltipPosition}
-              className="fixed z-system-popover w-[260px] -translate-y-1/2 rounded-lg border border-red-500/20 bg-popover px-3 py-2 text-xs font-medium leading-5 text-red-500 shadow-[0_12px_28px_rgba(0,0,0,0.18)] [overflow-wrap:anywhere]"
+              className="fixed z-system-popover w-[260px] -translate-y-1/2 rounded-lg border border-destructive/20 bg-popover px-3 py-2 text-xs font-medium leading-5 text-destructive shadow-[0_12px_28px_rgba(0,0,0,0.18)] [overflow-wrap:anywhere]"
             >
               {errorSummary}
             </div>,

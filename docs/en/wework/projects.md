@@ -28,6 +28,14 @@ Open **top + → Collaboration**. Global catalogs, space settings and project se
 | Space agents/teams                | Space settings → Collaboration members → Agents / Teams; add/create and configure lead, members, rules and execution requirements, then save | Removing a shared association differs from deleting a project-owned group; inspect impact                                   |
 | Space execution environment       | Space settings → Execution environment → add/share                                                                                           | Separate from project repository initialization; depends on storage type and capabilities                                   |
 
+### Clean up offline device registrations
+
+<a id="offline-device-cleanup"></a>
+
+Open **Top + → Collaboration → Devices**. Use the device ID and last online time to find the historical registration. Select **Delete offline device** on its row, review the registration number and affected spaces, then confirm.
+
+You can remove a registration you own when it is offline and has no running tasks. The current device is protected, as are records that could belong to it while its local identity is unavailable. Removing the registration takes it out of the device selectors in those spaces and preserves device files and execution history. See [Offline Device Handling](../wegent/user-guide/ai-devices/local-device-support.md#offline-device-cleanup) for last online display and reconnection behavior.
+
 ### Register a space Runner
 
 When supported for a cloud space, use the create action under **Space settings → Execution environment** to open **Register workspace runner**. Enter its name and register. Follow the dialog to securely configure `DEVICE_ID`, `WEGENT_AUTH_TOKEN` and `WEGENT_BACKEND_URL` on the target server and run Executor, then verify online status in Wework.
@@ -103,6 +111,10 @@ When the project list is empty, the sidebar's **Projects** section shows **+ New
 Choose **Local project** to open the system folder picker. Select an already registered project directly rather than adding it again. Registered entries survive refresh/restart and are not hidden merely because their source is inside a `Codex` directory.
 
 In local mode, choose **Local project** and select one or more folders in the system directory picker. This entry always uses the local execution device, even when cloud or remote devices are connected. To use another device, choose **Cloud project**, then open an existing directory, create a blank project, or enter a Git repository URL to clone on the target device. Git projects use the repository name as the directory name by default and allow an optional branch and target parent directory. After submission, the dialog closes immediately and the project list shows clone progress; failed clones can be retried or dismissed there.
+
+<a id="add-device-from-project"></a>
+
+After choosing **Cloud project**, select **Add device** beside the remote host picker. If no device is available, the dialog opens the add-device flow directly. The choices match **Settings → Personal → Cloud connection → Add device**. You can create a cloud device managed by Wegent or generate a startup command for a remote Docker device you manage. When the new device is online and version compatible, the project dialog selects it so you can open or create a directory.
 
 In the cloud-project creation dialog, **Use existing folder** and **Create**
 also open the system directory picker when the selected execution device is

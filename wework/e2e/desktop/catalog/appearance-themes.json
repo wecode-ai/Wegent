@@ -1,0 +1,23 @@
+{
+  "order": 198500,
+  "scenario": "./scenarios/appearance-themes.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 146500,
+      "shard": 6,
+      "position": 8500
+    }
+  },
+  "paths": [
+    "packages/collaboration/src/theme/*",
+    "wework/src/features/appearance/*",
+    "wework/src/styles/*",
+    "wework/src/lib/code-theme*",
+    "wework/src/lib/xterm-theme*",
+    "wework/src/lib/visualization-theme*",
+    "wework/electron/src/host/appearance-theme*",
+    "wework/src/components/code/PierreCodeProvider.tsx",
+    "wework/e2e/desktop/modules/appearance-theme.mjs"
+  ]
+}

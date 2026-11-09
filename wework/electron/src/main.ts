@@ -70,6 +70,8 @@ import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-mana
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
+import { DesktopAppearanceController } from './host/appearance-theme.js'
+import { normalizeAppearanceThemeSnapshot } from './host/appearance-theme-contract.js'
 import {
   DesktopPreferencesController,
   resolvePopoutShortcut,
@@ -147,6 +149,7 @@ import { ReleaseStore } from './runtime/release-store.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { cloudFetch } from './host/cloud-http.js'
+import { installE2eDshReleaseRedirect } from './host/e2e-dsh-release-redirect.js'
 import {
   cleanupStaleTemporaryImages,
   createNativeContextMenuActions,
@@ -388,6 +391,10 @@ let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
 let popoutWindowMode: PopoutWindowMode = 'composer'
 let processExplorerWindow: BrowserWindow | null = null
+const desktopAppearance = new DesktopAppearanceController({
+  nativeTheme,
+  windows: () => [mainWindow, processExplorerWindow, ...workspaceWindows.values()],
+})
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let pendingSystemDrops: Array<{
@@ -935,6 +942,15 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 }
 
 function installDshWindowLabelHeaders(): void {
+  const releaseRedirect = process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
+  delete process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
+  if (
+    releaseRedirect &&
+    process.env.VITE_WEWORK_E2E === 'true' &&
+    process.env.WEWORK_E2E_CONTROL_URL
+  ) {
+    installE2eDshReleaseRedirect(session.defaultSession.webRequest, releaseRedirect)
+  }
   session.defaultSession.webRequest.onErrorOccurred(
     { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
     details => {
@@ -1152,7 +1168,7 @@ async function openWorkspaceWindow(input: {
     width: 1280,
     height: 800,
     title: input.title,
-    backgroundColor: '#181818',
+    backgroundColor: desktopAppearance.current().backgroundColor,
     show: false,
     webPreferences: {
       backgroundThrottling: workbenchBackgroundThrottling(process.platform),
@@ -1352,7 +1368,7 @@ async function openProcessExplorerWindow(): Promise<void> {
     minHeight: 360,
     title: 'Process Explorer',
     autoHideMenuBar: true,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#fafafa',
+    backgroundColor: desktopAppearance.current().backgroundColor,
     show: false,
     webPreferences: {
       backgroundThrottling: workbenchBackgroundThrottling(process.platform),
@@ -1448,7 +1464,16 @@ async function updateDesktopPreferences(
   patch: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   if (!desktopPreferences) throw new Error('Desktop preferences are unavailable')
-  return desktopPreferences.update(patch)
+  if (Object.hasOwn(patch, 'appearanceThemeSnapshot') && patch.appearanceThemeSnapshot !== null) {
+    const snapshot = normalizeAppearanceThemeSnapshot(patch.appearanceThemeSnapshot)
+    if (!snapshot) throw new Error('appearanceThemeSnapshot is invalid')
+    patch = { ...patch, appearanceThemeSnapshot: snapshot }
+  }
+  const updated = await desktopPreferences.update(patch)
+  if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
+    desktopAppearance.update(updated)
+  }
+  return updated
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
@@ -2950,6 +2975,8 @@ if (hasSingleInstanceLock) {
         }
       }
       const startupPreferences = await preferences.read()
+      desktopAppearance.update(startupPreferences)
+      nativeTheme.on('updated', () => desktopAppearance.update())
       logStartupStep('startup-preferences-read', 'completed')
       try {
         popoutShortcut?.configure(resolvePopoutShortcut(startupPreferences))

@@ -123,6 +123,7 @@ interface TemporaryChatPanelProps {
   projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
   composerHeader?: ReactNode
+  contentFooter?: ReactNode
   onRestoreConversation?: () => void
   onFillSelectionToAnswer?: (text: string) => void
   initialScrollPosition?: 'restore' | 'latest'
@@ -164,6 +165,7 @@ export function TemporaryChatPanel({
   projectWorkBarMiddleContext,
   projectWorkBarTrailingContext,
   composerHeader,
+  contentFooter,
   onRestoreConversation,
   onFillSelectionToAnswer,
   initialScrollPosition = 'restore',
@@ -1191,6 +1193,8 @@ export function TemporaryChatPanel({
         className="min-h-0 flex-1"
         contentClassName="min-h-full shrink-0"
         messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
+        contentFooter={contentFooter}
+        contentFooterClassName={DESKTOP_MESSAGE_LIST_CLASS}
         scrollTestId="right-workspace-chat-scroll-area"
         onRetryFailedMessage={
           address && !readOnly

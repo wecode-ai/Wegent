@@ -1,6 +1,7 @@
 {
   "order": 101000,
   "groupOrder": 4000,
+  "paths": [".github/scripts/install-e2e-apt-packages.sh"],
   "members": [
     "plugin-account-auth-password",
     "plugin-account-auth-transfer",
