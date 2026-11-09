@@ -356,10 +356,14 @@ async function verifyComposerLineNavigation(control) {
 }
 
 async function verifyComposerLinkColor(control, selector) {
+  const linkColor = await control.command('getComputedStyleValue', 'html', {
+    value: '--color-link',
+  })
+  assert.match(linkColor, /^\d+ \d+ \d+$/)
   assert.equal(
     await control.command('getComputedStyleValue', selector, { value: 'color' }),
-    'rgb(51, 156, 255)',
-    'Composer links must use the shared blue link color'
+    `rgb(${linkColor.split(' ').join(', ')})`,
+    'Composer links must use the selected theme link color'
   )
   assert.equal(
     await control.command('getComputedStyleValue', selector, { value: 'text-decoration-line' }),

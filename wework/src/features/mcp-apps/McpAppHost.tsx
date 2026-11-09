@@ -404,7 +404,7 @@ export function McpAppHost({
     const observer = new MutationObserver(updateContext)
     observer.observe(window.document.documentElement, {
       attributes: true,
-      attributeFilter: ['class'],
+      attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme'],
     })
     return () => {
       active = false

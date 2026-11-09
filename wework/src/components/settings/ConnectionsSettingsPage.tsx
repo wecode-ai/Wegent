@@ -127,7 +127,7 @@ function StatusPill({
       className={cn(
         'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-1.5 py-0.5 text-xs',
         pendingLabel
-          ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+          ? 'bg-warning/10 text-warning'
           : isConnected
             ? 'bg-primary/10 text-primary'
             : 'bg-muted text-text-muted'
@@ -278,7 +278,7 @@ function ConfirmDeviceActionDialog({
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-red-500/10 text-red-500">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive">
             <Trash2 className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
@@ -301,7 +301,7 @@ function ConfirmDeviceActionDialog({
             data-testid="confirm-delete-device-button"
             onClick={onConfirm}
             disabled={loading}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-red-600 px-3 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             确认删除
@@ -355,9 +355,9 @@ function DeviceLifecycleNotice({
       className={cn(
         'mt-3 flex items-center justify-between gap-3 rounded-md px-3 py-2 text-xs',
         isError
-          ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+          ? 'bg-destructive/10 text-destructive'
           : isTimeout
-            ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+            ? 'bg-warning/10 text-warning'
             : isRecovered
               ? 'bg-primary/10 text-primary'
               : 'bg-muted text-text-secondary'
@@ -941,7 +941,7 @@ function DeviceCard({
         {sessionError && (
           <div
             data-testid={`connection-session-error-${device.device_id}`}
-            className="mt-3 flex items-start gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-500"
+            className="mt-3 flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
           >
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{sessionError}</span>
@@ -1144,7 +1144,7 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
           {t('workbench.cloud_models_loading', '正在加载云端模型...')}
         </div>
       ) : error ? (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {t('workbench.cloud_models_error', '云端模型加载失败')}
         </div>
       ) : models.length === 0 ? (
@@ -1289,7 +1289,7 @@ export function ConnectionsDeviceSettingsPage({
   if (!cloudConnection.isConnected) {
     return (
       <>
-        <SettingsPage>
+        <SettingsPage data-testid="connections-device-settings-page">
           {showHeader ? (
             <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
           ) : null}
@@ -1354,7 +1354,7 @@ export function ConnectionsDeviceSettingsPage({
 
   return (
     <>
-      <SettingsPage>
+      <SettingsPage data-testid="connections-device-settings-page">
         {showHeader ? (
           <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
         ) : null}

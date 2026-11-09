@@ -1043,7 +1043,10 @@ export function createElectronCapabilityRouter(
     return mcpDiscoveryFault.configure(params.enabled)
   })
   router.register('e2e.inlineVisualizationFrame', params =>
-    controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
+    controlInlineVisualizationFrame(
+      e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main'),
+      params
+    )
   )
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
