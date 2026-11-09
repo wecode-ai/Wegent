@@ -3,7 +3,7 @@ FROM ubuntu:24.04 AS toolchain
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 COPY .github/ci/rust-toolchain /tmp/rust-toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential ca-certificates cmake curl nasm pkg-config libssl-dev zlib1g-dev \
+    build-essential ca-certificates cmake curl nasm pkg-config libssl-dev libsasl2-dev zlib1g-dev \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain "$(cat /tmp/rust-toolchain)" \
     && rm -rf /var/lib/apt/lists/*

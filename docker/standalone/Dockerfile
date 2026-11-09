@@ -122,7 +122,7 @@ RUN dnf install -y \
     # Public reverse proxy for the bundled frontend applications
     nginx \
     # Development environment and runtime diagnostics
-    procps-ng iproute lsof less tree unzip ripgrep libcap cyrus-sasl-lib \
+    procps-ng iproute lsof less tree unzip ripgrep libcap cyrus-sasl-lib cyrus-sasl-plain \
     # Redis server for standalone mode (embedded)
     redis \
     # MySQL server for standalone mode (embedded)

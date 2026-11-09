@@ -209,6 +209,9 @@ jobs:
           manifest-path: backend-rs/Cargo.toml
           components: rustfmt, clippy
 
+      - name: Install Kafka SASL build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsasl2-dev libsasl2-modules
+
       - name: Check Rust backend formatting
         working-directory: backend-rs
         run: cargo fmt --all --check
@@ -601,7 +604,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./shared
-        run: uv sync --dev
+        run: uv sync --dev --extra event-reporting
 
       - name: Run shared tests
         working-directory: ./shared

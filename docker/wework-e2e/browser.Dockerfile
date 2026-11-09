@@ -10,6 +10,8 @@ RUN apt-get update \
     ffmpeg \
     socat \
     libmagic1 \
+    libsasl2-2 \
+    libsasl2-modules \
     zstd \
   && rm -rf /var/lib/apt/lists/* \
   && npm install --global "pnpm@${PNPM_VERSION}" \

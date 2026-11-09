@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
     libnss3 \
     librsvg2-dev \
+    libsasl2-2 \
+    libsasl2-modules \
     libssl-dev \
     libwebkit2gtk-4.1-dev \
     libxshmfence1 \
