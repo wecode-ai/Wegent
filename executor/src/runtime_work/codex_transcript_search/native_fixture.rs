@@ -568,9 +568,9 @@ async fn native_search_projects_terminal_turns_across_pages_and_hydrates_complet
             "interrupted",
             "interrupted",
             "",
-            // Explicit commentary remains visible beside its process items.
+            // Interrupted unphased progress remains visible beside its process items.
             vec![
-                json!({"id":"visible", "type":"agentMessage", "phase":"commentary", "text":"interrupted"}),
+                json!({"id":"visible", "type":"agentMessage", "text":"interrupted"}),
                 json!({"id":"tool", "type":"commandExecution", "command":"echo padding"}),
             ],
             vec![("visible", 0)],

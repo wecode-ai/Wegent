@@ -792,7 +792,7 @@ fn transcript_preserves_completed_unphased_reply_before_late_command_update() {
 }
 
 #[test]
-fn transcript_keeps_explicit_commentary_before_tools_in_processing() {
+fn transcript_keeps_unphased_progress_before_tools_and_later_reply_in_processing() {
     let thread = json!({
         "id": "thread-1",
         "cwd": "/tmp/project",
@@ -812,7 +812,6 @@ fn transcript_keeps_explicit_commentary_before_tools_in_processing() {
                     "id": "process-1",
                     "type": "agentMessage",
                     "role": "assistant",
-                    "phase": "commentary",
                     "text": "I will inspect the runtime."
                 },
                 {
@@ -850,6 +849,39 @@ fn transcript_keeps_explicit_commentary_before_tools_in_processing() {
     );
     assert_eq!(messages[1]["blocks"][1]["type"], "tool");
     assert_eq!(messages[1]["blocks"][1]["tool_name"], "exec_command");
+}
+
+#[test]
+fn transcript_distinguishes_legacy_progress_even_with_late_tool_updates() {
+    let thread = json!({"id":"thread-1", "turns":[{
+        "id":"turn-1", "status":"completed", "items":[
+            {"id":"progress", "type":"agentMessage", "text":"Inspecting"},
+            {"id":"first-tool", "type":"commandExecution", "command":"inspect"},
+            {"id":"reply", "type":"agentMessage", "text":"Done"},
+            {"id":"late-tool", "type":"commandExecution", "command":"late snapshot"}
+        ]
+    }]});
+    let messages = transcript_messages(&thread, "device-1");
+    let assistant = messages.last().unwrap();
+    assert_eq!(assistant["content"], "Done");
+    assert_eq!(assistant["blocks"][0]["content"], "Inspecting");
+    assert_eq!(assistant["blocks"][1]["type"], "tool");
+    assert_eq!(assistant["blocks"][2]["type"], "tool");
+}
+
+#[test]
+fn transcript_keeps_adjacent_unphased_reply_fragments_without_process_boundary() {
+    let thread = json!({"id":"thread-1", "turns":[{
+        "id":"turn-1", "status":"completed", "items":[
+            {"id":"reply-1", "type":"agentMessage", "text":"First part"},
+            {"id":"reply-2", "type":"agentMessage", "text":"Second part"}
+        ]
+    }]});
+    let messages = transcript_messages(&thread, "device-1");
+    assert_eq!(
+        messages.last().unwrap()["content"],
+        "First part\n\nSecond part"
+    );
 }
 
 #[test]

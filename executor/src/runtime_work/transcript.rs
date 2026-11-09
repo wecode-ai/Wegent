@@ -271,6 +271,7 @@ struct TurnTranscriptProjector<'a> {
     assistant_status: &'static str,
     assistant_error: Option<String>,
     fold_commentary: bool,
+    unphased_progress_item_ids: HashSet<String>,
     options: TranscriptBuildOptions,
     assistant_segment_index: usize,
     assistant: AssistantTurnAccumulation,
@@ -289,6 +290,7 @@ impl<'a> TurnTranscriptProjector<'a> {
     ) -> Self {
         let turn_id = stable_indexed_id(turn, "turn", turn_index);
         let items = canonical_turn_items(turn, &turn_id, root_thread_id);
+        let unphased_progress_item_ids = unphased_progress_item_ids(&items, turn_interrupted(turn));
         let created_at = turn_started_at(turn);
         Self {
             messages,
@@ -301,6 +303,7 @@ impl<'a> TurnTranscriptProjector<'a> {
             assistant_status: turn_assistant_status(turn),
             assistant_error: turn_error_message(turn),
             fold_commentary: turn_should_fold_commentary(turn),
+            unphased_progress_item_ids,
             assistant: AssistantTurnAccumulation::new(file_changes(turn)),
             turn_id,
             created_at,
@@ -509,7 +512,10 @@ impl<'a> TurnTranscriptProjector<'a> {
             item,
             self.created_at,
             self.fold_commentary,
-            self.assistant_status == "streaming",
+            self.assistant_status == "streaming"
+                || self
+                    .unphased_progress_item_ids
+                    .contains(&item_id(item, "assistant-text")),
             &mut self.assistant,
             self.options,
         );
@@ -1200,6 +1206,33 @@ fn turn_should_fold_commentary(turn: &Value) -> bool {
     // collapsible process area. If commentary is the only assistant output,
     // surface it directly like Codex app does.
     turn_interrupted(turn) && turn_has_substantive_process(turn)
+}
+
+fn unphased_progress_item_ids(items: &[Value], interrupted: bool) -> HashSet<String> {
+    let mut progress_ids = HashSet::new();
+    let mut later_reply = interrupted;
+    let mut process_before_reply = false;
+    for item in items.iter().rev() {
+        let kind = item_type(item);
+        if kind == "usermessage"
+            || (kind == "message"
+                && string_field(item, "role").is_some_and(|role| role.eq_ignore_ascii_case("user")))
+        {
+            later_reply = interrupted;
+            process_before_reply = false;
+        } else if is_final_assistant_message(item) {
+            // Preserve legacy progress across a process/reply boundary. A late
+            // tool snapshot without a later reply must not hide the final text.
+            // Interrupted turns retain their unfinished process text instead.
+            if process_before_reply && assistant_message_phase_name(item).is_none() {
+                progress_ids.insert(item_id(item, "assistant-text"));
+            }
+            later_reply = true;
+        } else if later_reply && is_substantive_process_item_type(&kind) {
+            process_before_reply = true;
+        }
+    }
+    progress_ids
 }
 
 fn turn_has_substantive_process(turn: &Value) -> bool {
