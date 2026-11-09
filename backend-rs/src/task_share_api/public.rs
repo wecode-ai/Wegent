@@ -162,7 +162,7 @@ const TASK_SHARE_LINK_QUERY: &str = "SELECT share_links.resource_id AS \
      share_links_resource_id, share_links.created_by_user_id AS \
      share_links_created_by_user_id FROM share_links WHERE \
      share_links.token_hash = ? AND share_links.resource_type = 'Task' AND \
-     share_links.is_active = true AND share_links.expires_at > NOW() LIMIT 1";
+     share_links.is_active = true AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1";
 
 /// GET /api/tasks/share/public: the source declares no authentication
 /// dependency, so the route is public.

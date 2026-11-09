@@ -33,7 +33,7 @@ const CONTEXT_TYPE_ATTACHMENT: &str = "attachment";
 const TASK_SHARE_LINK_QUERY: &str = "SELECT share_links.resource_id AS resource_id, \
      share_links.created_by_user_id AS created_by_user_id FROM share_links \
      WHERE share_links.token_hash = ? AND share_links.resource_type = 'Task' \
-     AND share_links.is_active = true AND share_links.expires_at > NOW() LIMIT 1";
+     AND share_links.is_active = true AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1";
 
 /// `db.query(User).filter(User.id == user_id, User.is_active == True).first()`:
 /// every mapped column, aliased `users_<column>` like SQLAlchemy's labeled

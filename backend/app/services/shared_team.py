@@ -12,14 +12,15 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 from datetime import datetime, timedelta
 from typing import List, Optional
-import secrets
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
@@ -33,7 +34,6 @@ from app.schemas.shared_team import (
     TeamShareInfo,
     TeamShareResponse,
 )
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class SharedTeamService:
         return self.token_hasher(share_token.encode("utf-8")).hexdigest()
 
     def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
-        """Find an active, unexpired team share link by its token hash."""
+        """Find an active team share link by its token hash."""
         share_link = (
             db.query(ShareLink)
             .filter(
@@ -86,8 +86,6 @@ class SharedTeamService:
             )
             .first()
         )
-        if share_link and share_link.is_expired:
-            return None
         return share_link
 
     def decode_share_token(

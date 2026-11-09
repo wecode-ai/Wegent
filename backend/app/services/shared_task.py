@@ -8,11 +8,11 @@ Service for managing task sharing functionality.
 Uses the unified ResourceMember model instead of the legacy SharedTask table.
 """
 
+import hashlib
 import logging
 import re
-import hashlib
-from datetime import datetime, timedelta
 import secrets
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -78,7 +78,7 @@ class SharedTaskService:
         return self.token_hasher(share_token.encode("utf-8")).hexdigest()
 
     def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
-        """Find an active, unexpired task share link by its token hash."""
+        """Find an active task share link by its token hash."""
         share_link = (
             db.query(ShareLink)
             .filter(
@@ -88,8 +88,6 @@ class SharedTaskService:
             )
             .first()
         )
-        if share_link and share_link.is_expired:
-            return None
         return share_link
 
     def decode_share_token(
@@ -106,6 +104,9 @@ class SharedTaskService:
 
         user_id = share_link.created_by_user_id
         task_id = share_link.resource_id
+
+        if share_link.is_expired:
+            raise HTTPException(status_code=400, detail="Share link has expired")
         user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
         task = task_store.get_task_by_states(
             db,
@@ -263,6 +264,7 @@ class SharedTaskService:
             db.query(Kind)
             .filter(
                 Kind.id == new_team_id,
+                Kind.user_id == new_user_id,
                 Kind.kind == "Team",
                 Kind.is_active == True,
             )

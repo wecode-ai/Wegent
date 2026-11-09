@@ -144,7 +144,7 @@ async fn team_share_info(
              FROM share_links WHERE share_links.token_hash = ? \
              AND share_links.resource_type = 'Team' \
              AND share_links.is_active = true \
-             AND share_links.expires_at > NOW() LIMIT 1",
+             AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1",
             (token_hash(share_token),),
         )
         .await

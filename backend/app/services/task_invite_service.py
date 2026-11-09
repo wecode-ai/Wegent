@@ -4,15 +4,16 @@
 
 """Service for task invite link functionality."""
 
-import logging
-from datetime import datetime, timedelta
 import hashlib
+import logging
 import secrets
+from datetime import datetime, timedelta
 from typing import Optional
 
-from app.models.share_link import ResourceType, ShareLink
 from sqlalchemy.orm import Session
+
 from app.core.config import settings
+from app.models.share_link import ResourceType, ShareLink
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class TaskInviteService:
         token = secrets.token_urlsafe(32)
         db.add(
             ShareLink(
-                resource_type=ResourceType.TASK.value,
+                resource_type=ResourceType.TASK_INVITE.value,
                 resource_id=task_id,
                 share_token=token,
                 token_hash=self._hash_share_token(token),
@@ -65,7 +66,7 @@ class TaskInviteService:
             db.query(ShareLink)
             .filter(
                 ShareLink.token_hash == self._hash_share_token(token),
-                ShareLink.resource_type == ResourceType.TASK.value,
+                ShareLink.resource_type == ResourceType.TASK_INVITE.value,
                 ShareLink.is_active.is_(True),
             )
             .first()

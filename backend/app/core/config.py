@@ -595,7 +595,6 @@ class Settings(BaseSettings):
     TASK_SHARE_BASE_URL: str = "http://localhost:3000"
     TEAM_SHARE_QUERY_PARAM: str = "teamShare"
 
-
     # Webhook notification configuration
     WEBHOOK_ENABLED: bool = False
     WEBHOOK_ENDPOINT_URL: str = ""

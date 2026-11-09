@@ -11,8 +11,8 @@ Resource-specific services should extend this base class.
 
 import hashlib
 import logging
-import urllib.parse
 import secrets
+import urllib.parse
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -162,7 +162,7 @@ class UnifiedShareService(ABC):
         return self.token_hasher(share_token.encode("utf-8")).hexdigest()
 
     def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
-        """Find an active, unexpired share link by its token hash."""
+        """Find an active share link by its token hash."""
         share_link = (
             db.query(ShareLink)
             .filter(
@@ -171,8 +171,6 @@ class UnifiedShareService(ABC):
             )
             .first()
         )
-        if share_link and share_link.is_expired:
-            return None
         return share_link
 
     def _generate_share_url(self, share_token: str) -> str:
@@ -259,7 +257,10 @@ class UnifiedShareService(ABC):
         logger.info("[create_share_link] No existing link found, generating new token")
         share_token = self._generate_share_token(user_id, resource_id)
         token_hash = self._hash_share_token(share_token)
-        logger.info(f"[create_share_link] Generated share_token: {share_token[:50]}...")
+        logger.info(
+            "[create_share_link] Generated share token hash prefix: %s",
+            token_hash[:12],
+        )
 
         duplicate_check = (
             db.query(ShareLink).filter(ShareLink.token_hash == token_hash).first()
@@ -271,7 +272,8 @@ class UnifiedShareService(ABC):
                 f"duplicate_resource_type={duplicate_check.resource_type}, "
                 f"duplicate_resource_id={duplicate_check.resource_id}, "
                 f"duplicate_is_active={duplicate_check.is_active}, "
-                f"token={share_token[:50]}..."
+                "token_hash_prefix=%s",
+                token_hash[:12],
             )
         else:
             logger.info(
@@ -286,9 +288,7 @@ class UnifiedShareService(ABC):
             expires_at = datetime.utcnow() + timedelta(days=365 * 100)
 
         # Create new share link
-        logger.info(
-            f"[create_share_link] Creating new ShareLink record with token: {share_token[:50]}..."
-        )
+        logger.info("[create_share_link] Creating new ShareLink record")
         share_link = ShareLink(
             resource_type=self.resource_type.value,
             resource_id=resource_id,
@@ -313,11 +313,13 @@ class UnifiedShareService(ABC):
                 f"[create_share_link] FAILED to commit share_link: {type(e).__name__}: {str(e)}"
             )
             logger.error(
-                f"[create_share_link] Share link details that failed: "
-                f"resource_type={self.resource_type.value}, "
-                f"resource_id={resource_id}, "
-                f"share_token={share_token[:50]}..., "
-                f"created_by_user_id={user_id}"
+                "Share link details that failed: "
+                "resource_type=%s, resource_id=%s, token_hash_prefix=%s, "
+                "created_by_user_id=%s",
+                self.resource_type.value,
+                resource_id,
+                token_hash[:12],
+                user_id,
             )
             raise
 
@@ -482,7 +484,8 @@ class UnifiedShareService(ABC):
         if share_link.resource_type not in self._resource_type_variants:
             raise HTTPException(status_code=400, detail="Invalid resource type")
 
-        resource_type_variants = self._resource_type_variants
+        if share_link.is_expired:
+            raise HTTPException(status_code=400, detail="Share link has expired")
 
         # Cannot join own resource
         # Cannot join own resource

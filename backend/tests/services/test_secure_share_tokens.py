@@ -14,6 +14,7 @@ from app.models.user import User
 from app.services.shared_task import shared_task_service
 from app.services.shared_team import shared_team_service
 from app.services.share import task_share_service
+from app.services.task_invite_service import task_invite_service
 
 
 def _add_user(db: Session, name: str) -> User:
@@ -87,19 +88,27 @@ def test_task_share_token_is_random_and_persisted(test_db: Session):
     task = _add_task(test_db, owner, "secure-task")
 
     response = shared_task_service.share_task(test_db, task.id, owner.id)
-    link = test_db.query(ShareLink).filter(
-        ShareLink.resource_type == ResourceType.TASK.value,
-        ShareLink.resource_id == task.id,
-    ).one()
+    link = (
+        test_db.query(ShareLink)
+        .filter(
+            ShareLink.resource_type == ResourceType.TASK.value,
+            ShareLink.resource_id == task.id,
+        )
+        .one()
+    )
 
     assert response.share_token == link.share_token
     assert len(response.share_token) >= 43
-    assert link.token_hash == hashlib.sha256(
-        response.share_token.encode("utf-8")
-    ).hexdigest()
-    assert shared_task_service.get_public_shared_task(
-        test_db, response.share_token
-    ).task_title == "secure-task"
+    assert (
+        link.token_hash
+        == hashlib.sha256(response.share_token.encode("utf-8")).hexdigest()
+    )
+    assert (
+        shared_task_service.get_public_shared_task(
+            test_db, response.share_token
+        ).task_title
+        == "secure-task"
+    )
 
 
 @pytest.mark.unit
@@ -116,24 +125,78 @@ def test_forged_task_token_cannot_read_public_task(test_db: Session):
 
 
 @pytest.mark.unit
+def test_task_invite_and_share_tokens_are_not_interchangeable(
+    test_db: Session,
+):
+    owner = _add_user(test_db, "invite-isolation-owner")
+    task = _add_task(test_db, owner, "invite-isolation-task")
+    share_link = shared_task_service.create_share_link(test_db, task.id, owner.id)
+    invite_token = task_invite_service.generate_invite_token(
+        test_db, task_id=task.id, inviter_id=owner.id
+    )
+
+    assert (
+        test_db.query(ShareLink)
+        .filter(ShareLink.share_token == invite_token)
+        .one()
+        .resource_type
+        == ResourceType.TASK_INVITE.value
+    )
+
+    with pytest.raises(HTTPException) as share_error:
+        shared_task_service.get_public_shared_task(test_db, invite_token)
+
+    assert share_error.value.status_code == 400
+    assert share_error.value.detail == "Invalid share link format"
+    assert (
+        task_invite_service.decode_invite_token(test_db, share_link.share_token) is None
+    )
+
+
+@pytest.mark.unit
+def test_joining_shared_task_requires_own_target_team(test_db: Session):
+    owner = _add_user(test_db, "join-target-owner")
+    attacker = _add_user(test_db, "join-target-attacker")
+    task = _add_task(test_db, owner, "join-target-task")
+    owner_team = _add_team(test_db, owner, "join-target-owner-team")
+    response = shared_task_service.share_task(test_db, task.id, owner.id)
+    with pytest.raises(HTTPException) as exc_info:
+        shared_task_service.join_shared_task(
+            test_db,
+            share_token=response.share_token,
+            user_id=attacker.id,
+            team_id=owner_team.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == f"Team with id {owner_team.id} not found"
+
+
+@pytest.mark.unit
 def test_team_share_token_is_random_and_persisted(test_db: Session):
     owner = _add_user(test_db, "secure-team-owner")
     team = _add_team(test_db, owner, "secure-team")
 
     response = shared_team_service.share_team(test_db, team.id, owner.id)
-    link = test_db.query(ShareLink).filter(
-        ShareLink.resource_type == ResourceType.TEAM.value,
-        ShareLink.resource_id == team.id,
-    ).one()
+    link = (
+        test_db.query(ShareLink)
+        .filter(
+            ShareLink.resource_type == ResourceType.TEAM.value,
+            ShareLink.resource_id == team.id,
+        )
+        .one()
+    )
 
     assert response.share_token == link.share_token
     assert len(response.share_token) >= 43
-    assert link.token_hash == hashlib.sha256(
-        response.share_token.encode("utf-8")
-    ).hexdigest()
-    assert shared_team_service.get_share_info(
-        test_db, response.share_token
-    ).team_name == "secure-team"
+    assert (
+        link.token_hash
+        == hashlib.sha256(response.share_token.encode("utf-8")).hexdigest()
+    )
+    assert (
+        shared_team_service.get_share_info(test_db, response.share_token).team_name
+        == "secure-team"
+    )
 
 
 @pytest.mark.unit

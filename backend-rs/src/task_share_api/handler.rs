@@ -108,7 +108,7 @@ pub(super) async fn share_task(
         .get_required("user_id")
         .map_err(|error| internal(&error))?;
     let share_token = generate_share_token().map_err(|()| FastApiError::unhandled())?;
-    let expires_at = chrono::Local::now().naive_local() + Duration::days(365 * 100);
+    let expires_at = chrono::Utc::now().naive_utc() + Duration::days(365 * 100);
     state
         .mysql
         .execute(

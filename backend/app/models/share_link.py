@@ -19,7 +19,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    UniqueConstraint,
 )
 from sqlalchemy.sql import func
 
@@ -32,6 +31,7 @@ class ResourceType(str, PyEnum):
 
     TEAM = "Team"
     TASK = "Task"
+    TASK_INVITE = "TaskInvite"
     KNOWLEDGE_BASE = "KnowledgeBase"
     PLUGIN = "Plugin"
     SMART_APP = "SmartApp"
@@ -93,8 +93,6 @@ class ShareLink(Base):
         String(64),
         nullable=False,
         unique=True,
-        default="",
-        server_default="",
         comment="SHA-256 hash of the share token",
     )
 
@@ -152,10 +150,6 @@ class ShareLink(Base):
             "is_active",
         ),
         Index("idx_share_links_token_hash_active", "token_hash", "is_active"),
-        UniqueConstraint(
-            "token_hash",
-            name="uniq_share_links_token_hash",
-        ),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",
