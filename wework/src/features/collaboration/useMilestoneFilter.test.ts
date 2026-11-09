@@ -21,6 +21,56 @@ function setup(data = issues) {
 }
 
 describe('milestone filter drilldown', () => {
+  it('reads controlled values immediately and emits only explicit actions once', () => {
+    const onChange = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ milestoneId }: { milestoneId: string | null }) =>
+        useMilestoneFilter('p', 'board', issues, { filter: { milestoneId }, onChange }),
+      { initialProps: { milestoneId: 'm' as string | null } }
+    )
+    expect(result.current.filteredIssues.map(item => item.id)).toEqual(['parent', 'same'])
+    act(() => result.current.select(null))
+    expect(onChange.mock.calls).toEqual([[null]])
+    expect(result.current.value).toBe('m')
+    rerender({ milestoneId: null })
+    expect(result.current.filteredIssues.map(item => item.id)).toEqual(['other', 'nested'])
+    act(() => result.current.clear())
+    expect(onChange.mock.calls).toEqual([[null], ['all']])
+    expect(result.current.value).toBeNull()
+    rerender({ milestoneId: 'all' })
+    expect(result.current.filteredIssues).toHaveLength(4)
+    act(() => result.current.select('m'))
+    expect(onChange.mock.calls).toEqual([[null], ['all'], ['m']])
+    rerender({ milestoneId: 'm' })
+    expect(onChange).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps a controlled filter read-only without a callback', () => {
+    const { result } = renderHook(() =>
+      useMilestoneFilter('p', 'board', issues, { filter: { milestoneId: 'm' } })
+    )
+    act(() => result.current.select(null))
+    act(() => result.current.clear())
+    expect(result.current.value).toBe('m')
+    expect(result.current.filter).toEqual({ milestoneId: 'm' })
+  })
+
+  it('keeps drilldown temporary and applies a changed controlled filter immediately', () => {
+    const onChange = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ milestoneId }: { milestoneId: string | null }) =>
+        useMilestoneFilter('p', 'board', issues, { filter: { milestoneId }, onChange }),
+      { initialProps: { milestoneId: 'm' as string | null } }
+    )
+    act(() => result.current.openChildren(issues[0]))
+    expect(result.current.value).toBe('all')
+    expect(result.current.filter).toEqual({ milestoneId: 'm' })
+    rerender({ milestoneId: null })
+    expect(result.current.value).toBeNull()
+    expect(result.current.filteredIssues.map(item => item.id)).toEqual(['other', 'nested'])
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('temporarily includes counted children and restores selection at the root in the same event', () => {
     const { result } = setup()
     act(() => result.current.select('m'))

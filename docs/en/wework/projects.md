@@ -55,13 +55,14 @@ Type **#** and select a matching Issue from this project. After switching projec
 
 Open **Milestones** in the project. The Issue-detail selector only associates existing milestones and is not the management page.
 
-| Feature         | Steps                                                                                                                                                                  |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Browse/filter   | Switch Open/Closed, select a milestone for its Issues and use Back to leave details                                                                                    |
-| Create/edit     | Create or edit a row, enter title, description and due date, then Save; Cancel discards                                                                                |
-| Close/reopen    | Use the row action; this changes the milestone state without automatically completing its Issues                                                                       |
-| Delete          | Verify the target and review confirmation/permissions; deletion differs from closing                                                                                   |
-| Archived Issues | When the selected milestone contains archived Issues, use its Archived entry to view those records; not the Closed milestone filter or globally archived conversations |
+| Feature         | Steps                                                                                                                                                                                                                                                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browse/filter   | Switch Open/Closed, select a milestone for its Issues and use Back to leave details                                                                                                                                                                                                                                           |
+| Shared filter   | Milestones, Board and Table share the filter in the current project session. Choose All milestones, No milestone or a specific milestone; switching views preserves the choice. Use Clear milestone filter or Back to milestones to restore all. Filters are not shared through notification links or persisted on the server |
+| Create/edit     | Create or edit a row, enter title, description and due date, then Save; Cancel discards                                                                                                                                                                                                                                       |
+| Close/reopen    | Use the row action; this changes the milestone state without automatically completing its Issues                                                                                                                                                                                                                              |
+| Delete          | Verify the target and review confirmation/permissions; deletion differs from closing                                                                                                                                                                                                                                          |
+| Archived Issues | When the selected milestone contains archived Issues, use its Archived entry to view those records; not the Closed milestone filter or globally archived conversations                                                                                                                                                        |
 
 ## Members, discussion assignment and archival
 

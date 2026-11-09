@@ -593,7 +593,78 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         },
         uiTimeoutMs
       )
+      const noMilestone = await requestExecutor(
+        control,
+        'todos.create',
+        {
+          project_id: localProject.id,
+          todo: {
+            title: 'Task without a milestone',
+            status: 'pending',
+            priority: 'none',
+            tags: [],
+          },
+        },
+        uiTimeoutMs
+      )
+      assert.ok(noMilestone.id)
       await reloadMainWindow(control, 'The cross-milestone child must survive reopening')
+      await openMilestones(control)
+      await control.command('clickWhenEnabled', scoped(`milestone-open-${localId}`))
+      await control.command('waitFor', scoped(`collaboration-issue-table-row-${localIssue}`))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
+      await control.command('waitFor', `${scoped('milestone-filter')}[data-value="${localId}"]`)
+      await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
+      assert.equal(
+        Number(await control.command('getElementCount', scoped(`cloud-todo-card-${child.id}`))),
+        0
+      )
+      await selectCollaborationProjectView(control, CONTENT, 'table')
+      await control.command('waitFor', `${scoped('milestone-filter')}[data-value="${localId}"]`)
+      await control.command('waitFor', scoped(`collaboration-issue-table-row-${localIssue}`))
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped(`collaboration-issue-table-row-${child.id}`)
+          )
+        ),
+        0
+      )
+      await openMilestones(control)
+      await control.command('waitFor', `${scoped('milestones-filter')}[data-value="${localId}"]`)
+      await control.command('waitFor', scoped(`collaboration-issue-table-row-${localIssue}`))
+      await control.command('clickWhenEnabled', scoped('milestones-filter-clear'))
+      await control.command('waitFor', scoped(`milestone-open-${localId}`))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
+      await control.command('waitFor', `${scoped('milestone-filter')}[data-value="all"]`)
+      await selectMilestone(control, '', 'milestone-filter')
+      await control.command('waitFor', scoped(`cloud-todo-card-${noMilestone.id}`))
+      assert.equal(
+        Number(await control.command('getElementCount', scoped(`cloud-todo-card-${localIssue}`))),
+        0
+      )
+      await openMilestones(control)
+      await control.command('waitFor', `${scoped('milestones-filter')}[data-value=""]`)
+      await control.command('waitFor', scoped(`collaboration-issue-table-row-${noMilestone.id}`))
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped(`collaboration-issue-table-row-${localIssue}`)
+          )
+        ),
+        0
+      )
+      await selectCollaborationProjectView(control, CONTENT, 'table')
+      await control.command('waitFor', `${scoped('milestone-filter')}[data-value=""]`)
+      await control.command('waitFor', scoped(`collaboration-issue-table-row-${noMilestone.id}`))
+      await control.command('clickWhenEnabled', scoped('milestone-filter-clear'))
+      await control.command('waitFor', scoped(`collaboration-issue-table-row-${localIssue}`))
+      await control.command('waitFor', scoped(`collaboration-issue-table-row-${noMilestone.id}`))
+      await openMilestones(control)
+      await control.command('waitFor', `${scoped('milestones-filter')}[data-value="all"]`)
+      await control.command('waitFor', scoped(`milestone-open-${localId}`))
       await selectCollaborationProjectView(control, CONTENT, 'board', workbenchReadyTimeoutMs)
       await control.command('waitFor', `${scoped('milestone-filter')}:enabled`)
       await selectMilestone(control, localId, 'milestone-filter')
@@ -668,6 +739,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await selectMilestone(control, localId, 'milestone-filter')
       await openMilestones(control)
+      await control.command('waitFor', `${scoped('milestones-filter')}[data-value="${localId}"]`)
+      await control.command('clickWhenEnabled', scoped('milestones-back'))
       await deleteMilestone(control, localId)
       await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')
       await selectCollaborationProjectView(control, CONTENT, 'board')

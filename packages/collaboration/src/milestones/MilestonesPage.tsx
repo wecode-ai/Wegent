@@ -1,6 +1,6 @@
 import "./milestones.css";
 import { Flag } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAssignment,
@@ -12,6 +12,11 @@ import { useIssueAssignmentsByIssueId } from "../platform/useIssueAssignmentsByI
 import type { Milestone, MilestoneInput } from "./types";
 import { milestoneMessages } from "./messages";
 import { useMilestones, milestoneVisibilityScope } from "./useMilestones";
+import {
+  useMilestoneFilter,
+  type MilestoneFilterValue,
+} from "./useMilestoneFilter";
+import { MilestonePicker } from "./MilestonePicker";
 
 const buttonBaseClass =
   "min-h-11 rounded-md border px-3 text-sm disabled:opacity-50 md:min-h-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40";
@@ -26,6 +31,8 @@ export function MilestonesPage({
   renderIssues,
   onChanged,
   onOpenArchive,
+  filter,
+  onFilterChange,
 }: {
   api: SharedWorkspaceApi;
   project: CollaborationProject;
@@ -33,11 +40,13 @@ export function MilestonesPage({
   locale: "zh-CN" | "en";
   onChanged?(): Promise<unknown>;
   onOpenArchive?(): void;
+  filter?: MilestoneFilterValue;
+  onFilterChange?(milestoneId: string | null): void;
   renderIssues(
     issues: CollaborationIssue[],
     assignments: Record<string, CollaborationAssignment[]>,
     emptyLabel: string,
-    milestoneId: string,
+    milestoneId: string | null,
   ): ReactNode;
 }) {
   const m = milestoneMessages[locale];
@@ -49,7 +58,12 @@ export function MilestonesPage({
     milestoneVisibilityScope(project),
   );
   const [state, setState] = useState<"open" | "closed">("open");
-  const [selected, setSelected] = useState<string | null>(null);
+  const selection = useMilestoneFilter(project.id, "milestones", issues, {
+    filter,
+    onChange: onFilterChange,
+  });
+  const selected = selection.value;
+  const readOnlyFilter = filter !== undefined && onFilterChange === undefined;
   const [editing, setEditing] = useState<Milestone | "new" | null>(null);
   const [deleting, setDeleting] = useState<Milestone | null>(null);
   const [busy, setBusy] = useState(false);
@@ -62,14 +76,18 @@ export function MilestonesPage({
     }
   }, [canManage]);
   const active = query.items.find((item) => item.id === selected);
-  const linkedIssues = useMemo(
-    () => issues.filter((issue) => issue.milestone_id === selected),
-    [issues, selected],
+  const linkedIssues = selection.filteredIssues;
+  const showingIssues =
+    Boolean(active) ||
+    (selected === null && (query.items.length > 0 || linkedIssues.length > 0));
+  const listedMilestones = query.items.filter(
+    (item) =>
+      item.state === state && (selected === "all" || item.id === selected),
   );
   const { assignmentsByIssueId } = useIssueAssignmentsByIssueId({
     assignmentsApi: api.assignments,
     issues: linkedIssues,
-    enabled: selected !== null,
+    enabled: showingIssues,
   });
 
   async function mutate(action: () => Promise<unknown>) {
@@ -99,12 +117,13 @@ export function MilestonesPage({
         data-testid="milestones-content"
       >
         <header className="mb-6 space-y-4">
-          {active ? (
+          {selected !== "all" ? (
             <button
               type="button"
               className="min-h-11 text-sm text-text-secondary hover:text-text-primary md:min-h-8"
               data-testid="milestones-back"
-              onClick={() => setSelected(null)}
+              disabled={readOnlyFilter}
+              onClick={selection.clear}
             >
               ← {m.back}
             </button>
@@ -114,7 +133,28 @@ export function MilestonesPage({
               <p className="mt-1 text-sm text-text-muted">{m.intro}</p>
             </div>
           )}
-          {!active ? (
+          {filter !== undefined ? (
+            <MilestonePicker
+              api={api.milestones}
+              query={query}
+              projectId={project.id}
+              value={selected}
+              onChange={selection.select}
+              onClear={selection.clear}
+              clearLabel={m.clearFilter}
+              label={m.title}
+              searchLabel={m.search}
+              emptyLabel={m.noMatches}
+              noneLabel={m.none}
+              allLabel={m.all}
+              errorLabel={m.error}
+              retryLabel={m.retry}
+              testId="milestones-filter"
+              compact
+              disabled={readOnlyFilter}
+            />
+          ) : null}
+          {!showingIssues ? (
             <div
               className="flex flex-wrap items-center justify-between gap-3"
               data-testid="milestones-toolbar"
@@ -133,7 +173,7 @@ export function MilestonesPage({
                     aria-pressed={value === state}
                     onClick={() => {
                       setState(value);
-                      setSelected(null);
+                      if (selected !== "all") selection.clear();
                     }}
                   >
                     {m[value]}{" "}
@@ -163,7 +203,7 @@ export function MilestonesPage({
           ) : null}
         </header>
         {query.error || failed ? (
-          <p role="alert" className="mb-3 text-sm text-red-600">
+          <p role="alert" className="mb-3 text-sm text-destructive">
             {m.error}{" "}
             <button
               type="button"
@@ -238,32 +278,40 @@ export function MilestonesPage({
         ) : null}
         {!query.loading &&
         !query.error &&
-        !active &&
+        !showingIssues &&
         !editing &&
-        query.items.filter((item) => item.state === state).length === 0 ? (
+        listedMilestones.length === 0 ? (
           <div
             className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center"
             data-testid="milestones-empty"
           >
             <Flag className="h-6 w-6 text-text-muted" aria-hidden="true" />
             <h2 className="heading-small">
-              {state === "closed" ? m.emptyClosed : m.empty}
+              {selected !== "all" && query.items.length > 0
+                ? m.noMatches
+                : state === "closed"
+                  ? m.emptyClosed
+                  : m.empty}
             </h2>
             <p className="max-w-md text-sm text-text-muted">
               {state === "closed" ? m.emptyClosedHint : m.emptyHint}
             </p>
           </div>
         ) : null}
-        {active ? (
+        {showingIssues ? (
           <>
-            <h2 className="heading-medium mb-3 break-words">{active.title}</h2>
+            <h2 className="heading-medium mb-3 break-words">
+              {active?.title ?? m.none}
+            </h2>
             <p className="max-w-3xl whitespace-pre-wrap break-words text-sm text-text-secondary">
-              {active.description}
+              {active?.description}
             </p>
-            <div className="my-4">
-              <MilestoneProgress item={active} messages={m} />
-            </div>
-            {(active.archived_issues ?? 0) > 0 && onOpenArchive ? (
+            {active ? (
+              <div className="my-4">
+                <MilestoneProgress item={active} messages={m} />
+              </div>
+            ) : null}
+            {(active?.archived_issues ?? 0) > 0 && onOpenArchive ? (
               <div className="my-3">
                 <button
                   type="button"
@@ -275,97 +323,95 @@ export function MilestonesPage({
                 </button>
               </div>
             ) : null}
-            <div key={active.id}>
+            <div key={selected}>
               {renderIssues(
                 linkedIssues,
                 assignmentsByIssueId,
-                (active.archived_issues ?? 0) > 0
+                (active?.archived_issues ?? 0) > 0
                   ? m.noActiveIssues
                   : m.noIssues,
-                active.id,
+                active?.id ?? null,
               )}
             </div>
           </>
         ) : (
-          query.items
-            .filter((item) => item.state === state)
-            .map((item) => {
-              const overdue =
-                item.state === "open" &&
-                item.due_on &&
-                item.due_on < new Date().toLocaleDateString("sv-SE");
-              return (
-                <article
-                  key={item.id}
-                  className="border-b border-border py-5"
-                  data-testid={`milestone-${item.id}`}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      data-testid={`milestone-open-${item.id}`}
-                      onClick={() => setSelected(item.id)}
-                      className="min-h-11 min-w-0 max-w-full break-words text-left text-sm font-semibold hover:underline md:min-h-8"
-                    >
-                      {item.title}
-                    </button>
-                    {item.due_on ? (
-                      <span className="text-xs text-text-muted">
-                        {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ""}
-                      </span>
-                    ) : null}
-                    {canManage ? (
-                      <div className="ml-auto flex gap-2">
-                        <button
-                          type="button"
-                          className={buttonClass}
-                          data-testid={`milestone-edit-${item.id}`}
-                          disabled={busy}
-                          onClick={() => setEditing(item)}
-                        >
-                          {m.edit}
-                        </button>
-                        <button
-                          type="button"
-                          className={buttonClass}
-                          data-testid={`milestone-state-${item.id}`}
-                          disabled={busy}
-                          onClick={() =>
-                            void mutate(() =>
-                              api.milestones!.update(project.id, item.id, {
-                                title: item.title,
-                                description: item.description,
-                                due_on: item.due_on,
-                                version: item.version,
-                                state:
-                                  item.state === "open" ? "closed" : "open",
-                              }),
-                            )
-                          }
-                        >
-                          {item.state === "open" ? m.close : m.reopen}
-                        </button>
-                        <button
-                          type="button"
-                          className={buttonClass}
-                          data-testid={`milestone-delete-${item.id}`}
-                          disabled={busy}
-                          onClick={() => setDeleting(item)}
-                        >
-                          {m.remove}
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                  <p className="my-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
-                    {item.description}
-                  </p>
-                  <div>
-                    <MilestoneProgress item={item} messages={m} />
-                  </div>
-                </article>
-              );
-            })
+          listedMilestones.map((item) => {
+            const overdue =
+              item.state === "open" &&
+              item.due_on &&
+              item.due_on < new Date().toLocaleDateString("sv-SE");
+            return (
+              <article
+                key={item.id}
+                className="border-b border-border py-5"
+                data-testid={`milestone-${item.id}`}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid={`milestone-open-${item.id}`}
+                    disabled={readOnlyFilter}
+                    onClick={() => selection.select(item.id)}
+                    className="min-h-11 min-w-0 max-w-full break-words text-left text-sm font-semibold hover:underline md:min-h-8"
+                  >
+                    {item.title}
+                  </button>
+                  {item.due_on ? (
+                    <span className="text-xs text-text-muted">
+                      {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ""}
+                    </span>
+                  ) : null}
+                  {canManage ? (
+                    <div className="ml-auto flex gap-2">
+                      <button
+                        type="button"
+                        className={buttonClass}
+                        data-testid={`milestone-edit-${item.id}`}
+                        disabled={busy}
+                        onClick={() => setEditing(item)}
+                      >
+                        {m.edit}
+                      </button>
+                      <button
+                        type="button"
+                        className={buttonClass}
+                        data-testid={`milestone-state-${item.id}`}
+                        disabled={busy}
+                        onClick={() =>
+                          void mutate(() =>
+                            api.milestones!.update(project.id, item.id, {
+                              title: item.title,
+                              description: item.description,
+                              due_on: item.due_on,
+                              version: item.version,
+                              state: item.state === "open" ? "closed" : "open",
+                            }),
+                          )
+                        }
+                      >
+                        {item.state === "open" ? m.close : m.reopen}
+                      </button>
+                      <button
+                        type="button"
+                        className={buttonClass}
+                        data-testid={`milestone-delete-${item.id}`}
+                        disabled={busy}
+                        onClick={() => setDeleting(item)}
+                      >
+                        {m.remove}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <p className="my-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                  {item.description}
+                </p>
+                <div>
+                  <MilestoneProgress item={item} messages={m} />
+                </div>
+              </article>
+            );
+          })
         )}
       </div>
     </section>

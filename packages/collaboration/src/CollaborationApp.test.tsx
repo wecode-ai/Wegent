@@ -66,6 +66,7 @@ vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
 }));
 
 import { CollaborationApp } from "./CollaborationApp";
+import { MilestonesPage } from "./milestones/MilestonesPage";
 import { IssueDetail } from "./IssueDetail";
 import { CollaborationSettings } from "./CollaborationSettings";
 import { collaborationTestIds } from "./testIds";
@@ -288,6 +289,40 @@ describe("CollaborationApp API boundary", () => {
       );
     },
   );
+
+  it("connects the milestone page to the project-owned filter", () => {
+    const project = createProject(1);
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(project),
+    );
+    const host = createHost(false, undefined);
+    host.location = {
+      projectId: project.id,
+      issueId: null,
+      view: "milestones",
+    };
+    const api = {
+      ...createApi(),
+      milestones: { list: vi.fn() },
+    } as unknown as SharedWorkspaceApi;
+    const shell = findByType(
+      renderApp(host, api),
+      CollaborationProjectViewShell,
+    );
+    const page = shell?.props.extensions.find(
+      (extension: { id: string }) => extension.id === "milestones",
+    )?.content;
+    expect(page.type).toBe(MilestonesPage);
+    expect(page.props.filter).toEqual({ milestoneId: "all" });
+    page.props.onFilterChange("M1");
+    expect(
+      collaborationAppMocks.stateSetters.some(({ setter }) =>
+        setter.mock.calls.some(
+          ([value]) => value?.projectId === project.id && value.value === "M1",
+        ),
+      ),
+    ).toBe(true);
+  });
 
   it("accepts the grouped SharedWorkspaceApi as its only cloud API", () => {
     expectTypeOf<
