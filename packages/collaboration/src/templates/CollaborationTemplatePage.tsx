@@ -60,6 +60,7 @@ function ScopedCollaborationTemplatePage({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [deleting, setDeleting] = useState<Card | null>(null)
   const generation = useRef(0)
   const refresh = useCallback(async () => {
     const remote = store.library.remote
@@ -295,6 +296,21 @@ function ScopedCollaborationTemplatePage({
               <span>
                 {m.version} {card.version}
               </span>
+              {card.ownerId === store.library.ownerId &&
+                (!card.record || card.record.source === 'personal') && (
+                  <button
+                    type="button"
+                    className="collaboration-danger-button"
+                    data-testid={`template-delete-${card.record?.document.metadata.name ?? card.id}`}
+                    disabled={busy || local.syncing}
+                    onClick={() => {
+                      setError(null)
+                      setDeleting(card)
+                    }}
+                  >
+                    {m.delete}
+                  </button>
+                )}
               <button
                 type="button"
                 data-testid={`template-details-${card.record?.document.metadata.name ?? card.id}`}
@@ -435,6 +451,61 @@ function ScopedCollaborationTemplatePage({
               {error}
             </p>
           )}
+        </TemplateDialog>
+      )}
+      {deleting && (
+        <TemplateDialog
+          title={m.delete}
+          closeLabel={m.close}
+          onClose={() => setDeleting(null)}
+          busy={busy}
+          footer={
+            <>
+              <button
+                type="button"
+                data-testid="template-delete-cancel"
+                disabled={busy}
+                onClick={() => setDeleting(null)}
+              >
+                {m.cancel}
+              </button>
+              <button
+                type="button"
+                className="collaboration-danger-button"
+                data-testid="template-delete-confirm"
+                disabled={busy || (deleting.id !== null && !store.library.remote)}
+                onClick={async () => {
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    const record =
+                      deleting.record ?? (await store.library.remote!.get(deleting.id!))
+                    await store.delete(record)
+                    // Invalidate older list responses before removing their cached metadata.
+                    generation.current++
+                    setMine(previous =>
+                      previous.filter(
+                        item => `${item.ownerId}:${item.namespace}:${item.name}` !== deleting.key
+                      )
+                    )
+                    setListings(previous => previous.filter(item => item.id !== record.id))
+                    setDeleting(null)
+                    void refresh()
+                  } catch {
+                    setError(m.failed)
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                {m.delete}
+              </button>
+            </>
+          }
+        >
+          <p>{m.deleteHint.replace('{name}', deleting.name)}</p>
+          {deleting.id !== null && !store.library.remote && <p>{m.deleteConnectionRequired}</p>}
+          {error && <p role="alert">{error}</p>}
         </TemplateDialog>
       )}
       {importOpen && (

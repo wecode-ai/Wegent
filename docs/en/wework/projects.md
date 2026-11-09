@@ -36,6 +36,10 @@ Credentials are shown only this time. Do not put their values in chat, documents
 
 ## Collaboration templates and configuration sharing
 
+<a id="template-controls"></a>
+
+To delete an imported personal template, open **Collaboration → Templates → My templates → Delete template** on its card, check its name and confirm. Cancel leaves it unchanged. Only your own personal templates have this action; built-in and other users’ templates cannot be deleted. Unsynced drafts can be deleted offline. Synced templates require a cloud connection and are removed from your account and this device. Existing projects and groups are unaffected. On failure, the template remains available and you can retry in the dialog.
+
 | Action                            | UI steps and result                                                                                                                                                             |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Find templates                    | Collaboration left navigation → Templates → Discover, Available or My templates; search, refresh or use More                                                                    |
