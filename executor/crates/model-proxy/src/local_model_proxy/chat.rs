@@ -203,7 +203,11 @@ impl ResponsesToolState {
             return None;
         }
         let name = item.get("name").and_then(Value::as_str)?;
-        let identity = self.context.identity(name)?;
+        let identity = if let Some(namespace) = item.get("namespace").and_then(Value::as_str) {
+            self.context.identity(self.context.wire_name(Some(namespace), name)?)?
+        } else {
+            self.context.identity(name)?
+        };
         if identity.kind == ToolKind::Function && identity.namespace.is_none() {
             return None;
         }

@@ -34,7 +34,13 @@ pub(super) fn responses_tools(
             }
             Some("namespace") => {
                 if !bridge_namespace_tools {
-                    converted.push(tool.clone());
+                    let mut namespace = tool.clone();
+                    if let Some(tools) = tool.get("tools").and_then(Value::as_array) {
+                        namespace["tools"] = Value::Array(responses_tools(
+                            tools, context, convert_custom_tools, bridge_tool_search, false,
+                        ));
+                    }
+                    converted.push(namespace);
                     continue;
                 }
                 let Some(namespace) = tool.get("name").and_then(Value::as_str) else {

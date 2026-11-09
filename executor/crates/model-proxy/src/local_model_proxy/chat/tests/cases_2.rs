@@ -580,6 +580,48 @@ fn responses_to_responses_preserves_native_tool_search_and_namespaces() {
 }
 
 #[tokio::test]
+async fn native_namespaces_keep_custom_declarations_history_choice_and_stream_consistent() {
+    let input = json!({
+        "tools":[{"type":"namespace","name":"functions","description":"Native namespace",
+            "tools":[{"type":"custom","name":"exec"},{"type":"custom","name":"apply_patch"}]}],
+        "input":[{"type":"custom_tool_call","namespace":"functions","name":"exec",
+            "call_id":"call-1","input":"raw tool input"},
+            {"type":"custom_tool_call_output","call_id":"call-1","output":"result"}],
+        "tool_choice":{"type":"custom","namespace":"functions","name":"exec"}
+    });
+    for policy in [CustomToolConversion::All, CustomToolConversion::ExceptApplyPatch] {
+        let (converted, context) = responses_to_responses(&input, policy, true, true).unwrap();
+        assert_eq!(converted["tools"][0]["type"], "namespace");
+        assert_eq!(converted["tools"][0]["name"], "functions");
+        assert_eq!(converted["tools"][0]["description"], "Native namespace");
+        assert_eq!(converted["tools"][0]["tools"][0]["type"], "function");
+        assert_eq!(converted["tools"][0]["tools"][1]["type"],
+            if policy == CustomToolConversion::All { "function" } else { "custom" });
+        assert_eq!(converted["input"][0]["type"], "function_call");
+        assert_eq!(converted["input"][0]["namespace"], "functions");
+        assert_eq!(converted["input"][0]["name"], "exec");
+        assert_eq!(converted["input"][0]["arguments"], r#"{"input":"raw tool input"}"#);
+        assert_eq!(converted["input"][1]["type"], "function_call_output");
+        assert_eq!(converted["tool_choice"], json!({"type":"function","namespace":"functions","name":"exec"}));
+        let item = json!({"id":"fc-1","type":"function_call","namespace":"functions",
+            "name":"exec","call_id":"call-2","arguments":r#"{"input":"new raw input"}"#});
+        let stream = [
+            json!({"type":"response.output_item.added","output_index":0,"item":item}),
+            json!({"type":"response.output_item.done","output_index":0,"item":item}),
+            json!({"type":"response.completed","response":{"id":"resp-1","status":"completed","output":[item]}}),
+        ].iter().map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap())).collect::<String>();
+        let output = convert_responses_stream(&stream, context).await;
+        assert!(output.contains("\"type\":\"custom_tool_call\""), "{output}");
+        assert!(output.contains("\"namespace\":\"functions\""), "{output}");
+        assert!(output.contains("\"input\":\"new raw input\""), "{output}");
+        assert!(!output.contains("\"type\":\"function_call\""), "{output}");
+    }
+    let (native, context) = responses_to_responses(&input, CustomToolConversion::None, true, true).unwrap();
+    assert_eq!(native, input);
+    assert!(context.is_empty());
+}
+
+#[tokio::test]
 async fn normalizes_provider_ids_in_responses_streams() {
     let output = convert_responses_stream(
         concat!(
