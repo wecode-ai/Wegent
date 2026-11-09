@@ -1,5 +1,15 @@
 import { once } from 'node:events'
 
+/** Read the connected host identity through the native snapshot shipped by historical packages. */
+export async function readConnectedApplicationPid(control) {
+  const { applicationPid } = JSON.parse(
+    await control.command('getProcessExplorerWindowSnapshot', 'body')
+  )
+  if (!Number.isSafeInteger(applicationPid) || applicationPid <= 0)
+    throw new Error('The connected workbench has no valid application process ID')
+  return applicationPid
+}
+
 /** Attach only to the fresh child paused by this driver's --inspect-brk argument. */
 export async function inspectBeforeStart(child, expression, log = console.log) {
   const socketUrl = await new Promise((accept, reject) => {
