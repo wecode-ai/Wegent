@@ -29,7 +29,9 @@ states, not base instructions or complete header snapshots. Release each header 
 processing it. Recovery reconstructs the original provider value and verifies its digest so
 permissions, accounts and all other fields cannot change. Validate existing v2 entries one at
 a time and atomically compact them to v3 without loading every session header simultaneously.
-Interruption during compaction still resumes from durable progress.
+Interruption before atomic v3 publication restarts conversion of the v2 entries from the beginning.
+Existing rollout/index migration progress remains durable; journal compaction itself has no
+persisted per-entry cursor.
 Leave empty rollouts without published metadata unchanged and retain native metadata-readiness
 recovery. A nonempty truncated header, or a missing header already recorded in the pending
 journal, still blocks completion. Auxiliary named-Home readers share native process lifetime
