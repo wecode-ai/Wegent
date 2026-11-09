@@ -222,6 +222,17 @@ test('does not restore an unrelated selection when the configured model changed 
   await waitFor(() => expect(hook.result.current.selectedModel).toBeNull())
   expect(hook.result.current.isSelectionReady).toBe(false)
   expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+
+  const hiddenModel: UnifiedModel = {
+    name: 'hidden-model',
+    type: 'public',
+    namespace: 'default',
+    resourceUserId: 0,
+  }
+  api.getModel.mockResolvedValue(hiddenModel)
+  act(() => hook.result.current.refreshModels())
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(hiddenModel))
+  expect(hook.result.current.isSelectionReady).toBe(true)
 })
 
 test('rejects a same-named model from another group identity', async () => {
