@@ -15,6 +15,16 @@ beforeEach(() => {
   request.mockReset()
 })
 
+test('distinguishes missing Executor configuration from a failed status read', async () => {
+  request.mockResolvedValueOnce({ configured: false, connected: false })
+  expect(await refreshLocalExecutorCloudConnectionStatus('/api')).toEqual({
+    configured: false,
+    connected: false,
+  })
+  request.mockRejectedValueOnce(new Error('Executor is restarting'))
+  expect(await refreshLocalExecutorCloudConnectionStatus('/api')).toBeNull()
+})
+
 test('does not publish a query that finishes after connection state was reset and replaced', async () => {
   let finish!: (value: { configured: boolean; connected: boolean }) => void
   request.mockReturnValue(

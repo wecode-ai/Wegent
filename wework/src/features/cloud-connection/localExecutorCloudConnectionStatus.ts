@@ -44,7 +44,7 @@ export function useLocalExecutorCloudConnectionStatus(): LocalExecutorCloudConne
 
 export async function refreshLocalExecutorCloudConnectionStatus(
   apiBaseUrl: string
-): Promise<boolean> {
+): Promise<{ configured?: boolean; connected: boolean } | null> {
   const revision = ++refreshRevision
   try {
     const response = await requestLocalExecutor<{
@@ -52,15 +52,14 @@ export async function refreshLocalExecutorCloudConnectionStatus(
       connected?: boolean
     }>('executor.backend.status')
     const connected = response.configured === true && response.connected === true
-    if (revision === refreshRevision) {
-      setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected })
-    }
-    return connected
+    if (revision !== refreshRevision) return null
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected })
+    return { configured: response.configured, connected }
   } catch {
     if (revision === refreshRevision) {
       setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected: false })
     }
-    return false
+    return null
   }
 }
 

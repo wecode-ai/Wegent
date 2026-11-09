@@ -280,7 +280,6 @@ mod tests {
             &json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"handlingPolicy":{"immediate":false}}),
             &json!({"id":"issue","title":"Review"}),
             &json!({"humanAssignmentId":"human","assignmentId":"event","dispatchRoundId":"direct"}),
-            false,
         ).await.unwrap();
         handler.flush_assignment_receipts().await.unwrap();
         let binding = received_binding.lock().unwrap().clone();

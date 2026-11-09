@@ -378,6 +378,57 @@ describe('LocalExecutorCloudBridge', () => {
     }
   })
 
+  test('reconfigures a restarted Executor but leaves socket reconnects to the Executor', async () => {
+    vi.useFakeTimers()
+    let configured = true
+    mocks.request.mockImplementation((method: string) =>
+      Promise.resolve(
+        method === 'executor.backend.status'
+          ? { configured, connected: configured && mocks.backendConnected }
+          : { changed: false }
+      )
+    )
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://backend.example.com/api"
+        backendUrl="https://backend.example.com"
+        socketBaseUrl="wss://socket.example.com"
+        isConnected
+        token="token-a"
+      />
+    )
+    try {
+      await flushAsyncEffects()
+      expect(mocks.connect).toHaveBeenCalledTimes(1)
+      mocks.backendConnected = false
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(1)
+      configured = false
+      mocks.connect.mockImplementationOnce(async () => {
+        configured = true
+        mocks.backendConnected = true
+        return { running: true, ready: true }
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      await flushAsyncEffects()
+      expect(mocks.connect).toHaveBeenCalledTimes(2)
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2)
+      expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000)
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(2)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
   test('clears a pending runtime token refresh when the target changes', async () => {
     vi.useFakeTimers()
     mocks.runtimeTokenPost.mockResolvedValue({

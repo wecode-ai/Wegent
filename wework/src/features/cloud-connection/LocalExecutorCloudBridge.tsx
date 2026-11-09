@@ -62,6 +62,7 @@ export function LocalExecutorCloudBridge({
     let cancelled = false
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     let statusTimer: ReturnType<typeof setTimeout> | null = null
+    let applyingConnection = false
     const isCurrentConnectionAttempt = () =>
       !cancelled && connectionGenerationRef.current === generation
 
@@ -82,12 +83,21 @@ export function LocalExecutorCloudBridge({
 
     const refreshConnectionStatus = async () => {
       if (!isCurrentConnectionAttempt() || !connected || !apiBaseUrl) return
-      await refreshLocalExecutorCloudConnectionStatus(apiBaseUrl)
+      const status = await refreshLocalExecutorCloudConnectionStatus(apiBaseUrl)
       if (!isCurrentConnectionAttempt()) return
+      if (status?.configured === false) {
+        // A restarted Executor has no in-memory Backend configuration. Socket
+        // disconnections alone remain owned by its existing reconnect loop.
+        await applyConnection()
+        if (isCurrentConnectionAttempt()) setConnectorRefreshRevision(revision => revision + 1)
+        return
+      }
       statusTimer = setTimeout(() => void refreshConnectionStatus(), 1_000)
     }
 
     const applyConnection = async () => {
+      if (applyingConnection) return
+      applyingConnection = true
       try {
         const result = await applyLocalExecutorCloudConnection(
           {
@@ -128,6 +138,8 @@ export function LocalExecutorCloudBridge({
           '[CloudConnection] Failed to disconnect runtime task service from cloud',
           error
         )
+      } finally {
+        applyingConnection = false
       }
     }
 

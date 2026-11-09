@@ -16,6 +16,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod assignment_receipts;
+mod stand_in_dispatches;
 mod code_projects;
 pub mod execution_workspace;
 mod human_requests;

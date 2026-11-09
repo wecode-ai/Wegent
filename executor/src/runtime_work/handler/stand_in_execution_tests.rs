@@ -25,12 +25,10 @@ async fn deleted_stand_in_is_not_replayed_during_or_after_background_cleanup() {
         }
         for manual in [false, true] {
             config["manual"] = json!(manual);
-            for already_bound in [false, true] {
-                handler
-                    .execute_stand_in_task(&config, &issue, &binding, already_bound)
-                    .await
-                    .unwrap();
-            }
+            handler
+                .execute_stand_in_task(&config, &issue, &binding)
+                .await
+                .unwrap();
         }
         assert!(handler.store.is_deleted_archived_task_id(&task_id));
         assert_eq!(
@@ -42,7 +40,7 @@ async fn deleted_stand_in_is_not_replayed_during_or_after_background_cleanup() {
     let reassigned = json!({"humanAssignmentId":"new-human-assignment"});
     assert_ne!(handler.stand_in_task_id(&config, &reassigned), task_id);
     let error = handler
-        .execute_stand_in_task(&config, &issue, &reassigned, false)
+        .execute_stand_in_task(&config, &issue, &reassigned)
         .await
         .unwrap_err();
     assert_eq!(
@@ -106,7 +104,7 @@ async fn project_background_policy_queues_once_and_routed_work_does_not_reenter_
     let issue = serde_json::to_value(issue).unwrap();
     for _ in 0..2 {
         handler
-            .execute_stand_in_task(&config, &issue, &binding, false)
+            .execute_stand_in_task(&config, &issue, &binding)
             .await
             .unwrap();
     }
@@ -125,7 +123,7 @@ async fn project_background_policy_queues_once_and_routed_work_does_not_reenter_
     assert!(receipt[0]["human_read_at"].is_null());
     config["intakeRouted"] = json!(true);
     let error = handler
-        .execute_stand_in_task(&config, &issue, &binding, false)
+        .execute_stand_in_task(&config, &issue, &binding)
         .await
         .unwrap_err();
     assert_eq!(error.code, "workspace_unavailable");
