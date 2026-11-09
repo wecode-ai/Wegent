@@ -28,6 +28,7 @@ import { getRuntimeTaskReminderKey } from '@/features/workbench/runtimeTaskRemin
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import { Tooltip } from '@/components/ui/tooltip'
 import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
@@ -138,7 +139,11 @@ export function TaskBoardView({
   onMarkRuntimeTaskRead,
   onOpenRuntimeTask,
 }: TaskBoardViewProps) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const boardTranslate = useMemo(
+    () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
+    [i18n.language]
+  )
   const [activeLocalProjectFilter, setActiveLocalProjectFilter] = useState('all')
   const [taskContexts, setTaskContexts] = useState<Map<string, RuntimeTaskContextSource>>(
     () => new Map()
@@ -450,6 +455,7 @@ export function TaskBoardView({
   return (
     <div className="contents" data-testid="task-board-surface">
       <ProjectBoardBody<RuntimeMyWorkItem>
+        translate={boardTranslate}
         state={board.state}
         activeDragItemId={board.activeDragItemId}
         boardError={null}

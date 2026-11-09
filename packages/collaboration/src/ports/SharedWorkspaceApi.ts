@@ -683,6 +683,11 @@ export interface SharedWorkspaceGitRepositoriesApi {
   ): Promise<WorkspaceGitBranch[]>;
 }
 
+export interface IssueAttachmentContext {
+  projectId: string;
+  issueId: string;
+}
+
 export interface SharedWorkspaceAttachmentsApi {
   list(issueId: string): Promise<CollaborationAttachment[]>;
   listProjectTaskAttachments(
@@ -693,10 +698,17 @@ export interface SharedWorkspaceAttachmentsApi {
     issueId: string,
     contextIds: number[],
   ): Promise<CollaborationAttachment[]>;
-  access(attachmentId: string): Promise<WorkspaceBinaryAccess>;
-  read(attachmentId: string): Promise<Blob>;
-  download?(attachmentId: string, filename: string): Promise<void>;
-  remove(attachmentId: string): Promise<void>;
+  access(
+    attachmentId: string,
+    context?: IssueAttachmentContext,
+  ): Promise<WorkspaceBinaryAccess>;
+  read(attachmentId: string, context?: IssueAttachmentContext): Promise<Blob>;
+  download?(
+    attachmentId: string,
+    filename: string,
+    context?: IssueAttachmentContext,
+  ): Promise<void>;
+  remove(attachmentId: string, context?: IssueAttachmentContext): Promise<void>;
 }
 
 export interface SharedWorkspaceCollaboratorsApi {
