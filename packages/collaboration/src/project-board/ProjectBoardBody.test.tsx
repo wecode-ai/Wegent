@@ -93,6 +93,7 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
     renderSkeleton: () => null,
     rootLabel: 'Issue',
     rootUnitLabel: '个 Issue',
+    translate: createCollaborationTranslator('zh-CN'),
     saveGlobalDisabled: false,
     saveGlobalLabel: '应用到全局',
     searchPlaceholder: '搜索 Issue',
@@ -103,6 +104,59 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe('ProjectBoardBody', () => {
+  it.each([false, true])('localizes group filters on English boards (external: %s)', external => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const options = props()
+    const translate = createCollaborationTranslator('en')
+    options.translate = translate
+    options.isExternalBoard = external
+    options.externalGroupLabel = 'Status'
+    options.groupFields = [{ id: 'status', name: 'Status' }]
+    options.columns = [
+      { ...options.columns[0], label: 'Inbox' },
+      {
+        dotClass: 'bg-zinc-400',
+        groupValue: 'in_progress',
+        key: 'in_progress',
+        label: 'In progress',
+        status: 'in_progress',
+      },
+    ]
+    options.focusLabels = {
+      enter: translate('todo.focus_view_description'),
+      exit: translate('todo.exit_focus_view_description'),
+      title: translate('todo.focus_view'),
+    }
+    options.rootUnitLabel = translate('todo.board_issue_unit')
+    try {
+      act(() => root.render(<ProjectBoardBody {...options} />))
+      const filter = container.querySelector<HTMLSelectElement>(
+        external
+          ? '[data-testid="dingtalk-board-assignee-filter"]'
+          : '[data-testid="cloud-board-group-filter"]'
+      )!
+      expect(filter.options[0].textContent).toBe('All')
+      expect(filter.closest('span, label')?.textContent).toContain('All Status')
+      expect(filter.getAttribute('aria-label')).toBe('Filter group values')
+      if (!external) {
+        expect(
+          container.querySelector('[data-testid="cloud-board-focus-running"]')?.textContent
+        ).toBe('Focus view')
+      }
+      act(() => {
+        filter.value = external ? '' : 'inbox'
+        filter.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      expect(
+        external ? options.state.setExternalGroupFilter : options.state.setGroupFilter
+      ).toHaveBeenCalledWith(external ? '' : 'inbox')
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it.each(['', 'removed-lane'])(
     'keeps filter names and icons independent from collapsible text (%s)',
     groupFilter => {

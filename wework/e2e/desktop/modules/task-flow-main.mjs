@@ -1098,6 +1098,8 @@ async function writeLocalHarnessDiagnostics(control, resultDir) {
 }
 
 async function main() {
+  const releaseAssetToken = process.env.WEWORK_E2E_RELEASE_ASSET_TOKEN
+  delete process.env.WEWORK_E2E_RELEASE_ASSET_TOKEN
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
@@ -1254,6 +1256,7 @@ async function main() {
       homePath,
       upgradeHome,
       resultDir,
+      releaseAssetToken,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),

@@ -1475,8 +1475,31 @@
 .collaboration-resource-catalog-list[data-kind="devices"]
   > :is(.collaboration-resource-catalog-list-header, article) {
   grid-template-columns:
-    36px minmax(180px, 1fr) 100px minmax(150px, 0.8fr)
-    minmax(120px, 0.65fr) 88px;
+    36px minmax(160px, 1fr) 80px 100px minmax(120px, 0.8fr)
+    minmax(110px, 0.65fr) 176px;
+}
+
+.collaboration-device-last-seen {
+  color: rgb(var(--color-text-secondary));
+  white-space: nowrap;
+}
+
+.collaboration-device-identifier {
+  color: rgb(var(--color-text-secondary));
+  overflow-wrap: anywhere;
+}
+
+.collaboration-delete-device-details {
+  display: grid;
+  gap: 8px;
+  padding: 16px 20px 0;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.collaboration-delete-device-details > p {
+  margin: 0;
 }
 
 .collaboration-resource-catalog-list-header {
@@ -4914,6 +4937,12 @@
     grid-template-columns: 36px minmax(0, 1fr) auto auto;
   }
 
+  .collaboration-resource-catalog-list[data-kind="devices"]
+    .collaboration-device-last-seen {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
   .collaboration-resource-row-detail,
   .collaboration-resource-row-ownership,
   .collaboration-resource-row-members,
@@ -4922,6 +4951,12 @@
   }
 
   .collaboration-resource-bind-button {
+    min-height: 44px;
+  }
+
+  .collaboration-delete-device-dialog
+    .collaboration-resource-form-actions
+    > button {
     min-height: 44px;
   }
 

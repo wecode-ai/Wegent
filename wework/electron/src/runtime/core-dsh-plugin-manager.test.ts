@@ -12,7 +12,7 @@ import {
   CoreDshPluginManager,
   validateCoreDshDevelopmentPlugin,
 } from './core-dsh-plugin-manager.js'
-import { temporaryDirectory } from './test-helpers.js'
+import { temporaryDirectory, testNodeEnvironment } from './test-helpers.js'
 import { prepareElectronNodeRuntime } from './electron-node-runtime.js'
 
 vi.mock('node:child_process', { spy: true })
@@ -628,11 +628,7 @@ async function createFixture(
         runtimeRoot,
         dshEntry: join(runtimeRoot, 'dsh.js'),
         nodeCommand: process.execPath,
-        // process.execPath may be the signed Electron Helper used as the managed Node runtime.
-        environment: {
-          ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
-          ...options.environment,
-        },
+        environment: testNodeEnvironment(options.environment),
         runCommand: options.realCommands
           ? undefined
           : (options.runCommand ??

@@ -420,12 +420,16 @@ export function ProjectBoardAdapter({
     translate,
   });
 
+  const layerCount = controller.filteredItems.filter(
+    (issue) => issue.parent_id === controller.currentParentId,
+  ).length;
   return (
     <div
       data-testid={collaborationTestIds.board}
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <ProjectBoardBody<CollaborationIssue>
+        translate={translate}
         parentRows={
           parentBoard.active
             ? {
@@ -556,9 +560,9 @@ export function ProjectBoardAdapter({
         externalManagedLabel=""
         externalSearchPlaceholder=""
         focusLabels={{
-          enter: "展开进行中与待确认列",
-          exit: "退出执行阶段专注视图",
-          title: "专注视图",
+          enter: translate("todo.focus_view_description"),
+          exit: translate("todo.exit_focus_view_description"),
+          title: translate("todo.focus_view"),
         }}
         sortLabels={
           supportsOrder ? createProjectBoardSortLabels(translate) : undefined
@@ -586,8 +590,12 @@ export function ProjectBoardAdapter({
               onCreateUnmatchedIssue))
             ? {
                 action: {
-                  ariaLabel: `在${column.label}中新建 Issue`,
-                  label: "创建第一个 Issue",
+                  ariaLabel: translate(
+                    "todo.board_create_in_column",
+                    undefined,
+                    { column: column.label },
+                  ),
+                  label: translate("todo.board_create_first"),
                   onClick: () => {
                     if (controller.currentParent && onCreateUnmatchedIssue) {
                       onCreateUnmatchedIssue({
@@ -614,11 +622,7 @@ export function ProjectBoardAdapter({
         ]}
         isExternalBoard={false}
         isMyTasksBoard={false}
-        layerCount={
-          controller.filteredItems.filter(
-            (issue) => issue.parent_id === controller.currentParentId,
-          ).length
-        }
+        layerCount={layerCount}
         onBreadcrumbSelect={controller.setCurrentParentId}
         onSaveGlobalGroupBy={() => undefined}
         renderDragOverlay={() =>
@@ -807,7 +811,11 @@ export function ProjectBoardAdapter({
         }}
         renderSkeleton={() => null}
         rootLabel="Issue"
-        rootUnitLabel="个 Issue"
+        rootUnitLabel={translate(
+          layerCount === 1
+            ? "todo.board_issue_unit_one"
+            : "todo.board_issue_unit",
+        )}
         saveGlobalDisabled
         saveGlobalLabel=""
         searchPlaceholder={labels.search}

@@ -149,6 +149,7 @@ import { ReleaseStore } from './runtime/release-store.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { cloudFetch } from './host/cloud-http.js'
+import { installE2eDshReleaseRedirect } from './host/e2e-dsh-release-redirect.js'
 import {
   cleanupStaleTemporaryImages,
   createNativeContextMenuActions,
@@ -941,6 +942,15 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 }
 
 function installDshWindowLabelHeaders(): void {
+  const releaseRedirect = process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
+  delete process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
+  if (
+    releaseRedirect &&
+    process.env.VITE_WEWORK_E2E === 'true' &&
+    process.env.WEWORK_E2E_CONTROL_URL
+  ) {
+    installE2eDshReleaseRedirect(session.defaultSession.webRequest, releaseRedirect)
+  }
   session.defaultSession.webRequest.onErrorOccurred(
     { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
     details => {
