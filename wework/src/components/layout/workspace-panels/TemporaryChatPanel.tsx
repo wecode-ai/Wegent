@@ -1,10 +1,9 @@
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import { conversationOutcomePresentation } from './conversationOutcomePresentation'
+import { useTemporaryChatSend } from './useTemporaryChatSend'
+import { useTemporaryChatControls } from './useTemporaryChatControls'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
-import {
-  createPluginTrialGuide,
-  type PluginTrialGuide,
-} from '@wegent/chat-core/composer-plugin-trial'
+import type { PluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
 import { runtimePaneQueue } from './runtimePaneQueues'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
 import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
@@ -38,24 +37,21 @@ import {
   requestUserInputResponseKey,
   requestUserInputResponseText,
 } from '@/components/chat/requestUserInputMessages'
-import type { ChatSubmitOptions, ProjectWorkControls } from '@/components/chat/ChatInput'
+import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { retryRuntimeConversation } from '@wegent/collaboration/execution/retryRuntimeConversation'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
-import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import {
   deriveRuntimePaneStatus,
   isRuntimeTaskBusyError,
 } from '@/features/workbench/runtimePaneStatus'
 import {
   appendAcceptedRuntimeConversationMessage,
-  applyRuntimeConversationAction,
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
   getRuntimeConversationTurnIds,
-  removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
@@ -63,23 +59,18 @@ import {
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { createRuntimeContextUsageStore } from '@wegent/chat-core/runtime-context-usage'
-import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { queueWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceLaunchRequest'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { getErrorMessage } from '@/lib/error-message'
-import { persistAttachmentReferences } from '@/lib/attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
-import { runtimeGoalCreateInput } from '@/lib/runtime-goal'
 import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
-  ModelOptions,
   ProjectWithTasks,
   RequestUserInputResponse,
   RuntimeSendRequest,
   RuntimeTaskAddress,
-  UnifiedModel,
 } from '@/types/api'
 import type {
   RuntimeConversationTurn,
@@ -107,6 +98,7 @@ interface TemporaryChatPanelProps {
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
   sendEphemeral?: boolean
+  crossProviderSwitchBehavior?: 'new-session'
   emptyStateText?: string
   placeholder?: string
   showExecutionTools?: boolean
@@ -150,6 +142,7 @@ export function TemporaryChatPanel({
   onAddressChange,
   runtimeContext,
   sendEphemeral = true,
+  crossProviderSwitchBehavior,
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
   showExecutionTools = true,
@@ -222,73 +215,23 @@ export function TemporaryChatPanel({
   )
   const taskModelSelection = address ? projectChat.resolveRuntimeTaskModelSelection(address) : null
   const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
-  const globalSelectedModelOptions =
-    projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
   const taskModelIdentityPending = Boolean(
     address &&
     !taskModelSelection?.taskSelection &&
     (state.isBootstrapping || state.runtimeWork === null)
   )
   const [trialGuide, setTrialGuide] = useState<PluginTrialGuide | null>(null)
-  const sideChatProjectChat = useMemo(
-    () => ({
-      ...projectChat,
-      scopeKey: instanceId,
-      trialTemplates: trialGuide?.templates ?? [],
-      trialPluginName: trialGuide?.pluginName,
-      trialPluginApp: trialGuide?.app,
-      showTrialGuide: (title: string, app: import('@/types/api').LocalDeviceApp) =>
-        setTrialGuide(createPluginTrialGuide(title, app.trialTemplates, app)),
-      dismissTrialGuide: () => setTrialGuide(null),
-      onDismissTrialGuide: undefined,
-      onRefineTrialPrompt: undefined,
-      contextUsage: contextUsage ?? undefined,
-      ...(address && taskModelSelection
-        ? {
-            activeModel: taskModelSelection.activeModel,
-            selectedModel: taskModelSelection.selectedModel,
-            selectedModelOptions: taskModelSelection.selectedModelOptions,
-            setSelectedModel: (model: UnifiedModel | null) =>
-              projectChat.setRuntimeTaskSelectedModel(address, model),
-            setSelectedModelAndOptions: (model: UnifiedModel, options: ModelOptions) =>
-              projectChat.setRuntimeTaskSelectedModelAndOptions(address, model, options),
-            continueInNewConversation: (
-              model: UnifiedModel,
-              options?: ModelOptions,
-              source?: { draft?: string }
-            ) =>
-              projectChat.continueInNewConversation?.(model, options, {
-                ...source,
-                address,
-              }),
-            setSelectedModelOption: (optionId: string, value: string) =>
-              projectChat.setRuntimeTaskSelectedModelOption(address, optionId, value),
-            getSelectedModel: () =>
-              projectChat.resolveRuntimeTaskModelSelection(address).selectedModel,
-            getSelectedModelOptions: () =>
-              projectChat.resolveRuntimeTaskModelSelection(address).selectedModelOptions,
-          }
-        : {}),
-      hasConversationContext: Boolean(address),
-      attachments: attachmentSelection.attachments,
-      uploadingFiles: attachmentSelection.uploadingFiles,
-      errors: attachmentSelection.errors,
-      isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
-      handleFileSelect: attachmentSelection.handleFileSelect,
-      addExistingAttachment: attachmentSelection.addExistingAttachment,
-      removeAttachment: attachmentSelection.removeAttachment,
-      resetAttachments: attachmentSelection.resetAttachments,
-    }),
-    [
-      address,
-      attachmentSelection,
-      contextUsage,
-      projectChat,
-      taskModelSelection,
-      instanceId,
-      trialGuide,
-    ]
-  )
+  const { controls: sideChatProjectChat, selectedModelFields } = useTemporaryChatControls({
+    projectChat,
+    instanceId,
+    trialGuide,
+    setTrialGuide,
+    contextUsage,
+    crossProviderSwitchBehavior,
+    address,
+    taskModelSelection,
+    attachmentSelection,
+  })
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
     initialAddress ? getRuntimeConversationMessages(initialAddress) : []
   )
@@ -519,25 +462,6 @@ export function TemporaryChatPanel({
     })
   }, [address, contextUsageStore, subscribeRuntimeTaskStream, conversationQueue])
 
-  const selectedModelFields = useMemo(() => {
-    if (address && taskModelSelection) {
-      if (taskModelSelection.selectedModel) {
-        return selectedModelExecutionFields(
-          taskModelSelection.selectedModel,
-          taskModelSelection.selectedModelOptions
-        )
-      }
-      if (taskModelSelection.taskSelection?.modelName) {
-        return {
-          modelId: taskModelSelection.taskSelection.modelName,
-          modelType: taskModelSelection.taskSelection.modelType,
-          modelOptions: taskModelSelection.selectedModelOptions,
-        }
-      }
-    }
-    return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
-  }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection])
-
   useEffect(() => {
     if (!address) return
     console.info('[runtime-v2] task conversation identity resolved', {
@@ -626,208 +550,42 @@ export function TemporaryChatPanel({
     [address, conversationQueue, lifecycleStore, queuePort]
   )
 
-  const send = useCallback(
-    async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
-      const message = (valueOverride ?? input).trim()
-      if (!message) return false
-      if (taskModelIdentityPending) {
-        setError('正在同步任务模型配置，请稍后重试')
-        return false
-      }
-      setError(null)
-      setInput('')
-      setTrialGuide(null)
-
-      const currentAttachments = sideChatProjectChat.attachments
-      const initialGoal = goalDraftActive
-        ? runtimeGoalCreateInput({
-            objective: message,
-            status: 'active',
-            tokenBudget: null,
-          })
-        : undefined
-      const queuedMessage: RuntimePaneQueuedMessage = {
-        id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
-        content: message,
-        status: 'queued',
-        createdAt: new Date().toISOString(),
-        attachments: persistAttachmentReferences(currentAttachments),
-        ...selectedModelFields,
-      }
-      if (address && busy && !options.interruptWhenBusy) {
-        conversationQueue.enqueue(queuedMessage)
-        sideChatProjectChat.resetAttachments()
-        if (options.guideWhenBusy) {
-          return sendQueuedMessageAsGuidance(queuedMessage)
-        }
-        return true
-      }
-
-      setSending(true)
-      const attachmentIds = remoteAttachmentIds(currentAttachments)
-      const attachments = localRuntimeAttachments(currentAttachments)
-      const handleError = (errorMessage: string) => {
-        setError(errorMessage)
-        setSending(false)
-      }
-
-      let targetAddress: RuntimeTaskAddress | false | null = address
-      let optimisticAddress: RuntimeTaskAddress | null = null
-      if (!targetAddress) {
-        const optimisticUserMessage = createRuntimeUserMessage(message, currentAttachments, {
-          id: queuedMessage.id,
-        })
-        setMessages(current => [...current, optimisticUserMessage])
-        const handleOptimisticOpen = (nextAddress: RuntimeTaskAddress) => {
-          optimisticAddress = nextAddress
-          createdAddressKeyRef.current = `${nextAddress.deviceId}:${nextAddress.taskId}`
-          setMessages(getRuntimeConversationMessages(nextAddress))
-          setAddress(nextAddress)
-        }
-        targetAddress = createTask
-          ? await createTask(message, {
-              attachments: currentAttachments,
-              initialGoal,
-              executionModel: selectedModelFields,
-              optimisticUserMessage,
-              onError: handleError,
-              onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
-            })
-          : await createTemporaryRuntimeTask(message, {
-              project: currentProject,
-              source,
-              attachments: currentAttachments,
-              optimisticUserMessage,
-              onError: handleError,
-              onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
-            })
-      }
-
-      if (!targetAddress) {
-        setMessages(
-          optimisticAddress
-            ? removeRuntimeConversationTurn(optimisticAddress, {
-                clientUserMessageId: queuedMessage.id,
-              })
-            : current => current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
-        )
-        updateAddress(null)
-        setSending(false)
-        return false
-      }
-      if (!address) {
-        setMessages(getRuntimeConversationMessages(targetAddress))
-        updateAddress(targetAddress)
-        setGoalDraftActive(false)
-        sideChatProjectChat.resetAttachments()
-        setSending(false)
-        return true
-      }
-
-      const deferLocalMessage = Boolean(
-        pendingRequestUserInputPayload(getRuntimeConversationMessages(targetAddress))
-      )
-      const turnIdsBeforeSend = getRuntimeConversationTurnIds(targetAddress)
-      if (!deferLocalMessage) {
-        setMessages(
-          applyRuntimeConversationAction(targetAddress, {
-            type: 'user_added',
-            message: createRuntimeUserMessage(message, currentAttachments, {
-              id: queuedMessage.id,
-            }),
-          })
-        )
-      }
-      let sendError: string | null = null
-      let queued = false
-      const sendMessage =
-        busy && options.interruptWhenBusy
-          ? interruptAndSendRuntimePaneMessage
-          : sendRuntimePaneMessage
-      const lifecycleBeforeSend = lifecycleStore.getTaskRevision(targetAddress)
-      const sent = await sendMessage(
-        {
-          address: targetAddress,
-          message,
-          clientUserMessageId: queuedMessage.id,
-          ...(sendEphemeral ? { ephemeral: true } : {}),
-          ...selectedModelFields,
-          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-          ...(attachments.length > 0 ? { attachments } : {}),
-          ...runtimeContext,
-        },
-        {
-          onError: errorMessage => {
-            sendError = errorMessage
-          },
-          onQueued: () => {
-            queued = true
-          },
-        }
-      )
-      if (sent) {
-        if (deferLocalMessage && !queued) {
-          setMessages(
-            appendAcceptedRuntimeConversationMessage(
-              targetAddress,
-              createRuntimeUserMessage(message, currentAttachments, { id: queuedMessage.id }),
-              lifecycleStore.getTask(targetAddress)?.turn.id ?? null,
-              turnIdsBeforeSend
-            )
-          )
-        }
-        sideChatProjectChat.resetAttachments()
-        setSending(false)
-        return true
-      }
-      if (!deferLocalMessage) {
-        setMessages(
-          removeRuntimeConversationTurn(targetAddress, {
-            clientUserMessageId: queuedMessage.id,
-          })
-        )
-      }
-      if (isRuntimeTaskBusyError(sendError)) {
-        conversationQueue.enqueue(queuedMessage, {
-          value: lifecycleBeforeSend,
-        })
-        sideChatProjectChat.resetAttachments()
-        if (options.guideWhenBusy) {
-          setSending(false)
-          return sendQueuedMessageAsGuidance(queuedMessage, true)
-        }
-      } else {
-        handleError(sendError || '发送失败')
-        return false
-      }
-      setSending(false)
-      return true
-    },
-    [
-      address,
-      goalDraftActive,
-      createTask,
-      lifecycleStore,
-      createTemporaryRuntimeTask,
-      currentProject,
-      input,
-      busy,
-      queuedMessages.length,
-      conversationQueue,
-      sideChatProjectChat,
-      selectedModelFields,
-      runtimeContext,
-      sendQueuedMessageAsGuidance,
-      sendRuntimePaneMessage,
-      interruptAndSendRuntimePaneMessage,
-      source,
-      sendEphemeral,
-      taskModelIdentityPending,
-      updateAddress,
-      setInput,
-    ]
-  )
-
+  const send = useTemporaryChatSend({
+    address,
+    crossProviderSwitchBehavior,
+    taskModelSelection,
+    messages,
+    loadRuntimeTranscriptForPane,
+    t,
+    goalDraftActive,
+    createTask,
+    lifecycleStore,
+    createTemporaryRuntimeTask,
+    currentProject,
+    input,
+    busy,
+    queuedMessages,
+    conversationQueue,
+    sideChatProjectChat,
+    selectedModelFields,
+    runtimeContext,
+    sendQueuedMessageAsGuidance,
+    sendRuntimePaneMessage,
+    interruptAndSendRuntimePaneMessage,
+    source,
+    sendEphemeral,
+    taskModelIdentityPending,
+    updateAddress,
+    setInput,
+    setAddress,
+    setMessages,
+    setSending,
+    setError,
+    setGoalDraftActive,
+    createdAddressKeyRef,
+    draftEditVersionRef,
+    dismissTrialGuide: () => setTrialGuide(null),
+  })
   useEffect(() => {
     if (!autoSubmitInitialInput || !initialInput.trim() || autoSubmittedInitialInputRef.current) {
       return

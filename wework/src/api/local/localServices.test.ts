@@ -4451,6 +4451,40 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('forwards guarded stand-in session transitions with a fresh native execution request', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        taskId: 'stand-in-chat-7-primary',
+        threadId: 'old-thread',
+      },
+      message: 'continue with GPT',
+      startNewSession: true,
+      expectedThreadId: 'old-thread',
+      modelId: 'gpt-6.1-sol',
+      modelType: 'runtime',
+      modelOptions: { runnerModelProvider: 'openai' },
+      additionalContext: {
+        referencedConversations: { kind: 'application', value: 'untrusted old conversation' },
+      },
+    })
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(payload).toMatchObject({
+      taskId: 'stand-in-chat-7-primary',
+      startNewSession: true,
+      expectedThreadId: 'old-thread',
+      modelSelection: { modelName: 'gpt-6.1-sol', modelType: 'runtime' },
+      executionRequest: { new_session: true },
+      additionalContext: { referencedConversations: { value: 'untrusted old conversation' } },
+    })
+  })
+
   test('keeps official Codex classification when OpenAI provider metadata is present', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

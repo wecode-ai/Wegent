@@ -735,6 +735,58 @@ describe('ChatInput', () => {
     expect(setSelectedModel).not.toHaveBeenCalled()
   })
 
+  test('selects cloud DeepSeek to local GPT inside a stand-in without opening another conversation', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'deepseek',
+      type: 'public',
+      provider: 'cloud',
+      displayName: 'DeepSeek',
+      isActive: true,
+    }
+    const targetModel: UnifiedModel = {
+      name: 'gpt-6.1-sol',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'GPT 6.1 Sol',
+      isActive: true,
+      config: { weworkModelKind: 'codex-official' },
+    }
+    const setSelectedModel = vi.fn()
+    const continueInNewConversation = vi.fn()
+    const onSubmit = vi.fn()
+    render(
+      <ChatInput
+        value="继续排查"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [activeModel, targetModel],
+          activeModel,
+          selectedModel: activeModel,
+          setSelectedModel,
+          continueInNewConversation,
+          crossProviderSwitchBehavior: 'new-session',
+        })}
+      />
+    )
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-gpt-6.1-sol'))
+    expect(screen.getByTestId('model-switch-warning-confirm-button')).toHaveTextContent(
+      'Switch model'
+    )
+    expect(setSelectedModel).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
+    expect(setSelectedModel).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-gpt-6.1-sol'))
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+    expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
+    expect(continueInNewConversation).not.toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {

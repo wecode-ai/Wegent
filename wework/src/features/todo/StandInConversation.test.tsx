@@ -10,6 +10,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 const mocks = vi.hoisted(() => ({
   initialAddress: undefined as RuntimeTaskAddress | null | undefined,
   hideProcessing: false,
+  crossProviderSwitchBehavior: undefined as 'new-session' | undefined,
   createTask: undefined as
     | undefined
     | ((message: string, options: RuntimeTaskComposerCreateOptions) => Promise<unknown>),
@@ -19,10 +20,12 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     createTask: typeof mocks.createTask
     initialAddress?: RuntimeTaskAddress | null
     hideProcessing?: boolean
+    crossProviderSwitchBehavior?: 'new-session'
   }) => {
     mocks.createTask = props.createTask
     mocks.initialAddress = props.initialAddress
     mocks.hideProcessing = props.hideProcessing ?? false
+    mocks.crossProviderSwitchBehavior = props.crossProviderSwitchBehavior
     return <div data-testid="conversation-pane" />
   },
 }))
@@ -43,6 +46,15 @@ it('retains the persisted owner workspace when reopening the primary conversatio
   await screen.findByTestId('conversation-pane')
   expect(mocks.initialAddress).toEqual({ deviceId: 'device', ...task })
   expect(mocks.hideProcessing).toBe(true)
+  expect(mocks.crossProviderSwitchBehavior).toBe('new-session')
+})
+
+it('uses internal execution sessions for role conversations too', async () => {
+  const api = { readTask: vi.fn(async () => ({ success: true })) } as unknown as StandInExecutorApi
+  render(<StandInConversation api={api} userId={7} deviceId="device" roleId="reviewer" />)
+  await screen.findByTestId('conversation-pane')
+  expect(api.readTask).toHaveBeenCalledWith('device', 'stand-in-chat-7-role-reviewer')
+  expect(mocks.crossProviderSwitchBehavior).toBe('new-session')
 })
 
 it('returns failure to the pane rollback path and permits retrying the same conversation', async () => {

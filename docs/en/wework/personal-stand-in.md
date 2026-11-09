@@ -90,6 +90,8 @@ Open **left sidebar → My Stand-in → Stand-in details → Manage stand-in →
 
 ## Model selection
 
+Select a model in the primary or role conversation composer and confirm to use it for the next message. Switching between third-party models such as cloud DeepSeek and a local GPT subscription starts a new execution session inside the same stand-in entry, with the old conversation supplied as reference context. Drafts, attachments and readable history remain here; no ordinary task conversation opens. Finish the current execution, pending questions, approvals and active goal before sending with the new model. Rejected sends retain the draft and attachments for retry.
+
 Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. The primary conversation and the concrete work it creates both use the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
 
 <a id="stand-in-source-session-policy"></a>

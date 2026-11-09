@@ -13,7 +13,11 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import {
+  selectE2EModel,
+  PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+  PROVIDER_SWITCH_OFFICIAL_LABEL,
+} from '../modules/shared.mjs'
 
 const USER = 9001
 const TASK = `stand-in-chat-${USER}-primary`
@@ -21,6 +25,8 @@ const FIRST = 'STAND_IN_SESSION_FIRST_QUESTION'
 const SECOND = 'STAND_IN_SESSION_SECOND_CLEAN_CONTEXT'
 const FOLLOWUP = 'STAND_IN_SESSION_FOLLOWUP'
 const CHILD = 'STAND_IN_SESSION_CHILD_RESULT'
+const SWITCH = 'STAND_IN_SESSION_UI_PROVIDER_SWITCH'
+const SWITCH_FOLLOWUP = 'STAND_IN_SESSION_UI_PROVIDER_FOLLOWUP'
 const CHAT = '[data-testid="stand-in-conversation"]'
 
 export function createDesktopScenario({
@@ -33,6 +39,7 @@ export function createDesktopScenario({
   let followupObserved = false
   let questionCalls = 0
   let resultDelivered = false
+  let providerSwitchObserved = false
 
   async function settled(control, expected = () => true) {
     const deadline = Date.now() + modelResponseTimeoutMs
@@ -68,7 +75,20 @@ export function createDesktopScenario({
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
       let events
-      if (input.includes('Wework delegated task result:')) {
+      if (input.includes(SWITCH_FOLLOWUP)) {
+        events = [assistantMessage('切换后的后续消息继续使用同一个执行会话。')]
+      } else if (input.includes(SWITCH)) {
+        assert.ok(
+          input.includes('untrusted background context'),
+          'Provider transitions must bridge readable reference context'
+        )
+        assert.ok(
+          input.includes(SECOND),
+          'The previous stand-in conversation must remain available as reference'
+        )
+        providerSwitchObserved = true
+        events = [assistantMessage('模型已在原分身入口切换，历史保持可读。')]
+      } else if (input.includes('Wework delegated task result:')) {
         assert.ok(input.includes(SECOND), 'Work results must wake the current execution session')
         assert.ok(!input.includes(FIRST), 'Work results must not reopen the old execution session')
         resultDelivered = true
@@ -117,6 +137,9 @@ export function createDesktopScenario({
     },
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
+      control.failBlockedCloudModels()
+      control.restoreCloudModels()
+      await control.command('dispatchLocalModelSettingsChanged', '')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
@@ -348,9 +371,50 @@ export function createDesktopScenario({
           .threadId,
         current.threadId
       )
+      await control.command(
+        'fill',
+        `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
+        { value: SWITCH }
+      )
+      await selectE2EModel(
+        control,
+        PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+        PROVIDER_SWITCH_OFFICIAL_LABEL,
+        CHAT,
+        null
+      )
+      await control.command('waitFor', CHAT, { visible: true })
+      assert.ok(
+        (await control.command('getText', `${CHAT} [data-testid="chat-message-input"]`)).includes(
+          SWITCH
+        ),
+        'Switching providers must preserve the stand-in draft'
+      )
+      await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
+        text: '模型已在原分身入口切换',
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const switched = await settled(
+        control,
+        task => task.threadId !== current.threadId && providerSwitchObserved
+      )
+      assert.equal(switched.taskId, TASK)
+      assert.equal(switched.modelSelection.modelName, PROVIDER_SWITCH_OFFICIAL_OPTION_ID)
+      await control.command(
+        'fill',
+        `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
+        { value: SWITCH_FOLLOWUP }
+      )
+      await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
+        text: '切换后的后续消息',
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      assert.equal((await settled(control)).threadId, switched.threadId)
     },
     diagnostics() {
-      return { cleanContextObserved, questionCalls, resultDelivered }
+      return { cleanContextObserved, questionCalls, resultDelivered, providerSwitchObserved }
     },
   }
 }

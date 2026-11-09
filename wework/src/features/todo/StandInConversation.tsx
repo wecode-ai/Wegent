@@ -111,6 +111,7 @@ export function StandInConversation({
       onDraftRequestConsumed={onDraftRequestConsumed}
       initialAddress={address}
       sendEphemeral={false}
+      crossProviderSwitchBehavior="new-session"
       showExecutionTools={false}
       hideProcessing
       expanded
