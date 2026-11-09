@@ -48,7 +48,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - name: Set up uv
+        id: setup-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+        continue-on-error: true
+      - name: Retry uv setup after a transient download failure
+        if: steps.setup-uv.outcome == 'failure'
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
       - uses: actions/setup-go@v6
@@ -76,7 +84,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - name: Set up uv
+        id: setup-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+        continue-on-error: true
+      - name: Retry uv setup after a transient download failure
+        if: steps.setup-uv.outcome == 'failure'
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
       - name: Test SDK, scaffolds, and isolated plugin processes
@@ -94,7 +110,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - name: Set up uv
+        id: setup-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+        continue-on-error: true
+      - name: Retry uv setup after a transient download failure
+        if: steps.setup-uv.outcome == 'failure'
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
