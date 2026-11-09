@@ -19,7 +19,6 @@ from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
 from shared.event_reporting.catalogs.knowledge._common import loaded_scalar
 from shared.event_reporting.catalogs.knowledge.quality import RetrievalResultObserver
-from shared.event_reporting.catalogs.knowledge.usage import report_document_usage
 from shared.knowledge_module import QueryTarget, query_documents
 from shared.models import (
     RemoteAuthorizedRetrievalResources,
@@ -121,18 +120,6 @@ class QueryExecutor:
             records.append(remote_record)
             observer.capture(remote_record, rank)
         observer.flush()
-        invocation_id = getattr(request, "invocation_id", None)
-        if invocation_id:
-            report_document_usage(
-                records,
-                invocation_id=invocation_id,
-                actor_user_id=getattr(request, "actor_user_id", None),
-                actor_type=getattr(request, "actor_type", None) or "unknown",
-                entrypoint=getattr(request, "entrypoint", None) or "unknown",
-                client_surface=(getattr(request, "client_surface", None) or "unknown"),
-                task_id=getattr(request, "task_id", None),
-                subtask_id=getattr(request, "subtask_id", None),
-            )
         logger.info(
             "Query result: query_mode=%s, total_records=%d, returned_records=%d",
             plan.hint_source,

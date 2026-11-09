@@ -117,7 +117,7 @@ async fn direct_execution(
     message: &str,
     selection: Option<&Value>,
 ) -> Result<Value> {
-    let auth = tokens::create_task_token(state, 0, 0, i64::from(user.id), &user.user_name, None)
+    let auth = tokens::create_task_token(state, 0, 0, i64::from(user.id), &user.user_name)
         .map_err(|error| anyhow::anyhow!("Task identity creation failed: {error:?}"))?;
     let now = chrono::Utc::now().timestamp();
     let ttl = crate::config::env_or_dotenv("SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES")

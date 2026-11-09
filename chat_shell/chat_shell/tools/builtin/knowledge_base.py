@@ -135,7 +135,6 @@ class KnowledgeBaseTool(BaseTool):
 
     # User JWT for backend internal API calls that require authentication
     auth_token: str = ""
-    client_surface: str | None = None
 
     # Database session (will be set when tool is created)
     # Accepts both sync Session (backend) and AsyncSession (chat_shell HTTP mode)
@@ -1297,8 +1296,6 @@ class KnowledgeBaseTool(BaseTool):
             "runtime_context": self._build_runtime_context(),
             "restricted_mode": self._is_restricted_search_only(),
         }
-        if self.client_surface:
-            payload["client_surface"] = self.client_surface
         if self.external_knowledge_refs:
             payload["external_knowledge_refs"] = self.external_knowledge_refs
         if self.knowledge_base_scopes:

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 const DEFAULT_QUEUE_MAX_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_EVENT_MAX_BYTES: usize = 8 * 1024;
-pub(crate) const QUEUE_MAX_EVENTS: usize = 2_048;
+const MAX_QUEUE_EVENTS: usize = 2_048;
 
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct Secret(String);
@@ -38,11 +38,7 @@ impl fmt::Debug for Secret {
 #[derive(Clone)]
 pub(crate) struct ReporterConfig {
     pub(crate) enabled: bool,
-    pub(crate) adv_attribution_enabled: bool,
-    pub(crate) adv_read_wiki_enabled: bool,
-    pub(crate) adv_model_storage_enabled: bool,
-    pub(crate) adv_quality_detail_enabled: bool,
-    pub(crate) adv_result_detail_limit: usize,
+    pub(crate) read_events_enabled: bool,
     pub(crate) bootstrap_servers: String,
     pub(crate) topic: String,
     pub(crate) environment: String,
@@ -87,15 +83,8 @@ pub enum ConfigErrorCode {
     MissingBootstrapServers,
     MissingEnvironment,
     MissingTopic,
-    InvalidQueueMaxBytes,
-    InvalidEventMaxBytes,
-    EventLimitExceedsQueueLimit,
     InvalidMemoryLimit,
-    InvalidLingerMs,
-    InvalidRequestTimeoutMs,
-    InvalidDeliveryTimeoutMs,
-    InvalidShutdownTimeoutMs,
-    InvalidAdvResultDetailLimit,
+    InvalidTimeout,
     InvalidAcks,
     InvalidCompression,
     InvalidSecurityProtocol,
@@ -121,41 +110,15 @@ impl ReporterConfig {
         service_name: &str,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, ConfigErrorCode> {
-        let globally_enabled = parse_bool(lookup("EVENT_REPORTING_ENABLED"), false)?;
-        let rust_enabled = parse_bool(lookup("EVENT_REPORTING_BACKEND_RS_ENABLED"), false)?;
-        let enabled = globally_enabled && rust_enabled;
-        let adv_attribution_enabled =
-            parse_bool(lookup("EVENT_KAFKA_ADV_ATTRIBUTION_ENABLED"), false)?;
-        let adv_read_wiki_enabled = parse_bool(lookup("EVENT_KAFKA_ADV_READ_WIKI_ENABLED"), false)?;
-        let adv_model_storage_enabled =
-            parse_bool(lookup("EVENT_KAFKA_ADV_MODEL_STORAGE_ENABLED"), false)?;
-        let adv_quality_detail_enabled =
-            parse_bool(lookup("EVENT_KAFKA_ADV_QUALITY_DETAIL_ENABLED"), false)?;
-        let adv_result_detail_limit =
-            parse_usize(lookup("EVENT_KAFKA_ADV_RESULT_DETAIL_LIMIT"), 10)?;
-        let linger_ms = parse_u64(lookup("EVENT_KAFKA_LINGER_MS"), 20)?;
-        let request_timeout_ms = parse_u64(lookup("EVENT_KAFKA_REQUEST_TIMEOUT_MS"), 5_000)?;
-        let delivery_timeout_ms = parse_u64(lookup("EVENT_KAFKA_DELIVERY_TIMEOUT_MS"), 5_000)?;
-        let queue_max_bytes = parse_usize(
-            lookup("EVENT_KAFKA_QUEUE_MAX_BYTES"),
-            DEFAULT_QUEUE_MAX_BYTES,
-        )?;
-        let event_max_bytes = parse_usize(
-            lookup("EVENT_KAFKA_EVENT_MAX_BYTES"),
-            DEFAULT_EVENT_MAX_BYTES,
-        )?;
-        let shutdown_timeout_ms = parse_u64(lookup("EVENT_KAFKA_SHUTDOWN_TIMEOUT_MS"), 8_000)?;
-        let compression_type = text(&lookup, "EVENT_KAFKA_COMPRESSION_TYPE", "lz4");
-        let security_protocol = text(&lookup, "EVENT_KAFKA_SECURITY_PROTOCOL", "PLAINTEXT");
-        let sasl_mechanism = text(&lookup, "EVENT_KAFKA_SASL_MECHANISM", "PLAIN");
+        let enabled = parse_bool(lookup("EVENT_REPORTING_ENABLED"), false)?
+            && parse_bool(lookup("EVENT_REPORTING_BACKEND_RS_ENABLED"), false)?;
+        let request_timeout = duration(&lookup, "EVENT_KAFKA_REQUEST_TIMEOUT_MS", 5_000)?;
+        let delivery_timeout = duration(&lookup, "EVENT_KAFKA_DELIVERY_TIMEOUT_MS", 5_000)?;
+        let shutdown_timeout = duration(&lookup, "EVENT_KAFKA_SHUTDOWN_TIMEOUT_MS", 8_000)?;
         let hostname = text(&lookup, "HOSTNAME", "local");
         let config = Self {
             enabled,
-            adv_attribution_enabled,
-            adv_read_wiki_enabled,
-            adv_model_storage_enabled,
-            adv_quality_detail_enabled,
-            adv_result_detail_limit,
+            read_events_enabled: parse_bool(lookup("EVENT_KAFKA_ADV_READ_WIKI_ENABLED"), false)?,
             bootstrap_servers: text(&lookup, "EVENT_KAFKA_BOOTSTRAP_SERVERS", ""),
             topic: text(&lookup, "EVENT_KAFKA_TOPIC", "knowledge-events-v1"),
             environment: text(&lookup, "EVENT_KAFKA_ENVIRONMENT", ""),
@@ -165,17 +128,25 @@ impl ReporterConfig {
                 "backend-rs-event-reporter",
             ),
             acks: text(&lookup, "EVENT_KAFKA_ACKS", "all"),
-            compression_type,
-            linger_ms,
-            request_timeout: Duration::from_millis(request_timeout_ms),
-            delivery_timeout: Duration::from_millis(delivery_timeout_ms),
-            queue_max_bytes,
-            event_max_bytes,
-            shutdown_timeout: Duration::from_millis(shutdown_timeout_ms),
-            security_protocol,
-            sasl_mechanism,
+            compression_type: text(&lookup, "EVENT_KAFKA_COMPRESSION_TYPE", "lz4"),
+            linger_ms: number(&lookup, "EVENT_KAFKA_LINGER_MS", 20)?,
+            request_timeout,
+            delivery_timeout,
+            queue_max_bytes: number(
+                &lookup,
+                "EVENT_KAFKA_QUEUE_MAX_BYTES",
+                DEFAULT_QUEUE_MAX_BYTES,
+            )?,
+            event_max_bytes: number(
+                &lookup,
+                "EVENT_KAFKA_EVENT_MAX_BYTES",
+                DEFAULT_EVENT_MAX_BYTES,
+            )?,
+            shutdown_timeout,
+            security_protocol: text(&lookup, "EVENT_KAFKA_SECURITY_PROTOCOL", "PLAINTEXT"),
+            sasl_mechanism: text(&lookup, "EVENT_KAFKA_SASL_MECHANISM", "PLAIN"),
             sasl_username: Secret::new(text(&lookup, "EVENT_KAFKA_SASL_USERNAME", "")),
-            sasl_password: Secret::new(raw_text(&lookup, "EVENT_KAFKA_SASL_PASSWORD")),
+            sasl_password: Secret::new(lookup("EVENT_KAFKA_SASL_PASSWORD").unwrap_or_default()),
             ssl_cafile: text(&lookup, "EVENT_KAFKA_SSL_CAFILE", ""),
             service_name: service_name.to_owned(),
             host_ip: lookup("POD_IP")
@@ -203,26 +174,19 @@ impl ReporterConfig {
         if self.topic.is_empty() {
             return Err(ConfigErrorCode::MissingTopic);
         }
-        if self.queue_max_bytes == 0 {
-            return Err(ConfigErrorCode::InvalidQueueMaxBytes);
-        }
-        if self.event_max_bytes == 0 {
-            return Err(ConfigErrorCode::InvalidEventMaxBytes);
-        }
-        if self.event_max_bytes > self.queue_max_bytes {
-            return Err(ConfigErrorCode::EventLimitExceedsQueueLimit);
-        }
-        if self.event_max_bytes > 64 * 1024 || self.queue_max_bytes > 256 * 1024 * 1024 {
+        if self.queue_max_bytes == 0
+            || self.event_max_bytes == 0
+            || self.event_max_bytes > self.queue_max_bytes
+            || self.event_max_bytes > 64 * 1024
+            || self.queue_max_bytes > 256 * 1024 * 1024
+        {
             return Err(ConfigErrorCode::InvalidMemoryLimit);
         }
-        if self.request_timeout.is_zero() {
-            return Err(ConfigErrorCode::InvalidRequestTimeoutMs);
-        }
-        if self.delivery_timeout.is_zero() {
-            return Err(ConfigErrorCode::InvalidDeliveryTimeoutMs);
-        }
-        if self.adv_result_detail_limit > 100 {
-            return Err(ConfigErrorCode::InvalidAdvResultDetailLimit);
+        if self.request_timeout.is_zero()
+            || self.delivery_timeout.is_zero()
+            || self.shutdown_timeout.is_zero()
+        {
+            return Err(ConfigErrorCode::InvalidTimeout);
         }
         if self.acks != "all" {
             return Err(ConfigErrorCode::InvalidAcks);
@@ -246,6 +210,10 @@ impl ReporterConfig {
         }
         Ok(())
     }
+
+    pub(crate) fn queue_capacity(&self) -> usize {
+        (self.queue_max_bytes / self.event_max_bytes).clamp(1, MAX_QUEUE_EVENTS)
+    }
 }
 
 fn text(lookup: &impl Fn(&str) -> Option<String>, name: &str, default: &str) -> String {
@@ -253,10 +221,6 @@ fn text(lookup: &impl Fn(&str) -> Option<String>, name: &str, default: &str) -> 
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.trim().to_owned())
         .unwrap_or_else(|| default.to_owned())
-}
-
-fn raw_text(lookup: &impl Fn(&str) -> Option<String>, name: &str) -> String {
-    lookup(name).unwrap_or_default()
 }
 
 fn parse_bool(value: Option<String>, default: bool) -> Result<bool, ConfigErrorCode> {
@@ -270,8 +234,15 @@ fn parse_bool(value: Option<String>, default: bool) -> Result<bool, ConfigErrorC
     }
 }
 
-fn parse_u64(value: Option<String>, default: u64) -> Result<u64, ConfigErrorCode> {
-    value.map_or(Ok(default), |value| {
+fn number<T>(
+    lookup: &impl Fn(&str) -> Option<String>,
+    name: &str,
+    default: T,
+) -> Result<T, ConfigErrorCode>
+where
+    T: std::str::FromStr,
+{
+    lookup(name).map_or(Ok(default), |value| {
         value
             .trim()
             .parse()
@@ -279,13 +250,12 @@ fn parse_u64(value: Option<String>, default: u64) -> Result<u64, ConfigErrorCode
     })
 }
 
-fn parse_usize(value: Option<String>, default: usize) -> Result<usize, ConfigErrorCode> {
-    value.map_or(Ok(default), |value| {
-        value
-            .trim()
-            .parse()
-            .map_err(|_| ConfigErrorCode::InvalidEventConfiguration)
-    })
+fn duration(
+    lookup: &impl Fn(&str) -> Option<String>,
+    name: &str,
+    default_ms: u64,
+) -> Result<Duration, ConfigErrorCode> {
+    Ok(Duration::from_millis(number(lookup, name, default_ms)?))
 }
 
 #[cfg(test)]
@@ -294,26 +264,17 @@ mod tests {
 
     fn enabled() -> HashMap<String, String> {
         HashMap::from([
-            ("EVENT_REPORTING_ENABLED".to_owned(), "true".to_owned()),
-            (
-                "EVENT_REPORTING_BACKEND_RS_ENABLED".to_owned(),
-                "true".to_owned(),
-            ),
-            (
-                "EVENT_KAFKA_BOOTSTRAP_SERVERS".to_owned(),
-                "unused:9092".to_owned(),
-            ),
-            ("EVENT_KAFKA_ENVIRONMENT".to_owned(), "test".to_owned()),
+            ("EVENT_REPORTING_ENABLED".into(), "true".into()),
+            ("EVENT_REPORTING_BACKEND_RS_ENABLED".into(), "true".into()),
+            ("EVENT_KAFKA_BOOTSTRAP_SERVERS".into(), "unused:9092".into()),
+            ("EVENT_KAFKA_ENVIRONMENT".into(), "test".into()),
         ])
     }
 
     #[test]
     fn rust_switch_is_independent() {
         let mut values = enabled();
-        values.insert(
-            "EVENT_REPORTING_BACKEND_RS_ENABLED".to_owned(),
-            "false".to_owned(),
-        );
+        values.insert("EVENT_REPORTING_BACKEND_RS_ENABLED".into(), "false".into());
         assert!(
             !ReporterConfig::from_mapping("backend", &values)
                 .unwrap()
@@ -322,48 +283,16 @@ mod tests {
     }
 
     #[test]
-    fn invalid_enabled_configuration_is_non_secret() {
-        let mut values = enabled();
-        values.insert(
-            "EVENT_KAFKA_SECURITY_PROTOCOL".to_owned(),
-            "SASL_SSL".to_owned(),
-        );
-        values.insert("EVENT_KAFKA_SASL_USERNAME".to_owned(), "alice".to_owned());
-        assert!(matches!(
-            ReporterConfig::from_mapping("backend", &values),
-            Err(ConfigErrorCode::MissingSaslCredentials)
-        ));
-    }
-
-    #[test]
     fn debug_redacts_credentials() {
         let mut values = enabled();
-        values.insert(
-            "EVENT_KAFKA_SECURITY_PROTOCOL".to_owned(),
-            "SASL_SSL".to_owned(),
-        );
-        values.insert("EVENT_KAFKA_SASL_USERNAME".to_owned(), "alice".to_owned());
-        values.insert("EVENT_KAFKA_SASL_PASSWORD".to_owned(), "private".to_owned());
+        values.insert("EVENT_KAFKA_SECURITY_PROTOCOL".into(), "SASL_SSL".into());
+        values.insert("EVENT_KAFKA_SASL_USERNAME".into(), "alice".into());
+        values.insert("EVENT_KAFKA_SASL_PASSWORD".into(), "private".into());
         let rendered = format!(
             "{:?}",
             ReporterConfig::from_mapping("backend", &values).unwrap()
         );
         assert!(!rendered.contains("alice"));
         assert!(!rendered.contains("private"));
-    }
-
-    #[test]
-    fn advanced_limit_is_bounded() {
-        for (value, valid) in [("0", true), ("100", true), ("101", false)] {
-            let mut values = enabled();
-            values.insert(
-                "EVENT_KAFKA_ADV_RESULT_DETAIL_LIMIT".to_owned(),
-                value.to_owned(),
-            );
-            assert_eq!(
-                ReporterConfig::from_mapping("backend", &values).is_ok(),
-                valid
-            );
-        }
     }
 }

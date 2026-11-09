@@ -151,6 +151,29 @@ def _language_of(knowledge_base: Kind) -> str:
     return _LANGUAGE_NAMES.get(code, "English")
 
 
+def _report_reclaimed_generations(
+    knowledge_base_id: int, generation_ids: Sequence[int]
+) -> None:
+    if not generation_ids:
+        return
+    from app.services.knowledge.code_wiki.version_store import WORKER_ABANDONED_CODE
+    from app.services.knowledge.event_logging import emit_fact_snapshots
+
+    emit_fact_snapshots(
+        (
+            "knowledge.code_wiki.generation.finished",
+            {
+                "kb_id": knowledge_base_id,
+                "status": "failure",
+                "fact_key_parts": (knowledge_base_id, generation_id),
+                "error_code": WORKER_ABANDONED_CODE,
+                "data": {"generation": generation_id},
+            },
+        )
+        for generation_id in generation_ids
+    )
+
+
 def start_run(
     db: Session,
     *,
@@ -281,6 +304,11 @@ def start_run(
         team_id_for_mode=execution_team_id,
     )
     if not started.started:
+        if started.reclaimed_generation_ids:
+            db.commit()
+            _report_reclaimed_generations(
+                knowledge_base.id, started.reclaimed_generation_ids
+            )
         return StartedRun(
             generation=None,
             reason=started.decision.reason,
@@ -345,6 +373,7 @@ def start_run(
 
     event_snapshot = generation_snapshot(generation)
     db.commit()
+    _report_reclaimed_generations(knowledge_base.id, started.reclaimed_generation_ids)
 
     report_generation(
         event_snapshot,

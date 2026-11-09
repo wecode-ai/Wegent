@@ -132,7 +132,6 @@ pub(super) async fn create(
             enable_web_search: false,
             enable_deep_thinking: true,
             task_json: &value,
-            knowledge_client_surface: None,
             request_id: &request_id,
             message_id: setup.assistant_message_id,
             is_group_chat: false,

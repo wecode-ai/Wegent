@@ -163,6 +163,7 @@ class StartedGeneration:
     generation: Optional[WikiGeneration]
     decision: RunModeDecision
     seeded_pages: int = 0
+    reclaimed_generation_ids: tuple[int, ...] = ()
 
     @property
     def started(self) -> bool:
@@ -315,7 +316,11 @@ def start_generation(
         logger.info(
             "[code_wiki] kb %s needs no run: %s", knowledge_base.id, decision.reason
         )
-        return StartedGeneration(generation=None, decision=decision)
+        return StartedGeneration(
+            generation=None,
+            decision=decision,
+            reclaimed_generation_ids=reclaimed,
+        )
 
     generation = WikiGeneration(
         project_id=project_id,
@@ -358,7 +363,10 @@ def start_generation(
         seeded,
     )
     return StartedGeneration(
-        generation=generation, decision=decision, seeded_pages=seeded
+        generation=generation,
+        decision=decision,
+        seeded_pages=seeded,
+        reclaimed_generation_ids=reclaimed,
     )
 
 

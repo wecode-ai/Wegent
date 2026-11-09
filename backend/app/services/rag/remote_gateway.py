@@ -16,7 +16,7 @@ from app.models.subtask_context import ContextType
 from app.services.context import context_service
 from app.services.rag.content_refs import build_content_ref_for_attachment
 from app.services.rag.reporting import (
-    current_usage_context,
+    report_document_usage_for_result,
     report_index_execution,
     report_query_execution,
 )
@@ -164,17 +164,9 @@ class RemoteRagGateway:
         db: Session | None = None,
     ) -> dict[str, Any]:
         del db
-        usage = current_usage_context()
         payload = RemoteQueryRequest(
             knowledge_base_ids=spec.knowledge_base_ids,
             user_id=spec.user_id,
-            invocation_id=usage.invocation_id if usage else None,
-            actor_user_id=getattr(usage, "actor_user_id", None),
-            actor_type=getattr(usage, "actor_type", None),
-            entrypoint=usage.entrypoint if usage else None,
-            client_surface=usage.client_surface if usage else None,
-            task_id=usage.task_id if usage else None,
-            subtask_id=usage.subtask_id if usage else None,
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,
@@ -189,10 +181,12 @@ class RemoteRagGateway:
         async def execute() -> dict[str, Any]:
             response_payload = await self._post_model("/internal/rag/query", payload)
             response = RemoteQueryResponse.model_validate(response_payload)
-            return {
+            result = {
                 "mode": "rag_retrieval",
                 **response.model_dump(),
             }
+            report_document_usage_for_result(result["records"])
+            return result
 
         return await report_query_execution(
             execution_mode="remote",

@@ -90,6 +90,7 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
         "user_id": 7,
         "query": "What risks do you see?",
         "knowledge_base_ids": [1],
+        "client_surface": "knowledge_web",
         "runtime_context": {
             "context_window": 10000,
             "used_context_tokens": 100,
@@ -409,6 +410,55 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
     assert response.status_code == 200
     mock_query.assert_awaited_once_with(ANY, ANY, task_id=ANY)
     mock_persist.assert_called_once()
+
+
+def test_internal_retrieve_reports_resolved_task_identity(test_client):
+    payload = {
+        "user_id": 7,
+        "query": "How should we proceed?",
+        "knowledge_base_ids": [1],
+        "persistence_context": {"user_subtask_id": 11},
+    }
+
+    async def run_with_reporting(**kwargs):
+        assert kwargs["actor_user_id"] == 7
+        assert kwargs["task_id"] == 42
+        assert kwargs["subtask_id"] == 11
+        return await kwargs["execute"]()
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag._resolve_read_identity",
+            return_value=(7, 42),
+        ) as resolve_identity,
+        patch(
+            "app.api.endpoints.internal.rag.report_retrieval_request",
+            new_callable=AsyncMock,
+            side_effect=run_with_reporting,
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(knowledge_base_ids=[1]),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag._execute_query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        ),
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
+
+    assert response.status_code == 200
+    resolve_identity.assert_called_once()
 
 
 def test_internal_retrieve_resolves_document_names_before_query(test_client):

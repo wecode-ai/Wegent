@@ -244,8 +244,11 @@ class ExternalDocumentImportService:
         # timestamp. Overwrite the key first: the saved baseline may carry it.
         refreshed_metadata["source_update_time"] = None
         document.update_external_source_config(**refreshed_metadata)
-        binding_fact(db, document, "refreshed", committed=True)
+        from app.services.knowledge.wiki_reporting import emit_binding_snapshot
+
+        binding_snapshot = binding_fact(db, document, "refreshed", committed=True)
         db.commit()
+        emit_binding_snapshot(binding_snapshot)
         db.refresh(document)
         return ExternalDocumentRefreshResult(document, started=True)
 

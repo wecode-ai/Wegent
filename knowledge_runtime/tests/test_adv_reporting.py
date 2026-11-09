@@ -258,13 +258,6 @@ async def test_runtime_final_results_emit_bounded_ranked_identities(sink, monkey
     request = SimpleNamespace(
         query="private-query",
         user_id=7,
-        invocation_id="invocation-1",
-        actor_user_id=71,
-        actor_type="user",
-        entrypoint="chat",
-        client_surface="chat_shell",
-        task_id=81,
-        subtask_id=82,
         search_hints=None,
         knowledge_base_ids=[11],
         knowledge_base_retrieval_overrides=None,
@@ -292,10 +285,5 @@ async def test_runtime_final_results_emit_bounded_ranked_identities(sink, monkey
     assert [item["document_id"] for item in quality_events] == [1, 2]
     assert [item["data"]["rank"] for item in quality_events] == [1, 2]
     assert all(item["data"]["returned_count"] == 3 for item in quality_events)
-    assert [item["document_id"] for item in usage_events] == [1, 2, 3]
-    assert all(item["data"]["invocation_id"] == "invocation-1" for item in usage_events)
-    assert all(item["data"]["actor_user_id"] == 71 for item in usage_events)
-    assert all(item["data"]["client_surface"] == "chat_shell" for item in usage_events)
-    assert all(item["data"]["expected_document_count"] == 3 for item in usage_events)
-    assert all(item["data"]["coverage_state"] == "complete" for item in usage_events)
+    assert usage_events == []
     assert "private" not in json.dumps(emitted)

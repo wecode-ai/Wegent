@@ -7,7 +7,6 @@
 import ast
 from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -377,15 +376,6 @@ class TestTryDirectInjection:
     @pytest.mark.asyncio
     async def test_reports_selected_documents_with_current_usage_identity(self):
         records = [_injection_record(), _injection_record("second chunk")]
-        usage = SimpleNamespace(
-            invocation_id="invocation-1",
-            actor_user_id=42,
-            actor_type="user",
-            entrypoint="chat",
-            client_surface="chat_shell",
-            task_id=81,
-            subtask_id=82,
-        )
 
         with (
             patch.object(
@@ -394,12 +384,7 @@ class TestTryDirectInjection:
                 AsyncMock(return_value=records),
             ),
             patch(
-                "app.services.rag.reporting.current_usage_context",
-                return_value=usage,
-            ),
-            patch(
-                "shared.event_reporting.catalogs.knowledge.usage."
-                "report_document_usage"
+                "app.services.rag.reporting.report_document_usage_for_result"
             ) as report_usage,
         ):
             await direct_injection.try_direct_injection(
@@ -411,16 +396,7 @@ class TestTryDirectInjection:
                 max_direct_chunks=500,
             )
 
-        report_usage.assert_called_once_with(
-            records,
-            invocation_id="invocation-1",
-            actor_user_id=42,
-            actor_type="user",
-            entrypoint="chat",
-            client_surface="chat_shell",
-            task_id=81,
-            subtask_id=82,
-        )
+        report_usage.assert_called_once_with(records)
 
     @pytest.mark.asyncio
     async def test_rejects_when_document_cap_exceeded(self):

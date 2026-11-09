@@ -20,11 +20,9 @@ def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.mark.parametrize("surface", ["knowledge_web", None])
 def test_public_rag_retrieve_uses_gateway_runtime_spec(
     test_client,
     test_token: str,
-    surface,
 ):
     payload = {
         "query": "release checklist",
@@ -57,8 +55,7 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
             ],
         },
     }
-    if surface is not None:
-        payload["client_surface"] = surface
+    payload["client_surface"] = "knowledge_web"
     runtime_spec = QueryRuntimeSpec(
         user_id=7,
         knowledge_base_ids=[7],
@@ -139,23 +136,17 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
     mock_get_gateway.assert_called_once()
     gateway.query.assert_awaited_once_with(runtime_spec, db=ANY)
     assert mock_report.await_args.kwargs["entrypoint"] == "openapi"
-    assert mock_report.await_args.kwargs["client_surface"] == (
-        surface or "external_api"
-    )
+    assert mock_report.await_args.kwargs["client_surface"] == "external_api"
 
 
-@pytest.mark.parametrize("surface", ["knowledge_web", None])
-def test_public_rag_config_failure_records_query_surface(
-    test_client, test_token, surface
-):
+def test_public_rag_config_failure_records_query_surface(test_client, test_token):
     payload = {
         "query": "test",
         "knowledge_id": "7",
         "retriever_ref": {"name": "retriever-a", "namespace": "default"},
         "embedding_model_ref": {"model_name": "embed-a", "model_namespace": "default"},
     }
-    if surface is not None:
-        payload["client_surface"] = surface
+    payload["client_surface"] = "knowledge_web"
     events = []
     with (
         patch(
@@ -177,7 +168,7 @@ def test_public_rag_config_failure_records_query_surface(
     assert name == "knowledge.retrieval.request.finished"
     assert event["status"] == "failure"
     assert event["data"]["entrypoint"] == "openapi"
-    assert event["data"]["client_surface"] == (surface or "external_api")
+    assert event["data"]["client_surface"] == "external_api"
     usage.assert_not_called()
 
 

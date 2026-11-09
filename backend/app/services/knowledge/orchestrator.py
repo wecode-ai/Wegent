@@ -2032,8 +2032,9 @@ class KnowledgeOrchestrator:
             )
             .update(update_fields, synchronize_session=False)
         )
+        committed_facts = []
         if updated:
-            from app.services.knowledge.event_logging import after_commit_fact
+            from app.services.knowledge.event_logging import emit_fact_snapshots
             from shared.event_reporting.catalogs.knowledge import loaded_scalar
 
             event_data = {
@@ -2050,17 +2051,20 @@ class KnowledgeOrchestrator:
                 "fact_key_parts": (document_id, generation),
                 "data": event_data,
             }
-            after_commit_fact(db, "knowledge.external.body.landed", event_fields)
+            committed_facts.append(("knowledge.external.body.landed", event_fields))
             if had_body:
-                after_commit_fact(
-                    db,
-                    "knowledge.document.content.updated",
-                    {
-                        **event_fields,
-                        "data": {**event_data, "trigger": "external_refresh"},
-                    },
+                committed_facts.append(
+                    (
+                        "knowledge.document.content.updated",
+                        {
+                            **event_fields,
+                            "data": {**event_data, "trigger": "external_refresh"},
+                        },
+                    )
                 )
         db.commit()
+        if updated:
+            emit_fact_snapshots(committed_facts)
 
         if not updated:
             raise ExternalImportLostWriteError(

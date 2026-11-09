@@ -69,16 +69,21 @@ def test_build_generates_skill_identity_token(test_db, mocker):
         message="hello",
     )
 
-    from app.services.auth import verify_task_token
+    import jwt
+
     from shared.models.openai_converter import OpenAIRequestConverter
 
-    assert (
-        verify_task_token(result.auth_token).knowledge_client_surface == "knowledge_web"
+    task_claims = jwt.decode(
+        result.auth_token,
+        settings.SECRET_KEY,
+        algorithms=[settings.ALGORITHM],
     )
+    assert "knowledge_client_surface" not in task_claims
+    assert "knowledge_client_surface" not in vars(result)
     transport = OpenAIRequestConverter.from_execution_request(result)
-    assert (
-        OpenAIRequestConverter.to_execution_request(transport).knowledge_client_surface
-        == "knowledge_web"
+    assert "knowledge_client_surface" not in transport["metadata"]
+    assert "knowledge_client_surface" not in vars(
+        OpenAIRequestConverter.to_execution_request(transport)
     )
     assert result.skill_identity_token == "skill-jwt"
     assert result.task_title == "Persisted task title"

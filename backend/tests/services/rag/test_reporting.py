@@ -5,6 +5,7 @@ import pytest
 
 from app.services.rag.reporting import (
     current_usage_context,
+    report_document_usage_for_result,
     report_index_execution,
     report_query_execution,
     report_retrieval_request,
@@ -216,3 +217,24 @@ async def test_request_always_restores_context_when_optional_usage_reporting_fai
 
     assert returned is result
     assert current_usage_context() is None
+
+
+def test_document_usage_reporting_never_interrupts_retrieval(mocker):
+    usage = SimpleNamespace(
+        invocation_id="invocation-1",
+        actor_user_id=42,
+        actor_type="user",
+        entrypoint="chat",
+        client_surface="chat_shell",
+        task_id=91,
+        subtask_id=92,
+    )
+    mocker.patch("app.services.rag.reporting.current_usage_context", return_value=usage)
+    report_document_usage = mocker.patch(
+        "app.services.rag.reporting.report_document_usage",
+        side_effect=RuntimeError("optional reporting failed"),
+    )
+
+    report_document_usage_for_result([{"document_id": 1}])
+
+    report_document_usage.assert_called_once()

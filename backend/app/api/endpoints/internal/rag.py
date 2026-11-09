@@ -128,8 +128,6 @@ class KnowledgeBaseScopePayload(BaseModel):
 class InternalRetrieveRequest(BaseModel):
     """Simplified retrieve request for internal use."""
 
-    client_surface: Literal["knowledge_web", "chat_shell", "external_api"] | None = None
-
     query: str = Field(..., description="Search query")
     search_hints: SearchHints | None = Field(
         default=None,
@@ -690,6 +688,7 @@ async def internal_retrieve(
     db: Session = Depends(get_db),
 ):
     """Record a request fact without constructing a statistical result wrapper."""
+    read_user_id, task_id = _resolve_read_identity(db, request)
     requested_ids = request.knowledge_base_ids or []
     knowledge_base_ids = (
         _scope_kb_ids(request.knowledge_base_scopes)
@@ -700,24 +699,33 @@ async def internal_retrieve(
         knowledge_base_ids = [request.knowledge_base_id]
     return await report_retrieval_request(
         entrypoint="chat",
-        client_surface=request.client_surface or "chat_shell",
+        client_surface="chat_shell",
         requested_kb_ids=requested_ids or knowledge_base_ids,
         effective_kb_ids=knowledge_base_ids,
         route_mode=request.route_mode,
         restricted_mode=request.restricted_mode,
-        actor_user_id=request.user_id,
+        actor_user_id=read_user_id,
+        task_id=task_id,
         subtask_id=(
             request.persistence_context.user_subtask_id
             if request.persistence_context
             else None
         ),
-        execute=lambda: _execute_internal_retrieve(request, db),
+        execute=lambda: _execute_internal_retrieve(
+            request,
+            db,
+            read_user_id=read_user_id,
+            task_id=task_id,
+        ),
     )
 
 
 async def _execute_internal_retrieve(
     request: InternalRetrieveRequest,
     db: Session,
+    *,
+    read_user_id: int | None,
+    task_id: int | None,
 ):
     """
     Internal RAG retrieval endpoint for chat_shell.
@@ -794,7 +802,6 @@ async def _execute_internal_retrieve(
                 restricted_mode=restricted_mode,
             )
         else:
-            read_user_id, task_id = _resolve_read_identity(db, request)
             runtime_spec = runtime_resolver.build_query_runtime_spec(
                 knowledge_base_ids=knowledge_base_ids,
                 query=request.query,

@@ -68,11 +68,22 @@ impl DocumentContentReadResponse {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DocumentReadContext {
+    pub entrypoint: &'static str,
+    pub actor_user_id: i64,
+    pub effective_reader_id: i64,
+    pub task_id: Option<i64>,
+    pub subtask_id: Option<i64>,
+}
+
 /// A mapped source failure carrying the HTTP status and `detail` message.
 #[derive(Debug)]
 pub struct ApiFailure {
     status: StatusCode,
     detail: String,
+    kb_id: Option<i64>,
+    error_code: &'static str,
 }
 
 impl ApiFailure {
@@ -88,7 +99,19 @@ impl ApiFailure {
         Self {
             status,
             detail: detail.into(),
+            kb_id: None,
+            error_code: "DOCUMENT_READ_FAILED",
         }
+    }
+
+    fn with_kb_id(mut self, kb_id: i64) -> Self {
+        self.kb_id = Some(kb_id);
+        self
+    }
+
+    fn with_error_code(mut self, error_code: &'static str) -> Self {
+        self.error_code = error_code;
+        self
     }
 
     pub fn internal(detail: impl Into<String>) -> Self {
@@ -99,13 +122,22 @@ impl ApiFailure {
     /// "access denied"/"permission" -> 403, otherwise 400.
     pub fn from_value_error(message: &str) -> Self {
         let lower = message.to_ascii_lowercase();
-        if lower.contains("not found") {
+        let failure = if lower.contains("not found") {
             Self::new(StatusCode::NOT_FOUND, message)
         } else if lower.contains("access denied") || lower.contains("permission") {
             Self::new(StatusCode::FORBIDDEN, message)
         } else {
             Self::new(StatusCode::BAD_REQUEST, message)
-        }
+        };
+        failure.with_error_code(match message {
+            "Document not found" => "DOCUMENT_NOT_FOUND",
+            "Knowledge base not found" => "KNOWLEDGE_BASE_NOT_FOUND",
+            "Document content is not ready for preview" => "DOCUMENT_CONTENT_NOT_READY",
+            _ if lower.contains("access denied") || lower.contains("permission") => {
+                "DOCUMENT_ACCESS_DENIED"
+            }
+            _ => "DOCUMENT_READ_FAILED",
+        })
     }
 
     /// This failure as a plain [`FastApiError`], so sibling knowledge
@@ -324,18 +356,56 @@ async fn document_content(
     };
     let (offset, limit) = parse_paging(offset_raw, limit_raw)?;
 
-    Ok(read_document_content(state, user.id, document_id, offset, limit, "openapi").await?)
+    Ok(read_document_content(
+        state,
+        document_id,
+        offset,
+        limit,
+        DocumentReadContext {
+            entrypoint: "openapi",
+            actor_user_id: user.id,
+            effective_reader_id: user.id,
+            task_id: None,
+            subtask_id: None,
+        },
+    )
+    .await?)
 }
 
 /// `KnowledgeOrchestrator.read_document_content` after authentication:
 /// document load with access validation, then the paginated reader.
 pub(crate) async fn read_document_content(
     state: &AppState,
+    document_id: i64,
+    offset: i64,
+    limit: i64,
+    context: DocumentReadContext,
+) -> Result<DocumentContentReadResponse, ApiFailure> {
+    let invocation_id = crate::wework_auth_tokens::uuid4_hex().ok();
+    let result = read_document_content_inner(
+        state,
+        context.effective_reader_id,
+        document_id,
+        offset,
+        limit,
+    )
+    .await;
+    report_document_read(
+        &state.event_reporter,
+        &result,
+        document_id,
+        context,
+        invocation_id.as_deref(),
+    );
+    result
+}
+
+async fn read_document_content_inner(
+    state: &AppState,
     user_id: i64,
     document_id: i64,
     offset: i64,
     limit: i64,
-    entrypoint: &'static str,
 ) -> Result<DocumentContentReadResponse, ApiFailure> {
     let mysql = &state.mysql;
     let redis = state.redis.as_ref();
@@ -350,19 +420,22 @@ pub(crate) async fn read_document_content(
         return Err(ApiFailure::from_value_error("Document not found"));
     };
 
-    let kb = access::knowledge_base_record(mysql, document.knowledge_documents_kind_id)
+    let kb_id = document.knowledge_documents_kind_id;
+    let kb = access::knowledge_base_record(mysql, kb_id)
         .await
-        .map_err(|error| ApiFailure::internal(error.to_string()))?;
+        .map_err(|error| ApiFailure::internal(error.to_string()).with_kb_id(kb_id))?;
     let Some(kb) = kb else {
-        return Err(ApiFailure::from_value_error("Knowledge base not found"));
+        return Err(ApiFailure::from_value_error("Knowledge base not found").with_kb_id(kb_id));
     };
 
     let has_access =
-        access::knowledge_base_access(mysql, redis, &state.entity_resolvers, &kb, user_id).await?;
+        access::knowledge_base_access(mysql, redis, &state.entity_resolvers, &kb, user_id)
+            .await
+            .map_err(|error| error.with_kb_id(kb_id))?;
     if !has_access {
-        return Err(ApiFailure::from_value_error(
-            "Access denied to this document",
-        ));
+        return Err(
+            ApiFailure::from_value_error("Access denied to this document").with_kb_id(kb_id),
+        );
     }
 
     // `_assert_external_document_previewable`: reject external placeholders
@@ -370,21 +443,22 @@ pub(crate) async fn read_document_content(
     if document.knowledge_documents_source_type == "external"
         && document.knowledge_documents_attachment_id <= 0
     {
-        return Err(ApiFailure::from_value_error(
-            "Document content is not ready for preview",
-        ));
+        return Err(
+            ApiFailure::from_value_error("Document content is not ready for preview")
+                .with_kb_id(kb_id),
+        );
     }
 
     // `document_read_service.read_documents` for the single document with
     // its knowledge-base scope.
     let documents = reader::documents_by_ids(mysql, &[document_id])
         .await
-        .map_err(|error| ApiFailure::internal(error.to_string()))?;
+        .map_err(|error| ApiFailure::internal(error.to_string()).with_kb_id(kb_id))?;
     let Some(result) = documents
         .into_iter()
         .find(|row| row.knowledge_documents_id == document_id)
     else {
-        return Err(ApiFailure::from_value_error("Document not found"));
+        return Err(ApiFailure::from_value_error("Document not found").with_kb_id(kb_id));
     };
 
     // Attachment contexts: the original attachment plus the optional
@@ -401,7 +475,7 @@ pub(crate) async fn read_document_content(
     }
     let attachments = reader::attachment_contexts(mysql, &attachment_ids)
         .await
-        .map_err(|error| ApiFailure::internal(error.to_string()))?;
+        .map_err(|error| ApiFailure::internal(error.to_string()).with_kb_id(kb_id))?;
     let attachment = attachments
         .iter()
         .find(|row| row.subtask_contexts_id == result.knowledge_documents_attachment_id);
@@ -432,61 +506,99 @@ pub(crate) async fn read_document_content(
         source_media_type: reader::source_media_type(attachment),
     };
     if document.knowledge_documents_source_type == "external" && total_length == 0 {
-        return Err(ApiFailure::from_value_error(
-            "Document content is not ready for preview",
-        ));
+        return Err(
+            ApiFailure::from_value_error("Document content is not ready for preview")
+                .with_kb_id(kb_id),
+        );
     }
-    report_document_read(&state.event_reporter, &response, user_id, entrypoint);
     Ok(response)
 }
 
 fn report_document_read(
     reporter: &crate::event_reporting::ReporterHandle,
-    response: &DocumentContentReadResponse,
-    user_id: i64,
-    entrypoint: &'static str,
+    result: &Result<DocumentContentReadResponse, ApiFailure>,
+    document_id: i64,
+    context: DocumentReadContext,
+    invocation_id: Option<&str>,
 ) {
-    use crate::event_reporting::EventKind;
-
-    reporter.emit(EventKind::KnowledgeDocumentReadFinished, || {
-        document_read_fact(
-            response.kb_id,
-            response.document_id,
-            response.offset,
-            response.returned_length,
-            response.total_length,
-            response.has_more,
-            user_id,
-            entrypoint,
-        )
-    });
+    let event = match result {
+        Ok(response) => successful_document_read_event(response, context, invocation_id),
+        Err(error) => failed_document_read_event(document_id, error, context, invocation_id),
+    };
+    reporter.emit_document_read(event);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn document_read_fact(
-    kb_id: i64,
-    document_id: i64,
-    offset: i64,
-    returned_length: i64,
-    total_length: i64,
-    has_more: bool,
-    user_id: i64,
-    entrypoint: &'static str,
-) -> Result<crate::event_reporting::FactDraft, crate::event_reporting::FactBuildError> {
-    use crate::event_reporting::{FactDraft, Field, Scalar};
+fn successful_document_read_event(
+    response: &DocumentContentReadResponse,
+    context: DocumentReadContext,
+    invocation_id: Option<&str>,
+) -> crate::event_reporting::DocumentReadEvent {
+    crate::event_reporting::DocumentReadEvent {
+        kb_id: Some(response.kb_id),
+        document_id: response.document_id,
+        outcome: crate::event_reporting::DocumentReadOutcome::Success,
+        offset: Some(response.offset),
+        returned_length: Some(response.returned_length),
+        total_length: Some(response.total_length),
+        has_more: Some(response.has_more),
+        actor_user_id: context.actor_user_id,
+        effective_reader_id: context.effective_reader_id,
+        entrypoint: context.entrypoint,
+        task_id: context.task_id,
+        subtask_id: context.subtask_id,
+        invocation_id: invocation_id.map(str::to_owned),
+    }
+}
 
-    FactDraft::success()
-        .with_kb_id(kb_id)
-        .with_document_id(document_id)
-        .with_field(Field::Stage, Scalar::text("content_delivery")?)?
-        .with_field(Field::Entrypoint, Scalar::text(entrypoint)?)?
-        .with_field(Field::UserId, Scalar::from(user_id))?
-        .with_field(Field::EffectiveReaderId, Scalar::from(user_id))?
-        .with_field(Field::SubtaskId, Scalar::Null)?
-        .with_field(Field::Offset, Scalar::from(offset))?
-        .with_field(Field::ReturnedLength, Scalar::from(returned_length))?
-        .with_field(Field::TotalLength, Scalar::from(total_length))?
-        .with_field(Field::HasMore, Scalar::from(has_more))
+fn failed_document_read_event(
+    document_id: i64,
+    error: &ApiFailure,
+    context: DocumentReadContext,
+    invocation_id: Option<&str>,
+) -> crate::event_reporting::DocumentReadEvent {
+    crate::event_reporting::DocumentReadEvent {
+        kb_id: error.kb_id,
+        document_id,
+        outcome: crate::event_reporting::DocumentReadOutcome::Failure(document_read_error_code(
+            error,
+        )),
+        offset: None,
+        returned_length: None,
+        total_length: None,
+        has_more: None,
+        actor_user_id: context.actor_user_id,
+        effective_reader_id: context.effective_reader_id,
+        entrypoint: context.entrypoint,
+        task_id: context.task_id,
+        subtask_id: context.subtask_id,
+        invocation_id: invocation_id.map(str::to_owned),
+    }
+}
+
+pub(crate) fn document_read_rejection_event(
+    document_id: i64,
+    context: DocumentReadContext,
+    error_code: &'static str,
+) -> crate::event_reporting::DocumentReadEvent {
+    crate::event_reporting::DocumentReadEvent {
+        kb_id: None,
+        document_id,
+        outcome: crate::event_reporting::DocumentReadOutcome::Failure(error_code),
+        offset: None,
+        returned_length: None,
+        total_length: None,
+        has_more: None,
+        actor_user_id: context.actor_user_id,
+        effective_reader_id: context.effective_reader_id,
+        entrypoint: context.entrypoint,
+        task_id: context.task_id,
+        subtask_id: context.subtask_id,
+        invocation_id: crate::wework_auth_tokens::uuid4_hex().ok(),
+    }
+}
+
+fn document_read_error_code(error: &ApiFailure) -> &'static str {
+    error.error_code
 }
 
 #[cfg(test)]
@@ -494,25 +606,157 @@ mod tests {
     use super::*;
 
     #[test]
-    fn document_read_fact_matches_python_content_delivery_contract() {
-        use crate::event_reporting::{EntityId, Field, Scalar};
-
-        let fact = document_read_fact(11, 12, 3, 5, 20, true, 42, "knowledge_api").unwrap();
-        assert_eq!(fact.kb_id, Some(EntityId::from(11_i64)));
-        assert_eq!(fact.document_id, Some(EntityId::from(12_i64)));
+    fn document_read_event_matches_python_content_delivery_contract() {
+        let response = DocumentContentReadResponse {
+            document_id: 12,
+            name: "readme".into(),
+            content: "hello".into(),
+            total_length: 20,
+            offset: 3,
+            returned_length: 5,
+            has_more: true,
+            kb_id: 11,
+            index_status: "completed".into(),
+            source_media_type: None,
+        };
+        let event = successful_document_read_event(
+            &response,
+            DocumentReadContext {
+                entrypoint: "knowledge_api",
+                actor_user_id: 41,
+                effective_reader_id: 42,
+                task_id: Some(1606),
+                subtask_id: Some(9001),
+            },
+            Some("read-1"),
+        );
+        assert_eq!(event.kb_id, Some(11));
+        assert_eq!(event.document_id, 12);
         assert_eq!(
-            fact.data,
-            vec![
-                (Field::Stage, Scalar::text("content_delivery").unwrap()),
-                (Field::Entrypoint, Scalar::text("knowledge_api").unwrap()),
-                (Field::UserId, Scalar::from(42_i64)),
-                (Field::EffectiveReaderId, Scalar::from(42_i64)),
-                (Field::SubtaskId, Scalar::Null),
-                (Field::Offset, Scalar::from(3_i64)),
-                (Field::ReturnedLength, Scalar::from(5_i64)),
-                (Field::TotalLength, Scalar::from(20_i64)),
-                (Field::HasMore, Scalar::from(true)),
-            ]
+            event.outcome,
+            crate::event_reporting::DocumentReadOutcome::Success
+        );
+        assert_eq!(event.invocation_id.as_deref(), Some("read-1"));
+        assert_eq!(event.entrypoint, "knowledge_api");
+        assert_eq!(event.actor_user_id, 41);
+        assert_eq!(event.effective_reader_id, 42);
+        assert_eq!(event.task_id, Some(1606));
+        assert_eq!(event.subtask_id, Some(9001));
+        assert_eq!(event.offset, Some(3));
+        assert_eq!(event.returned_length, Some(5));
+        assert_eq!(event.total_length, Some(20));
+        assert_eq!(event.has_more, Some(true));
+    }
+
+    #[test]
+    fn document_read_event_marks_non_task_reads_explicitly() {
+        let response = DocumentContentReadResponse {
+            document_id: 12,
+            name: "readme".into(),
+            content: "hello".into(),
+            total_length: 5,
+            offset: 0,
+            returned_length: 5,
+            has_more: false,
+            kb_id: 11,
+            index_status: "completed".into(),
+            source_media_type: None,
+        };
+        let event = successful_document_read_event(
+            &response,
+            DocumentReadContext {
+                entrypoint: "openapi",
+                actor_user_id: 42,
+                effective_reader_id: 42,
+                task_id: None,
+                subtask_id: None,
+            },
+            Some("read-2"),
+        );
+
+        assert_eq!(event.task_id, None);
+        assert_eq!(event.subtask_id, None);
+    }
+
+    #[test]
+    fn failed_document_read_event_preserves_known_dimensions() {
+        let error = ApiFailure::from_value_error("Access denied to this document").with_kb_id(11);
+        let event = failed_document_read_event(
+            12,
+            &error,
+            DocumentReadContext {
+                entrypoint: "mcp",
+                actor_user_id: 41,
+                effective_reader_id: 42,
+                task_id: Some(1606),
+                subtask_id: Some(9001),
+            },
+            Some("read-failed-1"),
+        );
+
+        assert_eq!(event.kb_id, Some(11));
+        assert_eq!(event.document_id, 12);
+        assert_eq!(
+            event.outcome,
+            crate::event_reporting::DocumentReadOutcome::Failure("DOCUMENT_ACCESS_DENIED")
+        );
+        assert_eq!(event.offset, None);
+        assert_eq!(event.returned_length, None);
+        assert_eq!(event.total_length, None);
+        assert_eq!(event.has_more, None);
+        assert_eq!(event.actor_user_id, 41);
+        assert_eq!(event.effective_reader_id, 42);
+        assert_eq!(event.task_id, Some(1606));
+        assert_eq!(event.subtask_id, Some(9001));
+    }
+
+    #[test]
+    fn preflight_rejection_preserves_mcp_task_identity() {
+        let context = DocumentReadContext {
+            entrypoint: "mcp",
+            actor_user_id: 41,
+            effective_reader_id: 41,
+            task_id: Some(1606),
+            subtask_id: Some(9001),
+        };
+
+        let event = document_read_rejection_event(12, context, "DOCUMENT_READ_IDENTITY_UNRESOLVED");
+
+        assert_eq!(event.document_id, 12);
+        assert_eq!(event.kb_id, None);
+        assert_eq!(
+            event.outcome,
+            crate::event_reporting::DocumentReadOutcome::Failure(
+                "DOCUMENT_READ_IDENTITY_UNRESOLVED"
+            )
+        );
+        assert_eq!(event.entrypoint, "mcp");
+        assert_eq!(event.actor_user_id, 41);
+        assert_eq!(event.effective_reader_id, 41);
+        assert_eq!(event.task_id, Some(1606));
+        assert_eq!(event.subtask_id, Some(9001));
+        assert!(event.invocation_id.is_some());
+    }
+
+    #[test]
+    fn document_read_error_codes_are_stable_and_sanitized() {
+        assert_eq!(
+            document_read_error_code(&ApiFailure::from_value_error("Document not found")),
+            "DOCUMENT_NOT_FOUND"
+        );
+        assert_eq!(
+            document_read_error_code(&ApiFailure::from_value_error("Knowledge base not found")),
+            "KNOWLEDGE_BASE_NOT_FOUND"
+        );
+        assert_eq!(
+            document_read_error_code(&ApiFailure::from_value_error(
+                "Document content is not ready for preview"
+            )),
+            "DOCUMENT_CONTENT_NOT_READY"
+        );
+        assert_eq!(
+            document_read_error_code(&ApiFailure::internal("database password leaked")),
+            "DOCUMENT_READ_FAILED"
         );
     }
 

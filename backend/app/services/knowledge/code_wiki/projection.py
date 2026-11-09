@@ -43,6 +43,7 @@ from app.services.knowledge.code_wiki.projection_plan import (
     PageSource,
     ProjectionPlan,
 )
+from app.services.knowledge.event_logging import FactSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class ProjectionOutcome:
     created_document_ids: tuple[int, ...] = ()
     updated_document_ids: tuple[int, ...] = ()
     deleted_document_ids: tuple[int, ...] = ()
+    committed_facts: tuple[FactSnapshot, ...] = ()
     # doc_refs whose RAG deletion did not succeed and must be retried.
     unfinished_index_cleanup: tuple[str, ...] = field(default=())
 
@@ -189,25 +191,27 @@ def apply_projection_plan(
             content=source.content,
         )
 
+    committed_facts: list[FactSnapshot] = []
+
     def remember_document(event_type: str, document: KnowledgeDocument) -> None:
-        from app.services.knowledge.event_logging import after_commit_fact
         from shared.event_reporting import is_event_reporting_enabled
         from shared.event_reporting.catalogs.knowledge import loaded_scalar
 
         if not is_event_reporting_enabled():
             return
-        after_commit_fact(
-            db,
-            event_type,
-            {
-                "kb_id": kind_id,
-                "document_id": loaded_scalar(document, "id"),
-                "data": {
-                    "source_type": "code_wiki",
-                    "file_extension": loaded_scalar(document, "file_extension"),
-                    "content_bytes": loaded_scalar(document, "file_size"),
+        committed_facts.append(
+            (
+                event_type,
+                {
+                    "kb_id": kind_id,
+                    "document_id": loaded_scalar(document, "id"),
+                    "data": {
+                        "source_type": "code_wiki",
+                        "file_extension": loaded_scalar(document, "file_extension"),
+                        "content_bytes": loaded_scalar(document, "file_size"),
+                    },
                 },
-            },
+            )
         )
 
     def add_document(source: PageSource) -> int:
@@ -289,6 +293,7 @@ def apply_projection_plan(
         created_document_ids=tuple(created),
         updated_document_ids=tuple(updated),
         deleted_document_ids=tuple(deleted),
+        committed_facts=tuple(committed_facts),
         unfinished_index_cleanup=tuple(removed_refs),
     )
 

@@ -251,8 +251,6 @@ class OpenAIRequestConverter:
             "new_session": request.new_session,
             "collaboration_model": request.collaboration_model,
         }
-        if request.knowledge_client_surface:
-            metadata["knowledge_client_surface"] = request.knowledge_client_surface
         openai_request["metadata"] = metadata
 
         # Add model_config as a separate field for chat_shell to use
@@ -395,7 +393,6 @@ class OpenAIRequestConverter:
             interactive_form_answer=metadata.get("interactive_form_answer"),
             attachments=metadata.get("attachments", []),
             auth_token=metadata.get("auth_token", ""),
-            knowledge_client_surface=metadata.get("knowledge_client_surface"),
             skill_identity_token=metadata.get("skill_identity_token", ""),
             backend_url=metadata.get("backend_url", ""),
             workspace=metadata.get("workspace", {}),

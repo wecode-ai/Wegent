@@ -39,10 +39,9 @@ pub(crate) fn create_task_token(
     subtask_id: i64,
     user_id: i64,
     user_name: &str,
-    knowledge_client_surface: Option<&str>,
 ) -> Result<String, FastApiError> {
     let expire = chrono::Utc::now().timestamp() + 24 * 60 * 60;
-    let mut claims = serde_json::json!({
+    let claims = serde_json::json!({
         "task_id": task_id,
         "subtask_id": subtask_id,
         "user_id": user_id,
@@ -53,9 +52,6 @@ pub(crate) fn create_task_token(
         "exp": expire,
         "type": "task_token",
     });
-    if let Some(surface) = knowledge_client_surface {
-        claims["knowledge_client_surface"] = Value::from(surface);
-    }
     sign(state, &claims, "the task token")
 }
 

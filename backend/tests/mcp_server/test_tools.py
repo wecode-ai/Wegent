@@ -18,6 +18,75 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tool_registry import _register_tool
 
 
+def test_mcp_document_read_reports_task_and_effective_reader():
+    module = get_knowledge_module()
+    token = TaskTokenInfo(task_id=1, subtask_id=2, user_id=3, user_name="alice")
+    session = MagicMock()
+    session.query.return_value.filter.return_value.scalar.return_value = 77
+    reader = SimpleNamespace(id=4)
+    response = MagicMock()
+    response.model_dump.return_value = {
+        "document_id": 9,
+        "kb_id": 77,
+        "content": "x",
+        "offset": 0,
+        "returned_length": 1,
+        "total_length": 1,
+        "has_more": False,
+    }
+    events = []
+    with (
+        patch.object(module, "SessionLocal", return_value=session),
+        patch.object(module, "_get_read_user_for_knowledge_base", return_value=reader),
+        patch.object(
+            module.knowledge_orchestrator,
+            "read_document_content",
+            return_value=response,
+        ),
+        patch(
+            "app.services.knowledge.read_reporting.observe",
+            side_effect=lambda name, fields: events.append(fields()),
+        ),
+    ):
+        assert module.read_document_content(token, 9)["content"] == "x"
+    assert len(events) == 1
+    assert events[0]["data"]["task_id"] == 1
+    assert events[0]["data"]["subtask_id"] == 2
+    assert events[0]["data"]["actor_user_id"] == 3
+    assert events[0]["data"]["effective_reader_id"] == 4
+    assert events[0]["data"]["invocation_id"]
+
+
+def test_mcp_read_reporting_failure_preserves_response():
+    module = get_knowledge_module()
+    token = TaskTokenInfo(task_id=1, subtask_id=2, user_id=3, user_name="alice")
+    session = MagicMock()
+    session.query.return_value.filter.return_value.scalar.return_value = 77
+    response = MagicMock()
+    response.model_dump.return_value = {"document_id": 9, "content": "x"}
+    with (
+        patch.object(module, "SessionLocal", return_value=session),
+        patch.object(
+            module,
+            "_get_read_user_for_knowledge_base",
+            return_value=SimpleNamespace(id=4),
+        ),
+        patch.object(
+            module.knowledge_orchestrator,
+            "read_document_content",
+            return_value=response,
+        ),
+        patch(
+            "app.services.knowledge.read_reporting.observe",
+            side_effect=RuntimeError("offline"),
+        ),
+    ):
+        assert module.read_document_content(token, 9) == {
+            "document_id": 9,
+            "content": "x",
+        }
+
+
 def get_silent_exit_module():
     """Get the silent_exit module, handling import caching issues."""
     module_name = "app.mcp_server.tools.silent_exit"
@@ -302,10 +371,7 @@ class TestKnowledgeTool:
         mock_session.close.assert_called_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "surface", ["knowledge_web", "chat_shell", "external_api", None]
-    )
-    async def test_search_knowledge_base_passes_raw_scope(self, surface):
+    async def test_search_knowledge_base_passes_raw_scope(self):
         """search_knowledge_base should delegate raw scope to the orchestrator."""
         module = get_knowledge_module()
         token_info = TaskTokenInfo(
@@ -313,7 +379,6 @@ class TestKnowledgeTool:
             subtask_id=2,
             user_id=3,
             user_name="alice",
-            knowledge_client_surface=surface,
         )
 
         async def fake_retrieve(**kwargs):
@@ -344,7 +409,7 @@ class TestKnowledgeTool:
         mock_retrieve.assert_called_once()
         assert mock_retrieve.call_args.kwargs["user_id"] == 3
         assert mock_retrieve.call_args.kwargs["entrypoint"] == "mcp"
-        assert mock_retrieve.call_args.kwargs["client_surface"] == (surface or "mcp")
+        assert mock_retrieve.call_args.kwargs["client_surface"] == "mcp"
         assert mock_retrieve.call_args.kwargs["task_id"] == 1
         assert mock_retrieve.call_args.kwargs["document_ids"] == [11]
         assert mock_retrieve.call_args.kwargs["folder_ids"] == [5]

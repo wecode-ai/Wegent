@@ -190,7 +190,6 @@ class ExecutionRequest:
 
     # === Authentication ===
     auth_token: str = ""
-    knowledge_client_surface: Optional[str] = None
     skill_identity_token: str = ""
     backend_url: str = ""
 

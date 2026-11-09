@@ -11,7 +11,11 @@ from app.services.context.context_service import context_service
 from app.services.knowledge.document_read_service import DocumentReadService
 from app.services.knowledge.generation_reporting import report_generation
 from app.services.knowledge.retrieval_persistence import RetrievalPersistenceService
-from app.services.knowledge.wiki_reporting import binding_fact, wiki_request
+from app.services.knowledge.wiki_reporting import (
+    binding_fact,
+    emit_binding_snapshot,
+    wiki_request,
+)
 from shared.event_reporting import reporter
 from shared.event_reporting.config import EventReporterConfig
 
@@ -62,8 +66,9 @@ async def test_commit_then_failure_keeps_only_true_binding_fact_without_select(s
         first = Document(id=1, kind_id=knowledge_base_id)
         db.add(first)
         db.flush()
-        binding_fact(db, first, "created", committed=True)
+        first_snapshot = binding_fact(db, first, "created", committed=True)
         db.commit()
+        emit_binding_snapshot(first_snapshot)
         second = Document(id=2, kind_id=knowledge_base_id)
         db.add(second)
         db.flush()

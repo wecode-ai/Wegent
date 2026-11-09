@@ -57,7 +57,6 @@ async def prepare_knowledge_base_tools(
     auth_token: str = "",
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL,
     external_knowledge_refs: Optional[list[dict]] = None,
-    client_surface: str | None = None,
 ) -> KnowledgeBaseToolsResult:
     """Prepare knowledge base tools and enhanced system prompt.
 
@@ -135,7 +134,6 @@ async def prepare_knowledge_base_tools(
         user_id=user_id,
         user_name=user_name,
         auth_token=auth_token,
-        client_surface=client_surface,
         db_session=db,
         user_subtask_id=user_subtask_id,
         model_id=model_id or KnowledgeBaseTool.model_id,

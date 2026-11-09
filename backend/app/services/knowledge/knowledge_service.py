@@ -68,6 +68,7 @@ from app.services.knowledge.content_scope import (
     assert_user_content_is_mutable,
     wiki_pages,
 )
+from app.services.knowledge.event_logging import emit_fact_snapshots
 from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.knowledge_access_policy import (
@@ -1122,18 +1123,19 @@ class KnowledgeService:
             if (purge_result or {}).get("status") not in {"success", "deleted"}:
                 raise RuntimeError("Code Wiki remote purge did not complete")
 
+        deleted_document_facts = []
         for document in documents:
-            from app.services.knowledge.event_logging import after_commit_fact
             from shared.event_reporting.catalogs.knowledge import loaded_scalar
 
-            after_commit_fact(
-                db,
-                "knowledge.document.deleted",
-                {
-                    "kb_id": knowledge_base_id,
-                    "document_id": loaded_scalar(document, "id"),
-                    "data": {"delete_mode": "code_wiki"},
-                },
+            deleted_document_facts.append(
+                (
+                    "knowledge.document.deleted",
+                    {
+                        "kb_id": knowledge_base_id,
+                        "document_id": loaded_scalar(document, "id"),
+                        "data": {"delete_mode": "code_wiki"},
+                    },
+                )
             )
             db.delete(document)
 
@@ -1176,6 +1178,7 @@ class KnowledgeService:
         # Physically delete the knowledge base
         db.delete(kb)
         db.commit()
+        emit_fact_snapshots(deleted_document_facts)
         emit_knowledge_base_deleted(
             kb_id=knowledge_base_id,
             delete_mode="physical",
@@ -1806,8 +1809,11 @@ class KnowledgeService:
             db.add(document)
             db.flush()
             KnowledgeService._update_document_count_cache(db, knowledge_base_id)
-            binding_fact(db, document, "created", committed=True)
+            from app.services.knowledge.wiki_reporting import emit_binding_snapshot
+
+            binding_snapshot = binding_fact(db, document, "created", committed=True)
             db.commit()
+            emit_binding_snapshot(binding_snapshot)
         except IntegrityError:
             db.rollback()
             raise
@@ -2275,13 +2281,16 @@ class KnowledgeService:
                     )
 
         # Physically delete document from database
-        binding_fact(db, doc, "deleted", committed=True)
+        from app.services.knowledge.wiki_reporting import emit_binding_snapshot
+
+        binding_snapshot = binding_fact(db, doc, "deleted", committed=True)
         db.delete(doc)
 
         # Update cached document count in knowledge base spec
         KnowledgeService._update_document_count_cache(db, kind_id)
 
         db.commit()
+        emit_binding_snapshot(binding_snapshot)
         emit_document_deleted(
             kb_id=kind_id,
             document_id=document_id,

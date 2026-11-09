@@ -403,6 +403,9 @@ def publish_generation(
         },
     )
     db.commit()
+    from app.services.knowledge.event_logging import emit_fact_snapshots
+
+    emit_fact_snapshots(outcome.committed_facts)
     report_publish(True)
 
     # Past this point the version is live. Nothing below may raise: the pages are

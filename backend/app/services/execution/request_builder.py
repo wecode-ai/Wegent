@@ -442,10 +442,7 @@ class TaskRequestBuilder:
             self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
 
         # Generate task-scoped identities before finalizing MCP capabilities.
-        from app.services.knowledge.query_surface import task_query_surface
-
-        surface = task_query_surface(task.json, getattr(task, "client_origin", None))
-        auth_token = self._generate_auth_token(task, subtask, user, surface)
+        auth_token = self._generate_auth_token(task, subtask, user)
         skill_identity_token = self._generate_skill_identity_token(task, subtask, user)
 
         managed_mcp_config: dict[str, dict] = {}
@@ -627,7 +624,6 @@ class TaskRequestBuilder:
             attachments=attachments or [],
             is_subscription=is_subscription,
             system_mcp_config=system_mcp_config,
-            knowledge_client_surface=surface,
             task_data=self._build_request_task_data(user),
             trace_context=trace_context,
             executor_name=getattr(subtask, "executor_name", None),
@@ -3261,7 +3257,6 @@ class TaskRequestBuilder:
         task: TaskResource,
         subtask: Subtask,
         user: User,
-        surface: str | None = None,
     ) -> str:
         """Generate authentication token for task execution.
 
@@ -3288,7 +3283,6 @@ class TaskRequestBuilder:
             subtask_id=subtask.id,
             user_id=user.id,
             user_name=user.user_name,
-            knowledge_client_surface=surface,
             dispatch_id=str(labels.get("dispatchId") or "") or None,
             dispatch_role=str(labels.get("dispatchRole") or "") or None,
             manager_agent_id=str(labels.get("managerAgentId") or "") or None,

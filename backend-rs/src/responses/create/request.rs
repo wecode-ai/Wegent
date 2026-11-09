@@ -79,7 +79,6 @@ pub struct BuildExecutionRequestInput<'a> {
     pub enable_deep_thinking: bool,
     /// The rewritten Task CRD JSON (override labels and KB refs).
     pub task_json: &'a Value,
-    pub knowledge_client_surface: Option<&'static str>,
     /// The request-scoped id (`get_request_id()`).
     pub request_id: &'a str,
     pub message_id: i64,
@@ -619,7 +618,6 @@ pub(super) async fn build_request(
         input.assistant_subtask_id,
         input.user_id,
         input.user_name,
-        input.knowledge_client_surface,
     )?;
     let skill_identity_token = create_skill_identity_token(
         state,
@@ -720,7 +718,6 @@ pub(super) async fn build_request(
                 .collect(),
         ),
         auth_token,
-        knowledge_client_surface: input.knowledge_client_surface.map(str::to_owned),
         skill_identity_token,
         backend_url: backend_url(),
         workspace,

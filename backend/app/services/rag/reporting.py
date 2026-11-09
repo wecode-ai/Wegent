@@ -12,7 +12,7 @@ estimate, never provider usage. Neither field measures relevance or correctness.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -24,6 +24,7 @@ from shared.event_reporting.catalogs.knowledge import (
     error_code_for,
     loaded_scalar,
     observe,
+    report_document_usage,
     report_kb_usage,
 )
 from shared.telemetry.context import get_request_id
@@ -63,6 +64,26 @@ _usage_context: ContextVar[UsageContext | None] = ContextVar(
 def current_usage_context() -> UsageContext | None:
     """Return the logical usage identity for the current retrieval call."""
     return _usage_context.get()
+
+
+def report_document_usage_for_result(records: Iterable[object]) -> None:
+    """Record selected documents without allowing telemetry to affect retrieval."""
+    usage = current_usage_context()
+    if usage is None:
+        return
+    try:
+        report_document_usage(
+            records,
+            invocation_id=usage.invocation_id,
+            actor_user_id=usage.actor_user_id,
+            actor_type=usage.actor_type,
+            entrypoint=usage.entrypoint,
+            client_surface=usage.client_surface,
+            task_id=usage.task_id,
+            subtask_id=usage.subtask_id,
+        )
+    except Exception:
+        pass
 
 
 @contextmanager

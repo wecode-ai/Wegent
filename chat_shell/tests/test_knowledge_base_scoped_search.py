@@ -126,7 +126,6 @@ def test_knowledge_base_input_supports_search_hints() -> None:
 @pytest.mark.asyncio
 async def test_http_mode_forwards_document_names_and_ids():
     tool = KnowledgeBaseTool(
-        client_surface="knowledge_web",
         knowledge_base_ids=[1, 2],
         user_id=7,
     )
@@ -158,6 +157,7 @@ async def test_http_mode_forwards_document_names_and_ids():
                 }
             ),
         ),
+        patch.object(tool, "_build_runtime_context", return_value={}),
     ):
         post = AsyncMock(return_value=mock_response)
         mock_client.return_value.__aenter__.return_value.post = post
@@ -171,7 +171,7 @@ async def test_http_mode_forwards_document_names_and_ids():
 
     payload = post.call_args.kwargs["json"]
     assert payload["document_ids"] == [101]
-    assert payload["client_surface"] == "knowledge_web"
+    assert "client_surface" not in payload
     assert payload["document_names"] == ["release.md"]
 
 

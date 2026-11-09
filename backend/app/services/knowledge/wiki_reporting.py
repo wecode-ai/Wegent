@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from app.services.knowledge.event_logging import after_commit_fact
+from app.services.knowledge.event_logging import FactSnapshot, emit_fact_snapshots
 from shared.event_reporting import is_event_reporting_enabled
 from shared.event_reporting.catalogs.knowledge import loaded_scalar, observe
 
@@ -92,7 +92,7 @@ def _request_fields(
 
 def binding_fact(
     db: Session, document: object, decision: str, *, committed: bool = False
-) -> None:
+) -> FactSnapshot | None:
     """Only Wiki entrypoints activate this context; never inspect external metadata."""
     try:
         state = _context.get()
@@ -102,7 +102,7 @@ def binding_fact(
             or state["remaining"] <= 0
             or not is_event_reporting_enabled(_BINDING)
         ):
-            return
+            return None
         state["remaining"] -= 1
         fields = {
             "kb_id": loaded_scalar(document, "kind_id"),
@@ -116,8 +116,15 @@ def binding_fact(
             },
         }
         if committed:
-            after_commit_fact(db, _BINDING, fields)
+            return (_BINDING, fields)
         else:
             observe(_BINDING, lambda: fields)
     except Exception:
-        pass
+        return None
+    return None
+
+
+def emit_binding_snapshot(snapshot: FactSnapshot | None) -> None:
+    """Emit a binding fact only after the caller's database commit succeeds."""
+    if snapshot is not None:
+        emit_fact_snapshots((snapshot,))

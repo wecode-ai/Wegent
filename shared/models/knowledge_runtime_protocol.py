@@ -190,13 +190,6 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_ids: list[int]
     user_id: int = Field(..., gt=0, strict=True)
-    invocation_id: str | None = Field(default=None, min_length=1, max_length=256)
-    actor_user_id: int | None = Field(default=None, gt=0, strict=True)
-    actor_type: str | None = Field(default=None, min_length=1, max_length=64)
-    entrypoint: str | None = Field(default=None, min_length=1, max_length=256)
-    client_surface: str | None = Field(default=None, min_length=1, max_length=64)
-    task_id: int | None = None
-    subtask_id: int | None = None
     query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)

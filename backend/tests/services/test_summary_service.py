@@ -279,12 +279,15 @@ class TestManualKnowledgeBaseSummary:
     ):
         summary_service = get_summary_service(test_db)
 
-        summary = await summary_service.update_kb_manual_summary(
-            test_knowledge_base.id,
-            test_user.id,
-            test_user.user_name,
-            "Manual long summary",
-        )
+        with patch(
+            "app.services.knowledge.summary_reporting.report_summary_state"
+        ) as report_summary_state:
+            summary = await summary_service.update_kb_manual_summary(
+                test_knowledge_base.id,
+                test_user.id,
+                test_user.user_name,
+                "Manual long summary",
+            )
 
         assert summary is not None
         assert summary.long_summary == "AI long summary"
@@ -292,6 +295,7 @@ class TestManualKnowledgeBaseSummary:
         assert summary.manual_updated_by is not None
         assert summary.manual_updated_by.name == test_user.user_name
         assert summary.status == "completed"
+        report_summary_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reset_manual_summary_clears_override_fields(
@@ -305,11 +309,17 @@ class TestManualKnowledgeBaseSummary:
             "Manual long summary",
         )
 
-        summary = await summary_service.reset_kb_manual_summary(test_knowledge_base.id)
+        with patch(
+            "app.services.knowledge.summary_reporting.report_summary_state"
+        ) as report_summary_state:
+            summary = await summary_service.reset_kb_manual_summary(
+                test_knowledge_base.id
+            )
 
         assert summary is not None
         assert summary.long_summary == "AI long summary"
         assert summary.manual_long_summary is None
+        report_summary_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_manual_summary_does_not_set_completed_without_ai_summary(
@@ -387,9 +397,14 @@ class TestManualKnowledgeBaseSummary:
         test_db.add(doc)
         test_db.commit()
 
-        with patch(
-            "app.services.knowledge.summary_service.BackgroundChatExecutor"
-        ) as mock_executor:
+        with (
+            patch(
+                "app.services.knowledge.summary_service.BackgroundChatExecutor"
+            ) as mock_executor,
+            patch(
+                "app.services.knowledge.summary_reporting.report_summary_state"
+            ) as report_summary_state,
+        ):
             mock_instance = MagicMock()
             mock_instance.execute = AsyncMock(
                 return_value=MagicMock(
@@ -414,6 +429,11 @@ class TestManualKnowledgeBaseSummary:
                     test_user.user_name,
                     force=True,
                 )
+
+        report_summary_state.assert_called_once()
+        terminal_state = report_summary_state.call_args.args[0]
+        assert terminal_state["status"] == "completed"
+        assert terminal_state["task_id"] == 456
 
         refreshed_summary = await summary_service.get_kb_summary(test_knowledge_base.id)
         assert refreshed_summary is not None

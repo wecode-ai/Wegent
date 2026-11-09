@@ -247,7 +247,6 @@ pub(crate) async fn request_for_task(
             enable_web_search: false,
             enable_deep_thinking: true,
             task_json: &task.json.0,
-            knowledge_client_surface: None,
             request_id: &request_id,
             message_id: assistant.message_id,
             is_group_chat: false,

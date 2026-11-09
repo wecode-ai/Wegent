@@ -271,19 +271,6 @@ def reclaim_stale_generations(
         ext.setdefault(FAILURE_CODE_EXT_KEY, WORKER_ABANDONED_CODE)
         generation.ext = ext
         reclaimed.append(generation.id)
-        from app.services.knowledge.event_logging import after_commit_fact
-
-        after_commit_fact(
-            db,
-            "knowledge.code_wiki.generation.finished",
-            {
-                "kb_id": kind_id,
-                "status": "failure",
-                "fact_key_parts": (kind_id, generation.id),
-                "error_code": WORKER_ABANDONED_CODE,
-                "data": {"generation": generation.id},
-            },
-        )
     db.flush()
 
     reclaimed_ids = tuple(reclaimed)

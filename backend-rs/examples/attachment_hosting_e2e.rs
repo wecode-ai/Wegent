@@ -16,8 +16,8 @@ use sha2::{Digest, Sha256};
 use wegent_backend_rs::{
     Application, AttachmentUploadBackend, BoxError, ExternalAttachmentStorageResult,
     ExternalAttachmentUploadError, ExternalAttachmentUploadRequest, HybridConfig, ImagePid,
-    ImageUploadRequest, MinioConfig, S3StorageBackend, StoreObjectRequest, UploadBackendError,
-    build_app_state, run_hybrid,
+    ImageUploadRequest, MinioConfig, ReporterHandle, S3StorageBackend, StoreObjectRequest,
+    UploadBackendError, build_app_state, run_hybrid,
 };
 
 struct MediaHosting {
@@ -130,7 +130,7 @@ fn main() -> Result<(), BoxError> {
     let logs = brz_logs::init_default()?;
     let runtime = tokio::runtime::Runtime::new()?;
     let result: Result<(), BoxError> = runtime.block_on(async {
-        let mut state = build_app_state().await?;
+        let mut state = build_app_state(ReporterHandle::disabled()).await?;
         let config = MinioConfig::from_env()
             .ok_or_else(|| std::io::Error::other("MinIO configuration is required"))?;
         let mut ordinary_config = config.clone();

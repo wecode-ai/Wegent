@@ -249,18 +249,6 @@ async def test_remote_gateway_index_document_closes_owned_session_before_http(
 
 @pytest.mark.asyncio
 async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None:
-    mocker.patch(
-        "app.services.rag.remote_gateway.current_usage_context",
-        return_value=SimpleNamespace(
-            invocation_id="invocation-1",
-            actor_user_id=42,
-            actor_type="user",
-            entrypoint="chat",
-            client_surface="chat_shell",
-            task_id=81,
-            subtask_id=82,
-        ),
-    )
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -282,6 +270,9 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
+    )
+    report_document_usage = mocker.patch(
+        "app.services.rag.remote_gateway.report_document_usage_for_result"
     )
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
@@ -320,13 +311,6 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
     assert kwargs["json"] == {
         "knowledge_base_ids": [1],
         "user_id": 8,
-        "invocation_id": "invocation-1",
-        "actor_user_id": 42,
-        "actor_type": "user",
-        "entrypoint": "chat",
-        "client_surface": "chat_shell",
-        "task_id": 81,
-        "subtask_id": 82,
         "query": "release checklist",
         "search_hints": {
             "semantic_query": "How to verify the release checklist?",
@@ -341,6 +325,7 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
             "value": "kb",
         },
     }
+    report_document_usage.assert_called_once_with(result["records"])
 
 
 @pytest.mark.asyncio

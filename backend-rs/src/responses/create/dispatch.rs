@@ -218,8 +218,6 @@ pub struct ExecutionRequest {
     pub interactive_form_answer: Option<Value>,
     pub attachments: Vec<Value>,
     pub auth_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub knowledge_client_surface: Option<String>,
     pub skill_identity_token: String,
     pub backend_url: String,
     pub workspace: Value,
@@ -303,7 +301,6 @@ impl Default for ExecutionRequest {
             interactive_form_answer: None,
             attachments: Vec::new(),
             auth_token: String::new(),
-            knowledge_client_surface: None,
             skill_identity_token: String::new(),
             backend_url: String::new(),
             workspace: Value::Object(Map::new()),
@@ -498,12 +495,6 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
     );
     metadata.insert("attachments".into(), serde_json::json!(request.attachments));
     metadata.insert("auth_token".into(), serde_json::json!(request.auth_token));
-    if let Some(surface) = &request.knowledge_client_surface {
-        metadata.insert(
-            "knowledge_client_surface".into(),
-            serde_json::json!(surface),
-        );
-    }
     metadata.insert(
         "skill_identity_token".into(),
         serde_json::json!(request.skill_identity_token),

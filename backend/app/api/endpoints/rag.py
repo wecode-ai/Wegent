@@ -135,7 +135,7 @@ async def retrieve_documents(
 
         result = await report_retrieval_request(
             entrypoint="openapi",
-            client_surface=request.client_surface or "external_api",
+            client_surface="external_api",
             requested_kb_ids=[knowledge_base_id],
             effective_kb_ids=[knowledge_base_id],
             route_mode="rag_retrieval",

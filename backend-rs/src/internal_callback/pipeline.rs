@@ -125,7 +125,6 @@ async fn dispatch_execution(
             enable_web_search: false,
             enable_deep_thinking: true,
             task_json: &advance.task_json,
-            knowledge_client_surface: None,
             request_id: &request_id,
             message_id: advance.message_id + 1,
             is_group_chat: advance

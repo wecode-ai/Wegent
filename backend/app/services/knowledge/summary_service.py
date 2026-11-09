@@ -133,11 +133,7 @@ class SummaryService:
         kb_json["spec"] = spec
         kb.json = kb_json
         flag_modified(kb, "json")
-        event_kb_id = kb.__dict__.get("id")
         self.db.commit()
-        from .summary_reporting import report_summary_state
-
-        report_summary_state(summary_data, kb_id=event_kb_id)
 
     def _persist_document_summary(
         self,
@@ -157,12 +153,6 @@ class SummaryService:
         )
         if updated_rows == 0:
             self.db.rollback()
-            from .summary_reporting import report_summary_state
-
-            report_summary_state(
-                {"status": "skipped", "reason": "document_deleted"},
-                document_id=document_id,
-            )
             logger.info(
                 "[SummaryService] Skipping summary persistence for deleted document: "
                 "document_id=%s",
@@ -171,9 +161,6 @@ class SummaryService:
             return False
 
         self.db.commit()
-        from .summary_reporting import report_summary_state
-
-        report_summary_state(summary_data, document_id=document_id)
         return True
 
     # ==================== Model Configuration ====================
@@ -433,6 +420,12 @@ class SummaryService:
             summary_data["status"] = "generating"
             summary_data["updated_at"] = datetime.now().isoformat()
             if not self._persist_document_summary(document_id, summary_data):
+                from .summary_reporting import report_summary_state
+
+                report_summary_state(
+                    {"status": "skipped", "reason": "document_deleted"},
+                    document_id=document_id,
+                )
                 return None
 
             logger.info(
@@ -502,12 +495,22 @@ class SummaryService:
                 )
 
             if not self._persist_document_summary(document_id, summary_data):
+                from .summary_reporting import report_summary_state
+
+                report_summary_state(
+                    {"status": "skipped", "reason": "document_deleted"},
+                    document_id=document_id,
+                )
                 logger.info(
                     "[SummaryService] Document deleted before summary completion: "
                     "document_id=%s",
                     document_id,
                 )
                 return result
+
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(summary_data, document_id=document_id)
 
             # 10. Check if knowledge base summary needs to be triggered
             if result.success:
@@ -532,7 +535,10 @@ class SummaryService:
                     "error": str(e),
                     "updated_at": datetime.now().isoformat(),
                 }
-                self._persist_document_summary(document_id, summary_data)
+                if self._persist_document_summary(document_id, summary_data):
+                    from .summary_reporting import report_summary_state
+
+                    report_summary_state(summary_data, document_id=document_id)
             except Exception as commit_error:
                 logger.warning(
                     f"[SummaryService] Failed to save error status: {commit_error}"
@@ -694,6 +700,9 @@ class SummaryService:
             )
 
         self._persist_kb_summary(kb, summary_data)
+        from .summary_reporting import report_summary_state
+
+        report_summary_state(summary_data, kb_id=kb_id)
 
     def _write_kb_summary_failure(self, kb_id: int, error: str) -> None:
         kb = (
@@ -709,15 +718,16 @@ class SummaryService:
             return
 
         existing_summary = dict((kb.json or {}).get("spec", {}).get("summary") or {})
-        self._persist_kb_summary(
-            kb,
-            {
-                **existing_summary,
-                "status": "failed",
-                "error": error,
-                "updated_at": datetime.now().isoformat(),
-            },
-        )
+        summary_data = {
+            **existing_summary,
+            "status": "failed",
+            "error": error,
+            "updated_at": datetime.now().isoformat(),
+        }
+        self._persist_kb_summary(kb, summary_data)
+        from .summary_reporting import report_summary_state
+
+        report_summary_state(summary_data, kb_id=kb_id)
 
     async def _execute_kb_summary_model(
         self,
