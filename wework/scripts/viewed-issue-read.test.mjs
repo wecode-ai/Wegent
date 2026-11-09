@@ -18,6 +18,12 @@ test('the read prerequisite belongs to the final associated Issue, not the earli
   )
   assert.ok(linked >= 0 && read > linked && draft > read)
   assert.ok(
+    source
+      .slice(linked, read)
+      .includes("await control.command('click', '[data-testid=\"work-item-guide-open-summary\"]')"),
+    'Standalone checkpoints must explicitly open the associated detail before waiting for it'
+  )
+  assert.ok(
     source.slice(linked, read).includes("snapshot.testIds.includes('cloud-task-activity-list')")
   )
   assert.ok(

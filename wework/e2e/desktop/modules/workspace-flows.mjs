@@ -1916,6 +1916,7 @@ async function verifyExistingTaskBoardAssociation(
   if (captureScreenshots) {
     await captureVerificationScreenshot(control, 'workspace-10-existing-card-linked.png')
   }
+  await control.command('click', '[data-testid="work-item-guide-open-summary"]')
   const linkedDetail = '[data-testid="work-item-context-panel"]'
   await control.command('waitFor', linkedDetail, {
     text: existingTargetTitle,
