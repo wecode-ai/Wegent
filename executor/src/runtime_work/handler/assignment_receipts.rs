@@ -280,7 +280,6 @@ mod tests {
             &json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"handlingPolicy":{"immediate":false}}),
             &json!({"id":"issue","title":"Review"}),
             &json!({"humanAssignmentId":"human","assignmentId":"event","dispatchRoundId":"direct"}),
-            false,
         ).await.unwrap();
         handler.flush_assignment_receipts().await.unwrap();
         let binding = received_binding.lock().unwrap().clone();
@@ -325,7 +324,17 @@ mod tests {
         assert!(receipt[0]["stand_in_received_at"].is_string());
         assert!(receipt[0]["human_read_at"].is_null());
         assert!(handler.local_task_links(true).is_empty());
-        assert!(store.list_task_bindings(&issue.id).unwrap().is_empty());
+        let reservations = store.list_task_bindings(&issue.id).unwrap();
+        assert_eq!(reservations.len(), 1);
+        assert_eq!(reservations[0].device_id, "mac");
+        assert_eq!(
+            reservations[0].human_assignment_id.as_deref(),
+            Some(assignment.as_str())
+        );
+        assert_eq!(
+            reservations[0].task_id,
+            format!("stand-in-{assignment}-review")
+        );
     }
 
     #[tokio::test]
