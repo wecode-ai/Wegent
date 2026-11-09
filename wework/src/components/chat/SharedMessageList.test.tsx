@@ -131,39 +131,57 @@ describe('full shared message list in a browser host', () => {
     }
   )
 
-  test('stand-in guidance remains a user message rather than an execution block', () => {
-    const turn: RuntimeConversationTurn = {
-      id: 'guidance-turn',
-      status: 'streaming',
-      startedAt: Date.now() - 5000,
-      items: [
-        { id: 'user', type: 'user_message', message: { ...userMessage, id: 'user' } },
-        { id: 'ack', type: 'assistant_text', content: 'First acknowledgement.', createdAt: '' },
-        {
-          id: 'next',
-          type: 'user_message',
-          message: {
-            ...userMessage,
+  test.each(['assistant_text', 'commentary'] as const)(
+    'stand-in %s guidance remains chat rather than an execution block',
+    kind => {
+      const reply = (id: string, content: string): RuntimeConversationTurn['items'][number] =>
+        kind === 'assistant_text'
+          ? { id, type: 'assistant_text', content, createdAt: '' }
+          : {
+              id,
+              type: 'block',
+              block: {
+                id,
+                type: 'text',
+                content,
+                subtaskId: 'guidance-turn',
+                status: 'done',
+                createdAt: 0,
+              },
+            }
+      const turn: RuntimeConversationTurn = {
+        id: 'guidance-turn',
+        status: 'streaming',
+        startedAt: Date.now() - 5000,
+        items: [
+          { id: 'user', type: 'user_message', message: { ...userMessage, id: 'user' } },
+          reply('ack', 'First acknowledgement.'),
+          {
             id: 'next',
-            content: 'Another thing.',
-            runtimeGuidance: true,
+            type: 'user_message',
+            message: {
+              ...userMessage,
+              id: 'next',
+              content: 'Another thing.',
+              runtimeGuidance: true,
+            },
           },
-        },
-        { id: 'reply', type: 'assistant_text', content: 'Second acknowledgement.', createdAt: '' },
-      ],
+          reply('reply', 'Second acknowledgement.'),
+        ],
+      }
+      renderList({
+        ...conversationOutcomePresentation([], [turn]),
+        assistantMessageStyle: 'bubble',
+        showProcessingStatus: false,
+      })
+      expect(screen.getAllByTestId('message-user')).toHaveLength(2)
+      expect(screen.getAllByTestId('message-assistant')).toHaveLength(2)
+      expect(screen.queryByTestId('processing-duration-label')).not.toBeInTheDocument()
+      expect(
+        screen.queryByText(/引导对话|Guiding conversation|Guide conversation/i)
+      ).not.toBeInTheDocument()
     }
-    renderList({
-      ...conversationOutcomePresentation([], [turn]),
-      assistantMessageStyle: 'bubble',
-      showProcessingStatus: false,
-    })
-    expect(screen.getAllByTestId('message-user')).toHaveLength(2)
-    expect(screen.getAllByTestId('message-assistant')).toHaveLength(2)
-    expect(screen.queryByTestId('processing-duration-label')).not.toBeInTheDocument()
-    expect(
-      screen.queryByText(/引导对话|Guiding conversation|Guide conversation/i)
-    ).not.toBeInTheDocument()
-  })
+  )
 
   test('stand-in outcome presentation retains actionable questions without execution timing', () => {
     const turn: RuntimeConversationTurn = {

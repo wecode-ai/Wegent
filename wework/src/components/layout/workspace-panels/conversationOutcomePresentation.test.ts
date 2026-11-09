@@ -2,6 +2,63 @@ import { expect, it } from 'vitest'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { conversationOutcomePresentation } from './conversationOutcomePresentation'
 
+it('keeps the acknowledgement after dispatch and another after a user follow-up in the same turn', () => {
+  const text = (id: string, content: string) => ({
+    id,
+    type: 'block' as const,
+    block: {
+      id,
+      type: 'text' as const,
+      content,
+      status: 'done' as const,
+      subtaskId: 'native',
+      createdAt: 0,
+    },
+  })
+  const turn: RuntimeConversationTurn = {
+    id: 'native',
+    status: 'done',
+    items: [
+      {
+        id: 'spawn',
+        type: 'block',
+        block: {
+          id: 'spawn',
+          type: 'subagent',
+          subtaskId: 'native',
+          title: 'Worker',
+          status: 'done',
+          createdAt: 0,
+        },
+      },
+      text('ack', '已交给子代理。'),
+      text('progress', '内部执行进度'),
+      {
+        id: 'next',
+        type: 'user_message',
+        message: {
+          id: 'next',
+          role: 'user',
+          content: '再查另一项。',
+          status: 'done',
+          runtimeGuidance: true,
+        },
+      },
+      text('followup-ack', '第二件事也已收到。'),
+      text('followup-progress', '内部后续进度'),
+      { id: 'result', type: 'assistant_text', content: '检查结果。', createdAt: '' },
+    ],
+  }
+  const replies = conversationOutcomePresentation([], [turn]).messages.filter(
+    message => message.role === 'assistant'
+  )
+  expect(replies.map(message => message.content)).toEqual([
+    '已交给子代理。',
+    '第二件事也已收到。',
+    '检查结果。',
+  ])
+})
+
 it('removes guidance blocks generated during projection without losing either user message', () => {
   const user = (id: string, content: string, runtimeGuidance = false) => ({
     id,

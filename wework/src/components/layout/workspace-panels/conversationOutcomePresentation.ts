@@ -61,36 +61,40 @@ export function conversationOutcomePresentation(
   messages: WorkbenchMessage[],
   turns: RuntimeConversationTurn[]
 ) {
-  const visibleTurns = turns.map(turn => ({
-    ...turn,
-    streamingThinkingContent: undefined,
-    items: turn.items
-      .filter((item, index) => {
-        if (item.type !== 'block') return true
-        if (keepOutcomeBlock(item.block)) return true
-        // Keep the opening acknowledgement, not the later execution commentary.
-        return (
-          item.block.type === 'text' &&
-          !turn.items
-            .slice(0, index)
-            .some(
-              previous =>
-                previous.type === 'assistant_text' ||
-                (previous.type === 'block' && previous.block.type !== 'thinking')
-            )
-        )
-      })
-      .map(item =>
-        item.type === 'block' && item.block.type === 'text'
-          ? {
-              id: item.id,
-              type: 'assistant_text' as const,
-              content: item.block.content,
-              createdAt: new Date(item.block.createdAt).toISOString(),
-            }
-          : item
-      ),
-  }))
+  const visibleTurns = turns.map(turn => {
+    let hasReplySinceUser = false
+    return {
+      ...turn,
+      streamingThinkingContent: undefined,
+      items: turn.items
+        .filter(item => {
+          if (item.type === 'user_message') {
+            hasReplySinceUser = false
+            return true
+          }
+          if (item.type === 'assistant_text') {
+            if (item.content.trim()) hasReplySinceUser = true
+            return true
+          }
+          if (keepOutcomeBlock(item.block)) return true
+          // Each user boundary owns its acknowledgement, even after dispatching tools.
+          if (item.block.type !== 'text' || !item.block.content.trim() || hasReplySinceUser)
+            return false
+          hasReplySinceUser = true
+          return true
+        })
+        .map(item =>
+          item.type === 'block' && item.block.type === 'text'
+            ? {
+                id: item.id,
+                type: 'assistant_text' as const,
+                content: item.block.content,
+                createdAt: new Date(item.block.createdAt).toISOString(),
+              }
+            : item
+        ),
+    }
+  })
   const projectedMessages = turns.length ? projectRuntimeConversationTurns(visibleTurns) : messages
   const timestamps = new Map(
     visibleTurns.flatMap(turn =>
