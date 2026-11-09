@@ -19,6 +19,16 @@ sidebar_position: 18
 
 ## 单任务刷新与列表开销
 
+`runtime.work.changed` 和跨窗口任务变更共用串行刷新队列：读取未结束时，
+后续事件只标记一次待刷新；结束后再读取最新快照，不并发发出多份完整列表。
+队列销毁后不再补发请求，读取错误保留在诊断日志中，下一次事件可重新刷新。
+
+`runtime.tasks.list`（包括通知中心的缓存待办轮询）只读取 Runtime 任务清单，
+不能逐条打开 Issue 数据库、申请写事务或回写 Issue 状态。
+Issue 状态投影由执行生命周期、绑定完成和显式 `todos.list` 协调负责。
+`inventory_read_tests` 使用合成的大历史库验证缓存扫描不写入 Issue 库且生命周期
+仍能同步状态；桌面 `idle-executor-requests` 检查点另验证变更事件突发不会产生重叠列表读取。
+
 Goal 更新、清除和轮次结束后的状态确认只刷新对应执行：存在单任务查询能力时，
 `refreshRuntimeTask` 调用拥有者的 `runtime.tasks.get`，不能为每次事件读取整台设备的
 `runtime.tasks.list`。不存在的任务返回空，读取失败直接传播，不能再用全量列表重试。
