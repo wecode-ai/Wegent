@@ -11,7 +11,8 @@ Assignments, reassignments and user mentions are wakeups, not conversation ident
 Reassignment still creates new authority and reception receipts; retained history grants no new authority.
 Legacy task reservations retain their native identity and history without duplicate bindings.
 Explicit manual launches retain existing authorization without enabling automatic handling or later automatic follow-ups.
-Manual launches and publication still validate the current role connection and assignment; history never bypasses reassignment or revocation.
+Enablement, project subscriptions and tags govern automatic intake, not execution authority. Explicit delegation to an existing selected role does not require those intake conditions. Removed roles, revoked project access and superseded assignments still deny execution and publication. Omitting a role still selects only from connected roles. Manual work never re-enables subscriptions or automatic follow-ups. Manual triggers and assignment identities must match the persisted conversation; request fields cannot forge manual authority.
+Manual launches and publication still validate the current role, Issue access and assignment; history never bypasses reassignment or revocation.
 
 Mentions use assignment selection: enabled roles connected to the project, matching Issue tags and allowing automatic handling.
 Self mentions wake eligible roles without a human self-reminder.

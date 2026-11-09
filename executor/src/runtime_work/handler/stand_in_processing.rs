@@ -773,7 +773,11 @@ impl RuntimeWorkRpcHandler {
         } else {
             let project = origin["cloudProjectId"].as_str().unwrap_or_default();
             let kind = origin["projectStore"].as_str().unwrap_or_default();
-            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind) {
+            if !manual_issue_request
+                && !crate::task_runtime::personal_stand_in::role_project_matches(
+                    role, project, kind,
+                )
+            {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Work project is no longer connected",
@@ -797,11 +801,12 @@ impl RuntimeWorkRpcHandler {
             }
             let config =
                 crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
-            if super::personal_stand_in::matching_personal_roles(
-                std::slice::from_ref(&config),
-                &issue,
-            )
-            .is_empty()
+            if !manual_issue_request
+                && super::personal_stand_in::matching_personal_roles(
+                    std::slice::from_ref(&config),
+                    &issue,
+                )
+                .is_empty()
             {
                 return Err(AppIpcError::new(
                     "permission_denied",
