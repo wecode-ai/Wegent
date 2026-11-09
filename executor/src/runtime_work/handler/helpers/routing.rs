@@ -194,26 +194,26 @@ fn log_runtime_project_filter_item(link: &RuntimeTaskLink, details: RuntimeProje
     );
 }
 
+/// Record the resolved task link and its allowlisted model identity for read and archive events.
 fn log_runtime_archive_link(event: &str, link: &RuntimeTaskLink, archived_query: bool) {
-    log_executor_event(
-        event,
-        &[
-            ("archived_query", archived_query.to_string()),
-            ("local_task_id", link.local_task_id.clone()),
-            (
-                "thread_id",
-                link.thread_id.as_deref().unwrap_or("none").to_owned(),
-            ),
-            ("workspace_path", link.workspace_path.clone()),
-            ("runtime", link.runtime.clone()),
-            ("status", link.status.clone()),
-            ("running", link.running.to_string()),
-            (
-                "session_id",
-                runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
-            ),
-        ],
-    );
+    let mut fields = vec![
+        ("archived_query", archived_query.to_string()),
+        ("local_task_id", link.local_task_id.clone()),
+        (
+            "thread_id",
+            link.thread_id.as_deref().unwrap_or("none").to_owned(),
+        ),
+        ("workspace_path", link.workspace_path.clone()),
+        ("runtime", link.runtime.clone()),
+        ("status", link.status.clone()),
+        ("running", link.running.to_string()),
+        (
+            "session_id",
+            runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
+        ),
+    ];
+    fields.extend(model_selection_log_fields(&link.runtime_handle));
+    log_executor_event(event, &fields);
 }
 
 fn log_runtime_transcript_finished(details: RuntimeTranscriptLog<'_>) {

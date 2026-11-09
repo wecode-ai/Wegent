@@ -1,6 +1,7 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import type { ModelSelectionDiagnostics } from './modelSelectionDiagnostics'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
@@ -223,6 +224,7 @@ export interface WorkbenchContextValue {
     selectedModel: UnifiedModel | null
     activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
+    modelSelectionDiagnostics?: ModelSelectionDiagnostics
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean
     onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
