@@ -807,8 +807,10 @@ fn inherit_native_instructions(model: &mut Value, native: &Value) -> Result<(), 
         "include_plugin_usage_instructions",
         "include_apps_usage_instructions",
     ] {
-        if let Some(value) = native.get(key) {
-            model[key] = value.clone();
+        if model.get(key).is_none() {
+            if let Some(value) = native.get(key) {
+                model[key] = value.clone();
+            }
         }
     }
     Ok(())

@@ -706,6 +706,10 @@ fn compatibility_profiles_inherit_the_native_default_without_overwriting_user_in
         edited["model_messages"]["permissions"]["read_only"],
         "Preserved"
     );
+    let mut explicit_usage = json!({"include_skills_usage_instructions":false});
+    inherit_native_instructions(&mut explicit_usage, &native).unwrap();
+    assert_eq!(explicit_usage["include_skills_usage_instructions"], false);
+    assert_eq!(explicit_usage["model_messages"], native["model_messages"]);
 }
 
 #[test]
