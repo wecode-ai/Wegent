@@ -14,31 +14,6 @@ pub(super) fn accepted_stand_in_result(result: Value) -> Result<Value, AppIpcErr
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn has_pending_stand_in_assignment(
-        &self,
-        config: &Value,
-        issue: &Value,
-        binding: &Value,
-    ) -> Result<bool, AppIpcError> {
-        let store = LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(super::stand_in::settings_error)?;
-        Ok(store
-            .stand_in_events(config["userId"].as_i64().unwrap_or_default())
-            .map_err(super::stand_in::settings_error)?
-            .iter()
-            .any(|event| {
-                event["kind"] == "assignment"
-                    && event["status"] == "pending"
-                    && event["projectId"] == config["projectId"]
-                    && event["projectStore"] == config["projectStore"]
-                    && event["issueId"] == issue["id"]
-                    && event["assignmentId"] == binding["assignmentId"]
-                    && event["roleIds"]
-                        .as_array()
-                        .is_some_and(|roles| roles.contains(&config["id"]))
-            }))
-    }
-
     pub(super) async fn dispatch_stand_in_task(
         &self,
         payload: Value,
@@ -70,12 +45,7 @@ impl RuntimeWorkRpcHandler {
         result.and_then(accepted_stand_in_result)
     }
 
-    pub(super) fn stand_in_task_is_handled(
-        &self,
-        config: &Value,
-        task_id: &str,
-        already_bound: bool,
-    ) -> bool {
+    pub(super) fn stand_in_task_is_handled(&self, config: &Value, task_id: &str) -> bool {
         let task = self.local_task_link(task_id);
         if self.store.is_deleted_archived_task_id(task_id)
             || task
@@ -85,10 +55,11 @@ impl RuntimeWorkRpcHandler {
             return true;
         }
         let retry = config["manual"] == true
+            && config["recoveringDispatch"] != true
             && task
                 .as_ref()
                 .is_some_and(|task| matches!(task.status.as_str(), "failed" | "archived"));
-        (already_bound || task.is_some()) && !retry
+        task.is_some() && !retry
     }
 
     pub(super) async fn execute_stand_in_task(
@@ -96,10 +67,9 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         issue: &Value,
         binding: &Value,
-        already_bound: bool,
     ) -> Result<(), AppIpcError> {
         let task_id = self.stand_in_task_id(config, binding);
-        if self.stand_in_task_is_handled(config, &task_id, already_bound) {
+        if self.stand_in_task_is_handled(config, &task_id) {
             self.log_stand_in_decision(
                 config,
                 issue,
@@ -134,7 +104,7 @@ impl RuntimeWorkRpcHandler {
         }
         let result = async {
             let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-            if already_bound {
+            if self.local_task_link(&task_id).is_some() {
                 self.dispatch_stand_in_task(payload, true).await.map(|_| ())
             } else {
                 self.create_stand_in_task(config, issue, binding, payload)
