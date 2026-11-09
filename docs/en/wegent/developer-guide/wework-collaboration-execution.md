@@ -52,6 +52,10 @@ stand-in task. The CI-covered `stand-in-assignment-notifications` suite verifies
 notification dispatch, manual delegation, reassignment after completion, and
 round reception receipts together.
 
+## Manager status decisions
+
+The server locks and refreshes the current execution record before applying a manager status decision. Issue status, execution completion and the manager comment commit in one transaction. If completion loses its version comparison, the server rolls back and returns `409`. Regressions cover stale-version refresh, conflict rollback and recovery with the same idempotency key.
+
 ## Verification cases
 
 1. A project Maintainer can bind another member's workspace-authorized Agent while global configuration permissions remain unchanged.
