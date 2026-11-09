@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openStandInActivity, openStandInDetails } from './stand-in-profile-navigation.mjs'
 import { execFile } from 'node:child_process'
 import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
@@ -100,6 +101,7 @@ export function createDingTalkReplyStory(options) {
     )
     await openStoryPrimary(control)
     await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
+    await openStandInActivity(control)
     await control.command(
       'clickWhenEnabled',
       `[data-testid="stand-in-activity-task-${selected.taskId}"]`
@@ -263,6 +265,7 @@ export function createDingTalkReplyStory(options) {
         await control.command('press', `${STORY_CHAT} [data-testid="chat-message-input"]`, {
           key: 'Enter',
         })
+        await openStandInDetails(control)
         await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
           timeoutMs: options.modelResponseTimeoutMs,
         })

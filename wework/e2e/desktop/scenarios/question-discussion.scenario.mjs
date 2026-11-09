@@ -27,6 +27,12 @@ import {
   OTHER_TASK_REPLY,
   verifyQuestionDiscussionTabs,
 } from '../modules/question-discussion-tabs.mjs'
+import {
+  SOURCE_LOOKUP_PROMPT,
+  SOURCE_LOOKUP_REPLY,
+  SOURCE_LOOKUP_SEED_PROMPT,
+  verifyQuestionDiscussionSourceLookup,
+} from '../modules/question-discussion-source-lookup.mjs'
 
 const PROMPT = '请帮我整理本周项目进展，先确定周报的接收范围。'
 const MULTI_PROMPT = `${PROMPT} 还要确定发送时间。`
@@ -49,6 +55,7 @@ const CARD = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card
 const callId = 'question-discussion-audience'
 
 export function createDesktopScenario({
+  codexSqliteHome,
   executorHome,
   workspacePath,
   resultDir,
@@ -60,7 +67,11 @@ export function createDesktopScenario({
   let finalAnswers = 0
   let ordinaryAnswers = 0
   let firstToolName
+  let nativeSourceOptions
   return {
+    async prepareApp({ appEnvironment, codexHome }) {
+      nativeSourceOptions = { appEnvironment, codexHome, codexSqliteHome }
+    },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -71,11 +82,21 @@ export function createDesktopScenario({
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const text = JSON.stringify(body.input ?? body.messages ?? [])
-      if (!text.includes(PROMPT) && !text.includes(QUESTION) && !text.includes(OTHER_TASK_PROMPT))
+      if (
+        !text.includes(PROMPT) &&
+        !text.includes(QUESTION) &&
+        !text.includes(OTHER_TASK_PROMPT) &&
+        !text.includes(SOURCE_LOOKUP_PROMPT) &&
+        !text.includes(SOURCE_LOOKUP_SEED_PROMPT)
+      )
         return false
       const id = `discussion-${Date.now()}`
       let events
-      if (text.includes(OTHER_TASK_PROMPT)) {
+      if (text.includes(SOURCE_LOOKUP_PROMPT)) {
+        events = [assistantMessage(SOURCE_LOOKUP_REPLY)]
+      } else if (text.includes(SOURCE_LOOKUP_SEED_PROMPT)) {
+        events = [assistantMessage('已准备跨 provider 的原始会话。')]
+      } else if (text.includes(OTHER_TASK_PROMPT)) {
         events = [assistantMessage(OTHER_TASK_REPLY)]
       } else if (
         text.includes('Side conversation boundary.') ||
@@ -141,6 +162,7 @@ export function createDesktopScenario({
         'The original question must remain pending after its turn settles'
       )
       const source = original.pane.currentRuntimeTask
+      await verifyQuestionDiscussionSourceLookup(control, { ...nativeSourceOptions, source })
       await captureScreenshot(control, 'question-discussion-01-original-question.png', 'body')
       const draftAnswer = `${CARD} [data-testid="request-user-input-custom-question_1"]`
       await control.command('fill', draftAnswer, { value: '只发给项目成员，先讨论敏感事项。' })

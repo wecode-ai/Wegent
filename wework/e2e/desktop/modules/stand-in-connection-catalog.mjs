@@ -1,3 +1,4 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 
@@ -61,7 +62,7 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
     uiTimeoutMs
   )
   assert.equal(saved.primary.collaboration.enabled, !enabled)
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  await openStandInSettings(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
   await control.command('waitFor', dingtalk, { text: '迁移连接' })
   assert.equal(

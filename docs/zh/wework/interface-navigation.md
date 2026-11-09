@@ -38,7 +38,8 @@ sidebar_position: 2
 | 配置项目执行设备、仓库、初始化  | 项目空间 → 项目设置 → 执行环境              | 与全局设置的执行环境不是同一页；AI 执行前需在线设备完成初始化                                                                                                          |
 | 项目 AI / 项目管理者            | 项目设置 → AI 团队 / 自动处理               | 当前入口与旧称差异见[项目 AI 管理者](./project-ai-manager.md)；不要寻找旧版底部按钮                                                                                    |
 | 个人分身                        | 左侧栏 → 我的分身                           | Beta 功能，见[个人分身](./personal-stand-in.md)                                                                                                                        |
-| 停止分身 / 更换绑定             | 左侧栏 → 我的分身 → 页头“停止分身”          | 整体停止并取消任务后才显示换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)                                                           |
+| 恢复已归档的分身来源工作 | 我的分身 → 分身详情 → 近期活动旁箭头 → 对应工作 → 取消归档 | 仅在工作已归档时显示；恢复不自动执行，见[来源会话策略](./personal-stand-in.md#stand-in-source-session-policy) |
+| 停止分身 / 更换绑定 | 左侧栏 → 我的分身 → 分身详情 → 管理分身 → 设置面板左下角“停止分身” | 整体停止并取消任务后才显示换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping) |
 | 换模型 / 调推理等级             | 任务输入区 → 模型选择器                     | 没有可用模型时去设置添加，见[模型设置](./user-guide/model-settings.md)                                                                                                 |
 | 添加附件、选择 Skill / 插件     | 任务输入区 → + 或能力选择入口               | 见[与 AI 协作](./tasks.md)和[插件与 Skills](./plugins-and-skills.md)                                                                                                   |
 | 切换只读、工作区、完整访问权限  | 输入框左侧工具区 → 快捷短语右边的权限图标   | 悬停查看当前模式；切换权限不等于授权外部应用                                                                                                                           |
@@ -79,7 +80,7 @@ sidebar_position: 2
 | 功能关键词                                           | 具体操作说明                                                    |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | 空间成员、全局智能体/小组/设备、Runner、模板、里程碑 | [协作空间及资源操作](./projects.md#workspace-resource-controls) |
-| 分身记忆、作用域、编辑和遗忘                         | [记忆操作](./personal-stand-in.md#stand-in-memory-controls)     |
+| 分身记忆、来源证据、作用域、编辑、遗忘和遗忘规则     | [记忆操作](./personal-stand-in.md#stand-in-memory-controls)     |
 | 实验性负责人对话、接管、停止、发布到 Issue           | [负责人对话](./personal-stand-in.md#project-lead-controls)      |
 | 站点 PV/UV、访问日期、查看统计                       | [站点访问数据](./plugins-and-skills.md#site-analytics-controls) |
 | 系统拖拽、新对话/追问、快捷短语暂存区                | [拖拽与暂存](./settings.md#system-drag-controls)                |

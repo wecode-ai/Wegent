@@ -327,19 +327,24 @@
     )
     const style = window.getComputedStyle(canvas.parentElement)
     const angle = (parseFloat(style.getPropertyValue('--startup-logo-angle')) * Math.PI) / 180
-    const highlight = parseFloat(style.getPropertyValue('--startup-logo-highlight')) / 100
+    const bandStart = parseFloat(style.getPropertyValue('--startup-logo-band-start')) / 100
+    const bandEnd = parseFloat(style.getPropertyValue('--startup-logo-band-end')) / 100
     const gradientLength =
       2 * canvas.width * Math.sin(angle) + canvas.height * Math.abs(Math.cos(angle))
-    const peakOffset = ((highlight - 0.5) * gradientLength) / Math.sin(angle)
     const halfWidth = logo.halfWidth * fit
-    const position = x => `${100 * (1 + (peakOffset - x) / canvas.width)}% 50%`
+    // Clear the entire tilted light band, not just its peak, before resetting the loop.
+    const tilt = (logo.halfHeight * fit * Math.abs(Math.cos(angle))) / Math.sin(angle)
+    const position = (x, stop) => {
+      const stopOffset = ((stop - 0.5) * gradientLength) / Math.sin(angle)
+      return `${100 * (1 + (stopOffset - x) / canvas.width)}% 50%`
+    }
     canvas.parentElement.style.setProperty(
       '--startup-logo-sweep-start',
-      position(canvas.width / 2 - halfWidth)
+      position(canvas.width / 2 - halfWidth - tilt, bandEnd)
     )
     canvas.parentElement.style.setProperty(
       '--startup-logo-sweep-end',
-      position(canvas.width / 2 + halfWidth)
+      position(canvas.width / 2 + halfWidth + tilt, bandStart)
     )
   }
 

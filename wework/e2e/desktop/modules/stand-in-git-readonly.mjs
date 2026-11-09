@@ -1,3 +1,8 @@
+import {
+  openStandInActivity,
+  openStandInDetails,
+  verifyReadOnlyWorkActivity,
+} from './stand-in-profile-navigation.mjs'
 // Local live-provider extension: real CLI account/API, with only model responses simulated.
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -396,7 +401,8 @@ child.on('exit', (code, signal) => {
           row => row.source.subscriptionId === connection.subscriptionId
         )
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+        await verifyReadOnlyWorkActivity(control, work.taskId, captureScreenshot)
+        await openStandInActivity(control)
         await control.command(
           'clickWhenEnabled',
           `[data-testid="stand-in-activity-task-${work.taskId}"]`
@@ -485,7 +491,7 @@ child.on('exit', (code, signal) => {
           'clickWhenEnabled',
           `[data-testid="stand-in-overview-role-${live.roleId}"]`
         )
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+        await openStandInDetails(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-proposal-open"]')
         await control.command('waitFor', '[data-testid="stand-in-proposal-accept"]')
         await captureScreenshot(

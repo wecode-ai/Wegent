@@ -1,3 +1,4 @@
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -134,7 +135,7 @@ export function createDesktopScenario(options) {
       try {
         for (const testCase of cases) {
           current = testCase.name
-          await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+          await openStandInSettings(control)
           await control.command('waitFor', PANEL)
           await control.command(
             'clickWhenEnabled',

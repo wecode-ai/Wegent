@@ -127,9 +127,22 @@ async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) 
   }
 }
 
+async function navigationEntry(id: string): Promise<HTMLElement> {
+  const existing = screen.queryByTestId(id)
+  if (existing) return existing
+  if (id === 'stand-in-memory-open' || id === 'stand-in-create-role') {
+    await userEvent.click(await navigationEntry('stand-in-settings-open'))
+  } else {
+    const trigger = await screen.findByTestId('stand-in-details-open')
+    await waitFor(() => expect(trigger).toBeEnabled())
+    await userEvent.click(trigger)
+  }
+  return screen.findByTestId(id)
+}
+
 async function openRoles() {
   const selector = await screen.findByTestId('stand-in-role-selector')
-  await waitFor(() => expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled())
+  await waitFor(() => expect(screen.getByTestId('stand-in-details-open')).toBeEnabled())
   expect(selector).toBeVisible()
 }
 
@@ -173,7 +186,7 @@ it('handles primary and calendar entry requests received while the retained page
     <StandInOverviewPage {...props} initialSelectedRoleId="default" entryRequestKey={0} />
   )
   await openRoles()
-  expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
+  expect(screen.getByTestId('identity-conversation')).toHaveTextContent('default')
   view.rerender(<StandInOverviewPage {...props} active={false} entryRequestKey={0} />)
   view.rerender(
     <StandInOverviewPage {...props} active entryRequestKey={1} entryRoute="/stand-in" />
@@ -195,11 +208,11 @@ it('handles primary and calendar entry requests received while the retained page
   await waitFor(() =>
     expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
   )
-  await userEvent.click(screen.getByTestId('stand-in-settings-open'))
+  await userEvent.click(await navigationEntry('stand-in-settings-open'))
   expect(await screen.findByTestId('stand-in-preferences')).toBeVisible()
 })
 
-it('places instance lifecycle actions at the right end of the role header outside the scrolling tabs', async () => {
+it('keeps lifecycle controls in management and only exposes details in the role header', async () => {
   const { props } = fixture()
   render(
     <StandInOverviewPage
@@ -208,11 +221,61 @@ it('places instance lifecycle actions at the right end of the role header outsid
     />
   )
   await openRoles()
-  const picker = screen.getByTestId('instance-stop-fixture')
   const header = screen.getByTestId('stand-in-role-selector').closest('header')!
-  expect(header.lastElementChild).toBe(picker)
-  expect(screen.getByTestId('stand-in-role-selector')).not.toContainElement(picker)
+  expect(within(header).queryByTestId('instance-stop-fixture')).not.toBeInTheDocument()
+  expect(within(header).queryByTestId('stand-in-settings-open')).not.toBeInTheDocument()
+  expect(within(header).getByTestId('stand-in-details-open')).toBeVisible()
+  await userEvent.click(await navigationEntry('stand-in-settings-open'))
+  const picker = await screen.findByTestId('instance-stop-fixture')
+  expect(screen.getByTestId('stand-in-primary-footer-leading')).toContainElement(picker)
+  const settingsPanel = screen.getByTestId('stand-in-profile-panel')
+  expect(within(settingsPanel).queryByText('查看与管理')).not.toBeInTheDocument()
+  expect(within(settingsPanel).queryByTestId('stand-in-guide-open')).not.toBeInTheDocument()
+  expect(within(settingsPanel).queryByTestId('stand-in-role-chat')).not.toBeInTheDocument()
+  expect(within(settingsPanel).queryByTestId('stand-in-primary-enabled')).not.toBeInTheDocument()
+  expect(within(settingsPanel).getByTestId('stand-in-memory-open')).toHaveTextContent('记忆')
+  expect(screen.getByTestId('stand-in-settings-tools')).not.toContainElement(picker)
+  expect(within(header).getByTestId('stand-in-create-role')).toBeVisible()
   expect(within(header).getByTestId('stand-in-primary-open')).toBeVisible()
+})
+
+it('opens a scheduled activity in an editor dialog while preserving the profile and main chat', async () => {
+  const { props } = fixture()
+  props.services.automationApi = {
+    listAutomations: vi.fn(async () => ({
+      items: [
+        {
+          id: 'release-watch',
+          name: '关注正式发布',
+          enabled: true,
+          updatedAt: '2026-11-08T12:00:00Z',
+          timezone: 'Asia/Shanghai',
+          schedule: { type: 'interval', value: 1, unit: 'hours' },
+          taskRequest: {
+            deviceId: 'device',
+            standInOwner: { userId: 7, roleId: '@primary' },
+            standInCalendar: {},
+          },
+        },
+      ],
+    })),
+  } as unknown as NonNullable<WorkbenchServices['automationApi']>
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await openRoles()
+  const conversation = screen.getByTestId('identity-conversation')
+  await user.click(screen.getByTestId('stand-in-details-open'))
+  const activity = await screen.findByTestId('stand-in-details-schedule-release-watch')
+  await user.click(activity)
+  expect(screen.getByTestId('stand-in-schedule-dialog')).toBeVisible()
+  expect(screen.getByTestId('stand-in-details-popover')).toHaveAttribute('inert')
+  expect(screen.queryByTestId('stand-in-primary-profile')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-details-activity')).not.toBeInTheDocument()
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  await user.click(screen.getByTestId('stand-in-schedule-dialog-close'))
+  expect(screen.queryByTestId('stand-in-schedule-dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-details-popover')).not.toHaveAttribute('inert')
+  await waitFor(() => expect(activity).toHaveFocus())
 })
 
 it('reopens usage examples after onboarding without recreating a scheduled review', async () => {
@@ -220,7 +283,7 @@ it('reopens usage examples after onboarding without recreating a scheduled revie
   render(<StandInOverviewPage {...props} />)
   await openRoles()
   const user = userEvent.setup()
-  await user.click(screen.getByTestId('stand-in-guide-open'))
+  await user.click(await navigationEntry('stand-in-guide-open'))
   expect(await screen.findByRole('dialog', { name: '分身使用示例' })).toBeVisible()
   expect(screen.getByTestId('stand-in-onboarding-example-daily_brief')).toBeVisible()
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
@@ -228,7 +291,7 @@ it('reopens usage examples after onboarding without recreating a scheduled revie
   expect(screen.queryByTestId('stand-in-onboarding-complete')).not.toBeInTheDocument()
   await user.click(screen.getByTestId('stand-in-onboarding-close'))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled()
+  expect(screen.getByTestId('stand-in-details-open')).toBeEnabled()
 })
 
 it('selects the primary conversation and inserts the chosen example as an editable draft', async () => {
@@ -241,7 +304,7 @@ it('selects the primary conversation and inserts the chosen example as an editab
     'aria-current',
     'page'
   )
-  await user.click(screen.getByTestId('stand-in-guide-open'))
+  await user.click(await navigationEntry('stand-in-guide-open'))
   await user.click(await screen.findByTestId('stand-in-onboarding-example-meeting_prep'))
   expect(screen.getByTestId('stand-in-primary-open')).toHaveAttribute('aria-current', 'page')
   expect(screen.getByTestId('identity-conversation')).toHaveTextContent('下一场会议')
@@ -276,12 +339,14 @@ it('opens settings for the selected stand-in and reflects its renamed identity',
   render(<StandInOverviewPage {...props} />)
   await openRoles()
   await user.click(await screen.findByTestId('stand-in-overview-role-second'))
-  expect(await screen.findByTestId('stand-in-activity')).toHaveTextContent('尚无处理记录')
-  expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
-  await user.click(screen.getByTestId('stand-in-role-chat'))
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('second')
-  expect(screen.getByTestId('stand-in-settings-open')).toHaveTextContent('设置')
-  await user.click(screen.getByTestId('stand-in-settings-open'))
+  expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
+  await user.click(await navigationEntry('stand-in-role-chat'))
+  expect(await screen.findByTestId('stand-in-activity')).toHaveTextContent('尚无处理记录')
+  await user.click(screen.getByTestId('stand-in-work-dialog-close'))
+  expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('second')
+  expect(screen.getByTestId('stand-in-details-open')).toHaveAccessibleName('分身详情')
+  await user.click(await navigationEntry('stand-in-settings-open'))
   expect(screen.getByRole('dialog', { name: '设置' })).toBeInTheDocument()
   const name = await screen.findByRole('textbox', { name: '分身名称' })
   expect(name).toHaveValue('Reviewer')
@@ -295,10 +360,10 @@ it('opens settings for the selected stand-in and reflects its renamed identity',
   )
   expect(screen.getByTestId('stand-in-overview-role-first')).toHaveTextContent('Coding')
   expect(screen.getByTestId('identity-conversation')).toHaveTextContent('second')
-  await user.click(screen.getByTestId('stand-in-settings-open'))
+  await user.click(await navigationEntry('stand-in-settings-open'))
   expect(await screen.findByRole('textbox', { name: '分身名称' })).toHaveValue('代码审查')
   await user.click(screen.getByTestId('stand-in-close'))
-  await user.click(screen.getByTestId('stand-in-memory-open'))
+  await user.click(await navigationEntry('stand-in-memory-open'))
   await user.click(await screen.findByTestId('stand-in-memory-add'))
   expect(screen.getByRole('option', { name: '代码审查（与你聊天时）' })).toHaveValue(
     JSON.stringify({ kind: 'role', roleId: 'second' })
@@ -366,6 +431,7 @@ it('hides empty message associations while preserving existing execution history
   render(<StandInOverviewPage {...props} />)
   await openRoles()
   await userEvent.click(await screen.findByTestId('stand-in-overview-role-default'))
+  await userEvent.click(await navigationEntry('stand-in-role-chat'))
   expect(await screen.findByTestId('stand-in-activity-task-history')).toHaveTextContent(
     'Completed work'
   )
@@ -380,7 +446,7 @@ it('starts in the primary conversation and opens its editable profile explicitly
   expect(screen.queryByTestId('stand-in-activity')).not.toBeInTheDocument()
   expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
   expect(personalAgents).not.toHaveBeenCalled()
-  await user.click(screen.getByTestId('stand-in-settings-open'))
+  await user.click(await navigationEntry('stand-in-settings-open'))
   expect(await screen.findByTestId('stand-in-primary-profile')).toBeInTheDocument()
   await user.click(screen.getByTestId('stand-in-primary-cancel'))
   expect(await screen.findByTestId('stand-in-overview')).toBeInTheDocument()
@@ -398,7 +464,7 @@ it.each(['primary', 'role', 'memory'] as const)(
     await openRoles()
     if (panel === 'role') await user.click(screen.getByTestId('stand-in-overview-role-default'))
     await user.click(
-      screen.getByTestId(panel === 'memory' ? 'stand-in-memory-open' : 'stand-in-settings-open')
+      await navigationEntry(panel === 'memory' ? 'stand-in-memory-open' : 'stand-in-settings-open')
     )
     const content =
       panel === 'memory'
@@ -418,7 +484,7 @@ it('keeps the drawer open when a text selection ends outside it', async () => {
   render(<StandInOverviewPage {...props} />)
   await openRoles()
   await screen.findByTestId('stand-in-overview-role-default')
-  await user.click(screen.getByTestId('stand-in-settings-open'))
+  await user.click(await navigationEntry('stand-in-settings-open'))
   fireEvent.mouseDown(await screen.findByTestId('stand-in-primary-profile'))
   const backdrop = screen.getByTestId('stand-in-profile-backdrop')
   fireEvent.mouseUp(backdrop)
@@ -439,7 +505,7 @@ it.each(['primary', 'role', 'create', 'memory'] as const)(
     await openRoles()
     if (panel === 'role') await user.click(screen.getByTestId('stand-in-overview-role-default'))
     await user.click(
-      screen.getByTestId(
+      await navigationEntry(
         panel === 'memory'
           ? 'stand-in-memory-open'
           : panel === 'create'
@@ -518,6 +584,7 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
   )
   await openRoles()
   await user.click(await screen.findByTestId('stand-in-overview-role-default'))
+  await user.click(await navigationEntry('stand-in-role-chat'))
   const group = await screen.findByTestId('stand-in-activity-project')
   expect(group).toHaveTextContent('Example project')
   expect(group).not.toHaveTextContent('Unrelated local project')
@@ -538,7 +605,7 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   vi.mocked(api.personalGet).mockRejectedValue(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
   await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
-  await userEvent.click(await screen.findByTestId('stand-in-status-open'))
+  await userEvent.click(await navigationEntry('stand-in-status-open'))
   expect(await screen.findByRole('alert')).toHaveTextContent(
     '未能加载分身设置。请检查执行设备是否在线，再点击「重新加载」。'
   )
@@ -566,7 +633,7 @@ it('routes a pending background confirmation to its real Runtime task', async ()
   })
   const onOpenTask = vi.fn()
   render(<StandInOverviewPage {...props} onOpenTask={onOpenTask} />)
-  await userEvent.click(await screen.findByTestId('stand-in-status-open'))
+  await userEvent.click(await navigationEntry('stand-in-status-open'))
   await userEvent.click(await screen.findByTestId('stand-in-processing-open-task'))
   expect(onOpenTask).toHaveBeenCalledWith({
     taskId: 'stand-in-coordinator-7',
@@ -599,9 +666,13 @@ it('shows plugin installation guidance for a failed source and clears it after r
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
   const conversation = await screen.findByTestId('identity-conversation')
-  const status = await screen.findByTestId('stand-in-status-open')
-  expect(screen.queryByText(/来源所需插件尚未安装/)).not.toBeInTheDocument()
-  expect(screen.queryByText('Example group')).not.toBeInTheDocument()
+  const status = await navigationEntry('stand-in-status-open')
+  expect(
+    within(screen.getByTestId('stand-in-details-popover')).getByText('连接或运行需要处理')
+  ).toBeVisible()
+  expect(
+    within(screen.getByTestId('stand-in-details-popover')).queryByText('Example group')
+  ).not.toBeInTheDocument()
   await user.click(status)
   expect(screen.getByText('Example group')).toBeInTheDocument()
   const guidance = await screen.findByText(/来源所需插件尚未安装/)
@@ -632,12 +703,12 @@ it('keeps attention work in the work list instead of stacking duplicate cards ab
     </WorkbenchContext.Provider>
   )
   const conversation = await screen.findByTestId('identity-conversation')
-  expect(screen.getByTestId('stand-in-work-attention-count')).toHaveTextContent('1')
+  expect(screen.queryByTestId('stand-in-work-attention-count')).not.toBeInTheDocument()
   expect(screen.queryByTestId('stand-in-important-work')).not.toBeInTheDocument()
   expect(screen.queryByTestId('stand-in-attention-task')).not.toBeInTheDocument()
-  await userEvent.click(screen.getByTestId('stand-in-role-chat'))
+  await userEvent.click(await navigationEntry('stand-in-role-chat'))
   expect(await screen.findByTestId('stand-in-activity-task-task')).toBeVisible()
-  expect(conversation).not.toBeInTheDocument()
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
 
 it('opens a pending configuration explicitly without resolving it when the dialog is closed', async () => {
@@ -654,7 +725,7 @@ it('opens a pending configuration explicitly without resolving it when the dialo
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
   await screen.findByTestId('identity-conversation')
-  const entry = await screen.findByTestId('stand-in-proposal-open')
+  const entry = await navigationEntry('stand-in-proposal-open')
   expect(screen.queryByTestId('stand-in-proposal')).not.toBeInTheDocument()
   expect(screen.queryByText(proposal.summary)).not.toBeInTheDocument()
   await user.click(entry)
@@ -662,8 +733,8 @@ it('opens a pending configuration explicitly without resolving it when the dialo
   await user.click(screen.getByTestId('stand-in-proposal-dialog-close'))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(api.resolveProposal).not.toHaveBeenCalled()
-  expect(entry).toHaveFocus()
-  await user.click(entry)
+  expect(screen.getByTestId('stand-in-details-open')).toHaveFocus()
+  await user.click(await navigationEntry('stand-in-proposal-open'))
   await user.click(screen.getByTestId('stand-in-proposal-accept'))
   expect(api.resolveProposal).toHaveBeenCalledWith(7, 'device', proposal.id, true)
 })
@@ -679,7 +750,7 @@ it('keeps an outdated configuration visibly unconfirmable inside the review dial
   } as StandInProposal)
   api.resolveProposal = vi.fn()
   render(<StandInOverviewPage {...props} />)
-  await userEvent.click(await screen.findByTestId('stand-in-proposal-open'))
+  await userEvent.click(await navigationEntry('stand-in-proposal-open'))
   expect(screen.getByTestId('stand-in-proposal-accept')).toBeDisabled()
   expect(screen.getByTestId('stand-in-proposal-reject')).toBeEnabled()
   await userEvent.click(screen.getByTestId('stand-in-proposal-dialog-close'))
@@ -690,7 +761,7 @@ it('keeps unsaved settings mounted when the menu requests scheduled work', async
   const { props } = fixture()
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
-  await user.click(await screen.findByTestId('stand-in-settings-open'))
+  await user.click(await navigationEntry('stand-in-settings-open'))
   const field = await screen.findByTestId('stand-in-preferences')
   await user.type(field, '保留菜单切换前的草稿')
   requestScheduledWork()
@@ -788,7 +859,7 @@ it('guards a dirty memory panel before a new explicit settings request', async (
     <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="first" />
   )
   await user.click(await screen.findByTestId('stand-in-cancel'))
-  await user.click(screen.getByTestId('stand-in-memory-open'))
+  await user.click(await navigationEntry('stand-in-memory-open'))
   await user.click(await screen.findByTestId('stand-in-memory-add'))
   const field = await screen.findByTestId('stand-in-memory-content')
   await user.type(field, 'Keep this memory draft')
@@ -831,14 +902,14 @@ it('refreshes external configuration and returns to the primary identity on expl
   )
   expect(screen.getByTestId('stand-in-primary-open')).toHaveAttribute('aria-current', 'page')
   expect(screen.getByTestId('identity-conversation')).toHaveTextContent('primary')
-  await waitFor(() => expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled())
+  await waitFor(() => expect(screen.getByTestId('stand-in-details-open')).toBeEnabled())
 })
 
 it('keeps saved settings accessible while explicit navigation refreshes configuration', async () => {
   const { props } = fixture()
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
-  await waitFor(() => expect(screen.getByTestId('stand-in-memory-open')).toBeVisible())
+  await navigationEntry('stand-in-memory-open')
   let finish!: (value: PersonalStandInSettings) => void
   const settings = await props.services.standInApi!.personalGet(7, 'device')
   vi.mocked(props.services.standInApi!.personalGet).mockImplementationOnce(
@@ -855,7 +926,7 @@ it('keeps saved settings accessible while explicit navigation refreshes configur
     )
   })
   await waitFor(() => expect(finish).toBeTypeOf('function'))
-  await user.click(screen.getByTestId('stand-in-settings-open'))
+  await user.click(await navigationEntry('stand-in-settings-open'))
   expect(screen.getByTestId('stand-in-profile-panel')).toBeVisible()
   await act(async () => finish(settings))
 })
@@ -920,4 +991,5 @@ it('keeps profile recovery and creation reachable when the selected device and o
   await screen.findByTestId('stand-in-overview-retry')
   expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
   expect(screen.getByTestId('stand-in-create-role')).toBeEnabled()
+  expect(screen.getByTestId('stand-in-details-open')).toBeEnabled()
 })

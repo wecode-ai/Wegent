@@ -352,6 +352,7 @@ class RealCloudEnvironment {
     backendEnv = {},
     claudeBinary,
     codexBinary,
+    initialExecutorLatestVersion,
     managedCloudIdentity = false,
     modelServerUrl,
     scenarioConfigToml = '',
@@ -360,6 +361,7 @@ class RealCloudEnvironment {
     this.scenarioBackendEnv = backendEnv
     this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
+    this.initialExecutorLatestVersion = initialExecutorLatestVersion
     this.managedCloudIdentity = managedCloudIdentity
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
@@ -467,6 +469,10 @@ class RealCloudEnvironment {
         env: backendEnv,
       })
     )
+    // Seed before any device request can start a remote cold-cache refresh.
+    if (this.initialExecutorLatestVersion !== undefined) {
+      await this.setExecutorLatestVersion(this.initialExecutorLatestVersion)
+    }
     await this.launchBackend({ retryPortConflicts: true })
 
     const password = `wework-desktop-e2e-${process.pid}`

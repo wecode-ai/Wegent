@@ -1,4 +1,5 @@
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
+import { conversationOutcomePresentation } from './conversationOutcomePresentation'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import {
   createPluginTrialGuide,
@@ -109,6 +110,7 @@ interface TemporaryChatPanelProps {
   emptyStateText?: string
   placeholder?: string
   showExecutionTools?: boolean
+  hideProcessing?: boolean
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
@@ -150,6 +152,7 @@ export function TemporaryChatPanel({
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
   showExecutionTools = true,
+  hideProcessing = false,
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
@@ -1059,6 +1062,10 @@ export function TemporaryChatPanel({
     historyError,
     loadMoreHistory,
   ])
+  const presentation = useMemo(
+    () => (hideProcessing ? conversationOutcomePresentation(messages, turns) : { messages, turns }),
+    [hideProcessing, messages, turns]
+  )
   const pendingRequest =
     focusedRequest === undefined
       ? pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
@@ -1068,7 +1075,7 @@ export function TemporaryChatPanel({
         : null
   return (
     <TemporaryConversationLayout
-      messageCount={messages.length}
+      messageCount={presentation.messages.length}
       loading={historyLoading}
       loadError={historyError}
       onRetry={retryHistory}
@@ -1169,8 +1176,8 @@ export function TemporaryChatPanel({
       <ScrollableMessageArea
         onFillSelectionToAnswer={onFillSelectionToAnswer}
         messageTarget={messageTarget}
-        messages={messages}
-        turns={turns}
+        messages={presentation.messages}
+        turns={presentation.turns}
         loading={historyLoading || historyLoadingMoreBefore}
         hasMoreBefore={Boolean(historyBeforeCursor)}
         beforeCursor={historyBeforeCursor}

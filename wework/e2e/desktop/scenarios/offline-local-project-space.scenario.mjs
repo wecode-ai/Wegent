@@ -9,8 +9,8 @@ import {
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -293,6 +293,16 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         settingsSnapshot.testIds.includes('collaboration-tab-automation'),
         false,
         'Automation must not remain a top-level project view'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-project-view-select"] option[value="automation"]')
+          )
+        ),
+        0,
+        'Automation must not remain a compact top-level project view'
       )
 
       await control.command(

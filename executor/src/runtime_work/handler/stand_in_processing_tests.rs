@@ -939,6 +939,7 @@ async fn authorized_inventory_survives_read_capacity_and_conversations_are_read_
         work: None,
         project: None,
         review: false,
+        memory_review: false,
         readonly_worker: false,
         ask_before_act: false,
         coordinator_batch: Some("current".into()),

@@ -53,8 +53,11 @@ impl RuntimeWorkRpcHandler {
         let role_id = schedule["roleId"]
             .as_str()
             .ok_or("Missing arrangement identity")?;
+        let memory_review = role_id == "@primary"
+            && current.task_request["standInCalendar"]["template"]
+                == crate::runtime_work::automations::MEMORY_REVIEW_TEMPLATE;
         let enabled = if role_id == "@primary" {
-            settings["primary"]["enabled"] != false
+            settings["primary"]["enabled"] != false || memory_review
         } else {
             stand_in_identities(&settings)
                 .iter()
@@ -204,9 +207,12 @@ impl RuntimeWorkRpcHandler {
         if role_id == "@primary" && !settings["primary"].is_object() {
             identities.push(json!({"id":"@primary","enabled":true,"userId":user}));
         }
+        let memory_review = role_id == "@primary"
+            && automation.task_request["standInCalendar"]["template"]
+                == crate::runtime_work::automations::MEMORY_REVIEW_TEMPLATE;
         let mut config = identities
             .into_iter()
-            .find(|role| role["id"] == role_id && role["enabled"] == true)
+            .find(|role| role["id"] == role_id && (role["enabled"] == true || memory_review))
             .ok_or_else(|| {
                 AppIpcError::new(
                     "permission_denied",
@@ -231,8 +237,11 @@ impl RuntimeWorkRpcHandler {
         if review {
             payload["origin"]["weeklyReview"] = json!(true);
         }
+        if memory_review {
+            payload["origin"]["memoryReview"] = json!(true);
+        }
         let mut prepared = self.prepare_stand_in_execution(payload, &config).await?;
-        if review {
+        if review || memory_review {
             let invalid = || AppIpcError::new("bad_request", "Invalid review execution context");
             let request = prepared["executionRequest"]
                 .as_object_mut()
@@ -242,7 +251,7 @@ impl RuntimeWorkRpcHandler {
                 .or_insert_with(|| json!({}));
             additional.as_object_mut().ok_or_else(invalid)?.insert(
                 "wework.stand-in-review".into(),
-                json!({"kind":"application","value":crate::runtime_work::automations::WEEKLY_REVIEW_INSTRUCTIONS}),
+                json!({"kind":"application","value":if memory_review {crate::runtime_work::automations::MEMORY_REVIEW_INSTRUCTIONS} else {crate::runtime_work::automations::WEEKLY_REVIEW_INSTRUCTIONS}}),
             );
         }
         let system = prepared["executionRequest"]["system_prompt"]
@@ -335,6 +344,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
         };
         let args = json!({"requestId":"event","title":"Review","message":"Review outstanding items","at":"2099-01-01T00:00:00Z","timezone":"UTC"});

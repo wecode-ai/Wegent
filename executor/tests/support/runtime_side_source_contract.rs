@@ -200,6 +200,8 @@ async fn runtime_tasks_wait_for_a_running_source_turn_before_forking_ephemeral_c
         "the source must become durable before the first fork attempt"
     );
     assert_eq!(forks[0]["params"]["threadId"], "source-thread");
+    assert!(calls.iter().any(|call| call["method"] == "thread/read"
+        && call["params"] == json!({"threadId":"source-thread","includeTurns":false})));
     assert_eq!(
         forks[0]["params"]["path"],
         json!(log_path.with_extension("source.jsonl"))
@@ -227,6 +229,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"source-thread","cwd":"/tmp/project","name":"Source task","preview":"source","path":{},"createdAt":1780000000,"updatedAt":1780000060,"status":"active","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"source-thread","path":{source_path_json}}}}}}}'
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"source-thread"}}}}}}'
@@ -268,7 +273,8 @@ done
 "#,
         log_path.display(),
         source_path.display(),
-        json!(source_path)
+        json!(source_path),
+        source_path_json = json!(source_path)
     );
     write_executable(&path, &content);
     path

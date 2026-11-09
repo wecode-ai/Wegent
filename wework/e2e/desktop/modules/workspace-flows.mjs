@@ -7,6 +7,11 @@ import {
 } from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
+import {
+  waitForProjectIdentity,
+  selectCollaborationProjectView,
+  waitForLocalProjectNavigation,
+} from './collaboration-project-navigation.mjs'
 import { waitForClosedStartupSplash } from './native-window-state.mjs'
 
 import {
@@ -229,23 +234,6 @@ export async function selectAgentEnvironment(
   await beforeSelect()
   await control.command('clickWhenEnabled', option, { timeoutMs })
   await control.command('waitFor', `${trigger}[data-value=${JSON.stringify(value)}]`, { timeoutMs })
-}
-
-export async function selectCollaborationProjectView(
-  control,
-  contentSelector,
-  view,
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
-) {
-  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
-  const tabId = view === 'milestones' ? 'collaboration-milestones-tab' : `collaboration-tab-${view}`
-  const tab = `${contentSelector} [data-testid="${tabId}"]`
-  // Resolve and activate the mounted control in one renderer task: the header
-  // can switch between tabs and a select after its responsive widths settle.
-  await control.command('chooseWhenEnabled', `${compact}, ${tab}`, {
-    value: view,
-    timeoutMs,
-  })
 }
 
 /** Native fixtures require an explicit environment; automatic routing is cloud-only. */
@@ -552,13 +540,7 @@ export async function createLocalCollaborationProject(control, contentSelector, 
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command(
-    'waitFor',
-    `${contentSelector} [data-testid="cloud-project-header-title"]`,
-    // The project identity remains in the DOM when compact navigation hides its title.
-    { text: projectName, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-  )
-  await selectCollaborationProjectView(control, contentSelector, 'board')
+  await waitForLocalProjectNavigation(control, contentSelector, projectName)
 }
 
 export async function completeLocalCollaborationFolderImport(control, projectName) {
@@ -1845,13 +1827,11 @@ async function verifyExistingTaskBoardAssociation(
     control,
     'The moved work-item navigation did not open its project-space tab'
   )
-  await control.command(
-    'waitFor',
-    `${movedBoardContentSelector} [data-testid="cloud-project-header-title"]`,
-    {
-      text: targetProjectName,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  await waitForProjectIdentity(
+    control,
+    movedBoardContentSelector,
+    targetProjectName,
+    DEFAULT_STEP_TIMEOUT_MS
   )
   const movedBoardSelector = `${movedBoardContentSelector} [data-testid="collaboration-board"]`
   await control.command('waitFor', movedBoardSelector, {
@@ -2640,6 +2620,7 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
 }
 
 export {
+  selectCollaborationProjectView,
   waitForFolderPathReady,
   waitForFolderPickerInitialized,
   waitForControlValue,
@@ -2652,6 +2633,7 @@ export {
   waitForWorkbenchDebugState,
   captureVerificationScreenshot,
   reloadMainWindow,
+  waitForNativeCollaborationPlatform,
   verifyWorkspaceDocumentTabs,
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceIssueCreation,

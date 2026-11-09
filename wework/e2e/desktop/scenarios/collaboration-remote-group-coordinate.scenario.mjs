@@ -17,11 +17,11 @@ import {
   openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
   selectCloudAgentModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { isTranscriptReadAdmissionBusy } from '../modules/runtime-read-admission.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'

@@ -1,0 +1,12 @@
+{
+  "order": 35500,
+  "scenario": "./scenarios/stand-in-memory-learning.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 40500,
+      "shard": 10,
+      "position": 11500
+    }
+  }
+}

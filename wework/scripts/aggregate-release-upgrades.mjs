@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   aggregateUpgradeShards,
@@ -11,6 +11,10 @@ if (!planDirectory || !shardDirectory || !outputDirectory)
 const policy = JSON.parse(
   await readFile(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
 )
+const approvedExclusions = (process.env.WEWORK_APPROVED_BASELINE_EXCLUSIONS || '')
+  .split(',')
+  .map(source => source.trim())
+  .filter(Boolean)
 const files = await readdir(resolve(shardDirectory))
 const shards = await Promise.all(
   files
@@ -45,7 +49,20 @@ for (const frozen of plans) {
     shard => shard.target.platform === frozen.platform && shard.target.arch === frozen.arch
   )
   consumed += selected.length
-  for (const catalog of await aggregateUpgradeShards(frozen, selected, process.env.GITHUB_RUN_ID))
+  const catalogs = await aggregateUpgradeShards(
+    frozen,
+    selected,
+    process.env.GITHUB_RUN_ID,
+    approvedExclusions
+  )
+  for (const shard of selected.filter(shard => shard.status === 'failed')) {
+    const exclusion = `${frozen.platform}/${frozen.arch}/${shard.channel}/${shard.source.version}`
+    const message = `Excluded incompatible baseline ${exclusion} -> ${frozen.version}; explicitly approved, no upgrade edge generated.`
+    console.warn(`::warning::${message}`)
+    if (process.env.GITHUB_STEP_SUMMARY)
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, `- ${message}\n`)
+  }
+  for (const catalog of catalogs)
     await writeFile(
       join(
         outputDirectory,
