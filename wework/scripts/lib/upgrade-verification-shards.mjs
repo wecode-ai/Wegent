@@ -51,7 +51,7 @@ export function upgradeShardSelections(frozen) {
 }
 
 /** Re-run the complete policy decision using only exact, completed shard proof. */
-export async function aggregateUpgradeShards(frozen, shards, runId) {
+export async function aggregateUpgradeShards(frozen, shards, runId, approvedExclusions = []) {
   const selections = upgradeShardSelections(frozen)
   assert.equal(shards.length, selections.length, 'Missing upgrade source shard')
   const targets = shards.map(shard => shard.target)
@@ -104,7 +104,7 @@ export async function aggregateUpgradeShards(frozen, shards, runId) {
       })
     )
   }
-  return Promise.all(
+  const policies = await Promise.all(
     frozen.channels.map(async item => {
       const result = await verifyReleaseUpgradePlan(
         item.plan,
@@ -120,4 +120,16 @@ export async function aggregateUpgradeShards(frozen, shards, runId) {
       )
     })
   )
+  const excluded = shards
+    .filter(shard => shard.status === 'failed')
+    .map(shard => `${frozen.platform}/${frozen.arch}/${shard.channel}/${shard.source.version}`)
+  const unapproved = excluded.filter(source => !approvedExclusions.includes(source))
+  assert.equal(
+    unapproved.length,
+    0,
+    `Baseline exclusion requires human confirmation: ${unapproved.join(', ')}. ` +
+      'Review the failure diagnostics, then set approved_baseline_exclusions to these exact sources; ' +
+      'failed candidates receive no upgrade edge'
+  )
+  return policies
 }

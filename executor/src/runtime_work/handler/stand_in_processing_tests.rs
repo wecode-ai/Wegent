@@ -939,19 +939,14 @@ async fn authorized_inventory_survives_read_capacity_and_conversations_are_read_
         work: None,
         project: None,
         review: false,
+        memory_review: false,
         readonly_worker: false,
         ask_before_act: false,
         coordinator_batch: Some("current".into()),
     };
     let args = json!({"taskId":target,"limit":3});
-    assert_eq!(
-        handler
-            .read_stand_in_conversations(&identity, "read_task", &args)
-            .await
-            .unwrap_err()
-            .code,
-        "runtime_read_busy"
-    );
+    let mut queued = Box::pin(handler.read_stand_in_conversations(&identity, "read_task", &args));
+    assert!(futures_util::poll!(queued.as_mut()).is_pending());
     assert_eq!(
         handler
             .read_stand_in_conversations(
@@ -965,10 +960,7 @@ async fn authorized_inventory_survives_read_capacity_and_conversations_are_read_
         "permission_denied"
     );
     drop(permits);
-    let page = handler
-        .read_stand_in_conversations(&identity, "read_task", &args)
-        .await
-        .unwrap();
+    let page = queued.await.unwrap();
     assert!(page["messages"]
         .to_string()
         .contains("Verified delegated result"));

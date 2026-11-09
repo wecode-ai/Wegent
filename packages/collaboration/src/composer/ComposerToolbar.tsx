@@ -22,7 +22,7 @@ import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 export interface ComposerToolbarProps {
   translate: CollaborationTranslate
   hideFeatureActions?: boolean
-  renderFeatureMenus?: (compact: boolean) => ReactNode
+  renderFeatureMenus?: (compact: boolean, permissionSelector: ReactNode) => ReactNode
   renderTrailingActions?: (compact: boolean) => ReactNode
   contextUsageIndicator?: ReactNode
   workspaceMenu?: ReactNode
@@ -153,13 +153,23 @@ export function ComposerToolbar({
     return () => observer.disconnect()
   }, [])
 
+  const permissionSelector = showExecutionTools ? (
+    <PermissionModeSelector
+      translate={t}
+      value={runtimePermissionMode(selectedModelOptions)}
+      disabled={disabled}
+      iconOnly
+      onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+    />
+  ) : null
+
   return (
     <div
       ref={toolbarRef}
       data-testid="composer-toolbar"
       data-compact={compact ? 'true' : 'false'}
       className={cn(
-        'mt-auto flex min-h-7 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1 font-normal',
+        'mt-auto flex min-h-7 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1',
         className
       )}
     >
@@ -181,7 +191,7 @@ export function ComposerToolbar({
             supervisorPending={showExecutionTools && supervisorPending}
           />
         )}
-        {renderFeatureMenus?.(compact)}
+        {renderFeatureMenus ? renderFeatureMenus(compact, permissionSelector) : permissionSelector}
         {!hideFeatureActions && (
           <>
             {leadingContext}
@@ -207,18 +217,7 @@ export function ComposerToolbar({
         data-composer-toolbar-group="actions"
         className="ml-auto flex min-w-40 flex-1 items-center justify-end gap-1.5"
       >
-        {showExecutionTools ? (
-          <>
-            <PermissionModeSelector
-              translate={t}
-              value={runtimePermissionMode(selectedModelOptions)}
-              disabled={disabled}
-              iconOnly
-              onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
-            />
-            {contextUsageIndicator}
-          </>
-        ) : null}
+        {showExecutionTools ? contextUsageIndicator : null}
         {showModelSelector
           ? (modelSelectorOverride ??
             renderModelSelector({

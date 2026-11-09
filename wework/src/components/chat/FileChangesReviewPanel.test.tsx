@@ -3,6 +3,11 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { FileChangesReviewPanel } from './FileChangesReviewPanel'
+import type { ReactNode } from 'react'
+
+vi.mock('@/components/code/PierreCodeProvider', () => ({
+  PierreCodeProvider: ({ children }: { children: ReactNode }) => children,
+}))
 
 class ResizeObserverMock {
   observe() {}
@@ -11,11 +16,38 @@ class ResizeObserverMock {
 }
 
 vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+vi.stubGlobal(
+  'IntersectionObserver',
+  class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+)
 
 beforeEach(() => {
   document.documentElement.dataset.theme = 'light'
   Element.prototype.scrollIntoView = vi.fn()
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600)
 })
+
+function getRenderedDiffText() {
+  return Array.from(document.querySelectorAll('diffs-container'))
+    .map(container => container.shadowRoot?.textContent ?? '')
+    .join('\n')
+}
+
+const largeDiff = Array.from({ length: 13 }, (_, index) => {
+  const fileIndex = index + 1
+  return [
+    `diff --git a/src/file-${fileIndex}.ts b/src/file-${fileIndex}.ts`,
+    `--- a/src/file-${fileIndex}.ts`,
+    `+++ b/src/file-${fileIndex}.ts`,
+    '@@ -1 +1 @@',
+    `-old ${fileIndex}`,
+    `+new ${fileIndex}`,
+  ].join('\n')
+}).join('\n')
 
 const twoFileDiff = [
   'diff --git a/src/alpha.ts b/src/alpha.ts',
@@ -125,5 +157,65 @@ describe('FileChangesReviewPanel', () => {
       'revert',
       expect.stringContaining('diff --git a/src/alpha.ts b/src/alpha.ts')
     )
+  })
+  test('keeps all files in the virtualized review when the diff is large', async () => {
+    const { rerender } = render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={largeDiff}
+        reviewTitle="上轮对话"
+        defaultFileTreeVisible={false}
+      />
+    )
+
+    expect(screen.queryByText(/This diff is large|此差异较大/)).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('file-changes-review-file-diff-section')).toHaveLength(13)
+    expect(screen.getByTestId('file-changes-review-toolbar')).toHaveTextContent('上轮对话')
+    expect(screen.getByTestId('file-changes-review-file-tree')).not.toBeVisible()
+    expect(screen.getByTestId('toggle-file-tree-button')).toHaveAttribute('aria-pressed', 'false')
+
+    const diff = screen.getByTestId('file-changes-review-diff')
+    await waitFor(() => {
+      expect(diff).toBeInTheDocument()
+      expect(getRenderedDiffText()).toContain('new 1')
+      expect(getRenderedDiffText()).toContain('new 2')
+    })
+
+    rerender(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={largeDiff}
+        reviewTitle="上轮对话"
+        defaultFileTreeVisible={false}
+        focusFilePath="src/file-13.ts"
+      />
+    )
+
+    await waitFor(() => {
+      const lastSection = screen.getAllByTestId('file-changes-review-file-diff-section').at(-1)
+      expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(lastSection)
+    })
+  })
+
+  test('keeps multi-hunk files in one renderer and stages only the requested hunk', async () => {
+    const onApplyPatch = vi.fn().mockResolvedValue(undefined)
+    render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={treeDiff}
+        reviewMode="unstaged"
+        onApplyPatch={onApplyPatch}
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getAllByTestId('file-changes-review-stage-hunk-button')).toHaveLength(5)
+    )
+    expect(document.querySelectorAll('diffs-container')).toHaveLength(4)
+    await userEvent.click(screen.getAllByTestId('file-changes-review-stage-hunk-button')[2])
+    const patch = onApplyPatch.mock.calls[0]?.[1]
+    expect(patch).toContain('@@ -20 +20 @@')
+    expect(patch).toContain('+new second hunk')
+    expect(patch).not.toContain('+new component')
+    expect(patch).not.toContain('+new test')
   })
 })

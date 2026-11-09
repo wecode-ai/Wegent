@@ -917,7 +917,7 @@ export interface RuntimeTaskExecutionConfig {
 export interface RuntimeTaskCreateRequest extends RuntimeTaskCreateIntent {
   /** Identity that owns this scheduled work; checked again when it executes. */
   standInOwner?: { userId: number; roleId: string }
-  standInCalendar?: { template?: 'weekly_review' }
+  standInCalendar?: { template?: 'weekly_review' | 'memory_review' }
   forceStart?: boolean
   /** Logical route used to bind this task to a project Issue. */
   executionDeviceId?: string

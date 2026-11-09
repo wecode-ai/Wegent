@@ -211,10 +211,16 @@ jobs:
 
       - name: Check Rust backend formatting
         working-directory: backend-rs
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Record signal runtime for gateway tests
         run: /bin/kill --version
+
+      - name: Check shared Rust library formatting and tests
+        run: |
+          cargo fmt --manifest-path shared/rust/Cargo.toml --all --check
+          cargo test --manifest-path shared/rust/Cargo.toml --locked
+          cargo clippy --manifest-path shared/rust/Cargo.toml --all-targets --locked -- -D warnings
 
       - name: Run Rust backend tests
         working-directory: backend-rs
@@ -229,9 +235,16 @@ jobs:
         working-directory: backend-rs
         env:
           WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
+          RUNNER_RESOURCE_LOG_PATH: ../.ci-artifacts/backend-rs-tests/streaming-activity-resources.jsonl
+          RUNNER_PROCESS_DIAGNOSTICS: "1"
+          RUNNER_RESOURCE_SAMPLE_INTERVAL_MS: "100"
+          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
         run: |
           set -o pipefail
-          cargo test --locked --lib streaming_activity_redis_tests -- --ignored --test-threads=1 \
+          bash ../.github/scripts/run-with-redis-monitor.sh "$REDIS_CONTAINER_ID" \
+            ../.ci-artifacts/backend-rs-tests/streaming-activity-redis-arrivals.log \
+            node ../.github/scripts/run-with-resource-logging.mjs \
+            cargo test --locked --lib streaming_activity_redis_tests -- --ignored --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/streaming-activity-redis.log
 
       - name: Test Git connection inbox against real Redis
@@ -277,6 +290,8 @@ jobs:
           set -o pipefail
           cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
+          cargo test --locked --lib loop_tasks::human_requests::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/human-requests-mysql.log
 
       - name: Verify batched project roster permission compatibility with MySQL
         working-directory: backend-rs
@@ -426,7 +441,7 @@ jobs:
 
       - name: Run executor Rust format check
         working-directory: ./executor
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Run executor Rust tests
         working-directory: ./executor
@@ -514,9 +529,15 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: |
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
-          cargo test --all-features --lib agents::runtime_capabilities::json_file::tests
+          cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::marketplace_sources::tests
+          cargo test --all-features --lib claude_execution_home_publishes_runtime_selection_beyond_windows_max_path
+          cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem --lib json_file::tests
+          cargo test --all-features --lib effective_instructions_tests
+          cargo test -p wegent-executor --all-features --lib side_source
+          cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem atomic_file::tests
+          cargo test -p wegent-workspace --lib workspace_files::tests
           if [[ "$RUNNER_OS" == "macOS" ]]; then
-            cargo test --all-features --lib services::turn_file_changes::git_capture::capture_tests
+            cargo test -p wegent-workspace --lib turn_file_changes::git_capture::capture_tests
           fi
 
       - name: Run native worktree platform regressions
@@ -732,19 +753,22 @@ jobs:
 
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs
 
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
         run: |
-          sandbox_path="$(pnpm --dir wework/electron exec node -p 'require("node:path").join(require("node:path").dirname(require("electron")), "chrome-sandbox")')"
-          sudo chown root:root "$sandbox_path"
-          sudo chmod 4755 "$sandbox_path"
+          sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
+          sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
           dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1
         run: node --test wework/scripts/ci-test-sequencer.test.mjs
+
+      - name: Verify delegated work command and history contracts
+        if: matrix.shard == 1
+        run: node --test wework/scripts/dots-command-result.test.mjs wework/scripts/dots-history-navigation.test.mjs
 
       - name: Run Wework tests
         env:

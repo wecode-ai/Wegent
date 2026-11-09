@@ -17,11 +17,12 @@ import {
   openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
   selectCloudAgentModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
+import { isTranscriptReadAdmissionBusy } from '../modules/runtime-read-admission.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -99,7 +100,7 @@ function writeEvents(response, responseId, events) {
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
 }
 
-async function requestJson(baseUrl, token, pathname, options = {}) {
+async function requestJson(baseUrl, token, pathname, options = {}, deferTranscriptBusy = false) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     ...options,
     headers: {
@@ -109,6 +110,12 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
+  if (
+    deferTranscriptBusy &&
+    pathname === '/api/runtime-work/transcript' &&
+    isTranscriptReadAdmissionBusy(response.status, text)
+  )
+    return null
   assert.equal(
     response.ok,
     true,
@@ -515,7 +522,8 @@ export async function createDesktopScenario({
   const bothChildrenStarted = new Promise(resolve => {
     resolveBothChildrenStarted = resolve
   })
-  const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
+  const request = (pathname, options, deferTranscriptBusy) =>
+    requestJson(backendUrl, authToken, pathname, options, deferTranscriptBusy)
 
   return {
     requiresCloudEnvironment: true,
@@ -875,13 +883,24 @@ export async function createDesktopScenario({
         MANAGER_REPLY,
         modelResponseTimeoutMs
       )
-      const continuedTranscript = await request('/api/runtime-work/transcript', {
-        method: 'POST',
-        body: JSON.stringify({
-          deviceId: runtimeDeviceId(dispatch),
-          taskId: managerTaskId,
-        }),
-      })
+      // Closed popup readers retain worker admission until cancellation completes.
+      const continuedTranscript = await waitForValue(
+        () =>
+          request(
+            '/api/runtime-work/transcript',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                deviceId: runtimeDeviceId(dispatch),
+                taskId: managerTaskId,
+              }),
+            },
+            true
+          ),
+        Boolean,
+        'The continued manager transcript did not regain read admission',
+        uiTimeoutMs
+      )
       assert.equal(continuedTranscript.taskId, managerTaskId)
       assert.ok(
         JSON.stringify(continuedTranscript.turns).includes(updateStatusArguments().comment),

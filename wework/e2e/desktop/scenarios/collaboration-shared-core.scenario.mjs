@@ -55,13 +55,13 @@ async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeNa
     visible: false,
     timeoutMs,
   })
-  await selectCollaborationProjectView(control, scoped('').trim(), 'table')
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table', timeoutMs)
   await control.command(
     'waitFor',
     scoped(`[data-testid="collaboration-issue-table-row-${issueId}"]`),
     { text: assigneeName, timeoutMs }
   )
-  await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+  await selectCollaborationProjectView(control, scoped('').trim(), 'board', timeoutMs)
   await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
     timeoutMs,
   })
@@ -641,7 +641,7 @@ export function createDesktopScenario({
           text: project.name,
           timeoutMs: uiTimeoutMs,
         })
-        await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+        await selectCollaborationProjectView(control, scoped('').trim(), 'board', uiTimeoutMs)
         const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
         assert.equal(maintainerProject.access_role, 'Maintainer')
         await verifyPersonalBoardGrouping(control, {

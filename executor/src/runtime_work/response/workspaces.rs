@@ -4,7 +4,7 @@
 
 use super::super::util::{
     infer_workspace_kind, normalize_workspace_path, now_ms, path_is_within, workspace_group_path,
-    workspace_label, workspace_task_path,
+    workspace_label,
 };
 use super::{
     compare_runtime_task_links, git_info_for_workspace, local_task_json, RuntimeTaskLink,
@@ -60,7 +60,7 @@ fn task_group(
         }
         return WorkspaceGroupKey::Directory(path.to_owned());
     }
-    if infer_workspace_kind(&link.workspace_path) == "chat" {
+    if link.workspace_kind() == "chat" {
         return WorkspaceGroupKey::Directory(normalize_workspace_path(&link.workspace_path));
     }
     // Unbound local tasks may be grouped by a unique local root. A remote
@@ -119,9 +119,9 @@ pub(crate) fn workspace_response(
             .map(|workspace| workspace.workspace_path.clone())
             .unwrap_or(path);
         link.workspace_path = if link.preserve_execution_path {
-            workspace_task_path(&link.workspace_path, "")
+            link.execution_workspace_path("")
         } else {
-            workspace_task_path(&link.workspace_path, &group_path)
+            link.execution_workspace_path(&group_path)
         };
         groups
             .entry(key)

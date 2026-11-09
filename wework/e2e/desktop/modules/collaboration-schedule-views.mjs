@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { selectCollaborationProjectView } from './workspace-flows.mjs'
+import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 
 function dateKey(value) {
   const year = value.getFullYear()
@@ -112,7 +112,7 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs,
   })
 
-  await control.command('click', scoped('[data-testid="collaboration-calendar-tab"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'calendar')
   await control.command('waitFor', scoped('[data-testid="collaboration-calendar"]'), {
     visible: true,
     timeoutMs,
@@ -175,7 +175,7 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs
   )
 
-  await control.command('click', scoped('[data-testid="collaboration-gantt-tab"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'gantt')
   await control.command('waitFor', scoped('[data-testid="collaboration-gantt"]'), {
     visible: true,
     timeoutMs,

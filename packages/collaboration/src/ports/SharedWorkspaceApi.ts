@@ -968,7 +968,6 @@ export interface WorkspaceStandInSettings {
   id?: string;
   name?: string;
   tags?: string[];
-  agentId?: string | null;
   enabled: boolean;
   prompt: string;
   executionDeviceId: string;

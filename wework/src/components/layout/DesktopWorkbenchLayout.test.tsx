@@ -72,6 +72,11 @@ import type {
 } from '@/types/workbench'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import {
+  getWorkspaceCodeText,
+  installPierreEditorTestPlatform,
+  replaceWorkspaceEditorText,
+} from '@/test/pierreCode'
+import {
   act,
   cleanup,
   configure,
@@ -595,6 +600,10 @@ vi.mock('@/lib/local-terminal', () => ({
   WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT: 'wework:local-harness-sessions-changed',
 }))
 
+vi.mock('@/components/code/PierreCodeProvider', () => ({
+  PierreCodeProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
+
 vi.mock('@pierre/diffs/react', async () => {
   const actual = await vi.importActual<typeof import('@pierre/diffs/react')>('@pierre/diffs/react')
 
@@ -852,7 +861,7 @@ function createDefaultImNotificationSettings() {
 }
 
 describe('DesktopWorkbenchLayout', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     configure({ asyncUtilTimeout: 5_000 })
     vi.setConfig({ testTimeout: 30_000 })
   })
@@ -933,6 +942,7 @@ describe('DesktopWorkbenchLayout', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks()
+    await installPierreEditorTestPlatform()
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
     experimentalFeatures.enabled = true
@@ -2460,6 +2470,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
+  })
+
+  test('retains the stand-in workspace when navigating away and back', async () => {
+    window.history.replaceState({}, '', '/stand-in')
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    const workspace = screen.getByTestId('personal-stand-in-workspace')
+    act(() => navigateTo('/'))
+    expect(workspace).toBeInTheDocument()
+    expect(workspace).not.toBeVisible()
+    act(() => navigateTo('/stand-in'))
+    expect(screen.getByTestId('personal-stand-in-workspace')).toBe(workspace)
+    expect(workspace).toBeVisible()
   })
 
   test.each(['button', 'menu'])('opens My Tasks from stand-in using the board %s', async entry => {
@@ -4853,9 +4875,7 @@ describe('DesktopWorkbenchLayout', () => {
       })
       await user.click(await screen.findByText('notes.txt'))
       const editor = await screen.findByTestId('workspace-file-editor')
-      const content = editor.querySelector<HTMLElement>('.cm-content')!
-      await user.click(content)
-      await user.keyboard('{Control>}a{/Control}hello world')
+      const content = await replaceWorkspaceEditorText(editor, 'hello world')
 
       fireEvent.keyDown(content, { key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
 
@@ -4867,7 +4887,7 @@ describe('DesktopWorkbenchLayout', () => {
           original.revision
         )
       )
-      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(saved.content)
+      expect(getWorkspaceCodeText()).toContain(saved.content)
       expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
       fireEvent.keyDown(content, { key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
       expect(writeWorkspaceTextFile).toHaveBeenCalledOnce()
@@ -4876,7 +4896,7 @@ describe('DesktopWorkbenchLayout', () => {
         expect(await screen.findByTestId('workspace-file-save-error')).toHaveTextContent(
           'Write failed'
         )
-        expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(saved.content)
+        expect(getWorkspaceCodeText()).toContain(saved.content)
         expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
         await user.click(screen.getByTestId('workspace-file-save-retry-button'))
       } else {
@@ -5385,6 +5405,107 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test.each(['workspace', 'worktree'])(
+    'preserves the owner boundary for a queued unlisted %s subdirectory deliverable',
+    async workspaceKind => {
+      const { queueWorkbenchWorkspaceLaunch } =
+        await import('@/features/workbench/workspaceLaunchRequest')
+      const workspace = createCloudWorkspacePanelState()
+      const task = {
+        deviceId: workspace.devices[0].device_id,
+        taskId: 'stand-in-chat-7-primary',
+        workspacePath: '/workspace/project/fixtures',
+        workspaceKind,
+        ...(workspaceKind === 'worktree' ? { worktreeId: 'ancestor-worktree' } : {}),
+      }
+      const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+        path: '/workspace/project/fixtures/cart-fixture/cart-review.md',
+        name: 'cart-review.md',
+        content: 'Persisted zero quantity regression passes.',
+        truncated: false,
+        size: 42,
+        modifiedAt: null,
+      })
+      queueWorkbenchWorkspaceLaunch(task.deviceId, task.workspacePath, {
+        taskId: task.taskId,
+        openFile: { path: 'cart-fixture/cart-review.md', options: { lineStart: 2, lineEnd: 4 } },
+      })
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{ ...baseProps.state, ...workspace, currentRuntimeTask: task }}
+          workspaceFileApi={{
+            listWorkspaceEntries: vi
+              .fn()
+              .mockResolvedValue({ path: task.workspacePath, entries: [] }),
+            readWorkspaceTextFile,
+          }}
+          projectWork={{
+            ...baseProps.projectWork,
+            projects: workspace.projects,
+            devices: workspace.devices,
+            currentProjectId: workspace.currentProject.id,
+          }}
+        />
+      )
+      if (workspaceKind === 'worktree') {
+        await act(async () => {})
+        const { getWorkbenchWorkspaceLaunch, clearWorkbenchWorkspaceLaunch } =
+          await import('@/features/workbench/workspaceLaunchRequest')
+        expect(getWorkbenchWorkspaceLaunch()?.options.taskId).toBe(task.taskId)
+        expect(readWorkspaceTextFile).not.toHaveBeenCalled()
+        expect(screen.queryByTestId('workspace-file-path')).not.toBeInTheDocument()
+        act(() => clearWorkbenchWorkspaceLaunch())
+        return
+      }
+      await waitFor(() =>
+        expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+          task.deviceId,
+          '/workspace/project/fixtures/cart-fixture/cart-review.md',
+          task.workspacePath
+        )
+      )
+      expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'Persisted zero quantity regression passes.'
+      )
+      const followupFile = {
+        path: '/workspace/project/fixtures/cart-fixture/followup.md',
+        name: 'followup.md',
+        content: 'A second click on the same open task.',
+        truncated: false,
+        size: 36,
+        modifiedAt: null,
+      }
+      const followupRead = createDeferred<typeof followupFile>()
+      readWorkspaceTextFile.mockReturnValueOnce(followupRead.promise)
+      act(() => {
+        queueWorkbenchWorkspaceLaunch(task.deviceId, task.workspacePath, {
+          taskId: task.taskId,
+          openFile: { path: 'cart-fixture/followup.md' },
+        })
+      })
+      await waitFor(() =>
+        expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+          task.deviceId,
+          '/workspace/project/fixtures/cart-fixture/followup.md',
+          task.workspacePath
+        )
+      )
+      expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'Persisted zero quantity regression passes.'
+      )
+      expect(screen.getByTestId('workspace-markdown-preview')).not.toHaveTextContent(
+        followupFile.content
+      )
+      await act(async () => followupRead.resolve(followupFile))
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent(
+          'A second click on the same open task.'
+        )
+      )
+    }
+  )
+
   test('right workspace panel shows file tree and read-only preview', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
@@ -5589,9 +5710,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByRole('tab', { name: /quick_launch.py|admin.py/ })).toHaveLength(2)
 
     await user.click(screen.getByRole('tab', { name: /admin.py/ }))
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent('admin = True')
-    )
+    await waitFor(() => expect(getWorkspaceCodeText()).toContain('admin = True'))
     await user.click(screen.getByRole('tab', { name: /quick_launch.py/ }))
     await waitFor(() =>
       expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent('quick_launch.py')
@@ -6143,7 +6262,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('workspace file panel directly edits and autosaves a writable text file', async () => {
+  test('workspace file panel previews markdown before editing and autosaves it', async () => {
     const user = userEvent.setup()
     const listWorkspaceEntries = vi.fn().mockResolvedValue({
       path: '/workspace/project',
@@ -6196,11 +6315,12 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('hello')
+    expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('workspace-file-markdown-mode-button'))
     const editor = await screen.findByTestId('workspace-file-editor')
     expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
-    const codeMirrorContent = editor.querySelector('.cm-content')
-    expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
 
     const nativeSetTimeout = window.setTimeout.bind(window)
     let runAutosave: (() => void) | null = null
@@ -6212,8 +6332,7 @@ describe('DesktopWorkbenchLayout', () => {
       return nativeSetTimeout(handler, timeout)
     })
     try {
-      await user.click(codeMirrorContent as HTMLElement)
-      await user.keyboard('{Control>}a{/Control}hello world')
+      await replaceWorkspaceEditorText(editor, 'hello world')
 
       await waitFor(() => expect(runAutosave).not.toBeNull())
       act(() => runAutosave?.())
@@ -6297,12 +6416,11 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
-    const codeMirrorContent = (await screen.findByTestId('workspace-file-editor')).querySelector(
-      '.cm-content'
+    await user.click(screen.getByTestId('workspace-file-markdown-mode-button'))
+    await replaceWorkspaceEditorText(
+      await screen.findByTestId('workspace-file-editor'),
+      'hello world'
     )
-    expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
-    await user.click(codeMirrorContent as HTMLElement)
-    await user.keyboard('{Control>}a{/Control}hello world')
     await user.click(screen.getByText('notes.txt'))
 
     await waitFor(() =>

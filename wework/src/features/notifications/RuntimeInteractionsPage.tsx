@@ -5,7 +5,12 @@ import { useIsDesktop } from '@/hooks/useIsDesktop'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { NotificationEntitySurface } from './NotificationEntitySurface'
 import { openWeworkScheme } from './schemeEvents'
-import { weworkTaskScheme } from './scheme'
+import { weworkIssueScheme, weworkTaskScheme } from './scheme'
+import { issueWaitingSince } from '@wegent/collaboration'
+import { IssueWaitingTime } from './IssueWaitingTime'
+import { usePendingProjectIssues } from './usePendingProjectIssues'
+import { issueHumanInteraction } from './issueHumanInteractions'
+import type { RuntimeTaskAddress } from '@/types/api'
 import {
   INTERACTION_SOURCES,
   interactionOriginalScheme,
@@ -13,6 +18,25 @@ import {
 } from './runtimeInteractions'
 import { cn } from '@/lib/utils'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
+import { canDiscussQuestion, useQuestionDiscussion } from './questionDiscussion'
+import { InteractionTime } from './InteractionTime'
+
+interface PendingWorkRow {
+  id: string
+  source: ReturnType<typeof interactionSource>
+  timestamp: number
+  title: string
+  question: string
+  address?: RuntimeTaskAddress
+  originalUrl?: string
+  sourceMessageIds?: string[]
+  waitingSince?: string | null
+  projectItem?: boolean
+}
+
+function originalUrl(row: PendingWorkRow): string {
+  return row.originalUrl || (row.address ? weworkTaskScheme(row.address) : '')
+}
 
 export function RuntimeInteractionsPage({
   selectedId,
@@ -22,6 +46,25 @@ export function RuntimeInteractionsPage({
   active?: boolean
 }) {
   const interactions = useRuntimeInteractions()
+  const projectIssues = usePendingProjectIssues(active)
+  const refreshInteractions = interactions?.refresh
+  useEffect(() => {
+    if (active) void refreshInteractions?.()
+  }, [active, refreshInteractions])
+  const refreshProjectIssues = projectIssues.refresh
+  const handoffRevision =
+    interactions?.pending
+      .filter(item => item.sharedRequest)
+      .map(item => `${item.id}:${item.sharedRequest?.version}`)
+      .sort()
+      .join('|') ?? ''
+  const previousHandoffRevision = useRef(handoffRevision)
+  useEffect(() => {
+    if (!active || previousHandoffRevision.current === handoffRevision) return
+    previousHandoffRevision.current = handoffRevision
+    void refreshProjectIssues()
+  }, [active, handoffRevision, refreshProjectIssues])
+  const discussion = useQuestionDiscussion()
   const { t } = useTranslation('common')
   const [history, setHistory] = useState(false)
   const [originalNavigation, setOriginalNavigation] = useState<{ id: string; url: string } | null>(
@@ -74,28 +117,75 @@ export function RuntimeInteractionsPage({
     setHistory(false)
     setShowList(!selectedId)
   }
+  const projectRows = projectIssues.items.filter(
+    row =>
+      !row.item.human_requests?.some(
+        request =>
+          (request.status === 'pending' || request.status === 'answering') &&
+          interactions?.history.some(
+            accepted => accepted.id === issueHumanInteraction(request, row.store).id
+          )
+      ) &&
+      !interactions?.pending.some(
+        request =>
+          request.project?.store === row.store &&
+          String(request.project.projectId) === String(row.item.cloud_project_id) &&
+          request.project.issueId === row.item.id
+      )
+  )
+  const reportProjectPendingCount = interactions?.reportProjectPendingCount
+  const projectCountKnown =
+    active && !projectIssues.loading && !Object.values(projectIssues.errors).some(Boolean)
+  const projectCount = projectCountKnown ? projectRows.length : null
+  useEffect(() => {
+    reportProjectPendingCount?.(projectCount)
+  }, [projectCount, reportProjectPendingCount])
+  useEffect(() => () => reportProjectPendingCount?.(null), [reportProjectPendingCount])
   if (!interactions) return null
-  const { pending, loading, errors } = interactions
-  const rows = history
+  const { pending, errors } = interactions
+  const loading = interactions.loading || projectIssues.loading
+  const rows: PendingWorkRow[] = history
     ? interactions.history.map(item => ({
         ...item,
         source: interactionSource(item),
         timestamp: item.answeredAt,
+        waitingSince: undefined as string | undefined,
       }))
-    : pending.map(item => ({
-        id: item.id,
-        source: interactionSource(item),
-        timestamp: item.createdAt,
-        title: item.task.task.title,
-        question: item.question,
-        address: item.task.address,
-        originalUrl: interactionOriginalScheme(item),
-        sourceMessageIds: item.sourceMessageIds,
-      }))
-  const row = selected
+    : [
+        ...pending.map(item => ({
+          id: item.id,
+          source: interactionSource(item),
+          timestamp: item.createdAt,
+          title: item.task.task.title,
+          question: item.question,
+          address: item.task.address,
+          originalUrl: interactionOriginalScheme(item),
+          sourceMessageIds: item.sourceMessageIds,
+          waitingSince:
+            item.sharedRequest?.waiting_since ??
+            (item.sharedRequest?.recipient_user_id == null
+              ? item.sharedRequest?.created_at
+              : undefined),
+        })),
+        ...projectRows.map(({ item, store, userId }) => ({
+          id: `project-issue:${store}:${item.cloud_project_id}:${item.id}`,
+          source: 'project' as const,
+          timestamp: Date.parse(issueWaitingSince(item, userId) ?? item.updated_at),
+          title: item.project_name,
+          question: item.title,
+          originalUrl: weworkIssueScheme(String(item.cloud_project_id), item.id, store),
+          waitingSince: issueWaitingSince(item, userId),
+          projectItem: true,
+        })),
+      ]
+  const historical = interactions.history.find(item => item.id === selected)
+  const row: PendingWorkRow | undefined = selected
     ? (rows.find(item => item.id === selected) ??
-      interactions.history.find(item => item.id === selected))
+      (historical
+        ? { ...historical, source: interactionSource(historical), timestamp: historical.answeredAt }
+        : undefined))
     : rows[0]
+  const liveQuestion = row ? pending.find(item => item.id === row.id && !item.cached) : undefined
   return (
     <main
       data-testid="runtime-interactions-page"
@@ -119,7 +209,7 @@ export function RuntimeInteractionsPage({
               data-testid={history ? 'interactions-history-count' : 'interactions-pending-count'}
               className="ml-1 text-sm text-text-secondary"
             >
-              {history ? interactions.history.length : pending.length}
+              {history ? interactions.history.length : pending.length + projectRows.length}
             </span>
           </h1>
           <button
@@ -138,7 +228,7 @@ export function RuntimeInteractionsPage({
             data-testid="interactions-refresh"
             disabled={loading}
             aria-label={t('notifications.refresh')}
-            onClick={() => void interactions.refresh()}
+            onClick={() => void Promise.all([interactions.refresh(), projectIssues.refresh()])}
             className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
           >
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
@@ -166,6 +256,7 @@ export function RuntimeInteractionsPage({
                     <button
                       type="button"
                       data-testid="interaction-list-item"
+                      data-project-issue={entry.projectItem ? 'true' : undefined}
                       data-interaction-id={entry.id}
                       aria-pressed={row?.id === entry.id}
                       className={cn(
@@ -191,30 +282,39 @@ export function RuntimeInteractionsPage({
                         >
                           {entry.title}
                         </span>
+                        {!history && entry.source === 'project' && (
+                          <IssueWaitingTime since={entry.waitingSince ?? null} />
+                        )}
+                        <InteractionTime
+                          timestamp={entry.timestamp}
+                          testId="interaction-list-time"
+                        />
                       </span>
                     </button>
-                    {!history && (
-                      <button
-                        type="button"
-                        data-testid="interaction-dismiss"
-                        aria-label={t('interactions.skip')}
-                        title={t('interactions.skip')}
-                        disabled={interactions.busy.has(entry.id)}
-                        className="absolute right-1 top-2 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-                        onClick={() => {
-                          const item = pending.find(item => item.id === entry.id)
-                          if (item) void interactions.dismiss(item)
-                        }}
-                      >
-                        <X className="h-4 w-4" aria-hidden="true" />
-                      </button>
-                    )}
+                    {!history &&
+                      !entry.projectItem &&
+                      !pending.find(item => item.id === entry.id)?.sharedRequest && (
+                        <button
+                          type="button"
+                          data-testid="interaction-dismiss"
+                          aria-label={t('interactions.skip')}
+                          title={t('interactions.skip')}
+                          disabled={interactions.busy.has(entry.id)}
+                          className="absolute right-1 top-2 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+                          onClick={() => {
+                            const item = pending.find(item => item.id === entry.id)
+                            if (item) void interactions.dismiss(item)
+                          }}
+                        >
+                          <X className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      )}
                   </div>
                 ))}
               </div>
             )
           })}
-          {!rows.length && (
+          {!rows.length && (history || !projectRows.length) && (
             <p
               data-testid={loading ? 'interactions-loading' : 'interactions-empty'}
               className="px-3 py-8 text-sm text-text-secondary"
@@ -229,6 +329,24 @@ export function RuntimeInteractionsPage({
                 {error}
               </p>
             ))}
+          {!history &&
+            Object.entries(projectIssues.errors)
+              .filter(([, error]) => error)
+              .map(([store, error]) => (
+                <details key={store} className="px-3 py-2 text-sm text-status-error">
+                  <summary
+                    data-testid={`project-work-error-${store}`}
+                    className="min-h-11 cursor-pointer md:min-h-8"
+                  >
+                    {t(
+                      store.endsWith('local')
+                        ? 'issueParticipation.local_load_failed'
+                        : 'issueParticipation.cloud_load_failed'
+                    )}
+                  </summary>
+                  <p className="mt-2 break-words whitespace-pre-wrap">{error}</p>
+                </details>
+              ))}
         </div>
       </section>
       <section
@@ -263,16 +381,26 @@ export function RuntimeInteractionsPage({
                 <p className="mt-1 truncate text-sm text-text-secondary" title={row.title}>
                   {row.title}
                 </p>
+                <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
               </div>
+              {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
+                <button
+                  type="button"
+                  data-testid="interaction-discuss"
+                  disabled={interactions.busy.has(liveQuestion.id)}
+                  onClick={() => discussion.open(liveQuestion.task.address, liveQuestion.payload)}
+                  className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7"
+                >
+                  {t('question_discussion.open')}
+                </button>
+              )}
               <button
                 type="button"
                 data-testid="interaction-open-original"
                 className="flex min-h-11 shrink-0 self-start items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus sm:self-auto md:min-h-7"
                 onClick={() =>
                   openWeworkScheme(
-                    originalNavigation?.id === row.id
-                      ? originalNavigation.url
-                      : row.originalUrl || weworkTaskScheme(row.address)
+                    originalNavigation?.id === row.id ? originalNavigation.url : originalUrl(row)
                   )
                 }
               >
@@ -284,7 +412,7 @@ export function RuntimeInteractionsPage({
               className="flex min-h-0 flex-1 flex-col overflow-hidden"
               data-testid="interaction-entity-container"
             >
-              <WorkbenchErrorBoundary key={row.originalUrl || weworkTaskScheme(row.address)}>
+              <WorkbenchErrorBoundary key={originalUrl(row)}>
                 <NotificationEntitySurface
                   interactionId={row.id}
                   sourceMessageIds={row.sourceMessageIds}
@@ -293,7 +421,7 @@ export function RuntimeInteractionsPage({
                       ?.payload ?? null
                   }
                   onOriginalUrlChange={onOriginalUrlChange}
-                  url={row.originalUrl || weworkTaskScheme(row.address)}
+                  url={originalUrl(row)}
                   address={row.address}
                   active={active}
                 />

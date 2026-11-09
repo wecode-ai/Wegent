@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { commandOutput, REMOTE_DOCKER_DEVICE_ID } from './shared.mjs'
+import { CLOUD_DEVICE_ID, commandOutput, stopProcessGroup } from './shared.mjs'
 import { until } from './plugin-regression-fixture.mjs'
 import { holdDeviceRegistrationRow } from './plugin-write-lease.mjs'
 
-export async function verifyCloudRegistrationDeletionRace(cloud, recordId, ownerId, document) {
+export async function verifyCloudRegistrationDeletionRace(cloud, ownerId) {
   const startedAt = Date.now()
+  const original = await cloud.device(CLOUD_DEVICE_ID)
+  assert.equal(original?.status, 'online', 'The real cloud fixture must start online')
+  assert.ok(
+    original.runtime_instance_id,
+    'The cloud fixture must have a persisted runtime identity'
+  )
+  const recordId = original.id
+  await stopProcessGroup(cloud.remoteExecutor)
+  cloud.remoteExecutor = null
+  await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
+
   const identityLocked = () =>
     commandOutput('redis-cli', [
       '-h',
@@ -16,31 +27,14 @@ export async function verifyCloudRegistrationDeletionRace(cloud, recordId, owner
       'EXISTS',
       `device:identity-lock:${ownerId}`,
     ]).trim() === '1'
-  const originalSpec = document.spec
   let rowLock
   let deletion
   try {
-    await cloud.executeDatabase(
-      'UPDATE kinds SET json=JSON_SET(json, %s, JSON_EXTRACT(%s, %s)) WHERE id=%s AND user_id=%s AND kind=%s AND namespace=%s',
-      [
-        '$.spec',
-        JSON.stringify({
-          ...originalSpec,
-          deviceType: 'cloud',
-          cloudConfig: { deviceId: REMOTE_DOCKER_DEVICE_ID, sandboxId: REMOTE_DOCKER_DEVICE_ID },
-        }),
-        '$',
-        recordId,
-        ownerId,
-        'Device',
-        'default',
-      ]
-    )
     rowLock = await holdDeviceRegistrationRow(cloud, ownerId, recordId)
     await until(identityLocked, locked => !locked, 'A previous registration retained its lock')
-    cloud.remoteDockerExecutor = await cloud.spawnExecutor(
-      { ...cloud.remoteDockerExecutorEnv, DEVICE_TYPE: 'cloud' },
-      cloud.remoteDockerExecutorLogPath
+    cloud.remoteExecutor = await cloud.spawnExecutor(
+      cloud.remoteExecutorEnv,
+      cloud.remoteExecutorLogPath
     )
     await until(
       identityLocked,
@@ -85,11 +79,13 @@ export async function verifyCloudRegistrationDeletionRace(cloud, recordId, owner
       409,
       'Removal accepted a cloud runner reconnecting concurrently'
     )
-    await cloud.waitForDeviceStatus(
-      REMOTE_DOCKER_DEVICE_ID,
+    const reconnected = await cloud.waitForDeviceStatus(
+      CLOUD_DEVICE_ID,
       'online',
-      cloud.remoteDockerExecutorLogPath
+      cloud.remoteExecutorLogPath
     )
+    assert.equal(reconnected.id, recordId, 'The cloud runner registered a different record')
+    assert.equal(reconnected.runtime_instance_id, original.runtime_instance_id)
     const [persisted] = await cloud.queryDatabase(
       'SELECT is_active FROM kinds WHERE id=%s AND user_id=%s AND kind=%s AND namespace=%s',
       [recordId, ownerId, 'Device', 'default']
@@ -101,10 +97,5 @@ export async function verifyCloudRegistrationDeletionRace(cloud, recordId, owner
   } finally {
     await rowLock?.release()
     if (deletion) await deletion
-    if (cloud.remoteDockerExecutor) await cloud.stopRemoteDockerExecutorAndWaitOffline()
-    await cloud.executeDatabase(
-      'UPDATE kinds SET json=JSON_SET(json, %s, JSON_EXTRACT(%s, %s)) WHERE id=%s AND user_id=%s AND kind=%s AND namespace=%s',
-      ['$.spec', JSON.stringify(originalSpec), '$', recordId, ownerId, 'Device', 'default']
-    )
   }
 }

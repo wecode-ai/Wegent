@@ -8,6 +8,7 @@ import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import { RuntimeInteractionsProvider } from '@/features/notifications/RuntimeInteractionsProvider'
 import { RuntimeInteractionsPage } from '@/features/notifications/RuntimeInteractionsPage'
 import { RuntimeInteractionNotice } from '@/features/notifications/RuntimeInteractionNotice'
+import { PluginPythonRuntimeNotice } from '@/components/plugins/PluginPythonRuntimeNotice'
 import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   Activity,
@@ -38,6 +39,7 @@ import {
 } from '@/features/workbench/workbenchServices'
 import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { RuntimeTaskSystemSleepBridge } from '@/features/workbench/RuntimeTaskSystemSleepBridge'
+import { ReplyPredictionCoordinator } from '@/features/reply-predictions/ReplyPredictionCoordinator'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
@@ -726,6 +728,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return (
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+        <ReplyPredictionCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
         <NotificationEventsBridge
           chatStream={services.chatStream}
@@ -755,6 +758,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   return (
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+      <ReplyPredictionCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
       <NotificationEventsBridge
         chatStream={services.chatStream}
@@ -1351,6 +1355,7 @@ function AppShell() {
             </div>
             {!isPopoutWindow && <WeworkDevInstanceBadge />}
             {!isPopoutWindow && !isWorkspaceWindow && <RuntimeInteractionNotice />}
+            {isElectron && !isPopoutWindow && !isWorkspaceWindow && <PluginPythonRuntimeNotice />}
           </div>
         </RuntimeInteractionsProvider>
       </WorkspaceTabsProvider>

@@ -10,6 +10,12 @@ fn active(run: &AutomationRun) -> bool {
     )
 }
 
+fn memory_review(automation: &Automation) -> bool {
+    automation.task_request["standInOwner"]["roleId"] == "@primary"
+        && automation.task_request["standInCalendar"]["template"]
+            == crate::runtime_work::automations::MEMORY_REVIEW_TEMPLATE
+}
+
 #[cfg(test)]
 #[path = "stand_in_arrangements_tests.rs"]
 mod tests;
@@ -35,7 +41,15 @@ impl RuntimeWorkRpcHandler {
             .filter(|run| active(run))
         {
             if let Some(automation) = self.automation_store.get(&run.automation_id) {
+                if memory_review(&automation)
+                    && run.status == AutomationRunStatus::Pending
+                    && run.trigger != "manual"
+                    && !self.memory_review_run_has_work(store, run)?
+                {
+                    continue;
+                }
                 if automation.task_request["standInCalendar"].is_object()
+                    && !memory_review(&automation)
                     && run.status == AutomationRunStatus::Pending
                     && run.trigger != "manual"
                 {
@@ -125,7 +139,9 @@ impl RuntimeWorkRpcHandler {
                 && self
                     .automation_store
                     .get(&run.automation_id)
-                    .is_some_and(|a| a.task_request["standInCalendar"].is_object())
+                    .is_some_and(|a| {
+                        a.task_request["standInCalendar"].is_object() && !memory_review(&a)
+                    })
             {
                 if run.status == AutomationRunStatus::Running {
                     self.reconcile_arrangement(&run).await?;

@@ -92,11 +92,11 @@ jobs:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
         run: node .github/scripts/balance-wework-windows-e2e.mjs >> "$GITHUB_OUTPUT"
 
-      - name: Balance Linux Core checkpoints across additional runners
+      - name: Balance Linux Core checkpoints within existing runners
         id: linux-matrix
         env:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
-          CORE_RUNNER_SCALE: "1.5"
+          CORE_RUNNER_SCALE: "1"
         run: node .github/scripts/order-wework-linux-e2e.mjs --balance-core >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
@@ -150,8 +150,8 @@ jobs:
         if: steps.classify.outputs.wework_desktop_e2e == 'true'
         id: runtime
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -366,6 +366,10 @@ jobs:
       # Codex creates its own user/mount namespaces inside this disposable runner.
       options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
+      # Reuse the hosted runner's browsers without downloading or installing them.
+      volumes:
+        - /opt/google/chrome:/opt/google/chrome:ro
+        - /usr/local/share/chromedriver-linux64:/opt/wegent-e2e/chromedriver:ro
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -383,6 +387,12 @@ jobs:
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
+      - name: Verify the existing external browser runtime
+        if: contains(matrix.segments, 'browser-toolbar-actions')
+        run: |
+          /opt/google/chrome/chrome --version
+          /opt/wegent-e2e/chromedriver/chromedriver --version
 
       - name: Prepare real mailbox server runtime
         if: contains(matrix.segments, 'stand-in-email')
@@ -445,6 +455,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'browser-toolbar-actions') && '1' || '0' }}
           RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
@@ -758,6 +769,8 @@ jobs:
       - name: Prepare DingTalk protocol fixture for the standard account
         if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli')
         shell: pwsh
+        env:
+          WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           $directory = Join-Path $env:GITHUB_WORKSPACE "wework/test-results/windows-e2e-tools/dingtalk"
           New-Item -ItemType Directory -Force -Path $directory | Out-Null
@@ -766,6 +779,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk protocol fixture" }
           "WEWORK_E2E_DWS_FIXTURE_BIN=$binary" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (($env:WEWORK_E2E_SEGMENTS -split ',') -contains 'stand-in-cli') {
+            $replyBinary = Join-Path $directory "source-story-dws.exe"
+            rustc wework/e2e/desktop/fixtures/source-story-dingtalk-cli.rs --edition 2021 -o $replyBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk reply protocol fixture" }
+            "WEWORK_E2E_DWS_REPLY_FIXTURE_BIN=$replyBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $recoveryBinary = Join-Path $directory "direct-recovery-dws.exe"
+            rustc wework/e2e/desktop/fixtures/direct-recovery-dingtalk-cli.rs --edition 2021 -o $recoveryBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk recovery protocol fixture" }
+            "WEWORK_E2E_DWS_RECOVERY_FIXTURE_BIN=$recoveryBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
@@ -927,8 +952,8 @@ jobs:
           fi
           gh --version
 
-      - name: Prepare the pinned native DWS compiler for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth-dws')
+      - name: Prepare the pinned native compiler for account authentication E2E
+        if: contains(matrix.segments, 'plugin-account-auth-dws') || contains(matrix.segments, 'plugin-account-auth-password')
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"

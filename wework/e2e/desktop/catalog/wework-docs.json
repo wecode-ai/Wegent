@@ -1,0 +1,17 @@
+{
+  "order": 86010,
+  "scenario": "./scenarios/wework-docs.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/resources/bundled-plugins/wework-personal/plugins/wework-docs/*",
+    "docs/zh/wework/*",
+    "docs/en/wework/*"
+  ],
+  "ci": {
+    "core": {
+      "order": 125010,
+      "shard": 6,
+      "position": 11010
+    }
+  }
+}

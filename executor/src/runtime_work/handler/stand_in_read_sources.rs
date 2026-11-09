@@ -196,6 +196,7 @@ impl RuntimeWorkRpcHandler {
             coordinator_batch: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: true,
         };
         self.delegated_read_sources(&child).map(|_| ())
@@ -247,6 +248,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
         };
         (root, handler, identity, source)
@@ -278,6 +280,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: true,
         }
     }

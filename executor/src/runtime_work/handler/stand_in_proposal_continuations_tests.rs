@@ -30,6 +30,7 @@ fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler, StandInMcpIdentity) {
         work: None,
         project: None,
         review: false,
+        memory_review: false,
         readonly_worker: false,
         ask_before_act: true,
         coordinator_batch: None,

@@ -36,8 +36,7 @@ done
 for stand_in_work_path in \
   "wework/e2e/desktop/scenarios/stand-in-alternate-source.scenario.mjs" \
   "wework/src/features/todo/StandInWorkList.tsx" \
-  "wework/src/features/todo/StandInWorkConfirmation.tsx" \
-  "wework/src/features/todo/StandInConversation.tsx"; do
+  "wework/src/features/todo/StandInWorkConfirmation.tsx"; do
   assert_desktop_case "stand-in work surfaces retain workspace and conversation coverage" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -46,6 +45,14 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$stand_in_work_path"
 done
+
+assert_desktop_case "stand-in conversation retains workspace coverage and delegated delivery loops" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,dots-closed-loops,stand-in-telemetry,stand-in-git"},{"id":"core-7","name":"Core / shard 7","segments":"stand-in-workspace"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/todo/StandInConversation.tsx"
 
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true

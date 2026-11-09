@@ -26,7 +26,7 @@ jest.mock('@/features/knowledge/document/hooks/useNamespaceRoleMap', () => ({
 
 jest.mock('@/features/knowledge/permission/hooks/useKnowledgePermissions', () => ({
   useKnowledgePermissions: () => ({
-    myPermission: { role: 'owner' },
+    myPermission: { has_access: true, role: 'Owner', is_creator: false },
     fetchMyPermission: jest.fn(),
   }),
 }))
@@ -185,4 +185,25 @@ describe('CodeWikiWorkspace', () => {
       'false'
     )
   })
+})
+
+it('removes an open permission view immediately when the verified list role drops', async () => {
+  mockCanManageKnowledgeBase.mockReturnValue(true)
+  mockCanManageKnowledgeBaseDocuments.mockReturnValue(true)
+  mockCanManageKnowledgeBasePermissions.mockReturnValue(true)
+  const user = userEvent.setup()
+  const { rerender } = render(
+    <CodeWikiWorkspace wiki={wiki} view="documents" verifiedRole="Owner" />
+  )
+  const trigger = screen.getByTestId('code-wiki-content-permissions')
+  expect(trigger).toHaveClass('min-h-11', 'min-w-11')
+  expect(trigger.className).not.toContain('sm:min-h-0')
+  await user.click(trigger)
+  expect(screen.getByTestId('mock-code-wiki-permissions')).toBeInTheDocument()
+  rerender(<CodeWikiWorkspace wiki={wiki} view="documents" verifiedRole="Reporter" />)
+  expect(screen.queryByTestId('mock-code-wiki-permissions')).not.toBeInTheDocument()
+  expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
+    'data-read-only',
+    'true'
+  )
 })

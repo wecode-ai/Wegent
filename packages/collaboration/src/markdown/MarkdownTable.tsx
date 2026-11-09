@@ -5,11 +5,17 @@ import { Copy, CopyCheck, CircleAlert, Maximize2 } from "lucide-react";
 import { Button } from "./Button";
 import { Tooltip } from "../issue-detail/Tooltip";
 import { MarkdownTableDialog } from "./MarkdownTableDialog";
+import type { Element } from "hast";
 
 export function MarkdownTable({
   children,
   node,
-}: { children?: ReactNode } & ExtraProps) {
+  sourceLineAnchors,
+}: {
+  children?: ReactNode;
+  node?: Element;
+  sourceLineAnchors?: boolean;
+} & ExtraProps) {
   const {
     translate: t,
     copyText: copyTextToClipboard,
@@ -45,6 +51,9 @@ export function MarkdownTable({
   return (
     <div
       data-scroll-anchor
+      data-source-line={
+        sourceLineAnchors ? node?.position?.start?.line : undefined
+      }
       className="group/markdown-table relative mb-3 max-w-full pr-12 md:pr-9"
       data-testid="markdown-table"
     >

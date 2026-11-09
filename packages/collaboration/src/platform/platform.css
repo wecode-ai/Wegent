@@ -4796,6 +4796,17 @@
     border-bottom: 0;
   }
 
+  .collaboration-platform-sidebar-full {
+    max-height: min(25dvh, 160px);
+    align-items: stretch;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .collaboration-platform-sidebar-full > * {
+    flex-shrink: 0;
+  }
+
   .collaboration-platform-brand {
     display: none;
   }

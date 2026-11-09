@@ -7,6 +7,27 @@ use super::transcript_overlays::{is_running_runtime_command, is_runtime_user_int
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn transcript_identity(&self, task_id: &str) -> Result<Value, AppIpcError> {
+        let link = self
+            .store
+            .get_task_summary(task_id)
+            .filter(|link| link.status != "archived" && !self.archived_link_is_deleted(link))
+            .ok_or_else(|| {
+                AppIpcError::new("not_found", "Conversation no longer exists on this Runtime")
+            })?;
+        // Continuation reuses transcript authorization but needs no message
+        // projection, provider I/O or admission to the history CPU workers.
+        Ok(json!({
+            "taskId": link.local_task_id,
+            "workspacePath": link.workspace_path,
+            "runtime": link.runtime,
+            "origin": link.runtime_handle.get("origin"),
+            "turns": [],
+            "messages": [],
+            "running": self.is_active_local_task(task_id),
+        }))
+    }
+
     pub(super) fn reconcile_native_transcript_terminal(&self, task_id: &str, thread: &Value) {
         if thread["timeline"] != true || self.is_active_local_task(task_id) {
             return;

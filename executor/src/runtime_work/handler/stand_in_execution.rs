@@ -1,6 +1,18 @@
 //! Shared task lifecycle decisions for automatic and explicit Stand-in dispatch.
 use super::*;
 
+pub(super) fn accepted_stand_in_result(result: Value) -> Result<Value, AppIpcError> {
+    if result["success"] == false || result["accepted"] == false {
+        return Err(AppIpcError::new(
+            result["code"].as_str().unwrap_or("stand_in_start_failed"),
+            result["error"]
+                .as_str()
+                .unwrap_or("Stand-in execution was not accepted"),
+        ));
+    }
+    Ok(result)
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn has_pending_stand_in_assignment(
         &self,
@@ -55,18 +67,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             Box::pin(self.create_task(payload)).await
         };
-        result.and_then(|result| {
-            if result["success"] == false || result["accepted"] == false {
-                Err(AppIpcError::new(
-                    "stand_in_start_failed",
-                    result["error"]
-                        .as_str()
-                        .unwrap_or("Stand-in execution was not accepted"),
-                ))
-            } else {
-                Ok(result)
-            }
-        })
+        result.and_then(accepted_stand_in_result)
     }
 
     pub(super) fn stand_in_task_is_handled(

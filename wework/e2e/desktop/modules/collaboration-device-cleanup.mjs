@@ -181,7 +181,7 @@ export async function verifyCollaborationDeviceCleanup({
     Date.parse(offlineDocument.status.lastSeenAt) >= Date.parse(observedBeforeDisconnect),
     'The final real heartbeat was not persisted before the online cache was removed'
   )
-  await verifyCloudRegistrationDeletionRace(cloud, original.id, ownerId, offlineDocument)
+  await verifyCloudRegistrationDeletionRace(cloud, ownerId)
   await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
   await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
   await control.command(

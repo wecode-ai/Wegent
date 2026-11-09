@@ -6,6 +6,73 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 
+it('routes forgetting-rule reads and versioned deletion to the selected owner device', async () => {
+  const request = vi.fn().mockResolvedValue({ items: [] })
+  const api = createStandInExecutorApi(request)
+  expect(await api.memoryRules(7, 'owner-device')).toEqual([])
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.memory.rules.list',
+    { userId: 7 },
+    'owner-device'
+  )
+  await api.deleteMemoryRule(7, 'owner-device', 'rule-1', 3)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.memory.rules.delete',
+    { userId: 7, id: 'rule-1', version: 3 },
+    'owner-device'
+  )
+  await api.deleteMemoryRule(7, 'owner-device', 'legacy-1', 1, 'revision')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.memory.rules.delete',
+    { userId: 7, id: 'legacy-1', version: 1, expectedUpdatedAt: 'revision' },
+    'owner-device'
+  )
+})
+
+it('keeps instance binding on its local owner while addressing lifecycle operations to the bound Executor', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValue({ userId: 7, executionDeviceId: 'cloud', version: 1, roles: [] })
+  const api = createStandInExecutorApi(request)
+  await api.binding('mac', 'bind', 3, { userId: 7, deviceId: 'cloud' })
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.binding',
+    { operation: 'bind', version: 3, target: { userId: 7, deviceId: 'cloud' } },
+    'mac'
+  )
+  await api.lifecycle(7, 'cloud', 'stop')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.personal.lifecycle',
+    { userId: 7, operation: 'stop' },
+    'cloud'
+  )
+})
+
+it('treats the cloud transport task_not_found as an empty first-conversation lookup', async () => {
+  const request = vi
+    .fn()
+    .mockRejectedValue(
+      Object.assign(new Error('Task not found on the owning Runtime'), { code: 'task_not_found' })
+    )
+  expect(await createStandInExecutorApi(request).readTask('cloud', 'new-conversation')).toEqual({
+    success: false,
+    code: 'task_not_found',
+  })
+  expect(request).toHaveBeenCalledWith('runtime.tasks.get', { taskId: 'new-conversation' }, 'cloud')
+})
+
+it.each(['permission_denied', 'task_archived', 'cloud_unavailable'])(
+  'preserves %s errors while looking up a conversation',
+  async code => {
+    const error = Object.assign(new Error(code), { code })
+    const api = createStandInExecutorApi(vi.fn().mockRejectedValue(error))
+    await expect(api.readTask('cloud', 'conversation')).rejects.toMatchObject({
+      code,
+      cause: error,
+    })
+  }
+)
+
 it('routes onboarding reads and explicit feature choices to the selected Executor', async () => {
   const request = vi.fn().mockResolvedValue({ state: { version: 1, completed: true } })
   const api = createStandInExecutorApi(request)
@@ -64,7 +131,6 @@ it('addresses project processing status and explicit checks to the chosen bindin
 function fixture() {
   const transport = {
     notifyAssignment: vi.fn<StandInExecutorApi['notifyAssignment']>(),
-    personalAgents: vi.fn<StandInExecutorApi['personalAgents']>(),
     personalGet: vi.fn<StandInExecutorApi['personalGet']>(),
     personalSave: vi.fn<StandInExecutorApi['personalSave']>(),
     readTask: vi.fn<StandInExecutorApi['readTask']>(),

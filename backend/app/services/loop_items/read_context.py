@@ -40,6 +40,9 @@ class LoopItemReadContext:
         item_ids = [item.id for item in items]
         executions = _latest_executions(db, item_ids)
         user_ids = {item.assignee_user_id for item in items if item.assignee_user_id}
+        user_ids.update(
+            item.created_by_user_id for item in items if item.created_by_user_id
+        )
         agent_ids = {item.assignee_agent_id for item in items if item.assignee_agent_id}
         team_ids = {item.assignee_team_id for item in items if item.assignee_team_id}
         agent_ids.update(row.agent_id for row in executions.values() if row.agent_id)

@@ -1,8 +1,9 @@
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
 import { validateSmartAppArtifacts } from './smart-app-artifact-validator.js'
 import { scaffoldSmartApp, type SmartAppTemplate } from './smart-app-scaffold.js'
@@ -17,10 +18,32 @@ const fixtureRoot = join(
 const roots: string[] = []
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
 describe('validateSmartAppArtifacts', () => {
+  test.each(['electron', 'node'])(
+    'rejects a broken Host with a configured %s runtime regardless of parent mode',
+    async kind => {
+      const root = await copiedFixture('valid-client')
+      await writeFile(join(root, 'package', 'index.js'), "throw new Error('broken host')\n")
+      vi.stubEnv(
+        'WEWORK_NODE_PATH',
+        kind === 'electron' ? createRequire(import.meta.url)('electron') : process.execPath
+      )
+      vi.stubEnv('WEWORK_NODE_RUNTIME_KIND', kind)
+      vi.stubEnv('WEWORK_RUNTIME_BIN', '')
+      vi.stubEnv('ELECTRON_RUN_AS_NODE', '0')
+
+      const result = await validateFixture(root, capabilities(true, false, false))
+
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({ code: 'SA-HOST-IMPORT', stage: 'artifacts' })
+      )
+    }
+  )
+
   test('accepts a real Client ModuleLoader registration without requiring Host import', async () => {
     const projectRoot = fixture('valid-client')
 

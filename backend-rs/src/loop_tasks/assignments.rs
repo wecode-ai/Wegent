@@ -41,6 +41,8 @@ const ASSIGNMENT_EVENT_TYPE: &str = "assignment";
 /// One `IssueAssignmentResponse` row.
 #[derive(Debug, Serialize)]
 pub(super) struct IssueAssignmentResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    automation: Option<serde_json::Value>,
     pub(super) id: String,
     issue_id: String,
     pub(super) target_type: String,
@@ -106,6 +108,14 @@ pub(super) async fn require_issue_read(
     item_id: &str,
     current_user: &FlexibleUser,
 ) -> Result<(), FastApiError> {
+    require_issue_read_for_user(state, item_id, current_user.id).await
+}
+
+pub(crate) async fn require_issue_read_for_user(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<(), FastApiError> {
     let repository = LoopItemRepository::new(&state.mysql);
 
     // `is_external_item(db, item_id)`.
@@ -114,7 +124,7 @@ pub(super) async fn require_issue_read(
         .await
         .map_err(internal)?;
     if external.is_some() {
-        ensure_shadow(state, item_id, current_user.id).await?;
+        ensure_shadow(state, item_id, user_id).await?;
     }
 
     // `project_for_issue(db, issue_id=item_id, user_id=current_user.id)`.
@@ -127,12 +137,12 @@ pub(super) async fn require_issue_read(
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     // `issue_assignment_service.list`.
-    let access = require_cloud_project_role(state, &project.id, current_user.id).await?;
+    let access = require_cloud_project_role(state, &project.id, user_id).await?;
     // `_require_issue_project` re-reads the item through the session's identity
     // map, so it issues no statement.
     if is_external_provider(&access.project) {
-        provider_get(state, item_id, current_user.id).await?;
-    } else if !can_view_item(state, &access, &item, current_user.id).await? {
+        provider_get(state, item_id, user_id).await?;
+    } else if !can_view_item(state, &access, &item, user_id).await? {
         return Err(FastApiError::detail(
             StatusCode::NOT_FOUND,
             "Issue not found",
@@ -412,6 +422,7 @@ async fn assignment_response(
             .map(|user| user.user_name)
     };
     Ok(IssueAssignmentResponse {
+        automation: metadata.automation.clone(),
         id: comment.id.clone(),
         issue_id: comment.loop_item_id.clone().unwrap_or_default(),
         target_type: metadata.target_type.clone().unwrap_or_default(),
@@ -598,7 +609,8 @@ mod tests {
     fn serializes_the_assignment_shape() {
         let comments = vec![assign("101", "human", "7", "")];
         let event = active_events(&comments);
-        let row = IssueAssignmentResponse {
+        let mut row = IssueAssignmentResponse {
+            automation: None,
             id: event[0].comment.id.clone(),
             issue_id: "EXAMPLE-5".to_string(),
             target_type: event[0].metadata.target_type.clone().unwrap_or_default(),
@@ -616,7 +628,7 @@ mod tests {
             human_read_at: None,
             stand_in_received_at: None,
         };
-        let value = crate::json_contract_tests::serialized(row).unwrap();
+        let value = crate::json_contract_tests::serialized(&row).unwrap();
         assert_eq!(
             value,
             serde_json::json!({
@@ -638,5 +650,12 @@ mod tests {
                 "stand_in_received_at": null,
             })
         );
+        let automation = serde_json::json!({
+            "rule_id": "rule-1", "rule_name": "Review new Issues", "run_id": "run-1"
+        });
+        row.automation = Some(automation.clone());
+        let automated = crate::json_contract_tests::serialized(row).unwrap();
+        assert_eq!(automated["automation"], automation);
+        assert_eq!(automated["created_by_user_id"], 7);
     }
 }

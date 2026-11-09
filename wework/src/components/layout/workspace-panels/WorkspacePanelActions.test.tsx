@@ -125,6 +125,15 @@ describe('WorkspacePanelActions', () => {
     })
   })
 
+  test('keeps the right panel toggle available', async () => {
+    const user = userEvent.setup()
+    render(<WorkspacePanelActions {...baseProps} mode="right-panel-toggle" />)
+    const toggle = screen.getByTestId('toggle-right-workspace-panel-button')
+    expect(toggle).toBeEnabled()
+    await user.click(toggle)
+    expect(baseProps.onToggleRightPanel).toHaveBeenCalledOnce()
+  })
+
   test('remembers and prioritizes the last successful titlebar IDE selection', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     const actions = (
