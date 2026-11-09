@@ -5,6 +5,17 @@ export interface SecretProtection {
   decrypt(value: string): Promise<string>
 }
 
+function requireProtectedCiphertext(value: Buffer): Buffer {
+  // Linux's v10 provider uses a public fixed key if its secret service is unavailable.
+  if (process.platform === 'linux' && value.subarray(0, 3).toString() === 'v10') {
+    throw new HostCapabilityError(
+      'secure_storage_unavailable',
+      'OS credential storage is unavailable'
+    )
+  }
+  return value
+}
+
 /** Keep encryption keys in the operating system credential service, never beside ciphertext. */
 async function nativeStorage() {
   const { safeStorage } = await import('electron')
@@ -23,10 +34,12 @@ async function nativeStorage() {
 export const systemSecretProtection: SecretProtection = {
   async encrypt(value) {
     const storage = await nativeStorage()
-    return (await storage.encryptStringAsync(value)).toString('base64')
+    return requireProtectedCiphertext(await storage.encryptStringAsync(value)).toString('base64')
   },
   async decrypt(value) {
     const storage = await nativeStorage()
-    return (await storage.decryptStringAsync(Buffer.from(value, 'base64'))).result
+    return (
+      await storage.decryptStringAsync(requireProtectedCiphertext(Buffer.from(value, 'base64')))
+    ).result
   },
 }
