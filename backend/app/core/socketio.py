@@ -46,6 +46,7 @@ def create_socketio_server() -> socketio.AsyncServer:
         mgr = ObservedRedisManager(
             redis_url,
             redis_options={
+                "client_name": settings.SOCKETIO_REDIS_CLIENT_NAME,
                 "socket_timeout": settings.SOCKETIO_REDIS_SOCKET_TIMEOUT,
                 "socket_connect_timeout": settings.SOCKETIO_REDIS_CONNECT_TIMEOUT,
                 "socket_keepalive": True,
@@ -130,7 +131,10 @@ async def socketio_ack_probe_lifespan() -> AsyncIterator[None]:
     if not isinstance(manager, ObservedRedisManager):
         yield
         return
-    probe = asyncio.create_task(manager.run_ack_probe(), name="socketio-ack-probe")
+    probe = asyncio.create_task(
+        manager.run_ack_probe(settings.SOCKETIO_REDIS_ACK_PROBE_INTERVAL_SECONDS),
+        name="socketio-ack-probe",
+    )
     try:
         yield
     finally:

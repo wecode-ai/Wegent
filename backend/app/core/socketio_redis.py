@@ -14,7 +14,6 @@ from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
-ACK_PROBE_INTERVAL_SECONDS = 30
 ACK_PROBE_TIMEOUT_SECONDS = 5
 ACK_PROBE_FAILURE_THRESHOLD = 3
 
@@ -121,8 +120,8 @@ class ObservedRedisManager(AsyncRedisManager):
                     "Socket.IO Redis ACK probe recovered host_id=%s", self.host_id
                 )
 
-    async def run_ack_probe(self) -> None:
+    async def run_ack_probe(self, interval_seconds: float) -> None:
         """Check independently of HTTP traffic and local Socket.IO connections."""
         while True:
             await self.check_ack()
-            await asyncio.sleep(ACK_PROBE_INTERVAL_SECONDS)
+            await asyncio.sleep(interval_seconds)
