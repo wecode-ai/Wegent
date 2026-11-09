@@ -59,7 +59,7 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     config["manual"] = json!(true);
     let initial_issue = issue.lock().unwrap().clone();
     let error = handler
-        .start_cloud_stand_in_with_roles(&[config.clone()], &initial_issue)
+        .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &initial_issue)
         .await
         .unwrap_err();
     assert_eq!(error.code, "cloud_request_failed");
@@ -67,7 +67,7 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].1["retryCount"], 1);
     handler
-        .queue_stand_in_dispatches(&[config.clone()], &issue.lock().unwrap())
+        .queue_stand_in_dispatches(std::slice::from_ref(&config), &issue.lock().unwrap())
         .unwrap();
     assert_eq!(store.pending_stand_in_dispatches().unwrap().len(), 1);
     drop(handler);
@@ -105,7 +105,7 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     );
     assert!(restarted.local_task_links(true).is_empty());
     restarted
-        .queue_stand_in_dispatches(&[config.clone()], &initial_issue)
+        .queue_stand_in_dispatches(std::slice::from_ref(&config), &initial_issue)
         .unwrap();
     issue.lock().unwrap()["human_task_binding"]["assignmentId"] = json!("reassigned");
     restarted
@@ -155,7 +155,7 @@ async fn stand_in_dispatch_does_not_replay_accepted_or_deleted_work() {
             ..Default::default()
         });
         assert!(handler
-            .queue_stand_in_dispatches(&[config.clone()], &issue)
+            .queue_stand_in_dispatches(std::slice::from_ref(&config), &issue)
             .unwrap()
             .is_empty());
         handler
