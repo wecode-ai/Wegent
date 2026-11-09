@@ -8,9 +8,11 @@ impl LocalTaskStore {
             "stand-in-dispatch:{:x}",
             Sha256::digest(intent.to_string().as_bytes())
         );
+        let mut queued = intent.clone();
+        queued["lastAttemptAt"] = json!(Utc::now().timestamp());
         self.connection()?.execute(
             "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_dispatch',?2,?3,?3) ON CONFLICT(id) DO NOTHING",
-            params![id, intent.to_string(), now()],
+            params![id, queued.to_string(), now()],
         )?;
         Ok(id)
     }
@@ -54,6 +56,23 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_intents_start_with_backoff_and_duplicates_preserve_retry_state() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let intent = json!({"userId":7});
+        let before = Utc::now().timestamp();
+        let id = store.queue_stand_in_dispatch(&intent).unwrap();
+        let pending = store.pending_stand_in_dispatches().unwrap();
+        assert!(pending[0].1["lastAttemptAt"].as_i64().unwrap() >= before);
+        store
+            .defer_stand_in_dispatch(&id, "cloud_unavailable")
+            .unwrap();
+        let deferred = store.pending_stand_in_dispatches().unwrap();
+        assert_eq!(store.queue_stand_in_dispatch(&intent).unwrap(), id);
+        assert_eq!(store.pending_stand_in_dispatches().unwrap(), deferred);
+    }
 
     #[test]
     fn stopping_cancels_only_the_owners_dispatch_intents() {

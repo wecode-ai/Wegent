@@ -15,6 +15,38 @@ beforeEach(() => {
   request.mockReset()
 })
 
+test('shares a live status read between background polling and an operation guard', async () => {
+  let finish!: (value: { configured: boolean; connected: boolean }) => void
+  request.mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+  const polling = refreshLocalExecutorCloudConnectionStatus('/api')
+  const operation = refreshLocalExecutorCloudConnectionStatus('/api')
+  expect(request).toHaveBeenCalledTimes(1)
+  finish({ configured: true, connected: true })
+  expect(await polling).toEqual({ configured: true, connected: true })
+  expect(await operation).toEqual({ configured: true, connected: true })
+})
+
+test('does not reuse a pending read after the account connection is reset', async () => {
+  let finish!: (value: { configured: boolean; connected: boolean }) => void
+  request.mockReturnValueOnce(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+  const old = refreshLocalExecutorCloudConnectionStatus('/api')
+  resetLocalExecutorCloudConnectionStatus()
+  request.mockResolvedValueOnce({ configured: false, connected: false })
+  const current = refreshLocalExecutorCloudConnectionStatus('/api')
+  expect(request).toHaveBeenCalledTimes(2)
+  finish({ configured: true, connected: true })
+  expect(await old).toBeNull()
+  expect(await current).toEqual({ configured: false, connected: false })
+})
+
 test('distinguishes missing Executor configuration from a failed status read', async () => {
   request.mockResolvedValueOnce({ configured: false, connected: false })
   expect(await refreshLocalExecutorCloudConnectionStatus('/api')).toEqual({
