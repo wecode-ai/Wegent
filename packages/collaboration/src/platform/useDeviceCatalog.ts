@@ -67,16 +67,32 @@ export function useDeviceCatalog(
   }
   const matchedLocal = new Set<CollaborationExecutionEnvironment>()
   const registered = cloudItems.map((device) => {
-    const siblingCount = registrationCounts.get(identity(device)) ?? 0
-    const current = localItems.find((candidate) => {
-      if (identity(candidate) !== identity(device)) return false
-      if (candidate.runtime_instance_id && device.runtime_instance_id) {
-        return candidate.runtime_instance_id === device.runtime_instance_id
+    const key = identity(device)
+    const siblingCount = registrationCounts.get(key) ?? 0
+    const candidates = localItems.filter(
+      (candidate) => identity(candidate) === key,
+    )
+    const runtime = device.runtime_instance_id?.trim()
+    const current = candidates.find((candidate) => {
+      const localRuntime = candidate.runtime_instance_id?.trim()
+      if (localRuntime && runtime) {
+        return localRuntime === runtime
       }
       return siblingCount === 1
     })
-    if (current) matchedLocal.add(current)
-    return current ? { ...device, is_current_device: true } : device
+    if (current) {
+      matchedLocal.add(current)
+      return { ...device, is_current_device: true }
+    }
+    // A failed local status read can retain the app ID without a runtime ID.
+    // Protect all matching registrations until the local runtime is known.
+    if (
+      siblingCount > 1 &&
+      candidates.some((candidate) => !candidate.runtime_instance_id?.trim())
+    ) {
+      return { ...device, is_current_device_candidate: true }
+    }
+    return device
   })
   const devices = [
     ...localItems.filter((device) => !matchedLocal.has(device)),

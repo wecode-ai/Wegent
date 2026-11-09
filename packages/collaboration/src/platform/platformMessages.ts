@@ -58,6 +58,8 @@ export const platformMessages = {
     deviceDeleteConflict:
       "设备已上线或仍有任务，无法删除。请刷新设备状态后重试。",
     deviceDeleteMissing: "此设备记录已被移除。请刷新列表。",
+    deviceDeleteIdentityUnresolved:
+      "此记录可能属于当前设备。请确认本机状态后再试。",
     deviceDeleteFailed: "无法删除设备。请检查连接后重试。",
     deviceIdentifier: "设备标识",
     lastSeen: "最近在线",
@@ -285,6 +287,8 @@ export const platformMessages = {
       "The device is online or still has tasks. Refresh its status before trying again.",
     deviceDeleteMissing:
       "This device registration has already been removed. Refresh the list.",
+    deviceDeleteIdentityUnresolved:
+      "This registration may belong to the current device. Check the local device status before trying again.",
     deviceDeleteFailed:
       "Could not delete the device. Check your connection and try again.",
     deviceIdentifier: "Device ID",

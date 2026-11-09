@@ -105,6 +105,10 @@ classify_path() {
       mark_all
       return
       ;;
+    .github/scripts/install-e2e-apt-packages.sh)
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
+      ;;
     .github/workflows/e2e-tests.yml | \
       .github/scripts/run-attachment-replica-e2e.sh | \
       .github/scripts/run-knowledge-provider-e2e.sh | \

@@ -6,6 +6,14 @@ export type ResourceSource = "local" | "cloud";
 export type ResourceScope = "all" | "mine" | "shared";
 export type ResourceCatalogKind = "agents" | "teams" | "devices";
 
+export function isDeviceDeletionProtected(
+  device: import("../types").CollaborationExecutionEnvironment,
+): boolean {
+  return Boolean(
+    device.is_current_device || device.is_current_device_candidate,
+  );
+}
+
 export function canDeleteOfflineDevice(
   device: import("../types").CollaborationExecutionEnvironment,
   currentUserId?: number,
@@ -15,7 +23,7 @@ export function canDeleteOfflineDevice(
     device.owner_type === "user" &&
     device.owner_id === String(currentUserId) &&
     device.status === "offline" &&
-    !device.is_current_device &&
+    !isDeviceDeletionProtected(device) &&
     Number.isSafeInteger(device.device_id) &&
     Number(device.device_id) > 0
   );

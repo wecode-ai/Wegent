@@ -883,6 +883,7 @@ jobs:
 
       - name: Start backend server
         env:
+          PYTHONPATH: ..:.:tests/e2e
           EXTERNAL_KNOWLEDGE_MCP_ENABLED: "true"
           EMBEDDED_CELERY_ENABLED: "false"
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -895,6 +896,7 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
+          WEGENT_PYTHON_APP: mcp_marketplace_app:app
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           KNOWLEDGE_CONVERSION_ENABLED: "true"
           KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
@@ -1985,10 +1987,13 @@ jobs:
           E2E_DEVICE_ID: e2e-claudecode-device
           CI: true
         run: |
+          # Sandbox veth changes must not invalidate the browser's network stack.
           repository_name="${GITHUB_REPOSITORY##*/}"
           container_workspace="/__w/$repository_name/$repository_name"
           docker run --rm \
-            --network host \
+            --network bridge \
+            --add-host wegent-e2e-runner:host-gateway \
+            --entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh" \
             --ipc host \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --volume "$GITHUB_WORKSPACE:$container_workspace" \
@@ -2072,7 +2077,9 @@ jobs:
           repository_name="${GITHUB_REPOSITORY##*/}"
           container_workspace="/__w/$repository_name/$repository_name"
           docker run --rm \
-            --network host \
+            --network bridge \
+            --add-host wegent-e2e-runner:host-gateway \
+            --entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh" \
             --ipc host \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --volume "$GITHUB_WORKSPACE:$container_workspace" \

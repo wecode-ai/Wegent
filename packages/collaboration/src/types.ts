@@ -284,6 +284,7 @@ export interface CollaborationExecutionEnvironment {
   app_device_id?: string;
   runtime_instance_id?: string;
   is_current_device?: boolean;
+  is_current_device_candidate?: boolean;
   last_seen_at?: string | null;
   workspace_ids?: string[];
   name: string;

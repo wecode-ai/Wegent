@@ -8,6 +8,7 @@ import type { PlatformMessages } from "./platformMessages";
 
 export function DeviceDeleteDialog({
   device,
+  protectedRegistration = false,
   workspaceNames,
   locale,
   messages,
@@ -15,6 +16,7 @@ export function DeviceDeleteDialog({
   onClose,
 }: {
   device: CollaborationExecutionEnvironment;
+  protectedRegistration?: boolean;
   workspaceNames: string[];
   locale: string;
   messages: PlatformMessages;
@@ -44,7 +46,7 @@ export function DeviceDeleteDialog({
     };
   }, []);
   const remove = async () => {
-    if (locked.current) return;
+    if (locked.current || protectedRegistration) return;
     locked.current = true;
     setPending(true);
     setError(null);
@@ -136,9 +138,11 @@ export function DeviceDeleteDialog({
             </p>
           ) : null}
         </div>
-        {error ? (
+        {protectedRegistration || error ? (
           <p role="alert" className="collaboration-resource-form-error">
-            {error}
+            {protectedRegistration
+              ? messages.deviceDeleteIdentityUnresolved
+              : error}
           </p>
         ) : null}
         <div className="collaboration-resource-form-actions collaboration-delete-agent-actions">
@@ -155,7 +159,7 @@ export function DeviceDeleteDialog({
             type="button"
             className="collaboration-primary-button"
             data-testid="collaboration-delete-device-confirm"
-            disabled={pending}
+            disabled={pending || protectedRegistration}
             onClick={() => void remove()}
           >
             {pending ? messages.deleting : messages.deleteDevice}

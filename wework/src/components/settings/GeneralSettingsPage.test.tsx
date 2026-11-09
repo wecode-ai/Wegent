@@ -9,6 +9,8 @@ import { RuntimeConcurrencySettings } from './RuntimeConcurrencySettings'
 
 const defaultPreferences: AppPreferences = {
   workbenchMode: 'developer',
+  appearanceMode: 'system',
+  appearanceThemeSnapshot: null,
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -76,6 +78,8 @@ vi.mock('@/hooks/useTranslation', () => ({
 vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
     workbenchMode: 'developer',
+    appearanceMode: 'system',
+    appearanceThemeSnapshot: null,
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     fixedWorkspaceTabs: [

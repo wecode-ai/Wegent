@@ -28,6 +28,14 @@ Open **top + → Collaboration**. Global catalogs, space settings and project se
 | Space agents/teams                | Space settings → Collaboration members → Agents / Teams; add/create and configure lead, members, rules and execution requirements, then save | Removing a shared association differs from deleting a project-owned group; inspect impact                                   |
 | Space execution environment       | Space settings → Execution environment → add/share                                                                                           | Separate from project repository initialization; depends on storage type and capabilities                                   |
 
+### Clean up offline device registrations
+
+<a id="offline-device-cleanup"></a>
+
+Open **Top + → Collaboration → Devices**. Use the device ID and last online time to find the historical registration. Select **Delete offline device** on its row, review the registration number and affected spaces, then confirm.
+
+You can remove a registration you own when it is offline and has no running tasks. The current device is protected, as are records that could belong to it while its local identity is unavailable. Removing the registration takes it out of the device selectors in those spaces and preserves device files and execution history. See [Offline Device Handling](../wegent/user-guide/ai-devices/local-device-support.md#offline-device-cleanup) for last online display and reconnection behavior.
+
 ### Register a space Runner
 
 When supported for a cloud space, use the create action under **Space settings → Execution environment** to open **Register workspace runner**. Enter its name and register. Follow the dialog to securely configure `DEVICE_ID`, `WEGENT_AUTH_TOKEN` and `WEGENT_BACKEND_URL` on the target server and run Executor, then verify online status in Wework.

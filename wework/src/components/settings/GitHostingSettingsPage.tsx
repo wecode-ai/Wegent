@@ -180,7 +180,7 @@ export function GitHostingSettingsPage() {
                     </h2>
                     <span
                       data-testid={`git-hosting-cli-${provider}-status`}
-                      className={`text-xs ${ready ? 'text-green-500' : 'text-text-muted'}`}
+                      className={`text-xs ${ready ? 'text-success' : 'text-text-muted'}`}
                     >
                       {statusLabel(t, status, loading)}
                     </span>
@@ -221,7 +221,7 @@ export function GitHostingSettingsPage() {
                       className="inline-flex h-8 items-center gap-2 rounded-lg bg-muted px-3 text-sm text-text-primary hover:bg-hover"
                     >
                       {copiedProvider === provider ? (
-                        <Check className="h-4 w-4 text-green-500" />
+                        <Check className="h-4 w-4 text-success" />
                       ) : (
                         <Copy className="h-4 w-4" />
                       )}
@@ -241,7 +241,7 @@ export function GitHostingSettingsPage() {
       </div>
 
       {error ? (
-        <p data-testid="git-hosting-settings-error" className="mt-4 text-xs text-red-500">
+        <p data-testid="git-hosting-settings-error" className="mt-4 text-xs text-destructive">
           {error}
         </p>
       ) : null}

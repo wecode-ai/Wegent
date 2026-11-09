@@ -459,6 +459,10 @@ class RealCloudEnvironment {
       ...this.scenarioBackendEnv,
     }
     this.backendEnv = backendEnv
+    // Seed before device requests can start a remote refresh that races fixture updates.
+    await this.observePreparation('executor-version-seeding', () =>
+      this.setExecutorLatestVersion('1.0.0')
+    )
     await this.observePreparation('database-migrate', () =>
       runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
         cwd: backendDirectory,

@@ -41,35 +41,39 @@ async function render(
   devices: CollaborationExecutionEnvironment[],
   remove = vi.fn(async () => {}),
 ) {
-  await act(async () =>
-    root.render(
-      <ResourceCatalogPage
-        api={{} as SharedWorkspaceApi}
-        domain="cloud"
-        kind="devices"
-        cloudAccess={{ status: "connected" } as never}
-        agents={[]}
-        groups={[]}
-        environments={devices}
-        locale="zh-CN"
-        currentUserId={7}
-        translate={(_key, fallback) => fallback ?? ""}
-        canCreateDevice={false}
-        workspaces={[]}
-        projects={[]}
-        ownerOptions={[]}
-        messages={messages}
-        onAddToWorkspace={async () => {}}
-        onCreateAgent={() => {}}
-        onCreateDevice={() => {}}
-        onCreateLocalAgent={() => {}}
-        onCreateTeam={() => {}}
-        onDeleteAgent={async () => {}}
-        onDeleteTeam={async () => {}}
-        onManageResource={() => {}}
-        onDeleteDevice={remove}
-      />,
-    ),
+  await act(async () => root.render(deviceCatalogPage(devices, remove)));
+}
+function deviceCatalogPage(
+  devices: CollaborationExecutionEnvironment[],
+  remove: (device: CollaborationExecutionEnvironment) => Promise<void>,
+) {
+  return (
+    <ResourceCatalogPage
+      api={{} as SharedWorkspaceApi}
+      domain="cloud"
+      kind="devices"
+      cloudAccess={{ status: "connected" } as never}
+      agents={[]}
+      groups={[]}
+      environments={devices}
+      locale="zh-CN"
+      currentUserId={7}
+      translate={(_key, fallback) => fallback ?? ""}
+      canCreateDevice={false}
+      workspaces={[]}
+      projects={[]}
+      ownerOptions={[]}
+      messages={messages}
+      onAddToWorkspace={async () => {}}
+      onCreateAgent={() => {}}
+      onCreateDevice={() => {}}
+      onCreateLocalAgent={() => {}}
+      onCreateTeam={() => {}}
+      onDeleteAgent={async () => {}}
+      onDeleteTeam={async () => {}}
+      onManageResource={() => {}}
+      onDeleteDevice={remove}
+    />
   );
 }
 async function click(id: string) {
@@ -286,6 +290,74 @@ it.each(["online", "offline"] as const)(
     ).toBe(false);
   },
 );
+
+it("protects same-app records while a local status failure hides runtime identity and restores historical deletion on recovery", async () => {
+  const { useDeviceCatalog } = await import("./useDeviceCatalog");
+  const local = {
+    ...device,
+    id: "local",
+    device_id: 0,
+    device_key: "desktop",
+    is_current_device: true,
+    runtime_instance_id: "current-runtime",
+  };
+  const listLocal = vi
+    .fn()
+    .mockResolvedValueOnce([local])
+    .mockResolvedValueOnce([{ ...local, runtime_instance_id: undefined }])
+    .mockResolvedValue([local]);
+  const remove = vi.fn(async () => {});
+  const api = {
+    resources: {
+      devices: {
+        local: listLocal,
+        cloud: async () => [
+          {
+            ...device,
+            app_device_id: "desktop",
+            runtime_instance_id: "old-runtime",
+          },
+          {
+            ...device,
+            id: "43",
+            device_id: 43,
+            app_device_id: "desktop",
+            runtime_instance_id: "current-runtime",
+          },
+          { ...device, id: "44", device_id: 44, device_key: "unrelated" },
+        ],
+      },
+    },
+  } as SharedWorkspaceApi;
+  let refresh!: () => Promise<void>;
+  function Harness() {
+    const catalog = useDeviceCatalog(api, true);
+    refresh = catalog.refresh;
+    return deviceCatalogPage(catalog.items, remove);
+  }
+  const button = (id: string) =>
+    container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
+  const deleteButton = (id: number) =>
+    button(`collaboration-devices-delete-${id}`);
+  await act(async () => root.render(<Harness />));
+  expect(deleteButton(42)).not.toBeNull();
+  expect(deleteButton(43)).toBeNull();
+  await click("collaboration-devices-delete-42");
+
+  await act(async () => refresh());
+  expect(deleteButton(42)).toBeNull();
+  expect(deleteButton(43)).toBeNull();
+  expect(deleteButton(44)).not.toBeNull();
+  expect(button("collaboration-delete-device-confirm")?.disabled).toBe(true);
+  await click("collaboration-delete-device-confirm");
+  expect(remove).not.toHaveBeenCalled();
+  await click("collaboration-delete-device-cancel");
+
+  await act(async () => refresh());
+  expect(deleteButton(42)).not.toBeNull();
+  expect(deleteButton(43)).toBeNull();
+  expect(deleteButton(44)).not.toBeNull();
+});
 
 it("reports deletion conflicts immediately while both discovery sources have pending work and recovers independently", async () => {
   let finishLocal!: (items: CollaborationExecutionEnvironment[]) => void;
