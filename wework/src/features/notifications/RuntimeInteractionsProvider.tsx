@@ -56,6 +56,7 @@ import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
 import { persistInteractionArchive } from './interactionArchive'
+import { useRuntimeInteractionSettlements } from './useRuntimeInteractionSettlements'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
@@ -608,6 +609,15 @@ function RuntimeInteractionsState({
     },
     [setDraft]
   )
+  const settleFromConversation = useCallback(
+    async (item: RuntimeInteraction) => {
+      await archive(item, Date.now())
+      saveInteractionState(acceptancePrefix + item.id, true)
+      if (mounted.current) markHandled(item.id)
+    },
+    [acceptancePrefix, archive, markHandled]
+  )
+  useRuntimeInteractionSettlements(pending, settleFromConversation)
   const dismiss = useCallback(
     async (item: RuntimeInteraction) => {
       if (item.sharedRequest || inFlight.current.has(item.id)) return

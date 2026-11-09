@@ -21,6 +21,7 @@ import {
   selectTool,
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
 
 const PROMPT = 'WEWORK_CONSECUTIVE_ASYNC_QUESTIONS'
 const COMPLETE = 'WEWORK_CONSECUTIVE_ANSWERS_ACCEPTED'
@@ -183,7 +184,10 @@ export function createDesktopScenario({
           'click',
           `${CARD} [data-testid=${JSON.stringify(`request-user-input-option-${thirdId}-1`)}]`
         )
+        // Two async requests contain three questions; draft selection does not settle either.
+        await verifyPendingInteractionsTab(control, 2)
         await control.command('click', `${CARD} [data-testid="request-user-input-submit-button"]`)
+        await verifyPendingInteractionsTab(control, 0)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -208,6 +212,7 @@ export function createDesktopScenario({
           0,
           'Answered questions must remain settled after reloading'
         )
+        await verifyPendingInteractionsTab(control, 0)
       } finally {
         active = false
         releaseSecond()
