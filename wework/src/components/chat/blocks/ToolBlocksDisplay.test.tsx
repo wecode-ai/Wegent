@@ -219,8 +219,11 @@ describe('ToolBlocksDisplay', () => {
     const line = content.parentElement
 
     expect(line?.firstElementChild).toHaveTextContent('1')
-    expect(line).toHaveClass('border-green-500', 'bg-green-500/10')
-    expect(line).not.toHaveClass('border-red-500', 'bg-red-500/10')
+    expect(line).toHaveClass(
+      'border-[rgb(var(--color-diff-added,34_197_94))]',
+      'bg-[rgb(var(--color-diff-added,34_197_94)/0.1)]'
+    )
+    expect(line).not.toHaveClass('border-[rgb(var(--color-diff-removed,239_68_68))]')
   })
 
   test('persists file detail across summary keys and clears it when the summary closes', () => {

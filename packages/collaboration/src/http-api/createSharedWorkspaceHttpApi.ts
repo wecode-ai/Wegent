@@ -416,7 +416,12 @@ export function createSharedWorkspaceHttpApi(
             ...(device.app_device_id
               ? { app_device_id: device.app_device_id }
               : {}),
+            ...(device.runtime_instance_id
+              ? { runtime_instance_id: device.runtime_instance_id }
+              : {}),
             name: device.name,
+            last_seen_at: device.last_seen_at ?? null,
+            workspace_ids: device.workspace_ids ?? [],
             kind:
               device.device_type === "cloud" || device.device_type === "remote"
                 ? ("cloud_host" as const)
@@ -431,6 +436,20 @@ export function createSharedWorkspaceHttpApi(
             updated_at: "",
           }));
         },
+      },
+      async removeDevice(device) {
+        if (
+          !Number.isSafeInteger(device.device_id) ||
+          Number(device.device_id) <= 0
+        ) {
+          throw new Error("Device registration ID is required");
+        }
+        await transport.delete(
+          `/devices/records/${device.device_id}?offline_only=true`,
+        );
+        cache.invalidate("/v1/resources");
+        cache.invalidate("/v1/workspaces/");
+        cache.invalidate("/v1/cloud-projects/");
       },
       async list() {
         return mapCollaborationPlatformResourcesDto(

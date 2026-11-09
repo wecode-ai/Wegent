@@ -2134,6 +2134,16 @@ describe('createLocalAppServices', () => {
     })
     expect(getLocalRuntimeSourceIdentity(JSON.parse(JSON.stringify(current)))).toBeUndefined()
 
+    available.mockRejectedValueOnce(new Error('local IPC unavailable'))
+    const [unavailable] = await services.deviceApi.listDevices()
+    expect(unavailable).toMatchObject({
+      device_id: 'current-ipc',
+      runtime_instance_id: null,
+      status: 'offline',
+    })
+    expect(unavailable.local_identity_unresolved).toBeUndefined()
+    expect(getLocalRuntimeSourceIdentity(unavailable)).toBeUndefined()
+
     available.mockResolvedValue({
       running: true,
       ready: true,
@@ -2158,6 +2168,7 @@ describe('createLocalAppServices', () => {
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
+        local_identity_unresolved: true,
         name: 'Local Executor',
         status: 'offline',
         device_type: 'local',

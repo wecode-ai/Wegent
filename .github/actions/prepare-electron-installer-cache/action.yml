@@ -1,0 +1,33 @@
+name: Prepare verified Electron installer cache
+description: Reuse published checksum-verified Electron downloads before the official installer
+runs:
+  using: composite
+  steps:
+    - name: Prepare OCI download tools
+      shell: bash
+      run: |
+        source .github/scripts/lib/apt-packages.sh
+        mapfile -t missing < <(find_missing_apt_packages skopeo umoci)
+        if ((${#missing[@]})); then
+          if ((EUID == 0)); then
+            apt-get update
+            apt-get install -y --no-install-recommends "${missing[@]}"
+          else
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends "${missing[@]}"
+          fi
+        fi
+
+    - name: Restore published Electron downloads
+      shell: bash
+      run: .github/scripts/restore-ci-downloads.sh
+
+    - name: Install locked Electron package dependencies
+      shell: bash
+      env:
+        ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      run: pnpm --dir wework/electron install --frozen-lockfile
+
+    - name: Prime the official Electron installer cache
+      shell: bash
+      run: node .github/scripts/prime-ci-electron-installer-cache.mjs

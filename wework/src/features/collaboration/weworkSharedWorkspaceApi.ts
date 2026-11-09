@@ -610,18 +610,18 @@ export function createWeworkDeliverySharedWorkspaceApi(
         const attachments = contextIds.map(id => ({ id }) as Attachment)
         return (await deliveryApi.importLoopItemAttachments(issueId, attachments)).map(toAttachment)
       },
-      async access(attachmentId) {
-        const access = await deliveryApi.accessLoopItemAttachment(attachmentId)
+      async access(attachmentId, context) {
+        const access = await deliveryApi.accessLoopItemAttachment(attachmentId, context)
         return { url: access.url, expiresInSeconds: access.expires_in_seconds }
       },
-      read(attachmentId) {
-        return deliveryApi.readLoopItemAttachment(attachmentId)
+      read(attachmentId, context) {
+        return deliveryApi.readLoopItemAttachment(attachmentId, context)
       },
-      download(attachmentId, filename) {
-        return deliveryApi.downloadLoopItemAttachment(attachmentId, filename)
+      download(attachmentId, filename, context) {
+        return deliveryApi.downloadLoopItemAttachment(attachmentId, filename, context)
       },
-      remove(attachmentId) {
-        return deliveryApi.deleteLoopItemAttachment(attachmentId)
+      remove(attachmentId, context) {
+        return deliveryApi.deleteLoopItemAttachment(attachmentId, context)
       },
     },
     collaborators: {

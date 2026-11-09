@@ -1,0 +1,666 @@
+/* Only desktop-owned documents opt into these renderer adapters. */
+html[data-appearance-theme] {
+  --file-change-error-bg: var(--color-diff-removed) / 0.08;
+  --file-change-error: var(--color-diff-removed);
+}
+
+html[data-appearance-theme] :is(.bn-container, .bn-root) {
+  --bn-colors-editor-text: rgb(var(--color-text-primary));
+  --bn-colors-editor-background: rgb(var(--color-bg-base));
+  --bn-colors-menu-text: rgb(var(--color-text-primary));
+  --bn-colors-menu-background: rgb(var(--color-popover));
+  --bn-colors-tooltip-text: rgb(var(--color-text-primary));
+  --bn-colors-tooltip-background: rgb(var(--color-popover));
+  --bn-colors-hovered-text: rgb(var(--color-text-primary));
+  --bn-colors-hovered-background: rgb(var(--color-bg-hover));
+  --bn-colors-selected-text: rgb(var(--color-primary-contrast));
+  --bn-colors-selected-background: rgb(var(--color-primary));
+  --bn-colors-disabled-text: rgb(var(--color-text-muted));
+  --bn-colors-disabled-background: rgb(var(--color-muted));
+  --bn-colors-border: rgb(var(--color-border));
+  --bn-colors-shadow: rgb(var(--color-overlay) / 0.2);
+  --bn-colors-side-menu: rgb(var(--color-text-muted));
+  --bn-font-family: var(--font-ui);
+  --mantine-color-body: rgb(var(--color-popover));
+  --mantine-color-text: rgb(var(--color-text-primary));
+  --mantine-color-dimmed: rgb(var(--color-text-secondary));
+  --mantine-color-default: rgb(var(--color-bg-surface));
+  --mantine-color-default-hover: rgb(var(--color-bg-hover));
+  --mantine-color-default-color: rgb(var(--color-text-primary));
+  --mantine-color-default-border: rgb(var(--color-border));
+  --mantine-color-placeholder: rgb(var(--color-text-muted));
+  --mantine-color-error: rgb(var(--color-destructive));
+  --mantine-color-anchor: rgb(var(--color-link));
+}
+
+html[data-appearance-theme]
+  .bn-editor
+  :is(
+    [data-content-type='quote'] blockquote,
+    [data-content-type='divider'] hr,
+    [data-content-type='table'] th,
+    [data-content-type='table'] td
+  ) {
+  border-color: rgb(var(--color-border));
+}
+
+html[data-appearance-theme] .bn-editor [data-content-type='quote'] blockquote {
+  color: rgb(var(--color-text-secondary));
+}
+
+html[data-appearance-theme] .bn-editor :is(.column-resize-handle, .bn-table-drop-cursor) {
+  background: rgb(var(--color-focus));
+}
+
+html[data-appearance-theme] .bn-editor .selectedCell::after {
+  background: rgb(var(--color-primary) / 0.2);
+}
+
+html[data-appearance-theme]
+  .bn-editor
+  :is(
+    .bn-block-content.ProseMirror-selectednode > *,
+    .ProseMirror-selectednode > .bn-block-content > *
+  ) {
+  outline-color: rgb(var(--color-focus));
+}
+
+html[data-appearance-theme] .bn-editor .bn-block-content[data-content-type='codeBlock'] {
+  background: rgb(var(--color-code-bg));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme]
+  .bn-editor
+  .bn-block-content[data-content-type='codeBlock']
+  > div
+  > select {
+  color: rgb(var(--color-text-secondary));
+}
+
+html[data-appearance-theme]
+  .bn-editor
+  .bn-block-content[data-content-type='codeBlock']
+  > div
+  > select
+  > option {
+  background: rgb(var(--color-popover));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme] :is(.wework-workspace-file-viewer, .wework-diagram-preview) {
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+}
+
+html[data-appearance-theme]
+  :is(.wework-workspace-file-viewer, .wework-diagram-preview)
+  :is(.image-viewer, .drawing-viewer, .drawing-diagram-shell) {
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme]
+  :is(.wework-workspace-file-viewer, .wework-diagram-preview)
+  :is(.drawing-toolbar, .image-lightbox button) {
+  background: rgb(var(--color-bg-surface));
+  border-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme] .wework-diagram-preview .drawing-actions button {
+  background: rgb(var(--color-bg-base));
+  border-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme] .wework-diagram-preview .drawing-title strong {
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme] .wework-diagram-preview .drawing-actions span {
+  color: rgb(var(--color-text-secondary));
+}
+
+/* Theme viewer controls, while document pages, cells, images and canvases keep their content colors. */
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .pdf-shell,
+    .pdf-wrapper,
+    .docx-fit-viewer,
+    .excel-wrapper,
+    .archive-shell,
+    .archive-viewer,
+    .data-viewer,
+    .markdown-viewer,
+    .fv-audio-viewer,
+    .fv-midi-viewer,
+    .fv-video-viewer,
+    .msdoc-stage,
+    .msdoc-zoom-viewer,
+    .odf-viewer,
+    .flyfish-rtf-viewer,
+    .pptx-viewer-shell,
+    .ofd-viewer,
+    .typst-viewer,
+    .geo-viewer,
+    .cad-shell,
+    .cad-body,
+    .model-viewer,
+    .eda-viewer,
+    .xmind-viewer
+  ) {
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .docx-fit-viewer .docx-wrapper {
+  /* The renderer marks its page-surrounding canvas important. */
+  background: rgb(var(--color-bg-base)) !important;
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .pdf-toolbar,
+    .pdf-nav-pane,
+    .pdf-nav-head,
+    .pdf-nav-tabs,
+    .pdf-toolbar-group,
+    .pdf-page-button,
+    .pdf-outline-empty,
+    .pdf-state,
+    .excel-wrapper .toolbar,
+    .excel-wrapper .loading-card,
+    .archive-sidebar,
+    .archive-preview-toolbar,
+    .archive-entry,
+    .archive-state > div,
+    .archive-password-card,
+    .data-card,
+    .data-summary div,
+    .asset-image,
+    .data-table th,
+    .fv-audio-card,
+    .fv-midi-card,
+    .fv-video-shell,
+    .fv-midi-card header,
+    .fv-midi-stats div,
+    .fv-midi-table th,
+    .odf-shell > header,
+    .flyfish-rtf-header,
+    .pptx-loading,
+    .pptx-error,
+    .typst-toolbar,
+    .typst-loading,
+    .typst-error,
+    .geo-panel,
+    .geo-toolbar,
+    .geo-state,
+    .geo-viewer .maplibregl-ctrl,
+    .geo-viewer .maplibregl-ctrl button,
+    .geo-viewer .maplibregl-ctrl-attrib,
+    .cad-toolbar,
+    .cad-layers,
+    .cad-inspector,
+    .cad-layers-head,
+    .cad-inspector dl div,
+    .cad-state,
+    .dwfv-toolbar,
+    .dwfv-tree,
+    .model-toolbar,
+    .model-state,
+    .eda-header,
+    .eda-summary,
+    .eda-panel,
+    .eda-sidebar,
+    .eda-stream,
+    .eda-stat-grid div,
+    .eda-mini-grid div,
+    .eda-tree button,
+    .eda-entity-group button,
+    .eda-string-grid span,
+    .eda-diagnostics p,
+    .xmind-toolbar,
+    .xmind-tabs,
+    .xmind-sidebar,
+    .xmind-stats div,
+    .fv-print-mask-toolbar
+  ) {
+  background: rgb(var(--color-bg-surface));
+  border-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .pdf-icon-button,
+    .pdf-scale-button,
+    .pdf-page-meter,
+    .pdf-rotation-meter,
+    .pdf-outline-button,
+    .pdf-nav-tabs button,
+    .pdf-nav-head strong,
+    .pdf-page-meter strong,
+    .data-header h2,
+    .data-summary strong,
+    .data-table,
+    .archive-empty strong,
+    .fv-audio-copy strong,
+    .fv-midi-card header strong,
+    .fv-midi-stats strong,
+    .fv-midi-table,
+    .fv-video-heading strong,
+    .excel-wrapper .loading-copy strong,
+    .odf-shell > header h2,
+    .flyfish-rtf-header strong,
+    .typst-toolbar strong,
+    .typst-loading strong,
+    .typst-error strong,
+    .cad-layers button,
+    .cad-inspector strong,
+    .cad-inspector dd,
+    .eda-summary strong,
+    .eda-header dd,
+    .eda-mini-grid strong,
+    .eda-stat-grid strong,
+    .eda-entity-group h3,
+    .eda-local-strings strong,
+    .xmind-stats strong,
+    .xmind-outline button,
+    .xmind-title strong,
+    .fv-print-mask-toolbar span,
+    .fv-print-mask-toolbar button
+  ) {
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .excel-wrapper .summary,
+    .excel-wrapper .sheet-loading-summary,
+    .archive-head span,
+    .archive-head p,
+    .archive-preview-toolbar span,
+    .entry-copy em,
+    .archive-entry small,
+    .archive-empty,
+    .archive-state p,
+    .archive-password-card p,
+    .data-summary span,
+    .data-table th,
+    .fv-audio-copy p,
+    .fv-audio-meter,
+    .fv-midi-state,
+    .fv-midi-stats span,
+    .fv-midi-table th,
+    .fv-video-hint,
+    .pdf-outline-toggle,
+    .excel-wrapper .loading-copy p,
+    .pptx-error p,
+    .typst-toolbar span,
+    .typst-toolbar em,
+    .typst-loading p,
+    .geo-panel dt,
+    .geo-counts strong,
+    .cad-zoom,
+    .cad-meta span,
+    .cad-layers-head span,
+    .cad-layers button.muted,
+    .cad-inspector dt,
+    .dwfv-status,
+    .dwfv-tree-stats,
+    .dwfv-tree-meta,
+    .model-actions span,
+    .model-meta,
+    .eda-header dt,
+    .eda-summary p,
+    .eda-warning p,
+    .eda-empty p,
+    .eda-entity-group p,
+    .eda-mini-grid span,
+    .eda-stat-grid span,
+    .eda-stream em,
+    .eda-stream small,
+    .eda-tree em,
+    .eda-tree small,
+    .eda-entity-group button > span,
+    .eda-entity-group dl div,
+    .eda-entity-group dt,
+    .eda-property-grid span,
+    .xmind-actions span,
+    .xmind-stats span
+  ) {
+  color: rgb(var(--color-text-secondary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .data-header,
+    .data-summary,
+    .font-preview,
+    .asset-image,
+    .asset-text,
+    .data-table-wrap,
+    .data-table th,
+    .data-table td,
+    .fv-midi-card header,
+    .fv-midi-stats,
+    .fv-midi-table th,
+    .fv-midi-table td,
+    .fv-video-heading
+  ) {
+  border-color: rgb(var(--color-border));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .data-summary,
+html[data-appearance-theme] .wework-workspace-file-viewer .fv-midi-stats {
+  background: rgb(var(--color-border));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .archive-search,
+    .archive-password-card input,
+    .archive-sidebar-toggle,
+    .archive-preview-toolbar .archive-sidebar-toggle,
+    .archive-password-cancel,
+    .eda-search,
+    .cad-tools button,
+    .cad-viewer-native-host .dwfv-toolbar button,
+    .cad-viewer-native-host .dwfv-toolbar select,
+    .model-actions button,
+    .xmind-actions button,
+    .xmind-tabs button
+  ) {
+  background: rgb(var(--color-bg-base));
+  border-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .pdf-icon-button:hover:not(:disabled),
+    .pdf-scale-button:hover,
+    .pdf-icon-button--active,
+    .pdf-nav-tabs button:hover,
+    .pdf-nav-tabs button.active,
+    .pdf-page-button:hover,
+    .pdf-page-button--active,
+    .pdf-outline-button:hover,
+    .excel-wrapper .sheet-tab:hover,
+    .excel-wrapper .sheet-tab.active,
+    .archive-sidebar-toggle:hover,
+    .archive-entry:hover,
+    .archive-entry.active,
+    .geo-viewer .maplibregl-ctrl button:hover,
+    .cad-tools button:hover,
+    .cad-layers button:hover,
+    .model-actions button:hover,
+    .model-actions button.active,
+    .eda-stream:hover,
+    .eda-stream.active,
+    .eda-tree button:hover,
+    .eda-tree button.active,
+    .eda-entity-group button:hover,
+    .xmind-actions button:hover,
+    .xmind-tabs button.active,
+    .xmind-outline button:hover,
+    .fv-print-mask-toolbar button:hover,
+    .psd-actions button:hover,
+    .psd-layer:hover,
+    .git-bundle-list button:hover,
+    .git-bundle-list button.active,
+    .git-bundle-tree button:hover,
+    .git-bundle-tree button.active
+  ) {
+  background: rgb(var(--color-bg-hover));
+  border-color: rgb(var(--color-primary) / 0.4);
+  color: rgb(var(--color-primary));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .excel-wrapper .sheet-tab {
+  color: rgb(var(--color-text-secondary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .archive-preview-toolbar .archive-download-button,
+    .archive-password-submit,
+    .geo-toolbar button,
+    .geo-toolbar button:hover,
+    .fv-print-mask-toolbar button.primary
+  ) {
+  background: rgb(var(--color-primary));
+  color: rgb(var(--color-primary-contrast));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .data-header span,
+    .fv-audio-kicker,
+    .fv-midi-card header span,
+    .fv-video-heading span,
+    .excel-wrapper .loading-kicker,
+    .odf-shell > header span,
+    .flyfish-rtf-header span,
+    .xmind-title span,
+    .eda-tree span,
+    .eda-diagnostics span,
+    .eda-header span,
+    .eda-panel-head span,
+    .model-meta strong,
+    .geo-viewer .maplibregl-ctrl-attrib a
+  ) {
+  color: rgb(var(--color-primary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .entry-ext,
+    .excel-wrapper .sheet-loading,
+    .excel-wrapper .loading-brand,
+    .geo-panel > span,
+    .cad-meta span,
+    .eda-stream span,
+    .eda-selected-meta span,
+    .eda-property-grid div,
+    .eda-local-strings span,
+    .eda-layout-meta span
+  ) {
+  background: rgb(var(--color-primary) / 0.1);
+  border-color: rgb(var(--color-primary) / 0.25);
+  color: rgb(var(--color-primary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(.excel-wrapper .sheet-loading-dot, .fv-audio-art, .fv-audio-progress i, .pptx-loading-dot) {
+  background: rgb(var(--color-primary));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .fv-audio-progress {
+  background: rgb(var(--color-primary) / 0.15);
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(.archive-spinner, .excel-wrapper .loading-spinner, .typst-loading span, .eda-state span) {
+  border-color: rgb(var(--color-primary) / 0.2);
+  border-top-color: rgb(var(--color-primary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(.archive-state, .excel-wrapper .loading, .ofd-state, .eda-state, .xmind-state) {
+  background: rgb(var(--color-bg-base) / 0.9);
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .archive-warning,
+    .excel-wrapper .error,
+    .cad-warning,
+    .dwfv-warn,
+    .eda-warning,
+    .eda-diagnostics p[data-level='warning'],
+    .git-bundle-notice
+  ) {
+  background: rgb(var(--color-warning) / 0.1);
+  color: rgb(var(--color-warning));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .archive-info {
+  background: rgb(var(--color-info) / 0.1);
+  color: rgb(var(--color-info));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .archive-error {
+  background: rgb(var(--color-destructive) / 0.1);
+  color: rgb(var(--color-destructive));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .pdf-state--error,
+    .fv-midi-error,
+    .markdown-mermaid-error,
+    .ofd-state.error,
+    .geo-state.error,
+    .cad-state.error,
+    .model-state.error,
+    .model-state strong,
+    .xmind-state.error
+  ) {
+  color: rgb(var(--color-destructive));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .archive-password-error {
+  color: rgb(var(--color-destructive)) !important;
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .archive-password-card input:focus {
+  border-color: rgb(var(--color-focus));
+  box-shadow: 0 0 0 3px rgb(var(--color-focus) / 0.15);
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .markdown-body {
+  --bgColor-default: rgb(var(--color-bg-surface));
+  --bgColor-muted: rgb(var(--color-code-bg));
+  --bgColor-neutral-muted: rgb(var(--color-muted));
+  --borderColor-default: rgb(var(--color-border));
+  --borderColor-muted: rgb(var(--color-border));
+  --borderColor-neutral-muted: rgb(var(--color-border));
+  --fgColor-default: rgb(var(--color-text-primary));
+  --fgColor-muted: rgb(var(--color-text-secondary));
+  --fgColor-accent: rgb(var(--color-link));
+  border-color: rgb(var(--color-border));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .code-viewer {
+  --code-bg: rgb(var(--color-code-bg));
+  --code-toolbar-bg: rgb(var(--color-bg-surface));
+  --code-border: rgb(var(--color-border));
+  --code-text: rgb(var(--color-text-primary));
+  --code-muted: rgb(var(--color-text-secondary));
+  --code-keyword: rgb(var(--color-syntax-keyword));
+  --code-title: rgb(var(--color-syntax-function));
+  --code-string: rgb(var(--color-syntax-string));
+  --code-number: rgb(var(--color-syntax-number));
+  --code-comment: rgb(var(--color-syntax-comment));
+  --code-attr: rgb(var(--color-syntax-variable));
+  --code-built-in: rgb(var(--color-syntax-type));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .patch-viewer {
+  --patch-bg: rgb(var(--color-bg-base));
+  --patch-surface: rgb(var(--color-bg-surface));
+  --patch-border: rgb(var(--color-border));
+  --patch-text: rgb(var(--color-text-primary));
+  --patch-muted: rgb(var(--color-text-secondary));
+  --patch-add: rgb(var(--color-diff-added) / 0.12);
+  --patch-del: rgb(var(--color-diff-removed) / 0.12);
+  --patch-info: rgb(var(--color-info) / 0.12);
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(.patch-toolbar, .patch-body .d2h-file-header) {
+  background: rgb(var(--color-bg-surface));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(.patch-fallback, .asset-text, .eda-panel pre) {
+  background: rgb(var(--color-code-bg));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .code-virtual-line--match {
+  background: rgb(var(--color-warning) / 0.15);
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .code-virtual-content mark {
+  background: rgb(var(--color-primary));
+  color: rgb(var(--color-primary-contrast));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer :is(.typst-error pre, .eda-error) {
+  background: rgb(var(--color-destructive) / 0.1);
+  color: rgb(var(--color-destructive));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .file-viewer-missing-renderer {
+  /* The unsupported-renderer state uses inline colors. */
+  color: rgb(var(--color-text-secondary)) !important;
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .file-viewer-missing-renderer strong {
+  color: rgb(var(--color-text-primary)) !important;
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .psd-viewer {
+  --psd-bg: rgb(var(--color-bg-base));
+  --psd-surface: rgb(var(--color-bg-surface));
+  --psd-border: rgb(var(--color-border));
+  --psd-text: rgb(var(--color-text-primary));
+  --psd-muted: rgb(var(--color-text-secondary));
+  --psd-accent: rgb(var(--color-primary));
+}
+
+html[data-appearance-theme]
+  .wework-workspace-file-viewer
+  :is(
+    .psd-toolbar,
+    .psd-sidebar,
+    .psd-sidebar-header,
+    .psd-layer,
+    .psd-actions button,
+    .git-bundle-toolbar
+  ) {
+  background: rgb(var(--color-bg-surface));
+  border-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+html[data-appearance-theme] .wework-workspace-file-viewer .git-bundle-viewer {
+  --bundle-bg: rgb(var(--color-bg-base));
+  --bundle-surface: rgb(var(--color-bg-surface));
+  --bundle-border: rgb(var(--color-border));
+  --bundle-text: rgb(var(--color-text-primary));
+  --bundle-muted: rgb(var(--color-text-secondary));
+  --bundle-accent: rgb(var(--color-primary));
+  --bundle-code: rgb(var(--color-code-bg));
+  --bundle-code-text: rgb(var(--color-text-primary));
+}
