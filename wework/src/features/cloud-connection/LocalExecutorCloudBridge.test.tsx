@@ -409,6 +409,7 @@ describe('LocalExecutorCloudBridge', () => {
         await vi.advanceTimersByTimeAsync(29_000)
       })
       expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2)
+      vi.setSystemTime(Date.now() - 1_000)
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1_000)
       })

@@ -63,7 +63,7 @@ export function LocalExecutorCloudBridge({
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     let statusTimer: ReturnType<typeof setTimeout> | null = null
     let applyingConnection = false
-    let retryNotBefore = 0
+    let retryScheduled = false
     let needsConnectorResync = false
     const isCurrentConnectionAttempt = () =>
       !cancelled && connectionGenerationRef.current === generation
@@ -80,8 +80,11 @@ export function LocalExecutorCloudBridge({
     const scheduleRetry = () => {
       if (!isCurrentConnectionAttempt() || !connected) return
       if (refreshTimer) clearTimeout(refreshTimer)
-      retryNotBefore = Date.now() + 30_000
-      refreshTimer = setTimeout(() => void applyConnection(), 30_000)
+      retryScheduled = true
+      refreshTimer = setTimeout(() => {
+        retryScheduled = false
+        void applyConnection()
+      }, 30_000)
     }
 
     const refreshConnectionStatus = async () => {
@@ -100,7 +103,7 @@ export function LocalExecutorCloudBridge({
     }
 
     const applyConnection = async () => {
-      if (applyingConnection || Date.now() < retryNotBefore) return
+      if (applyingConnection || retryScheduled) return
       applyingConnection = true
       try {
         const result = await applyLocalExecutorCloudConnection(
@@ -114,7 +117,7 @@ export function LocalExecutorCloudBridge({
           { isCurrent: isCurrentConnectionAttempt }
         )
         if (!isCurrentConnectionAttempt()) return
-        retryNotBefore = 0
+        retryScheduled = false
         if (
           result.connected &&
           typeof result.runtimeAuthTokenExpiresIn === 'number' &&
