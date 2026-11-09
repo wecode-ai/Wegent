@@ -127,6 +127,7 @@ import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
+import { createRuntimeWorkRefreshQueue } from './workbenchDataRefreshHelpers'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { reportArchivedCleanupFailure } from '@/components/settings/archivedConversationsSettingsState'
@@ -2092,22 +2093,36 @@ function OwnedWorkbenchProvider({
       console.warn('[Wework] Failed to refresh runtime work after tab reveal', error)
     })
   }, [stableRefreshWorkLists, workspaceTabRevealRevision])
-  useEffect(
-    () =>
-      resolvedServices.chatStream.subscribe({
-        onRuntimeWorkChanged: payload => {
-          if (payload.archiveCleanup?.errors.length) {
-            const { workspacePath, errors } = payload.archiveCleanup
-            reportArchivedCleanupFailure(
-              `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
-              t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
-            )
-          }
-          void stableRefreshWorkLists({ refreshDevices: false })
-        },
-      }),
-    [resolvedServices.chatStream, stableRefreshWorkLists, t]
-  )
+  useEffect(() => {
+    const queue = createRuntimeWorkRefreshQueue(() =>
+      stableRefreshWorkLists({ refreshDevices: false })
+    )
+    const refreshChangedWork = () => queue.refresh()
+    const unsubscribe = resolvedServices.chatStream.subscribe({
+      onRuntimeWorkChanged: payload => {
+        if (payload.archiveCleanup?.errors.length) {
+          const { workspacePath, errors } = payload.archiveCleanup
+          reportArchivedCleanupFailure(
+            `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
+            t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
+          )
+        }
+        void refreshChangedWork().catch(error => {
+          console.warn('[Wework] Failed to refresh changed runtime work', error)
+        })
+      },
+    })
+    const listener = installMainRuntimeWorkChangedListener(refreshChangedWork)
+    return () => {
+      queue.dispose()
+      unsubscribe()
+      void listener
+        ?.then(unlisten => disposeDesktopListener(unlisten, 'runtime work changed'))
+        .catch(error => {
+          console.debug('[Wework] Runtime work listener was unavailable during cleanup', error)
+        })
+    }
+  }, [resolvedServices.chatStream, stableRefreshWorkLists, t])
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedLifecycle = lifecycleStore.getTask(address)
     void refreshRuntimeTask(address)
@@ -2301,17 +2316,6 @@ function OwnedWorkbenchProvider({
     ]
   )
 
-  useEffect(() => {
-    const listener = installMainRuntimeWorkChangedListener(stableRefreshWorkLists)
-
-    return () => {
-      void listener
-        ?.then(unlisten => disposeDesktopListener(unlisten, 'runtime work changed'))
-        .catch(error => {
-          console.debug('[Wework] Runtime work listener was unavailable during cleanup', error)
-        })
-    }
-  }, [stableRefreshWorkLists])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
