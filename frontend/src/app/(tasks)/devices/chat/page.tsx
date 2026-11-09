@@ -25,7 +25,8 @@ import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useDeviceChatSidecar } from '@extensions/device-chat-sidecar'
-import { Monitor, WifiOff } from 'lucide-react'
+import { ChevronDown, Monitor, WifiOff } from 'lucide-react'
+import type { DeviceInfo } from '@/apis/devices'
 import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 import {
@@ -197,6 +198,53 @@ export default function DeviceChatPage() {
     isExistingTask ? persistedTaskDeviceId : selectedDeviceId
   )
   const selectedDevice = devices.find(d => d.device_id === activeDeviceId)
+  const isDeviceLocked = isProjectContext || isExistingTask
+  const getDeviceName = (device: DeviceInfo) =>
+    device.device_type === 'app' ? `${t('wework_device_prefix')}${device.name}` : device.name
+  const getDeviceStatus = (status: DeviceInfo['status']) =>
+    t(status === 'online' ? 'status_online' : status === 'busy' ? 'status_busy' : 'status_offline')
+
+  const deviceSelector = (
+    <div className="relative min-w-0 lg:mr-2 lg:flex lg:items-center lg:gap-2">
+      <Monitor className="hidden h-4 w-4 shrink-0 text-text-muted lg:block" aria-hidden="true" />
+      <select
+        data-testid="device-chat-target-select"
+        aria-label={t('select_device')}
+        value={activeDeviceId || ''}
+        onChange={e => handleDeviceSelect(e.target.value)}
+        disabled={isDeviceLocked}
+        className="peer absolute inset-0 h-full w-full opacity-0 lg:static lg:h-auto lg:w-auto lg:rounded-md lg:border lg:border-border lg:bg-surface lg:px-2 lg:py-1 lg:text-sm lg:opacity-100 lg:focus:outline-none lg:focus:ring-2 lg:focus:ring-primary/20 lg:disabled:cursor-not-allowed lg:disabled:opacity-60"
+      >
+        <option value="" disabled>
+          {t('select_device')}
+        </option>
+        {conversationDevices.map(device => (
+          <option
+            key={device.device_id}
+            value={device.device_id}
+            data-testid={`device-chat-option-${device.device_id}`}
+          >
+            {getDeviceName(device)} ({getDeviceStatus(device.status)})
+          </option>
+        ))}
+      </select>
+      {/* The native picker keeps the full option labels while the compact display truncates only the name. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none flex h-11 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-sm peer-focus-visible:ring-2 peer-focus-visible:ring-inset peer-focus-visible:ring-primary/40 peer-disabled:opacity-60 lg:hidden"
+      >
+        <span className="min-w-0 flex-1 truncate">
+          {selectedDevice ? getDeviceName(selectedDevice) : t('select_device')}
+        </span>
+        {selectedDevice && (
+          <span className="shrink-0 text-xs text-text-muted">
+            {getDeviceStatus(selectedDevice.status)}
+          </span>
+        )}
+        {!isDeviceLocked && <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" />}
+      </div>
+    </div>
+  )
 
   // Check if selected device is OpenClaw type
   const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
@@ -236,43 +284,13 @@ export default function DeviceChatPage() {
           activePage="devices"
           variant="with-sidebar"
           title={currentTaskTitle || t('device_chat_title') || '设备任务'}
+          centerContent={deviceSelector}
           taskDetail={selectedTaskDetail}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
         >
-          {/* Device selector in top bar */}
-          <div className="flex items-center gap-2 mr-2">
-            <Monitor className="w-4 h-4 text-text-muted" />
-            <select
-              data-testid="device-chat-target-select"
-              value={activeDeviceId || ''}
-              onChange={e => handleDeviceSelect(e.target.value)}
-              disabled={isProjectContext || isExistingTask}
-              className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <option value="" disabled>
-                {t('select_device')}
-              </option>
-              {conversationDevices.map(device => (
-                <option
-                  key={device.device_id}
-                  value={device.device_id}
-                  data-testid={`device-chat-option-${device.device_id}`}
-                >
-                  {device.device_type === 'app' ? t('wework_device_prefix') : ''}
-                  {device.name} (
-                  {device.status === 'online'
-                    ? t('status_online')
-                    : device.status === 'busy'
-                      ? t('status_busy')
-                      : t('status_offline')}
-                  )
-                </option>
-              ))}
-            </select>
-          </div>
           {sidecar.toolbar}
           {shareButton}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
