@@ -56,5 +56,9 @@ flowchart LR
 编译器测试在内存中追加注册项，要求唯一错误落在 resolver 的 `never` 分支。
 
 运行 `pnpm --filter @wegent/collaboration typecheck` 和该包的聚焦测试。
-七个旧深链的浏览器回归位于 `frontend/e2e/tests/collaboration/project-surface-links.spec.ts`，
-由默认 Chromium CI suite 收集。E2E 和像素对比需要单独执行，单元测试通过不代表已取得像素证据。
+浏览器回归位于 `frontend/e2e/tests/collaboration/project-surface-links.spec.ts`，
+由默认 Chromium CI suite 收集，验证 Web 的六个可用深链及不可用里程碑视图的既有回退。
+Web 尚未提供里程碑 API，因此基线不显示该入口，旧 `view=milestones` 会回到看板并规范化为
+`view=board`；本开关不改变宿主能力或这条既有行为。七个视图的共享映射由 golden fixture 验证，
+里程碑的实际交互由桌面的 `collaboration-milestones` CI checkpoint 覆盖。
+E2E 和像素对比需要单独执行，单元测试通过不代表已取得像素证据。

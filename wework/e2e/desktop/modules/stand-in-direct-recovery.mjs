@@ -188,7 +188,7 @@ export function createDirectRecoveryVerification(options) {
           )
         }
         workCalls++
-        events = [assistantMessage(`${MARKER}_DONE`)]
+        events = [assistantMessage(`${MARKER}_DONE_${workCalls}`)]
       }
       if (!events) return false
       const id = `${MARKER}-${Date.now()}`
@@ -352,6 +352,20 @@ export function createDirectRecoveryVerification(options) {
         )
         assert.equal(workCalls, 3)
         dispatchBatch = false
+        // A terminal child status precedes its asynchronous report to the primary conversation.
+        await storyUntil(
+          () =>
+            rpc(control, 'runtime.tasks.transcript', { taskId: `stand-in-chat-${USER}-primary` }),
+          value =>
+            value.messages.some(
+              message =>
+                message.role === 'assistant' &&
+                JSON.stringify(message.content).includes(direct.taskId) &&
+                JSON.stringify(message.content).includes(`${MARKER}_DONE_3`)
+            ),
+          options.modelResponseTimeoutMs,
+          'The latest direct work result must reach the primary conversation before archival'
+        )
         await rpc(control, 'runtime.tasks.archive', { taskId: direct.taskId })
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await openStandInActivity(control)

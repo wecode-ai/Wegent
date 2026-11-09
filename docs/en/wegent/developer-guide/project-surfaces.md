@@ -59,5 +59,10 @@ in memory and requires the only error to occur at the resolver's `never` branch.
 
 Run `pnpm --filter @wegent/collaboration typecheck` and focused package tests.
 The default Chromium CI suite collects `frontend/e2e/tests/collaboration/project-surface-links.spec.ts`
-for all seven legacy links. E2E and pixel comparisons require separate execution;
-passing unit tests does not establish pixel equivalence.
+for the six available Web legacy links and the existing unavailable-milestones fallback.
+The Web host does not provide a milestones API, so its baseline hides that entry and
+normalizes the old `view=milestones` link to the board with `view=board`. This flag
+does not change host capabilities or that existing behavior. Golden fixtures cover
+all seven shared mappings; the desktop `collaboration-milestones` CI checkpoint
+covers actual milestone interactions. E2E and pixel comparisons require separate
+execution; passing unit tests does not establish pixel equivalence.
