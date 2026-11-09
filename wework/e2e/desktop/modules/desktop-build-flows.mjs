@@ -682,7 +682,10 @@ async function verifyCloudVisionFlows(control, composerSelector) {
 export async function verifyRemoteDockerCommandFlow(
   control,
   cloudEnvironment,
-  { interactiveSessions = null } = {}
+  {
+    interactiveSessions = null,
+    projectEntry = SELECTED_DESKTOP_SEGMENT === 'remote-device-onboarding',
+  } = {}
 ) {
   await control.command('navigate', 'body', { value: '/settings/connections?addDevice=1' })
   await control.command('waitFor', '[data-testid="add-cloud-device-dialog"]', {
@@ -696,6 +699,86 @@ export async function verifyRemoteDockerCommandFlow(
     false,
     'The remote Docker setup still exposed a manual IDE URL input'
   )
+  assert.equal(
+    setupSnapshot.testIds.includes('add-device-panel'),
+    true,
+    'Connections did not render the shared device panel'
+  )
+  assert.equal(
+    setupSnapshot.testIds.includes('remote-docker-command'),
+    false,
+    'Opening device setup generated a command before the user requested one'
+  )
+  if (projectEntry) {
+    await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
+    await control.command('waitFor', '[data-testid="remote-docker-command"]', {
+      text: remoteDeviceE2EExtension.commandMarker,
+    })
+    const settingsCommand = JSON.parse(
+      await control.command('snapshot', '[data-testid="remote-docker-command"]')
+    )
+    remoteDeviceE2EExtension.assertCommand({
+      assert,
+      command: settingsCommand.text,
+      backendUrl: cloudEnvironment.backendUrl,
+      socketUrl: cloudEnvironment.socketUrl,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="copy-remote-docker-command"]')
+    await control.command('waitFor', '[data-testid="copy-remote-docker-command"]', {
+      text: '已复制',
+    })
+    assert.equal(
+      await control.command('getClipboardText', ''),
+      settingsCommand.text,
+      'Connections did not copy its complete Docker command'
+    )
+    await control.command('clickWhenEnabled', '[data-testid="add-cloud-device-cancel"]')
+    await control.command('navigate', 'body', { value: '/' })
+    await control.command('clickWhenEnabled', '[data-testid="projects-create-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="project-create-remote-option"]')
+    await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]')
+    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+      value: REMOTE_DOCKER_DEVICE_ID,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-source-git"]')
+    const existingHome = join(resultDir, 'remote-docker-executor-home')
+    await waitForControlValue(
+      control,
+      '[data-testid="remote-project-git-parent-input"]',
+      existingHome,
+      'The Git form did not load the original device home'
+    )
+    await control.command('fill', '[data-testid="remote-project-git-parent-input"]', {
+      value: join(existingHome, 'projects'),
+    })
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-add-device"]')
+    await control.command('waitFor', '[data-testid="standalone-folder-no-device"]')
+    const projectSetup = JSON.parse(
+      await control.command('snapshot', '[data-testid="standalone-folder-project-dialog"]')
+    )
+    assert.ok(
+      projectSetup.testIds.includes('add-device-panel'),
+      'Remote projects did not render the shared device panel'
+    )
+    assert.ok(
+      projectSetup.testIds.includes('add-cloud-device-confirm'),
+      'Remote projects omitted managed cloud creation'
+    )
+    assert.ok(
+      projectSetup.testIds.includes('add-remote-docker-button'),
+      'Remote projects omitted Docker command generation'
+    )
+    assert.equal(
+      projectSetup.testIds.includes('remote-docker-command'),
+      false,
+      'Remote projects generated a command automatically'
+    )
+    assert.doesNotMatch(
+      projectSetup.text,
+      /宿主机启动|local_executor_install\.sh/,
+      'Remote projects still exposed the obsolete host installer'
+    )
+  }
   await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
   await control.command('waitFor', '[data-testid="remote-docker-command"]', {
     text: remoteDeviceE2EExtension.commandMarker,
@@ -760,6 +843,57 @@ export async function verifyRemoteDockerCommandFlow(
     connectedDevice?.runtime_instance_id,
     'The generated remote Executor did not expose a Runtime identity'
   )
+  if (projectEntry) {
+    await waitForControlValue(
+      control,
+      '[data-testid="remote-project-git-parent-input"]',
+      generatedDevice.home,
+      'The Git form kept the previous device directory after onboarding'
+    )
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-source-back"]')
+    await control.command('waitFor', '[data-testid="remote-project-source-existing"]')
+    assert.equal(
+      await control.command('getValue', '[data-testid="standalone-remote-device-select"]'),
+      generatedDeviceId,
+      'The project flow did not select its generated device'
+    )
+    const readySnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="standalone-folder-project-dialog"]')
+    )
+    assert.equal(
+      readySnapshot.testIds.includes('add-device-panel'),
+      false,
+      'Device setup did not advance to project creation'
+    )
+    const existingOption = `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`
+    assert.equal(
+      Number(await control.command('getElementCount', `${existingOption}:not(:disabled)`)),
+      1,
+      'The existing remote device was not selectable before disconnecting'
+    )
+    await cloudEnvironment.stopRemoteDockerExecutorAndWaitOffline()
+    await waitForWorkbenchDeviceStatus(
+      control,
+      REMOTE_DOCKER_DEVICE_ID,
+      'offline',
+      'The workbench catalog did not publish the disconnected remote device'
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', `${existingOption}:disabled`)),
+      1,
+      'The open project picker kept the disconnected device selectable'
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="standalone-remote-device-select"]'),
+      generatedDeviceId,
+      'Refreshing the catalog changed the selected online device'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="close-standalone-folder-project-dialog"]'
+    )
+    await control.command('navigate', 'body', { value: '/settings/connections' })
+  }
   await waitForSnapshot(
     control,
     snapshot =>

@@ -29,7 +29,9 @@ import {
 const USER = 9001
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 const COORDINATOR = `stand-in-coordinator-${USER}`
+const PRIMARY = `stand-in-chat-${USER}-primary`
 const MARKER = 'DIRECT_RECOVERY'
+const BATCH_RESULT = `${MARKER}_BATCH_DONE`
 
 /** Protocol integration: real Electron, Executor, Codex, storage and native tool calls. */
 export function createDirectRecoveryVerification(options) {
@@ -188,7 +190,7 @@ export function createDirectRecoveryVerification(options) {
           )
         }
         workCalls++
-        events = [assistantMessage(`${MARKER}_DONE_${workCalls}`)]
+        events = [assistantMessage(dispatchBatch ? BATCH_RESULT : `${MARKER}_DONE`)]
       }
       if (!events) return false
       const id = `${MARKER}-${Date.now()}`
@@ -352,19 +354,16 @@ export function createDirectRecoveryVerification(options) {
         )
         assert.equal(workCalls, 3)
         dispatchBatch = false
-        // A terminal child status precedes its asynchronous report to the primary conversation.
         await storyUntil(
-          () =>
-            rpc(control, 'runtime.tasks.transcript', { taskId: `stand-in-chat-${USER}-primary` }),
+          () => rpc(control, 'runtime.tasks.transcript', { taskId: PRIMARY, limit: 100 }),
           value =>
-            value.messages.some(
+            value.messages?.some(
               message =>
                 message.role === 'assistant' &&
-                JSON.stringify(message.content).includes(direct.taskId) &&
-                JSON.stringify(message.content).includes(`${MARKER}_DONE_3`)
+                message.content?.includes(`任务 ${direct.taskId}（done）：${BATCH_RESULT}`)
             ),
           options.modelResponseTimeoutMs,
-          'The latest direct work result must reach the primary conversation before archival'
+          'The primary conversation must report the selected batch result before archiving its source'
         )
         await rpc(control, 'runtime.tasks.archive', { taskId: direct.taskId })
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')

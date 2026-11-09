@@ -52,6 +52,8 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
 
+From **Projects → New project → Cloud project** in the sidebar, you can add a device while choosing the remote host. See [Projects and workspaces](./projects.md#add-device-from-project).
+
 ## Sidebar feature entries
 
 ### Jump to individual feature controls
