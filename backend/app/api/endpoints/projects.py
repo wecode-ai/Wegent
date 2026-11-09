@@ -353,6 +353,9 @@ def list_project_tasks_endpoint(
     limit: int = Query(50, ge=1, le=100, description="Tasks per page"),
     cursor: str | None = Query(None, max_length=512, description="Next-page cursor"),
     title: str | None = Query(None, min_length=1, description="Task title keywords"),
+    include_total: bool = Query(
+        True, description="Whether to count all matching tasks"
+    ),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -367,6 +370,7 @@ def list_project_tasks_endpoint(
         cursor=cursor,
         title=title,
         client_origin=client_origin,
+        include_total=include_total,
     )
 
 
