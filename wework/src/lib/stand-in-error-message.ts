@@ -93,6 +93,15 @@ const TRANSPORT_ERROR_CODES: Record<string, string> = {
   http_504: 'service_unavailable',
 }
 
+/** Upgrade actions depend on structured error codes, never translated copy. */
+export function requiresStandInUpgrade(error: unknown): boolean {
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+  return (
+    code === 'executor_update_required' ||
+    (typeof code === 'string' && TRANSPORT_ERROR_CODES[code] === 'executor_update_required')
+  )
+}
+
 // Device routing emits these prefixes followed by the requested device identity.
 const DEVICE_ERROR_CODES: Record<string, string> = {
   'executor-not-found': 'executor_unavailable',

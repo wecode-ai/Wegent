@@ -3,7 +3,12 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import {
+  getStandInErrorMessage,
+  reportStandInError,
+  requiresStandInUpgrade,
+} from '@/lib/stand-in-error-message'
+import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
 import { createWeworkPlatformApi } from './weworkPlatformApi'
@@ -72,7 +77,7 @@ function AccountStandInWorkspace({
     (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? ''))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [attempt, setAttempt] = useState(0)
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
@@ -110,7 +115,7 @@ function AccountStandInWorkspace({
       cause => {
         if (current) {
           reportStandInError('load_projects', cause)
-          setError(getStandInErrorMessage(cause, 'load_projects_failed'))
+          setError(cause)
         }
       }
     )
@@ -135,12 +140,28 @@ function AccountStandInWorkspace({
       {t(binding?.status === 'stopping' ? 'standIn.instance.retry_stop' : 'standIn.instance.stop')}
     </button>
   )
-  const failure = instance.error || error
+  const failure =
+    instance.error || (error ? getStandInErrorMessage(error, 'load_projects_failed') : null)
+  const upgradeRequired = requiresStandInUpgrade(instance.error ? instance.errorCause : error)
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="personal-stand-in-workspace">
       {failure && (
-        <div role="alert" className="flex items-center gap-2 px-5 py-2 text-sm text-error">
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-error"
+        >
           <span>{failure}</span>
+          {upgradeRequired && (
+            <Button
+              type="button"
+              size="sm"
+              className="min-h-11 md:min-h-8"
+              data-testid="stand-in-view-devices"
+              onClick={() => navigateTo('/cloud-work')}
+            >
+              {t('standIn.view_devices')}
+            </Button>
+          )}
           <button
             type="button"
             data-testid="stand-in-project-catalog-retry"

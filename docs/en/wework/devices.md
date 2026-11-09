@@ -41,6 +41,8 @@ The workbench then includes server models, cloud devices, and remote devices. Di
 
 ## Cloud and remote devices
 
+In the desktop app, **left sidebar → Cloud work** includes local recovery guidance in the device section. The current Wework app manages local execution; local devices are not mixed into cloud and remote device cards. For incompatible local versions, select **View local version** to open **Settings → Personal → About**, use the existing update controls, follow any upgrade and restart instructions, then reload the stand-in. This entry remains available without cloud devices or a cloud connection, but is hidden in web browsers. Selecting it only navigates; it does not install or restart anything automatically.
+
 When the cloud connection is available, select **Cloud work** in the sidebar to open its dedicated page instead of General settings. The page combines:
 
 - Cloud and remote device status, executor version, terminal, IDE, and other device actions.

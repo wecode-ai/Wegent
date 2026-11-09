@@ -6,6 +6,7 @@ import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
 import { DeviceSection } from '@/components/settings/ConnectionsSettingsPage'
+import { Button } from '@/components/ui/button'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAuth } from '@/features/auth/useAuth'
@@ -278,6 +279,26 @@ export function CloudWorkPage() {
                     {t('workbench.cloud_work_add_device', '添加设备')}
                   </button>
                 </div>
+                {isDesktop && (
+                  <div
+                    data-testid="cloud-work-local-device-guidance"
+                    className="mb-4 flex flex-col items-start gap-2 md:flex-row md:items-center md:gap-3"
+                  >
+                    <p className="min-w-0 text-sm text-text-secondary md:flex-1">
+                      {t('workbench.cloud_work_local_device_guidance')}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11 md:min-h-8"
+                      data-testid="cloud-work-local-version-button"
+                      onClick={() => navigateTo('/settings/about')}
+                    >
+                      {t('workbench.cloud_work_local_version')}
+                    </Button>
+                  </div>
+                )}
                 {cloudDevices.length > 0 ? (
                   <DeviceSection
                     title={t('workbench.cloud_work_available_devices', '云端与远程设备')}
