@@ -43,6 +43,7 @@ import {
   type TodoWorkspaceEntry,
 } from './todoModel'
 import type { TodoWorkType } from './todoModel'
+import { todoStateColors } from './todoStateColors'
 import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 
 export type TodoViewState = 'inbox' | 'backlog' | 'started' | 'review' | 'completed'
@@ -106,11 +107,15 @@ interface TodoDetailPanelProps {
 
 const STATE_DETAILS: Record<TodoViewState, { labelKey: string; fallback: string; color: string }> =
   {
-    inbox: { labelKey: 'todo.state_inbox', fallback: '收集箱', color: '#858E97' },
-    backlog: { labelKey: 'todo.state_backlog', fallback: '待处理', color: '#858E97' },
-    started: { labelKey: 'todo.state_started', fallback: '进行中', color: '#F59E0B' },
-    review: { labelKey: 'todo.state_review', fallback: '待确认', color: '#8B5CF6' },
-    completed: { labelKey: 'todo.state_completed', fallback: '已完成', color: '#10B981' },
+    inbox: { labelKey: 'todo.state_inbox', fallback: '收集箱', color: todoStateColors.inbox },
+    backlog: { labelKey: 'todo.state_backlog', fallback: '待处理', color: todoStateColors.backlog },
+    started: { labelKey: 'todo.state_started', fallback: '进行中', color: todoStateColors.started },
+    review: { labelKey: 'todo.state_review', fallback: '待确认', color: todoStateColors.review },
+    completed: {
+      labelKey: 'todo.state_completed',
+      fallback: '已完成',
+      color: todoStateColors.completed,
+    },
   }
 
 export function TodoDetailPanel({
@@ -555,7 +560,7 @@ export function TodoDetailPanel({
                         {t('todo.blocked', '阻塞')}：{child.blocker}
                       </span>
                     ) : child.waitingFor && child.waitingFor.length > 0 ? (
-                      <span className="max-w-40 truncate text-xs text-amber-600">
+                      <span className="max-w-40 truncate text-xs text-warning">
                         {t('todo.waiting_for', '等待')}：{child.waitingFor.join('、')}
                       </span>
                     ) : (
@@ -732,7 +737,7 @@ export function TodoDetailPanel({
                   {item.waitingFor && item.waitingFor.length > 0 && (
                     <span
                       data-testid="todo-detail-dependency-warning"
-                      className="block truncate text-xs text-amber-600"
+                      className="block truncate text-xs text-warning"
                     >
                       {t('todo.waiting_for', '等待')}：{item.waitingFor.join('、')}
                     </span>
@@ -882,7 +887,7 @@ export function TodoDetailPanel({
           {runError && (
             <div
               data-testid="todo-detail-run-error"
-              className="flex min-w-0 items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-300"
+              className="flex min-w-0 items-start gap-2 rounded-md border border-warning/25 bg-warning/10 px-2.5 py-2 text-xs text-warning"
             >
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span className="min-w-0">{runError}</span>

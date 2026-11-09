@@ -174,6 +174,24 @@ test('a feature config selects its existing shard rather than all desktop suites
   assert.equal(result.wework_desktop_other_e2e, 'false')
 })
 
+test('theme changes select the gallery and real content and auxiliary window regressions', () => {
+  const result = classified('wework/src/features/appearance/ThemeSelector.tsx')
+  const checkpoints = JSON.parse(result.wework_desktop_core_e2e_matrix).include.flatMap(shard =>
+    shard.segments.split(',')
+  )
+  for (const id of [
+    'appearance-themes',
+    'application-menu',
+    'background-terminals',
+    'collaboration-first-use',
+    'local-file-preview',
+    'office-file-preview',
+    'streaming-content',
+  ]) {
+    assert.ok(checkpoints.includes(id), `Theme changes omit the ${id} CI checkpoint`)
+  }
+})
+
 test('extracted routing and test modules retain their parent CI gates', () => {
   for (const path of [
     '.github/scripts/desktop-ci/workbench-paths.sh',
