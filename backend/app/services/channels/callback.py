@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 CHANNEL_TASK_CALLBACK_PREFIX = "channel:task_callback:"
 # TTL for task callback info (1 hour - should be enough for most tasks)
 CHANNEL_TASK_CALLBACK_TTL = 60 * 60
+# Refresh the TTL at most this often so long runs keep an addressable card.
+CHANNEL_TASK_CALLBACK_REFRESH_INTERVAL = 5 * 60
 RUNTIME_LOCAL_TASK_CALLBACK_PREFIX = "runtime"
 
 
@@ -120,6 +122,8 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         self._last_emitted_offsets: Dict[int, int] = {}
         # Track emitter creation time for TTL cleanup
         self._emitter_created_at: Dict[int, float] = {}
+        # Last time each task's callback info TTL was refreshed
+        self._callback_ttl_refreshed_at: Dict[int | str, float] = {}
         # Emitter TTL in seconds (30 minutes)
         self._emitter_ttl = 30 * 60
 
@@ -381,6 +385,10 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         if not await self.has_callback_info(task_id):
             return False
 
+        # A run that keeps emitting is demonstrably alive; keep its address
+        # valid instead of letting the 1h TTL expire mid-stream.
+        await self._refresh_callback_info_ttl(task_id)
+
         try:
             emitter = await self._get_or_create_emitter(task_id, subtask_id)
             if not emitter:
@@ -504,10 +512,25 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Args:
             task_id: Task ID
             callback_info: Channel-specific callback information
+
+        Raises:
+            RuntimeError: The address could not be persisted. Callers must fail
+                loudly: a silently missing entry strands the card, because no
+                later event or terminal result can reach it.
         """
         key = f"{self.redis_key_prefix}{task_id}"
         data = json.dumps(callback_info.to_dict())
-        await cache_manager.set(key, data, expire=CHANNEL_TASK_CALLBACK_TTL)
+        try:
+            saved = await cache_manager.set_or_raise(
+                key, data, expire=CHANNEL_TASK_CALLBACK_TTL
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not persist callback info for task {task_id}"
+            ) from exc
+        if not saved:
+            raise RuntimeError(f"Could not persist callback info for task {task_id}")
+        self._callback_ttl_refreshed_at[task_id] = time.monotonic()
         logger.info(
             f"[{self._channel_type.value}Callback] Saved callback info for task {task_id}"
         )
@@ -545,6 +568,17 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         data = await cache_manager.get(key)
         return data is not None
 
+    async def _refresh_callback_info_ttl(self, task_id: int | str) -> None:
+        """Keep the address alive while the run keeps producing events."""
+        now = time.monotonic()
+        last = self._callback_ttl_refreshed_at.get(task_id)
+        if last is not None and now - last < CHANNEL_TASK_CALLBACK_REFRESH_INTERVAL:
+            return
+        self._callback_ttl_refreshed_at[task_id] = now
+        await cache_manager.expire(
+            f"{self.redis_key_prefix}{task_id}", CHANNEL_TASK_CALLBACK_TTL
+        )
+
     async def delete_callback_info(self, task_id: int) -> None:
         """Delete callback info for a task.
 
@@ -552,6 +586,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             task_id: Task ID
         """
         key = f"{self.redis_key_prefix}{task_id}"
+        self._callback_ttl_refreshed_at.pop(task_id, None)
         await cache_manager.delete(key)
         logger.debug(
             f"[{self._channel_type.value}Callback] Deleted callback info for task {task_id}"

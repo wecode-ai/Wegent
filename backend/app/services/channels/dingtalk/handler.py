@@ -37,6 +37,7 @@ from app.services.channels.dingtalk.callback import (
 )
 from app.services.channels.dingtalk.card_binding import (
     CardBinding,
+    delete_binding,
     reply_address,
     save_binding,
 )
@@ -416,37 +417,51 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         *,
         persist_without_emitter: bool = False,
     ) -> None:
-        if streaming_emitter and getattr(streaming_emitter, "chat_card", None):
-            try:
-                await self._bind_chat_card(task_id, streaming_emitter, message_context)
-            except Exception:
-                await self._fail_unstarted_card_streaming_emitter(
-                    task_id=task_id,
-                    streaming_emitter=streaming_emitter,
-                    message_context=message_context,
-                )
-                raise
-            try:
-                await super()._register_streaming_emitter(
-                    task_id,
-                    streaming_emitter,
-                    message_context,
-                    persist_without_emitter=persist_without_emitter,
-                )
-            except Exception:
-                await self._fail_unstarted_card_streaming_emitter(
-                    task_id=task_id,
-                    streaming_emitter=streaming_emitter,
-                    message_context=message_context,
-                )
-                raise
-        else:
+        if not (streaming_emitter and getattr(streaming_emitter, "chat_card", None)):
             await super()._register_streaming_emitter(
                 task_id,
                 streaming_emitter,
                 message_context,
                 persist_without_emitter=persist_without_emitter,
             )
+            return
+
+        card_instance_id = getattr(streaming_emitter, "card_instance_id", None)
+        bound = False
+        try:
+            await self._bind_chat_card(task_id, streaming_emitter, message_context)
+            bound = True
+            await super()._register_streaming_emitter(
+                task_id,
+                streaming_emitter,
+                message_context,
+                persist_without_emitter=persist_without_emitter,
+            )
+        except Exception:
+            # The quote address is written before the callback entry, so a card
+            # that fails registration stays quotable unless the address is
+            # dropped here. The plain-text error alone cannot retire it.
+            if bound and card_instance_id:
+                try:
+                    await delete_binding(self._channel_id, card_instance_id)
+                except Exception:
+                    self.logger.exception(
+                        "[DingTalkHandler] Failed to drop unusable card binding: %s",
+                        card_instance_id,
+                    )
+            try:
+                await self._fail_unstarted_card_streaming_emitter(
+                    task_id=task_id,
+                    streaming_emitter=streaming_emitter,
+                    message_context=message_context,
+                )
+            except Exception:
+                self.logger.exception(
+                    "[DingTalkHandler] Failed to close card after registration "
+                    "error: %s",
+                    card_instance_id,
+                )
+            raise
 
     async def _fail_unstarted_card_streaming_emitter(
         self,

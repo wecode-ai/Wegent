@@ -157,3 +157,60 @@ async def test_runtime_card_registration_failure_finishes_card(monkeypatch):
     kwargs = handler._fail_private_im_runtime_continuation.await_args.kwargs
     assert kwargs["callback_key"] == "runtime:device-1:task-1"
     assert "任务可能仍在运行" in kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_failed_callback_registration_drops_card_address(monkeypatch):
+    """A card that cannot be registered must stop being quotable."""
+    handler = DingTalkChannelHandler(channel_id=77)
+    emitter = SimpleNamespace(
+        chat_card=object(),
+        subtask_id=42,
+        card_instance_id="card-1",
+        close=AsyncMock(),
+    )
+    context = SimpleNamespace(extra_data={}, conversation_id="group-a")
+    service = SimpleNamespace(
+        save_callback_info=AsyncMock(side_effect=RuntimeError("cache down")),
+        register_emitter=AsyncMock(),
+    )
+    delete = AsyncMock()
+    monkeypatch.setattr(handler, "_bind_chat_card", AsyncMock())
+    monkeypatch.setattr(handler, "get_callback_service", lambda: service)
+    monkeypatch.setattr("app.services.channels.dingtalk.handler.delete_binding", delete)
+    monkeypatch.setattr(handler, "_fail_unstarted_card_task", AsyncMock())
+    monkeypatch.setattr(handler, "send_text_reply", AsyncMock())
+
+    with pytest.raises(RuntimeError, match="cache down"):
+        await handler._register_streaming_emitter(101, emitter, context)
+
+    delete.assert_awaited_once_with(77, "card-1")
+    emitter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_binding_leaves_no_address_to_drop(monkeypatch):
+    """Nothing was written, so the cleanup must not delete a foreign address."""
+    handler = DingTalkChannelHandler(channel_id=77)
+    emitter = SimpleNamespace(
+        chat_card=object(),
+        subtask_id=42,
+        card_instance_id=None,
+        close=AsyncMock(),
+    )
+    delete = AsyncMock()
+    monkeypatch.setattr(
+        handler,
+        "_bind_chat_card",
+        AsyncMock(side_effect=RuntimeError("binding failed")),
+    )
+    monkeypatch.setattr("app.services.channels.dingtalk.handler.delete_binding", delete)
+    monkeypatch.setattr(handler, "_fail_unstarted_card_task", AsyncMock())
+    monkeypatch.setattr(handler, "send_text_reply", AsyncMock())
+
+    with pytest.raises(RuntimeError, match="binding failed"):
+        await handler._register_streaming_emitter(
+            101, emitter, SimpleNamespace(extra_data={}, conversation_id="group-a")
+        )
+
+    delete.assert_not_awaited()

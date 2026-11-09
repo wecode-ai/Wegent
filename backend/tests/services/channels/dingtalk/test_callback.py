@@ -243,3 +243,49 @@ async def test_round_change_during_locked_creation_rejects_stale_event(monkeypat
     create.assert_not_called()
     emitter.emit_start.assert_not_awaited()
     assert 101 not in service._active_emitters
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "store_result",
+    [False, RuntimeError("redis down")],
+)
+async def test_callback_info_is_never_silently_dropped(monkeypatch, store_result):
+    """A dropped entry strands the card, so the write must fail loudly."""
+    service = DingTalkCallbackService()
+    info = DingTalkCallbackInfo(channel_id=77, conversation_id="group-a")
+    if isinstance(store_result, Exception):
+        store = AsyncMock(side_effect=store_result)
+    else:
+        store = AsyncMock(return_value=store_result)
+    monkeypatch.setattr(
+        "app.services.channels.callback.cache_manager.set_or_raise", store
+    )
+
+    with pytest.raises(RuntimeError, match="callback info for task 101"):
+        await service.save_callback_info(101, info)
+
+
+@pytest.mark.asyncio
+async def test_emit_event_refreshes_callback_ttl_at_most_once_per_interval(
+    monkeypatch,
+):
+    """Long runs keep their address without rewriting it on every event."""
+    service = DingTalkCallbackService()
+    emitter = SimpleNamespace(emit=AsyncMock())
+    expire = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "has_callback_info", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        service, "_get_or_create_emitter", AsyncMock(return_value=emitter)
+    )
+    monkeypatch.setattr("app.services.channels.callback.cache_manager.expire", expire)
+
+    event = SimpleNamespace(type="CHUNK", content="delta")
+    await service.emit_event(101, 1, event)
+    await service.emit_event(101, 1, event)
+
+    expire.assert_awaited_once_with("channel:task_callback:dingtalk:101", 60 * 60)
+
+    service._callback_ttl_refreshed_at.clear()
+    await service.emit_event(101, 1, event)
+    assert expire.await_count == 2
