@@ -1162,14 +1162,7 @@ async fn assert_runtime_tasks_fork_completed_turn(fail_transcript: bool, cloud_m
     assert_eq!(fork_call["params"]["threadId"], "thread-1");
     assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
     assert_eq!(fork_call["params"]["model"], "gpt-5.6-sol");
-    assert_eq!(
-        fork_call["params"]["modelProvider"],
-        if cloud_model {
-            "wework-router"
-        } else {
-            "openai"
-        }
-    );
+    assert_eq!(fork_call["params"]["modelProvider"], "~");
     assert_eq!(fork_call["params"]["excludeTurns"], true);
 
     let mut follow_up_request = if cloud_model {
@@ -1209,21 +1202,13 @@ async fn assert_runtime_tasks_fork_completed_turn(fail_transcript: bool, cloud_m
             "gpt-5.5"
         }
     );
-    assert_eq!(
-        resume_call["params"]["modelProvider"],
-        if cloud_model {
-            "wework-router"
-        } else {
-            "openai"
-        }
-    );
+    assert_eq!(resume_call["params"]["modelProvider"], "~");
     if cloud_model {
-        let fork_proxy_url = fork_call["params"]["config"]
-            ["model_providers.wework-router.base_url"]
+        let fork_proxy_url = fork_call["params"]["config"]["model_providers.~"]["base_url"]
             .as_str()
             .expect("cloud fork should configure an authenticated proxy route");
         assert_eq!(
-            resume_call["params"]["config"]["model_providers.wework-router.base_url"].as_str(),
+            resume_call["params"]["config"]["model_providers.~"]["base_url"].as_str(),
             Some(fork_proxy_url),
             "fork follow-up should reuse its own authenticated route"
         );

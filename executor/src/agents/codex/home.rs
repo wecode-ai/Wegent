@@ -17,6 +17,7 @@ pub(super) const WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV: &str = "WEWORK_CODEX_SUB
 #[path = "home_auth.rs"]
 mod auth;
 pub(super) use auth::acquire_shared_auth;
+pub(crate) use auth::prepare_provider_migration;
 
 #[cfg(test)]
 #[path = "home_auth_tests.rs"]

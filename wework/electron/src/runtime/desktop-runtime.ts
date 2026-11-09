@@ -1,4 +1,5 @@
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { migrateCodexProviderState } from './codex-provider-upgrade.js'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
   createCoreDshLaunch,
@@ -288,6 +289,15 @@ export class DesktopRuntime {
     // Device identity and managed auth preparation may write Homes. Gate both first.
     await assertExecutorWorkbenchCompatibility(this.options.environment)
     if (this.lifecycleGeneration !== generation) return null
+    this.startupStep('codex-session-upgrade', 'started')
+    try {
+      await migrateCodexProviderState(this.options)
+    } catch (error) {
+      this.startupStep('codex-session-upgrade', 'failed')
+      throw error
+    }
+    if (this.lifecycleGeneration !== generation) return null
+    this.startupStep('codex-session-upgrade', 'completed')
     const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     const deviceName = await resolveDesktopDeviceName({

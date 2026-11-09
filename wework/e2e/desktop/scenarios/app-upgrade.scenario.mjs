@@ -15,7 +15,8 @@ import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
-import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
+import { createSingleRootLocalProject } from '../modules/shared.mjs'
+import { createUpgradeConversationContinuity } from '../modules/upgrade-conversation-continuity.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
@@ -148,6 +149,7 @@ export async function createDesktopScenario(options) {
   let passed = false
   let origin
   let modelRequests = 0
+  const continuity = createUpgradeConversationContinuity(() => control, workbenchReadyTimeoutMs)
   const requests = []
   // Observe asynchronous acceptance before releasing real package bytes. A fixed
   // six-second server delay charged every checkpoint without establishing state.
@@ -285,16 +287,7 @@ export async function createDesktopScenario(options) {
     await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]')
     await control.command('waitFor', '[data-testid="about-settings-page"]')
   }
-  const send = async text => {
-    const expectedAnswer = `${ANSWER} ${modelRequests + 1}`
-    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: text })
-    await control.command('clickWhenEnabled', '[data-testid="send-message-button"]')
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: expectedAnswer,
-      timeoutMs: workbenchReadyTimeoutMs,
-    })
-  }
+  const send = text => continuity.send(text, `${ANSWER} ${modelRequests + 1}`)
   return {
     usesReleasePackageRuntimeAssets: true,
     ...(!options.preparationOnly
@@ -451,6 +444,7 @@ export async function createDesktopScenario(options) {
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!JSON.stringify(body).includes(PROMPT)) return false
+      continuity.observeModel(body)
       modelRequests++
       const id = `upgrade-model-${modelRequests}`
       response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -483,6 +477,7 @@ export async function createDesktopScenario(options) {
       await control.command('click', '[data-testid="new-chat-button"]')
       await createSingleRootLocalProject(control, workspace, 'upgrade-source-project')
       await send(PROMPT)
+      await continuity.assertThread()
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: STORAGE_KEY, value: 'before-update' }),
       })
@@ -708,6 +703,7 @@ export async function createDesktopScenario(options) {
       })
       const beforeRequests = modelRequests
       await send(`${PROMPT} continue after upgrade`)
+      await continuity.assertThread()
       await assertSelectedComposition(pair.to.version)
       assert.ok(
         modelRequests > beforeRequests,
@@ -815,6 +811,7 @@ export async function createDesktopScenario(options) {
         }
         await pruneWithRolledBackSource(root, resultDir, options.homePath)
         await send(`${PROMPT} continue after rollback`)
+        await continuity.assertThread()
         await assertSelectedComposition(pair.from.version)
         if (restoreRequired) {
           const { readdir } = await import('node:fs/promises')
@@ -856,6 +853,7 @@ export async function createDesktopScenario(options) {
             : 'not-run',
         requests,
         compositions,
+        conversationContinuity: continuity.evidence(),
       })
       await writeFile(join(resultDir, 'upgrade-edge-result.json'), evidence)
       if (

@@ -4,6 +4,48 @@ sidebar_position: 61
 
 # Desktop upgrades, rollback, and E2E maintenance
 
+## Codex session provider migration
+
+Session conversion is separate from download-time environment preparation. The target's
+`DesktopRuntime.prepareExecutor` invokes its delivered executor's offline
+`--workbench-codex-providers-migrate` entry before constructing the managed executor and
+admitting queued work or Goal recovery. Never rewrite live sessions during
+`release-preparation-cli` prewarming. A Home relocation's `beforeMove` is insufficient:
+an already relocated Home does not move again on upgrade.
+
+Migration holds Home process ownership, agent execution and native thread writer coordination
+leases. It changes only rollout `session_meta.model_provider` and SQLite
+`threads.model_provider` to the logical Wework router, persisted as the single-byte ID `~`.
+Replace only the raw JSON provider value and pad unused bytes with JSON whitespace, preserving
+the header length and every subsequent byte offset used by paginated/fork history. Never
+re-serialize the entire header and shift those references. Older metadata without a saved
+provider remains byte-identical and uses native current-provider selection. A versioned Home-local journal
+retains original providers and index provenance. Conversation bodies, compression/history
+references, permissions, creator accounts, Goal state/budgets and recoverable user commands
+are not regenerated. Authentication files, repositories and cloud data are excluded.
+
+Persist intent before mutation; publish rollout files atomically and update indexes in
+transactions. Re-entering preparation after interruption must converge, not treat an exception
+as completion. Compatible older clients may rewrite the index provider or materialize compressed
+history before appending turns. Re-upgrade reconciles indexes against existing sessions without
+restoring stale history or discarding those turns. Writers must stop first. Failure cannot admit
+the new executor or Goal recovery; activation failure uses existing healthy-release rollback
+and startup recovery.
+
+A shared identity never implies shared credentials. API-key and native-account threads replace
+the complete provider definition independently. Unscoped account RPCs keep native Codex authentication.
+The local router serves the merged catalog using a non-secret catalog credential, never an account
+token or task API key. Threads must not inherit that credential or another route's bearer command. Bind model
+routes and notification subscriptions before `thread/resume`, since native Goals can continue
+before that RPC returns. Never resubmit original user input or settle an active Goal from a
+previous turn's completed outcome.
+
+Acceptance requires delivered-package upgrade, legacy continuation, writes after rollback and
+re-upgrade. Cover ordinary/tool history, compressed/compacted history, forks/children, active
+Goals, interruption at durable publication boundaries and concurrent account/API-key isolation.
+Migration unit tests and native-binary protocol probes do not replace packaged Electron upgrade
+and rollback evidence.
+
 ## Repairs delivered with the update package
 
 Repairs run through the target package's `release-preparation-cli`, under the same integrity

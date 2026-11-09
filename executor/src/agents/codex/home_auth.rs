@@ -12,6 +12,22 @@ use fs2::FileExt;
 use super::super::CodexAuthMode;
 use crate::file_lease::FileLease;
 
+/// Prepare durable state without launching a native process or changing auth.
+/// The same Home-wide leases exclude older Wework executors during migration.
+pub(crate) fn prepare_provider_migration(home: &Path) -> Result<(), String> {
+    fs::create_dir_all(home).map_err(|error| format!("create Codex Home: {error}"))?;
+    let gate = FileLease(open_lock(&home.join(".wework-auth-start.lock"))?);
+    gate.0
+        .try_lock_exclusive()
+        .map_err(|error| lock_error(error, None))?;
+    let users = FileLease(open_lock(&home.join(".wework-auth-processes.lock"))?);
+    users
+        .0
+        .try_lock_exclusive()
+        .map_err(|error| lock_error(error, None))?;
+    super::super::provider_migration::migrate(home)
+}
+
 /// The startup gate keeps mode selection atomic while lifetime readers protect
 /// authentication from changes by every executor sharing this Home.
 pub(in crate::agents::codex) fn acquire_shared_auth(
@@ -26,6 +42,9 @@ pub(in crate::agents::codex) fn acquire_shared_auth(
     let mut users = FileLease(open_lock(&home.join(".wework-auth-processes.lock"))?);
     match users.0.try_lock_exclusive() {
         Ok(()) => {
+            // The desktop upgrade hook owns bulk migration. This also admits
+            // interrupted upgrades and headless executor startup before any RPC.
+            super::super::provider_migration::migrate(home)?;
             let mode = requested.unwrap_or(CodexAuthMode::WeworkRouter);
             super::prepare_wework_codex_home_with_auth(
                 home,

@@ -38,6 +38,12 @@ entry is selected only when no matching entry exists.
 
 When a local provider has an endpoint and resolvable static or environment-variable credentials, the executor uses the same model route for provider-ID-only requests and user-configuration requests. Initial execution, follow-up comments and native thread control operations share that resolution logic so different entry points cannot drift to different provider identities. Configuration is read only from the task's Codex Home: a missing provider in a named agent Home never selects a same-named provider from the application's default Home. An explicit task endpoint takes precedence and is never replaced by a local provider with the same name. Providers requiring native authentication remain owned by Codex.
 
+Sessions share the logical Wework router identity (persisted as `~` to preserve history byte offsets), not authentication. API-key sessions use the
+local proxy; OpenAI account sessions retain native Codex authentication and endpoints. Each
+thread replaces its complete provider definition. Unscoped account and catalog requests never
+borrow a task's API-key route. See [upgrade and rollback](./wework-upgrades.md#codex-session-provider-migration)
+for legacy conversion and Goal recovery ordering.
+
 The proxy gateway supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. The Model CRD's `protocol`, `apiFormat`, and `wire_api` select the upstream wire protocol. Conflicting or ambiguous configuration returns an explicit backend error instead of silently falling back to another protocol.
 
 The provider `base_url` may be a service root, a versioned API base, or a complete protocol endpoint. The gateway merges endpoint path segments and removes overlap. For example:

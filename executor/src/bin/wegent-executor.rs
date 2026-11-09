@@ -92,6 +92,25 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
 fn raise_open_files_soft_limit() {}
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--workbench-codex-providers-migrate") {
+        let args: Vec<_> = env::args().skip(2).collect();
+        let result = match args.as_slice() {
+            [request, stopped, version]
+                if stopped == "--executor-stopped" && version == "--version" =>
+            {
+                wegent_executor::local::codex_provider_migration::run(request)
+            }
+            _ => Err("Codex provider migration requires a request and --executor-stopped".into()),
+        };
+        match result {
+            Ok(response) => println!("{response}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let app_startup = env::var_os("WEGENT_APP_IPC_ENDPOINT").is_some();
     if app_startup {
         eprintln!("executor startup: process entered");

@@ -35,7 +35,10 @@ use toml_edit::DocumentMut;
 use crate::logging::log_executor_event;
 
 pub const ROUTE: &str = "/v1/codex-router/models";
-pub const PROVIDER_ID: &str = "wework-router";
+// A one-byte reserved identity permits byte-stable rollout metadata conversion.
+// Paginated/fork history retains byte offsets into those immutable JSONL files.
+pub const PROVIDER_ID: &str = "~";
+pub const LEGACY_PROVIDER_ID: &str = "wework-router";
 #[cfg(test)]
 pub const KIMI_K3_MODEL: &str = "wework-kimi-k3";
 #[cfg(test)]
@@ -656,7 +659,7 @@ fn configured_catalog_upstream() -> Option<(String, String)> {
             .parse::<DocumentMut>()
             .ok()?;
     let provider = document.get("model_provider")?.as_str()?;
-    if provider == PROVIDER_ID || provider == "wework-catalog" {
+    if provider == PROVIDER_ID || provider == LEGACY_PROVIDER_ID || provider == "wework-catalog" {
         return None;
     }
     let config = document

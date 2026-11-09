@@ -439,6 +439,7 @@ fn current_codex_model_provider(
         .or_else(|| string_from_map(&config, "model_provider"))
         .filter(|provider| {
             provider != crate::server::codex_model_catalog::PROVIDER_ID
+                && provider != crate::server::codex_model_catalog::LEGACY_PROVIDER_ID
                 && provider != "wework-catalog"
         });
     let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {

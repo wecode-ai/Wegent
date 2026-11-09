@@ -15,8 +15,12 @@ pub(super) fn request_upstream(
     }
     // A provider-only selection still owns the provider configured in CODEX_HOME.
     // Use the same route for launch, follow-up turns and control operations.
+    let provider = request_provider(request)?;
+    if is_builtin_codex_provider(&provider) {
+        return Ok(None);
+    }
     Ok(configured_codex_provider(
-        &request_provider(request)?,
+        &provider,
         runtime_proxy_url(&request.model_config),
         &request_home(request)?,
     )
@@ -52,13 +56,24 @@ pub(super) fn configure_request_provider(
         );
     } else {
         let provider = request_provider(request)?;
-        launch.model_provider = Some(provider.clone());
-        launch.config_overrides.extend(header_overrides(
-            &provider,
-            request.model_config.get("default_headers"),
-            project_id(request).as_deref(),
-            &request.task_id,
-        ));
+        launch.model_provider = Some(codex_model_catalog::PROVIDER_ID.to_owned());
+        let headers = if is_builtin_codex_provider(&provider) {
+            Vec::new()
+        } else {
+            task_provider_headers(
+                request.model_config.get("default_headers"),
+                project_id(request).as_deref(),
+                &request.task_id,
+            )
+        };
+        launch
+            .config_overrides
+            .extend(super::native_provider::with_headers(
+                &request_home(request)?,
+                &provider,
+                headers,
+                request.cwd(),
+            )?);
     }
     Ok(())
 }
@@ -107,6 +122,34 @@ fn log_route(request: &ExecutionRequest, route: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_provider_configuration_cannot_turn_native_auth_into_a_proxy_route() {
+        let _lock = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        let _restore = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+        env::set_var(WEGENT_CODEX_HOME_ENV, home.path());
+        fs::write(
+            home.path().join("config.toml"),
+            r#"
+[model_providers.openai]
+base_url="https://synthetic.invalid/v1"
+experimental_bearer_token="must-not-select"
+"#,
+        )
+        .unwrap();
+        let request = ExecutionRequest {
+            model_config: json!({"model_provider":"openai","model_id":"gpt-test"}),
+            ..ExecutionRequest::default()
+        };
+        assert!(request_upstream(&request).unwrap().is_none());
+        let launch = build_codex_launch_config(&request).unwrap();
+        assert!(launch.local_proxy_registration.is_none());
+        let profile = super::super::native_provider::profile_for_test(&launch.config_overrides);
+        assert_eq!(profile["requires_openai_auth"], true);
+        assert!(profile.get("auth").is_none());
+        assert!(profile.get("base_url").is_none());
+    }
 
     #[test]
     fn provider_only_requests_and_user_config_share_the_same_router() {

@@ -10,6 +10,72 @@ struct Fixture {
     _environment: LaunchEnvironment,
 }
 
+#[tokio::test]
+async fn recovered_goal_route_is_bound_before_native_resume_can_start_model_work() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/unsubscribe"'*)
+      printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/resume"'*)
+      touch "$(dirname "$0")/resume-entered"
+      while [ ! -f "$(dirname "$0")/resume-release" ]; do sleep 0.01; done
+      printf '{"id":%s,"result":{"thread":{"id":"recovered-goal-route","modelProvider":"~","turns":[]}}}\n' "$id"
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"recovered-goal-route","goal":{"status":"active"}}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"recovered-goal-route","turn":{"id":"recovered-turn"}}}'
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"recovered-goal-route","goal":{"status":"complete"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"recovered-goal-route","turn":{"id":"recovered-turn","status":"completed"}}}' ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"complete"}}}\n' "$id" ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    let request = ExecutionRequest {
+        task_id: "recovering-goal-owner".into(),
+        bot: json!([{"shell_type":"Codex"}]),
+        model_config: json!({"model_id":"gpt-test","base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"}),
+        ..ExecutionRequest::default()
+    };
+    let client = fixture.client.clone();
+    let running = tokio::spawn(async move {
+        client
+            .run_turn_with_cancel(
+                request,
+                CodexAppServerTurnOptions {
+                    resume_thread_id: Some("recovered-goal-route".into()),
+                    resume_goal_only: true,
+                    ..CodexAppServerTurnOptions::default()
+                },
+            )
+            .await
+    });
+    let entered = fixture._directory.path().join("resume-entered");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !entered.try_exists().unwrap() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("native resume must reach the observed pre-response checkpoint");
+    let bound_before_response = local_model_proxy::thread_has_bound_route("recovered-goal-route");
+    fs::write(fixture._directory.path().join("resume-release"), "").unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.client.restart().await;
+    assert!(result.is_ok(), "Goal recovery failed: {result:?}");
+    assert!(
+        bound_before_response,
+        "native resume can start Goal inference before returning its RPC response"
+    );
+}
+
 impl Fixture {
     fn new() -> Self {
         Self::with_script(

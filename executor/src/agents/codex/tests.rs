@@ -2562,13 +2562,20 @@ fn internal_catalog_provider_is_never_used_for_thread_inference() {
     let launch_config =
         build_codex_launch_config(&request).expect("Codex launch config should be built");
 
-    assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
+    assert_eq!(
+        launch_config.model_provider.as_deref(),
+        Some(codex_model_catalog::PROVIDER_ID)
+    );
     for params in [
         thread_start_params(&request, &launch_config),
         thread_resume_params("thread-1", &request, &launch_config),
         thread_fork_params("thread-1", None, &request, &launch_config),
     ] {
-        assert_eq!(params["modelProvider"], "openai");
+        assert_eq!(params["modelProvider"], codex_model_catalog::PROVIDER_ID);
+        let profile = &params["config"]["model_providers.~"];
+        assert_eq!(profile["name"], "OpenAI");
+        assert_eq!(profile["requires_openai_auth"], true);
+        assert!(profile.get("auth").is_none());
     }
 }
 
@@ -2602,7 +2609,10 @@ fn built_in_provider_does_not_emit_reserved_model_provider_overrides() {
     let launch_config =
         build_codex_launch_config(&request).expect("Codex launch config should be built");
 
-    assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
+    assert_eq!(
+        launch_config.model_provider.as_deref(),
+        Some(codex_model_catalog::PROVIDER_ID)
+    );
     assert!(!launch_config
         .config_overrides
         .iter()
@@ -2706,10 +2716,13 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
         Some(codex_model_catalog::PROVIDER_ID)
     );
     assert!(launch_config.local_proxy_registration.is_some());
-    assert!(launch_config.config_overrides.iter().any(|value| {
-        value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && value.ends_with("/v1/codex-router\"")
-    }));
+    let profile = native_provider::profile_for_test(&launch_config.config_overrides);
+    let base_url = profile["base_url"].as_str().unwrap();
+    assert!(base_url.starts_with("http://127.0.0.1:"));
+    assert!(base_url.ends_with("/v1/codex-router"));
+    assert_eq!(profile["requires_openai_auth"], false);
+    let (command, args) = codex_router_auth_command();
+    assert_eq!(profile["auth"], json!({"command":command,"args":args}));
     for params in [
         thread_start_params(&request, &launch_config),
         thread_resume_params("thread-1", &request, &launch_config),
@@ -2823,39 +2836,51 @@ fn configured_inference_provider_rejects_the_internal_catalog_provider() {
 
 #[test]
 fn header_overrides_do_not_redefine_builtin_codex_providers() {
-    for provider in ["openai", "amazon-bedrock", "ollama", "lmstudio"] {
+    let _environment = environment::LaunchEnvironment::new();
+    for provider in [
+        "openai",
+        "amazon-bedrock",
+        "amazon-bedrock-runtime",
+        "gcp",
+        "ollama",
+        "lmstudio",
+    ] {
+        let request = ExecutionRequest {
+            task_id: "task-1".into(),
+            model_config: json!({"model_provider":provider,"default_headers":{"X-Wegent-Test":"test-value"}}),
+            ..ExecutionRequest::default()
+        };
+        let launch = build_codex_launch_config(&request).unwrap();
         assert!(
-            header_overrides(
-                provider,
-                Some(&json!({"X-Wegent-Test": "test-value"})),
-                Some("42"),
-                "task-1",
-            )
-            .is_empty(),
+            !launch
+                .config_overrides
+                .iter()
+                .any(|value| value.starts_with(&format!("model_providers.{provider}."))),
             "built-in provider {provider} must not receive model_providers overrides"
+        );
+        let profile = native_provider::profile_for_test(&launch.config_overrides);
+        assert!(profile["http_headers"].get("X-Wegent-Test").is_none());
+        assert_eq!(
+            launch.model_provider.as_deref(),
+            Some(codex_model_catalog::PROVIDER_ID)
         );
     }
 }
 
 #[test]
 fn header_overrides_preserve_custom_provider_headers() {
-    let overrides = header_overrides(
-        "openai-custom",
-        Some(&json!({"X-Wegent-Test": "test-value"})),
-        Some("42"),
-        "task-1",
-    );
-
-    assert!(overrides
-        .iter()
-        .any(|value| value
-            == "model_providers.openai-custom.http_headers.X-Wegent-Test=\"test-value\""));
-    assert!(overrides
-        .iter()
-        .any(|value| value == "model_providers.openai-custom.http_headers.wecode-project=\"42\""));
-    assert!(overrides.iter().any(|value| {
-        value == "model_providers.openai-custom.http_headers.wecode-session-id=\"task-1\""
-    }));
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest {
+        task_id: "task-1".into(),
+        model_config: json!({"model_provider":"openai-custom","default_headers":{"X-Wegent-Test":"test-value"}}),
+        extra: json!({"project_id":"42"}).as_object().unwrap().clone(),
+        ..ExecutionRequest::default()
+    };
+    let launch = build_codex_launch_config(&request).unwrap();
+    let profile = native_provider::profile_for_test(&launch.config_overrides);
+    assert_eq!(profile["http_headers"]["X-Wegent-Test"], "test-value");
+    assert_eq!(profile["http_headers"]["wecode-project"], "42");
+    assert_eq!(profile["http_headers"]["wecode-session-id"], "task-1");
 }
 
 #[test]
@@ -3099,10 +3124,10 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
         launch_config.model_provider.as_deref(),
         Some(codex_model_catalog::PROVIDER_ID)
     );
-    assert!(launch_config.config_overrides.iter().any(|override_value| {
-        override_value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && override_value.ends_with("/v1/codex-router\"")
-    }));
+    let profile = native_provider::profile_for_test(&launch_config.config_overrides);
+    let base_url = profile["base_url"].as_str().unwrap();
+    assert!(base_url.starts_with("http://127.0.0.1:"));
+    assert!(base_url.ends_with("/v1/codex-router"));
     assert!(!launch_config
         .config_overrides
         .iter()
@@ -3263,11 +3288,9 @@ fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
     let sol_config =
         build_codex_launch_config(&sol_request).expect("Sol launch config should be built");
     let proxy_url = |config: &CodexLaunchConfig| {
-        config
-            .config_overrides
-            .iter()
-            .find(|value| value.starts_with("model_providers.wework-router.base_url="))
-            .expect("local proxy base URL")
+        native_provider::profile_for_test(&config.config_overrides)["base_url"]
+            .as_str()
+            .unwrap()
             .to_owned()
     };
 
@@ -3515,7 +3538,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     assert!(launch_config
         .config_overrides
         .iter()
-        .any(|value| value == "model_provider=wework-router"));
+        .any(|value| value == &format!("model_provider={}", codex_model_catalog::PROVIDER_ID)));
     assert!(!launch_config
         .config_overrides
         .iter()

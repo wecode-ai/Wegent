@@ -36,6 +36,11 @@ Model CRD 的 `spec.modelConfig.ui.defaultModel: true` 标记默认模型，
 
 本地 provider 配置包含端点和可解析的静态或环境变量凭证时，executor 对“只传 provider ID”和“使用用户配置”的任务使用同一模型路由；首次执行、后续评论及原生线程控制操作复用同一解析逻辑，避免入口不同导致 provider 身份漂移。配置只能从任务所属的 Codex Home 读取；命名智能体 Home 缺少配置时，不读取应用默认 Home 中的同名 provider。任务显式携带端点时优先使用任务配置，不会被本地同名 provider 替换。需要原生鉴权流程的 provider 仍由 Codex 处理。
 
+会话统一使用 Wework router 逻辑身份（持久化 ID 为 `~`，避免迁移时改变历史字节偏移），但不会统一实际鉴权。API-key 会话经本地代理，
+OpenAI 账号会话保留 Codex 原生鉴权和端点；各线程以完整 provider 定义隔离凭证，
+公共账号和模型目录请求不借用某个任务的 API-key 路由。
+旧会话转换和 Goal 恢复时序见[升级与回退](./wework-upgrades.md#codex-会话-provider-迁移)。
+
 代理网关支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。Model CRD 的 `protocol`、`apiFormat` 和 `wire_api` 决定实际请求协议；配置互相冲突或无法确定协议时，backend 会直接返回配置错误，不会静默回退到其他协议。
 
 provider `base_url` 可以是服务根地址、带版本前缀的 API base，或已经包含协议端点的完整地址。网关按路径段合并协议端点并去除重叠部分，例如：

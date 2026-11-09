@@ -130,6 +130,8 @@ mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
 mod memory_review;
+mod native_provider;
+mod provider_migration;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
 use stand_in_approval::stand_in_mcp_approval_overrides;
@@ -155,7 +157,8 @@ use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
 pub(crate) use home::{
-    executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
+    executor_home, prepare_provider_migration, replace_config,
+    select_wework_codex_user_instructions, wework_codex_home,
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
@@ -1914,9 +1917,11 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
+    // Account RPCs retain native auth while model discovery uses the local
+    // merged catalog. Threads replace this whole table with their own profile.
     launch_config
         .config_overrides
-        .extend(codex_router_provider_overrides());
+        .extend(native_provider::process_overrides());
     launch_config
         .config_overrides
         .push("features.goals=true".to_owned());
@@ -1938,24 +1943,14 @@ fn codex_tool_orchestration_overrides() -> Vec<String> {
 }
 
 fn codex_router_provider_overrides() -> Vec<String> {
+    let (auth_command, auth_args) = codex_router_auth_command();
+    native_provider::api_overrides(codex_router_base_url(), auth_command, auth_args)
+}
+
+fn codex_router_base_url() -> String {
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
-    let provider = codex_model_catalog::PROVIDER_ID;
-    let (auth_command, auth_args) = codex_router_auth_command();
-    vec![
-        format!("model_provider={provider}"),
-        format!("model_providers.{provider}.name=\"Wework model router\""),
-        format!("model_providers.{provider}.base_url=\"{local_base_url}/v1/codex-router\""),
-        format!("model_providers.{provider}.wire_api=\"responses\""),
-        format!(
-            "model_providers.{provider}.auth.command={}",
-            toml_value(auth_command)
-        ),
-        format!(
-            "model_providers.{provider}.auth.args={}",
-            serde_json::to_string(&auth_args).expect("router auth args must serialize")
-        ),
-    ]
+    format!("{local_base_url}/v1/codex-router")
 }
 
 #[cfg(unix)]
@@ -2353,6 +2348,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             .prepare_thread_admission(&thread_plan, request, &launch_config)
             .await?;
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            // Native resume may start an active Goal before returning its RPC
+            // response. Both its route and notification listener must exist first.
+            bind_local_proxy_thread(&launch_config, thread_id)?;
             subscribed_thread_id = Some(thread_id.to_owned());
             early_request_context = Some(CodexTurnRequestContext::new(
                 client
@@ -2794,6 +2792,10 @@ async fn run_codex_app_server_turn_with_runtime(
             request,
             &launch_config,
         );
+        if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            bind_local_proxy_thread(&launch_config, thread_id)?;
+            state.set_root_thread_id(thread_id.to_owned());
+        }
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -4090,6 +4092,9 @@ fn spawn_codex_app_server(
     let auth_lease = if launch_config.env.contains_key(CODEX_HOME_ENV) {
         fs::create_dir_all(&codex_home)
             .map_err(|error| format!("create agent Codex Home: {error}"))?;
+        // A named Home may import an older task after the application upgrade.
+        // The task owns its Home execution lease; native writers are not started yet.
+        provider_migration::migrate(&codex_home)?;
         None
     } else {
         Some(home::acquire_shared_auth(&codex_home, auth_mode)?)
@@ -5281,6 +5286,7 @@ fn configured_inference_model_provider_from_path(config_path: &Path) -> String {
             document
                 .get("model_provider")
                 .and_then(|item| item.as_str())
+                .filter(|provider| !is_internal_codex_provider(provider))
                 .map(sanitize_provider_id)
         })
         .filter(|provider| !is_internal_codex_provider(provider))
@@ -5291,18 +5297,21 @@ fn explicit_model_provider(model_config: &Value) -> Option<String> {
     non_empty_config(model_config, "codex_model_provider")
         .or_else(|| non_empty_config(model_config, "model_provider"))
         .or_else(|| non_empty_config(model_config, "provider"))
+        .filter(|value| !is_internal_codex_provider(value))
         .map(|value| sanitize_provider_id(&value))
         .filter(|provider| !is_internal_codex_provider(provider))
 }
 
 fn is_internal_codex_provider(provider: &str) -> bool {
-    provider == codex_model_catalog::PROVIDER_ID || provider == "wework-catalog"
+    provider == codex_model_catalog::PROVIDER_ID
+        || provider == codex_model_catalog::LEGACY_PROVIDER_ID
+        || provider == "wework-catalog"
 }
 
 fn is_builtin_codex_provider(provider: &str) -> bool {
     matches!(
         provider,
-        "openai" | "amazon-bedrock" | "ollama" | "lmstudio"
+        "openai" | "amazon-bedrock" | "amazon-bedrock-runtime" | "gcp" | "ollama" | "lmstudio"
     )
 }
 
@@ -5351,54 +5360,22 @@ fn non_empty_config(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn header_overrides(
-    model_provider: &str,
+fn task_provider_headers(
     default_headers: Option<&Value>,
     project_id: Option<&str>,
     task_id: &str,
-) -> Vec<String> {
-    // Codex owns its built-in providers and rejects any
-    // `model_providers.<builtin>.*` override as a reserved provider conflict.
-    if is_builtin_codex_provider(model_provider) {
-        return Vec::new();
-    }
-
-    let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        let mut headers = parse_header_map(default_headers);
-        inject_session_headers(&mut headers, task_id);
-        return if headers.is_empty() {
-            Vec::new()
-        } else {
-            headers
-                .into_iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
-                        toml_value(&value)
-                    )
-                })
-                .collect()
-        };
-    };
-
+) -> Vec<(String, String)> {
     let mut headers = parse_header_map(default_headers);
-    insert_missing_header(&mut headers, "wecode-action", "wegent");
-    insert_missing_header(&mut headers, "wecode-source", "wegent-local");
-    insert_missing_header(&mut headers, "wecode-executor", "codex");
-    inject_session_headers(&mut headers, task_id);
-    insert_header(&mut headers, "wecode-project", project_id);
-
+    if let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) {
+        insert_missing_header(&mut headers, "wecode-action", "wegent");
+        insert_missing_header(&mut headers, "wecode-source", "wegent-local");
+        insert_missing_header(&mut headers, "wecode-executor", "codex");
+        inject_session_headers(&mut headers, task_id);
+        insert_header(&mut headers, "wecode-project", project_id);
+    } else {
+        inject_session_headers(&mut headers, task_id);
+    }
     headers
-        .into_iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
-                toml_value(&value)
-            )
-        })
-        .collect()
 }
 
 fn parse_header_map(value: Option<&Value>) -> Vec<(String, String)> {
