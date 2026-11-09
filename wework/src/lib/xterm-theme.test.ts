@@ -6,6 +6,7 @@ import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from './xt
 afterEach(() => {
   document.documentElement.removeAttribute('style')
   document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('data-appearance-theme')
 })
 
 test.each(['light', 'dark'] as const)(
@@ -15,6 +16,7 @@ test.each(['light', 'dark'] as const)(
     const terminal = { options: {} } as Terminal
     const container = document.createElement('div')
     const applyThemeVariables = (themeId: string) => {
+      document.documentElement.dataset.appearanceTheme = themeId
       Object.entries(resolveUiThemeVariables(mode, themeId)).forEach(([key, value]) => {
         document.documentElement.style.setProperty(key, value)
       })
@@ -27,6 +29,7 @@ test.each(['light', 'dark'] as const)(
       brightGreen: 'rgb(138, 226, 52)',
     }
     expect(terminal.options.theme).toMatchObject(originalColors)
+    expect(terminal.options.minimumContrastRatio).toBe(mode === 'light' ? 4.5 : 1)
 
     const disconnect = observeTerminalTheme(theme => applyTerminalTheme(terminal, container, theme))
     try {
@@ -35,15 +38,32 @@ test.each(['light', 'dark'] as const)(
       expect(terminal.options.theme?.brightCyan).toBe(
         mode === 'light' ? 'rgb(45, 159, 168)' : 'rgb(107, 215, 202)'
       )
+      expect(terminal.options.minimumContrastRatio).toBe(1)
 
       applyThemeVariables('wework')
       await new Promise<void>(resolve => queueMicrotask(resolve))
       expect(terminal.options.theme).toMatchObject(originalColors)
+      expect(terminal.options.minimumContrastRatio).toBe(mode === 'light' ? 4.5 : 1)
     } finally {
       disconnect()
     }
   }
 )
+
+test('leaves transparent terminals at xterm default contrast without changing ANSI whites', () => {
+  const terminal = { options: {} } as Terminal
+  const container = document.createElement('div')
+  const theme = { white: '#d3d7cf', brightWhite: '#eeeeec' }
+  document.documentElement.dataset.theme = 'light'
+
+  applyTerminalTheme(terminal, container, theme)
+  expect(terminal.options.minimumContrastRatio).toBe(4.5)
+  expect(terminal.options.theme).toMatchObject(theme)
+
+  applyTerminalTheme(terminal, container, theme, true)
+  expect(terminal.options.minimumContrastRatio).toBe(1)
+  expect(terminal.options.theme).toMatchObject({ ...theme, background: 'rgba(0, 0, 0, 0)' })
+})
 
 test('applies all ANSI colors and updates a mounted terminal without resetting it', async () => {
   const tokens = [

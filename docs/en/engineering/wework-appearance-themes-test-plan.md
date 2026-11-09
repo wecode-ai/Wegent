@@ -18,6 +18,9 @@ Terminal ANSI palettes are independent of syntax highlighting. Wework and themes
 authored terminal palette preserve the original 16 xterm colors; function, string, or operator
 colors must not replace ANSI blue, green, or cyan. Authored terminal palettes still follow their
 themes; switching back to Wework restores the original cyan and blue zsh directory and Git prompts.
+Opaque Wework light terminals use xterm's 4.5 minimum text contrast so ANSI whites remain readable
+without changing the palette definitions. Dark mode, other named themes, and transparent backgrounds
+retain xterm's default contrast behavior.
 
 Themes cover Wework-owned chrome, tabs, sidebars, every settings page, authentication, plugins,
 applications, automations, interactions, projects, boards, Issues, project Agent editors, menus and
