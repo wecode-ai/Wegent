@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+mod stand_in_memory;
 mod stand_in_review;
+pub use stand_in_memory::{memory_review, MEMORY_REVIEW_INSTRUCTIONS, MEMORY_REVIEW_TEMPLATE};
 pub use stand_in_review::{weekly_review, WEEKLY_REVIEW_INSTRUCTIONS, WEEKLY_REVIEW_TEMPLATE};
 
 const AUTOMATION_STORE_VERSION: u64 = 2;
@@ -41,6 +43,7 @@ struct AutomationState {
     automations: HashMap<String, Automation>,
     runs: Vec<AutomationRun>,
     stand_in_onboarding: HashMap<i64, Value>,
+    stand_in_memory_initialized: std::collections::HashSet<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -222,7 +225,7 @@ impl AutomationStore {
             return Err("automation already exists".to_owned());
         }
         if stand_in_review::duplicate_review(&state, &automation) {
-            return Err("weekly review already exists".into());
+            return Err("This stand-in review template already exists for the account".into());
         }
         state
             .automations
@@ -235,7 +238,7 @@ impl AutomationStore {
         validate_automation(&automation)?;
         let mut state = self.lock_state()?;
         if stand_in_review::duplicate_review(&state, &automation) {
-            return Err("weekly review already exists".into());
+            return Err("This stand-in review template already exists for the account".into());
         }
         let existing = state
             .automations
@@ -635,8 +638,11 @@ fn standard_day_of_week_name(value: &str) -> Option<&str> {
 fn validate_automation(automation: &Automation) -> Result<(), String> {
     if let Some(calendar) = automation.task_request.get("standInCalendar") {
         let owner = &automation.task_request["standInOwner"];
-        if calendar["template"] == WEEKLY_REVIEW_TEMPLATE && owner["roleId"] != "@primary" {
-            return Err("weekly review belongs to the primary stand-in".into());
+        if (calendar["template"] == WEEKLY_REVIEW_TEMPLATE
+            || calendar["template"] == MEMORY_REVIEW_TEMPLATE)
+            && owner["roleId"] != "@primary"
+        {
+            return Err("Stand-in reviews belong to the primary stand-in".into());
         }
         if !calendar.is_object()
             || !owner["userId"].as_i64().is_some_and(|id| id >= 0)

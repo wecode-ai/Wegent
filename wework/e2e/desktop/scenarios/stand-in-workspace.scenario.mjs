@@ -1,5 +1,13 @@
+import {
+  openStandInSettings,
+  openStandInActivity,
+} from '../modules/stand-in-profile-navigation.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
-import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
+import {
+  openProjectStandIn,
+  discardStandInDraft,
+  editProjectSource,
+} from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -219,15 +227,17 @@ export function createDesktopScenario({
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         connect: true,
       })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
-      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
       const beforeSave = await requestExecutor(
         control,
         'runtime.stand_in.get',
         { projectId: project.id, userId: USER_ID, projectStore: 'local' },
         uiTimeoutMs
       )
-      assert.equal(beforeSave.enabled, false, 'Automatic handling must wait for explicit save')
+      assert.equal(
+        beforeSave.enabled,
+        true,
+        'The preceding explicit connection Save enabled intake'
+      )
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-device"]'), '0')
@@ -316,7 +326,7 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
       await verifyStandInInstantReturn(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-overview-role-default"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
       await control.command('waitFor', '[data-testid="project-work-button"]', {
@@ -327,8 +337,7 @@ export function createDesktopScenario({
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
       // Goal persistence is asserted above; ordinary completion uses one model response.
       await control.command('click', '[data-testid="cancel-goal-draft-button"]')
-      await control.command('click', '[data-testid="stand-in-auto"]')
-      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+      await editProjectSource(control, false)
       const beforeDisableSave = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -336,10 +345,14 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(beforeDisableSave.enabled, true, 'Disabling must also wait for explicit save')
+      assert.equal(
+        beforeDisableSave.collaboration.enabled,
+        true,
+        'Disconnecting a source waits for Save'
+      )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-overview-status"]', {
-        text: '未开启',
-      })
+      await control.command('waitFor', '[data-testid="stand-in-sources-empty"]')
+      await control.command('click', '[data-testid="stand-in-close"]')
       saved = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -347,7 +360,12 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(saved.goalMode, false)
-      assert.equal(saved.enabled, false)
+      assert.equal(
+        saved.enabled,
+        true,
+        'Disconnecting one source must not stop the entire identity'
+      )
+      assert.equal(saved.collaboration.enabled, false)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-home"]`)
       await control.command('waitFor', '[data-testid="collaboration-issue-project-trigger"]', {
@@ -457,8 +475,9 @@ export function createDesktopScenario({
           '---\nname: stand-in-catalog\ndescription: Verify the stand-in composer catalog.\n---\nInspect the current task.\n'
         )
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+          connect: true,
+        })
         await control.command('fill', '[data-testid="stand-in-prompt"]', {
           value: `${MARKER}_UNSAVED /`,
         })
@@ -513,6 +532,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('clickWhenEnabled', selector(`stand-in-overview-role-${saved.id}`))
+      await openStandInActivity(control)
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', '[data-testid="stand-in-preview-open"]')

@@ -20,6 +20,7 @@ from app.schemas.plugin_account_auth import (
     PluginOAuthFinish,
     PluginRevocationBegin,
     PluginRevocationFinish,
+    PluginRevocationQuery,
 )
 from app.services.device.runtime_route import (
     RuntimeRouteError,
@@ -209,6 +210,8 @@ def _exchange_sync(
                 user_id=user_id,
                 device_id=device_id,
                 installed_ids=request.installed_plugin_ids,
+                prepare_only=request.prepare_only,
+                targets=request.targets,
             )
             db.commit()
             return {"success": True, **result}
@@ -258,12 +261,18 @@ def _exchange_sync(
             db.commit()
             return {"success": True, "connection": result.model_dump()}
         if operation == "oauth_revocations":
-            if data != {}:
-                raise PluginAccountAuthError("plugin_auth_invalid_request", 400)
-            ids = plugin_oauth_revocations.pending(
-                db, user_id=user_id, device_id=device_id
+            request = PluginRevocationQuery.model_validate(data)
+            page = plugin_oauth_revocations.pending(
+                db, user_id=user_id, device_id=device_id, after_id=request.after_id
             )
-            return {"success": True, "connection_ids": ids}
+            return {
+                "success": True,
+                # Retain the public identity list for already released native clients.
+                "connection_ids": [
+                    target["connection_id"] for target in page["revocations"]
+                ],
+                **page,
+            }
         if operation == "oauth_revoke_begin":
             request = PluginRevocationBegin.model_validate(data)
             result = plugin_oauth_revocations.begin(

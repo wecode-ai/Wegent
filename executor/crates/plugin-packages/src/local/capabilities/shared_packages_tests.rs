@@ -351,6 +351,42 @@ async fn uninstall_remembers_runtime_ownership_from_existing_manifest() {
 }
 
 #[tokio::test]
+async fn unmanaged_personal_source_is_rejected_before_package_download() {
+    let root = tempfile::tempdir().unwrap();
+    let store = store(root.path());
+    let source = store.personal_marketplace_dir().join("plugins/demo");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("personal.txt"), "keep author source").unwrap();
+    let packages = counted("v1");
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "",
+        store,
+        packages.clone(),
+        Arc::new(crate::NoRunningSessions),
+    );
+
+    let result = handler
+        .apply_sync(json!({"mode":"merge", "plugins":[{
+            "name":"demo", "installed_plugin_id":1,
+            "marketplace":PERSONAL_SHARED_PLUGIN_MARKETPLACE,
+            "version":"1.0", "download_path":"/package"
+        }]}))
+        .await
+        .unwrap();
+
+    assert_eq!(result["success"], false);
+    assert_eq!(
+        result["plugins"][0]["error_code"],
+        "PLUGIN_RUNTIME_METADATA_FAILED"
+    );
+    assert_eq!(packages.downloads.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        fs::read_to_string(source.join("personal.txt")).unwrap(),
+        "keep author source"
+    );
+}
+
+#[tokio::test]
 async fn unmanaged_plugin_cache_is_not_adopted_from_another_owner() {
     for runtime in ["claude", "codex"] {
         let root = tempfile::tempdir().unwrap();

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 import {
   assistantMessage,
@@ -17,7 +18,6 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   selectProjectRunnerModel,
-  selectCollaborationProjectView,
   waitForTestIdByText,
   inCollaborationSidebar,
 } from '../modules/workspace-flows.mjs'

@@ -1,3 +1,7 @@
+import {
+  openStandInSettings,
+  openStandInActivity,
+} from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
@@ -242,13 +246,17 @@ export function createDesktopScenario({
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await openStandInSettings(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
         await control.command(
           'click',
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
         )
         const timing = `[data-testid="stand-in-project-policy-${project.id}"]`
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-processing-settings-toggle"]'
+        )
         await control.command('waitFor', timing)
         assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'button')
         assert.equal(await control.command('getAttribute', timing, { value: 'role' }), 'switch')
@@ -273,11 +281,15 @@ export function createDesktopScenario({
         assert.equal(configured.processing, undefined)
         await verifyQueuedAssignmentReceipt(control, project.id)
         // Direct source routing is explicit; completion feedback still uses the silent window.
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await openStandInSettings(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
         await control.command(
           'click',
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
+        )
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-processing-settings-toggle"]'
         )
         await control.command('click', timing)
         assert.equal(
@@ -323,6 +335,7 @@ export function createDesktopScenario({
         await captureScreenshot(control, 'silent-02-feedback-without-extra-work.png')
         // Collaboration executions belong to the stand-in work list, not the ordinary task sidebar.
         const workCard = `[data-testid="stand-in-activity-task-${taskId}"]`
+        await openStandInActivity(control)
         await control.command('waitFor', workCard)
         await control.command('click', workCard)
         await control.command('click', '[data-testid="stand-in-preview-open"]')
@@ -390,7 +403,7 @@ export function createDesktopScenario({
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         const history = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
         assert.ok(history.actions.some(action => action.status === 'succeeded'))
-        await control.command('waitFor', '[data-testid="stand-in-settings-open"]:not(:disabled)')
+        await control.command('waitFor', '[data-testid="stand-in-details-open"]:not(:disabled)')
         await captureScreenshot(control, 'silent-05-return-to-stand-in.png')
         // Establish an ordinary user task through the real public task API.
         const ordinary = await rpc(control, 'runtime.tasks.create', {

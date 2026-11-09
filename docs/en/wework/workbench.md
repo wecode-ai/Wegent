@@ -9,6 +9,10 @@ sidebar_position: 5
 <!-- ui-source: src/pages/WorkbenchPage.tsx -->
 <!-- ui-source: src/pages/PopoutWorkbenchPage.tsx -->
 
+## Startup animation
+
+The startup logo has a left-to-right light sweep. The light band fully exits before a brief pause and the next pass, keeping the same base color across the loop boundary. The sweep is disabled when the system's reduced-motion preference is enabled.
+
 ## Application menu
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
@@ -128,7 +132,7 @@ Open **top tab bar → + → Needs your input**, or choose **Needs your input** 
 
 List entries and detail headers show a timestamp: the request time for pending questions and the recorded handling time for handled entries. Today's entries show hours and minutes; other dates show month and day, including the year for a different year. Hover over the timestamp for the complete date and time in your local timezone. Missing or invalid timestamps are omitted.
 
-When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
+When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. The reminder shows the question's creation time below the task name: hours and minutes for today, or a date for older questions. Hover over it for the complete date and time. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
 
 To leave an ordinary conversation question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally. Persistent Issue handoffs and ordinary project work do not offer this button: local archiving cannot replace an answer or a transfer.
 
@@ -212,7 +216,7 @@ The titlebar's **Open workspace location** and neighboring IDE dropdown open the
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
-Selecting a writable text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
+Selecting a writable non-Markdown text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 
 Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 

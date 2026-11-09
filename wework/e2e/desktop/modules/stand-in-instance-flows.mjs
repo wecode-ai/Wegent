@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 
 const testId = id => `[data-testid=${JSON.stringify(id)}]`
 
@@ -15,6 +16,8 @@ export async function finishStandInOnboarding(control) {
 }
 
 export async function stopBoundStandIn(control, timeoutMs) {
+  if ((await control.command('getElementCount', testId('stand-in-instance-stop'))) === '0')
+    await openStandInSettings(control)
   await control.command('clickWhenEnabled', testId('stand-in-instance-stop'))
   await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
   await control.command('waitFor', testId('stand-in-instance-stopped'))

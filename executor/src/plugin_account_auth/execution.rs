@@ -8,6 +8,7 @@ use super::{
 use crate::local::backend::LocalBackendTransport;
 use serde::Deserialize;
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -27,12 +28,28 @@ pub async fn execute<T: LocalBackendTransport>(
     executor_home: &Path,
     request: ExecutionRequest,
 ) -> Result<String, AuthError> {
-    tokio::time::timeout(
-        Duration::from_secs(180),
+    validate_request(&request)?;
+    let installed_ids = [request.installed_plugin_id];
+    let connector_slug = request.connector_slug.clone();
+    after_runtime_preparation(
+        super::migration::ensure_registered_python(
+            executor_home,
+            &installed_ids,
+            Some(&connector_slug),
+        ),
         execute_inner(transport, executor_home, request),
     )
     .await
-    .map_err(|_| AuthError("plugin_auth_execution_timeout"))?
+}
+
+async fn after_runtime_preparation<T>(
+    preparation: impl Future<Output = Result<(), AuthError>>,
+    action: impl Future<Output = Result<T, AuthError>>,
+) -> Result<T, AuthError> {
+    preparation.await?;
+    tokio::time::timeout(Duration::from_secs(180), action)
+        .await
+        .map_err(|_| AuthError("plugin_auth_execution_timeout"))?
 }
 
 async fn execute_inner<T: LocalBackendTransport>(
@@ -40,6 +57,29 @@ async fn execute_inner<T: LocalBackendTransport>(
     executor_home: &Path,
     request: ExecutionRequest,
 ) -> Result<String, AuthError> {
+    let gateway = NativeAuthGateway::new(transport);
+    let (package, credential) = execution_credential(&gateway, executor_home, &request).await?;
+    if package.installed_plugin_id != request.installed_plugin_id
+        || package.connector_slug != request.connector_slug
+    {
+        return Err(AuthError("plugin_auth_invalid_response"));
+    }
+    let root = resolve_managed_package(executor_home, &package)?;
+    let adapter = NativeAdapter::load(&root, &package.connector_slug, &package.auth_definition)?;
+    let interpreter = interpreter_for(&package.auth_definition)?;
+    let output = adapter
+        .run(
+            &interpreter,
+            credential,
+            &request.args,
+            request.working_directory.as_deref(),
+            Duration::from_secs(60),
+        )
+        .await?;
+    String::from_utf8(output).map_err(|_| AuthError("plugin_auth_invalid_output"))
+}
+
+fn validate_request(request: &ExecutionRequest) -> Result<(), AuthError> {
     if request.installed_plugin_id == 0
         || request.connector_slug.is_empty()
         || request.connector_slug.len() > 100
@@ -61,26 +101,7 @@ async fn execute_inner<T: LocalBackendTransport>(
     {
         return Err(AuthError("plugin_auth_invalid_request"));
     }
-    let gateway = NativeAuthGateway::new(transport);
-    let (package, credential) = execution_credential(&gateway, executor_home, &request).await?;
-    if package.installed_plugin_id != request.installed_plugin_id
-        || package.connector_slug != request.connector_slug
-    {
-        return Err(AuthError("plugin_auth_invalid_response"));
-    }
-    let root = resolve_managed_package(executor_home, &package)?;
-    let adapter = NativeAdapter::load(&root, &package.connector_slug, &package.auth_definition)?;
-    let interpreter = interpreter_for(&package.auth_definition)?;
-    let output = adapter
-        .run(
-            &interpreter,
-            credential,
-            &request.args,
-            request.working_directory.as_deref(),
-            Duration::from_secs(60),
-        )
-        .await?;
-    String::from_utf8(output).map_err(|_| AuthError("plugin_auth_invalid_output"))
+    Ok(())
 }
 
 async fn execution_credential<T: LocalBackendTransport>(
@@ -144,4 +165,25 @@ async fn execution_credential<T: LocalBackendTransport>(
         }
     }
     gateway.execution(request).await
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn preparation_precedes_action_timeout_and_credential_access() {
+        let preparation = async {
+            tokio::time::sleep(Duration::from_secs(181)).await;
+            Err(AuthError("python_runtime_unavailable"))
+        };
+        let action = async {
+            panic!("No backend credentials or leases may be requested before preparation")
+        };
+
+        assert_eq!(
+            after_runtime_preparation::<()>(preparation, action).await,
+            Err(AuthError("python_runtime_unavailable"))
+        );
+    }
 }

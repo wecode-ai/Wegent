@@ -409,6 +409,20 @@ test("source runners consume one frozen plan and complete aggregation gates publ
   assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
 });
 
+test("baseline exclusions require explicit dispatch confirmation without bypassing aggregation", () => {
+  const inputs = (workflow.on ?? workflow.true).workflow_dispatch.inputs;
+  assert.equal(inputs.approved_baseline_exclusions.default, "");
+  const aggregate = jobs["aggregate-upgrades"].steps.find((step) =>
+    step.run?.includes("aggregate-release-upgrades.mjs"),
+  );
+  assert.equal(
+    aggregate.env.WEWORK_APPROVED_BASELINE_EXCLUSIONS,
+    "${{ inputs.approved_baseline_exclusions }}",
+  );
+  assert.equal(aggregate["continue-on-error"], undefined);
+  assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
+});
+
 test("duration remains observable without blocking the verified release", () => {
   for (const name of ["verify-upgrades", "aggregate-upgrades", "publish"]) {
     const timing = jobs[name].steps.filter((step) =>

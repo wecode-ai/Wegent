@@ -5,7 +5,7 @@ title: Python 插件账号认证 SDK
 
 # Python 插件账号认证 SDK
 
-这是 `accountAuth` 协议草案 v1 的公共 Python 实现，SDK 版本为 `0.7.1`。
+这是 `accountAuth` 协议草案 v1 的公共 Python 实现，SDK 版本为 `0.7.2`。
 支持 Python 3.9+，只使用标准库；SDK 源码随插件打包，不依赖运行时安装。
 邮箱插件已使用此实现。当前提供原生 `export`、`run` 和公开业务命令委托，
 已接入桌面与独立设备的 Backend Runner。OAuth 授权、刷新回调已接入原生链路；真实后端/桌面已通过合成 OAuth 服务的端到端验证，提供方撤销已接入持久化任务；真实服务方与 Windows 实机验收待完成，协议继续作为草案。
@@ -117,6 +117,10 @@ SDK 的唯一维护源位于本目录。修改此处、运行测试，再使用 
 
 ## 传输与错误边界
 
+- 公开业务命令调用本机 Broker 的等待上限为 18 分钟，覆盖桌面 Python 环境
+  准备（最多 13 分钟）、原生执行（最多 3 分钟）和传输余量。准备失败返回
+  `python_runtime_unavailable`，不会改用其他账号或绕过授权。旧插件需要重新
+  `vendor` 本版本 SDK 并发布，才能获得更新后的等待预算。
 - 默认使用下述认证 loopback Socket；原生宿主也可通过 `WEGENT_PLUGIN_AUTH_FD`
   传递私有 FD（≥3）。凭据不走环境变量、命令参数或 stdout；拒绝普通文件和标准流。
 - 帧为四字节大端长度 + UTF-8 JSON，完整 envelope 上限为 65536 字节。

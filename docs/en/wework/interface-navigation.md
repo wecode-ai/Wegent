@@ -38,7 +38,8 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 | Configure project devices, repositories, initialization | Project space → Project settings → Execution environment            | Not the global execution-environment settings; AI execution requires an initialized online device                                                                                                                                                                                    |
 | Project AI / project manager                            | Project settings → AI team / Automatic processing                   | See [Project AI manager](./project-ai-manager.md) for current equivalents; do not look for the old bottom-of-board button                                                                                                                                                            |
 | Personal stand-in                                       | Left sidebar → My Stand-in                                          | Beta feature. See [Personal stand-in](./personal-stand-in.md)                                                                                                                                                                                                                        |
-| Stop stand-in / change binding                          | Left sidebar → My Stand-in → Stop stand-in in the header            | Rebinding choices appear only after stopping the entire stand-in and cancelling its tasks. See [Instance binding and stopping](./personal-stand-in.md#instance-binding-and-stopping)                                                                                                 |
+| Restore archived stand-in source work | My Stand-in → Stand-in details → arrow beside Recent activity → the work → Unarchive | Visible only for archived work; restoration does not execute it. See [Source session policy](./personal-stand-in.md#stand-in-source-session-policy) |
+| Stop stand-in / change binding | Left sidebar → My Stand-in → Stand-in details → Manage stand-in → Stop stand-in at the bottom left of settings | Rebinding choices appear only after stopping the entire stand-in and cancelling its tasks. See [Instance binding and stopping](./personal-stand-in.md#instance-binding-and-stopping) |
 | Change model / reasoning level                          | Task composer → model selector                                      | Add a model in settings if none is available. See [Model settings](./user-guide/model-settings.md)                                                                                                                                                                                   |
 | Attach files, select Skill / plugin                     | Task composer → + or capability selector                            | See [Working with AI](./tasks.md) and [Plugins and Skills](./plugins-and-skills.md)                                                                                                                                                                                                  |
 | Read-only, workspace, full-access permissions           | Left composer toolbar → permission icon beside quick phrases        | Hover to see the current mode; changing it does not authorize an external app                                                                                                                                                                                                        |
@@ -78,16 +79,16 @@ Internal routes below support version maintenance and automated checks; they are
 
 ### Space and auxiliary feature links
 
-| Search terms                                                              | Detailed steps                                                             |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Space members, global agents/teams/devices, Runner, templates, milestones | [Space and resource operations](./projects.md#workspace-resource-controls) |
-| Stand-in memory, scope, edit and forget                                   | [Memory controls](./personal-stand-in.md#stand-in-memory-controls)         |
-| Experimental lead conversation, takeover, stop, publish to Issue          | [Project lead controls](./personal-stand-in.md#project-lead-controls)      |
-| Site PV/UV, visit dates and analytics                                     | [Site visit data](./plugins-and-skills.md#site-analytics-controls)         |
-| System drag, new chat/follow-up and quick-phrase stash                    | [Drag and stash](./settings.md#system-drag-controls)                       |
-| History search, multi-delete, date groups and retry                       | [Browsing history](./browser.md#browser-history-controls)                  |
-| Bell, mark all read, notification channels and IM target                  | [Notification center](./workbench.md#notification-controls)                |
-| Process resource usage, filtering, launch details and pinning             | [Process Explorer](./troubleshooting.md#process-explorer-controls)         |
+| Search terms                                                                      | Detailed steps                                                             |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls) |
+| Stand-in memory, source evidence, scope, editing, forgetting and forgetting rules | [Memory controls](./personal-stand-in.md#stand-in-memory-controls)         |
+| Experimental lead conversation, takeover, stop, publish to Issue                  | [Project lead controls](./personal-stand-in.md#project-lead-controls)      |
+| Site PV/UV, visit dates and analytics                                             | [Site visit data](./plugins-and-skills.md#site-analytics-controls)         |
+| System drag, new chat/follow-up and quick-phrase stash                            | [Drag and stash](./settings.md#system-drag-controls)                       |
+| History search, multi-delete, date groups and retry                               | [Browsing history](./browser.md#browser-history-controls)                  |
+| Bell, mark all read, notification channels and IM target                          | [Notification center](./workbench.md#notification-controls)                |
+| Process resource usage, filtering, launch details and pinning                     | [Process Explorer](./troubleshooting.md#process-explorer-controls)         |
 
 ## Settings quick reference
 

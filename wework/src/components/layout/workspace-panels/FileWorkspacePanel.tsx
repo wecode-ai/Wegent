@@ -345,9 +345,8 @@ export function FileWorkspacePanel({
           pendingNavigationRef.current = null
           setBinaryPreview(null)
           acceptRead(file, requestId)
-          const editable = Boolean(file.editable && writeWorkspaceTextFile)
-          setEditing(editable)
-          setMarkdownMode(editable && isMarkdownFile(file.name) ? 'source' : 'preview')
+          setMarkdownMode('preview')
+          setEditing(Boolean(file.editable && writeWorkspaceTextFile && !isMarkdownFile(file.name)))
           return
         }
         if (!readWorkspaceFileChunk) {

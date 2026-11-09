@@ -1,3 +1,4 @@
+import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -121,6 +122,7 @@ export function createDesktopScenario({
         'click',
         `[data-testid="stand-in-overview-role-${settings.roles[0].id}"]`
       )
+      await openStandInActivity(control)
       await control.command('waitFor', `[data-testid="stand-in-activity-task-${TASK}"]`, {
         timeoutMs: modelResponseTimeoutMs,
       })

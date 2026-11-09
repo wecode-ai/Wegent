@@ -538,6 +538,7 @@ interface RuntimeWorkIpcOptions {
 
 interface AutomationIpcOptions extends RuntimeWorkIpcOptions {
   prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
+  resolveRunDeviceId?: () => Promise<string>
 }
 
 function runtimeExecutionUser(
@@ -3745,7 +3746,11 @@ export function createAutomationApiFromIpc(
       )
       return {
         run: response.run
-          ? withAutomationRunSource(response.run, source, automationDeviceId)
+          ? withAutomationRunSource(
+              response.run,
+              source,
+              await (options.resolveRunDeviceId?.() ?? Promise.resolve(automationDeviceId))
+            )
           : null,
       }
     },
@@ -3755,10 +3760,9 @@ export function createAutomationApiFromIpc(
         automationId ? { automationId } : {},
         automationDeviceId
       )
+      const deviceId = await (options.resolveRunDeviceId?.() ?? Promise.resolve(automationDeviceId))
       return {
-        items: (response.items ?? []).map(item =>
-          withAutomationRunSource(item, source, automationDeviceId)
-        ),
+        items: (response.items ?? []).map(item => withAutomationRunSource(item, source, deviceId)),
       }
     },
   }
@@ -4068,6 +4072,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       resolveProxy,
       user: deps.user,
       prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
+      // Persisted intent can use the local alias; live navigation/event scopes cannot.
+      resolveRunDeviceId: getLocalDeviceId,
     }
   )
   // Local project-space identity is the local session user, not the connected

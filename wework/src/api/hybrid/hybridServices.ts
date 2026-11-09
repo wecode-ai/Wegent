@@ -1820,6 +1820,18 @@ export function createHybridWorkbenchServices(
       async memories(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
       },
+      async memoryRules(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).memoryRules(userId, deviceId)
+      },
+      async deleteMemoryRule(userId, deviceId, id, version, ...revision) {
+        return (await standInApiForDevice(deviceId)).deleteMemoryRule(
+          userId,
+          deviceId,
+          id,
+          version,
+          ...revision
+        )
+      },
       async saveMemory(userId, deviceId, memory) {
         return (await standInApiForDevice(deviceId)).saveMemory(userId, deviceId, memory)
       },

@@ -129,6 +129,7 @@ mod auth_mode;
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
+mod memory_review;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
 use stand_in_approval::stand_in_mcp_approval_overrides;
@@ -1913,16 +1914,24 @@ fn persistent_codex_app_server_launch_config(
     launch_config
         .config_overrides
         .extend(codex_router_provider_overrides());
-    launch_config.config_overrides.extend([
-        "features.goals=true".to_owned(),
-        "features.code_mode_host=true".to_owned(),
-        "features.code_mode_only=true".to_owned(),
-        "features.code_mode_only_strict_3p_tools=true".to_owned(),
-    ]);
+    launch_config
+        .config_overrides
+        .push("features.goals=true".to_owned());
+    launch_config
+        .config_overrides
+        .extend(codex_tool_orchestration_overrides());
     launch_config
         .config_overrides
         .extend(codex_runtime_default_config_overrides());
     launch_config
+}
+
+fn codex_tool_orchestration_overrides() -> Vec<String> {
+    vec![
+        "features.code_mode_host=true".to_owned(),
+        "features.code_mode_only=true".to_owned(),
+        "features.code_mode_only_strict_3p_tools=true".to_owned(),
+    ]
 }
 
 fn codex_router_provider_overrides() -> Vec<String> {
@@ -2270,6 +2279,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     // establish a no-tools boundary through thread overrides alone.
     if super::instance_home::request_home(&request).is_some()
         || request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false)
+        || memory_review::applies(&request)
     {
         let mut options = options;
         if let Some(thread_id) = options.direct_thread_id.take() {
@@ -4148,6 +4158,11 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_HUMAN_INPUT_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
         host_skills::INSTRUCTIONS,
+        if crate::python_runtime::managed_python_bridge_configured() {
+            crate::plugin_python::INSTRUCTIONS
+        } else {
+            ""
+        },
         external_work::SOURCE_CONTENT_INSTRUCTIONS,
     ]
     .into_iter()
@@ -4649,13 +4664,21 @@ fn build_codex_launch_config_with_route_scope(
 
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
         configure_text_generation(&mut launch_config);
+    } else {
+        external_work::configure(request, &mut launch_config, &codex_home)?;
+    }
+
+    if memory_review::applies(request) {
+        memory_review::configure(&mut launch_config)?;
+    }
+    if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false)
+        || memory_review::applies(request)
+    {
         if let Some(path) = request.extra.get("weworkTextModelCatalog") {
             launch_config
                 .config_overrides
                 .push(format!("model_catalog_json={path}"));
         }
-    } else {
-        external_work::configure(request, &mut launch_config, &codex_home)?;
     }
 
     effective_instructions::publish(request, &launch_config)?;

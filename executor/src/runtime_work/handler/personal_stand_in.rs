@@ -112,36 +112,6 @@ impl RuntimeWorkRpcHandler {
         configs
     }
 
-    pub(super) async fn stand_in_text_decision(
-        &self,
-        selected_model: Option<&Value>,
-        prompt: String,
-        schema: Value,
-    ) -> Result<Value, AppIpcError> {
-        let request = self
-            .prepare_coordination_text_request(
-                selected_model,
-                prompt,
-                schema,
-                format!("stand-in-grouping-{}", uuid::Uuid::new_v4()),
-            )
-            .await?;
-        let response = tokio::time::timeout(
-            Duration::from_secs(60),
-            self.generate_text(json!({"executionRequest":request})),
-        )
-        .await
-        .map_err(|_| {
-            AppIpcError::new("stand_in_grouping_failed", "Message grouping timed out")
-        })??;
-        serde_json::from_str(response["content"].as_str().unwrap_or_default()).map_err(|_| {
-            AppIpcError::new(
-                "stand_in_grouping_failed",
-                "The model returned an invalid message grouping",
-            )
-        })
-    }
-
     pub(super) async fn prepare_coordination_text_request(
         &self,
         selected_model: Option<&Value>,

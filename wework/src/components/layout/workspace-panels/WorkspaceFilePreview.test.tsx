@@ -22,7 +22,14 @@ const appearanceMocks = vi.hoisted(() => ({
 vi.mock('@/components/chat/AssistantMarkdown', () => ({
   AssistantMarkdown: ({ content, variant }: { content: string; variant?: string }) => (
     <div data-testid="assistant-markdown" data-variant={variant}>
-      {content}
+      {content.split('\n\n').map((block, index) => (
+        <p
+          key={`${index}-${block}`}
+          data-source-line={content.slice(0, content.indexOf(block)).split('\n').length}
+        >
+          {block}
+        </p>
+      ))}
     </div>
   ),
 }))
@@ -102,6 +109,7 @@ vi.mock('@/features/appearance', () => ({
 
 beforeEach(() => {
   document.documentElement.dataset.theme = 'light'
+  Element.prototype.scrollIntoView = vi.fn()
   fileViewerMocks.render.mockClear()
   codeViewMocks.render.mockClear()
   appearanceMocks.resolvedMode = 'light'
@@ -253,4 +261,79 @@ test.each([
   )
   expect(screen.getByTestId('diagram-copy-image-button')).toBeInTheDocument()
   expect(screen.getByTestId('diagram-save-image-button')).toBeInTheDocument()
+})
+
+test('keeps markdown preview unanchored without a target line', () => {
+  const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/README.md',
+        name: 'README.md',
+        content: '# Title\n\nFirst paragraph.\n\nSecond paragraph.',
+        editable: true,
+        revision: 'revision-1',
+        truncated: false,
+        size: 44,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(screen.getByTestId('workspace-markdown-preview')).toBeInTheDocument()
+  expect(scrollIntoView).not.toHaveBeenCalled()
+})
+
+test('scrolls and highlights the rendered source block for a target line', () => {
+  const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/README.md',
+        name: 'README.md',
+        content: '# Title\n\nFirst paragraph.\n\nSecond paragraph.',
+        editable: true,
+        revision: 'revision-1',
+        truncated: false,
+        size: 44,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+      targetLineStart={5}
+    />
+  )
+
+  const target = scrollIntoView.mock.contexts.at(-1) as HTMLElement
+  expect(target).toHaveTextContent('Second paragraph.')
+  expect(target).toHaveAttribute('data-source-line', '5')
+  expect(target).toHaveAttribute('data-source-line-target', 'true')
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' })
+})
+
+test('prefers the closest preceding rendered block for a line inside a block', () => {
+  const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/README.md',
+        name: 'README.md',
+        content: '# Title\n\nFirst paragraph.\n\nSecond paragraph.',
+        editable: true,
+        revision: 'revision-1',
+        truncated: false,
+        size: 44,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+      targetLineStart={3}
+    />
+  )
+
+  const target = scrollIntoView.mock.contexts.at(-1) as HTMLElement
+  expect(target).toHaveTextContent('First paragraph.')
+  expect(target).toHaveAttribute('data-source-line', '3')
 })
