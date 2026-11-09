@@ -2,6 +2,101 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use base64::Engine;
+
+#[tokio::test]
+async fn archived_history_reads_canonical_rollout_without_reactivating_the_thread() {
+    for (label, options) in [
+        ("conversation", json!({"conversationContextOnly":true})),
+        ("bounded", json!({"transcriptProtocolVersion":2})),
+        ("navigation", json!({"navigationOnly":true})),
+    ] {
+        let (handler, root) = native_handler(&format!("archived-rollout-{label}"));
+        handler.store.update_task("task-1", |link| {
+            link.status = "archived".into();
+            link.running = false;
+            link.continuable = false;
+        });
+        let rollout = root.join("archived-history.jsonl");
+        let records = [
+            json!({"type":"task_started","turn_id":"current","started_at":1780000000}),
+            json!({"type":"item_completed","turn_id":"current","item":{
+                "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
+            }}),
+            json!({"type":"item_completed","turn_id":"current","item":{
+                "id":"reply","type":"agentMessage","text":"Archived result"
+            }}),
+            json!({"type":"task_complete","turn_id":"current","completed_at":1780000001}),
+        ];
+        fs::write(
+            &rollout,
+            records
+                .iter()
+                .map(|payload| json!({"type":"event_msg","payload":payload}).to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("thread_read.json"),
+            json!({"thread":{
+                "id":"thread-1","cwd":"/tmp/project","historyMode":"paginated","path":rollout
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("thread_timeline_list.error-once.json"),
+            json!({"code":-32600,"message":"thread thread-1 is archived"}).to_string(),
+        )
+        .unwrap();
+        let mut payload = options;
+        payload["taskId"] = json!("task-1");
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method":"runtime.tasks.transcript","payload":payload
+            }))
+            .await;
+        handler
+            .codex_app_server
+            .request("test/stop", json!({}))
+            .await
+            .unwrap();
+        let mut response = result.unwrap();
+        if label == "bounded" {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(response["transfer"]["payload"].as_str().unwrap())
+                .unwrap();
+            let mut packed: Value =
+                serde_json::from_reader(flate2::read::GzDecoder::new(bytes.as_slice())).unwrap();
+            response = packed["transcript"].take();
+        }
+        if label == "navigation" {
+            assert_eq!(response["turnNavigation"][0]["turnId"], "current");
+        } else {
+            assert!(response["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| {
+                    message["role"] == "assistant" && message["content"] == "Archived result"
+                }));
+        }
+        assert_eq!(
+            handler.local_task_link("task-1").unwrap().status,
+            "archived"
+        );
+        let requests = fs::read_to_string(root.join("requests.jsonl")).unwrap();
+        for forbidden in ["thread/timeline/list", "thread/resume", "thread/unarchive"] {
+            assert!(
+                !requests.contains(forbidden),
+                "Archived reads must not invoke {forbidden}"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
 
 #[tokio::test]
 async fn native_timeline_keeps_an_active_open_turn_running_without_unpersisted_items() {
