@@ -11,6 +11,7 @@ import {
   responseCreated,
   responseCompleted,
   selectTool,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 
@@ -29,6 +30,9 @@ export function createDesktopScenario(options) {
   let spawned = false
   let followedUp = false
   let childResultObserved = false
+  let nativeWaitObserved = false
+  let lastWaitCallId
+  let lastWaitResult
   let childResponse
   let released = false
   let sequence = 0
@@ -57,6 +61,17 @@ export function createDesktopScenario(options) {
         return true
       }
       if (!input.includes(FIRST)) return false
+      if (lastWaitCallId) {
+        const output = toolOutputText(body, lastWaitCallId)
+        if (output != null) {
+          lastWaitResult = output.slice(0, 2000)
+          try {
+            if (typeof JSON.parse(output).timed_out === 'boolean') nativeWaitObserved = true
+          } catch {
+            // Retain the result for diagnosis; the final assertion requires a real native wait.
+          }
+        }
+      }
       if (!spawned) {
         spawned = true
         reply(
@@ -86,9 +101,10 @@ export function createDesktopScenario(options) {
           events.push(assistantMessage('已交给原生子代理，你可以继续交代其他事情。'))
         }
         for (const event of events) event.item.phase = 'commentary'
+        lastWaitCallId = `native-chat-wait-${sequence}`
         events.push(
           ...selectedToolCall(
-            `native-chat-wait-${sequence}`,
+            lastWaitCallId,
             selectTool(body, 'wait_agent', {
               timeout_ms: 60000,
             }),
@@ -159,6 +175,11 @@ export function createDesktopScenario(options) {
           true,
           'The parent must receive the real child result before reporting it'
         )
+        assert.equal(
+          nativeWaitObserved,
+          true,
+          'The parent must successfully use native mailbox wait, not poll tool errors'
+        )
         await control.command(
           'waitFor',
           `${CHAT} [data-testid="message-assistant"]:has([data-runtime-item-id="native-chat-followup"]):not(:has([data-runtime-item-id="native-chat-result"]))`,
@@ -198,6 +219,8 @@ export function createDesktopScenario(options) {
         spawned,
         followedUp,
         childResultObserved,
+        nativeWaitObserved,
+        lastWaitResult,
         released,
         sequence,
       }

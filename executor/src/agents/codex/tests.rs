@@ -4307,6 +4307,41 @@ fn single_collaboration_mode_disables_codex_native_subagents() {
 }
 
 #[test]
+fn stand_in_identity_uses_native_v2_without_changing_other_task_defaults() {
+    for origin_type in ["stand_in_identity", "stand_in_task", "project_coordinator"] {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("origin".to_owned(), json!({"type": origin_type}));
+        let overrides = codex_collaboration_config_overrides(&request);
+        if origin_type == "stand_in_identity" {
+            assert_eq!(overrides, vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]);
+        } else {
+            assert!(overrides.is_empty());
+        }
+    }
+    assert!(codex_collaboration_config_overrides(&ExecutionRequest::default()).is_empty());
+}
+
+#[test]
+fn single_stand_in_identity_still_disables_both_native_agent_families() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("origin".to_owned(), json!({"type":"stand_in_identity"}));
+    request
+        .extra
+        .insert("collaboration_model".to_owned(), json!("single"));
+    assert_eq!(
+        codex_collaboration_config_overrides(&request),
+        vec![
+            CODEX_DISABLE_MULTI_AGENT_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE
+        ]
+    );
+}
+
+#[test]
 fn turn_start_params_includes_client_user_message_id() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
