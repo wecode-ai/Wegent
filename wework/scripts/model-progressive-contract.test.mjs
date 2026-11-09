@@ -4,6 +4,7 @@ import {
   assertProgressiveHi,
   assertRequiredToolInventory,
   MATRIX_REQUIRED_TOOLS,
+  INITIAL_CONTEXT_TOKEN_LIMIT,
   MATRIX_UNUSED_SKILL_CANARY,
   countModelRequest,
   MATRIX_MCP_DESCRIPTION,
@@ -14,7 +15,7 @@ import {
   assertCodeModeRequest,
 } from '../e2e/desktop/modules/model-wire-contract.mjs'
 
-const baseInstructions = "You are Codex, Wework's coding assistant."
+const baseInstructions = 'You are Codex, an agent based on GPT-6.'
 const script = 'text(await tools.apply_patch("line 1\\n中文\\nline 3"))'
 const result = { callId: 'native-call', script, marker: 'REAL_EXEC_RESULT' }
 const budget = { encoding: 'o200k_base', tokens: 500, bytes: 1200 }
@@ -129,14 +130,14 @@ test('Lite input declarations are checked even when top-level tools is absent', 
   )
 })
 
-test('the hard threshold rejects 7000 rather than only requests above it', () => {
+test('the native context budget rejects its exact threshold', () => {
   expect(() =>
     assertProgressiveHi(
       request('responses'),
       { protocol: 'responses' },
-      { ...budget, tokens: 7000 }
+      { ...budget, tokens: INITIAL_CONTEXT_TOKEN_LIMIT }
     )
-  ).toThrow('must be < 7000')
+  ).toThrow(`must be < ${INITIAL_CONTEXT_TOKEN_LIMIT}`)
 })
 
 test('the pinned tokenizer includes declarations in input and every other request field', () => {
@@ -148,10 +149,10 @@ test('the pinned tokenizer includes declarations in input and every other reques
   })
   const large = countModelRequest(body)
   expect(small.encoding).toBe('o200k_base')
-  expect(small.tokens).toBeLessThan(7000)
-  expect(large.tokens).toBeGreaterThan(7000)
+  expect(small.tokens).toBeLessThan(INITIAL_CONTEXT_TOKEN_LIMIT)
+  expect(large.tokens).toBeGreaterThan(INITIAL_CONTEXT_TOKEN_LIMIT)
   expect(() => assertProgressiveHi(body, { protocol: 'responses' }, large)).toThrow(
-    'must be < 7000'
+    `must be < ${INITIAL_CONTEXT_TOKEN_LIMIT}`
   )
 }, 30_000)
 

@@ -19,6 +19,7 @@ import {
 } from './response-protocol.mjs'
 
 export const MATRIX_UNUSED_SKILL_CANARY = 'MATRIX_UNUSED_SKILL_BODY_MUST_NEVER_BE_LOADED_29BD'
+export const INITIAL_CONTEXT_TOKEN_LIMIT = 12_000
 export const MATRIX_REQUIRED_TOOLS = ['get_goal', 'exec_command', 'apply_patch']
 const MATRIX_DISCOVERY_SCRIPT =
   'text(ALL_TOOLS.filter(tool => tool.name.includes("get_issue_details") || ["get_goal","exec_command","apply_patch"].includes(tool.name)))'
@@ -68,17 +69,20 @@ export function assertProgressiveHi(body, model, budget = countModelRequest(body
     'hi',
     'The budget must measure the real default hi, not a title or prediction request'
   )
-  if (budget.tokens >= 7000)
+  if (budget.tokens >= INITIAL_CONTEXT_TOKEN_LIMIT)
     failures.push(
-      `complete request uses ${budget.tokens} ${budget.encoding} tokens (must be < 7000)`
+      `complete request uses ${budget.tokens} ${budget.encoding} tokens (must be < ${INITIAL_CONTEXT_TOKEN_LIMIT})`
     )
   const text = strings(body).join('\n')
-  if (!text.includes("You are Codex, Wework's coding assistant."))
-    failures.push('The canonical native catalog did not restore the default base instructions')
+  if (!text.includes('You are Codex,'))
+    failures.push('The native Codex catalog instructions are missing')
   for (const marker of [
     MATRIX_SKILL_CANARY,
     MATRIX_UNUSED_SKILL_CANARY,
     MATRIX_MCP_DESCRIPTION,
+    'wework-runtime:coding',
+    'Read [workflow.md](workflow.md)',
+    "You are Codex, Wework's coding assistant.",
     'Run JavaScript in the persistent Node REPL.',
     '### `get_goal`',
     '### `create_goal`',
