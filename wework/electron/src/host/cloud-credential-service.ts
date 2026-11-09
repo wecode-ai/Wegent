@@ -278,7 +278,9 @@ export class CloudCredentialService {
       const envelope = await this.readEnvelope()
       const value =
         envelope?.version === 3
-          ? JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
+          ? envelope.ciphertext === null
+            ? null
+            : JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
           : envelope
       return normalizeStoredCredential(value)
     } catch (error) {
@@ -299,7 +301,13 @@ export class CloudCredentialService {
       const envelope = await this.readEnvelope()
       const stored =
         envelope?.version === 3
-          ? { version: 3, ciphertext: await this.protection.encrypt(JSON.stringify(credential)) }
+          ? {
+              version: 3,
+              ciphertext:
+                credential === null
+                  ? null
+                  : await this.protection.encrypt(JSON.stringify(credential)),
+            }
           : credential
       await writeFile(temporary, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 })
       beforeRename()
@@ -309,13 +317,15 @@ export class CloudCredentialService {
     }
   }
 
-  private async readEnvelope(): Promise<{ version?: number; ciphertext?: string } | null> {
+  private async readEnvelope(): Promise<{ version?: number; ciphertext?: string | null } | null> {
     try {
       const envelope = JSON.parse(await readFile(this.path(), 'utf8'))
       if (
         !envelope ||
         ![2, 3].includes(envelope.version) ||
-        (envelope.version === 3 && typeof envelope.ciphertext !== 'string')
+        (envelope.version === 3 &&
+          envelope.ciphertext !== null &&
+          typeof envelope.ciphertext !== 'string')
       ) {
         throw new CloudCredentialError(
           'credentials_unavailable',

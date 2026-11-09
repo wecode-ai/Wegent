@@ -45,10 +45,18 @@ describe('CloudCredentialService', () => {
     const service = new CloudCredentialService(root, request, protection)
     const prepared = await service.prepareAuthorization(legacy.apiBaseUrl)
     expect(prepared.publicKey).toEqual(legacy.publicKey)
-    await service.clear()
-    expect(
-      JSON.parse(await protection.decrypt(JSON.parse(await readFile(path, 'utf8')).ciphertext))
-    ).toBeNull()
+    const unavailable = {
+      encrypt: vi.fn().mockRejectedValue(new Error('OS storage unavailable')),
+      decrypt: vi.fn().mockRejectedValue(new Error('OS storage unavailable')),
+    }
+    const locked = new CloudCredentialService(root, request, unavailable)
+    await locked.clear()
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 3, ciphertext: null })
+    await expect(locked.prepareAuthorization(legacy.apiBaseUrl)).resolves.toMatchObject({
+      publicKey: { kty: 'EC', crv: 'P-256' },
+    })
+    expect(unavailable.encrypt).not.toHaveBeenCalled()
+    expect(unavailable.decrypt).not.toHaveBeenCalled()
     const restarted = new CloudCredentialService(root, request, protection)
     const next = await restarted.prepareAuthorization(legacy.apiBaseUrl)
     await restarted.claimAuthorization({
