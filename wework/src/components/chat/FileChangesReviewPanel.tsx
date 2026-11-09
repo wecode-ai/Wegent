@@ -493,8 +493,12 @@ function ReviewToolbar({
               <span className="shrink-0">{toolbarTitle}</span>
             )}
           </div>
-          <span className="shrink-0 font-normal text-diff-added">+{additions.toLocaleString()}</span>
-          <span className="shrink-0 font-normal text-diff-removed">-{deletions.toLocaleString()}</span>
+          <span className="shrink-0 font-normal text-diff-added">
+            +{additions.toLocaleString()}
+          </span>
+          <span className="shrink-0 font-normal text-diff-removed">
+            -{deletions.toLocaleString()}
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <ToolbarButton

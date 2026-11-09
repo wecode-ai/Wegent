@@ -6,5 +6,12 @@
       "shard": 6,
       "position": 2000
     }
-  }
+  },
+  "paths": [
+    "wework/src/components/devices/**",
+    "wework/src/components/settings/AddCloudDeviceDialog.tsx",
+    "wework/src/components/projects/Standalone*ProjectDialog*.tsx",
+    "wework/src/components/projects/standaloneProjectDevices.ts",
+    "wework/e2e/desktop/modules/desktop-build-flows.mjs"
+  ]
 }
