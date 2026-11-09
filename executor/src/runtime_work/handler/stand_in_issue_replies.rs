@@ -62,6 +62,16 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn persist_stand_in_issue_reply(&self, task: &str, message: &CodexNotification) {
         let notification = codex_notification(message);
+        if notification.method != "turn/started" && notification.method != "item/completed" {
+            return;
+        }
+        if self.store.read_task(task, |link| {
+            link.runtime_handle["origin"]["type"] == "issue_dispatch"
+                && link.runtime_handle["origin"]["initiatedBy"] == "stand_in"
+        }) != Some(true)
+        {
+            return;
+        }
         if notification.method == "turn/started" {
             let result = self.store.try_update_task(task, |link| {
                 if link.runtime_handle["origin"]["type"] == "issue_dispatch"
@@ -145,16 +155,15 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn sync_stand_in_issue_replies(&self, task: &str) {
-        let Some(link) = self.local_task_link(task) else {
-            return;
-        };
-        if !link.runtime_handle["standInIssueReplies"]
-            .as_object()
-            .is_some_and(|reports| {
-                reports
-                    .values()
-                    .any(|report| report["sent"] != true && report["rejected"] != true)
-            })
+        if self.store.read_task(task, |link| {
+            link.runtime_handle["standInIssueReplies"]
+                .as_object()
+                .is_some_and(|reports| {
+                    reports
+                        .values()
+                        .any(|report| report["sent"] != true && report["rejected"] != true)
+                })
+        }) != Some(true)
         {
             return;
         }

@@ -298,7 +298,11 @@ mod tests {
         let binding = received_binding.lock().unwrap().clone();
         assert_eq!(binding["deviceId"], "mac");
         assert_eq!(binding["assignmentId"], "event");
-        assert_eq!(binding["taskId"], "stand-in-human-review");
+        assert_eq!(
+            binding["taskId"],
+            "stand-in-issue-abf6e07390e1647c67dad92c7f6306dadc4b461f0830e780536856cf500b2db6"
+        );
+        assert_eq!(binding["standInConversationId"], binding["taskId"]);
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         assert!(store.pending_assignment_receipts().unwrap().is_empty());
         assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
@@ -346,7 +350,10 @@ mod tests {
         );
         assert_eq!(
             reservations[0].task_id,
-            format!("stand-in-{assignment}-review")
+            super::super::stand_in::stand_in_issue_identity(
+                &json!({"id":"review","projectId":project.id,"projectStore":"local","userId":7}),
+                &serde_json::to_value(&issue).unwrap(),
+            )
         );
     }
 
