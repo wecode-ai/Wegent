@@ -183,10 +183,10 @@ fn run_native_control(cloud_bound: bool) {
                 resumed["params"]["config"]["mcp_servers.wework_control.enabled"],
                 true
             );
-            assert!(resumed["params"]["developerInstructions"]
-                .as_str()
-                .unwrap()
-                .contains("Wework control routing:"));
+            let instructions = resumed["params"]["developerInstructions"].as_str().unwrap();
+            assert!(instructions.contains("wework-runtime"));
+            assert!(instructions.contains("personal Wework operations use wework_control"));
+            assert!(!instructions.contains("For weekly reports"));
             if cloud_bound {
                 let error = handler.control_operation(&ctx, "create_automation", json!({"name":"CI monitor","prompt":"Check CI","schedule":{"type":"interval","value":5,"unit":"minutes"},"timezone":"Asia/Shanghai","conversation_id":workbench_control::conversation_id("control-test-device","target"),"enabled":false})).await.unwrap_err();
                 assert_eq!(error.code, "project_automation_required");

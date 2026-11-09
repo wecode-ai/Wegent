@@ -90,6 +90,8 @@ export interface BundledPluginMarketplace {
 }
 
 let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = null
+let scheduledLocalExecutorAvailability: Promise<LocalExecutorStatus> | null = null
+let ensureLocalExecutorConfiguredPromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
 let localExecutorIdentityEpoch = 0
 let availableLocalExecutorStatus: LocalExecutorStatus | null = null
@@ -331,6 +333,7 @@ function markLocalExecutorUnavailable(cause: unknown): void {
       error: cause instanceof Error ? cause.message : String(cause),
     }
   }
+  ensureLocalExecutorConfiguredPromise = null
   initializedLocalExecutorStatus = null
 }
 
@@ -473,9 +476,20 @@ export function ensureLocalExecutorAvailable(
   ) {
     return Promise.resolve(availableLocalExecutorStatus)
   }
+  // A fresh read may join only before dispatch, so post-operation identity
+  // checks never reuse a description requested before the operation completed.
+  if (options.refresh && scheduledLocalExecutorAvailability) {
+    return scheduledLocalExecutorAvailability
+  }
   if (options.refresh || !ensureLocalExecutorAvailablePromise) {
     const epoch = localExecutorIdentityEpoch
-    const availability = describeDshExecutor()
+    const availability = Promise.resolve()
+      .then(() => {
+        if (scheduledLocalExecutorAvailability === availability)
+          scheduledLocalExecutorAvailability = null
+        ensureLocalExecutorIdentityUnchanged(epoch)
+        return describeDshExecutor()
+      })
       .then(description => {
         ensureLocalExecutorIdentityUnchanged(epoch)
         if (
@@ -484,6 +498,7 @@ export function ensureLocalExecutorAvailable(
             availableLocalExecutorStatus.deviceId !== description.device_id)
         ) {
           localExecutorIdentityEpoch += 1
+          ensureLocalExecutorConfiguredPromise = null
           initializedLocalExecutorStatus = null
           ensureLocalExecutorStartedPromise = null
         }
@@ -507,6 +522,7 @@ export function ensureLocalExecutorAvailable(
           ensureLocalExecutorAvailablePromise = null
       })
     ensureLocalExecutorAvailablePromise = availability
+    scheduledLocalExecutorAvailability = availability
   }
   return ensureLocalExecutorAvailablePromise
 }
@@ -542,6 +558,36 @@ export function initializeBundledPluginMarketplace(): Promise<BundledPluginMarke
   return initializeBundledPluginMarketplacePromise
 }
 
+function ensureLocalExecutorConfigured(traceId?: string): Promise<LocalExecutorStatus> {
+  if (!ensureLocalExecutorConfiguredPromise) {
+    const epoch = localExecutorIdentityEpoch
+    const configurationTraceId = traceId ?? createModelLoadingTrace()
+    const configuration = (async () => {
+      const available = await traceModelLoading(
+        configurationTraceId,
+        'executor.available',
+        ensureLocalExecutorAvailable
+      )
+      const proxyUrl = await traceModelLoading(
+        configurationTraceId,
+        'executor.proxy',
+        resolveLocalCodexProxyUrl
+      )
+      await traceModelLoading(configurationTraceId, 'executor.runtime_config', () =>
+        requestDshExecutor('runtime.codex.runtime_config.update', { proxyUrl })
+      )
+      ensureLocalExecutorIdentityUnchanged(epoch)
+      return available
+    })().catch((cause: unknown) => {
+      if (ensureLocalExecutorConfiguredPromise === configuration)
+        ensureLocalExecutorConfiguredPromise = null
+      throw cause
+    })
+    ensureLocalExecutorConfiguredPromise = configuration
+  }
+  return ensureLocalExecutorConfiguredPromise
+}
+
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
   if (initializedLocalExecutorStatus && isExecutorHealthy(initializedLocalExecutorStatus)) {
     return Promise.resolve(initializedLocalExecutorStatus)
@@ -550,15 +596,7 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
     const epoch = localExecutorIdentityEpoch
     const traceId = createModelLoadingTrace()
     const startup = (async () => {
-      const available = await traceModelLoading(
-        traceId,
-        'executor.available',
-        ensureLocalExecutorAvailable
-      )
-      const proxyUrl = await traceModelLoading(traceId, 'executor.proxy', resolveLocalCodexProxyUrl)
-      await traceModelLoading(traceId, 'executor.runtime_config', () =>
-        requestDshExecutor('runtime.codex.runtime_config.update', { proxyUrl })
-      )
+      const available = await ensureLocalExecutorConfigured(traceId)
       const codexStartup = await traceModelLoading(traceId, 'executor.codex_start', () =>
         requestDshExecutor<CodexStartupStatus>('runtime.codex.ensure_started')
       )
@@ -600,6 +638,8 @@ export function resetLocalExecutorStateForTests(): void {
   bundledPluginUpdateTasks.clear()
   pausedBundledPluginUpdates.clear()
   ensureLocalExecutorAvailablePromise = null
+  scheduledLocalExecutorAvailability = null
+  ensureLocalExecutorConfiguredPromise = null
   ensureLocalExecutorStartedPromise = null
   availableLocalExecutorStatus = null
   initializedLocalExecutorStatus = null
@@ -676,7 +716,14 @@ export function requestLocalExecutor<T = unknown>(
   _deviceId?: string,
   requestOptions?: DshExecutorRequestOptions
 ): Promise<T> {
-  const dispatch = (): Promise<T> => {
+  const dispatch = async (): Promise<T> => {
+    if (
+      method === 'runtime.tasks.transcript' ||
+      method === 'runtime.tasks.transcript.search' ||
+      method.startsWith('runtime.tasks.goal.')
+    ) {
+      await ensureLocalExecutorConfigured()
+    }
     if (nextLocalExecutorRequestFailure?.method === method) {
       const failure = nextLocalExecutorRequestFailure
       nextLocalExecutorRequestFailure = null

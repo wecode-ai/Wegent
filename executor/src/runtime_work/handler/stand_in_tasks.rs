@@ -36,6 +36,46 @@ impl RuntimeWorkRpcHandler {
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
+        if matches!(
+            name,
+            "list_memory_sources" | "next_memory_page" | "complete_memory_source"
+        ) {
+            return self.memory_progress_operation(&identity, name, &args).await;
+        }
+        if name == "remember_from_conversation" {
+            return self.remember_from_conversation(&identity, &args).await;
+        }
+        if matches!(
+            name,
+            "search_review_memories" | "list_memory_forgetting_rules"
+        ) {
+            if !identity.memory_review {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "Memory review identity required",
+                ));
+            }
+            self.read_stand_in_conversations(&identity, "list_tasks", &json!({"limit":1}))
+                .await?;
+            let store = LocalTaskStore::open(self.task_store_path.as_ref())
+                .map_err(super::stand_in::settings_error)?;
+            let memories = if name == "list_memory_forgetting_rules" {
+                store.recall_stand_in_memory_rules(identity.user, &identity.device, None, None)
+            } else {
+                store.active_stand_in_memories(identity.user, &identity.device)
+            }
+            .map_err(super::stand_in::settings_error)?;
+            return LocalTaskStore::page_stand_in_memories(
+                memories,
+                if name == "list_memory_forgetting_rules" {
+                    ""
+                } else {
+                    args["query"].as_str().unwrap_or_default()
+                },
+                args["cursor"].as_str(),
+            )
+            .map_err(super::stand_in::settings_error);
+        }
         if name == "propose_profile" {
             return self.propose_stand_in_profile(&identity, &args);
         }
@@ -294,6 +334,7 @@ mod operation_tests {
             work: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
             ask_before_act: true,
             coordinator_batch: Some("batch".into()),
@@ -351,6 +392,7 @@ mod operation_tests {
             work: None,
             project: None,
             review: false,
+            memory_review: false,
             readonly_worker: false,
             ask_before_act: true,
             coordinator_batch: None,

@@ -10,8 +10,9 @@ import { createServer, connect } from 'node:net'
 import { reservePort } from '../port-reservation.mjs'
 
 const run = promisify(execFile)
-const VERSION = '1.6.15'
-const SHA256 = 'e93dc3ed2db0175a4d6e168743bde3c8ac8a7435490bdab3f12da33d491ee24e'
+// GreenMail 2.1.15 fixes APPEND noon timestamps being parsed as midnight.
+const VERSION = '2.1.15'
+const SHA256 = '91d58798698cac357f015365240383b936ced2f2a1a9f7db37d9e3e1a31391b1'
 
 /**
  * Keep fixture APPEND times outside GreenMail's 12:xx parsing window.
@@ -69,6 +70,12 @@ async function startImapProxy(port, targetPort) {
 
 // GreenMail is a real, isolated IMAP/SMTP service. No production mailboxes are used.
 export async function startRealMailServer(directory, runtimeRoot) {
+  const { stdout, stderr } = await run('java', ['-version'])
+  const version = `${stdout}\n${stderr}`.match(/version "(?:1\.)?(\d+)/)?.[1]
+  assert.ok(
+    Number(version) >= 11,
+    `GreenMail ${VERSION} requires Java 11 or newer on PATH; select a supported JDK before running the mail checkpoint. Detected: ${stdout.trim()} ${stderr.trim()}`
+  )
   await mkdir(directory, { recursive: true })
   const jar = join(directory, 'greenmail.jar')
   const response = await fetch(

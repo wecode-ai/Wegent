@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { Automation } from '@/types/automation'
 import { AutomationsPage } from './AutomationsPage'
+import { automationDraftFromAutomation, scheduleFromAutomationDraft } from './automationDraft'
 
 const mocks = vi.hoisted(() => ({
   listAutomations: vi.fn(async (): Promise<{ items: Automation[] }> => ({ items: [] })),
@@ -99,6 +100,25 @@ it('shows an existing review once and opens it from the list', async () => {
   await userEvent.click(reviewEntry)
   expect(await screen.findByTestId('automation-name-input')).toHaveValue('existing-review')
   expect(mocks.onboarding).not.toHaveBeenCalled()
+})
+
+it('preserves the memory review identity and interval when opening its editable draft', async () => {
+  const review = entry('memory-review', '@primary')
+  review.taskRequest!.standInCalendar = { template: 'memory_review' }
+  review.schedule = { type: 'interval', value: 6, unit: 'hours' }
+  const draft = automationDraftFromAutomation(review)
+  expect(draft.calendarTemplate).toBe('memory_review')
+  expect(scheduleFromAutomationDraft(draft)).toEqual(review.schedule)
+  mocks.listAutomations.mockResolvedValueOnce({ items: [review] })
+  render(
+    <AutomationsPage
+      embedded
+      standInOwner={{ userId: 7, roleId: '@primary' }}
+      standInDeviceId="local"
+    />
+  )
+  await userEvent.click(await screen.findByTestId('automation-open-memory-review'))
+  expect(await screen.findByTestId('automation-name-input')).toHaveValue('memory-review')
 })
 
 it('uses a single embedded pane on desktop and protects a schedule draft before returning to the list', async () => {

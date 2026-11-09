@@ -88,6 +88,16 @@ def _require_manager_dispatch(
             status.HTTP_409_CONFLICT,
             "Collaboration dispatch is unavailable",
         )
+    # Snapshot reconciliation can advance the execution version independently.
+    # Lock and refresh the aggregate before authorizing and completing it, so
+    # the Issue decision cannot commit after losing its terminal transition.
+    dispatch = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.id == dispatch.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
     if "project_coordination" in dispatch.runtime_origin_context:
         from app.services.collaboration_revocation import execution_authorized
 

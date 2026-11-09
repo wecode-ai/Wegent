@@ -23,7 +23,11 @@ const scheduledReview: Automation = {
   updatedAt: '',
 }
 
-function renderSchedule(automation: Automation, locale = 'zh-CN') {
+function renderSchedule(
+  automation: Automation,
+  locale = 'zh-CN',
+  onReviewTemplate: () => void = vi.fn()
+) {
   render(
     <AutomationListPane
       automations={[automation]}
@@ -41,6 +45,7 @@ function renderSchedule(automation: Automation, locale = 'zh-CN') {
       onSelect={vi.fn()}
       onCreate={vi.fn()}
       onClearError={vi.fn()}
+      onReviewTemplate={onReviewTemplate}
       calendar
     />
   )
@@ -57,6 +62,9 @@ it.each([
     await i18n.changeLanguage(locale)
     try {
       const row = renderSchedule(scheduledReview, locale)
+      expect(screen.getByTestId('stand-in-weekly-review-template')).toHaveTextContent(
+        locale === 'en' ? 'Add weekly review' : '添加每周复盘'
+      )
       expect(row.getByText(schedule)).toBeVisible()
       expect(row.getByText(status)).toBeVisible()
       expect(screen.getByTestId('automation-row-review')).toHaveTextContent(/Nov 9|11月9日/)
@@ -153,3 +161,41 @@ it('keeps a calendar load failure actionable instead of presenting an empty succ
   expect(retry).toHaveBeenCalledOnce()
   expect(screen.queryByText('暂无事项，添加事项并设置触发时间。')).not.toBeInTheDocument()
 })
+
+it.each([
+  ['zh-CN', true, '添加每周复盘'],
+  ['zh-CN', false, '添加每周复盘'],
+  ['en', true, 'Add weekly review'],
+  ['en', false, 'Add weekly review'],
+] as const)(
+  'translates weekly review in %s with populated=%s',
+  async (language, populated, label) => {
+    const previousLanguage = i18n.language
+    const onReviewTemplate = vi.fn()
+    await i18n.changeLanguage(language)
+    try {
+      if (populated) {
+        renderSchedule(scheduledReview, language, onReviewTemplate)
+      } else {
+        render(
+          <AutomationEmptyState
+            calendar
+            loading={false}
+            error={null}
+            query=""
+            onQueryChange={vi.fn()}
+            onCreate={vi.fn()}
+            onClearError={vi.fn()}
+            onReviewTemplate={onReviewTemplate}
+          />
+        )
+      }
+      const button = screen.getByRole('button', { name: label })
+      expect(button).toHaveAttribute('data-testid', 'stand-in-weekly-review-template')
+      await userEvent.setup().click(button)
+      expect(onReviewTemplate).toHaveBeenCalledOnce()
+    } finally {
+      await i18n.changeLanguage(previousLanguage)
+    }
+  }
+)

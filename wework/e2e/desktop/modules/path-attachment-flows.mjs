@@ -597,11 +597,11 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   await control.command('fill', composerSelector, { value: '' })
 
   await control.command('click', `[data-item-path="${SELECTED_TEXT_FILE_NAME}"]`)
-  await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
     text: SELECTED_TEXT_FILE_CONTENT.trim(),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('press', '[data-testid="workspace-file-editor-content"]', {
     key: process.platform === 'darwin' ? 'Meta+a' : 'Control+a',
   })
   await control.command('waitFor', '[data-testid="workspace-selection-actions"]', {
@@ -611,26 +611,23 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   assert.equal(
     await control.command('getSystemDragPanelVisibility', 'body'),
     'false',
-    'Selecting CodeMirror workspace text incorrectly opened the system drag panel'
+    'Selecting Pierre workspace text incorrectly opened the system drag panel'
   )
   await control.command('click', '[data-testid="add-workspace-selection-to-conversation-button"]')
   assert.equal(
     await control.command('getValue', composerSelector),
     SELECTED_TEXT_FILE_CONTENT.trim(),
-    'The CodeMirror selection action did not insert text into the composer'
+    'The Pierre selection action did not insert text into the composer'
   )
   await control.command('fill', composerSelector, { value: '' })
-  await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('press', '[data-testid="workspace-file-editor-content"]', {
     key: process.platform === 'darwin' ? 'Meta+a' : 'Control+a',
   })
-  await control.command(
-    'dragDataTransferStart',
-    '[data-testid="workspace-file-editor"] .cm-content'
-  )
+  await control.command('dragDataTransferStart', '[data-testid="workspace-file-editor-content"]')
   await waitForSystemDragPanelVisibility(
     control,
     true,
-    'Dragging CodeMirror workspace text did not show the system drag panel'
+    'Dragging Pierre workspace text did not show the system drag panel'
   )
   await control.command('dragDataTransferEnd', 'body', { target: composerSelector })
   await waitForSystemDragPanelVisibility(
@@ -644,7 +641,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     'Dragging selected workspace editor text did not insert it into the composer'
   )
   assert.equal(
-    await control.command('getValue', '[data-testid="workspace-file-editor"] .cm-content'),
+    await control.command('getValue', '[data-testid="workspace-file-editor-content"]'),
     SELECTED_TEXT_FILE_CONTENT.trim(),
     'Dragging selected workspace editor text removed it from the source editor'
   )

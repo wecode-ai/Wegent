@@ -7,6 +7,7 @@ import type { ProjectBoardColumn } from './ProjectBoardBody'
 import type { ProjectBoardSort } from './projectBoardSorting'
 import type { CollaborationTranslate } from '../i18n'
 import { hasTooManyTags } from '../tagging'
+import { issueNeedsUser, type IssueHumanRequest } from '../issueParticipation'
 
 export interface SavedBoardColumn {
   id: string
@@ -19,7 +20,12 @@ export interface SavedBoardView {
   id: string
   name: string
   columns: SavedBoardColumn[]
-  filter?: { tags?: string[]; match?: 'any' | 'all'; [key: string]: unknown }
+  filter?: {
+    tags?: string[]
+    match?: 'any' | 'all'
+    needs_my_input?: boolean
+    [key: string]: unknown
+  }
   sorts?: Record<string, ProjectBoardSort>
   [key: string]: unknown
 }
@@ -53,9 +59,16 @@ export function defaultBoardViewId(config?: ProjectBoardViews | null): string {
 }
 
 export function matchesBoardView(
-  item: { tags: string[] },
-  view?: Pick<SavedBoardView, 'filter'> | null
+  item: {
+    tags: string[]
+    status?: string
+    human_requests?: readonly IssueHumanRequest[]
+  },
+  view?: Pick<SavedBoardView, 'filter'> | null,
+  userId?: import('../issueParticipation').IssueParticipationViewer
 ) {
+  if (view?.filter?.needs_my_input && (userId == null || !issueNeedsUser(item, userId)))
+    return false
   const tags = view?.filter?.tags ?? []
   if (!tags.length) return true
   return view?.filter?.match === 'any'
@@ -81,12 +94,16 @@ export function savedBoardColumns(
         ? (statusColumns.find(status => status.groupValue === column.value)?.dotClass ??
           'bg-zinc-400')
         : 'bg-zinc-400',
-    status: column.type === 'status' ? column.value : '',
+    status: column.type === 'status' ? column.value : ''
   }))
   const matchedColumns = columns.filter(column => column.type !== 'unmatched')
   return columns.map(column =>
     column.type === 'unmatched'
-      ? { ...column, unmatchedColumns: matchedColumns, unmatchedFilter: view.filter }
+      ? {
+          ...column,
+          unmatchedColumns: matchedColumns,
+          unmatchedFilter: { ...view.filter, needs_my_input: false }
+        }
       : column
   )
 }
@@ -98,9 +115,9 @@ export function createSavedBoardView(statuses: readonly CollaborationStatus[]): 
     columns: statuses.map(status => ({
       id: crypto.randomUUID(),
       type: 'status',
-      value: status.id,
+      value: status.id
     })),
-    filter: { tags: [], match: 'all' },
+    filter: { tags: [], match: 'all' }
   }
 }
 
@@ -135,13 +152,13 @@ export function unmatchedCreateDefaults(
     columns: view.columns
       .filter(column => column.type !== 'unmatched')
       .map(column => [column.type, column.value]),
-    filter: { tags: filterTags, match: view.filter?.match ?? 'all' },
+    filter: { tags: filterTags, match: view.filter?.match ?? 'all' }
   })
   return {
     status,
     tags,
     parent,
-    draftScope: `board-view:${view.id}:unmatched:${parent?.id ?? 'root'}:${draftRules}`,
+    draftScope: `board-view:${view.id}:unmatched:${parent?.id ?? 'root'}:${draftRules}`
   }
 }
 
@@ -188,7 +205,7 @@ export function boardDropHint(
   if (removing)
     return t('todo.board_drop_move_tag', undefined, {
       source: source.label,
-      tag: target.label,
+      tag: target.label
     })
   return item.tags.includes(target.groupValue)
     ? t('todo.board_drop_has_tag')

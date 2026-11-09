@@ -436,6 +436,23 @@ export function BoardViewEditor({
                   </button>
                 </div>
                 <div className="flex flex-col gap-2">
+                  <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
+                    <input
+                      type="checkbox"
+                      data-testid="board-view-needs-my-input"
+                      checked={draft.filter.needs_my_input === true}
+                      onChange={event =>
+                        setDraft({
+                          ...draft,
+                          filter: {
+                            ...draft.filter,
+                            needs_my_input: event.target.checked,
+                          },
+                        })
+                      }
+                    />
+                    {t('todo.board_view_needs_my_input')}
+                  </label>
                   <span className="text-sm">{t('todo.board_view_filter')}</span>
                   <AlignedSelect
                     aria-label={t('todo.board_view_filter')}

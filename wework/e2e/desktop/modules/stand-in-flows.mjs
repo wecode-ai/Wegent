@@ -1,3 +1,14 @@
+export async function sendStandInNotificationFollowUp(control, content, prompt) {
+  const pane = `${content} [data-active-workbench-pane="true"]`
+  const composer = `${pane} [data-testid="chat-message-input"][contenteditable="true"]`
+  await control.command('waitFor', composer, { visible: true })
+  await control.command('fill', composer, { value: prompt })
+  // This flow verifies session routing; IME Enter handling has separate coverage.
+  await control.command('clickWhenEnabled', `${pane} [data-testid="send-message-button"]`, {
+    visible: true,
+  })
+}
+
 /** Open the project picker, follow the explicit link into personal settings. */
 export async function openProjectStandIn(
   control,
@@ -19,24 +30,26 @@ export async function openProjectStandIn(
     await control.command('select', '[data-testid="stand-in-project-select"]', { value })
   }
   await control.command('click', '[data-testid="stand-in-personal-settings-link"]')
-  await control.command('waitFor', '[data-testid="stand-in-auto"]')
+  await control.command('waitFor', '[data-testid="stand-in-role-name"]')
   if (connect) {
-    await control.command('click', '[data-testid="stand-in-connections-open"]')
-    await openConnectionTypePicker(control)
-    await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
-    await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
-    const enabled = await control.command(
-      'getAttribute',
-      '[data-testid="stand-in-source-collaboration"]',
-      { value: 'aria-checked' }
-    )
-    if (enabled !== 'true')
-      await control.command('click', '[data-testid="stand-in-source-collaboration"]')
+    await editProjectSource(control, true)
     await onConnections?.()
     await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-    await control.command('waitFor', '[data-testid="stand-in-auto"]')
+    await control.command('waitFor', '[data-testid="stand-in-role-name"]')
   }
   if (requirements) await control.command('waitFor', '[data-testid="stand-in-prompt"]')
+}
+
+/** Change only this source's intake; the global lifecycle remains a separate native confirmation. */
+export async function editProjectSource(control, enabled) {
+  await control.command('click', '[data-testid="stand-in-connections-open"]')
+  await openConnectionTypePicker(control)
+  await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
+  const selector = '[data-testid="stand-in-source-collaboration"]'
+  await control.command('waitFor', selector)
+  const current = await control.command('getAttribute', selector, { value: 'aria-checked' })
+  if (current !== String(enabled)) await control.command('click', selector)
+  await control.command('waitFor', `${selector}[aria-checked="${enabled}"]`)
 }
 
 export async function discardStandInDraft(control) {

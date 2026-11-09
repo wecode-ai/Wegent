@@ -109,23 +109,53 @@ async fn run_tool_json(
     plugin_key: &str,
     connector_slug: &str,
 ) -> Result<Value, AppIpcError> {
-    let mut command = Command::new(tool);
+    let requires_python = tool
+        .to_str()
+        .is_some_and(crate::python_runtime::is_python_program);
+    let selected = if requires_python && crate::python_runtime::managed_python_bridge_configured() {
+        Some(
+            crate::python_runtime::prepare_plugin_python(root, true)
+                .await
+                .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?,
+        )
+    } else {
+        None
+    };
+    let mut command = Command::new(
+        selected
+            .as_ref()
+            .map_or(tool, |python| python.path.as_path()),
+    );
+    if let Some(selected) = &selected {
+        selected
+            .configure(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+        if tool
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
+        {
+            command.arg(tool);
+        }
+    }
     crate::process::hide_windows_console(&mut command);
-    let mut child = command
+    command
         .args(args)
         .current_dir(root)
         .envs(crate::plugin_account_auth::broker::environment())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| {
-            AppIpcError::new(
-                "connection_cli_unavailable",
-                "Plugin tool could not be started",
-            )
-        })?;
+        .kill_on_drop(true);
+    if requires_python && selected.is_none() {
+        crate::python_runtime::isolate_python_environment(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+    }
+    let mut child = command.spawn().map_err(|_| {
+        AppIpcError::new(
+            "connection_cli_unavailable",
+            "Plugin tool could not be started",
+        )
+    })?;
     let stdout = child.stdout.take().expect("piped plugin stdout");
     let stderr = child.stderr.take().expect("piped plugin stderr");
     let output = tokio::time::timeout(Duration::from_secs(40), async {

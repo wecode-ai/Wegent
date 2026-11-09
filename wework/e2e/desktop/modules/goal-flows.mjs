@@ -59,6 +59,7 @@ import {
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { prepareGoalCompletionRace } from './goal-completion-race.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
+import { verifyGoalDraftNavigation } from './goal-draft-flows.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -125,6 +126,17 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
     kind: 'response',
     name: 'runtime.tasks.list',
     holdFollowing: true,
+  })
+  // Point refreshes can repair the sidebar too; keep every cleared snapshot held.
+  await gates.arm({
+    id: 'missing-goal-task-lookup',
+    kind: 'response',
+    name: 'runtime.tasks.get',
+    holdFollowing: true,
+    where: [
+      { path: 'params.taskId', equals: goalTaskId },
+      { path: 'result.task.goalStatus', equals: null },
+    ],
   })
   try {
     const clearResponse = JSON.parse(
@@ -618,6 +630,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({
     ACTIVE_WORKBENCH_SELECTOR
   )
   await completionRace?.reset()
+  await verifyGoalDraftNavigation({ composerSelector, control, taskRowTestId: goalTaskRowTestId })
 }
 
 async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {

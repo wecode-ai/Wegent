@@ -4,6 +4,57 @@
 
 use super::*;
 
+#[test]
+fn interrupted_reply_keeps_its_place_before_persisted_guidance() {
+    let (handler, root) = isolated_runtime_work_handler("interrupted-reply-order");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    let prefix = json!({"id":"partial", "type":"agentMessage", "phase":"final_answer",
+        "text":"Create the environment. Code"});
+    let guidance = json!({"id":"answer", "type":"userMessage",
+        "content":[{"type":"text","text":"Use the cloud"}]});
+    let progress = json!({"id":"progress", "type":"agentMessage", "phase":"commentary",
+        "text":"Connecting the entry points"});
+    for (method, item) in [
+        ("item/started", prefix),
+        ("item/completed", guidance.clone()),
+        ("item/completed", progress.clone()),
+    ] {
+        handler.record_active_codex_transcript_item(
+            "task-1",
+            "turn-1",
+            &json!({
+                "method":method, "params":{"threadId":"thread-1", "turnId":"turn-1", "item":item}
+            }),
+        );
+    }
+    let mut native_guidance = guidance;
+    native_guidance["position"] = json!(30);
+    let mut native_progress = progress;
+    native_progress["position"] = json!(40);
+    let mut thread = json!({"id":"thread-1", "timeline":true, "turns":[{
+        "id":"turn-1", "status":"inProgress", "items":[
+            {"id":"prompt", "type":"userMessage", "position":10,
+                "content":[{"type":"text", "text":"Prepare an environment"}]},
+            native_guidance, native_progress
+        ]
+    }]});
+
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+
+    let items = thread["turns"][0]["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["prompt", "partial", "answer", "progress"]
+    );
+    assert_eq!(items[2]["position"], 30);
+    assert_eq!(items[3]["position"], 40);
+    assert_eq!(items[1]["text"], "Create the environment. Code");
+    let _ = fs::remove_dir_all(root);
+}
+
 fn active_history_fixture(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, Value) {
     let (handler, root) = isolated_runtime_work_handler(label);
     let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
@@ -94,11 +145,12 @@ async fn isolated_runtime_fixtures_keep_two_worker_slots_shared_only_with_their_
     assert!(clone.handle_runtime_rpc(request.clone()).await.is_ok());
     let second_slot = workers.try_acquire_owned().unwrap();
 
-    let error = clone.handle_runtime_rpc(request.clone()).await.unwrap_err();
-    assert_eq!(error.code, "runtime_read_busy");
+    let mut queued = Box::pin(clone.handle_runtime_rpc(request.clone()));
+    assert!(futures_util::poll!(queued.as_mut()).is_pending());
     assert!(second.handle_runtime_rpc(request).await.is_ok());
 
     drop((first_slot, second_slot));
+    assert!(queued.await.is_ok());
     let _ = fs::remove_dir_all(first_root);
     let _ = fs::remove_dir_all(second_root);
 }

@@ -166,6 +166,18 @@ export function createSourceStoryModel({ marker, roleId, providerId, mode, expec
     const message = work.messages.find(item => item.text === value.text)
     assert.ok(message, "The real collected event must contain this phase's source facts")
     assert.ok(message.recordId, 'Full source reads require the immutable version record ID')
+    if (
+      mode === 'project' &&
+      phase > 1 &&
+      !state.continuations.some(item => item.taskId === work.work.taskId)
+    ) {
+      // Native exact-record routing can continue a revision without an AI assessment.
+      state.continuations.push({
+        taskId: work.work.taskId,
+        recordId: message.recordId,
+        route: 'native-record-binding',
+      })
+    }
     if (!has(body, payload))
       return call(body, payload, 'read_work', {
         messageId: message.recordId,

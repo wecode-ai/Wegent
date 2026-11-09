@@ -54,6 +54,8 @@ describe('runtimeConversationCache', () => {
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.useRealTimers()
   })
 
   test('keeps transcript data independently from a mounted pane', () => {
@@ -716,18 +718,9 @@ describe('runtimeConversationCache', () => {
   })
 
   test('cancels a pending streaming notification when bounded eviction removes its turn', () => {
-    const animationFrames = new Map<number, FrameRequestCallback>()
-    let nextFrameId = 1
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-      const frameId = nextFrameId++
-      animationFrames.set(frameId, callback)
-      return frameId
-    })
-    const cancelAnimationFrame = vi.fn((frameId: number) => {
-      animationFrames.delete(frameId)
-    })
-    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
-
+    vi.useFakeTimers()
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',
       taskId: address.taskId,
@@ -742,7 +735,8 @@ describe('runtimeConversationCache', () => {
       content: 'pending update',
     })
 
-    expect(animationFrames.size).toBe(1)
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 100)
+    const streamingTimer = setTimeoutSpy.mock.results.at(-1)!.value
 
     for (let index = 0; index < 50; index += 1) {
       const otherAddress = { ...address, taskId: `other-task-${index}` }
@@ -758,8 +752,8 @@ describe('runtimeConversationCache', () => {
     }
 
     expect(getRuntimeConversationMessages(address)).toEqual([])
-    expect(cancelAnimationFrame).toHaveBeenCalledOnce()
-    expect(animationFrames.size).toBe(0)
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(streamingTimer)
+    vi.advanceTimersByTime(100)
     expect(listener).not.toHaveBeenCalled()
     unsubscribe()
   })

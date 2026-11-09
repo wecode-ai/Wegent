@@ -25,6 +25,7 @@ export interface ProjectBoardPosition {
 }
 
 export interface StandardCloudBoardItem {
+  human_requests?: readonly import("../issueParticipation").IssueHumanRequest[];
   id: string;
   parent_id: string | null;
   cloud_project_id?: string | number;
@@ -410,6 +411,7 @@ export interface StandardCloudBoardControllerOptions<
   T extends StandardCloudBoardItem,
 > extends ProjectBoardStateOptions {
   view?: SavedBoardView | null;
+  currentUserId?: import("../issueParticipation").IssueParticipationViewer;
   tagFilter?: readonly string[];
   createColumns(groupBy: ProjectBoardGroupBy): ProjectBoardColumn[];
   currentParentId?: string | null;
@@ -755,6 +757,7 @@ export function useStandardCloudBoardController<
   supportsOrder = true,
   tagLimitError,
   view,
+  currentUserId,
   tagFilter,
   ...stateOptions
 }: StandardCloudBoardControllerOptions<T>) {
@@ -903,11 +906,11 @@ export function useStandardCloudBoardController<
     () =>
       items.filter(
         (item) =>
-          matchesBoardView(item, view) &&
+          matchesBoardView(item, view, currentUserId) &&
           (!tagFilter?.length ||
             tagFilter.some((tag) => item.tags.includes(tag))),
       ),
-    [items, view, tagFilter],
+    [items, view, tagFilter, currentUserId],
   );
   const getColumnItems = useCallback(
     (

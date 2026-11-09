@@ -115,6 +115,15 @@ export function createDailyBriefStory(options) {
       reason: '测试中的显式简报请求正在原有独立工作中处理，不重复派发。',
     })
   }
+  function automaticIntake(body) {
+    const read = `${MARKER}-automatic-read`
+    if (!has(body, read)) return call(body, read, 'read_work', {})
+    const work = output(body, read)
+    const messages = work.messages.filter(item => item.text.includes(MARKER))
+    assert.ok(messages.length, 'Automatic mail work must read its actual bound fixture')
+    assert.ok(messages.every(item => item.source.providerId === PROVIDER))
+    return [assistantMessage('已记录这条邮件变化；综合简报由原有独立工作处理。')]
+  }
   return {
     async handleHttp(req, response, url) {
       if (
@@ -136,6 +145,7 @@ export function createDailyBriefStory(options) {
         if (text.startsWith('Review this silent intake batch')) events = coordinator(body)
         else if (text.includes(REQUEST) && !text.includes(`${MARKER}:`)) events = owner(body)
         else if (JSON.stringify(body.input ?? []).includes(`${MARKER}:`)) events = worker(body)
+        else if (JSON.stringify(body.input ?? []).includes(MARKER)) events = automaticIntake(body)
         else return false
       }
       const id = `${MARKER}-response-${Date.now()}`
@@ -172,11 +182,14 @@ export function createDailyBriefStory(options) {
         })
         for (const fixture of fixtures) {
           const { age, ...details } = fixture
+          const internalDate = new Date(now - age)
+          // Exercise IMAP's 24-hour noon boundary regardless of the CI clock.
+          if (details.status === 'pending') internalDate.setUTCHours(12, 33, 30, 0)
           await mail.append(
             `${MARKER} ${details.status}`,
             JSON.stringify(details),
             `<daily-${details.status}@example.com>`,
-            new Date(now - age)
+            internalDate
           )
         }
         await control.command('setMainWindowSize', 'body', {

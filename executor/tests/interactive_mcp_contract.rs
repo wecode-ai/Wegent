@@ -528,11 +528,12 @@ fn claude_code_executor_implements_interactive_form_deferred_proxy() {
     .expect("runtime capabilities module should be readable");
     let proxy_source = std::fs::read_to_string(
         repo_root
+            .join("crates")
+            .join("mcp-runtime")
             .join("src")
-            .join("agents")
             .join("interactive_mcp.rs"),
     )
-    .unwrap_or_default();
+    .expect("MCP runtime proxy module should be readable");
 
     assert!(agent_source.contains("prepare_claude_runtime"));
     assert!(runtime_source.contains("install_deferred_mcp_hook"));

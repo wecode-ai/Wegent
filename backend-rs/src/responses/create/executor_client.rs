@@ -96,11 +96,14 @@ impl ExecutorHttp for HttpClient {
             .post(url)
             .map_err(|error| ExecutorDispatchError::Transport(error.to_string()))?
             .header("content-type", "application/json")
-            .header("accept", super::dispatch::OPENAI_ACCEPT)
-            .header("authorization", super::dispatch::OPENAI_DUMMY_AUTHORIZATION);
+            .header("accept", super::openai_client::OPENAI_ACCEPT)
+            .header(
+                "authorization",
+                super::openai_client::OPENAI_DUMMY_AUTHORIZATION,
+            );
         // Same Source client identity as the streaming path; one shared set
         // keeps the two outbound model requests from drifting apart.
-        let response = super::dispatch::apply_openai_client_headers(request)
+        let response = super::openai_client::apply_openai_client_headers(request)
             .json(body)
             .send()
             .await

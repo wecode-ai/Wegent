@@ -6,31 +6,6 @@ use crate::task_runtime::personal_stand_in::{
 };
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn personal_stand_in_agents(
-        &self,
-        payload: Value,
-    ) -> Result<Value, AppIpcError> {
-        self.verify_runtime_user(&payload).await?;
-        let resources = self
-            .runtime_http(reqwest::Method::GET, "/v1/resources", None)
-            .await?;
-        let items: Vec<Value> = resources["agents"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|agent| {
-                agent["owner_type"] == "user"
-                    && agent["owner_id"].as_str()
-                        == payload["userId"]
-                            .as_i64()
-                            .map(|id| id.to_string())
-                            .as_deref()
-                    && agent["status"] == "available"
-            })
-            .map(|agent| json!({"id":agent["team_id"],"name":agent["name"]}))
-            .collect();
-        Ok(json!({"items":items}))
-    }
     pub(super) async fn personal_stand_in_projects(&self) -> Result<Vec<Value>, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let personal = store
@@ -135,36 +110,6 @@ impl RuntimeWorkRpcHandler {
             }
         }
         configs
-    }
-
-    pub(super) async fn stand_in_text_decision(
-        &self,
-        selected_model: Option<&Value>,
-        prompt: String,
-        schema: Value,
-    ) -> Result<Value, AppIpcError> {
-        let request = self
-            .prepare_coordination_text_request(
-                selected_model,
-                prompt,
-                schema,
-                format!("stand-in-grouping-{}", uuid::Uuid::new_v4()),
-            )
-            .await?;
-        let response = tokio::time::timeout(
-            Duration::from_secs(60),
-            self.generate_text(json!({"executionRequest":request})),
-        )
-        .await
-        .map_err(|_| {
-            AppIpcError::new("stand_in_grouping_failed", "Message grouping timed out")
-        })??;
-        serde_json::from_str(response["content"].as_str().unwrap_or_default()).map_err(|_| {
-            AppIpcError::new(
-                "stand_in_grouping_failed",
-                "The model returned an invalid message grouping",
-            )
-        })
     }
 
     pub(super) async fn prepare_coordination_text_request(

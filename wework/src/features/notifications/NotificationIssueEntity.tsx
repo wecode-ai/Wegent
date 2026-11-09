@@ -23,7 +23,7 @@ export function NotificationIssueEntity({
   store: 'local' | 'backend'
   commentId?: string
   url: string
-  address: RuntimeTaskAddress
+  address?: RuntimeTaskAddress
   active: boolean
 }) {
   const { state, services } = useWorkbench()

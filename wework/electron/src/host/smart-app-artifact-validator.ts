@@ -306,11 +306,15 @@ function validateClientModule(
 }
 
 function importHostInSubprocess(path: string): Promise<boolean> {
+  const configuredCommand = process.env.WEWORK_NODE_PATH?.trim()
+  const usesElectron = configuredCommand
+    ? process.env.WEWORK_NODE_RUNTIME_KIND === 'electron'
+    : Boolean(process.versions.electron)
   const environment: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
-    ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    ...(usesElectron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
-  const command = process.env.WEWORK_NODE_PATH?.trim() || process.execPath
+  const command = configuredCommand || process.execPath
   const source = `import(${JSON.stringify(pathToFileURL(path).href)}).then(() => process.exit(0), () => process.exit(1))`
   const args = runtimeNodeArgs(process.env, ['--input-type=module', '--eval', source])
   return new Promise(resolvePromise => {

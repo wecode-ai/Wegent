@@ -1,3 +1,4 @@
+import { readNativeMcpCallId } from '../modules/native-tool-call-id.mjs'
 import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
 import { verifyMcpDiscoveryNetworkFailure } from './mcp-discovery-network-regression.mjs'
 import { verifyMcpReplacementSession, waitForMcpAppText } from './mcp-app-session-regression.mjs'
@@ -88,6 +89,7 @@ export function createDesktopScenario({
       const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         .workbench.currentRuntimeTask
       assert.ok(address.taskId)
+      const callId = await readNativeMcpCallId(control, address, 'counter', 'show_app', uiTimeoutMs)
       const discoveredApp = await requestExecutor(
         control,
         'runtime.mcp_apps.request',
@@ -265,7 +267,14 @@ export function createDesktopScenario({
           text: activeCase.completion,
           timeoutMs: modelResponseTimeoutMs,
         })
-        const scope = '[data-mcp-call-id="' + activeCase.callId + '"]'
+        const nativeCallId = await readNativeMcpCallId(
+          control,
+          address,
+          'counter',
+          tool,
+          uiTimeoutMs
+        )
+        const scope = '[data-mcp-call-id="' + nativeCallId + '"]'
         if (tool === 'show_recovery') {
           await control.command('waitFor', scope + ' [data-testid="mcp-app-retry"]')
           await control.command('click', scope + ' [data-testid="mcp-app-retry"]')

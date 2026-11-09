@@ -13,6 +13,56 @@ import {
 } from './plugin-development-manager.js'
 
 describe('PluginDevelopmentManager', () => {
+  test('state polling cannot undo stopping or reopen login recovery', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'development-stop-login-'))
+    const pendingStop = Promise.withResolvers<void>()
+    const child: { exitCode: number | null } = { exitCode: null }
+    const manager = new PluginDevelopmentManager({
+      command: process.execPath,
+      args: [],
+      environment: {},
+      userDataDirectory: root,
+    })
+    Object.assign(manager, {
+      session: { status: 'ready', userDataDirectory: join(root, 'user-data') },
+      child,
+    })
+    const command = vi
+      .spyOn(manager as unknown as { command(name: string): Promise<void> }, 'command')
+      .mockImplementation(name => (name === 'stop' ? pendingStop.promise : Promise.resolve()))
+    await writeFile(join(root, 'state.json'), JSON.stringify({ status: 'ready' }))
+    const stopped = manager.stop()
+    try {
+      expect((await manager.list())[0].status).toBe('stopping')
+      await manager.resumePythonAfterLogin()
+      expect(command.mock.calls).toEqual([['stop']])
+    } finally {
+      child.exitCode = 0
+      pendingStop.resolve()
+      await stopped
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test.each(['stopping', 'stopped', 'ready'] as const)(
+    'login recovery respects the development session status %s',
+    async status => {
+      const manager = new PluginDevelopmentManager({
+        command: process.execPath,
+        args: [],
+        environment: {},
+        userDataDirectory: tmpdir(),
+      })
+      Object.assign(manager, { session: { status }, child: { exitCode: null } })
+      const command = vi
+        .spyOn(manager as unknown as { command(name: string): Promise<void> }, 'command')
+        .mockResolvedValue(undefined)
+      await manager.resumePythonAfterLogin()
+      expect(command).toHaveBeenCalledTimes(status === 'ready' ? 1 : 0)
+      if (status === 'ready') expect(command).toHaveBeenCalledWith('python-login')
+    }
+  )
+
   test('inherits Electron runtime switches required by an isolated parent process', () => {
     const enabled = new Set(['no-sandbox', 'disable-gpu', 'unrelated-switch'])
 
@@ -45,6 +95,10 @@ describe('PluginDevelopmentManager', () => {
         WEWORK_NODE_PATH: '/parent/runtime/bin/node',
         WEWORK_NODE_RUNTIME_KIND: 'electron',
         WEWORK_RUNTIME_BIN: '/parent/runtime/bin',
+        WEGENT_PYTHON_PATH: '/parent/runtime/bin/python3',
+        WEWORK_PYTHON_RUNTIME_URL: 'http://127.0.0.1:9876',
+        WEWORK_PYTHON_RUNTIME_TOKEN: 'parent-python-token',
+        WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       },
       {
         name: 'dsh-development',
@@ -68,6 +122,14 @@ describe('PluginDevelopmentManager', () => {
     expect(environment).not.toHaveProperty('WEWORK_NODE_PATH')
     expect(environment).not.toHaveProperty('WEWORK_NODE_RUNTIME_KIND')
     expect(environment).not.toHaveProperty('WEWORK_RUNTIME_BIN')
+    expect(environment).not.toHaveProperty('WEGENT_PYTHON_PATH')
+    expect(environment).not.toHaveProperty('WEWORK_PYTHON_RUNTIME_URL')
+    expect(environment).not.toHaveProperty('WEWORK_PYTHON_RUNTIME_TOKEN')
+    expect(environment.WEWORK_PARENT_PYTHON_DOWNLOADS_URL).toBe(
+      'http://127.0.0.1:9876/runtime/python/downloads'
+    )
+    expect(environment.WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN).toBe('parent-python-token')
+    expect(environment).not.toHaveProperty('WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP')
     expect(environment).toMatchObject({
       WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',
       WEWORK_PLUGIN_DEVELOPMENT_ROOT: '/plugins/dsh-development',
@@ -89,6 +151,7 @@ describe('PluginDevelopmentManager', () => {
         WEWORK_E2E_CONTROL_TOKEN: 'control-token',
         WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
         WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+        WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       },
       {
         name: 'dsh-development',
@@ -107,6 +170,7 @@ describe('PluginDevelopmentManager', () => {
       WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
       WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
       WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL: 'plugin-development-development-id',
+      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
     })
   })
 

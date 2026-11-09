@@ -456,7 +456,7 @@ async function launchWindowsOpener(
   await launchDetached(command, [workspacePath])
 }
 
-async function launchDetached(command: string, args: string[]): Promise<void> {
+export async function launchDetached(command: string, args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, {
       detached: true,

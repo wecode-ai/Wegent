@@ -1641,6 +1641,8 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    localParticipationIdentity: localServices.localParticipationIdentity,
+    localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
     composerCatalogApi: {
       async readCatalog(address, forceRefresh) {
         const runtime = await runtimeApiForDevice(address.deviceId)
@@ -1731,6 +1733,12 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async binding(deviceId, operation, version, target) {
+        return (await standInApiForDevice(deviceId)).binding(deviceId, operation, version, target)
+      },
+      async lifecycle(userId, deviceId, operation) {
+        return (await standInApiForDevice(deviceId)).lifecycle(userId, deviceId, operation)
+      },
       taskCommands: {
         async get(deviceId, target) {
           return (await standInApiForDevice(deviceId)).taskCommands.get(deviceId, target)
@@ -1811,6 +1819,18 @@ export function createHybridWorkbenchServices(
       },
       async memories(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
+      },
+      async memoryRules(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).memoryRules(userId, deviceId)
+      },
+      async deleteMemoryRule(userId, deviceId, id, version, ...revision) {
+        return (await standInApiForDevice(deviceId)).deleteMemoryRule(
+          userId,
+          deviceId,
+          id,
+          version,
+          ...revision
+        )
       },
       async saveMemory(userId, deviceId, memory) {
         return (await standInApiForDevice(deviceId)).saveMemory(userId, deviceId, memory)
@@ -1897,9 +1917,6 @@ export function createHybridWorkbenchServices(
           userId,
           deviceId
         )
-      },
-      async personalAgents(userId, deviceId) {
-        return (await standInApiForDevice(deviceId)).personalAgents(userId, deviceId)
       },
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)

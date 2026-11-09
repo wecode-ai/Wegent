@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { selectE2EModel } from './shared.mjs'
 import {
@@ -67,7 +68,7 @@ export function createPersistentInteractionNoticeCase() {
       held.response.end(
         createSse([
           responseCreated(PROMPT),
-          ...functionCall(callId, held.tool.name, held.tool.arguments, 1),
+          ...selectedToolCall(callId, held.tool, 1),
           responseCompleted(PROMPT),
         ])
       )

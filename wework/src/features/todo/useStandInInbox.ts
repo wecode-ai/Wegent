@@ -8,7 +8,8 @@ export function inboxRuntimeItem(
   deviceId: string,
   runtimeItem?: RuntimeTaskReminderItem
 ): RuntimeTaskReminderItem {
-  const task = runtimeItem?.task ??
+  // Archived inbox state must not be overwritten by a stale active-work snapshot.
+  const task = (work.task?.status === 'archived' ? work.task : runtimeItem?.task) ??
     work.task ?? {
       taskId: work.taskId,
       title: work.title,
@@ -44,7 +45,8 @@ export function inboxRuntimeItem(
 export function useStandInInbox(
   api: StandInExecutorApi | undefined,
   userId: number,
-  deviceId?: string
+  deviceId?: string,
+  enabled = true
 ) {
   const [data, setData] = useState<{
     scope?: string
@@ -56,7 +58,7 @@ export function useStandInInbox(
   const refresh = useCallback(() => setRevision(value => value + 1), [])
   const scope = `${userId}:${deviceId}`
   useEffect(() => {
-    if (!api || !deviceId) return
+    if (!enabled || !api || !deviceId) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
@@ -77,6 +79,6 @@ export function useStandInInbox(
       active = false
       clearTimeout(timer)
     }
-  }, [api, userId, deviceId, revision, scope])
+  }, [api, userId, deviceId, revision, scope, enabled])
   return { ...(data.scope === scope ? data : { items: [], sourceErrors: [] }), error, refresh }
 }

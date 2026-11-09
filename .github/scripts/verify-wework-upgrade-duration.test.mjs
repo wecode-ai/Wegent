@@ -94,6 +94,25 @@ test("unpublished active steps remain a bounded hard failure", async () => {
   assert.throws(() => verifyUpgradeDuration(value), /Missing execution steps/);
 });
 
+test("report-only reads do not wait for unavailable GitHub step telemetry", async () => {
+  const value = fixture();
+  value.jobs[2].steps = [];
+  const jobs = await readUpgradeExecutionJobs(() => value.jobs, {
+    requireSteps: false,
+    wait: async () =>
+      assert.fail("Advisory reporting must not delay package verification"),
+  });
+  const report = verifyUpgradeDuration({
+    ...value,
+    jobs,
+    enforceBudget: false,
+  });
+  assert.equal(report.timing, "unavailable");
+  assert.equal(report.elapsedMs, null);
+  assert.equal(report.withinBudget, null);
+  assert.deepEqual(report.missingExecutionJobs, [value.jobs[2].name]);
+});
+
 test("counts resolver and complete execution of the slowest shard while excluding runner queues", () => {
   const value = fixture();
   const result = verifyUpgradeDuration(value);
@@ -144,7 +163,35 @@ test("report-only timing records an exceeded target without accepting invalid ev
   assert.throws(() => verifyUpgradeDuration(value));
   value.completed = false;
   value.jobs[1].steps = [];
-  assert.throws(() => verifyUpgradeDuration(value), /Missing execution steps/);
+  assert.equal(verifyUpgradeDuration(value).timing, "unavailable");
+});
+
+test("missing telemetry never relaxes completed package verification gates", () => {
+  const value = fixture();
+  value.enforceBudget = false;
+  value.completed = true;
+  value.jobs[2].status = "completed";
+  value.jobs[2].conclusion = "success";
+  value.jobs.push({
+    name: "Aggregate complete upgrade verification",
+    status: "completed",
+    conclusion: "success",
+  });
+  for (const job of value.jobs) job.steps = [];
+  assert.equal(verifyUpgradeDuration(value).timing, "unavailable");
+  for (const job of value.jobs) {
+    job.conclusion = "failure";
+    assert.throws(() => verifyUpgradeDuration(value));
+    job.conclusion = "success";
+    job.status = "in_progress";
+    assert.throws(() => verifyUpgradeDuration(value));
+    job.status = "completed";
+  }
+  value.jobs.pop();
+  assert.throws(
+    () => verifyUpgradeDuration(value),
+    /Missing complete upgrade aggregation/,
+  );
 });
 
 test("queued shards have no execution yet but cannot authorize completion", () => {

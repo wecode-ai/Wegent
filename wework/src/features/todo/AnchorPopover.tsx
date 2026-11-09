@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 
 const POPOVER_WIDTH = 280
@@ -17,6 +17,10 @@ interface AnchorPopoverProps {
   children: ReactNode
   header?: ReactNode
   wide?: boolean
+  profile?: boolean
+  suspended?: boolean
+  onBodyScroll?: (scrollTop: number) => void
+  bodyRef?: Ref<HTMLDivElement>
 }
 
 // Shared shell for detail popovers anchored to a trigger button: positions
@@ -30,6 +34,10 @@ export function AnchorPopover({
   children,
   header,
   wide = false,
+  profile = false,
+  suspended = false,
+  onBodyScroll,
+  bodyRef,
 }: AnchorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState<{
@@ -37,13 +45,17 @@ export function AnchorPopover({
     width: number
     top?: number
     bottom?: number
+    maxHeight?: number
   } | null>(null)
 
   useLayoutEffect(() => {
     if (!anchor) return
     const update = () => {
       const rect = anchor.getBoundingClientRect()
-      const width = Math.min(wide ? 374 : POPOVER_WIDTH, window.innerWidth - POPOVER_MARGIN * 2)
+      const width = Math.min(
+        profile ? 300 : wide ? 374 : POPOVER_WIDTH,
+        window.innerWidth - POPOVER_MARGIN * 2
+      )
       const spaceAbove = rect.top
       const spaceBelow = window.innerHeight - rect.bottom
       const placeAbove = spaceAbove >= POPOVER_HEIGHT_ESTIMATE || spaceAbove >= spaceBelow
@@ -58,6 +70,10 @@ export function AnchorPopover({
         ),
         bottom: placeAbove ? window.innerHeight - rect.top + POPOVER_GAP : undefined,
         top: !placeAbove ? rect.bottom + POPOVER_GAP : undefined,
+        maxHeight: Math.max(
+          0,
+          (placeAbove ? spaceAbove : spaceBelow) - POPOVER_GAP - POPOVER_MARGIN
+        ),
       })
     }
     update()
@@ -67,7 +83,7 @@ export function AnchorPopover({
       window.removeEventListener('resize', update)
       document.removeEventListener('scroll', update, true)
     }
-  }, [anchor, wide])
+  }, [anchor, wide, profile])
 
   useEffect(() => {
     if (!anchor) return
@@ -88,6 +104,7 @@ export function AnchorPopover({
   }, [anchor])
 
   useEffect(() => {
+    if (suspended) return
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) {
@@ -108,7 +125,7 @@ export function AnchorPopover({
       document.removeEventListener('pointerdown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [anchor, onClose])
+  }, [anchor, onClose, suspended])
 
   if (!anchor || !position) return null
 
@@ -119,20 +136,30 @@ export function AnchorPopover({
       role="dialog"
       tabIndex={-1}
       aria-label={title}
-      className={`electron-titlebar-interactive-region fixed z-system-popover rounded-xl border border-border/70 bg-popover text-text-primary shadow-lg ${header ? '' : 'p-1'}`}
+      inert={suspended}
+      aria-hidden={suspended || undefined}
+      className={`electron-titlebar-interactive-region fixed ${suspended ? 'z-modal' : 'z-system-popover'} border border-border/70 bg-popover text-text-primary shadow-lg ${profile ? 'flex flex-col overflow-hidden rounded-2xl' : `rounded-xl ${header ? '' : 'p-1'}`}`}
       style={{
         left: position.left,
         width: position.width,
         bottom: position.bottom,
         top: position.top,
+        maxHeight: profile ? position.maxHeight : undefined,
       }}
     >
-      {header ?? <p className="px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>}
+      {header ??
+        (!profile && (
+          <p className="px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>
+        ))}
       <div
+        ref={bodyRef}
+        onScroll={onBodyScroll ? event => onBodyScroll(event.currentTarget.scrollTop) : undefined}
         className={
-          wide
-            ? `overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
-            : `max-h-[264px] overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
+          profile
+            ? 'min-h-0 overflow-y-auto overscroll-contain'
+            : wide
+              ? `overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
+              : `max-h-[264px] overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
         }
         style={wide ? { maxHeight: 'min(400px, calc(100vh - 112px))' } : undefined}
       >

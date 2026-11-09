@@ -165,6 +165,7 @@ export interface RuntimeProjectWork {
 }
 
 export interface RuntimeWorkListResponse {
+  localIssueQuestionsPending?: boolean
   projects: RuntimeProjectWork[]
   chats: RuntimeDeviceWorkspace[]
   totalTasks: number
@@ -241,6 +242,12 @@ export interface RuntimeGoalCreateInput {
 }
 
 export type RuntimeTaskOrigin = {
+  type: 'project_chat'
+  cloudProjectId: string
+  projectStore: 'local' | 'backend'
+  loopItemId?: never
+  [key: string]: unknown
+} | {
   type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
   cloudProjectId: string
   loopItemId: string
