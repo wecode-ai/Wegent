@@ -24,9 +24,10 @@ runs:
 
     - name: Install locked Electron package dependencies
       shell: bash
+      env:
+        ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       run: pnpm --dir wework/electron install --frozen-lockfile
 
     - name: Prime the official Electron installer cache
       shell: bash
-      run: |
-        node --input-type=module -e 'import {primeElectronInstallerCache} from "./wework/scripts/lib/electron-installer-cache.mjs"; await primeElectronInstallerCache({electronPackageRoot:"wework/electron/node_modules/electron"})'
+      run: node .github/scripts/prime-ci-electron-installer-cache.mjs

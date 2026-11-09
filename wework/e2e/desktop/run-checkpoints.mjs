@@ -15,6 +15,7 @@ import {
 } from './checkpoints.mjs'
 import {
   isResourceExclusiveCheckpoint,
+  linuxCoreCheckpointResources,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS, rejectFailedReleaseCheckpoint } from './upgrade-suite.mjs'
@@ -411,8 +412,10 @@ async function runParallelCheckpoints(checkpoints) {
     await runWithCheckpointResources({
       checkpoints,
       workerCount,
-      resourceFor: checkpoint =>
-        process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
+      resourceFor: checkpoint => {
+        if (linuxCore) return linuxCoreCheckpointResources(checkpoint)
+        return process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : []
+      },
       exclusiveFor: checkpoint => isResourceExclusiveCheckpoint(checkpoint, linuxCore),
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)

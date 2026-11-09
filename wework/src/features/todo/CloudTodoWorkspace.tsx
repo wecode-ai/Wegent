@@ -4702,6 +4702,7 @@ export function CloudTodoWorkspace({
                   ) : null,
                   board: (
                     <ProjectBoardBody<LocatedLoopItem>
+                      translate={boardTranslate}
                       filterAction={
                         !isAITableProject && !isExternalGitBoard && !isMyTasksBoard
                           ? tagFilter.control
@@ -5324,7 +5325,13 @@ export function CloudTodoWorkspace({
                           onClick={() =>
                             void selectedItemApi?.downloadLoopItemAttachment(
                               attachment.id,
-                              attachment.display_name
+                              attachment.display_name,
+                              selectedProject && selectedItem
+                                ? {
+                                    projectId: String(selectedProject.id),
+                                    issueId: selectedItem.id,
+                                  }
+                                : undefined
                             )
                           }
                           className="task-conversation-resource-row"
