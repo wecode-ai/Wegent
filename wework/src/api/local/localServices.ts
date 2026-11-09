@@ -9,6 +9,7 @@ import {
   requiresCloudModelCatalog,
   resolveRunnerSelection,
   runnerModelKey,
+  type RunnerModelIdentity,
   type RunnerSelection,
 } from '@wegent/collaboration'
 import type { RunnerEnvironment, RunnerModel } from '@wegent/collaboration'
@@ -1084,6 +1085,31 @@ function wecodeExecutorForRuntime(runtime: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '')
   return normalized === 'claude' || normalized === 'claudecode' ? 'claudecode' : normalized
+}
+
+/**
+ * Execution fields for the assigned model.
+ *
+ * A saved cloud reference can be absent from the discovery catalog after an
+ * admin hides it, but the persisted identity still carries the namespace and
+ * owner the local cloud gateway needs. Fall back to that saved identity so the
+ * runtime task keeps the model instead of failing identity validation.
+ */
+export function assignmentCloudExecutionFields(
+  cloudModel: UnifiedModel | null | undefined,
+  model: RunnerModelIdentity | null | undefined
+): Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'> | null {
+  if (cloudModel) return selectedModelExecutionFields(cloudModel, {})
+  const reference = model?.source === 'cloud' ? model.cloud_model : null
+  if (!reference) return null
+  return {
+    modelId: reference.name,
+    modelType: reference.type,
+    modelOptions: {
+      [CLOUD_MODEL_NAMESPACE_OPTION]: reference.namespace,
+      [CLOUD_MODEL_RESOURCE_USER_ID_OPTION]: String(reference.resource_user_id),
+    },
+  }
 }
 
 function localRuntimeModelConfig(
@@ -4246,7 +4272,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
             )
           )
         : null
-    const cloudFields = cloudModel ? selectedModelExecutionFields(cloudModel, {}) : null
+    const cloudFields = assignmentCloudExecutionFields(cloudModel, routing?.model)
     const groupContext = group
       ? [
           `协作小组：${group.name}`,
