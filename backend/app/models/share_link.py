@@ -149,7 +149,6 @@ class ShareLink(Base):
             "resource_id",
             "is_active",
         ),
-        Index("idx_share_links_token_hash_active", "token_hash", "is_active"),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",

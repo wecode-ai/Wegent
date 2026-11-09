@@ -96,7 +96,7 @@ class SharedTeamService:
             return None
 
         share_link = self._find_share_link(db, share_token)
-        if not share_link:
+        if not share_link or share_link.is_expired:
             logger.info("Invalid or inactive share token")
             return None
 
@@ -134,9 +134,18 @@ class SharedTeamService:
         return f"{settings.TEAM_SHARE_BASE_URL}?{settings.TEAM_SHARE_QUERY_PARAM}={share_token}"
 
     def create_share_relationship(
-        self, db: Session, user_id: int, original_user_id: int, team_id: int
+        self,
+        db: Session,
+        user_id: int,
+        original_user_id: int,
+        team_id: int,
+        share_link: ShareLink,
     ) -> SharedTeamInDB:
         """Create shared team relationship using ResourceMember"""
+        role = share_link.get_default_role()
+        if role == ResourceRole.Owner.value:
+            role = ResourceRole.Reporter.value
+
         # Check if relationship already exists
         existing = (
             db.query(ResourceMember)
@@ -168,10 +177,14 @@ class SharedTeamService:
         )
 
         if rejected:
-            # Reactivate existing record
-            rejected.status = MemberStatus.APPROVED
+            rejected.status = (
+                MemberStatus.PENDING
+                if share_link.require_approval
+                else MemberStatus.APPROVED
+            )
             rejected.invited_by_user_id = original_user_id
-            rejected.role = ResourceRole.Maintainer.value
+            rejected.role = role
+            rejected.share_link_id = share_link.id
             rejected.updated_at = datetime.now()
             db.commit()
             db.refresh(rejected)
@@ -192,10 +205,14 @@ class SharedTeamService:
             resource_id=team_id,
             entity_type="user",
             entity_id=str(user_id),
-            role=ResourceRole.Maintainer.value,
-            status=MemberStatus.APPROVED,
+            role=role,
+            status=(
+                MemberStatus.PENDING
+                if share_link.require_approval
+                else MemberStatus.APPROVED
+            ),
             invited_by_user_id=original_user_id,
-            share_link_id=0,
+            share_link_id=share_link.id,
             reviewed_by_user_id=0,
             copied_resource_id=0,
             requested_at=datetime.now(),
@@ -419,15 +436,25 @@ class SharedTeamService:
             )
 
         # Create share relationship
+        share_link = self._find_share_link(db, share_token)
+        if not share_link:
+            raise HTTPException(status_code=400, detail="Invalid share token")
+
         self.create_share_relationship(
             db=db,
             user_id=user_id,
             original_user_id=share_info.user_id,
             team_id=share_info.team_id,
+            share_link=share_link,
         )
 
         return JoinSharedTeamResponse(
-            message="Successfully joined shared team", team_id=share_info.team_id
+            message=(
+                "Request submitted for approval"
+                if share_link.require_approval
+                else "Successfully joined shared team"
+            ),
+            team_id=share_info.team_id,
         )
 
 

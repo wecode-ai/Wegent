@@ -1,6 +1,8 @@
 """Security tests for random, persisted share tokens."""
 
 import hashlib
+import re
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -8,12 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType, ShareLink
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.share import task_share_service
 from app.services.shared_task import shared_task_service
 from app.services.shared_team import shared_team_service
-from app.services.share import task_share_service
 from app.services.task_invite_service import task_invite_service
 
 
@@ -99,6 +102,7 @@ def test_task_share_token_is_random_and_persisted(test_db: Session):
 
     assert response.share_token == link.share_token
     assert len(response.share_token) >= 43
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43,}", response.share_token)
     assert (
         link.token_hash
         == hashlib.sha256(response.share_token.encode("utf-8")).hexdigest()
@@ -189,6 +193,7 @@ def test_team_share_token_is_random_and_persisted(test_db: Session):
 
     assert response.share_token == link.share_token
     assert len(response.share_token) >= 43
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43,}", response.share_token)
     assert (
         link.token_hash
         == hashlib.sha256(response.share_token.encode("utf-8")).hexdigest()
@@ -212,6 +217,45 @@ def test_forged_team_token_cannot_read_team_info(test_db: Session):
 
 
 @pytest.mark.unit
+def test_team_join_honors_link_expiry_approval_and_role(test_db: Session):
+    owner = _add_user(test_db, "team-link-owner")
+    joiner = _add_user(test_db, "team-link-joiner")
+    team = _add_team(test_db, owner, "team-link-team")
+    link = shared_team_service.create_share_link(test_db, team.id, owner.id)
+
+    link.require_approval = True
+    link.default_role = "Developer"
+    test_db.commit()
+
+    response = shared_team_service.join_shared_team(
+        test_db, link.share_token, joiner.id
+    )
+    member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_id == team.id,
+            ResourceMember.entity_id == str(joiner.id),
+        )
+        .one()
+    )
+
+    assert response.message == "Request submitted for approval"
+    assert member.status == MemberStatus.PENDING.value
+    assert member.role == "Developer"
+    assert member.share_link_id == link.id
+
+    link.expires_at = datetime.utcnow() - timedelta(seconds=1)
+    test_db.commit()
+    with pytest.raises(HTTPException) as exc_info:
+        shared_team_service.join_shared_team(
+            test_db, link.share_token, _add_user(test_db, "expired-link-joiner").id
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Invalid share token"
+
+
+@pytest.mark.unit
 def test_deleting_share_link_revokes_all_active_tokens(test_db: Session):
     owner = _add_user(test_db, "revocation-owner")
     task = _add_task(test_db, owner, "revocation-task")
@@ -223,10 +267,6 @@ def test_deleting_share_link_revokes_all_active_tokens(test_db: Session):
     )
 
     for token in (first.share_token, second.share_token):
-        link = (
-            test_db.query(ShareLink)
-            .filter(ShareLink.share_token == token)
-            .one()
-        )
+        link = test_db.query(ShareLink).filter(ShareLink.share_token == token).one()
         assert link.is_active is False
         assert shared_task_service.decode_share_token(token, test_db) is None

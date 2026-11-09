@@ -51,31 +51,9 @@ def upgrade() -> None:
         "share_links",
         ["token_hash"],
     )
-    op.create_index(
-        "idx_share_links_token_hash_active",
-        "share_links",
-        ["token_hash", "is_active"],
-        unique=False,
-    )
-
-    op.create_unique_constraint(
-        "uniq_share_links_token_hash",
-        "share_links",
-        ["token_hash"],
-    )
-    op.create_index(
-        "idx_share_links_token_hash_active",
-        "share_links",
-        ["token_hash", "is_active"],
-        unique=False,
-    )
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "idx_share_links_token_hash_active",
-        table_name="share_links",
-    )
     op.drop_constraint(
         "uniq_share_links_token_hash",
         "share_links",
