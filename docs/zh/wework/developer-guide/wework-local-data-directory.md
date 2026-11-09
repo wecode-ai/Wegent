@@ -23,6 +23,26 @@ Wework 的本地运行时数据统一存放在用户主目录下的 `~/.wework`�
 `WEGENT_EXECUTOR_HOME` 环境变量可以覆盖默认 Executor Home。显式设置该变量时，
 适用于隔离会话、测试和自定义部署。
 
+## 桌面 Executor 身份
+
+桌面受管和独立 Executor 均遵循“持久化身份优先，缺失才生成”的规则。
+
+未设置显式验证覆盖参数时，Electron 主机先读取本机持久化的 `desktop-device-id`，保留旧版本保存的 ID。
+仅在文件不存在时，使用机器硬件 UUID 与当前应用标识（默认 `io.wecode.wework`）
+的 SHA-256 哈希生成并保存 `electron-<hash>`。没有已有身份时，同一机器与应用
+生成相同 ID。硬件 UUID 不会作为设备 ID 明文发送，也不会写入身份文件或日志。
+
+受管 Executor 使用主机 ID 作为本机 IPC 和云端的 `app_device_id`。
+受管和独立 Executor 均优先使用 `device-config.json` 中持久化的 `device_id`、
+`runtime_instance_id`。启动参数只为缺失字段提供初始值：受管 Executor 分别使用
+`device-<app_device_id>`、`runtime-<app_device_id>`，独立 Executor 在没有初始值时生成新 ID。
+新身份会写入配置，后续重启不再覆盖。这三种身份仍保留各自的路由职责；
+账号权限、会话令牌和记录级路由继续由认证和注册协议控制，硬件哈希不授予权限。
+
+身份读取不会搬动会话数据、改写会话引用，也不从旧工作树推断身份。
+未设置覆盖参数时，已有身份文件为空或不可读会导致启动报错，不会静默替换。仅生成新桌面身份时才要求有效硬件 UUID。
+隔离验证可通过非空的 `WEGENT_APP_IPC_DEVICE_ID` 显式指定有效 ID；该参数优先于文件读取和硬件查询，且不覆盖正常身份文件。
+
 ## Home 迁移中的目录扫描
 
 迁移旧 Codex Home 到工作台目录时，相对符号链接扫描使用目录枚举提供的类型信息，

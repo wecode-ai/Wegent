@@ -1,3 +1,5 @@
+import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
+import { conversationOutcomePresentation } from './conversationOutcomePresentation'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import {
   createPluginTrialGuide,
@@ -62,6 +64,9 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { createRuntimeContextUsageStore } from '@wegent/chat-core/runtime-context-usage'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { queueWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceLaunchRequest'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { getErrorMessage } from '@/lib/error-message'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 import { runtimeGoalCreateInput } from '@/lib/runtime-goal'
@@ -93,6 +98,8 @@ interface TemporaryChatPanelProps {
   onDraftRequestConsumed?(id: number): void
   autoSubmitInitialInput?: boolean
   initialAddress?: RuntimeTaskAddress | null
+  controlledAddress?: RuntimeTaskAddress | null
+  draft?: { value: string; onChange(value: string): void }
   createTask?: (
     message: string,
     options: RuntimeTaskComposerCreateOptions
@@ -103,6 +110,7 @@ interface TemporaryChatPanelProps {
   emptyStateText?: string
   placeholder?: string
   showExecutionTools?: boolean
+  hideProcessing?: boolean
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
@@ -115,7 +123,9 @@ interface TemporaryChatPanelProps {
   projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
   composerHeader?: ReactNode
+  contentFooter?: ReactNode
   onRestoreConversation?: () => void
+  onFillSelectionToAnswer?: (text: string) => void
   initialScrollPosition?: 'restore' | 'latest'
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   coordinateUserInput?: boolean
@@ -134,6 +144,8 @@ export function TemporaryChatPanel({
   onDraftRequestConsumed,
   autoSubmitInitialInput = false,
   initialAddress = null,
+  controlledAddress,
+  draft,
   createTask,
   onAddressChange,
   runtimeContext,
@@ -141,6 +153,7 @@ export function TemporaryChatPanel({
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
   showExecutionTools = true,
+  hideProcessing = false,
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
@@ -152,7 +165,9 @@ export function TemporaryChatPanel({
   projectWorkBarMiddleContext,
   projectWorkBarTrailingContext,
   composerHeader,
+  contentFooter,
   onRestoreConversation,
+  onFillSelectionToAnswer,
   initialScrollPosition = 'restore',
   onOpenRuntimeTask,
   coordinateUserInput = false,
@@ -183,7 +198,8 @@ export function TemporaryChatPanel({
     deleteAttachment: services.attachmentApi?.deleteAttachment,
     scopeKey: instanceId,
   })
-  const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
+  const [localAddress, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
+  const address = controlledAddress === undefined ? localAddress : controlledAddress
   const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
   const catalogTranslate = useCallback((key: string) => String(t(key)), [t])
   const catalogAddress = address ?? source
@@ -286,10 +302,11 @@ export function TemporaryChatPanel({
     value: projectChat.inputByScope[draftScopeKey] ?? initialInput,
   }))
   const input =
-    inputState.scopeKey === draftScopeKey
+    draft?.value ??
+    (inputState.scopeKey === draftScopeKey
       ? inputState.value
       : (projectChat.inputByScope[draftScopeKey] ??
-        (initialDraftScope === draftScopeKey ? initialInput : ''))
+        (initialDraftScope === draftScopeKey ? initialInput : '')))
   if (inputState.scopeKey !== draftScopeKey) {
     setInputState({ scopeKey: draftScopeKey, value: input })
   }
@@ -297,10 +314,14 @@ export function TemporaryChatPanel({
   const setInput = useCallback(
     (value: SetStateAction<string>) => {
       const next = typeof value === 'function' ? value(input) : value
+      if (draft) {
+        draft.onChange(next)
+        return
+      }
       writeDraftInput(draftScopeKey, next)
       setInputState({ scopeKey: draftScopeKey, value: next })
     },
-    [draftScopeKey, input, writeDraftInput]
+    [draftScopeKey, input, writeDraftInput, draft]
   )
   const [replaceDraftKey, setReplaceDraftKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -399,6 +420,7 @@ export function TemporaryChatPanel({
         setError(null)
       }
     }
+    syncMessages()
     return subscribeRuntimeConversation(address, syncMessages)
   }, [address])
 
@@ -539,6 +561,7 @@ export function TemporaryChatPanel({
         if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
         const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
         let error: string | null = null
+        let queued = false
         const sent = await sendRuntimePaneMessage(
           runtimeQueuedMessageRequest(
             { address, ...(sendEphemeral ? { ephemeral: true } : {}), ...runtimeContext },
@@ -548,9 +571,12 @@ export function TemporaryChatPanel({
             onError: value => {
               error = value
             },
+            onQueued: () => {
+              queued = true
+            },
           }
         )
-        if (sent)
+        if (sent && !queued)
           setMessages(
             appendAcceptedRuntimeConversationMessage(
               address,
@@ -698,15 +724,22 @@ export function TemporaryChatPanel({
         return true
       }
 
-      setMessages(
-        applyRuntimeConversationAction(targetAddress, {
-          type: 'user_added',
-          message: createRuntimeUserMessage(message, currentAttachments, {
-            id: queuedMessage.id,
-          }),
-        })
+      const deferLocalMessage = Boolean(
+        pendingRequestUserInputPayload(getRuntimeConversationMessages(targetAddress))
       )
+      const turnIdsBeforeSend = getRuntimeConversationTurnIds(targetAddress)
+      if (!deferLocalMessage) {
+        setMessages(
+          applyRuntimeConversationAction(targetAddress, {
+            type: 'user_added',
+            message: createRuntimeUserMessage(message, currentAttachments, {
+              id: queuedMessage.id,
+            }),
+          })
+        )
+      }
       let sendError: string | null = null
+      let queued = false
       const sendMessage =
         busy && options.interruptWhenBusy
           ? interruptAndSendRuntimePaneMessage
@@ -727,18 +760,33 @@ export function TemporaryChatPanel({
           onError: errorMessage => {
             sendError = errorMessage
           },
+          onQueued: () => {
+            queued = true
+          },
         }
       )
       if (sent) {
+        if (deferLocalMessage && !queued) {
+          setMessages(
+            appendAcceptedRuntimeConversationMessage(
+              targetAddress,
+              createRuntimeUserMessage(message, currentAttachments, { id: queuedMessage.id }),
+              lifecycleStore.getTask(targetAddress)?.turn.id ?? null,
+              turnIdsBeforeSend
+            )
+          )
+        }
         sideChatProjectChat.resetAttachments()
         setSending(false)
         return true
       }
-      setMessages(
-        removeRuntimeConversationTurn(targetAddress, {
-          clientUserMessageId: queuedMessage.id,
-        })
-      )
+      if (!deferLocalMessage) {
+        setMessages(
+          removeRuntimeConversationTurn(targetAddress, {
+            clientUserMessageId: queuedMessage.id,
+          })
+        )
+      }
       if (isRuntimeTaskBusyError(sendError)) {
         conversationQueue.enqueue(queuedMessage, {
           value: lifecycleBeforeSend,
@@ -843,12 +891,36 @@ export function TemporaryChatPanel({
     void onOpenRuntimeTask(address)
   }, [address, onOpenRuntimeTask])
 
+  const openWorkspaceFile = useCallback(
+    async (path: string, options?: WorkspaceFileOpenOptions) => {
+      if (!address || !onOpenRuntimeTask) return
+      try {
+        const result = address.workspacePath
+          ? { success: true, task: address }
+          : await services.standInApi?.readTask(address.deviceId, address.taskId)
+        const task = result?.success ? result.task : undefined
+        if (!task?.workspacePath || task.taskId !== address.taskId)
+          throw new Error(t('workbench.runtime_task_load_failed'))
+        const target = { ...address, workspacePath: task.workspacePath }
+        queueWorkbenchWorkspaceLaunch(target.deviceId, task.workspacePath, {
+          taskId: target.taskId,
+          openFile: { path, options },
+        })
+        await onOpenRuntimeTask(target)
+      } catch (cause) {
+        setError(getErrorMessage(cause, t('workbench.runtime_task_load_failed')))
+      }
+    },
+    [address, onOpenRuntimeTask, services.standInApi, t]
+  )
+
   const retryFailedMessage = useCallback(
     async (message: WorkbenchMessage): Promise<boolean> => {
       if (!address || retryInFlightRef.current) return false
       retryInFlightRef.current = true
       setError(null)
       try {
+        const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
         await retryRuntimeConversation({
           messageId: message.id,
           messages,
@@ -858,11 +930,24 @@ export function TemporaryChatPanel({
             missing: t('workbench.retry_message_missing'),
             failed: t('workbench.retry_failed'),
           },
-          addUserMessage: message =>
-            setMessages(applyRuntimeConversationAction(address, { type: 'user_added', message })),
-          removeUserMessage: clientUserMessageId =>
-            setMessages(removeRuntimeConversationTurn(address, { clientUserMessageId })),
-          send: sendRuntimePaneMessage,
+          acceptUserMessage: (message, turnId) =>
+            setMessages(
+              appendAcceptedRuntimeConversationMessage(
+                address,
+                message,
+                turnId ?? lifecycleStore.getTask(address)?.turn.id ?? null,
+                turnIdsBeforeSend
+              )
+            ),
+          send: async request => {
+            let queued = false
+            const accepted = await sendRuntimePaneMessage(request, {
+              onQueued: () => {
+                queued = true
+              },
+            })
+            return { accepted, queued }
+          },
         })
         return true
       } catch (caughtError) {
@@ -872,7 +957,15 @@ export function TemporaryChatPanel({
         retryInFlightRef.current = false
       }
     },
-    [address, messages, runtimeContext, selectedModelFields, sendRuntimePaneMessage, t]
+    [
+      address,
+      messages,
+      runtimeContext,
+      selectedModelFields,
+      sendRuntimePaneMessage,
+      lifecycleStore,
+      t,
+    ]
   )
 
   const submitRequestUserInput = useCallback(
@@ -971,6 +1064,10 @@ export function TemporaryChatPanel({
     historyError,
     loadMoreHistory,
   ])
+  const presentation = useMemo(
+    () => (hideProcessing ? conversationOutcomePresentation(messages, turns) : { messages, turns }),
+    [hideProcessing, messages, turns]
+  )
   const pendingRequest =
     focusedRequest === undefined
       ? pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
@@ -980,7 +1077,7 @@ export function TemporaryChatPanel({
         : null
   return (
     <TemporaryConversationLayout
-      messageCount={messages.length}
+      messageCount={presentation.messages.length}
       loading={historyLoading}
       loadError={historyError}
       onRetry={retryHistory}
@@ -1004,21 +1101,29 @@ export function TemporaryChatPanel({
                 {t('workbench.sending_message')}
               </div>
             ) : null}
-            {pendingRequest ? (
-              <RequestUserInputCard
-                key={requestUserInputPayloadKey(pendingRequest)}
-                payload={pendingRequest}
-                disabled={requestUserInputHost?.isDisabled(pendingRequest)}
-                error={requestUserInputHost?.getError(pendingRequest)}
-                messages={messages}
-                draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
-                onDraftAnswersChange={answers =>
-                  requestUserInputHost?.setDraft(pendingRequest, answers)
-                }
-                onSubmit={submitRequestUserInput}
-                onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
-              />
-            ) : (
+            <RequestUserInputComposer
+              payload={pendingRequest}
+              source={address}
+              renderQuestion={onCollapse =>
+                pendingRequest ? (
+                  <RequestUserInputCard
+                    key={requestUserInputPayloadKey(pendingRequest)}
+                    payload={pendingRequest}
+                    source={address}
+                    disabled={requestUserInputHost?.isDisabled(pendingRequest)}
+                    error={requestUserInputHost?.getError(pendingRequest)}
+                    messages={messages}
+                    draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
+                    onDraftAnswersChange={answers =>
+                      requestUserInputHost?.setDraft(pendingRequest, answers)
+                    }
+                    onCollapse={onCollapse}
+                    onSubmit={submitRequestUserInput}
+                    onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
+                  />
+                ) : null
+              }
+            >
               <ComposerCatalogContext.Provider value={composerCatalog}>
                 <BufferedChatInput
                   predictionAddress={address}
@@ -1065,15 +1170,16 @@ export function TemporaryChatPanel({
                   onCancelGoalDraft={() => setGoalDraftActive(false)}
                 />
               </ComposerCatalogContext.Provider>
-            )}
+            </RequestUserInputComposer>
           </>
         )
       }
     >
       <ScrollableMessageArea
+        onFillSelectionToAnswer={onFillSelectionToAnswer}
         messageTarget={messageTarget}
-        messages={messages}
-        turns={turns}
+        messages={presentation.messages}
+        turns={presentation.turns}
         loading={historyLoading || historyLoadingMoreBefore}
         hasMoreBefore={Boolean(historyBeforeCursor)}
         beforeCursor={historyBeforeCursor}
@@ -1087,6 +1193,8 @@ export function TemporaryChatPanel({
         className="min-h-0 flex-1"
         contentClassName="min-h-full shrink-0"
         messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
+        contentFooter={contentFooter}
+        contentFooterClassName={DESKTOP_MESSAGE_LIST_CLASS}
         scrollTestId="right-workspace-chat-scroll-area"
         onRetryFailedMessage={
           address && !readOnly
@@ -1109,7 +1217,7 @@ export function TemporaryChatPanel({
             : undefined
         }
         onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}
-        onOpenWorkspaceFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
+        onOpenWorkspaceFile={onOpenRuntimeTask ? openWorkspaceFile : undefined}
         onOpenLocalSkillFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
         onRequestUserInputSubmit={address && !readOnly ? submitRequestUserInput : undefined}
         onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}

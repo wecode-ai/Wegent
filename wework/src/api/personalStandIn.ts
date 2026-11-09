@@ -9,6 +9,7 @@ export interface StandInHandlingPolicy {
   automatic: boolean
   askBeforeAct: boolean
   immediate?: boolean
+  sessionStrategy?: 'independent' | 'reuse'
 }
 
 export interface StandInSourceConnection {
@@ -52,8 +53,7 @@ export interface StandInIdentity extends Partial<
 export interface StandInRole extends WorkspaceStandInSettings {
   id: string
   name: string
-  agentResourceId?: number | null
-  agentProject?: StandInProjectRef
+  migrationSource?: string
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration: {
@@ -73,6 +73,31 @@ export interface PersonalStandInSettings {
   version: number
   primary?: StandInIdentity
   roles: StandInRole[]
+  lifecycle?: { status: 'stopping' | 'stopped' }
+}
+
+/** Explicitly connecting/enabling a source replaces the old second intake switch. */
+export function connectionChangeEnablesIdentity(
+  previous: Pick<StandInIdentity, 'connections' | 'calendar' | 'collaboration'>,
+  next: Pick<StandInIdentity, 'connections' | 'calendar' | 'collaboration'>
+): boolean {
+  const key = (source: StandInSourceConnection) =>
+    JSON.stringify([
+      source.providerId,
+      source.profile,
+      source.kind,
+      source.id,
+      source.collectionKey,
+    ])
+  return Boolean(
+    (next.collaboration?.enabled && !previous.collaboration?.enabled) ||
+    (next.calendar && !previous.calendar) ||
+    (next.calendar?.policy.automatic && !previous.calendar?.policy.automatic) ||
+    next.connections?.some(source => {
+      const old = previous.connections?.find(row => key(row) === key(source))
+      return !old || (source.policy.automatic && !old.policy.automatic)
+    })
+  )
 }
 
 export function standInPolicy(
@@ -89,11 +114,6 @@ export function standInPolicy(
 
 export function standInConversationTaskId(userId: number, roleId?: string): string {
   return `stand-in-chat-${userId}-${roleId ? `role-${roleId}` : 'primary'}`
-}
-
-export interface PersonalStandInAgent {
-  id: number
-  name: string
 }
 
 export function newStandInRole(deviceId: string, id: string = crypto.randomUUID()): StandInRole {
@@ -119,13 +139,13 @@ export function roleIncludesProject(role: StandInRole, project: StandInProjectRe
   return role.collaboration.enabled && roleSelectsProject(role, project)
 }
 
+/** Check the saved project scope and exclusions independently of source enablement. */
 export function roleSelectsProject(role: StandInRole, project: StandInProjectRef): boolean {
   const matches = (value: StandInProjectRef) =>
     value.id === project.id && value.store === project.store
   return (
     !role.collaboration.excludedProjects.some(matches) &&
-    (role.collaboration.allProjects || role.collaboration.projects.some(matches)) &&
-    (!role.agentProject || matches(role.agentProject))
+    (role.collaboration.allProjects || role.collaboration.projects.some(matches))
   )
 }
 
@@ -133,31 +153,25 @@ export function standInRoleName(role: StandInRole, index: number, fallback: stri
   return role.name?.trim() || `${fallback}${index ? ` ${index + 1}` : ''}`
 }
 
+/** Remove one project from the saved scope while retaining all other grants and switches. */
 export function disconnectStandInProject(
   role: StandInRole,
   project: StandInProjectRef
 ): StandInRole {
   const matches = (value: StandInProjectRef) =>
     value.id === project.id && value.store === project.store
-  if (role.agentProject && !matches(role.agentProject)) return role
   const source = role.collaboration
   const projects = source.projects.filter(value => !matches(value))
   const excludedProjects =
     source.allProjects && !source.excludedProjects.some(matches)
       ? [...source.excludedProjects, project]
       : source.excludedProjects
-  const enabled = role.agentProject ? false : source.enabled
-  if (
-    projects.length === source.projects.length &&
-    excludedProjects === source.excludedProjects &&
-    enabled === source.enabled
-  )
+  if (projects.length === source.projects.length && excludedProjects === source.excludedProjects)
     return role
   return {
     ...role,
     collaboration: {
       ...source,
-      enabled,
       projects,
       excludedProjects,
     },

@@ -75,6 +75,7 @@ async fn round_work_validates_the_issue_event_without_replacing_member_identity(
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
@@ -121,6 +122,10 @@ async fn stand_in_entry_futures_leave_room_on_windows_worker_stacks() {
             future_size(|| handler.handle_stand_in_assignment(json!({}))),
         ),
         ("scheduler", future_size(|| handler.poll_local_stand_ins())),
+        (
+            "dispatch_reconciliation",
+            future_size(|| handler.flush_stand_in_dispatches()),
+        ),
     ] {
         assert!(
             bytes < 16 * 1024,
@@ -203,6 +208,7 @@ async fn prior_assignment_binding_blocks_new_cloud_role_executions() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
@@ -290,7 +296,7 @@ async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
         ..RuntimeTaskLink::default()
     });
     let payload = json!({"id":"default","projectId":"project","issueId":"issue","userId":7,"projectStore":"cloud","standInId":"default"});
-    let config = json!({"id":"default","projectId":"project","userId":7,"enabledAfter":"2020-01-01T00:00:00Z"});
+    let config = json!({"id":"default","projectId":"project","userId":7,"enabledAfter":"2020-01-01T00:00:00Z","workspace":{"projectKey":"unregistered-project"}});
     let mut automatic = handler.clone();
     automatic.store = RuntimeWorkStore::new(root.path().join("automatic-index.json"));
     for status in [
@@ -309,10 +315,14 @@ async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
         assert_eq!(result["taskId"], "stand-in-human-default", "{status}");
         assert_eq!(reads.load(Ordering::SeqCst), before + 1, "{status}");
         // Automatic handling must also reach current assignment validation.
-        automatic
+        let error = automatic
             .start_cloud_stand_in(&config, &value)
             .await
-            .unwrap();
+            .unwrap_err();
+        assert_eq!(
+            error.code, "workspace_unavailable",
+            "An orphan reservation must reach execution preparation"
+        );
         assert_eq!(reads.load(Ordering::SeqCst), before + 2, "{status}");
     }
     for (field, value) in [
@@ -335,13 +345,12 @@ async fn cloud_fanout_attempts_all_matching_roles_and_continues_after_preparatio
     let started = Arc::new(AtomicUsize::new(0));
     let calls = started.clone();
     let router = Router::new()
-        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/users/me", get(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({"id":8})) }
+        }))
         .route("/api/v1/loop-items/{id}/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-20T12:00:01Z"}]})) }))
         .route("/api/v1/loop-items/{id}/tasks", get(|| async { Json(json!([])) }))
-        .route("/api/v1/cloud-projects/project/chat-agents", get(move || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            async { Json(json!([])) }
-        }))
         .route("/api/v1/cloud-projects/project/execution-environments", get(|| async { Json(json!({"items":[{"device_key":"mac","can_use":true}]})) }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -356,7 +365,7 @@ async fn cloud_fanout_attempts_all_matching_roles_and_continues_after_preparatio
         auth_token: "test".into(),
         ..Default::default()
     })));
-    let configs = [("one","review"),("two","review"),("docs","docs")].map(|(id,tag)| json!({"id":id,"projectId":"project","projectStore":"cloud","userId":7,"tags":[tag],"enabledAfter":"2020-01-01T00:00:00Z","agentId":"probe"}));
+    let configs = [("one","review"),("two","review"),("docs","docs")].map(|(id,tag)| json!({"id":id,"projectId":"project","projectStore":"cloud","userId":7,"tags":[tag],"enabledAfter":"2020-01-01T00:00:00Z"}));
     for issue in [
         json!({"id":"failed","assignee_user_id":7,"tags":["review"],"human_task_binding":{"humanAssignmentId":"failed-human","assignmentId":"assignment"}}),
         json!({"id":"later","assignee_user_id":7,"tags":["docs"],"human_task_binding":{"humanAssignmentId":"later-human","assignmentId":"assignment"}}),
@@ -530,7 +539,7 @@ async fn existing_matching_role_does_not_revalidate_unrelated_roles() {
 }
 
 #[tokio::test]
-async fn only_validated_intake_can_start_a_same_device_reserved_binding() {
+async fn same_device_binding_without_a_task_requires_revalidation_for_every_dispatch() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
@@ -541,10 +550,11 @@ async fn only_validated_intake_can_start_a_same_device_reserved_binding() {
     let issue = json!({"id":"issue"});
     let binding = json!({"humanAssignmentId":"human","assignmentId":"event"});
     let existing = json!([{"human_assignment_id":"human","task_id":"stand-in-human-default","device_id":"mac"}]);
-    handler
+    let error = handler
         .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(error.code, "cloud_unavailable");
     assert!(handler.local_task_links(true).is_empty());
     config["intakeRouted"] = json!(true);
     let error = handler
@@ -558,10 +568,11 @@ async fn only_validated_intake_can_start_a_same_device_reserved_binding() {
     assert!(handler.local_task_links(true).is_empty());
     config["intakeRouted"] = json!(false);
     config["manual"] = json!(true);
-    handler
+    let error = handler
         .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(error.code, "cloud_unavailable");
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     store
         .enqueue_stand_in_event(
@@ -669,92 +680,6 @@ async fn archived_local_stand_in_requires_real_preparation_before_reporting_succ
 }
 
 #[tokio::test]
-async fn rejected_local_creation_rolls_back_the_issue_binding() {
-    let root = tempfile::tempdir().unwrap();
-    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
-    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
-    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
-    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-    let project = store
-        .create_project(serde_json::from_value(json!({"name":"Stand-in"})).unwrap())
-        .unwrap();
-    let issue = store
-        .create_task(
-            &project.id,
-            serde_json::from_value(json!({"title":"Issue"})).unwrap(),
-        )
-        .unwrap();
-    let error = handler
-        .create_stand_in_task(
-            &json!({"id":"default","projectId":project.id,"projectStore":"local"}),
-            &serde_json::to_value(&issue).unwrap(),
-            &json!({"humanAssignmentId":"human"}),
-            json!({"schemaVersion":99}),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error.code, "unsupported_schema_version");
-    assert!(store
-        .find_user_task_binding("mac", "stand-in-human-default")
-        .is_err());
-    assert!(handler.local_task_link("stand-in-human-default").is_none());
-}
-
-#[tokio::test]
-async fn rejected_cloud_creation_rolls_back_the_issue_binding() {
-    let bindings = Arc::new(AtomicUsize::new(0));
-    let created = bindings.clone();
-    let removed = bindings.clone();
-    let router = Router::new()
-        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
-        .route(
-            "/api/v1/cloud-projects/project",
-            get(|| async { Json(json!({"access_role":"Developer"})) }),
-        )
-        .route(
-            "/api/v1/cloud-projects/project/execution-environments",
-            get(|| async { Json(json!({"items":[{"device_key":"mac","can_use":true}]})) }),
-        )
-        .route(
-            "/api/v1/loop-items/issue/tasks",
-            axum::routing::post(move || {
-                created.fetch_add(1, Ordering::SeqCst);
-                async { Json(json!({"id":1})) }
-            })
-            .delete(move || {
-                removed.fetch_sub(1, Ordering::SeqCst);
-                async { axum::http::StatusCode::NO_CONTENT }
-            }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
-    let runtime_root = tempfile::tempdir().unwrap();
-    let handler = RuntimeWorkRpcHandler {
-        store: RuntimeWorkStore::new(runtime_root.path().join("runtime-index.json")),
-        backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
-            backend_url: url,
-            auth_token: "test".into(),
-            ..Default::default()
-        }))),
-        ..RuntimeWorkRpcHandler::new("mac", "unused")
-    };
-    let error = handler
-        .create_stand_in_task(
-            &json!({"id":"default","projectId":"project","projectStore":"cloud","userId":7}),
-            &json!({"id":"issue","title":"Issue"}),
-            &json!({"humanAssignmentId":"human"}),
-            json!({"schemaVersion":99}),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error.code, "unsupported_schema_version");
-    assert_eq!(bindings.load(Ordering::SeqCst), 0);
-    server.abort();
-}
-
-#[tokio::test]
 async fn executor_rejects_settings_for_a_different_device() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
@@ -766,7 +691,7 @@ async fn executor_rejects_settings_for_a_different_device() {
 }
 
 #[tokio::test]
-async fn explicit_retry_reuses_failed_task_and_rolls_back_a_rejected_restart() {
+async fn explicit_retry_reuses_failed_task_and_preserves_a_rejected_restart_reservation() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     // Collection probes app-server state even when task validation rejects the retry.
@@ -823,7 +748,7 @@ async fn explicit_retry_reuses_failed_task_and_rolls_back_a_rejected_restart() {
         .is_err());
     assert!(store
         .find_user_task_binding("mac", "stand-in-human-default")
-        .is_err());
+        .is_ok());
     assert_eq!(
         handler
             .local_task_link("stand-in-human-default")
@@ -954,60 +879,28 @@ fn cloud_assignments_created_in_the_enable_second_are_not_lost() {
 }
 
 #[tokio::test]
-async fn project_agent_reference_is_rejected_outside_its_owning_project_before_catalog_access() {
+async fn independent_stand_in_does_not_resolve_old_agents_or_require_a_backend() {
     let handler = RuntimeWorkRpcHandler::new("mac", "unused");
-    for (project, store) in [("other", "cloud"), ("owning", "local")] {
-        let error = handler.stand_in_agent(&json!({"agentId":"reviewer","agentProject":{"id":"owning","store":"cloud"},"projectId":project,"projectStore":store})).await.unwrap_err();
-        assert_eq!(error.code, "agent_project_mismatch");
+    for reference in [
+        json!({"agentResourceId":11}),
+        json!({"agentId":"deleted","agentProject":{"id":"old","store":"cloud"}}),
+    ] {
+        let mut config = reference;
+        config["userId"] = json!(7);
+        let prepared = handler
+            .prepare_stand_in_execution(
+                json!({"message":"Review","origin":{"type":"stand_in_identity"}}),
+                &config,
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared["executionRequest"]["team_id"], 0);
+        assert_eq!(prepared["executionRequest"]["user_id"], 7);
+        assert_eq!(
+            prepared["executionRequest"]["bot"][0]["shell_type"],
+            "Codex"
+        );
     }
-}
-
-#[tokio::test]
-async fn personal_agent_catalog_is_owned_available_and_preserves_fixed_device_policy() {
-    let router = Router::new()
-        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
-        .route("/api/v1/resources", get(|| async { Json(json!({"agents":[
-            {"team_id":11,"name":"Personal reviewer","owner_type":"user","owner_id":"7","status":"available"},
-            {"team_id":12,"name":"Other user","owner_type":"user","owner_id":"8","status":"available"},
-            {"team_id":13,"name":"Workspace","owner_type":"workspace","owner_id":"7","status":"available"},
-            {"team_id":14,"name":"Archived","owner_type":"user","owner_id":"7","status":"unavailable"}
-        ]})) }))
-        .route("/api/teams/11", get(|| async { Json(json!({"name":"Personal reviewer","is_active":true,"bots":[{"role":"leader","bot":{"shell_name":"Codex","execution_policy":{"mode":"fixed","environment_id":"another-device"},"model_policy":{"mode":"user_select"}}}]})) }))
-        .route("/api/devices/online", get(|| async { Json(json!({"items":[]})) }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
-    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
-        backend_url: url,
-        auth_token: "test".into(),
-        ..Default::default()
-    })));
-    let catalog = handler
-        .personal_stand_in_agents(json!({"userId":7}))
-        .await
-        .unwrap();
-    assert_eq!(
-        catalog["items"],
-        json!([{"id":11,"name":"Personal reviewer"}])
-    );
-    assert_eq!(
-        handler
-            .personal_stand_in_agents(json!({"userId":8}))
-            .await
-            .unwrap_err()
-            .code,
-        "permission_denied"
-    );
-    assert_eq!(
-        handler
-            .stand_in_agent(&json!({"userId":7,"agentResourceId":11}))
-            .await
-            .unwrap_err()
-            .code,
-        "agent_device_conflict"
-    );
-    server.abort();
 }
 
 #[tokio::test]
@@ -1030,7 +923,7 @@ async fn personal_settings_project_view_retains_the_requested_storage_kind() {
 }
 
 #[tokio::test]
-async fn project_scoped_agent_connections_return_actionable_settings_code_without_saving() {
+async fn independent_stand_in_keeps_connections_when_old_project_binding_is_removed() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
@@ -1044,13 +937,12 @@ async fn project_scoped_agent_connections_return_actionable_settings_code_withou
         "providerId":"example","id":"group","kind":"group","profile":"work","name":"Group",
         "policy":{"automatic":true,"askBeforeAct":true}
     }]);
-    let error = handler
+    let result = handler
         .personal_stand_in_settings(json!({"userId":7,"settings":draft}), true)
         .await
-        .unwrap_err();
-    assert_eq!(error.code, "stand_in_project_connections");
-    assert!(error
-        .message
-        .contains("only receive work from their project"));
-    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
+        .unwrap();
+    assert!(result["roles"][0].get("agentId").is_none());
+    assert!(result["roles"][0].get("agentProject").is_none());
+    assert_eq!(result["roles"][0]["connections"][0]["id"], "group");
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), result);
 }

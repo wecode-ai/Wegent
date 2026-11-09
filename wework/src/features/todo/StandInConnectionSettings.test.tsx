@@ -170,6 +170,8 @@ it.each(['@primary', 'reviewer'])(
     )
     expect(screen.getByTestId('stand-in-connection-header')).toBeVisible()
     expect(screen.getByTestId('stand-in-processing-settings')).toBeVisible()
+    expect(screen.queryByTestId('stand-in-calendar-policy')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-processing-settings-toggle'))
     expect(screen.getByTestId('stand-in-calendar-policy')).toHaveAttribute(
       'aria-checked',
       String(roleId !== '@primary')

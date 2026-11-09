@@ -392,7 +392,7 @@ export function AssistantMessage({
     );
 
   return (
-    <div className="min-w-0 max-w-full text-chat font-normal text-text-primary">
+    <div className="min-w-0 max-w-full text-chat text-text-primary">
       <div
         className="w-full max-w-full"
         data-testid="message-hover-region"

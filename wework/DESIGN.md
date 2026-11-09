@@ -168,12 +168,12 @@ such as an animated transition between two heading roles. Third-party content
 that cannot inherit Wework variables requires a narrow documented exception.
 
 The primary Electron UI weight is `445`, matching ChatGPT's platform-adjusted
-normal weight. Explicit `font-normal` content remains `400`, while emphasis and
-headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
+normal weight. Ordinary UI and conversation text inherit this weight instead of forcing
+`font-normal` (`400`) on their containers. Emphasis and headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
 
 Entered composer text uses the primary text color so it reads as content. Normal
 menu labels and composer actions such as the quick-phrase trigger also use the
-primary text color, but remain at regular weight so they stay crisp without
+primary text color, but inherit the UI weight so they stay crisp without
 appearing bold. Descriptions, metadata, and shortcuts use secondary or tertiary
 text colors.
 
@@ -253,6 +253,16 @@ composer shadow `0 18px 44px`; it is not the Codex recipe.
 
 ## 4. Color system
 
+The neutral Codex reference below defines the default theme. Users may explicitly
+choose a named appearance theme, including colored surface and accent palettes.
+In that case, the selected theme's semantic tokens replace these reference
+colors across all Wework-owned surfaces, content-renderer controls, portals,
+and auxiliary windows. Layout, density, typography, contrast, focus visibility,
+and non-color status cues remain mandatory. Never hardcode the neutral reference
+into a component to override a user's selected theme. The remote Wegent Agent
+page keeps its own theme; Wework chrome around it still follows appearance.
+Startup flow and startup colors continue to use the upstream implementation.
+
 ### 4.1 Neutral palette and surfaces
 
 The Codex neutral reference palette is:
@@ -319,6 +329,10 @@ reserved for a feature with explicit semantic meaning. Status must always have
 a non-color cue such as text, icon, shape, or accessible label.
 
 ### 4.3 Absolute green/teal restriction
+
+This restriction applies to the default product theme. An explicitly selected
+named theme such as Matrix or Everforest may use its authored green palette;
+components must consume that palette through semantic tokens.
 
 Wework must not look green or teal. The current legacy Wework `primary` and
 `hover` tokens are teal-based and therefore are not Codex visual tokens. Do not
@@ -506,7 +520,7 @@ The active-conversation capture is also normative:
 - User messages are right-aligned compact neutral bubbles. Assistant content is
   left-aligned prose, not wrapped in a card. Turn metadata and feedback actions
   are quiet and subordinate.
-- Conversation prose and tool-process rows use regular `400` weight; chat
+- Conversation prose and tool-process rows inherit the primary UI `445` weight; chat
   headings, strong text, and table headings use `500`. Keep document-preview
   typography separate. Tool summaries use tertiary text and expandable details,
   without a full-width divider. Optional MCP App discovery failures do not
@@ -580,6 +594,11 @@ recipe closely:
   surface before the editor, not in a separate bordered rail. Context-bearing
   composers remain expanded so context and model recovery stay reachable.
   Keep contextual actions and input-leading chips independent.
+- 目标与协作上下文同时出现时保持左右分栏，为右侧协作区域保留宽度；长目标在左侧截断，
+  不得把协作入口挤出输入框。
+  When goal and collaboration context are both present, keep them in separate
+  left and right columns with reserved width for collaboration. Truncate long
+  goals within the left column so collaboration controls remain inside the composer.
 - desktop project, quick-phrase, model, execution-mode, and branch selectors
   use the same `text-sm` role at regular weight; mobile variants may retain
   their larger touch-oriented typography;

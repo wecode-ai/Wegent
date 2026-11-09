@@ -17,6 +17,8 @@ use super::public_model_access;
 use super::team_access_policy::filtered_agent_config;
 use super::teams_repository as repo;
 use super::teams_repository::{KindRow, TeamRow};
+use crate::permissions::EntityResolvers;
+use crate::responses::create::shell::resolve_shells;
 
 /// Batched preload caches for related entities
 /// (`get_user_teams` preload stage).
@@ -27,8 +29,6 @@ pub(crate) struct Preloaded {
     group_bots: HashMap<(String, String), KindRow>,
     /// `(user_id, name, namespace)` -> Shell kind.
     shells: HashMap<(i64, String, String), KindRow>,
-    /// name -> public Shell kind.
-    public_shells: HashMap<String, KindRow>,
     /// `(user_id, name, namespace)` -> Model kind.
     models: HashMap<(i64, String, String), KindRow>,
     /// name -> public Model kind.
@@ -167,14 +167,13 @@ fn kind_spec(json: &OpaqueJson) -> Option<KindSpecInput> {
 /// Batch preload related users, bots, shells, and models
 /// (`get_user_teams` preload stage). `user_id` is the request user, which the
 /// public-model visibility check reads.
-pub(crate) async fn preload_related<M>(
-    mysql: &M,
+pub(crate) async fn preload_related<R: brz_redis::Redis>(
+    mysql: &brz_mysql::MysqlService,
+    resolvers: &EntityResolvers<R>,
+    redis: Option<&R>,
     user_id: i64,
     teams: &[TeamRow],
-) -> Result<Preloaded, brz_mysql::MysqlError>
-where
-    M: brz_mysql::Mysql,
-{
+) -> Result<Preloaded, brz_mysql::MysqlError> {
     // Users. The source collects `set(team_data.team_user_id)` — duplicates
     // removed — and passes the set straight into the IN clause. The replay
     // engine matches IN-list contents order-insensitively, so first-seen
@@ -265,7 +264,7 @@ where
     // Shell and model refs from both bot caches. The source collects these
     // into sets and iterates them (hash-seed dependent); the target keeps
     // first-seen order and deduplicates.
-    let mut shell_refs: Vec<(i64, String, String)> = Vec::new();
+    let mut shell_refs = Vec::new();
     let mut model_refs: Vec<(i64, String, String)> = Vec::new();
     let mut bot_kinds: Vec<&KindRow> = bots.values().collect();
     bot_kinds.extend(group_bots.values());
@@ -273,9 +272,6 @@ where
         let crd = CrdDocument::project_opaque(&bot.kinds_json.0);
         let spec = crd.spec.as_ref();
         if let Some((name, namespace)) = spec.and_then(|spec| reference_parts(&spec.shell_ref)) {
-            // `ShellRef.name` is a plain `str` (required, may be empty in
-            // stored JSON); the source adds the ref to the set
-            // unconditionally.
             let entry = (bot.kinds_user_id, name, namespace);
             if !shell_refs.contains(&entry) {
                 shell_refs.push(entry);
@@ -292,45 +288,22 @@ where
         }
     }
 
-    // User shells (uid > 0) then public shells by name for misses.
-    let user_shell_refs: Vec<(i64, String, String)> = shell_refs
-        .iter()
-        .filter(|(uid, _, _)| *uid > 0)
-        .cloned()
+    let shells = resolve_shells(mysql, resolvers, redis, &shell_refs)
+        .await?
+        .into_iter()
+        .map(|(key, shell)| {
+            (
+                key,
+                KindRow {
+                    kinds_id: shell.id,
+                    kinds_user_id: shell.user_id,
+                    kinds_name: shell.name.clone(),
+                    kinds_namespace: shell.namespace.clone(),
+                    kinds_json: brz_mysql::Json(OpaqueJson::from_serializable(&shell.json.0)),
+                },
+            )
+        })
         .collect();
-    let shells: HashMap<(i64, String, String), KindRow> = if user_shell_refs.is_empty() {
-        HashMap::new()
-    } else {
-        repo::kinds_by_refs(mysql, "Shell", &user_shell_refs, true)
-            .await?
-            .into_iter()
-            .map(|kind| {
-                (
-                    (
-                        kind.kinds_user_id,
-                        kind.kinds_name.clone(),
-                        kind.kinds_namespace.clone(),
-                    ),
-                    kind,
-                )
-            })
-            .collect()
-    };
-    let mut public_shell_names: Vec<String> = shell_refs
-        .iter()
-        .filter(|(uid, name, ns)| !shells.contains_key(&(*uid, name.clone(), ns.clone())))
-        .map(|(_, name, _)| name.clone())
-        .collect();
-    dedup_strings(&mut public_shell_names);
-    let public_shells: HashMap<String, KindRow> = if public_shell_names.is_empty() {
-        HashMap::new()
-    } else {
-        repo::public_kinds_by_names(mysql, "Shell", &public_shell_names)
-            .await?
-            .into_iter()
-            .map(|kind| (kind.kinds_name.clone(), kind))
-            .collect()
-    };
 
     // User models then public models by name for misses.
     let user_model_refs: Vec<(i64, String, String)> = model_refs
@@ -380,7 +353,6 @@ where
         bots,
         group_bots,
         shells,
-        public_shells,
         models,
         public_models,
         users,
@@ -510,32 +482,11 @@ pub(crate) fn team_item(
         });
     }
 
-    // agent_type from the first bot's shell.
-    let agent_type = bots.first().and_then(|first| {
-        let bot_id = first.bot_id;
-        let bot = if is_group_resource {
-            preloaded
-                .group_bots
-                .values()
-                .find(|bot| bot.kinds_id == bot_id)?
-        } else {
-            preloaded.bots.values().find(|bot| bot.kinds_id == bot_id)?
-        };
-        let shell_ref = kind_spec(&bot.kinds_json.0)?.shell_ref?;
-        let namespace = shell_ref.namespace().to_owned();
-        let name = shell_ref.name?;
-        let lookup_user_id = if is_group_resource {
-            bot.kinds_user_id
-        } else {
-            team.context_user_id
-        };
-        let shell = preloaded
-            .shells
-            .get(&(lookup_user_id, name.clone(), namespace))
-            .or_else(|| preloaded.public_shells.get(&name))?;
-        let shell_type = shell_kind_type(&shell.kinds_json.0)?;
-        Some(agent_type_from_shell(&shell_type))
-    });
+    let agent_type = bots
+        .first()
+        .map(|first| first.bot.shell_type.as_str())
+        .filter(|shell_type| !shell_type.is_empty())
+        .map(agent_type_from_shell);
 
     // recommended_mode from bind_mode.
     let recommended_mode = crd
@@ -661,10 +612,10 @@ fn bot_summary(bot: &KindRow, user_id: i64, preloaded: &Preloaded) -> BotSummary
         .and_then(|shell_ref| {
             let name = shell_ref.name.as_deref()?;
             let namespace = shell_ref.namespace();
-            let shell = preloaded
-                .shells
-                .get(&(user_id, name.to_string(), namespace.to_string()))
-                .or_else(|| preloaded.public_shells.get(name))?;
+            let shell =
+                preloaded
+                    .shells
+                    .get(&(user_id, name.to_string(), namespace.to_string()))?;
             shell_kind_type(&shell.kinds_json.0)
         })
         .unwrap_or_default();

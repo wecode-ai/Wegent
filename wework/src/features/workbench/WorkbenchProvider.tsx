@@ -75,6 +75,7 @@ import {
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
+import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscussionScope'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import {
   createLocalDevicePluginApi,
@@ -1117,7 +1118,6 @@ function OwnedWorkbenchProvider({
     updateLocalRuntimeTaskPinned,
     rollbackLocalRuntimeTaskPinned,
     updateLocalRuntimeTaskTitle,
-    getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
     user: workbenchIdentity,
     ownershipKey,
@@ -1289,7 +1289,13 @@ function OwnedWorkbenchProvider({
   ])
 
   useEffect(() => {
-    if (lastProjectRestoreAttemptedRef.current || !state.runtimeWork) return
+    if (
+      lastProjectRestoreAttemptedRef.current ||
+      !state.runtimeWork ||
+      state.runtimeWorkLoad.phase === 'loading' ||
+      state.runtimeWorkLoad.phase === 'refreshing'
+    )
+      return
     if (
       projectSelectionStartedRef.current ||
       parseRuntimeTaskRoute(stripAppBasePath(window.location.pathname), window.location.search) ||
@@ -1317,6 +1323,7 @@ function OwnedWorkbenchProvider({
     state.currentRuntimeTask,
     state.projects,
     state.runtimeWork,
+    state.runtimeWorkLoad.phase,
     state.standaloneWorkspacePath,
     ownershipKey,
   ])
@@ -2096,7 +2103,7 @@ function OwnedWorkbenchProvider({
               t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
             )
           }
-          void stableRefreshWorkLists()
+          void stableRefreshWorkLists({ refreshDevices: false })
         },
       }),
     [resolvedServices.chatStream, stableRefreshWorkLists, t]
@@ -2365,7 +2372,6 @@ function OwnedWorkbenchProvider({
     unsubscribeRuntimeTaskNotifications
   )
   const stableRefreshDevices = useStableEvent(refreshDevices)
-  const stableGetRemoteDeviceStartupCommand = useStableEvent(getRemoteDeviceStartupCommand)
   const stableUpgradeDevice = useStableEvent(upgradeDevice)
   const stableCreateProject = useStableEvent(projectActions.createProject)
   const stableCreateLocalRuntimeProject = useStableEvent(projectActions.createLocalRuntimeProject)
@@ -2746,6 +2752,7 @@ function OwnedWorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
+      modelSelectionDiagnostics: modelSelection.modelSelectionDiagnostics,
       isModelCatalogReady: modelSelection.isCatalogReady,
       isModelSelectionReady:
         modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
@@ -2842,6 +2849,7 @@ function OwnedWorkbenchProvider({
       activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
+      modelSelection.modelSelectionDiagnostics,
       modelSelection.setSelectedModel,
       modelSelection.setSelectedModelAndOptions,
       continueInNewConversation,
@@ -2914,7 +2922,6 @@ function OwnedWorkbenchProvider({
       unsubscribeRuntimeTaskNotifications: stableUnsubscribeRuntimeTaskNotifications,
       refreshWorkLists: stableRefreshWorkLists,
       refreshDevices: stableRefreshDevices,
-      getRemoteDeviceStartupCommand: stableGetRemoteDeviceStartupCommand,
       upgradeDevice: stableUpgradeDevice,
       createProject: stableCreateProject,
       createLocalRuntimeProject: stableCreateLocalRuntimeProject,
@@ -2995,7 +3002,6 @@ function OwnedWorkbenchProvider({
       stableGetRuntimeGoal,
       stableGetImNotificationSettings,
       stableGetProjectWorkspaceRoot,
-      stableGetRemoteDeviceStartupCommand,
       stableListDeviceDirectories,
       stableListEnvironmentBranches,
       stableListGitBranches,
@@ -3080,7 +3086,7 @@ function OwnedWorkbenchProvider({
                 services={resolvedServices}
               />
               <RunnerSelectionHost />
-              {children}
+              <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>
         </WorkspaceFileReaderProvider>

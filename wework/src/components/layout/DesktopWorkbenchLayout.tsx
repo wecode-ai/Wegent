@@ -202,7 +202,6 @@ export function DesktopWorkbenchLayout({
     archiveChatConversations: onArchiveChatConversations,
     cancelRuntimeTask: onCancelRuntimeTask,
     refreshDevices: onRefreshDevices,
-    getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
     createLocalRuntimeProject: onCreateLocalRuntimeProject,
@@ -307,6 +306,20 @@ export function DesktopWorkbenchLayout({
   const standInContentRoute =
     ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
   const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
+  const [standInVisited, setStandInVisited] = useState(standInOpen)
+  const [standInEntryKey, setStandInEntryKey] = useState(0)
+  const standInWasOpen = useRef(standInOpen)
+  const retainedStandInRoute = useRef(standInContentRoute)
+  useEffect(() => {
+    if (standInOpen) {
+      setStandInVisited(true)
+      if (!standInWasOpen.current || retainedStandInRoute.current !== standInContentRoute) {
+        setStandInEntryKey(value => value + 1)
+      }
+      retainedStandInRoute.current = standInContentRoute
+    }
+    standInWasOpen.current = standInOpen
+  }, [standInOpen, standInContentRoute])
   const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
@@ -1083,7 +1096,6 @@ export function DesktopWorkbenchLayout({
       onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
       onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
-      onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onRefreshDevices={onRefreshDevices}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
@@ -1167,16 +1179,24 @@ export function DesktopWorkbenchLayout({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {standInOpen && (
-            <PersonalStandInWorkspace
-              contentRoute={standInContentRoute}
-              services={services}
-              user={state.user ?? LOCAL_USER}
-              devices={state.devices}
-              active={routeActive && !settingsOpen}
-              onClose={() => navigateTo('/')}
-              onOpenTask={openRuntimeTaskOutsideHarness}
-            />
+          {(standInOpen || standInVisited) && (
+            <div
+              className="min-h-0 min-w-0 flex-1 flex-col"
+              style={{ display: standInOpen ? 'flex' : 'none' }}
+              aria-hidden={!standInOpen}
+              inert={!standInOpen}
+            >
+              <PersonalStandInWorkspace
+                contentRoute={standInOpen ? standInContentRoute : retainedStandInRoute.current}
+                entryRequestKey={standInEntryKey}
+                services={services}
+                user={state.user ?? LOCAL_USER}
+                devices={state.devices}
+                active={standInOpen && routeActive && !settingsOpen}
+                onClose={() => navigateTo('/')}
+                onOpenTask={openRuntimeTaskOutsideHarness}
+              />
+            </div>
           )}
           {taskBoardOpen && routeActive && !settingsOpen ? (
             <>
@@ -1525,7 +1545,6 @@ export function DesktopWorkbenchLayout({
           })
           scopedRequest.onCreated?.(createdProject)
         }}
-        onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
         onRefreshDevices={onRefreshDevices}
       />
       <ProjectCreateDialog

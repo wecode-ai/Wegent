@@ -54,6 +54,7 @@ def _require_manager_dispatch(
     dispatch_id: str,
     manager_agent_id: str,
 ) -> tuple[ProjectChatAgent, LoopItemExecution]:
+    """Authorize the manager against a current, locked dispatch record."""
     dispatches = (
         db.query(LoopItemExecution)
         .filter(
@@ -72,11 +73,31 @@ def _require_manager_dispatch(
         ),
         None,
     )
+    if dispatch is not None:
+        # A device scan may have advanced the version since the initial read.
+        # Lock only the existing primary-key row, avoiding absent-row gap locks.
+        dispatch = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.id == dispatch.id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
     if dispatch is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Collaboration dispatch is unavailable",
         )
+    # Snapshot reconciliation can advance the execution version independently.
+    # Lock and refresh the aggregate before authorizing and completing it, so
+    # the Issue decision cannot commit after losing its terminal transition.
+    dispatch = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.id == dispatch.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
     if "project_coordination" in dispatch.runtime_origin_context:
         from app.services.collaboration_revocation import execution_authorized
 
@@ -175,7 +196,7 @@ def apply_collaboration_manager_decision(
             ),
         )
     if dispatch.status not in {"completed", "failed", "cancelled"}:
-        loop_item_execution_service.complete(
+        completed = loop_item_execution_service.complete(
             db,
             execution_id=dispatch.id,
             note=reason,
@@ -184,6 +205,12 @@ def apply_collaboration_manager_decision(
             commit=False,
             termination_reason="manager_status_decision",
         )
+        if completed is None or completed.status != "completed":
+            db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Collaboration dispatch changed during manager decision",
+            )
     message = existing_comment
     if normalized_comment and message is None:
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())

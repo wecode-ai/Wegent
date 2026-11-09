@@ -2,6 +2,7 @@ import {
   IssueAssignmentReceipts,
   type IssueAssignmentReceiptState,
 } from './IssueAssignmentReceipts'
+import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { LockKeyhole, Send } from 'lucide-react'
 import {
@@ -182,13 +183,23 @@ export function TodoEditor(props: TodoEditorProps) {
         : undefined,
     [workspaceApi]
   )
+  const attachmentProjectId = props.project ? String(props.project.id) : undefined
+  const attachmentIssueId = props.mode === 'edit' ? props.item.id : undefined
+  const attachmentContext = useMemo(
+    () =>
+      attachmentProjectId && attachmentIssueId
+        ? { projectId: attachmentProjectId, issueId: attachmentIssueId }
+        : undefined,
+    [attachmentProjectId, attachmentIssueId]
+  )
   const port = useMemo(() => {
     const detailPort = createSharedIssueDetailPort(
       workspaceApi,
       async (blob, filename) => {
         await saveBlobToDownloads(blob, filename)
       },
-      props.getRuntimeTranscript
+      props.getRuntimeTranscript,
+      attachmentContext
     )
     return {
       ...detailPort,
@@ -202,7 +213,7 @@ export function TodoEditor(props: TodoEditorProps) {
         },
       },
     }
-  }, [workspaceApi, taskOwnerUserId, props.getRuntimeTranscript])
+  }, [workspaceApi, taskOwnerUserId, props.getRuntimeTranscript, attachmentContext])
   const loadTeams = useCallback(
     () => props.teamApi?.listTeams() ?? Promise.resolve([]),
     [props.teamApi]
@@ -272,6 +283,7 @@ export function TodoEditor(props: TodoEditorProps) {
           api={receiptApi}
           issueId={item.id}
           version={item.version}
+          assignmentRevision={issueAssignmentRevision(item)}
           currentUserId={props.currentUserId}
           assigneeUserId={item.assignee_user_id}
           onStateChange={setAssignmentReceipts}

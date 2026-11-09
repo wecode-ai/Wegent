@@ -140,6 +140,7 @@ mod connections;
 mod context_compaction;
 mod control;
 mod control_metadata;
+mod conversation_sessions;
 mod creation;
 mod execution_control;
 mod fork_transfer;
@@ -166,6 +167,7 @@ mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
 mod runtime_owner;
+mod side_source;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
@@ -175,11 +177,15 @@ mod stand_in_calendar;
 mod stand_in_connection_guidance;
 mod stand_in_conversations;
 mod stand_in_diagnostics;
+mod stand_in_dispatches;
 mod stand_in_events;
 mod stand_in_execution;
 mod stand_in_history;
 mod stand_in_ingress;
+mod stand_in_lifecycle;
 mod stand_in_memory;
+mod stand_in_memory_progress;
+mod stand_in_memory_review;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
@@ -279,6 +285,8 @@ const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
 const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
+const ARCHIVED_BACKGROUND_FORK_RETRY_LIMIT: usize = 3;
+const ARCHIVED_BACKGROUND_FORK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
 const WORKTREE_AUTO_CLEANUP_BATCH_DELAY: Duration = Duration::from_secs(30);
 const WORKTREE_AUTO_CLEANUP_ERROR_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -536,6 +544,7 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+    stand_in_lifecycle_gate: Arc<Mutex<()>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
@@ -902,6 +911,7 @@ impl RuntimeWorkRpcHandler {
             event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
+            stand_in_lifecycle_gate: Arc::new(Mutex::new(())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
                 runtime_settings,
                 queued_turns,
@@ -929,7 +939,9 @@ impl RuntimeWorkRpcHandler {
             notification_router: Arc::new(Mutex::new(None)),
             local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
-            automation_store: AutomationStore::from_env(),
+            automation_store: AutomationStore::new(
+                super::store::runtime_work_dir().join("automations.json"),
+            ),
             task_store_path: Arc::new(LocalTaskStore::default_path()),
             store,
             worktrees,
@@ -938,7 +950,10 @@ impl RuntimeWorkRpcHandler {
             )),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
-            hook_service: HookService::from_env(),
+            hook_service: HookService::new(
+                crate::hooks::registry::HookRegistryStore::from_env(),
+                crate::agents::wework_codex_home(),
+            ),
             backend_connection: Arc::new(Mutex::new(None)),
         };
         for (local_task_id, turn) in handler
@@ -1011,6 +1026,9 @@ impl RuntimeWorkRpcHandler {
         self.register_cloud_collaboration_dispatcher();
         self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
+        for link in self.local_task_links(false) {
+            self.sync_issue_human_requests(&link.local_task_id);
+        }
         self.start_supervisor_scheduler();
         self
     }
@@ -1190,12 +1208,15 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
         || method.starts_with("runtime.stand_in.telemetry.")
         || method.starts_with("runtime.stand_in.onboarding.")
         || method == "runtime.stand_in.processing.status"
+        || method == "runtime.stand_in.binding"
+        || method == "runtime.stand_in.personal.lifecycle"
     {
         return false;
     }
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.python.has_demand"
             | "runtime.stand_in.assignment_tasks"
             | "runtime.tasks.get"
             | "runtime.composer.catalog.read"

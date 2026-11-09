@@ -96,7 +96,7 @@ import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
 import { IssueAssignmentHistoryDisclosure } from "./issue-detail/IssueAssignmentHistoryDisclosure";
 import { IssueSaveButton } from "./issue-detail/IssueSaveButton";
-import { localizeStandardStatuses } from "./i18n";
+import { localizeStandardStatuses, localizeStandardStatusName } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 import { useCollaborationPortalTheme } from "./theme";
 import { useIssueAssigneeResources } from "./issue-detail/useIssueAssigneeResources";
@@ -112,23 +112,6 @@ function cn(...values: Array<string | false | null | undefined>): string {
 }
 
 export interface SharedEditorIssue extends CollaborationIssue {
-  assignment_history?: Array<{
-    by_user_id: number;
-    to_type: "user" | "agent" | "team" | "group" | null;
-    to_id: string | null;
-    to_name?: string | null;
-    action: "assign" | "reassign" | "unassign";
-    at: string;
-  }>;
-  status_history?: Array<{
-    from_status: string;
-    from_status_name?: string | null;
-    to_status: string;
-    to_status_name?: string | null;
-    trigger: string;
-    by_user_id: number | null;
-    at: string;
-  }>;
   automation?: { trigger?: string } | null;
   execution_error?: string | null;
   source_record_id?: string | null;
@@ -907,6 +890,15 @@ export function TodoEditor(props: TodoEditorProps) {
   const [pendingFiles, setPendingFiles] = useState<File[]>(() =>
     draftKey ? (draftAttachmentStore.get(draftKey) ?? []) : [],
   );
+  const pendingFileIdsRef = useRef(new WeakMap<File, string>());
+  const nextPendingFileIdRef = useRef(0);
+  const pendingFileId = useCallback((file: File) => {
+    const existing = pendingFileIdsRef.current.get(file);
+    if (existing) return existing;
+    const id = `pending-${nextPendingFileIdRef.current++}`;
+    pendingFileIdsRef.current.set(file, id);
+    return id;
+  }, []);
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [editingDelivery, setEditingDelivery] = useState<{ id: string } | null>(
@@ -1500,13 +1492,21 @@ export function TodoEditor(props: TodoEditorProps) {
     tags.length > 0 ||
     pendingFiles.length > 0,
   );
-  const pendingAttachmentRows: AttachmentRow[] = pendingFiles.map(
-    (file, index) => ({
-      id: `pending-${index}`,
-      display_name: file.name,
-      content_type: file.type || null,
-      size_bytes: file.size,
-    }),
+  const pendingAttachmentRows: AttachmentRow[] = pendingFiles.map((file) => ({
+    id: pendingFileId(file),
+    display_name: file.name,
+    content_type: file.type || null,
+    size_bytes: file.size,
+  }));
+  const readPendingAttachment = useCallback(
+    async (attachmentId: string) => {
+      const file = pendingFiles.find(
+        (candidate) => pendingFileId(candidate) === attachmentId,
+      );
+      if (!file) throw new Error("Pending attachment is unavailable");
+      return file;
+    },
+    [pendingFileId, pendingFiles],
   );
   const childRailExpanded = Boolean(expandedRailSections.children);
   const executionRailExpanded = Boolean(expandedRailSections.executions);
@@ -1808,7 +1808,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
   async function removePendingFile(row: AttachmentRow) {
     setPendingFiles((current) =>
-      current.filter((_, index) => `pending-${index}` !== row.id),
+      current.filter((file) => pendingFileId(file) !== row.id),
     );
   }
 
@@ -2917,12 +2917,16 @@ export function TodoEditor(props: TodoEditorProps) {
                 <div className="task-detail-id-row">
                   <span>{item.id}</span>
                   <span>·</span>
-                  <span>创建于 {item.created_at.slice(5, 10)}</span>
+                  <span>
+                    {t("todo.created_at_short", undefined, {
+                      date: item.created_at.slice(5, 10),
+                    })}
+                  </span>
                   {item.automation ? (
                     <>
                       <span>·</span>
                       <span data-testid="cloud-todo-automation-source">
-                        自动化 ·{" "}
+                        {t("todo.automation_source")} ·{" "}
                         {item.automation.trigger === "manual"
                           ? t("todo.manual_trigger", "手动触发")
                           : t("todo.scheduled_trigger", "定时触发")}
@@ -3340,7 +3344,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           workspacePanel && "task-detail-desc-hint",
                         )}
                       >
-                        支持 Markdown，可拖拽文件到编辑器添加附件
+                        {t("todo.issue_markdown_hint")}
                       </p>
                       {workspacePanel && editingContent ? (
                         <span
@@ -3557,6 +3561,8 @@ export function TodoEditor(props: TodoEditorProps) {
                                     "todo.status_history_initial",
                                     "初始状态",
                                   ),
+                                  statusName: (id, name) =>
+                                    localizeStandardStatusName(id, name, t),
                                   accept: t(
                                     "todo.status_action_accept",
                                     "验收",
@@ -3599,7 +3605,9 @@ export function TodoEditor(props: TodoEditorProps) {
                     downloadingId={downloadingAttachmentId}
                     onAdd={isCreate ? stageFiles : addAttachments}
                     onReadPreview={
-                      isCreate ? undefined : editorPort.attachments.read
+                      isCreate
+                        ? readPendingAttachment
+                        : editorPort.attachments.read
                     }
                     onOpen={isCreate ? undefined : openAttachment}
                     onDownload={

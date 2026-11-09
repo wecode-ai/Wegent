@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { openStandInActivity, openStandInDetails } from './stand-in-profile-navigation.mjs'
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -100,6 +101,7 @@ export function createDingTalkReplyStory(options) {
     )
     await openStoryPrimary(control)
     await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
+    await openStandInActivity(control)
     await control.command(
       'clickWhenEnabled',
       `[data-testid="stand-in-activity-task-${selected.taskId}"]`
@@ -138,17 +140,22 @@ export function createDingTalkReplyStory(options) {
           result: { hasMore: false, nextCursor: '0', conversationMessagesList: [] },
         })
       )
+      const preparedBinary = process.env.WEWORK_E2E_DWS_REPLY_FIXTURE_BIN
       const binary = join(
         options.resultDir,
         process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
       )
-      await promisify(execFile)('rustc', [
-        fileURLToPath(new URL('../fixtures/source-story-dingtalk-cli.rs', import.meta.url)),
-        '--edition',
-        '2021',
-        '-o',
-        binary,
-      ])
+      if (preparedBinary) {
+        await copyFile(preparedBinary, binary)
+      } else {
+        await promisify(execFile)('rustc', [
+          fileURLToPath(new URL('../fixtures/source-story-dingtalk-cli.rs', import.meta.url)),
+          '--edition',
+          '2021',
+          '-o',
+          binary,
+        ])
+      }
       context.appEnvironment.DWS_BINARY_PATH = binary
     },
     async verify(control, rpc) {
@@ -258,9 +265,17 @@ export function createDingTalkReplyStory(options) {
         await control.command('press', `${STORY_CHAT} [data-testid="chat-message-input"]`, {
           key: 'Enter',
         })
+        await openStandInDetails(control)
         await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
           timeoutMs: options.modelResponseTimeoutMs,
         })
+        // The UI can show the proposal before the model consumes its tool result.
+        await storyUntil(
+          () => model.proposalSubmitted,
+          submitted => submitted === true,
+          options.modelResponseTimeoutMs,
+          'The model must receive the persisted proposal before reviewing its grant'
+        )
         assert.equal(model.proposalSubmitted, true)
         assert.equal(
           (await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })).roles.find(

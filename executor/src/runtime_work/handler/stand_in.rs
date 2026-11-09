@@ -41,12 +41,11 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+/// Map persistence errors to stable settings failures while retaining version-conflict recovery.
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
     let code = match &error {
         crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
-        crate::task_runtime::TaskRuntimeError::StandInProjectConnections => {
-            "stand_in_project_connections"
-        }
+        crate::task_runtime::TaskRuntimeError::MemorySuppressed => "memory_suppressed",
         _ => "stand_in_settings",
     };
     AppIpcError::new(code, error.to_string())
@@ -352,6 +351,21 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         });
+        let handler = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                // Cloud outages must not delay local assignment polling or receipts.
+                if let Err(error) = handler.flush_stand_in_dispatches().await {
+                    log_executor_event(
+                        "Stand-in dispatch reconciliation failed",
+                        &[("code", error.code)],
+                    );
+                }
+            }
+        });
     }
 
     async fn poll_local_stand_ins(&self) -> Result<(), AppIpcError> {
@@ -435,11 +449,7 @@ impl RuntimeWorkRpcHandler {
             for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
             {
                 let task_id = self.stand_in_task_id(config, &binding);
-                if self.stand_in_task_is_handled(
-                    config,
-                    &task_id,
-                    bindings.iter().any(|binding| binding.task_id == task_id),
-                ) {
+                if self.stand_in_task_is_handled(config, &task_id) {
                     continue;
                 }
                 if let Err(error) = self
@@ -466,6 +476,17 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn start_cloud_stand_in_with_roles(
+        &self,
+        configs: &[Value],
+        issue: &Value,
+    ) -> Result<(), AppIpcError> {
+        let intents = self.queue_stand_in_dispatches(configs, issue)?;
+        let result = self.start_cloud_stand_in_attempt(configs, issue).await;
+        self.settle_stand_in_dispatches(&intents, result.as_ref().err());
+        result
+    }
+
+    pub(super) async fn start_cloud_stand_in_attempt(
         &self,
         configs: &[Value],
         issue: &Value,
@@ -517,9 +538,10 @@ impl RuntimeWorkRpcHandler {
             self.log_stand_in_decision(config, issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
-        if matching.iter().all(|role| {
-            self.stand_in_task_is_handled(role, &self.stand_in_task_id(role, binding), false)
-        }) && config["manual"] != true
+        if matching
+            .iter()
+            .all(|role| self.stand_in_task_is_handled(role, &self.stand_in_task_id(role, binding)))
+            && config["manual"] != true
         {
             self.log_stand_in_decision(config, issue, "local_tasks_already_exist", json!({}));
             return Ok(());
@@ -631,17 +653,8 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        let reserved = bound.is_some()
-            && config["manual"] == true
-            && self.has_pending_stand_in_assignment(config, issue, binding)?;
-        // A validated intake action or explicit delegation may start queued work.
-        self.execute_stand_in_task(
-            config,
-            issue,
-            binding,
-            bound.is_some() && config["intakeRouted"] != true && !reserved,
-        )
-        .await
+        // Same-device reservations are not proof that a local task was accepted.
+        self.execute_stand_in_task(config, issue, binding).await
     }
 
     pub(super) async fn create_stand_in_task(
@@ -651,12 +664,11 @@ impl RuntimeWorkRpcHandler {
         binding: &Value,
         mut payload: Value,
     ) -> Result<(), AppIpcError> {
-        let issue_id = issue["id"].as_str().unwrap_or_default();
         let task_id = self.stand_in_task_id(config, binding);
         let gate = self.task_send_gate(&format!("stand-in-start:{task_id}"));
         let _guard = gate.lock().await;
         let existing = self.local_task_link(&task_id);
-        if self.stand_in_task_is_handled(config, &task_id, false) {
+        if self.stand_in_task_is_handled(config, &task_id) {
             self.log_stand_in_decision(
                 config,
                 issue,
@@ -666,9 +678,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let retry = existing.is_some();
-        let local = config["projectStore"] == "local";
-        let binding = self
-            .accept_stand_in_assignment(config, issue, binding)
+        self.accept_stand_in_assignment(config, issue, binding)
             .await?;
         self.log_stand_in_decision(
             config,
@@ -676,38 +686,21 @@ impl RuntimeWorkRpcHandler {
             "task_binding_created",
             json!({"taskId":task_id,"retry":retry}),
         );
-        if config["manual"] != true {
+        if !retry {
             use sha2::{Digest, Sha256};
-            payload["automaticStandIn"] = json!(true);
             payload["commandId"] = json!(format!(
                 "stand-in-initial:{:x}",
                 Sha256::digest(task_id.as_bytes())
             ));
         }
-        let result = self.dispatch_stand_in_task(payload, retry).await;
-        if let Err(error) = result {
-            let cleanup = if local {
-                LocalTaskStore::open(self.task_store_path.as_ref())
-                    .and_then(|store| store.unbind_task(&self.device_id, &task_id, Some(issue_id)))
-                    .map_err(settings_error)
-            } else {
-                self.runtime_http(
-                    reqwest::Method::DELETE,
-                    &format!("/v1/loop-items/{issue_id}/tasks"),
-                    Some(&binding),
-                )
-                .await
-                .map(|_| ())
-            };
-            if let Err(cleanup_error) = cleanup {
-                log_executor_event(
-                    "stand-in binding rollback failed",
-                    &[("task_id", task_id), ("error", cleanup_error.message)],
-                );
-            }
-            return Err(error);
+        if config["manual"] != true {
+            payload["automaticStandIn"] = json!(true);
         }
-        Ok(())
+        // A binding reserves ownership, not completion. Keep it on failure so
+        // reconciliation can resume the same task without a compensating DELETE.
+        self.dispatch_stand_in_task(payload, retry)
+            .await
+            .map(|_| ())
     }
     pub(super) async fn start_local_stand_in(
         &self,
@@ -725,8 +718,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             Some(gate.lock().await)
         };
-        self.execute_stand_in_task(config, issue, binding, false)
-            .await
+        self.execute_stand_in_task(config, issue, binding).await
     }
 
     pub(super) fn stand_in_task_id(&self, config: &Value, binding: &Value) -> String {
@@ -783,18 +775,19 @@ impl RuntimeWorkRpcHandler {
         self.prepare_stand_in_execution(payload, config).await
     }
 
+    /// Prepare an independent stand-in profile using only its own explicit model selection.
     pub(super) async fn prepare_stand_in_execution(
         &self,
         payload: Value,
         config: &Value,
     ) -> Result<Value, AppIpcError> {
-        let agent = self.stand_in_agent(config).await?.or_else(|| {
+        let agent = {
             config["model"].is_object().then(|| json!({
                 "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"],
                 "execution_policy":{"mode":"fixed","environment_id":self.device_id},
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
-        });
+        };
         self.prepare_stand_in_execution_with_agent(payload, config, agent)
             .await
     }
@@ -838,7 +831,7 @@ impl RuntimeWorkRpcHandler {
         if payload["modelId"].is_string() {
             payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
         }
-        // Project agents are direct Wework profiles, not backend Teams.
+        // Stand-ins and direct Wework profiles do not execute as Backend Teams.
         payload["executionRequest"]["team_id"] = json!(0);
         payload["executionRequest"]["user_id"] = config["userId"].clone();
         if matches!(

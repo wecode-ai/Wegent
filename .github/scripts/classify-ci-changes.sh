@@ -33,6 +33,12 @@ classify_path() {
       changed[wework]=true
       return
       ;;
+    .github/actions/prepare-electron-installer-cache/* | \
+      .github/scripts/prime-ci-electron-installer-cache.mjs)
+      changed[wework]=true
+      changed[wework_e2e]=true
+      return
+      ;;
     .github/actions/build-frontend-e2e/* | .github/scripts/frontend-e2e-build*.mjs | \
       .github/scripts/restore-frontend-ci-build.mjs)
       changed[platform_e2e]=true
@@ -105,6 +111,10 @@ classify_path() {
       mark_all
       return
       ;;
+    .github/scripts/install-e2e-apt-packages.sh)
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
+      ;;
     .github/workflows/e2e-tests.yml | \
       .github/scripts/run-attachment-replica-e2e.sh | \
       .github/scripts/run-knowledge-provider-e2e.sh | \
@@ -169,6 +179,12 @@ classify_path() {
     executor_manager/*)
       changed[executor_manager]=true
       changed[platform_e2e]=true
+      ;;
+    shared/rust/*)
+      changed[backend_rs]=true
+      changed[executor]=true
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
       ;;
     shared/*)
       changed[backend]=true

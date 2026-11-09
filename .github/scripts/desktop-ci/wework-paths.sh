@@ -56,7 +56,16 @@ classify_wework_path() {
       select_target "core:split-workbench"
       return
       ;;
+    wework/e2e/desktop/modules/github-release-asset.mjs)
+      select_target "core:harness-app-development"
+      select_target "core:harness-app-lifecycle"
+      select_target "core:harness-app-models"
+      select_target "cloud:plugin-legacy-upgrade"
+      return
+      ;;
     wework/e2e/desktop/scenarios/harness-apps.scenario.mjs | \
+      wework/e2e/desktop/modules/dsh-runtime-cache.mjs | \
+      wework/electron/src/host/e2e-dsh-release-redirect.ts | \
       wework/e2e/desktop/modules/harness-app-*)
       select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
@@ -76,6 +85,16 @@ classify_wework_path() {
   esac
 
   case "$path" in
+    wework/e2e/desktop/scenarios/python-runtime.scenario.mjs | \
+      wework/e2e/desktop/modules/managed-python.mjs | \
+      wework/electron/src/runtime/python-runtime* | \
+      wework/src/desktop/executionEnvironments* | \
+      wework/src/components/settings/ExecutionEnvironmentsSettingsPage*)
+      select_target "core:python-runtime"
+      select_target "core:plugin-development"
+      select_target "cloud:plugin-account-auth-password"
+      return
+      ;;
     wework/src/features/workbench/runtimeConversationCache* | \
       wework/src/components/layout/useWorkbenchPaneSession* | \
       wework/src/features/workbench/WorkbenchProvider* | \

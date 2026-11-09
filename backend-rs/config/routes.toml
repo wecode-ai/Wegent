@@ -447,7 +447,7 @@ path = "/api/resource-library/listings"
 methods = ["GET"]
 path = "/api/v1/collaboration-templates"
 [[routes]]
-methods = ["GET"]
+methods = ["GET", "DELETE"]
 path = "/api/v1/collaboration-templates/:template_id"
 [[routes]]
 methods = ["PUT"]
@@ -1113,6 +1113,11 @@ path = "/api/v1/deliveries/:delivery_id"
 methods = ["POST"]
 path = "/api/internal/callback"
 
+# Authenticated, platform-specific Wework runtime artifact descriptors.
+[[routes]]
+methods = ["POST"]
+path = "/api/wework/runtime-downloads"
+
 # Responses creation is implemented and selected in Rust.
 [[routes]]
 methods = ["POST"]
@@ -1125,3 +1130,12 @@ path = "/api/v1/cloud-projects/:project_id/milestones"
 [[routes]]
 methods = ["PATCH", "DELETE"]
 path = "/api/v1/cloud-projects/:project_id/milestones/:milestone_id"
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/loop-items/:item_id/human-requests"
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/loop-items/:item_id/human-requests/:request_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/wework-human-requests"

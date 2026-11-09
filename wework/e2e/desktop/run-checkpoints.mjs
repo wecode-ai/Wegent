@@ -15,6 +15,7 @@ import {
 } from './checkpoints.mjs'
 import {
   isResourceExclusiveCheckpoint,
+  linuxCoreCheckpointResources,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS, rejectFailedReleaseCheckpoint } from './upgrade-suite.mjs'
@@ -155,10 +156,12 @@ function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification' ||
+    checkpoint === 'stand-in-profile-settings' ||
+    checkpoint === 'stand-in-git' ||
     checkpoint.startsWith('human-interactions')
   ) {
-    // These checks present native auxiliary windows and must observe them as
-    // visible. macOS background mode prohibits activation and hides the app.
+    // Native windows and keyboard input need foreground activation.
+    // macOS background mode prohibits activation and hides the app.
     // Assignment notification also verifies tag commits through native focus loss.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
@@ -409,8 +412,10 @@ async function runParallelCheckpoints(checkpoints) {
     await runWithCheckpointResources({
       checkpoints,
       workerCount,
-      resourceFor: checkpoint =>
-        process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
+      resourceFor: checkpoint => {
+        if (linuxCore) return linuxCoreCheckpointResources(checkpoint)
+        return process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : []
+      },
       exclusiveFor: checkpoint => isResourceExclusiveCheckpoint(checkpoint, linuxCore),
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)

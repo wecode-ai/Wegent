@@ -6,6 +6,20 @@ sidebar_position: 39
 
 Wework can start an isolated development verification session so an AI can operate and assert against the real Electron application. It reuses the desktop E2E WebView control channel, never drives an external Chrome window, and does not attach to a developer's everyday Wework window.
 
+## Idle Executor request regression
+
+`idle-executor-requests` uses isolated real Electron and Executor instances with no tasks and no cloud connection. It reuses the shared runner's initial telemetry refusal, reloads the main window, and observes requests. Worktree capability discovery, telemetry configuration, and the shared SSE subscription must each occur once after reload. Foreground and close-to-background observation windows each last 6.5 seconds, crossing the five-second poll interval: pending-interaction discovery and Runtime identity checks must continue, without full task-catalog polling or repeated startup configuration. Known asynchronous bootstrap requests, such as plugin initialization, may finish; a fixed delay is not used to infer startup readiness.
+
+Identity descriptions share only not-yet-dispatched requests within the same synchronous batch; post-operation identity checks still fetch fresh descriptions. Confirmed local Runtime telemetry policy is not rewritten on idle polls. Runtime, account, API, or policy changes resynchronize it, and failed writes retry. Work-list changes refresh task data only; device events and explicit refresh retain device discovery. Work events preserve an in-flight full cloud sync and coalesce into one fresh work read afterward. Bootstrap device and team synchronization is not discarded when the task-read revision changes.
+
+Last-project restoration waits until the initial local work-list load settles; an earlier cloud-composed list must not consume that restoration attempt. Device and cloud catalogs may publish independently, without implying that local projects are ready.
+
+```bash
+pnpm --filter wework e2e:desktop --segment idle-executor-requests
+```
+
+The independent checkpoint is registered in an existing Core CI shard and does not require earlier scenarios. Local macOS arm64 verification took approximately 52 seconds including startup and cleanup, excluding the shared build. Its result directory contains `idle-executor-requests.json` with method names, timestamps, statuses, and necessary boolean flags only, never request parameters, headers, or query strings. Do not commit logs or screenshots.
+
 ## Periodic plugin recovery E2E
 
 The `plugin-periodic-reconcile` checkpoint uses real Electron, Executor, Socket.IO, database, and plugin package storage. It discards one real plugin change notification, then verifies timer-driven recovery, persisted acknowledgements, device identity, and unchanged unrelated plugin content. Its isolated instances set `LOCAL_PLUGIN_RECONCILE_INTERVAL=90` and `LOCAL_PLUGIN_RECONCILE_JITTER=18` (seconds), with the existing `LOCAL_HEARTBEAT_INTERVAL=1` configuration preserving the assertion of at least 10 heartbeats. The 90-second base period leaves room for plugin setup after registration before the first reconciliation.
@@ -17,6 +31,20 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 ```
 
 The plugin account late-response E2E uses a unique `Server-Timing` diagnostic marker on the selected fault-proxy response while preserving its real upstream body bytes. Verification identifies the renderer's actual consumption of that response before checking stable current-account inventory. Browsers may record multiple fetch consumers for one HTTP response, so a time window containing exactly one entry cannot establish response identity. Protocol tests protect byte preservation and coalesced-consumer correlation; the existing desktop checkpoint still verifies real account/device boundaries.
+
+## Conversation model restoration diagnostics
+
+When full task data is selected, the feedback bundle's `context/task.json` includes `modelSelection`: `configured` is the configuration supplied to the model selector, `effective` is the configuration after default resolution, and `selected` is the current composer model. Missing snapshots remain `null`. Snapshots contain only model identity, resource ownership and a diagnostic fingerprint; arbitrary model options and authentication configuration are excluded.
+
+The `workbench.selection_restored`, `workbench.selection_changed` and `workbench.selection_seeded` events in `logs/app/model-loading.log` correlate scopes and models through numeric fingerprints. Fingerprints are diagnostic identifiers. The executor's `runtime task model selection updated` event records an in-memory assignment. The `runtime task get resolved link` and `runtime task transcript resolved link` events record the owning task's current model identity on reads. Assignment does not prove that a disk write succeeded.
+
+`configured` is not the raw on-disk task record. Existing conversations receive configuration from the task summary or runtime handle; new conversations can receive project configuration or user preferences.
+
+1. Export feedback before restarting.
+2. Restart the app.
+3. Export feedback before the first send.
+4. Check the model identity read by the executor.
+5. Compare the composer's configured, effective and selected models to distinguish missing records, default substitution and composer changes.
 
 ## Prepare desktop E2E prerequisites before startup
 
@@ -38,7 +66,13 @@ During builds, `prepare-codex-binary.mjs` downloads the locked version through n
 pnpm --filter wework ai:verify start
 ```
 
-The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Electron app-data namespace, and diagnostics directory, then starts the real `dev-mac-app.sh`. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
+The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Electron app-data namespace, and diagnostics directory, then starts real Electron from the source application directory. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
+
+When the user explicitly selects their local Codex account, set `WEWORK_E2E_NATIVE_CODEX_HOME` to that signed-in native Codex directory. The existing native account mechanism supplies authentication to the isolated instance; never read, print or manually copy authentication contents. To reuse your own isolated data, `--executor-home` must be absolute, and `--device-id` explicitly retains that Home's device identity.
+
+Before launching the app, new sessions record the actual auth path, whether an entry already exists and the native managed marker's metadata. Normal stop, controller shutdown and failed startup share ownership-aware cleanup: only newly created managed links or copies whose marker and file identity still match are removed. Native source accounts, pre-existing auth and user replacements remain intact. Legacy sessions without ownership records retain default private-Home cleanup; explicit reused Homes are conservatively preserved. An older link can be cleaned by stopping the original default session that owns it.
+
+The native creator writes a versioned ownership marker binding the session nonce to file metadata, without auth contents. Session state uses a cross-process lock and atomic replacement; cleanup rereads the latest state so concurrent observers and stale snapshots cannot overwrite cleanup results. Unknown ownership protocols conservatively preserve auth.
 
 ## Shared desktop E2E runtime images
 

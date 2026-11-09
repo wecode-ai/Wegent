@@ -1428,6 +1428,20 @@ class ProjectChatService:
                 db, parent=row, data=data, sequence=sequence
             )
         terminal_status = self._project_chat_terminal_status(event_name, payload, data)
+        human_request_id = (row.metadata_json or {}).get("human_request_id")
+        if human_request_id:
+            from app.services.project_chat.execution_snapshot import (
+                runtime_event_client_message_id,
+            )
+            from app.services.project_chat.human_requests import settle_reply
+
+            if runtime_event_client_message_id(payload) == row.trigger_message_id:
+                settle_reply(
+                    db,
+                    issue_id=row.task_id,
+                    request_id=human_request_id,
+                    message_id=row.trigger_message_id,
+                )
         self._update_project_automation_run(db, row, terminal_status, event_name)
         if terminal_status is not None:
             logger.info(

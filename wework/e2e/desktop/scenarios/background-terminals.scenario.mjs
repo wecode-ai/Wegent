@@ -1,8 +1,14 @@
-import { readRequestBody } from '../modules/response-protocol.mjs'
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import {
+  readRequestBody,
+  selectTool,
+  requestAdvertisesShellTool,
+} from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 
 const PANE = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const PROMPT = 'WEWORK_DESKTOP_E2E_BACKGROUND_TERMINALS'
@@ -136,8 +142,8 @@ export function createDesktopScenario({
         return false
       const body = await readRequestBody(request)
       toolResults.push(
-        ...(Array.isArray(body.input) ? body.input : []).filter(
-          item => item.type === 'function_call_output'
+        ...(Array.isArray(body.input) ? body.input : []).filter(item =>
+          ['function_call_output', 'custom_tool_call_output'].includes(item.type)
         )
       )
       await writeFile(
@@ -148,29 +154,18 @@ export function createDesktopScenario({
       const items = []
       if (!launched && JSON.stringify(body).includes(PROMPT)) {
         assert.ok(
-          body.tools.some(tool => tool.name === 'exec_command'),
+          requestAdvertisesShellTool(body),
           'Real Codex must advertise unified exec for background terminals'
         )
         launched = true
         for (const [index, marker] of MARKERS.entries()) {
-          const item = {
-            id: `fc_background_${index}`,
-            type: 'function_call',
-            call_id: `background_${index}`,
-            name: 'exec_command',
-            arguments: JSON.stringify({
-              cmd: `node -e "console.log('${marker}'); let tick=0; setInterval(()=>console.log('${marker}_TICK_'+ ++tick), 250)"`,
-              workdir: workspacePath,
-              yield_time_ms: 1000,
-              max_output_tokens: 200,
-            }),
-          }
-          items.push({
-            type: 'response.output_item.added',
-            output_index: index,
-            item: { ...item, arguments: '' },
+          const tool = selectTool(body, 'exec_command', {
+            cmd: `node -e "console.log('${marker}'); let tick=0; setInterval(()=>console.log('${marker}_TICK_'+ ++tick), 250)"`,
+            workdir: workspacePath,
+            yield_time_ms: 1000,
+            max_output_tokens: 200,
           })
-          items.push({ type: 'response.output_item.done', output_index: index, item })
+          items.push(...selectedToolCall(`background_${index}`, tool, index))
         }
       } else {
         items.push({
@@ -190,6 +185,7 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       active = true
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1280, height: 800 }),

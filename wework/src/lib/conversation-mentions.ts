@@ -23,6 +23,7 @@ export interface ConversationMentionCandidate extends ConversationMention {
   projectName?: string | null
 }
 
+/** Serializes a Runtime task address into a composer conversation reference. */
 export function createConversationMentionReference(
   title: string,
   address: RuntimeTaskAddress
@@ -32,6 +33,7 @@ export function createConversationMentionReference(
   return `[$${safeTitle}](${CONVERSATION_MENTION_SCHEME}${encodedAddress})`
 }
 
+/** Extracts and deduplicates conversation references from a message. */
 export function parseConversationMentions(value: string): ConversationMention[] {
   const seen = new Set<string>()
   const mentions: ConversationMention[] = []
@@ -52,6 +54,12 @@ export function parseConversationMentions(value: string): ConversationMention[] 
   return mentions
 }
 
+/** Parses a single `wework-conversation://` href into a Runtime task address. */
+export function parseConversationMentionHref(href: string): RuntimeTaskAddress | null {
+  return parseConversationAddress(href.trim())
+}
+
+/** Builds the recent-conversation candidates shown by the composer mention menu. */
 export function buildConversationMentionCandidates(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   currentRuntimeTask?: RuntimeTaskAddress | null
@@ -75,6 +83,7 @@ export function buildConversationMentionCandidates(
   return candidates.sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt))
 }
 
+/** Loads referenced transcripts and appends them as untrusted model context. */
 export async function appendConversationMentionContext(
   message: string,
   currentContext: RuntimeAdditionalContext | undefined,
@@ -151,6 +160,7 @@ function appendCandidate(
   })
 }
 
+/** Decodes a conversation href while preserving supported address context. */
 function parseConversationAddress(reference: string): RuntimeTaskAddress | null {
   if (!reference.startsWith(CONVERSATION_MENTION_SCHEME)) return null
   try {
@@ -158,17 +168,32 @@ function parseConversationAddress(reference: string): RuntimeTaskAddress | null 
       decodeURIComponent(reference.slice(CONVERSATION_MENTION_SCHEME.length))
     ) as Partial<RuntimeTaskAddress>
     if (typeof value.deviceId !== 'string' || typeof value.taskId !== 'string') return null
+    const issueExecution = parseIssueAddress(value.issueExecution)
+    const projectSession = parseIssueAddress(value.projectSession)
     return {
       deviceId: value.deviceId,
       taskId: value.taskId,
+      ...(typeof value.runtime === 'string' ? { runtime: value.runtime } : {}),
       threadId: typeof value.threadId === 'string' ? value.threadId : null,
       workspacePath: typeof value.workspacePath === 'string' ? value.workspacePath : null,
+      ...(typeof value.workspaceKind === 'string' ? { workspaceKind: value.workspaceKind } : {}),
+      ...(typeof value.worktreeId === 'string' ? { worktreeId: value.worktreeId } : {}),
       runtimeHandle:
         value.runtimeHandle && typeof value.runtimeHandle === 'object' ? value.runtimeHandle : null,
+      ...(issueExecution ? { issueExecution } : {}),
+      ...(projectSession ? { projectSession } : {}),
     }
   } catch {
     return null
   }
+}
+
+function parseIssueAddress(value: unknown): { projectId: string; issueId: string } | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const candidate = value as { projectId?: unknown; issueId?: unknown }
+  return typeof candidate.projectId === 'string' && typeof candidate.issueId === 'string'
+    ? { projectId: candidate.projectId, issueId: candidate.issueId }
+    : undefined
 }
 
 function messageToConversationEntry(

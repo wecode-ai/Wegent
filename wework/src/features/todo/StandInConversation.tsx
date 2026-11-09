@@ -1,6 +1,6 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -18,6 +18,7 @@ export function StandInConversation({
   hasPendingWork = false,
   draftRequest,
   onDraftRequestConsumed,
+  contentFooter,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -28,6 +29,7 @@ export function StandInConversation({
   hasPendingWork?: boolean
   draftRequest?: { id: number; text: string }
   onDraftRequestConsumed?(id: number): void
+  contentFooter?: ReactNode
 }) {
   useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
   const { t } = useTranslation('common')
@@ -50,7 +52,19 @@ export function StandInConversation({
       .readTask(deviceId, taskId)
       .then(result => {
         if (active) {
-          setAddress(result.task ? { deviceId, taskId } : null)
+          setAddress(
+            result.task
+              ? {
+                  deviceId,
+                  taskId,
+                  runtime: result.task.runtime,
+                  threadId: result.task.threadId,
+                  workspacePath: result.task.workspacePath,
+                  workspaceKind: result.task.workspaceKind,
+                  runtimeHandle: result.task.runtimeHandle,
+                }
+              : null
+          )
           setFailure(null)
         }
       })
@@ -93,10 +107,12 @@ export function StandInConversation({
       instanceId={`stand-in:${deviceId}:${taskId}`}
       testId="stand-in-conversation"
       draftRequest={draftRequest}
+      contentFooter={contentFooter}
       onDraftRequestConsumed={onDraftRequestConsumed}
       initialAddress={address}
       sendEphemeral={false}
       showExecutionTools={false}
+      hideProcessing
       expanded
       active={active}
       placeholder={t(roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt')}

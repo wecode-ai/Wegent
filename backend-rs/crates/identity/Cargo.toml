@@ -1,0 +1,33 @@
+[package]
+name = "wegent-identity"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Session and service authentication with explicit identity dependencies"
+
+[features]
+test-support = []
+
+[dependencies]
+getrandom = "0.2"
+anyhow = "1"
+regex = "1"
+base64 = "0.23.1"
+wegent-crypto = { path = "../../../shared/rust/crypto" }
+async-trait = "0.1"
+brz-http-server = "=0.0.33"
+brz-json = "=0.0.11"
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+jsonwebtoken = { version = "9.3", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tracing = "0.1"
+wegent-backend-config = { path = "../config" }
+wegent-backend-persistence = { path = "../persistence" }
+wegent-http-compat = { path = "../http-compat" }
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

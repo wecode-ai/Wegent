@@ -153,7 +153,7 @@ describe('WorkspaceTabStrip', () => {
       .find(tab => tab.getAttribute('aria-selected') === 'true')
     expect(activeBoardTab).toBeDefined()
     expect(activeBoardTab?.parentElement).toHaveClass(
-      'bg-white',
+      'bg-surface',
       'border-border/70',
       'shadow-sm',
       'rounded-md'
@@ -398,11 +398,13 @@ describe('WorkspaceTabStrip', () => {
       contentRoute: '/pending-interactions?interaction=review',
       fixed: true,
     })
-    const tree = (count: number) => (
+    const tree = (count: number, projectCount?: number | null) => (
       <I18nextProvider i18n={i18n}>
         <RuntimeInteractionsContext.Provider
           value={{
             ...value,
+            projectItemsSupported: projectCount !== undefined,
+            pendingProjectCount: projectCount,
             pending: Array.from({ length: count }, (_, index) => ({
               id: `request-${index}`,
               requestKey: `request-${index}`,
@@ -439,6 +441,38 @@ describe('WorkspaceTabStrip', () => {
       ).toHaveTextContent(String(count))
       expect(screen.getAllByRole('tab')).toHaveLength(1)
     }
+    rendered.rerender(tree(2, 3))
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-pending-question-count',
+      '2'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-pending-count',
+      '3'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-count-state',
+      'known'
+    )
+    expect(
+      screen.getByTestId('workspace-tab-pending-count-pending-interactions')
+    ).toHaveTextContent('5')
+    rendered.rerender(tree(2, null))
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-pending-question-count',
+      '2'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveAttribute(
+      'data-project-count-state',
+      'unknown'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).not.toHaveAttribute(
+      'data-project-pending-count'
+    )
+    expect(screen.queryByTestId('workspace-tab-pending-count-pending-interactions')).toBeNull()
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveTextContent(
+      language === 'zh-CN' ? '待你处理' : 'Needs your input'
+    )
   })
 
   test('opens Smart apps from the top tab add menu', async () => {

@@ -1,3 +1,4 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -68,13 +69,13 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
   })
   await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
   await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  await openStandInSettings(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
   const row = `[data-testid="stand-in-connection-project-local-${project.id}"]`
   await control.command('waitFor', row, { text: name })
   await control.command('click', '[data-testid="stand-in-primary-cancel"]')
   await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  await openStandInSettings(control)
   await control.command('click', CONNECTIONS_OPEN)
   await control.command('waitFor', row, { text: name })
   await control.command('click', row)

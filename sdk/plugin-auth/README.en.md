@@ -6,7 +6,7 @@ title: Python plugin account authentication SDK
 # Python plugin account authentication SDK
 
 This dependency-free Python 3.9+ SDK implements `accountAuth` draft protocol v1.
-SDK version `0.7.1` is vendored into each plugin. The company email adapter uses it.
+SDK version `0.7.2` is vendored into each plugin. The company email adapter uses it.
 
 Optional `accountAuth.localEnvironment` declares non-secret source settings, for
 example `{"DWS_CONFIG_DIR":{"type":"directory"},"DWS_DISABLE_KEYCHAIN":{"type":"enum","values":["1"]}}`.
@@ -108,6 +108,12 @@ or import a sibling development checkout at runtime. Follow the plugin repositor
 version and release rules when distributing updates; this work is not published.
 
 ## Transport boundaries
+
+- Public business calls allow 18 minutes for the local Broker: up to 13 minutes
+  of desktop Python preparation, 3 minutes of native execution, and transport
+  overhead. Preparation failures return `python_runtime_unavailable` without
+  changing accounts or bypassing authorization. Existing plugins must vendor
+  this SDK version and publish an update to receive the new timeout budget.
 
 The native host uses the authenticated loopback socket described below. Explicit FD
 hosts may supply an inherited pipe FD >= 3 in `WEGENT_PLUGIN_AUTH_FD`, never a

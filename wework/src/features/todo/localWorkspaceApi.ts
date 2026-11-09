@@ -102,6 +102,8 @@ export function createLocalWorkspaceApi(
         device_id: device.id,
         device_key: device.device_id,
         ...(device.app_device_id ? { app_device_id: device.app_device_id } : {}),
+        ...(device.runtime_instance_id ? { runtime_instance_id: device.runtime_instance_id } : {}),
+        ...(device.local_identity_unresolved ? { local_identity_unresolved: true } : {}),
         is_current_device: true,
         name: device.name,
         kind: 'local_device' as const,

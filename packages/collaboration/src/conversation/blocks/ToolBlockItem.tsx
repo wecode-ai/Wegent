@@ -54,7 +54,7 @@ export function ToolBlockItem({
   onOpenAssistantPlan,
   onExpandedChange,
 }: ToolBlockItemProps) {
-  const { t } = useConversationTranslation()
+  const { t, translate } = useConversationTranslation()
   const interactions = useToolInteractionServices()
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
     stateKey ??
@@ -182,27 +182,7 @@ export function ToolBlockItem({
     )
   }
 
-  const { icon, label } = getBlockLabel(block, {
-    waitRunning: t('tool_activity.wait_running'),
-    waitDone: t('tool_activity.wait_done'),
-    waitError: t('tool_activity.wait_error'),
-    callRunning: name => t('tool_activity.call_running', { name }),
-    callDone: name => t('tool_activity.call_done', { name }),
-    callError: name => t('tool_activity.call_error', { name }),
-    fileCount: count => t('tool_activity.file_count', { count }),
-    fileFallback: t('tool_activity.file_fallback'),
-    searchRunning: t('tool_activity.search_running'),
-    searchDone: t('tool_activity.search_done'),
-    searchError: t('tool_activity.search_error'),
-    imageView: filename => t('tool_activity.image_view', { filename }),
-    imageViewFallback: t('tool_activity.image_view_fallback'),
-    imageGenerationRunning: t('tool_activity.image_generation_running'),
-    imageGenerationDone: t('tool_activity.image_generation_done'),
-    imageGenerationError: t('tool_activity.image_generation_error'),
-    javascriptRunning: t('tool_activity.javascript_running'),
-    javascriptDone: t('tool_activity.javascript_done'),
-    javascriptError: t('tool_activity.javascript_error'),
-  })
+  const { icon, label } = getBlockLabel(block, translate)
   const workspaceFilePath = getWorkspaceFilePath(block)
   const labelContent = (
     <>
@@ -219,10 +199,7 @@ export function ToolBlockItem({
   )
 
   return (
-    <div
-      className="min-w-0 overflow-x-clip text-sm font-normal"
-      data-processing-block-id={block.id}
-    >
+    <div className="min-w-0 overflow-x-clip text-sm" data-processing-block-id={block.id}>
       <div
         className={`flex w-full max-w-full items-center gap-1.5 text-text-muted ${compact ? 'min-h-8' : ''}`}
       >

@@ -280,6 +280,11 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
     snapshot => snapshot.testIds.includes('general-experimental-features-toggle'),
     'The experimental features control did not mount'
   )
+  // Suspense retains hidden settings DOM while its next module is loading.
+  await control.command('waitFor', '[data-testid="dsh-settings-loading"]', {
+    visible: false,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('scrollIntoView', toggleSelector, { visible: true })
   await control.command('waitFor', toggleSelector, { visible: true })
   if (

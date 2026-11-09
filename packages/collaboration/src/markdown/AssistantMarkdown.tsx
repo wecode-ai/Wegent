@@ -11,7 +11,7 @@ import {
 } from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import { Folder, Link2 } from 'lucide-react'
-import { Streamdown, defaultRemarkPlugins, type StreamdownProps } from 'streamdown'
+import { Streamdown, defaultRemarkPlugins, type ExtraProps, type StreamdownProps } from 'streamdown'
 import remarkBreaks from 'remark-breaks'
 import { math } from '@streamdown/math'
 import type { Element } from 'hast'
@@ -25,6 +25,7 @@ import {
   transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
+import { protectComposerReferenceLinks } from './composerReferenceMarkdown'
 import { AssistantMarkdownImage } from './AssistantMarkdownImage'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { MarkdownTable } from './MarkdownTable'
@@ -73,11 +74,24 @@ const STREAMING_DIAGRAM_LANGUAGES = new Map([
 const MarkdownStreamingContext = createContext(false)
 const completeMarkdownSource = (content: string) => [content]
 const markdownPlugins = { math }
+
+type MarkdownPositionedNode = { position?: { start?: { line?: number } } }
+
+function sourceLineData(
+  node: MarkdownPositionedNode | undefined,
+  enabled: boolean
+): { 'data-source-line'?: number } {
+  if (!enabled) return {}
+  const line = node?.position?.start?.line
+  return typeof line === 'number' ? { 'data-source-line': line } : {}
+}
+
 export interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
   preserveLineBreaks?: boolean
   variant?: 'default' | 'document' | 'process' | 'user'
+  sourceLineAnchors?: boolean
   renderLink?: (href: string, text: string) => ReactNode
   onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
@@ -121,11 +135,13 @@ type AssistantMarkdownPart =
     }
   | { kind: 'visualization'; file: string; mode?: 'wide'; title?: string }
 
+/** Renders assistant and user Markdown with shared link and diagram handling. */
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
   isStreaming = false,
   preserveLineBreaks = false,
   variant = 'default',
+  sourceLineAnchors = false,
   onOpenFile,
   renderVisualization: renderVisualizationOverride,
   renderLink,
@@ -141,9 +157,11 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     () =>
       preprocessCjkEmphasis(
         normalizeMathDelimiters(
-          variant === 'user'
-            ? bufferedContent
-            : stripUnsupportedContentReferenceCitations(bufferedContent)
+          protectComposerReferenceLinks(
+            variant === 'user'
+              ? bufferedContent
+              : stripUnsupportedContentReferenceCitations(bufferedContent)
+          )
         )
       ),
     [bufferedContent, variant]
@@ -194,62 +212,90 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   const canOpenFile = Boolean(onOpenFile)
   const components = useMemo(
     () => ({
-      h1: ({ children }: { children?: ReactNode }) => (
-        <h1 data-scroll-anchor className={headingClasses.h1}>
+      h1: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
+        <h1
+          data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
+          className={headingClasses.h1}
+        >
           {children}
         </h1>
       ),
-      h2: ({ children }: { children?: ReactNode }) => (
-        <h2 data-scroll-anchor className={headingClasses.h2}>
+      h2: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
+        <h2
+          data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
+          className={headingClasses.h2}
+        >
           {children}
         </h2>
       ),
-      h3: ({ children }: { children?: ReactNode }) => (
-        <h3 data-scroll-anchor className={headingClasses.h3}>
+      h3: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
+        <h3
+          data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
+          className={headingClasses.h3}
+        >
           {children}
         </h3>
       ),
-      h4: ({ children }: { children?: ReactNode }) => (
-        <h4 data-scroll-anchor className={headingClasses.h4}>
+      h4: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
+        <h4
+          data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
+          className={headingClasses.h4}
+        >
           {children}
         </h4>
       ),
-      h5: ({ children }: { children?: ReactNode }) => (
-        <h5 data-scroll-anchor className={headingClasses.h5}>
+      h5: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
+        <h5
+          data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
+          className={headingClasses.h5}
+        >
           {children}
         </h5>
       ),
-      h6: ({ children }: { children?: ReactNode }) => (
-        <h6 data-scroll-anchor className={headingClasses.h6}>
+      h6: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
+        <h6
+          data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
+          className={headingClasses.h6}
+        >
           {children}
         </h6>
       ),
-      p: ({ children }: { children?: ReactNode }) => (
+      p: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
         <p
           data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
           className={`${variant === 'process' ? 'mb-1.5' : variant === 'user' ? 'mb-2 whitespace-pre-wrap' : 'mb-3'} min-w-0 break-words leading-6`}
         >
           {children}
         </p>
       ),
-      ul: ({ children }: { children?: ReactNode }) => (
+      ul: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
         <ul
+          {...sourceLineData(node, sourceLineAnchors)}
           className={`${variant === 'process' ? 'mb-1.5 space-y-0.5' : 'mb-3 space-y-1.5'} list-disc pl-5`}
         >
           {children}
         </ul>
       ),
-      ol: ({ children, start }: OlHTMLAttributes<HTMLOListElement>) => (
+      ol: ({ children, start, node }: OlHTMLAttributes<HTMLOListElement> & ExtraProps) => (
         <ol
           start={start}
+          {...sourceLineData(node, sourceLineAnchors)}
           className={`${variant === 'process' ? 'mb-1.5 space-y-0.5 pl-5' : 'mb-3 space-y-1.5 pl-8'} list-decimal`}
         >
           {children}
         </ol>
       ),
-      li: ({ children }: { children?: ReactNode }) => (
+      li: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
         <li
           data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
           className={`min-w-0 break-words leading-6 ${variant === 'process' ? '' : 'pl-1'}`}
         >
           {children}
@@ -261,20 +307,34 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         </strong>
       ),
       code: (props: MarkdownCodeProps) => (
-        <MarkdownCode {...props} compact={variant === 'process'} />
+        <MarkdownCode
+          {...props}
+          compact={variant === 'process'}
+          sourceLineAnchors={sourceLineAnchors}
+        />
       ),
       inlineCode: ({ children }: { children?: ReactNode }) => (
         <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
       ),
-      blockquote: ({ children }: { children?: ReactNode }) => (
+      blockquote: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
         <blockquote
           data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
           className={`${variant === 'process' ? 'mb-1.5 pl-3 opacity-80' : 'mb-3 pl-4'} border-l-3 border-border text-text-secondary`}
         >
           {children}
         </blockquote>
       ),
-      table: MarkdownTable,
+      hr: ({ node }: ExtraProps) => (
+        <hr
+          data-scroll-anchor
+          {...sourceLineData(node, sourceLineAnchors)}
+          className="my-6 border-border"
+        />
+      ),
+      table: (props: Parameters<typeof MarkdownTable>[0]) => (
+        <MarkdownTable {...props} sourceLineAnchors={sourceLineAnchors} />
+      ),
       th: ({ children, style }: HTMLAttributes<HTMLTableCellElement>) => (
         <th
           style={style}
@@ -334,17 +394,21 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           </AssistantMarkdownLink>
         )
       },
-      img: ({ src, alt }: { src?: string | Blob; alt?: string }) => (
-        <AssistantMarkdownImage src={typeof src === 'string' ? src.trim() : undefined} alt={alt} />
+      img: ({ src, alt, node }: { src?: string | Blob; alt?: string } & ExtraProps) => (
+        <AssistantMarkdownImage
+          src={typeof src === 'string' ? src.trim() : undefined}
+          alt={alt}
+          sourceLine={sourceLineAnchors ? node?.position?.start?.line : undefined}
+        />
       ),
     }),
-    [headingClasses, openFile, variant, canOpenFile]
+    [headingClasses, openFile, variant, canOpenFile, sourceLineAnchors]
   )
 
   return (
     <MarkdownCustomLinkContext.Provider value={renderLink}>
       <div
-        className={`${variant === 'user' ? 'user-markdown' : variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words ${variant === 'document' ? '' : 'font-normal'}`}
+        className={`${variant === 'user' ? 'user-markdown' : variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
       >
         {contentParts.map((part, index) =>
           part.kind === 'visualization' ? (
@@ -409,11 +473,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 type MarkdownCodeProps = {
   node?: {
     properties?: unknown
+    position?: { start?: { line?: number } }
   }
   compact?: boolean
+  sourceLineAnchors?: boolean
 } & HTMLAttributes<HTMLElement>
 
-function MarkdownCode({ className, children, node, compact = false, ...props }: MarkdownCodeProps) {
+function MarkdownCode({
+  className,
+  children,
+  node,
+  compact = false,
+  sourceLineAnchors = false,
+  ...props
+}: MarkdownCodeProps) {
   const isStreaming = useContext(MarkdownStreamingContext)
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
@@ -432,16 +505,32 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
     const streamingDiagramLanguage = STREAMING_DIAGRAM_LANGUAGES.get(lang.toLowerCase())
     if (streamingDiagramLanguage) {
       return (
-        <MarkdownCodeBlock lang={streamingDiagramLanguage} compact={compact} isStreaming>
+        <MarkdownCodeBlock
+          lang={streamingDiagramLanguage}
+          compact={compact}
+          isStreaming
+          sourceLine={sourceLineAnchors ? node?.position?.start?.line : undefined}
+        >
           {text || children}
         </MarkdownCodeBlock>
       )
     }
     if (diagramKind(lang) !== null) {
-      return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
+      return (
+        <MarkdownDiagramPreview
+          code={text.trimEnd()}
+          language={lang}
+          sourceLine={sourceLineAnchors ? node?.position?.start?.line : undefined}
+        />
+      )
     }
     return (
-      <MarkdownCodeBlock lang={lang} compact={compact} isStreaming={isStreaming}>
+      <MarkdownCodeBlock
+        lang={lang}
+        compact={compact}
+        isStreaming={isStreaming}
+        sourceLine={sourceLineAnchors ? node?.position?.start?.line : undefined}
+      >
         {text || children}
       </MarkdownCodeBlock>
     )
@@ -473,6 +562,7 @@ function areAssistantMarkdownPropsEqual(
     previous.content === next.content &&
     previous.isStreaming === next.isStreaming &&
     previous.preserveLineBreaks === next.preserveLineBreaks &&
+    previous.sourceLineAnchors === next.sourceLineAnchors &&
     previous.renderVisualization === next.renderVisualization &&
     previous.variant === next.variant &&
     previous.onOpenFile === next.onOpenFile &&

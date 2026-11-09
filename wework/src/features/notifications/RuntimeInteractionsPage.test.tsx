@@ -9,6 +9,16 @@ import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
 import { interactionTask } from './runtimeInteractions.fixtures'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { openWeworkScheme } from './schemeEvents'
+import { QuestionDiscussionContext } from './questionDiscussion'
+import type { PendingProjectIssue } from './usePendingProjectIssues'
+
+const projectWork = vi.hoisted(() => ({
+  items: [] as PendingProjectIssue[],
+  errors: {} as Record<string, string>,
+  loading: false,
+  refresh: vi.fn(),
+}))
+vi.mock('./usePendingProjectIssues', () => ({ usePendingProjectIssues: () => projectWork }))
 
 vi.mock('./schemeEvents', () => ({ openWeworkScheme: vi.fn() }))
 
@@ -20,6 +30,9 @@ const viewport = vi.hoisted(() => ({ twoPanes: true }))
 vi.mock('@/hooks/useIsDesktop', () => ({ useIsDesktop: () => viewport.twoPanes }))
 beforeEach(() => {
   viewport.twoPanes = true
+  projectWork.items = []
+  projectWork.errors = {}
+  projectWork.loading = false
 })
 
 const approval: RuntimeInteraction = {
@@ -37,6 +50,30 @@ const approval: RuntimeInteraction = {
   },
   answered: false,
 }
+
+it('opens discussion from pending-work details without answering or dismissing the question', () => {
+  const open = vi.fn()
+  const question: RuntimeInteraction = {
+    ...approval,
+    id: 'question',
+    payload: {
+      requestId: 42,
+      questions: [{ id: 'audience', question: 'Who should receive it?' }],
+    },
+  }
+  const value = interactionValue({ pending: [question] })
+  render(
+    <QuestionDiscussionContext.Provider value={{ open }}>
+      <RuntimeInteractionsContext.Provider value={value}>
+        <RuntimeInteractionsPage selectedId="question" />
+      </RuntimeInteractionsContext.Provider>
+    </QuestionDiscussionContext.Provider>
+  )
+  fireEvent.click(screen.getByTestId('interaction-discuss'))
+  expect(open).toHaveBeenCalledWith(question.task.address, question.payload)
+  expect(value.respond).not.toHaveBeenCalled()
+  expect(value.dismiss).not.toHaveBeenCalled()
+})
 
 function interactionValue(
   overrides: Partial<RuntimeInteractionsValue> = {}
@@ -74,6 +111,43 @@ function view(
   return value.registerView
 }
 
+it('opens ordinary project work in the original Issue and reports the project count', () => {
+  projectWork.items = [
+    {
+      item: {
+        id: 'ISSUE-1',
+        cloud_project_id: '12',
+        project_name: 'Project',
+        title: 'Please decide',
+        status: 'pending',
+        created_by_user_id: 0,
+        created_at: '2026-11-08T00:00:00Z',
+        updated_at: '2026-11-08T00:00:00Z',
+      } as PendingProjectIssue['item'],
+      store: 'local',
+      userId: 0,
+    },
+  ]
+  const reportProjectPendingCount = vi.fn()
+  view(undefined, {}, { pending: [], reportProjectPendingCount })
+  expect(screen.getByTestId('interaction-list-item')).toHaveAttribute('data-project-issue', 'true')
+  expect(screen.getByTestId('test-original-entity')).toHaveTextContent(
+    'wework://boards/local/12/issues/ISSUE-1'
+  )
+  expect(reportProjectPendingCount).toHaveBeenLastCalledWith(1)
+})
+
+it.each(['loading', 'error'] as const)(
+  'does not publish a false zero while project work is %s',
+  state => {
+    projectWork.loading = state === 'loading'
+    projectWork.errors = state === 'error' ? { backend: 'Offline' } : {}
+    const reportProjectPendingCount = vi.fn()
+    view(undefined, {}, { pending: [], reportProjectPendingCount })
+    expect(reportProjectPendingCount).toHaveBeenLastCalledWith(null)
+  }
+)
+
 vi.mock('./NotificationEntitySurface', () => ({
   NotificationEntitySurface: ({
     url,
@@ -109,6 +183,65 @@ it('hosts the original entity instead of building a separate approval or reply f
   expect(screen.queryByTestId('interaction-reply')).not.toBeInTheDocument()
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
 })
+
+it.each([true, false])('shows request time in the list and detail (desktop: %s)', desktop => {
+  viewport.twoPanes = desktop
+  const date = new Date()
+  date.setHours(10, 24, 30, 0)
+  view(approval.id, {}, { pending: [{ ...approval, createdAt: date.getTime() }] })
+  const times = document.querySelectorAll('time')
+  expect(times).toHaveLength(2)
+  for (const time of times) {
+    expect(time).toHaveAttribute('datetime', date.toISOString())
+    expect(time).toHaveAttribute('title', date.toLocaleString())
+    expect(time).toHaveTextContent(
+      date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    )
+  }
+})
+
+it('shows the handled time in history and its selected detail', () => {
+  const date = new Date('2025-10-21T12:05:00Z')
+  view(
+    undefined,
+    {},
+    {
+      pending: [],
+      history: [
+        {
+          id: approval.id,
+          title: interactionTask.task.title,
+          question: approval.question,
+          address: interactionTask.address,
+          answeredAt: date.getTime(),
+        },
+      ],
+    }
+  )
+  fireEvent.click(screen.getByTestId('interactions-history'))
+  const times = document.querySelectorAll('time')
+  expect(times).toHaveLength(2)
+  for (const time of times) {
+    expect(time).toHaveAttribute('datetime', date.toISOString())
+    expect(time).toHaveAttribute('title', date.toLocaleString())
+    expect(time).toHaveTextContent(
+      date.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+      })
+    )
+  }
+})
+
+it.each([0, -1, NaN, Infinity, 1e20])(
+  'omits unavailable or invalid request time: %s',
+  createdAt => {
+    view(approval.id, {}, { pending: [{ ...approval, createdAt }] })
+    expect(document.querySelector('time')).not.toBeInTheDocument()
+    expect(screen.getByTestId('interaction-question-heading')).toHaveTextContent(approval.question)
+  }
+)
 
 it('groups pending questions by source type and orders each group newest first', () => {
   view(

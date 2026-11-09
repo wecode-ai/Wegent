@@ -43,6 +43,10 @@ export function useCollaborationTemplates() {
           requireScope()
           return apiClient.put<T>(path, body)
         },
+        delete<T>(path: string) {
+          requireScope()
+          return apiClient.delete<T>(path)
+        },
       })
       scoped = new CollaborationTemplateStore({
         scope,

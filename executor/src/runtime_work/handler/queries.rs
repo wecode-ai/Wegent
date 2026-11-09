@@ -5,6 +5,7 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    /// Read task identity and model configuration without starting a provider or returning profiles.
     pub(super) fn get_task(&self, payload: &Value) -> Result<Value, AppIpcError> {
         let task_id = runtime_task_id(payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -19,6 +20,7 @@ impl RuntimeWorkRpcHandler {
                 "error": "Task not found on the owning Runtime",
             }));
         };
+        log_runtime_archive_link("runtime task get resolved link", &link, false);
         if link.status == "archived" {
             return Ok(json!({
                 "success": false,
@@ -31,9 +33,17 @@ impl RuntimeWorkRpcHandler {
             self.is_active_local_task(&task_id),
             self.queued_local_task_position(&task_id),
         );
+        link.git_info = crate::runtime_work::response::git_info_for_workspace(
+            link.git_info.take(),
+            &link.workspace_path,
+        );
         // Return only the identity/configuration needed by a client to continue.
         // Execution profiles and transcript caches remain on the owning Runtime.
-        if let Some(handle) = link.runtime_handle.as_object_mut() {
+        let thread_id = link.thread_id.clone();
+        let last_turn_id = crate::runtime_work::lifecycle::native_execution_state(&link)
+            .and_then(|state| state.latest_turn_id);
+        let mut task = crate::runtime_work::response::local_task_json(link);
+        if let Some(handle) = task["runtimeHandle"].as_object_mut() {
             handle.retain(|key, _| {
                 matches!(
                     key.as_str(),
@@ -41,13 +51,22 @@ impl RuntimeWorkRpcHandler {
                         | "wegentTeam"
                         | "modelSelection"
                         | "model_selection"
+                        | "origin"
+                        | "changeRequests"
                         | "queuePosition"
                 )
             });
+            // The serializer originally adds this authoritative identity after
+            // filtering the stored handle; preserve that response contract.
+            handle.insert("threadId".to_owned(), json!(thread_id));
+            // Preserve the current-epoch lifecycle projection, not a stored handle value.
+            if let Some(turn_id) = last_turn_id {
+                handle.insert("lastTurnId".to_owned(), json!(turn_id));
+            }
         }
         Ok(json!({
             "success": true,
-            "task": crate::runtime_work::response::local_task_json(link),
+            "task": task,
         }))
     }
 
@@ -174,11 +193,29 @@ impl RuntimeWorkRpcHandler {
         if prefer_cached && !pending_only {
             self.reconcile_codex_threads_after_cached_list();
         }
-        Ok(json!({
+        let mut response = json!({
             "success": true,
             "workspaces": workspaces,
             "coverage": {"authorized_index_complete":catalog_complete,"unavailable_reasons":if catalog_complete {json!({})} else {json!({"native_catalog_unavailable":1})}},
-        }))
+        });
+        if pending_only {
+            let users = crate::local::app_ipc::human_request_viewer_ids(
+                payload,
+                "localIssueUserIds",
+                &[0],
+            )?;
+            match LocalTaskStore::pending_issue_human_requests_at(
+                self.task_store_path.as_ref(),
+                &users,
+            ) {
+                Ok(pending) => response["localIssueQuestionsPending"] = json!(pending),
+                Err(error) => log_executor_event(
+                    "pending Issue question hint failed",
+                    &[("error", error.to_string())],
+                ),
+            }
+        }
+        Ok(response)
     }
 
     fn reconcile_codex_threads_after_cached_list(&self) {
@@ -276,10 +313,39 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let messages = if runtime_has_provider_transcript_reader(&link.runtime) {
-                let Some(thread_id) = link.thread_id.as_deref() else {
-                    continue;
+                let thread_ids = match crate::runtime_work::conversation_sessions::thread_ids(link)
+                {
+                    Ok(ids) => ids,
+                    Err(error) => {
+                        log_executor_event(
+                            "task search skipped invalid conversation sessions",
+                            &[
+                                ("local_task_id", link.local_task_id.clone()),
+                                ("error", error.to_string()),
+                            ],
+                        );
+                        continue;
+                    }
                 };
-                self.thread_messages(thread_id).await
+                let mut matched = None;
+                for thread_id in thread_ids.iter().rev() {
+                    matched = first_message_search_result(
+                        link,
+                        &self.device_id,
+                        self.thread_messages(thread_id).await,
+                        &query,
+                    );
+                    if matched.is_some() {
+                        break;
+                    }
+                }
+                if let Some(item) = matched {
+                    items.push(item);
+                    if items.len() >= limit {
+                        break;
+                    }
+                }
+                continue;
             } else {
                 cached_runtime_transcript_messages(link)
             };
@@ -312,6 +378,9 @@ impl RuntimeWorkRpcHandler {
         let task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let versioned = transcript_transport::requested(&payload)?;
+        if payload["identityOnly"] == true {
+            return self.transcript_identity(&task_id);
+        }
         let runtime_directory = self
             .store
             .index_path()
@@ -382,7 +451,12 @@ impl RuntimeWorkRpcHandler {
         .await
     }
 
-    pub(super) async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
+    /// Record the resolved task's model identity before reading cached or native transcript content.
+    pub(super) async fn read_thread_transcript(
+        &self,
+        payload: Value,
+        historical_link: Option<RuntimeTaskLink>,
+    ) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -436,8 +510,15 @@ impl RuntimeWorkRpcHandler {
                 .as_deref()
                 .or(after_cursor.as_deref())
                 .is_some_and(super::transcript_search::is_cached_search_cursor);
-        let (local_link, bounded_native_page) =
-            self.transcript_read_link(&local_task_id, bounded_native);
+        let historical_session = historical_link.is_some();
+        let (local_link, bounded_native_page) = if let Some(link) = historical_link {
+            (Some(link), false)
+        } else {
+            self.transcript_read_link(&local_task_id, bounded_native)
+        };
+        if let Some(link) = local_link.as_ref() {
+            log_runtime_archive_link("runtime task transcript resolved link", link, false);
+        }
         let codex_client = match local_link.as_ref() {
             Some(link) => self
                 .codex_app_server
@@ -447,10 +528,11 @@ impl RuntimeWorkRpcHandler {
         .map_err(|error| AppIpcError::new("codex_error", error))?;
         let linked_session_id = local_link.as_ref().and_then(runtime_session_id_from_link);
         let requested_session_id = runtime_session_id_from_payload(&payload);
-        let direct_thread_override = requested_session_id
-            .as_deref()
-            .zip(linked_session_id.as_deref())
-            .is_some_and(|(requested, linked)| requested != linked);
+        let direct_thread_override = historical_session
+            || requested_session_id
+                .as_deref()
+                .zip(linked_session_id.as_deref())
+                .is_some_and(|(requested, linked)| requested != linked);
         let session_id = requested_session_id.or(linked_session_id);
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
@@ -754,7 +836,7 @@ impl RuntimeWorkRpcHandler {
                     .filter(|value| *value > 0)
                     .unwrap_or(CODEX_TRANSCRIPT_PAGE_SIZE)
                     .min(CODEX_TRANSCRIPT_PAGE_SIZE),
-                direction: if after_cursor.is_some() {
+                direction: if after_cursor.is_some() || payload["sessionReadAscending"] == true {
                     CodexTranscriptDirection::Ascending
                 } else {
                     CodexTranscriptDirection::Descending
@@ -866,6 +948,7 @@ impl RuntimeWorkRpcHandler {
             include_full_content,
             conversation_context_only,
             bounded_native_page,
+            historical_session,
         };
         super::super::transcript_work::run(move |cancellation| {
             handler.project_transcript_response(input, cancellation)

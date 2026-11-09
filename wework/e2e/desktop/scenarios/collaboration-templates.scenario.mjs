@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow, selectCollaborationProjectView } from '../modules/workspace-flows.mjs'
+import {
+  verifyTemplateDeletion,
+  verifyTemplateDeletionPermissions,
+} from '../modules/template-deletion-flow.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -136,6 +140,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       consumerToken = (await request('/api/auth/login', 'POST', { user_name: username, password }))
         .access_token
+      await verifyTemplateDeletionPermissions({ request, source, consumerToken })
       await request(
         `/api/v1/collaboration-templates/${source.id}`,
         'GET',
@@ -333,6 +338,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-template-preview', '发布交付')
       await capture(control, '02-preview')
       await openTemplateProject(control)
+      await control.command(
+        'waitFor',
+        testId('collaboration-project-create-confirm') + ':enabled',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       assert.equal(
         Number(
           await control.command(
@@ -364,11 +376,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: uiTimeoutMs,
       })
       await wait(control, 'cloud-project-header-title', projectName)
-      await selectCollaborationProjectView(control, CONTENT, 'manage')
+      await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-sharing')
       await wait(control, 'project-template-settings')
       await capture(control, '04-sharing-settings')
       await click(control, 'project-template-save')
+      // Saving first snapshots the project asynchronously before mounting the dialog.
+      await wait(control, 'template-save-name')
       await control.command('fill', testId('template-save-name'), { value: savedName })
       await click(control, 'template-save-confirm')
       await wait(control, 'collaboration-template-dialog', '已保存到我的模板')
@@ -400,7 +414,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, '09-imported-groups')
       await reloadMainWindow(control, 'Template-created project did not reload')
       await wait(control, 'cloud-project-header-title', projectName)
-      await selectCollaborationProjectView(control, CONTENT, 'manage')
+      await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
       await capture(control, '10-persisted')
@@ -418,6 +432,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         '内容创作小组'
       )
       await capture(control, '11-group-created-from-template')
+      await verifyTemplateDeletion(control, { request, captureScreenshot })
     },
   }
 }

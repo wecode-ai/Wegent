@@ -96,23 +96,34 @@ export function WindowedMarkdownChunk({
     [scope]
   )
   const retainPlaceholderLayout = useCallback(
-    (rect: DOMRect) => {
-      const current = currentRef.current
+    (rect: DOMRect, content = currentRef.current.content) => {
       const previous = renderedLayoutRef.current
       const height =
-        scope?.getHeight(current.content, rect.width) ??
-        (previous?.content === current.content && previous.width === rect.width
+        scope?.getHeight(content, rect.width) ??
+        (previous?.content === content && previous.width === rect.width
           ? previous.height
-          : estimateMarkdownChunkHeight(current.content, scope?.rootFontSize))
+          : estimateMarkdownChunkHeight(content, scope?.rootFontSize))
       setRetainedLayout(previous =>
-        previous?.content === current.content &&
-        previous.width === rect.width &&
-        previous.height === height
+        previous?.content === content && previous.width === rect.width && previous.height === height
           ? previous
-          : { content: current.content, width: rect.width, height }
+          : { content, width: rect.width, height }
       )
+      return height
     },
     [scope]
+  )
+  const attachChunk = useCallback(
+    (chunk: HTMLDivElement | null) => {
+      chunkRef.current = chunk
+      if (!chunk || shouldRender) return
+      // Parent virtual rows measure in the same commit, before this chunk's
+      // retained-layout state update can render. Restore its width-matched height now.
+      const height = retainPlaceholderLayout(chunk.getBoundingClientRect(), content)
+      chunk.style.minHeight = `${height}px`
+      const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
+      if (placeholder) placeholder.style.maxHeight = `${height}px`
+    },
+    [content, retainPlaceholderLayout, shouldRender]
   )
   const viewportRender = useCallback((viewport: DOMRect): (() => void) | undefined => {
     const chunk = chunkRef.current
@@ -276,7 +287,7 @@ export function WindowedMarkdownChunk({
 
   return (
     <div
-      ref={chunkRef}
+      ref={attachChunk}
       data-markdown-window-chunk
       data-markdown-chunk-index={chunkIndex}
       className="flow-root"

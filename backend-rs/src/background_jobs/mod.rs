@@ -1,17 +1,16 @@
 //! Rust background jobs, assembled after deployment-specific state injection.
 
 mod cleanup;
-mod client;
-pub mod config;
+pub(crate) use wegent_job_runtime::client;
+pub use wegent_job_runtime::config;
 mod device;
 mod download;
 pub(crate) mod execution;
 pub(crate) mod git_credentials;
-mod lock;
+
 mod maintenance;
 pub mod notifications;
-mod registry;
-mod runtime;
+
 mod stale_executor;
 pub use stale_executor::cleanup_stale_task_executor;
 pub(crate) mod robot;
@@ -23,10 +22,10 @@ pub(crate) mod project;
 pub mod video;
 
 pub use brz_schedule::{Completion, HandlerOptions, JobContext, SubmitResult};
-pub use client::BackgroundJobsClient;
-pub use lock::with_lock_watchdog;
-pub use registry::BackgroundJobRegistry;
-pub(crate) use runtime::BackgroundJobsRuntime;
+pub use wegent_job_runtime::BackgroundJobRegistry;
+pub use wegent_job_runtime::BackgroundJobsClient;
+pub(crate) use wegent_job_runtime::BackgroundJobsRuntime;
+pub use wegent_job_runtime::with_lock_watchdog;
 
 use std::sync::Arc;
 

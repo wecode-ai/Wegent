@@ -1,116 +1,8 @@
-//! Resolve personal resource references and enforce their execution policies at dispatch time.
+//! Shared execution policy helpers for stand-ins and project coordinators.
 use super::stand_in::settings_error;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn stand_in_agent(
-        &self,
-        config: &Value,
-    ) -> Result<Option<Value>, AppIpcError> {
-        if let Some(id) = config["agentResourceId"].as_i64() {
-            let allowed = self
-                .personal_stand_in_agents(json!({"userId":config["userId"]}))
-                .await?;
-            if !allowed["items"]
-                .as_array()
-                .is_some_and(|agents| agents.iter().any(|agent| agent["id"] == id))
-            {
-                return Err(AppIpcError::new(
-                    "permission_denied",
-                    "The personal agent is no longer available to this user",
-                ));
-            }
-            let team = self
-                .runtime_http(reqwest::Method::GET, &format!("/teams/{id}"), None)
-                .await?;
-            let entries = team["bots"].as_array().ok_or_else(|| {
-                AppIpcError::new("agent_unavailable", "The personal agent has no bots")
-            })?;
-            let entry = entries
-                .iter()
-                .find(|entry| entry["role"] == "leader")
-                .or_else(|| entries.first())
-                .ok_or_else(|| {
-                    AppIpcError::new("agent_unavailable", "The personal agent is empty")
-                })?;
-            let bot = &entry["bot"];
-            let runtime = match bot["shell_name"].as_str() {
-                Some("Codex") => "codex",
-                Some("ClaudeCode") => "claude_code",
-                _ => {
-                    return Err(AppIpcError::new(
-                        "unsupported_runtime",
-                        "Choose a Codex or Claude Code agent",
-                    ))
-                }
-            };
-            if team["is_active"] == false {
-                return Err(AppIpcError::new(
-                    "agent_unavailable",
-                    "The personal agent is inactive",
-                ));
-            }
-            let agent = json!({"id":id.to_string(),"name":team["displayName"].as_str().unwrap_or_else(|| team["name"].as_str().unwrap_or("Agent")),
-                "runtime":runtime,"execution_policy":bot["execution_policy"],
-                "model_policy":bot["model_policy"],
-                "system_prompt":bot["system_prompt"].as_str().unwrap_or_default(),
-                "additional_skills":bot["skills"].as_array().cloned().unwrap_or_default(),
-                "plugins":bot["plugins"].as_array().cloned().unwrap_or_default(),
-                "mcp_servers":bot["mcp_servers"].as_object().cloned().unwrap_or_default()});
-            return self.normalize_stand_in_agent(agent).await.map(Some);
-        }
-        let Some(id) = config["agentId"].as_str().filter(|id| !id.is_empty()) else {
-            return Ok(None);
-        };
-        let project = config["projectId"].as_str().unwrap_or_default();
-        if config["agentProject"].is_object()
-            && (config["agentProject"]["id"] != config["projectId"]
-                || config["agentProject"]["store"] != config["projectStore"])
-        {
-            return Err(AppIpcError::new(
-                "agent_project_mismatch",
-                "This role handles tasks only in the selected agent's project",
-            ));
-        }
-        let rows = if config["projectStore"] == "local" {
-            let agents = LocalTaskStore::open(self.task_store_path.as_ref())
-                .map_err(settings_error)?
-                .list_chat_agents(project)
-                .map_err(settings_error)?;
-            serde_json::to_value(agents)
-                .map_err(|error| AppIpcError::new("invalid_agent", error.to_string()))?
-        } else {
-            self.runtime_http(
-                reqwest::Method::GET,
-                &format!("/v1/cloud-projects/{project}/chat-agents"),
-                None,
-            )
-            .await?
-        };
-        let rows = if config["projectStore"] == "cloud" {
-            json!(rows
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(cloud_agent_profile)
-                .collect::<Vec<_>>())
-        } else {
-            rows
-        };
-        let agent = rows
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|row| row["id"] == id && row["status"] == "active" && row["can_use"] != false)
-            .ok_or_else(|| {
-                AppIpcError::new(
-                    "agent_unavailable",
-                    "The selected agent is unavailable in this project",
-                )
-            })?;
-        self.normalize_stand_in_agent(agent.clone()).await.map(Some)
-    }
-
     pub(super) async fn normalize_stand_in_agent(
         &self,
         mut agent: Value,
@@ -202,23 +94,13 @@ pub(super) fn default_stand_in_model<'a>(catalog: &'a Value, runtime: &str) -> O
     defaults.next().is_none().then_some(selected)
 }
 
+/// Resolve the explicit primary Codex model or the unique native default without consulting agents.
 pub(super) fn background_stand_in_model(
     config: &Value,
-    agent: Option<&Value>,
     catalog: &Value,
 ) -> Result<Value, AppIpcError> {
     let selected = config.get("model").filter(|model| !model.is_null());
-    let fixed = agent
-        .filter(|agent| agent["model_policy"]["mode"] == "fixed")
-        .map(|agent| &agent["model_policy"]["model"]);
-    let model = selected.or(fixed).or_else(|| {
-        default_stand_in_model(
-            catalog,
-            agent
-                .and_then(|agent| agent["runtime"].as_str())
-                .unwrap_or("codex"),
-        )
-    });
+    let model = selected.or_else(|| default_stand_in_model(catalog, "codex"));
     model
         .filter(|model| model["runtime"] == "codex")
         .cloned()
@@ -255,7 +137,7 @@ mod background_model_tests {
     fn background_model_uses_the_current_runtime_default_without_a_responsibility() {
         let config = json!({"enabled":true,"prompt":"","preferences":"","connections":[{"policy":{"automatic":true,"askBeforeAct":true,"immediate":false}}]});
         let before = config.clone();
-        let model = background_stand_in_model(&config, None, &catalog()).unwrap();
+        let model = background_stand_in_model(&config, &catalog()).unwrap();
         assert_eq!(model["model_id"], "native-default");
         assert_eq!(model["runtime"], "codex");
         assert_eq!(
@@ -269,13 +151,12 @@ mod background_model_tests {
         let explicit =
             json!({"runtime":"codex","provider":"deleted-provider","model_id":"deleted-model"});
         assert_eq!(
-            background_stand_in_model(&json!({"model":explicit}), None, &catalog()).unwrap(),
+            background_stand_in_model(&json!({"model":explicit}), &catalog()).unwrap(),
             explicit
         );
         assert_eq!(
             background_stand_in_model(
                 &json!({"model":{"runtime":"claude_code","model_id":"chosen"}}),
-                None,
                 &catalog()
             )
             .unwrap_err()
@@ -283,24 +164,7 @@ mod background_model_tests {
             "model_unavailable"
         );
         assert_eq!(
-            background_stand_in_model(&json!({"model":{}}), None, &catalog())
-                .unwrap_err()
-                .code,
-            "model_unavailable"
-        );
-    }
-
-    #[test]
-    fn background_model_keeps_a_selected_agents_fixed_model() {
-        let fixed = json!({"runtime":"codex","provider":"company","model_id":"fixed"});
-        let agent = json!({"runtime":"codex","model_policy":{"mode":"fixed","model":fixed}});
-        assert_eq!(
-            background_stand_in_model(&json!({}), Some(&agent), &catalog()).unwrap(),
-            fixed
-        );
-        let unsupported = json!({"runtime":"claude_code","model_policy":{"mode":"user_select"}});
-        assert_eq!(
-            background_stand_in_model(&json!({}), Some(&unsupported), &catalog())
+            background_stand_in_model(&json!({"model":{}}), &catalog())
                 .unwrap_err()
                 .code,
             "model_unavailable"
@@ -318,7 +182,7 @@ mod background_model_tests {
             ]),
         ] {
             assert_eq!(
-                background_stand_in_model(&json!({}), None, &json!({"models":models}))
+                background_stand_in_model(&json!({}), &json!({"models":models}))
                     .unwrap_err()
                     .code,
                 "model_unavailable"

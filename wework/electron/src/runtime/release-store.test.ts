@@ -30,6 +30,10 @@ async function fixture() {
   })
   const before = release('before', 1)
   const after = release('after', 2)
+  await mkdir(before.profileRoot, { recursive: true })
+  await mkdir(after.profileRoot, { recursive: true })
+  await writeFile(join(before.profileRoot, 'package.json'), '{}')
+  await writeFile(join(after.profileRoot, 'package.json'), '{}')
   await store.save(before)
   await store.save(after)
   await atomicReleaseWrite(join(root, 'active'), before.id)
@@ -87,6 +91,29 @@ test('macOS keeps an immutable bootstrap while exposing the installed executable
   await store.activate(after, 'snapshot')
   await store.confirm(after.id)
   expect(await optionalText(join(root, 'bridge'))).toBe(after.macosInstallation!.payloadExecutable)
+})
+
+test('macOS rollback keeps its physical restore intent after the activation journal closes', async () => {
+  const { store, root, after, retained } = await macosFixture()
+  await store.activate(after, 'snapshot')
+  await store.confirm(after.id)
+  await store.requestRollback()
+
+  await store.rollback()
+
+  expect(await store.activation()).toBeNull()
+  expect((await store.active())?.id).toBe(retained.id)
+  expect(await optionalText(join(root, 'macos-rollback'))).toBe(retained.id)
+})
+
+test('a healthy macOS activation clears a restore handoff left by an older source', async () => {
+  const { store, root, after, retained } = await macosFixture()
+  await atomicReleaseWrite(join(root, 'macos-rollback'), retained.id)
+  await store.activate(after, 'snapshot')
+
+  await store.confirm(after.id)
+
+  expect(await optionalText(join(root, 'macos-rollback'))).toBeNull()
 })
 
 test('macOS activation binds the stopped source profile and retains its owner', async () => {
@@ -164,7 +191,15 @@ test('source profile ownership survives rollback and expires only after its alia
   await store.prune()
   expect(await readFile(join(before.profileRoot, 'package.json'), 'utf8')).toBe('{"source":true}')
   expect(await store.read(retained.id)).toMatchObject({ retainedRelease: before.id })
-  const current = { ...before, id: 'new-current', retainedRelease: undefined }
+  const current = {
+    ...before,
+    id: 'new-current',
+    retainedRelease: undefined,
+    profileRoot: join(store.slot('new-current'), 'profile'),
+    runtimeRoot: join(store.slot('new-current'), 'runtimes'),
+  }
+  await mkdir(current.profileRoot, { recursive: true })
+  await writeFile(join(current.profileRoot, 'package.json'), '{}')
   await store.save(current)
   await atomicReleaseWrite(join(root, 'active'), current.id)
   await atomicReleaseWrite(join(root, 'bridge'), current.executable)

@@ -7,9 +7,56 @@ import { describe, expect, it } from "vitest";
 import {
   createCollaborationTranslator,
   localizeStandardStatuses,
+  localizeStandardStatusName,
 } from "./i18n";
 
 describe("collaboration i18n", () => {
+  it("localizes canonical history names without changing custom or missing status names", () => {
+    const en = createCollaborationTranslator("en");
+    const zh = createCollaborationTranslator("zh-CN");
+    expect(localizeStandardStatusName("inbox", "收集箱", en)).toBe("Inbox");
+    expect(localizeStandardStatusName("in_progress", "进行中", en)).toBe(
+      "In progress",
+    );
+    expect(localizeStandardStatusName("in_review", "In review", zh)).toBe(
+      "待确认",
+    );
+    expect(localizeStandardStatusName("pending", "等待设计", en)).toBe(
+      "等待设计",
+    );
+    expect(localizeStandardStatusName("custom", "收集箱", en)).toBe("收集箱");
+    expect(localizeStandardStatusName("inbox", null, en)).toBe("");
+  });
+  it("localizes shared board controls without Chinese fallbacks in English", () => {
+    const en = createCollaborationTranslator("en");
+    const zh = createCollaborationTranslator("zh-CN");
+    expect(en("todo.board_all_groups", undefined, { group: "Status" })).toBe(
+      "All Status",
+    );
+    expect(zh("todo.board_all_groups", undefined, { group: "状态" })).toBe(
+      "全部状态",
+    );
+    const keys = [
+      "todo.board_all",
+      "todo.board_group_items",
+      "todo.board_filter_group",
+      "todo.board_issue_unit",
+      "todo.board_issue_unit_one",
+      "todo.focus_view",
+      "todo.focus_view_description",
+      "todo.exit_focus_view_description",
+    ];
+    for (const key of keys) {
+      expect(en(key)).not.toBe(key);
+      expect(en(key)).not.toMatch(/\p{Script=Han}/u);
+      expect(zh(key)).not.toBe(key);
+    }
+    expect(en("todo.focus_view")).toBe("Focus view");
+    expect(en("todo.board_issue_unit_one")).toBe("issue");
+    expect(en("todo.board_issue_unit")).toBe("issues");
+    expect(zh("todo.focus_view")).toBe("专注视图");
+  });
+
   it("localizes execution duration units with interpolation", () => {
     const english = createCollaborationTranslator("en");
     const chinese = createCollaborationTranslator("zh-CN");
@@ -61,6 +108,9 @@ describe("collaboration i18n", () => {
       "todo.project_member_capability",
       "todo.project_member_role",
       "todo.issue_detail",
+      "todo.issue_markdown_hint",
+      "todo.created_at_short",
+      "todo.automation_source",
       "todo.attachment",
       "todo.collaborators",
       "todo.execution_history",

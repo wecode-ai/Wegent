@@ -33,7 +33,19 @@ impl RuntimeWorkRpcHandler {
 
         let (threads, mut complete) = self.read_codex_catalog(archived, limit).await;
         let stage_started_at = Instant::now();
+        let closed_threads: HashSet<_> = self
+            .local_task_links(true)
+            .iter()
+            .flat_map(|link| {
+                crate::runtime_work::conversation_sessions::closed_sessions(link)
+                    .unwrap_or_default()
+            })
+            .map(|session| session.thread_id)
+            .collect();
         for thread in threads {
+            if string_field(&thread, "id").is_some_and(|id| closed_threads.contains(&id)) {
+                continue;
+            }
             let thread_started_at = Instant::now();
             let thread_id = string_field(&thread, "id").unwrap_or_else(|| "none".to_owned());
             if let Some(mut link) = self.link_from_thread(&thread) {
@@ -177,15 +189,6 @@ impl RuntimeWorkRpcHandler {
         );
     }
 
-    pub(in crate::runtime_work::handler) async fn codex_threads(
-        &self,
-        archived: bool,
-    ) -> Vec<Value> {
-        self.read_codex_catalog(archived, Some(CODEX_THREAD_LIST_MAX_ITEMS))
-            .await
-            .0
-    }
-
     async fn read_codex_catalog(&self, archived: bool, limit: Option<usize>) -> (Vec<Value>, bool) {
         let started_at = Instant::now();
         let mut threads = Vec::new();
@@ -255,18 +258,6 @@ impl RuntimeWorkRpcHandler {
             ],
         );
         (threads, complete)
-    }
-
-    pub(in crate::runtime_work::handler) async fn thread_path_for_id(
-        &self,
-        thread_id: &str,
-    ) -> Option<String> {
-        for thread in self.codex_threads(false).await {
-            if string_field(&thread, "id").as_deref() == Some(thread_id) {
-                return string_field(&thread, "path").filter(|path| !path.trim().is_empty());
-            }
-        }
-        None
     }
 
     pub(in crate::runtime_work::handler) fn visible_links_for_projects(
@@ -343,7 +334,7 @@ impl RuntimeWorkRpcHandler {
                 visible_links.push(link);
                 continue;
             }
-            let workspace_kind = infer_workspace_kind(&link.workspace_path);
+            let workspace_kind = link.workspace_kind();
             if workspace_kind == "chat" {
                 kept_chat += 1;
                 log_runtime_project_filter_item(
@@ -580,7 +571,7 @@ fn runtime_task_sidebar_project_key(
     {
         return format!("local:{workspace_path}");
     }
-    if infer_workspace_kind(&link.workspace_path) == "chat" {
+    if link.workspace_kind() == "chat" {
         return "chats".to_owned();
     }
     format!("local:{}", workspace_group_path(&link.workspace_path))

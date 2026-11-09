@@ -13,7 +13,8 @@ const retiredSkill = 'retired-check'
 const addedSkill = 'added-check'
 const oldContent = 'Old release upgrade marker'
 const newContent = 'New release upgrade marker'
-const E2E_CATALOG_REFRESH_OBSERVATION_MS = 15_000
+// E2E catalog refresh runs every five seconds; include timer jitter.
+const E2E_CATALOG_REFRESH_OBSERVATION_MS = 5_500
 const PLUGIN_SYNC_TIMEOUT_MS = 30_000
 
 async function waitForManagedPlugin(manifestPath, managedKey, timeoutMs = PLUGIN_SYNC_TIMEOUT_MS) {

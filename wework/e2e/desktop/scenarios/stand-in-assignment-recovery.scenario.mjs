@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { verifyRoundStandInAssignment } from '../modules/stand-in-round-assignment.mjs'
+import { verifyOrphanStandInRecovery } from '../modules/stand-in-orphan-binding-recovery.mjs'
 import {
   assistantMessage,
   createSse,
@@ -11,7 +12,12 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, resultDir }) {
+export function createDesktopScenario({
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  resultDir,
+  executorHome,
+}) {
   let cloud, user, other, otherToken, project, environment, settings
   const evidence = []
   async function request(path, body, token = cloud.authToken) {
@@ -131,6 +137,19 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
             },
           ],
         },
+      })
+      await verifyOrphanStandInRecovery({
+        cloud,
+        request,
+        rpc,
+        project,
+        user,
+        settings,
+        until,
+        control,
+        executorHome,
+        resultDir,
+        timeoutMs: modelResponseTimeoutMs,
       })
       let issue = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
         title: 'Process me, transfer away, then transfer back',

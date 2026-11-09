@@ -144,6 +144,13 @@ shared_protocol="${shared_protocol/wework_target=false/wework_target=true}"
 assert_warmup_case "Shared protocol warms runtime images and desktop sidecar" "$shared_protocol" \
   "shared/protocol/runtime_task_create_request_v2.schema.json"
 
+shared_rust="${executor_lock/backend_rs_rust=false/backend_rs_rust=true}"
+assert_warmup_case "Shared Rust warms both runtimes" "$shared_rust" \
+  "shared/rust/crypto/src/lib.rs"
+if ! grep -q '"shared/rust/\*\*"' "$workflow_dir/ci-cache-warmup.yml"; then
+  fail "Shared Rust changes must trigger cache warmup"
+fi
+
 if ! ruby - "$workflow_dir" "$script_dir/../.." <<'RUBY'
 workflow_dir, root = ARGV
 ['ci-cache-warmup.yml', 'wework-e2e.yml', 'e2e-tests.yml'].each do |name|
@@ -534,6 +541,17 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F 'docker run --rm' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--network bridge' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--add-host wegent-e2e-runner:host-gateway' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- \
+      '--entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh"' \
+      >/dev/null ||
+  sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--network host' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \

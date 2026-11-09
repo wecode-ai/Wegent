@@ -37,6 +37,7 @@ export function StandInConnectionSettings({
   initialCalendar = false,
   onCalendarViewChange,
   onDetailViewChange,
+  onDetailTitleChange,
   hideHeading = false,
   savedConfiguration,
   ref,
@@ -55,6 +56,7 @@ export function StandInConnectionSettings({
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onDetailViewChange?(open: boolean): void
+  onDetailTitleChange?(title: string | null): void
   hideHeading?: boolean
   savedConfiguration?: Pick<StandInRole, 'connections' | 'collaboration' | 'calendar'>
   ref?: Ref<StandInConnectionNavigationHandle>
@@ -143,6 +145,16 @@ export function StandInConnectionSettings({
     }
   }, [api, deviceId, catalogKey, i18n.language, view, refresh])
   const provider = providers.find(item => item.id === view)
+  const detailTitle =
+    view === 'time'
+      ? t('standIn.workspace.time_connection')
+      : view === 'projects'
+        ? t('standIn.personal.collaboration')
+        : (provider?.displayName ?? (view ? t('standIn.workspace.connection_unavailable') : null))
+  useEffect(() => {
+    onDetailTitleChange?.(detailTitle)
+    return () => onDetailTitleChange?.(null)
+  }, [detailTitle, onDetailTitleChange])
   const install = async (item: ConnectionProviderDescriptor) => {
     if (!api) return
     setInstalling(true)
@@ -199,6 +211,7 @@ export function StandInConnectionSettings({
               {!scheduleDirty && (
                 <StandInProcessingSettings
                   disabled={disabled}
+                  sessionScope="schedule"
                   rows={[
                     {
                       key: 'calendar',

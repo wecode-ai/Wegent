@@ -17,6 +17,7 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use wegent_filesystem::atomic_file::replace_file;
 
 use super::local_execution::PersistedLocalExecution;
 use super::response::{RuntimeTaskLink, RuntimeWorkspaceLink};
@@ -51,6 +52,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "turnIdsBySubtask",
     "userMessagePresentations",
     "changeRequests",
+    "conversationSessions",
 ];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -453,6 +455,15 @@ impl RuntimeWorkStore {
         read: impl FnOnce(&RuntimeTaskLink) -> T,
     ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
+        self.read_loaded_task(local_task_id, read)
+    }
+
+    /// Read the live index after an explicit refresh outside another subsystem's lock.
+    pub(super) fn read_loaded_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.index.lock().ok()?.tasks.get(local_task_id).map(read)
     }
 
@@ -696,7 +707,7 @@ impl RuntimeWorkStore {
         self.update_index_signature();
     }
 
-    fn refresh_index_from_disk_if_changed(&self) {
+    pub(super) fn refresh_index_from_disk_if_changed(&self) {
         let Ok(_write_guard) = self.write_lock.lock() else {
             return;
         };
@@ -921,63 +932,6 @@ fn index_parent(index_path: &Path) -> &Path {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
-}
-
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
-    use windows_sys::Win32::Storage::FileSystem::{
-        FileRenameInfoEx, SetFileInformationByHandle, DELETE, FILE_RENAME_INFO,
-    };
-    use windows_sys::Win32::System::WindowsProgramming::{
-        FILE_RENAME_FLAG_POSIX_SEMANTICS, FILE_RENAME_FLAG_REPLACE_IF_EXISTS,
-    };
-
-    let source = OpenOptions::new().access_mode(DELETE).open(source)?;
-    // Rust's filesystem layer expands long paths, but this direct Win32 call
-    // needs the canonical parent's verbatim prefix even for a new index.
-    let destination =
-        fs::canonicalize(index_parent(destination))?.join(destination.file_name().ok_or_else(
-            || io::Error::new(io::ErrorKind::InvalidInput, "index path has no file name"),
-        )?);
-    let name = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let buffer_size = std::mem::size_of::<FILE_RENAME_INFO>() + name.len() * 2;
-    // Word storage aligns the variable-length FILE_RENAME_INFO and owns its tail.
-    let mut buffer = vec![0usize; buffer_size.div_ceil(std::mem::size_of::<usize>())];
-    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-    // POSIX replacement keeps existing readers on the old file while new opens
-    // see the new index. MoveFileExW rejects an open destination even when its
-    // handles share DELETE access.
-    let result = unsafe {
-        (*information).Anonymous.Flags =
-            FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
-        (*information).FileNameLength = ((name.len() - 1) * 2) as u32;
-        std::ptr::copy_nonoverlapping(
-            name.as_ptr(),
-            std::ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
-            name.len(),
-        );
-        SetFileInformationByHandle(
-            source.as_raw_handle(),
-            FileRenameInfoEx,
-            information.cast(),
-            buffer_size as u32,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
 }
 
 #[cfg(unix)]

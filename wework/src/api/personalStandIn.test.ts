@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  connectionChangeEnablesIdentity,
   disconnectStandInProject,
   newStandInRole,
   roleIncludesProject,
@@ -10,6 +11,53 @@ import {
 
 const project = { id: 'one', store: 'local' as const }
 const other = { id: 'two', store: 'local' as const }
+
+it('starts intake only for an explicit new source or source activation, without changing policy', () => {
+  const source = {
+    providerId: 'provider',
+    profile: 'account',
+    kind: 'group',
+    id: 'one',
+    name: 'One',
+    policy: { automatic: false, askBeforeAct: true },
+  }
+  const previous = { connections: [source] }
+  const snapshot = structuredClone(previous)
+  expect(
+    connectionChangeEnablesIdentity(previous, { connections: [{ ...source, name: 'Renamed' }] })
+  ).toBe(false)
+  expect(
+    connectionChangeEnablesIdentity(previous, {
+      connections: [{ ...source, policy: { ...source.policy, automatic: true } }],
+    })
+  ).toBe(true)
+  expect(connectionChangeEnablesIdentity(previous, { connections: [] })).toBe(false)
+  expect(
+    connectionChangeEnablesIdentity(previous, {
+      connections: [{ ...source, profile: 'another-account' }],
+    })
+  ).toBe(true)
+  expect(previous).toEqual(snapshot)
+  expect(previous.connections[0].policy.askBeforeAct).toBe(true)
+})
+
+it('shares explicit calendar and project activation between the primary identity and roles', () => {
+  const role = newStandInRole('device', 'role')
+  expect(
+    connectionChangeEnablesIdentity(
+      {},
+      { calendar: { policy: { automatic: false, askBeforeAct: true } } }
+    )
+  ).toBe(true)
+  expect(
+    connectionChangeEnablesIdentity(role, {
+      ...role,
+      collaboration: { ...role.collaboration, enabled: true },
+    })
+  ).toBe(true)
+  const changed = { ...role, prompt: 'Only changed instructions' }
+  expect(connectionChangeEnablesIdentity(role, changed)).toBe(false)
+})
 const sameIdInCloud = { id: 'one', store: 'cloud' as const }
 
 describe('project-only stand-in disabling', () => {
@@ -34,11 +82,9 @@ describe('project-only stand-in disabling', () => {
     }
   )
 
-  it('disables the collaboration source of a project-bound agent without turning off its global switch', () => {
+  it('disconnects a selected project without changing the stand-in or source switches', () => {
     const role = newStandInRole('mac', 'project-agent')
     role.enabled = true
-    role.agentId = 'reviewer'
-    role.agentProject = project
     role.collaboration = {
       ...role.collaboration,
       enabled: true,
@@ -47,8 +93,7 @@ describe('project-only stand-in disabling', () => {
     }
     const result = disconnectStandInProject(role, project)
     expect(result.enabled).toBe(true)
-    expect(result.collaboration.enabled).toBe(false)
-    expect(result.agentId).toBe('reviewer')
+    expect(result.collaboration.enabled).toBe(true)
     expect(roleIncludesProject(result, project)).toBe(false)
     expect(roleIncludesProject(role, project)).toBe(true)
   })
@@ -70,7 +115,5 @@ it.each([true, false])(
     role.collaboration.enabled = true
     expect(roleIncludesProject(role, project)).toBe(true)
     expect(roleSelectsProject(role, sameIdInCloud)).toBe(allProjects)
-    role.agentProject = project
-    expect(roleSelectsProject(role, sameIdInCloud)).toBe(false)
   }
 )

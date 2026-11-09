@@ -1,5 +1,6 @@
 import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
+import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
@@ -54,13 +55,13 @@ async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeNa
     visible: false,
     timeoutMs,
   })
-  await selectCollaborationProjectView(control, scoped('').trim(), 'table')
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table', timeoutMs)
   await control.command(
     'waitFor',
     scoped(`[data-testid="collaboration-issue-table-row-${issueId}"]`),
     { text: assigneeName, timeoutMs }
   )
-  await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+  await selectCollaborationProjectView(control, scoped('').trim(), 'board', timeoutMs)
   await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
     timeoutMs,
   })
@@ -357,6 +358,13 @@ export function createDesktopScenario({
           /尚未添加设备|当前没有云端设备/,
           'A cached device catalog rendered a false empty state'
         )
+        await verifyCollaborationDeviceCleanup({
+          cloud: cloudEnvironment,
+          control,
+          scoped,
+          timeoutMs: uiTimeoutMs,
+          capture: name => capture(control, name),
+        })
         await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
 
         const workspaceName = `${WORKSPACE_NAME}-${process.pid}`
@@ -633,7 +641,7 @@ export function createDesktopScenario({
           text: project.name,
           timeoutMs: uiTimeoutMs,
         })
-        await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+        await selectCollaborationProjectView(control, scoped('').trim(), 'board', uiTimeoutMs)
         const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
         assert.equal(maintainerProject.access_role, 'Maintainer')
         await verifyPersonalBoardGrouping(control, {

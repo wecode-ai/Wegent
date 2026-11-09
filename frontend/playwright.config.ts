@@ -1,9 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const EXECUTOR_REGRESSION_SPEC =
-  /(tasks\/(agent-conversation-regression|claude-background-lifecycle|claudecode-compaction|pipeline-session-archive|provider-native-claudecode|device-artifact-declaration)|collaboration\/(collaboration-agent-execution|issue-dispatch-executor))\.spec\.ts/
+  /(tasks\/(agent-conversation-regression|claude-background-lifecycle|claudecode-compaction|pipeline-session-archive|provider-native-claudecode|shell-reference-cancel|device-artifact-declaration)|collaboration\/(collaboration-agent-execution|issue-dispatch-executor))\.spec\.ts/
 const EXECUTOR_INDEPENDENT_SPEC =
-  /tasks\/(claude-background-lifecycle|pipeline-session-archive|provider-native-claudecode)\.spec\.ts/
+  /tasks\/(claude-background-lifecycle|pipeline-session-archive|provider-native-claudecode|shell-reference-cancel)\.spec\.ts/
 const STALLED_CHAT_SPEC = /tasks\/chat-stalled-execution\.spec\.ts/
 // Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
@@ -66,6 +66,13 @@ export default defineConfig({
 
     /* Navigation timeout */
     navigationTimeout: 30000,
+
+    // Keep localhost origins while reaching runner services from an isolated network.
+    launchOptions: process.env.E2E_BROWSER_HOST_GATEWAY
+      ? {
+          args: [`--host-resolver-rules=MAP localhost ${process.env.E2E_BROWSER_HOST_GATEWAY}`],
+        }
+      : {},
   },
 
   /* Configure projects for major browsers */

@@ -42,6 +42,30 @@ test('immediate input assesses now while a silent source waits', () => {
   assert.equal(Date.parse(result.nextWakeAt), now + SILENT_WINDOW_MS)
 })
 
+test('start timing is independent of the host-verified conversation strategy', () => {
+  for (const immediate of [false, true]) {
+    for (const reuse of [false, true]) {
+      const input = event('new', {
+        processingMode: immediate ? 'immediate' : 'silent',
+        binding: reuse ? { workId: 'source-work', revision: 'v1' } : null,
+      })
+      const initial = planIntake(snapshot([input]), { now })
+      const expected = reuse
+        ? [{ kind: 'continue_work', workId: 'source-work', workRevision: 'v1', eventIds: ['new'] }]
+        : [{ kind: 'assess', eventIds: ['new'] }]
+      assert.deepEqual(initial.actions, immediate ? expected : [])
+      assert.equal(
+        initial.nextWakeAt,
+        immediate ? null : new Date(now + SILENT_WINDOW_MS).toISOString()
+      )
+      assert.deepEqual(
+        planIntake(snapshot([input]), { now: now + SILENT_WINDOW_MS }).actions,
+        expected
+      )
+    }
+  }
+})
+
 test('source windows are independent and do not slide as more messages arrive', () => {
   const events = [
     event('a1'),

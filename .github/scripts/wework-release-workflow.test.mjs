@@ -315,7 +315,7 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   );
   assert.equal(
     jobs["prepare-release"].if,
-    "inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''",
+    `inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''`,
   );
   const source = verification.steps.find(
     (step) => step.name === "Download immutable diagnostic source",
@@ -341,14 +341,33 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(
     workflow.concurrency.group,
-    /verification_checkpoint == 'app-update-refresh'.*!inputs.publish_release/,
+    /app-update-refresh.*app-update-retry.*!inputs.publish_release/,
   );
   assert.ok(
     workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(
       "app-update-refresh",
     ),
   );
+  assert.ok(
+    workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(
+      "app-update-retry",
+    ),
+  );
   assert.match(verification.if, /!cancelled\(\)/);
+});
+
+test("retry without producer IDs routes only to the non-publishing native regression workflow", () => {
+  const retry = jobs["retry-regression"];
+  assert.equal(retry.uses, "./.github/workflows/wework-upgrade-regression.yml");
+  assert.equal(retry.permissions.contents, "read");
+  assert.match(retry.if, /verification_checkpoint == 'app-update-retry'/);
+  assert.match(retry.if, /verification_source_run_id == ''/);
+  assert.match(retry.if, /verification_run_id == ''/);
+  assert.match(retry.if, /!inputs.publish_release/);
+  assert.match(
+    jobs["prepare-upgrade-inputs"].if,
+    /!\(inputs.verification_checkpoint == 'app-update-retry'/,
+  );
 });
 
 test("source runners consume one frozen plan and complete aggregation gates publication", () => {
@@ -387,6 +406,20 @@ test("source runners consume one frozen plan and complete aggregation gates publ
     aggregate.steps.at(-1).run,
     /verify-wework-upgrade-duration.mjs/,
   );
+  assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
+});
+
+test("baseline exclusions require explicit dispatch confirmation without bypassing aggregation", () => {
+  const inputs = (workflow.on ?? workflow.true).workflow_dispatch.inputs;
+  assert.equal(inputs.approved_baseline_exclusions.default, "");
+  const aggregate = jobs["aggregate-upgrades"].steps.find((step) =>
+    step.run?.includes("aggregate-release-upgrades.mjs"),
+  );
+  assert.equal(
+    aggregate.env.WEWORK_APPROVED_BASELINE_EXCLUSIONS,
+    "${{ inputs.approved_baseline_exclusions }}",
+  );
+  assert.equal(aggregate["continue-on-error"], undefined);
   assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
 });
 

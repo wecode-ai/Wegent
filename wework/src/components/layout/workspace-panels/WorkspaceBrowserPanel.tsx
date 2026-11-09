@@ -74,7 +74,7 @@ import {
   readEmbeddedBrowserDownloadSnapshot,
   subscribeEmbeddedBrowserDownloadEvents,
 } from '@/lib/embedded-browser-download-store'
-import { openExternalUrl } from '@/lib/external-links'
+import { openInExternalBrowser } from '@/lib/external-links'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import { browserDiagnosticOrigin, normalizeBrowserUrl } from '@/lib/browser-url'
@@ -2016,7 +2016,18 @@ export function WorkspaceBrowserTabPanel({
 
   const handleOpenExternal = () => {
     if (!activePageUrl || internalExtensionPage) return
-    void openExternalUrl(activePageUrl, { target: 'system' })
+    setError(null)
+    console.info('[Wework] External browser open requested', {
+      protocol: new URL(activePageUrl).protocol,
+    })
+    void openInExternalBrowser(activePageUrl)
+      .then(() => console.info('[Wework] External browser open completed'))
+      .catch(error => {
+        console.error('[Wework] External browser open failed', {
+          errorName: error instanceof Error ? error.name : typeof error,
+        })
+        setError(t('workbench.browser_open_external_failed'))
+      })
   }
 
   const clearBrowserData = useCallback(
@@ -2655,7 +2666,7 @@ export function WorkspaceBrowserTabPanel({
           {agentState?.status === 'paused' ? (
             <Pause className="h-3.5 w-3.5 shrink-0 text-text-muted" />
           ) : (
-            <CircleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+            <CircleAlert className="h-3.5 w-3.5 shrink-0 text-warning" />
           )}
           <span className="min-w-0 flex-1 truncate">
             {agentState ? agentStatusText(agentState) : null}
@@ -2738,9 +2749,9 @@ export function WorkspaceBrowserTabPanel({
                 >
                   <div className="flex items-center gap-2">
                     {download.status === 'finished' ? (
-                      <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
                     ) : download.status === 'failed' ? (
-                      <CircleAlert className="h-4 w-4 shrink-0 text-red-500" />
+                      <CircleAlert className="h-4 w-4 shrink-0 text-destructive" />
                     ) : download.status === 'paused' ? (
                       <Download className="h-4 w-4 shrink-0 text-text-muted" />
                     ) : (
@@ -2792,7 +2803,7 @@ export function WorkspaceBrowserTabPanel({
                         <button
                           type="button"
                           data-testid="workspace-browser-download-delete-button"
-                          className="shrink-0 rounded-md p-1 text-red-500 hover:bg-red-500/10"
+                          className="shrink-0 rounded-md p-1 text-destructive hover:bg-destructive/10"
                           aria-label={t('workbench.browser_download_delete')}
                           onClick={() => void deleteEmbeddedBrowserDownload(download.id)}
                         >
@@ -2837,9 +2848,9 @@ export function WorkspaceBrowserTabPanel({
         >
           <div className="flex items-center gap-2">
             {downloadPeek.status === 'finished' ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
             ) : (
-              <CircleAlert className="h-4 w-4 shrink-0 text-red-500" />
+              <CircleAlert className="h-4 w-4 shrink-0 text-destructive" />
             )}
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium text-text-primary">
@@ -2915,9 +2926,9 @@ export function WorkspaceBrowserTabPanel({
         <div
           data-testid="workspace-browser-invalid-tls-warning"
           role="status"
-          className="flex shrink-0 items-start gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-text-primary"
+          className="flex shrink-0 items-start gap-2 border-b border-warning/30 bg-warning/10 px-3 py-2 text-sm text-text-primary"
         >
-          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <div className="min-w-0">
             <p className="font-medium">{t('workbench.browser_invalid_tls_title')}</p>
             <p className="mt-0.5 text-xs text-text-secondary">
@@ -2955,7 +2966,7 @@ export function WorkspaceBrowserTabPanel({
             data-testid="workspace-browser-native-view"
             className={cn(
               'relative h-full min-h-0 w-full overflow-hidden',
-              deviceToolbar.isEnabled ? 'bg-neutral-700' : 'bg-background'
+              deviceToolbar.isEnabled ? 'bg-muted' : 'bg-background'
             )}
             aria-label={t('workbench.browser')}
           >
@@ -3099,7 +3110,7 @@ export function WorkspaceBrowserTabPanel({
           <div
             data-testid="workspace-browser-error"
             role="alert"
-            className="absolute inset-x-4 top-4 rounded-md border border-red-500/30 bg-background px-3 py-2 text-sm text-red-500 shadow-sm"
+            className="absolute inset-x-4 top-4 rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive shadow-sm"
           >
             {error}
           </div>

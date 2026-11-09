@@ -1,10 +1,12 @@
-import { Box, FolderOpen, RefreshCw, RotateCcw } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { Box, Download, FolderOpen, RefreshCw, RotateCcw } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   chooseNodeExecutable,
+  ensurePython,
   listExecutionEnvironments,
   type ExecutionEnvironmentStatus,
   useBuiltinNode,
@@ -30,10 +32,19 @@ export function ExecutionEnvironmentsSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [actionId, setActionId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const latestPythonStatus = useRef<ExecutionEnvironmentStatus | null>(null)
 
   const refresh = useCallback(async () => {
+    const previousPythonStatus = latestPythonStatus.current
     try {
-      setEnvironments(await listExecutionEnvironments())
+      const next = await listExecutionEnvironments()
+      setEnvironments(
+        next.map(item =>
+          item.id === 'python' && latestPythonStatus.current !== previousPythonStatus
+            ? (latestPythonStatus.current ?? item)
+            : item
+        )
+      )
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -49,11 +60,20 @@ export function ExecutionEnvironmentsSettingsPage() {
     }
   }, [refresh])
 
-  useEffect(() => {
-    if (!environments.some(item => item.state === 'downloading')) return
-    const timer = window.setInterval(() => void refresh(), 1000)
-    return () => window.clearInterval(timer)
-  }, [environments, refresh])
+  useEffect(
+    () =>
+      subscribeDesktopHostEvents(event => {
+        if (event.type !== 'python-runtime-status') return
+        const status = event.payload as unknown as ExecutionEnvironmentStatus
+        latestPythonStatus.current = status
+        setEnvironments(previous =>
+          previous.some(item => item.id === 'python')
+            ? previous.map(item => (item.id === 'python' ? status : item))
+            : [...previous, status]
+        )
+      }),
+    []
+  )
 
   const runAction = async (id: string, action: () => Promise<unknown>) => {
     setActionId(id)
@@ -81,7 +101,7 @@ export function ExecutionEnvironmentsSettingsPage() {
       {error && (
         <div
           data-testid="execution-environments-error"
-          className="mb-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-600"
+          className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
         >
           {error}
         </div>
@@ -103,7 +123,11 @@ export function ExecutionEnvironmentsSettingsPage() {
               ? Math.min(100, (environment.downloadedBytes / environment.totalBytes) * 100)
               : 0
           const status = downloading
-            ? t('workbench.execution_environment_downloading', '正在后台下载')
+            ? environment.phase === 'install'
+              ? t('workbench.plugin_python_installing', '正在安装插件 Python 环境…')
+              : environment.phase === 'verify'
+                ? t('workbench.plugin_python_verifying', '正在验证插件 Python 环境…')
+                : t('workbench.execution_environment_downloading', '正在后台下载')
             : installed
               ? t('workbench.execution_environment_installed', '已安装')
               : environment.state === 'error'
@@ -124,7 +148,10 @@ export function ExecutionEnvironmentsSettingsPage() {
                     <h2 className="text-sm font-medium text-text-primary">
                       {isNode ? 'Node.js' : 'Python'}
                     </h2>
-                    <span className="text-xs text-text-secondary">
+                    <span
+                      data-testid={`execution-environment-${environment.id}-status`}
+                      className="text-xs text-text-secondary"
+                    >
                       {status}
                       {environment.source === 'electron'
                         ? ` · ${t(
@@ -133,7 +160,12 @@ export function ExecutionEnvironmentsSettingsPage() {
                           )}`
                         : environment.source === 'configured'
                           ? ` · ${t('workbench.execution_environment_custom', '自定义')}`
-                          : ''}
+                          : environment.source === 'managed'
+                            ? ` · ${t(
+                                'workbench.execution_environment_wework_managed',
+                                'Wework 管理'
+                              )}`
+                            : ''}
                       {environment.version ? ` · ${environment.version}` : ''}
                     </span>
                   </div>
@@ -145,25 +177,31 @@ export function ExecutionEnvironmentsSettingsPage() {
                         )
                       : t(
                           'workbench.execution_environment_python_description',
-                          '默认不下载。请在系统中手动安装 Python，Wework 会自动检测。'
+                          '启用 Python 插件后在后台自动准备独立的 Python 3.12，普通任务保留原有的 Python 环境。'
                         )}
                   </p>
                   {downloading && (
                     <div className="mt-3">
                       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                         <div
-                          className="h-full rounded-full bg-text-primary transition-[width]"
-                          style={{ width: `${progress}%` }}
+                          className={
+                            environment.totalBytes > 0
+                              ? 'h-full rounded-full bg-text-primary transition-[width]'
+                              : 'h-full w-1/3 animate-pulse rounded-full bg-text-primary'
+                          }
+                          style={environment.totalBytes > 0 ? { width: `${progress}%` } : undefined}
                         />
                       </div>
-                      <div className="mt-1 text-xs text-text-secondary">
-                        {formatBytes(environment.downloadedBytes) ?? '0 B'} /{' '}
-                        {formatBytes(environment.totalBytes) ?? '—'}
-                      </div>
+                      {environment.totalBytes > 0 && (
+                        <div className="mt-1 text-xs text-text-secondary">
+                          {formatBytes(environment.downloadedBytes) ?? '0 B'} /{' '}
+                          {formatBytes(environment.totalBytes) ?? '—'}
+                        </div>
+                      )}
                     </div>
                   )}
                   {environment.error && (
-                    <p className="mt-2 text-xs text-red-600">{environment.error}</p>
+                    <p className="mt-2 text-xs text-destructive">{environment.error}</p>
                   )}
                   {installed && environment.path && (
                     <p className="mt-2 truncate text-xs text-text-muted" title={environment.path}>
@@ -173,7 +211,7 @@ export function ExecutionEnvironmentsSettingsPage() {
                   {environment.restartRequired && (
                     <div
                       data-testid="execution-environment-node-restart-required"
-                      className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-4 text-amber-700"
+                      className="mt-2 rounded-lg bg-warning/10 px-3 py-2 text-xs leading-4 text-warning"
                     >
                       {environment.configuredPath
                         ? t(
@@ -222,11 +260,16 @@ export function ExecutionEnvironmentsSettingsPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        data-testid="execution-environment-python-refresh"
-                        onClick={() => void refresh()}
+                        disabled={busy || downloading}
+                        data-testid="execution-environment-python-install"
+                        onClick={() => void runAction('python', ensurePython)}
                       >
-                        <RefreshCw />
-                        {t('workbench.execution_environment_refresh', '重新检测')}
+                        {installed ? <RefreshCw /> : <Download />}
+                        {environment.state === 'error'
+                          ? t('workbench.execution_environment_retry', '重试安装')
+                          : installed
+                            ? t('workbench.execution_environment_refresh', '重新检测')
+                            : t('workbench.execution_environment_install', '安装 Python')}
                       </Button>
                     )}
                   </div>

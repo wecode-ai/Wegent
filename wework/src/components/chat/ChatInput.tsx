@@ -770,7 +770,12 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
               (contextHeader || (displayedGoal && !goalDraftActive)) && (
                 <div
                   data-testid="composer-context-rail"
-                  className="mb-1 flex min-w-0 flex-wrap items-center text-sm font-normal text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full"
+                  className={[
+                    'mb-1 min-w-0 items-center text-sm text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full',
+                    contextHeader && displayedGoal && !goalDraftActive
+                      ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
+                      : 'flex',
+                  ].join(' ')}
                 >
                   {displayedGoal && !goalDraftActive && (
                     <GoalStatusBar
@@ -953,7 +958,7 @@ function QueueResumeDialog({
             size="sm"
             data-testid="paused-queue-send-clear-button"
             onClick={onClear}
-            className="h-8 rounded-md border-red-200 bg-base px-3 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+            className="h-8 rounded-md border-destructive/30 bg-base px-3 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
             {t('queue.send_with_paused_clear')}
           </Button>

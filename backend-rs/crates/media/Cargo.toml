@@ -1,0 +1,13 @@
+[package]
+name = "wegent-media"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Media policy and video result extension contracts"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+brz-http = { version = "=0.0.14", features = ["json"] }
+brz-json = "=0.0.11"

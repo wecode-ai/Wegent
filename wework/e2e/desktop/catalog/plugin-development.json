@@ -2,10 +2,11 @@
   "order": 99000,
   "scenario": "./scenarios/plugin-development.scenario.mjs",
   "scenarioOnly": true,
+  "paths": [".github/scripts/install-e2e-apt-packages.sh"],
   "ci": {
     "core": {
       "order": 73000,
-      "shard": 8,
+      "shard": 10,
       "position": 9000
     }
   }

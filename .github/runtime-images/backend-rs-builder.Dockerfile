@@ -2,7 +2,10 @@ ARG DEPS_IMAGE=dependencies
 FROM ubuntu:24.04 AS toolchain
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 COPY .github/ci/rust-toolchain /tmp/rust-toolchain
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's#http://archive\.ubuntu\.com/ubuntu#http://security.ubuntu.com/ubuntu#g' \
+      /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get -o APT::Update::Error-Mode=any update \
+    && apt-get install -y --no-install-recommends \
     build-essential ca-certificates cmake curl nasm pkg-config libssl-dev zlib1g-dev \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain "$(cat /tmp/rust-toolchain)" \
@@ -14,6 +17,8 @@ WORKDIR /workspace/backend-rs
 
 FROM toolchain AS dependencies
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
+COPY shared/rust /workspace/shared/rust
+COPY backend-rs/crates ./crates
 RUN mkdir -p src && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \
     && cargo build --release --locked --bin wegent-backend-rs

@@ -124,6 +124,7 @@ export type BackendCollaborationProject = CollaborationProject & {
 };
 
 export interface CollaborationIssue {
+  human_requests?: import("./issueParticipation").IssueHumanRequest[];
   milestone_id?: string | null;
   id: string;
   cloud_project_id: CollaborationProjectId;
@@ -141,6 +142,7 @@ export interface CollaborationIssue {
   assignee_team_name?: string | null;
   execution_id?: number | null;
   execution_state?: string | null;
+  processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null;
   execution_note?: string | null;
   can_approve?: boolean;
   human_task_binding?: {
@@ -150,6 +152,7 @@ export interface CollaborationIssue {
     assignmentId: string;
   } | null;
   ai_state?: {
+    agent_name?: string | null;
     status?: string | null;
     last_error?: string | null;
     started_at?: string | null;
@@ -197,6 +200,7 @@ export interface CollaborationAssignmentReceipt {
 }
 
 export interface CollaborationAssignment {
+  automation?: IssueHistoryAutomation | null;
   receipt_tracking?: boolean;
   human_read_at?: string | null;
   stand_in_received_at?: string | null;
@@ -278,7 +282,12 @@ export interface CollaborationExecutionEnvironment {
   device_id?: number;
   device_key?: string;
   app_device_id?: string;
+  runtime_instance_id?: string;
   is_current_device?: boolean;
+  is_current_device_candidate?: boolean;
+  local_identity_unresolved?: boolean;
+  last_seen_at?: string | null;
+  workspace_ids?: string[];
   name: string;
   kind: "local_device" | "cloud_host";
   coding_tools: string[];
@@ -351,7 +360,14 @@ export type BackendCollaborationIssue = CollaborationIssue & {
   can_edit: boolean;
 };
 
+export interface IssueHistoryAutomation {
+  rule_id: string;
+  rule_name: string;
+  run_id: string;
+}
+
 export interface SharedIssueAssignmentHistoryEntry {
+  automation?: IssueHistoryAutomation;
   by_user_id: number;
   to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
@@ -361,6 +377,7 @@ export interface SharedIssueAssignmentHistoryEntry {
 }
 
 export interface SharedIssueStatusHistoryEntry {
+  automation?: IssueHistoryAutomation;
   from_status: string;
   from_status_name?: string | null;
   to_status: string;

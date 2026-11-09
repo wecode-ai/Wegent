@@ -18,6 +18,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.catalog",
         "runtime.connections.resources",
         "runtime.connections.dependencies.inventory",
+        "runtime.python.has_demand",
     ] {
         assert!(
             !should_resume_persisted_turns_before_rpc(method),
@@ -31,7 +32,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "native_history_test_support.rs"]
-mod native_history_test_support;
+pub(super) mod native_history_test_support;
 pub(super) use native_history_test_support::install_native_history;
 
 #[path = "command_recovery_tests.rs"]
@@ -51,12 +52,17 @@ mod text_generation_tests;
 
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
+#[path = "workspace_identity_tests.rs"]
+mod workspace_identity_tests;
 
 #[path = "mcp_elicitation_tests.rs"]
 mod mcp_elicitation_tests;
 
 #[path = "async_question_tests.rs"]
 mod async_question_tests;
+
+#[path = "issue_question_hint_tests.rs"]
+mod issue_question_hint_tests;
 
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
@@ -1221,6 +1227,9 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
     handler.turn_queue_path = Arc::new(runtime_work_dir.join("turn-queue.json"));
+    handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
+    handler.automation_store =
+        crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
     handler
         .turn_scheduler
         .lock()
@@ -3598,7 +3607,9 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 .send(json!({"event": "runtime.work.changed", "payload": {"taskId": "unrelated"}}))
                 .unwrap();
 
-            handler.delete_archived_link_background(link.clone()).await;
+            handler
+                .delete_archived_link_background(link.clone(), false)
+                .await;
 
             assert!(path.exists());
             assert!(handler.local_task_link("task-1").is_some());
@@ -3613,7 +3624,7 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 .is_empty());
 
             fs::write(path.join(".git"), marker).unwrap();
-            handler.delete_archived_link_background(link).await;
+            handler.delete_archived_link_background(link, false).await;
             assert!(!path.exists());
             assert!(handler.local_task_link("task-1").is_none());
             assert!(handler.worktrees.snapshot_source_for(path).is_none());

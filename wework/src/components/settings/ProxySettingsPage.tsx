@@ -368,7 +368,7 @@ export function ProxySettingsPage() {
       {localError && (
         <div
           data-testid="local-proxy-config-error"
-          className="mt-3 flex items-start gap-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+          className="mt-3 flex items-start gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive"
         >
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{localError}</span>
@@ -521,7 +521,7 @@ export function ProxySettingsPage() {
               {error && (
                 <div
                   data-testid="proxy-config-error"
-                  className="mt-3 flex items-start gap-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                  className="mt-3 flex items-start gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive"
                 >
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{error}</span>
