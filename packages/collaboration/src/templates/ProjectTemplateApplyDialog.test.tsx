@@ -223,7 +223,10 @@ it.each([{ models: [] }, { models: [selectableModel] }])(
   async ({ models }) => {
     const { render } = fixture({
       renderDialog: () => null,
-      listTemplateAgentModels: async () => ({ models, cloudModelsUnavailable: true }),
+      listTemplateAgentModels: async () => ({ models }),
+      listTemplateCloudAgentModels: async () => {
+        throw new Error('Cloud unavailable')
+      },
     })
     await render()
     expect(container.textContent).toContain('云端模型暂时无法加载')
@@ -234,6 +237,64 @@ it.each([{ models: [] }, { models: [selectableModel] }])(
     ).toBe(models.length + 1)
   }
 )
+
+it('allows selecting native models and applying while the cloud catalog is still pending', async () => {
+  const { render, api } = fixture({
+    renderDialog: () => null,
+    listTemplateAgentModels: async () => ({ models: [selectableModel] }),
+    listTemplateCloudAgentModels: () => new Promise(() => {}),
+    resolveTemplateAgentRouting: async () => ({
+      executionPolicy: { mode: 'fixed', environment_id: 'device' },
+      modelPolicy: { mode: 'fixed', model: selectableModel },
+    }),
+  })
+  await render()
+  const select = container.querySelector<HTMLSelectElement>('[data-testid="template-model-codex"]')!
+  expect(select.disabled).toBe(false)
+  await act(async () => {
+    select.value = runnerModelKey(selectableModel)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  const apply = container.querySelector<HTMLButtonElement>(
+    '[data-testid="template-bindings-apply"]'
+  )!
+  expect(apply.disabled).toBe(false)
+  await act(async () => apply.click())
+  expect(api.agents.create).toHaveBeenCalled()
+})
+
+it('keeps an explicitly cleared native default empty when the cloud request completes', async () => {
+  let resolveCloud!: (models: RunnerModel[]) => void
+  const host: ProjectAgentConfigurationHost = {
+    renderDialog: () => null,
+    listTemplateAgentModels: async () => ({ models: [{ ...selectableModel, is_default: true }] }),
+    listTemplateCloudAgentModels: () =>
+      new Promise(resolve => {
+        resolveCloud = resolve
+      }),
+  }
+  const onChange = vi.fn()
+  await act(async () =>
+    root.render(
+      <TemplateModelSelection
+        runtime="codex"
+        configuration={{ host, location: 'local' }}
+        locale="zh-CN"
+        disabled={false}
+        onChange={onChange}
+      />
+    )
+  )
+  const select = container.querySelector<HTMLSelectElement>('[data-testid="template-model-codex"]')!
+  expect(select.value).toBe(runnerModelKey(selectableModel))
+  await act(async () => {
+    select.value = ''
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  await act(async () => resolveCloud([]))
+  expect(select.value).toBe('')
+  expect(onChange).toHaveBeenLastCalledWith(undefined)
+})
 
 it('retains the displayed choice on refresh failure but blocks applying until recovery', async () => {
   const list = vi

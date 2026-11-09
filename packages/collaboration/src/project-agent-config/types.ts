@@ -25,8 +25,11 @@ export interface ProjectAgentConfigurationHost {
     projectId?: string,
   ): Promise<{
     models: import('../agent-form/runnerRouting').RunnerModel[];
-    cloudModelsUnavailable?: boolean;
   }>;
+  listTemplateCloudAgentModels?(
+    runtime: 'codex' | 'claude_code',
+    projectId?: string,
+  ): Promise<import('../agent-form/runnerRouting').RunnerModel[]>;
   listTemplateAgentEnvironments?(
     projectId: string,
   ): Promise<import("../types").CollaborationExecutionEnvironment[]>;
