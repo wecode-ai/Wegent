@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { rejectModelWebSocketUpgrade } from '../modules/reject-model-upgrade.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -69,6 +72,17 @@ export function createDesktopScenario({
   }
 
   return {
+    modelProviderId: 'openai',
+    modelId: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+    async prepareApp({ codexHome, control }) {
+      const configPath = join(codexHome, 'config.toml')
+      const config = await readFile(configPath, 'utf8')
+      // Keep the real built-in provider identity while mocking only its model service.
+      await writeFile(configPath, `openai_base_url = "${control.url}/v1"\n${config}`)
+    },
+    attachServer(server) {
+      server.on('upgrade', (_request, socket) => rejectModelWebSocketUpgrade(server, socket))
+    },
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -145,8 +159,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', CHAT)
-      // The default native model shares an alias with the official catalog.
-      // Use the explicit custom-model identity for a real provider transition.
+      // Use an explicit custom-model identity, independent of native catalog aliases.
       await selectE2EModel(control, SOURCE_MODEL, 'Desktop E2E Responses', CHAT)
       const settings = await requestExecutor(
         control,
@@ -155,6 +168,18 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
+      const nativeCatalog = await requestExecutor(
+        control,
+        'runtime.codex.models.list',
+        { includeHidden: false },
+        uiTimeoutMs
+      )
+      assert.ok(
+        nativeCatalog.providers.some(
+          provider => provider.id === 'openai' && provider.type === 'official'
+        ),
+        'The target must use the built-in official provider, not a custom GPT alias'
+      )
       const model = catalog.models.find(
         model => model.runtime === 'codex' && model.local_model_id === SOURCE_MODEL
       )
@@ -387,7 +412,7 @@ export function createDesktopScenario({
         PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
         PROVIDER_SWITCH_OFFICIAL_LABEL,
         CHAT,
-        null
+        'openai'
       )
       await control.command('waitFor', CHAT, { visible: true })
       assert.ok(

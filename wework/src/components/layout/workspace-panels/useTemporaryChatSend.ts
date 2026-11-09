@@ -34,7 +34,6 @@ import type {
 } from '@/types/workbench'
 import type { runtimePaneQueue } from './runtimePaneQueues'
 import { prepareModelSessionSwitch } from './prepareModelSessionSwitch'
-import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>
 type SendContext = Pick<
@@ -131,22 +130,6 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
         return false
       }
       let sessionSwitch: Awaited<ReturnType<typeof prepareModelSessionSwitch>> = null
-      if (crossProviderSwitchBehavior === 'new-session') {
-        logRuntimeTaskCreateStage('stand_in_model_session_switch_decision', {
-          taskModelName: taskModelSelection?.taskSelection?.modelName,
-          activeModelName: taskModelSelection?.activeModel?.name,
-          activeProvider: taskModelSelection?.activeModel?.provider,
-          activeKind: taskModelSelection?.activeModel?.config?.weworkModelKind,
-          selectedModelName: taskModelSelection?.selectedModel?.name,
-          selectedProvider: taskModelSelection?.selectedModel?.provider,
-          selectedKind: taskModelSelection?.selectedModel?.config?.weworkModelKind,
-          sendEphemeral,
-          requiresNewSession: requiresNewSessionForModelSwitch(
-            taskModelSelection?.activeModel,
-            taskModelSelection?.selectedModel ?? null
-          ),
-        })
-      }
       if (
         crossProviderSwitchBehavior === 'new-session' &&
         address &&
