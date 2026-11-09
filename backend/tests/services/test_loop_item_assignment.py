@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import event
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -48,6 +49,33 @@ from tests.utils.collaboration import (
 def isolate_notification_delivery():
     with patch("app.core.async_utils.schedule_async_task"):
         yield
+
+
+@pytest.mark.parametrize("for_update", [False, True])
+def test_assignment_history_query_does_not_require_a_named_mysql_index(
+    for_update: bool,
+) -> None:
+    with (
+        Session() as db,
+        patch("sqlalchemy.orm.Query.all", autospec=True, return_value=[]) as read,
+    ):
+        assert (
+            issue_assignment_service._assignment_comments(
+                db, ["issue-with-history"], for_update=for_update
+            )
+            == []
+        )
+
+    query = read.call_args.args[0]
+    statement = str(
+        query.statement.compile(
+            dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "INDEX" not in statement
+    assert "loop_items.loop_item_id IN ('issue-with-history')" in statement
+    assert ("FOR UPDATE" in statement) is for_update
+    assert query.load_options._populate_existing is for_update
 
 
 def _make_project(db: Session, user: User) -> CloudProject:

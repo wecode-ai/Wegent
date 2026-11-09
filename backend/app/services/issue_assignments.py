@@ -452,18 +452,7 @@ class IssueAssignmentService:
             .order_by(LoopItemComment.created_at, LoopItemComment.id)
         )
         if for_update:
-            # Resource-type/index-merge scans can wait on another Issue's
-            # uncommitted comments even at READ COMMITTED. Bound the locking
-            # scan to this Issue while retaining current reads and row locks.
-            query = (
-                query.with_hint(
-                    LoopItemComment,
-                    "FORCE INDEX (ix_loop_items_loop_item_id)",
-                    dialect_name="mysql",
-                )
-                .populate_existing()
-                .with_for_update()
-            )
+            query = query.populate_existing().with_for_update()
         return query.all()
 
     def _reduce_events(
