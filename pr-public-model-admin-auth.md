@@ -11,6 +11,8 @@ The legacy `/api/models` write endpoints only required an authenticated user, bu
 
 - `uv run pytest tests/api/test_public_model_write_auth.py`
 - `uvx ruff@0.14.1 check app/api/endpoints/adapter/models.py tests/api/test_public_model_write_auth.py`
+- Added Platform E2E coverage in `tests/e2e/public_model_write_auth.py`; CI runs it in the shard-1 real hybrid gateway job.
+- Added Playwright API coverage in `frontend/e2e/tests/api/public-model-write-auth.spec.ts`; the existing API project and CI shards discover it automatically.
 
 ## Security impact
 

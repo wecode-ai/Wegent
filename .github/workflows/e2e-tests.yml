@@ -1220,6 +1220,8 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
           uv run --no-sync python tests/e2e/team_detail_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/team-detail.log"
+          uv run --no-sync python tests/e2e/public_model_write_auth.py \
+            2>&1 | tee "$E2E_REPORT_DIR/public-model-auth.log"
 
       - name: Upload Python gateway API E2E reports
         if: always() && matrix.shardIndex == 1
