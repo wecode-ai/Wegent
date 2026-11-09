@@ -292,7 +292,7 @@ export function DesktopSettingsMenu({
           {updateError && updateErrorSummary ? (
             <div className="flex items-start gap-2">
               <TriangleAlert
-                className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning"
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning wework:text-orange-600 wework:dark:text-orange-400"
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1">{updateErrorSummary}</span>
@@ -300,7 +300,7 @@ export function DesktopSettingsMenu({
                 type="button"
                 data-testid="app-update-error-details-button"
                 onClick={() => setSelectedUpdateError(updateError)}
-                className="shrink-0 rounded-sm text-focus underline-offset-2 hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40"
+                className="shrink-0 rounded-sm text-focus underline-offset-2 hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 wework:text-blue-600 wework:dark:text-blue-300"
               >
                 {t('workbench.app_update_error_details', '查看错误详情')}
               </button>

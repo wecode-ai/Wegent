@@ -560,7 +560,7 @@ export function TodoDetailPanel({
                         {t('todo.blocked', '阻塞')}：{child.blocker}
                       </span>
                     ) : child.waitingFor && child.waitingFor.length > 0 ? (
-                      <span className="max-w-40 truncate text-xs text-warning">
+                      <span className="max-w-40 truncate text-xs text-warning wework:text-amber-600">
                         {t('todo.waiting_for', '等待')}：{child.waitingFor.join('、')}
                       </span>
                     ) : (
@@ -737,7 +737,7 @@ export function TodoDetailPanel({
                   {item.waitingFor && item.waitingFor.length > 0 && (
                     <span
                       data-testid="todo-detail-dependency-warning"
-                      className="block truncate text-xs text-warning"
+                      className="block truncate text-xs text-warning wework:text-amber-600"
                     >
                       {t('todo.waiting_for', '等待')}：{item.waitingFor.join('、')}
                     </span>
@@ -887,7 +887,7 @@ export function TodoDetailPanel({
           {runError && (
             <div
               data-testid="todo-detail-run-error"
-              className="flex min-w-0 items-start gap-2 rounded-md border border-warning/25 bg-warning/10 px-2.5 py-2 text-xs text-warning"
+              className="flex min-w-0 items-start gap-2 rounded-md border border-warning/25 bg-warning/10 px-2.5 py-2 text-xs text-warning wework:border-amber-500/25 wework:bg-amber-500/10 wework:text-amber-700 wework:dark:text-amber-300"
             >
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span className="min-w-0">{runError}</span>
