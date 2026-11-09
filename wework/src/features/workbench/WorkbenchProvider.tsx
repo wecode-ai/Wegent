@@ -24,7 +24,6 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
-import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import {
   normalizeRuntimeWorkspacePath,
@@ -102,7 +101,6 @@ import type {
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
-  ModelOptions,
   ModelSelectionConfig,
   PluginPathComponent,
   ProjectExecutionMode,
@@ -979,94 +977,6 @@ function OwnedWorkbenchProvider({
     modelSelectionConfig,
     state.currentRuntimeTask,
   ])
-  const selectModelAndOptions = modelSelection.setSelectedModelAndOptions
-  const selectModelForScope = modelSelection.setSelectionForScope
-  const continueInNewConversation = useCallback(
-    (
-      model: UnifiedModel,
-      options: ModelOptions = {},
-      source?: {
-        address?: RuntimeTaskAddress
-        draft?: string
-      }
-    ) => {
-      const sourceTask = source?.address ?? state.currentRuntimeTask
-      if (!sourceTask) {
-        selectModelAndOptions(model, options)
-        return
-      }
-
-      const nextStandaloneChatKey = state.standaloneChatKey + 1
-      const nextChatScopeKey = getProjectChatScopeKey({
-        currentRuntimeTask: null,
-        standaloneChatKey: nextStandaloneChatKey,
-      })
-      const nextModelScopeKey = getModelSelectionScopeKey({
-        userId: currentUser.id,
-        currentProjectId: state.currentProject?.id ?? null,
-        currentRuntimeTask: null,
-        standaloneChatKey: nextStandaloneChatKey,
-      })
-      const sourceTitle = resolveRuntimeTaskSummary(sourceTask)?.title.trim() || sourceTask.taskId
-      const reference = createConversationMentionReference(sourceTitle, sourceTask)
-      const currentDraft = (source?.draft ?? draftInputByScope[projectChatScopeKey] ?? '').trim()
-      const nextDraft = currentDraft
-        ? `${reference}\n\n${currentDraft}`
-        : `${reference}\n\n${t(
-            'workbench.model_switch_new_conversation_prompt',
-            'Continue from the referenced conversation.'
-          )}`
-
-      selectModelForScope(
-        nextModelScopeKey,
-        model,
-        options,
-        projectModelSelection ?? undefined,
-        projectModelSelection === null
-      )
-      setDraftInputForScope(nextChatScopeKey, nextDraft)
-
-      if (state.currentProject) {
-        writeLastProjectId(ownershipKey, state.currentProject.id)
-        dispatch({
-          type: 'project_workspace_selected',
-          project: state.currentProject,
-          deviceWorkspaceId: state.selectedDeviceWorkspaceId,
-          startFreshChat: true,
-        })
-      } else {
-        writeLastProjectId(ownershipKey, null)
-        dispatch({
-          type: 'project_cleared',
-          standaloneDeviceId: sourceTask.deviceId || state.standaloneDeviceId,
-          standaloneWorkspacePath:
-            sourceTask.workspacePath ?? state.standaloneWorkspacePath ?? null,
-          startFreshChat: true,
-        })
-      }
-      navigateTo('/')
-      requestNewChatComposerFocus(workspaceTabId)
-    },
-    [
-      currentUser.id,
-      draftInputByScope,
-      selectModelAndOptions,
-      selectModelForScope,
-      projectChatScopeKey,
-      projectModelSelection,
-      resolveRuntimeTaskSummary,
-      setDraftInputForScope,
-      state.currentProject,
-      state.currentRuntimeTask,
-      state.selectedDeviceWorkspaceId,
-      state.standaloneChatKey,
-      state.standaloneDeviceId,
-      state.standaloneWorkspacePath,
-      t,
-      workspaceTabId,
-      ownershipKey,
-    ]
-  )
   const {
     resolveRuntimeTaskModelSelection,
     setRuntimeTaskSelectedModel,
@@ -2776,7 +2686,6 @@ function OwnedWorkbenchProvider({
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
       setSelectedModelAndOptions: modelSelection.setSelectedModelAndOptions,
-      continueInNewConversation,
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
@@ -2852,7 +2761,6 @@ function OwnedWorkbenchProvider({
       modelSelection.modelSelectionDiagnostics,
       modelSelection.setSelectedModel,
       modelSelection.setSelectedModelAndOptions,
-      continueInNewConversation,
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,

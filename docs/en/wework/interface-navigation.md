@@ -22,6 +22,8 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 
 ## Where do I go?
 
+For in-conversation model switching and continuity, see [Model settings](./user-guide/model-settings.md#model-controls).
+
 | Goal / common search terms                              | Click path                                                          | Conditions and details                                                                                                                                                                                                                                                               |
 | ------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | New task / new conversation                             | Left sidebar → New task                                             | [Getting started](./getting-started.md)                                                                                                                                                                                                                                              |

@@ -58,7 +58,6 @@ import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
-import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -90,14 +89,6 @@ export interface ProjectChatControls {
   onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
-  continueInNewConversation?: (
-    model: UnifiedModel,
-    options?: ModelOptions,
-    source?: {
-      address?: RuntimeTaskAddress
-      draft?: string
-    }
-  ) => void
   setSelectedModelOption: (optionId: string, value: string) => void
   getSelectedModel?: () => UnifiedModel | null
   getSelectedModelOptions?: () => ModelOptions
@@ -252,35 +243,10 @@ interface PendingQueuedSend {
 interface PendingModelSelection {
   model: UnifiedModel | null
   options?: ModelOptions
-  continueInNewConversation: boolean
 }
 
 function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
   return left?.name === right?.name && left?.type === right?.type
-}
-
-function codexConversationProvider(
-  model: UnifiedModel | null | undefined
-): 'openai' | 'router' | null {
-  if (!model || model.name === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) return null
-  const configuredKind =
-    typeof model.config?.weworkModelKind === 'string'
-      ? model.config.weworkModelKind
-      : typeof (model.config?.ui as Record<string, unknown> | undefined)?.family === 'string'
-        ? ((model.config?.ui as Record<string, unknown>).family as string)
-        : ''
-  if (configuredKind === 'codex-official') return 'openai'
-  if (configuredKind === 'codex-provider' || configuredKind === 'model-interface') return 'router'
-  return model.provider && model.provider !== 'local' ? 'router' : null
-}
-
-function requiresNewConversationForModelSwitch(
-  activeModel: UnifiedModel | null | undefined,
-  targetModel: UnifiedModel | null
-): boolean {
-  const activeProvider = codexConversationProvider(activeModel)
-  const targetProvider = codexConversationProvider(targetModel)
-  return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
@@ -524,10 +490,6 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
       setPendingModelSelection({
         model,
         options,
-        continueInNewConversation: requiresNewConversationForModelSwitch(
-          controls.activeModel,
-          model
-        ),
       })
       return false
     }
@@ -537,22 +499,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
 
   const confirmModelSelection = () => {
     if (!pendingModelSelection) return
-    const { model, options, continueInNewConversation } = pendingModelSelection
+    const { model, options } = pendingModelSelection
     setPendingModelSelection(null)
-    if (continueInNewConversation && model) {
-      if (controls.continueInNewConversation) {
-        controls.continueInNewConversation(model, options, { draft: value })
-      } else {
-        controls.onBlockedModelSelect?.(
-          model,
-          t(
-            'workbench.model_switch_new_conversation_unavailable',
-            'Start a new conversation before switching to a different model provider.'
-          )
-        )
-      }
-      return
-    }
     applyModelSelection(model, options)
   }
   const cancelModelSelection = () => {
@@ -656,7 +604,6 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
         pendingModelSelection.model?.name ||
         t('workbench.model_auto_select', 'Auto select')
       }
-      continueInNewConversation={pendingModelSelection.continueInNewConversation}
       onCancel={cancelModelSelection}
       onConfirm={confirmModelSelection}
     />
@@ -982,13 +929,11 @@ function QueueResumeDialog({
 function ModelSwitchWarningDialog({
   t,
   targetModelLabel,
-  continueInNewConversation,
   onCancel,
   onConfirm,
 }: {
   t: ReturnType<typeof useTranslation>['t']
   targetModelLabel: string
-  continueInNewConversation: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -1006,36 +951,23 @@ function ModelSwitchWarningDialog({
         className="w-full max-w-[400px] rounded-2xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]"
       >
         <h2 id="model-switch-warning-dialog-title" className="heading-small text-text-primary">
-          {continueInNewConversation
-            ? t('workbench.model_switch_new_conversation_title', 'Continue in a new conversation?')
-            : t('workbench.model_switch_warning_title', 'Switch model?')}
+          {t('workbench.model_switch_warning_title', 'Switch model?')}
         </h2>
         <p
           id="model-switch-warning-dialog-description"
           className="mt-2 text-sm leading-5 text-text-secondary"
         >
-          {continueInNewConversation
-            ? t(
-                'workbench.model_switch_new_conversation_description',
-                '{{model}} uses a different model provider, so it cannot continue this Codex thread directly.',
-                { model: targetModelLabel }
-              )
-            : t(
-                'workbench.model_switch_warning_description',
-                'Switching to {{model}} may change how the existing context is understood. Tool support, response style, and task continuity may also differ.',
-                { model: targetModelLabel }
-              )}
+          {t(
+            'workbench.model_switch_warning_description',
+            'Switching to {{model}} may change how the existing context is understood. Tool support, response style, and task continuity may also differ.',
+            { model: targetModelLabel }
+          )}
         </p>
         <p className="mt-2 text-sm leading-5 text-text-secondary">
-          {continueInNewConversation
-            ? t(
-                'workbench.model_switch_new_conversation_effect',
-                'Wework will open a new conversation, reference this conversation, and preserve the current draft.'
-              )
-            : t(
-                'workbench.model_switch_warning_effect',
-                'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
-              )}
+          {t(
+            'workbench.model_switch_warning_effect',
+            'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
+          )}
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button
@@ -1055,9 +987,7 @@ function ModelSwitchWarningDialog({
             onClick={onConfirm}
             className="h-8 rounded-lg bg-text-primary px-4 text-sm text-background hover:bg-text-primary/90"
           >
-            {continueInNewConversation
-              ? t('workbench.model_switch_new_conversation_confirm', 'Continue in new conversation')
-              : t('workbench.model_switch_warning_confirm', 'Switch model')}
+            {t('workbench.model_switch_warning_confirm', 'Switch model')}
           </Button>
         </div>
       </div>
