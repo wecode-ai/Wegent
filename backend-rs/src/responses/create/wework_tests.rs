@@ -338,10 +338,24 @@ fn hidden_fallback_must_match_the_conversation_model() {
         Some(&json!({
             "modelName": "hidden-model",
             "modelType": "public",
-            "options": {"weworkCloudModelNamespace": "default"}
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": 0
+            }
         })),
         &selection
     ));
+    assert!(
+        !recorded_selection_matches(
+            Some(&json!({
+                "modelName": "hidden-model",
+                "modelType": "public",
+                "options": {"weworkCloudModelNamespace": "default"}
+            })),
+            &selection
+        ),
+        "a recorded selection without the owner cannot prove which model row it used"
+    );
     assert!(!recorded_selection_matches(
         Some(&json!({"modelName": "other-model", "modelType": "public"})),
         &selection

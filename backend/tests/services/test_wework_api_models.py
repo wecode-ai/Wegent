@@ -284,10 +284,21 @@ def test_hidden_fallback_must_match_the_recorded_model():
         {
             "modelName": "hidden-model",
             "modelType": "public",
-            "options": {"weworkCloudModelNamespace": "default"},
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": "0",
+            },
         },
         selection,
     )
+    assert not _selection_matches_recorded(
+        {
+            "modelName": "hidden-model",
+            "modelType": "public",
+            "options": {"weworkCloudModelNamespace": "default"},
+        },
+        selection,
+    ), "a recorded selection without the owner cannot prove which model row it used"
     assert not _selection_matches_recorded(
         {"modelName": "other-model", "modelType": "public"}, selection
     )

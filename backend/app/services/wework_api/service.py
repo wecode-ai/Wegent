@@ -80,7 +80,14 @@ async def _target(
 def _selection_matches_recorded(
     previous: dict, selection: RuntimeModelSelection
 ) -> bool:
-    """Whether a hidden fallback names the conversation's recorded model."""
+    """Whether a hidden fallback names the conversation's recorded model.
+
+    A recorded selection that lacks the cloud namespace or owner cannot prove
+    which model row it used: the same name can exist in another namespace or
+    belong to another account. Hidden continuations therefore require both
+    selections to carry the same identity options instead of skipping absent
+    keys.
+    """
     if not previous:
         return False
     if previous.get("modelName") != selection.model_name:
@@ -92,11 +99,9 @@ def _selection_matches_recorded(
         runtime.CLOUD_MODEL_NAMESPACE_OPTION,
         runtime.CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
     ):
-        if (
-            key in previous_options
-            and key in selection.options
-            and str(previous_options[key]) != str(selection.options[key])
-        ):
+        if key not in previous_options or key not in selection.options:
+            return False
+        if str(previous_options[key]) != str(selection.options[key]):
             return False
     return True
 

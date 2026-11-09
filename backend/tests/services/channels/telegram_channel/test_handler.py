@@ -1032,6 +1032,40 @@ class TestTelegramChannelHandler:
             )
 
     @pytest.mark.asyncio
+    async def test_is_claude_compatible_override_follows_bind_model_pointer(
+        self, handler
+    ):
+        """A hidden pointer model resolves its target before the provider check."""
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        pointer_kind = SimpleNamespace(name="pointer-model")
+        pointer_spec = {"modelConfig": {"bind_model": "target-model"}}
+        target_kind = SimpleNamespace(name="target-model")
+        target_spec = {"modelConfig": {"env": {"model": "claude"}}}
+        with (
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.config.model_resolver._find_model_with_namespace",
+                return_value=(pointer_kind, pointer_spec),
+            ) as find_model,
+            patch(
+                "app.services.chat.config.model_resolver._resolve_bind_model_pointer",
+                return_value=(target_kind, target_spec),
+            ) as resolve_pointer,
+        ):
+            assert (
+                await handler._is_claude_compatible_override(db, user, "pointer-model")
+                is True
+            )
+
+        find_model.assert_called_once_with(db, "pointer-model", 1)
+        resolve_pointer.assert_called_once_with(db, 1, pointer_kind, pointer_spec)
+
+    @pytest.mark.asyncio
     async def test_broadcast_user_message_to_web_includes_display_metadata(
         self, handler
     ):

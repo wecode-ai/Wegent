@@ -249,12 +249,14 @@ export function useAgentRouting(
   const { modelMode, model } = initializedDraft
   const modelAvailable =
     model !== null && models.some(item => runnerModelKey(item) === runnerModelKey(model))
+  // A saved cloud model is supported when any merged candidate for the policy
+  // supports its runtime. For fixed policies the inventory may omit runtimes
+  // that the native catalog reveals, so validate against the merged candidates
+  // instead of the raw inventory entry.
   const persistedModelSupported =
     draft.modelPersisted &&
     model !== null &&
-    (executionPolicy?.mode === 'fixed'
-      ? Boolean(selectedEnvironment && runnerSupportsModel(selectedEnvironment, model))
-      : candidates.some(environment => runnerSupportsModel(environment, model)))
+    candidates.some(environment => runnerSupportsModel(environment, model))
   const modelPolicy: AgentModelPolicy | null =
     modelMode === 'user_select' ? { mode: 'user_select' } : model ? { mode: 'fixed', model } : null
   const validEnvironment =

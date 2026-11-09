@@ -777,12 +777,17 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         from app.services.chat.config.model_resolver import (
             _extract_model_config,
             _find_model_with_namespace,
+            _resolve_bind_model_pointer,
         )
 
         try:
-            _kind, spec = _find_model_with_namespace(db, model_name, user.id)
+            kind, spec = _find_model_with_namespace(db, model_name, user.id)
             if not spec:
                 return None
+            # A saved model can be a bind_model pointer wrapper without its own
+            # env section; execution follows the pointer, so compatibility must
+            # inspect the same target instead of treating the wrapper as unknown.
+            kind, spec = _resolve_bind_model_pointer(db, user.id, kind, spec)
             return is_claude_provider(_extract_model_config(spec).get("model"))
         except Exception:
             return None
