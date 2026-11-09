@@ -540,6 +540,43 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
   );
 });
 
+test("Linux native probes restore verified Electron downloads before the official installer", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'])",
+      ".github/workflows/wework-e2e.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const steps = JSON.parse(result.stdout);
+  const primeIndex = steps.findIndex(
+    (step) => step.name === "Restore verified Electron installer cache",
+  );
+  const installIndex = steps.findIndex(
+    (step) =>
+      step.name ===
+      "Install Electron for native startup and schema verification",
+  );
+  assert(primeIndex >= 0 && primeIndex < installIndex);
+  const prime = steps[primeIndex];
+  assert.equal(prime.if, steps[installIndex].if);
+  assert(prime.run.includes(".github/scripts/restore-ci-downloads.sh"));
+  assert(
+    prime.run.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert(
+    prime.run.includes("primeElectronInstallerCache({electronPackageRoot:"),
+  );
+  assert(
+    steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),
+  );
+});
+
 test("platform sharding uses eight runners and preserves every provider shard", () => {
   const result = spawnSync(
     "ruby",
