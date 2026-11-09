@@ -28,6 +28,7 @@ const CHILD = 'STAND_IN_SESSION_CHILD_RESULT'
 const SWITCH = 'STAND_IN_SESSION_UI_PROVIDER_SWITCH'
 const SWITCH_FOLLOWUP = 'STAND_IN_SESSION_UI_PROVIDER_FOLLOWUP'
 const CHAT = '[data-testid="stand-in-conversation"]'
+const SOURCE_MODEL = 'local-model:desktop-e2e-responses'
 
 export function createDesktopScenario({
   workspacePath,
@@ -144,6 +145,9 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', CHAT)
+      // The default native model shares an alias with the official catalog.
+      // Use the explicit custom-model identity for a real provider transition.
+      await selectE2EModel(control, SOURCE_MODEL, 'Desktop E2E Responses', CHAT)
       const settings = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
@@ -151,8 +155,10 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
-      const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
-      assert.ok(model)
+      const model = catalog.models.find(
+        model => model.runtime === 'codex' && model.local_model_id === SOURCE_MODEL
+      )
+      assert.ok(model, 'The source must be the explicitly selected custom Responses model')
       const options = {
         modelId: model.local_model_id,
         modelType: 'runtime',
@@ -187,7 +193,6 @@ export function createDesktopScenario({
           },
           uiTimeoutMs
         )
-      await selectE2EModel(control, undefined, undefined, CHAT)
       await control.command(
         'fill',
         `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
@@ -371,6 +376,7 @@ export function createDesktopScenario({
           .threadId,
         current.threadId
       )
+      assert.equal(current.modelSelection.modelName, SOURCE_MODEL)
       await control.command(
         'fill',
         `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
