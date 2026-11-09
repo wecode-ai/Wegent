@@ -148,6 +148,31 @@ export class CollaborationTemplateStore {
     return downloaded
   }
 
+  async delete(record: TemplateRecord): Promise<void> {
+    await this.load()
+    if (
+      record.source !== 'personal' ||
+      record.ownerId !== this.library.ownerId ||
+      record.document.metadata.namespace !== 'default'
+    )
+      throw new Error('invalid_template_scope')
+    // A completed synchronization may have assigned an id since the dialog opened.
+    await this.synchronization
+    const operation = this.writes.then(async () => {
+      const identity = templateIdentity(record)
+      const current = this.state.records.find(item => templateIdentity(item) === identity) ?? record
+      if (current.id !== null) {
+        if (!this.library.remote) throw new Error('connection_required')
+        await this.library.remote.delete(current.id)
+      }
+      const records = this.state.records.filter(item => templateIdentity(item) !== identity)
+      await this.library.persistence.write(records.filter(item => item.source !== 'builtin'))
+      this.update({ records, error: null })
+    })
+    this.writes = operation.catch(() => undefined)
+    return operation
+  }
+
   /** A conflict stays pending. Reconnecting never publishes or overwrites a source. */
   synchronize(): Promise<void> {
     if (this.synchronization) return this.synchronization

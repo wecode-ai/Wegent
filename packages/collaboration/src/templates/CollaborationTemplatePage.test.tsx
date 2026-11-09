@@ -50,6 +50,7 @@ function remote(): CollaborationTemplateRemote {
     save: vi.fn(),
     install: vi.fn(),
     publish: vi.fn(),
+    delete: vi.fn(),
   }
 }
 
@@ -58,6 +59,118 @@ async function click(testId: string) {
   expect(target).not.toBeNull()
   await act(async () => target!.click())
 }
+
+it.each(['en', 'zh-CN'] as const)(
+  'confirms deletion, preserves cancellation and retries failure in %s',
+  async locale => {
+    const backend = remote()
+    const document = structuredClone(builtinCollaborationTemplates()[0].document)
+    document.metadata = { name: 'imported-workflow', namespace: 'default' }
+    const record: TemplateRecord = {
+      id: 42,
+      ownerId: 7,
+      source: 'personal',
+      document,
+      revision: '1',
+    }
+    const write = vi.fn(async () => undefined)
+    const store = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      remote: backend,
+      persistence: { read: async () => [record], write },
+    })
+    await act(async () => root.render(<CollaborationTemplatePage store={store} locale={locale} />))
+    expect(container.querySelector('[data-testid="template-delete-product-lifecycle"]')).toBeNull()
+    await click('template-tab-mine')
+    await click('template-delete-imported-workflow')
+    expect(container.querySelector('dialog')?.textContent).toContain(document.spec.displayName)
+    expect(backend.delete).not.toHaveBeenCalled()
+    await click('template-delete-cancel')
+    expect(
+      container.querySelector('[data-testid="template-card-imported-workflow"]')
+    ).not.toBeNull()
+    await click('template-delete-imported-workflow')
+    vi.mocked(backend.delete).mockRejectedValueOnce(new Error('network unavailable'))
+    await click('template-delete-confirm')
+    expect(container.querySelector('dialog [role="alert"]')).not.toBeNull()
+    expect(write).not.toHaveBeenCalled()
+    await click('template-delete-confirm')
+    expect(backend.delete).toHaveBeenCalledWith(42)
+    expect(container.querySelector('dialog')).toBeNull()
+    expect(container.querySelector('[data-testid="template-card-imported-workflow"]')).toBeNull()
+  }
+)
+
+it('never offers deletion of other users’ downloaded templates', async () => {
+  const record = structuredClone(builtinCollaborationTemplates()[0])
+  record.ownerId = 8
+  record.id = 42
+  record.source = 'downloaded'
+  record.document.metadata = { name: 'someone-else', namespace: 'default' }
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: remote(),
+    persistence: { read: async () => [record], write: vi.fn() },
+  })
+  await act(async () => root.render(<CollaborationTemplatePage store={store} locale="en" />))
+  expect(container.querySelector('[data-testid="template-card-someone-else"]')).not.toBeNull()
+  expect(container.querySelector('[data-testid^="template-delete-"]')).toBeNull()
+})
+
+it('deletes account-only templates and invalidates their list metadata', async () => {
+  const backend = remote()
+  const document = structuredClone(builtinCollaborationTemplates()[0].document)
+  document.metadata = { name: 'account-only', namespace: 'default' }
+  vi.mocked(backend.get).mockResolvedValue({
+    id: 42,
+    ownerId: 7,
+    document,
+    source: 'personal',
+    revision: '1',
+  })
+  vi.mocked(backend.list).mockResolvedValue([
+    {
+      id: 42,
+      ownerId: 7,
+      namespace: 'default',
+      name: 'account-only',
+      displayName: 'Account only',
+      description: '',
+      version: '1.0.0',
+      revision: '1',
+    },
+    {
+      id: 43,
+      ownerId: 7,
+      namespace: 'shared-space',
+      name: 'shared-workflow',
+      displayName: 'Shared workflow',
+      description: '',
+      version: '1.0.0',
+      revision: '1',
+    },
+  ])
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: backend,
+    persistence: { read: async () => [], write: vi.fn() },
+  })
+  await act(async () => root.render(<CollaborationTemplatePage store={store} locale="en" />))
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 250))
+  })
+  await click('template-tab-mine')
+  expect(container.querySelector('[data-testid="template-delete-43"]')).toBeNull()
+  await click('template-delete-42')
+  vi.mocked(backend.list).mockResolvedValue([])
+  await click('template-delete-confirm')
+  expect(backend.get).toHaveBeenCalledWith(42)
+  expect(backend.delete).toHaveBeenCalledWith(42)
+  expect(container.querySelector('[data-testid="template-card-42"]')).toBeNull()
+})
 
 it('keeps the use action available after adding a marketplace template to the account', async () => {
   const backend = remote()
@@ -69,13 +182,17 @@ it('keeps the use action available after adding a marketplace template to the ac
   }
   record.document.metadata = { name: 'shared-workflow', namespace: 'default' }
   const store = new CollaborationTemplateStore({
-    scope: 'backend:7', ownerId: 7, remote: backend,
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: backend,
     persistence: { read: async () => [record], write: async () => {} },
   })
   const onUse = vi.fn()
-  await act(async () => root.render(
-    <CollaborationTemplatePage store={store} locale="en" mode="marketplace" onUse={onUse} />
-  ))
+  await act(async () =>
+    root.render(
+      <CollaborationTemplatePage store={store} locale="en" mode="marketplace" onUse={onUse} />
+    )
+  )
   await click('template-details-shared-workflow')
   await click('template-account-add')
   expect(backend.install).toHaveBeenCalledWith(42)
