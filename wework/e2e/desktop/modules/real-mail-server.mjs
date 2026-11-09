@@ -14,20 +14,6 @@ const run = promisify(execFile)
 const VERSION = '2.1.15'
 const SHA256 = '91d58798698cac357f015365240383b936ced2f2a1a9f7db37d9e3e1a31391b1'
 
-/**
- * Keep fixture APPEND times outside GreenMail's 12:xx parsing window.
- *
- * GreenMail 1.6.15 parses APPEND's 24-hour date_time with a 12-hour pattern,
- * so 12:xx is stored as 00:xx. The scenarios only depend on calendar-day
- * boundaries, which a one-hour shift preserves.
- */
-export function appendInternalDate(internalDate) {
-  assert.ok(internalDate instanceof Date && Number.isFinite(internalDate.getTime()))
-  return internalDate.getUTCHours() === 12
-    ? new Date(internalDate.getTime() - 60 * 60 * 1000)
-    : internalDate
-}
-
 async function startImapProxy(port, targetPort) {
   let online = true
   const sockets = new Set()
@@ -231,7 +217,7 @@ export async function startRealMailServer(directory, runtimeRoot) {
     pauseImap: () => proxy.pause(),
     resumeImap: () => proxy.resume(),
     async append(subject, text, messageId, internalDate) {
-      const appendedDate = appendInternalDate(internalDate)
+      assert.ok(internalDate instanceof Date && Number.isFinite(internalDate.getTime()))
       const transport = nodemailer.createTransport({ streamTransport: true, buffer: true })
       const encoded = await transport.sendMail({
         from: 'sender@example.com',
@@ -239,10 +225,10 @@ export async function startRealMailServer(directory, runtimeRoot) {
         subject,
         text,
         messageId,
-        date: appendedDate,
+        date: internalDate,
       })
       return imap('owner', async client => {
-        const added = await client.append('INBOX', encoded.message, [], appendedDate)
+        const added = await client.append('INBOX', encoded.message, [], internalDate)
         assert.ok(added.uid, 'Real IMAP APPEND must return a UID')
         const stored = await client.fetchOne(
           added.uid,
@@ -251,7 +237,7 @@ export async function startRealMailServer(directory, runtimeRoot) {
         )
         assert.equal(
           new Date(stored.internalDate).getTime(),
-          Math.floor(appendedDate.getTime() / 1000) * 1000
+          Math.floor(internalDate.getTime() / 1000) * 1000
         )
         return { uid: added.uid, internalDate: new Date(stored.internalDate).toISOString() }
       })
