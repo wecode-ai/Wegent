@@ -2,9 +2,12 @@
 
 assert_case "docs only" "$all_false" "docs/zh/index.md"
 
-assert_case "Electron test runtime changes select Wework tests" \
-  "${all_false/wework=false/wework=true}" \
-  ".github/scripts/prepare-wework-electron-test-runtime.mjs"
+electron_cache_expected="${all_false/wework=false/wework=true}"
+for path in .github/scripts/prime-ci-electron-installer-cache.mjs \
+  .github/actions/prepare-electron-installer-cache/action.yml; do
+  assert_case "Electron installer cache changes run both consumer workflows: $path" \
+    "${electron_cache_expected/wework_e2e=false/wework_e2e=true}" "$path"
+done
 
 assert_case "DingTalk HTTPS fixture changes run platform E2E" \
   "${all_false/platform_e2e=false/platform_e2e=true}" \

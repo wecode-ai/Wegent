@@ -29,9 +29,14 @@ classify_path() {
   case "$path" in
     # Known leaf actions select their actual consumers; unknown actions retain full validation.
     .github/ci/wework-unit-test-durations.json | .github/scripts/balance-wework-unit-tests.* | \
-      .github/scripts/prepare-wework-electron-test-runtime.mjs | \
       wework/scripts/ci-test-sequencer.*)
       changed[wework]=true
+      return
+      ;;
+    .github/actions/prepare-electron-installer-cache/* | \
+      .github/scripts/prime-ci-electron-installer-cache.mjs)
+      changed[wework]=true
+      changed[wework_e2e]=true
       return
       ;;
     .github/actions/build-frontend-e2e/* | .github/scripts/frontend-e2e-build*.mjs | \

@@ -540,6 +540,70 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
   );
 });
 
+test("Linux native probes restore verified Electron downloads before the official installer", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate({core: YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'], unit: YAML.load_file(ARGV[1])['jobs']['test-wework']['steps'], action: YAML.load_file(ARGV[2])['runs']['steps']})",
+      ".github/workflows/wework-e2e.yml",
+      ".github/workflows/test.yml",
+      ".github/actions/prepare-electron-installer-cache/action.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const { core: steps, unit, action } = JSON.parse(result.stdout);
+  const primeIndex = steps.findIndex(
+    (step) => step.name === "Restore verified Electron installer cache",
+  );
+  const installIndex = steps.findIndex(
+    (step) =>
+      step.name ===
+      "Install Electron for native startup and schema verification",
+  );
+  assert(primeIndex >= 0 && primeIndex < installIndex);
+  const prime = steps[primeIndex];
+  assert.equal(prime.if, steps[installIndex].if);
+  assert.equal(
+    prime.uses,
+    "./.github/actions/prepare-electron-installer-cache",
+  );
+  const unitPrime = unit.find((step) => step.name === prime.name);
+  assert.equal(unitPrime.uses, prime.uses);
+  assert.equal(unitPrime.if, "matrix.shard == 1");
+  assert(
+    unit.indexOf(unitPrime) <
+      unit.findIndex(
+        (step) => step.name === "Prepare Wework Electron dependencies",
+      ),
+  );
+  const commands = action.map((step) => step.run).join("\n");
+  assert(commands.includes("find_missing_apt_packages skopeo umoci"));
+  assert(commands.includes(".github/scripts/restore-ci-downloads.sh"));
+  assert(
+    commands.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert(
+    commands.includes(
+      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
+    ),
+  );
+  const moduleInstall = action.find((step) =>
+    step.run?.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert.equal(moduleInstall.env.ELECTRON_SKIP_BINARY_DOWNLOAD, "1");
+  assert.equal(
+    steps[installIndex].env.WEWORK_ELECTRON_DEPENDENCIES_READY,
+    "true",
+  );
+  assert(
+    steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),
+  );
+});
+
 test("platform sharding uses eight runners and preserves every provider shard", () => {
   const result = spawnSync(
     "ruby",

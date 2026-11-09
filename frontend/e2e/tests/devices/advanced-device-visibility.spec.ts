@@ -232,3 +232,102 @@ test('gates OpenClaw behind advanced mode and keeps ordinary chat on Executor', 
     }
   }
 })
+
+test('opens the task list on a narrow device task link with the conversation tools visible', async ({
+  page,
+  request,
+}) => {
+  const storageState = await page.context().storageState()
+  const token =
+    storageState.origins
+      .flatMap(origin => origin.localStorage)
+      .find(item => item.name === 'auth_token')?.value ||
+    storageState.cookies.find(cookie => cookie.name === 'auth_token')?.value
+  if (!token) throw new Error('Authenticated E2E storage did not include a token')
+  const api = createApiClient(request, API_BASE_URL, token)
+  const deviceId = `e2e-mobile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const deviceName = 'E2E Executor with a long device name for the mobile conversation toolbar'
+  const title = `Mobile device ${deviceId.slice(-6)}`
+  const prompt = `Persisted message for ${title}`
+  const device = await registerDevice(token, deviceId, deviceName, 'claudecode')
+  const taskIds: number[] = []
+
+  try {
+    const teams = await api.get<{ items: Array<{ id: number; bots: unknown[] }> }>(
+      '/api/teams?page=1&limit=100&scope=all'
+    )
+    expect(teams.status).toBe(200)
+    const team = teams.data?.items.find(item => item.bots.length > 0)
+    expect(team).toBeTruthy()
+
+    // Seed real history and bind it to the registered device through the task fork API.
+    const created = await api.post<{ id: number }>('/api/tasks/create', {
+      team_id: team!.id,
+      task_type: 'task',
+      title: `${title} source`,
+      prompt,
+    })
+    expect(created.status, JSON.stringify(created.data)).toBe(201)
+    const sourceId = created.data!.id
+    taskIds.push(sourceId)
+    const completed = await api.put(`/api/tasks/${sourceId}`, { status: 'COMPLETED' })
+    expect(completed.status, JSON.stringify(completed.data)).toBe(200)
+    const forked = await api.post<{ task_id: number }>(`/api/tasks/${sourceId}/fork`, {
+      target: { type: 'device', device_id: deviceId },
+    })
+    expect(forked.status, JSON.stringify(forked.data)).toBe(200)
+    const taskId = forked.data!.task_id
+    taskIds.push(taskId)
+    const renamed = await api.put(`/api/tasks/${taskId}`, { title })
+    expect(renamed.status, JSON.stringify(renamed.data)).toBe(200)
+
+    await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
+    await page.setViewportSize({ width: 320, height: 720 })
+    const taskUrl = `${APP_BASE_URL}/devices/chat?taskId=${taskId}`
+    await page.goto(taskUrl)
+
+    const header = page.getByRole('banner')
+    const target = header.getByTestId('device-chat-target-select')
+    const messages = page.getByTestId('messages-container')
+    await expect(page).toHaveURL(taskUrl)
+    await expect(messages).toContainText(prompt)
+    await expect(target).toHaveValue(deviceId)
+    await expect(target).toBeDisabled()
+    await expect(target.locator('option:checked')).toContainText(deviceName)
+
+    const more = header.getByRole('button', { name: /^(More Actions|更多操作)$/ })
+    await more.click()
+    const exportPdf = page.getByRole('menuitem', { name: /^(Export PDF|导出 PDF)$/ })
+    await expect(exportPdf).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: /^(Share Link|链接分享)$/ })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(exportPdf).toBeHidden()
+
+    const toggle = header.getByRole('button', { name: /^(Open sidebar|打开侧边栏)$/ })
+    await expect(toggle).toBeInViewport({ ratio: 1 })
+    await toggle.click()
+    const drawer = page.getByRole('dialog')
+    await expect(drawer.getByText(title, { exact: true })).toBeVisible()
+    await expect(page).toHaveURL(taskUrl)
+    const close = drawer.getByRole('button', { name: /^(Close sidebar|关闭侧边栏)$/ })
+    await expect(close).toBeInViewport({ ratio: 1 })
+    await close.click()
+    await expect(drawer).toHaveCount(0)
+
+    await expect(page).toHaveURL(taskUrl)
+    await expect(messages).toContainText(prompt)
+    await expect(target).toHaveValue(deviceId)
+    await expect(target).toBeDisabled()
+    await header.getByRole('button', { name: title, exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: title, exact: true })).toBeVisible()
+  } finally {
+    device.dispose()
+    await Promise.all([
+      deleteDevice(request, token, deviceId),
+      ...taskIds.map(async taskId => {
+        const deleted = await api.deleteTask(String(taskId))
+        expect(deleted.status).toBe(200)
+      }),
+    ])
+  }
+})

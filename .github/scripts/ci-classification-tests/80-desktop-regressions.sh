@@ -228,6 +228,17 @@ for parent_board_path in \
   fi
 done
 
+for path in .github/scripts/prime-ci-electron-installer-cache.mjs \
+  .github/actions/prepare-electron-installer-cache/action.yml \
+  wework/scripts/lib/electron-installer-cache.mjs; do
+  assert_desktop_case "Electron installer cache selects its native Core consumers: $path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"workbench-mode,native-window-startup"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' "$path"
+done
+
 assert_desktop_case "E2E dependency installer selects only its desktop consumers" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

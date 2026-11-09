@@ -1,34 +1,19 @@
 import { execFile } from "node:child_process";
-import { constants } from "node:fs";
-import {
-  access,
-  mkdtemp,
-  readFile,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
-import { prepareSharedElectronZip } from "../../wework/scripts/lib/electron-zip-cache.mjs";
+import { primeElectronInstallerCache } from "../../wework/scripts/lib/electron-installer-cache.mjs";
 
 const run = promisify(execFile);
-const root = await realpath(resolve("wework/electron/node_modules/electron"));
-const { version } = JSON.parse(
-  await readFile(join(root, "package.json"), "utf8"),
-);
-const filename = `electron-v${version}-linux-x64.zip`;
-const temporary = await mkdtemp(join(root, ".ci-electron-"));
+const temporary = await mkdtemp(join(tmpdir(), "ci-electron-"));
 const api = "https://api.github.com/repos/electron/electron/releases";
-const dist = join(root, "dist");
 
 try {
-  const zipDir = await prepareSharedElectronZip({
-    electronPackageRoot: root,
-    environment: { WEWORK_ELECTRON_ZIP_DIR: join(temporary, "verified") },
-    runtime: { platform: "linux", arch: "x64" },
-    downloadArtifact: async () => {
+  await primeElectronInstallerCache({
+    electronPackageRoot: "wework/electron/node_modules/electron",
+    downloadSourceArtifact: async ({ version, platform, arch }) => {
+      const filename = `electron-v${version}-${platform}-${arch}.zip`;
       const { stdout } = await run("curl", [
         "--fail",
         "--silent",
@@ -66,12 +51,6 @@ try {
       return download;
     },
   });
-  const extracted = join(temporary, "dist");
-  await run("unzip", ["-q", join(zipDir, filename), "-d", extracted]);
-  await access(join(extracted, "electron"), constants.X_OK);
-  await rm(dist, { recursive: true, force: true });
-  await rename(extracted, dist);
-  await writeFile(join(root, "path.txt"), "electron");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
