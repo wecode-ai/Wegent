@@ -12,13 +12,11 @@ Utility functions for Docker executor
 
 import os
 import re
-import socket
 import subprocess
-from typing import Optional, Set
+from typing import Optional
 from urllib.parse import urlparse
 
 from executor_manager.common.config import ROUTE_PREFIX
-from executor_manager.config.config import PORT_RANGE_MAX, PORT_RANGE_MIN
 from shared.logger import setup_logger
 from shared.models.openai_converter import get_metadata_field
 from shared.utils.ip_util import get_host_ip, is_ip_address
@@ -64,86 +62,6 @@ def build_callback_url(task: dict) -> str:
         callback_url = f"{scheme}://{netloc}{ROUTE_PREFIX}/callback"
 
     return callback_url
-
-
-def find_available_port() -> int:
-    """
-    Find an available port in the defined range.
-    Only considers ports used by containers with label=owner=executor_manager
-    and ports in use by the host system.
-
-    Returns:
-        int: An available port number
-
-    Raises:
-        RuntimeError: If no ports are available in the defined range
-    """
-    try:
-        # Get ports used by Docker containers with specific label
-        docker_used_ports = get_docker_used_ports()
-        logger.info(
-            "Docker ports in use by executor_manager: %s", sorted(docker_used_ports)
-        )
-
-        # Find first available port in range
-        return _get_first_available_port(docker_used_ports)
-
-    except subprocess.CalledProcessError as e:
-        logger.error("Error checking Docker ports: %s", e.stderr or e)
-        raise
-    except Exception:
-        logger.exception("Unexpected error while finding available port")
-        raise
-
-
-def _get_first_available_port(used_ports: Set[int]) -> int:
-    """
-    Find the first available port in the defined range.
-
-    Args:
-        used_ports: Set of ports already in use
-
-    Returns:
-        int: First available port
-
-    Raises:
-        RuntimeError: If no ports are available
-    """
-    for port in range(PORT_RANGE_MIN, PORT_RANGE_MAX + 1):
-        if port not in used_ports:
-            logger.info("Selected available port: %d", port)
-            return port
-
-    raise RuntimeError(f"No available ports in range {PORT_RANGE_MIN}-{PORT_RANGE_MAX}")
-
-
-def get_docker_used_ports() -> Set[int]:
-    """
-    Get ports used by Docker containers with owner=executor_manager label.
-
-    Returns:
-        Set[int]: Set of port numbers in use
-    """
-    docker_used_ports = set()
-    cmd = [
-        "docker",
-        "ps",
-        "--filter",
-        "label=owner=executor_manager",
-        "--format",
-        "{{.Ports}}",
-    ]
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-    port_pattern = r"0\.0\.0\.0:(\d+)->.*?/tcp"
-    for line in result.stdout.splitlines():
-        docker_used_ports.update(
-            int(p)
-            for p in re.findall(port_pattern, line)
-            if PORT_RANGE_MIN <= int(p) <= PORT_RANGE_MAX
-        )
-
-    return docker_used_ports
 
 
 def check_container_ownership(container_name: str) -> bool:
