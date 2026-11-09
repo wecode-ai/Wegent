@@ -46,6 +46,7 @@ import {
   rememberProjectSpaceTaskBinding,
 } from './projectSpaceSelection'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
+import * as projectSurfaces from '@wegent/collaboration/project-shell/projectSurfaces'
 
 type BoardIssueCardRenderer = NonNullable<
   ComponentProps<typeof CollaborationApp>['renderBoardIssueCard']
@@ -527,6 +528,73 @@ function deferred<T>() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it.each([
+    ['surface=plan&mode=timeline', 'calendar'],
+    ['surface=plan&mode=timeline&view=gantt', 'gantt'],
+    ['surface=admin&mode=settings', 'manage'],
+    ['view=not-a-view', 'board'],
+  ])('applies and rolls back project surface query %s', async (query, expectedView) => {
+    const props = {
+      user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
+      localProjects: [],
+      services: {
+        sharedWorkspaceApi: {
+          projects: {
+            get: vi.fn().mockResolvedValue({
+              id: 'surface-project',
+              name: 'Surface project',
+              project_store: 'backend',
+            }),
+          },
+        },
+      } as never,
+      activeProjectRef: { projectStore: 'backend' as const, projectId: 'surface-project' },
+      projectSurfaceQuery: query,
+    }
+    const parse = vi.spyOn(projectSurfaces, 'parseProjectSurfaceQuery')
+    const view = render(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        featureFlags: { 'collab.projectSurfaces.v1': false },
+      })
+    )
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-project-view',
+      'board'
+    )
+    expect(parse).not.toHaveBeenCalled()
+    view.rerender(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        featureFlags: { 'collab.projectSurfaces.v1': true },
+      })
+    )
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-project-view',
+      expectedView
+    )
+    expect(parse).toHaveBeenCalled()
+    await act(async () => screen.getByTestId('collaboration-platform-manage-project').click())
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-project-view',
+      'manage'
+    )
+    parse.mockClear()
+    view.rerender(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        featureFlags: { 'collab.projectSurfaces.v1': false },
+      })
+    )
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-project-view',
+      'board'
+    )
+    expect(parse).not.toHaveBeenCalled()
+    expect(props.projectSurfaceQuery).toBe(query)
+    parse.mockRestore()
+  })
+
   it('does not reject task creation when the Issue start update fails', async () => {
     const issues = {
       get: vi.fn().mockResolvedValue({

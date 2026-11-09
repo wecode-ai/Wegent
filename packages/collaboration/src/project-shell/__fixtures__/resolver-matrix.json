@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "contract": "project-surface-resolver@1",
+  "description": "Golden fixture for the surface resolver. Every case is a deep-equal assertion; keys inside expected are all required.",
+  "resultKeys": ["surface", "mode", "legacyView", "timelineSubview", "lossy", "unsupported"],
+  "cases": [
+    {
+      "id": "legacy-board",
+      "input": { "kind": "legacy", "view": "board" },
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "legacy-calendar",
+      "input": { "kind": "legacy", "view": "calendar" },
+      "expected": {
+        "surface": "plan",
+        "mode": "timeline",
+        "legacyView": "calendar",
+        "timelineSubview": "calendar",
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "legacy-gantt",
+      "input": { "kind": "legacy", "view": "gantt" },
+      "expected": {
+        "surface": "plan",
+        "mode": "timeline",
+        "legacyView": "gantt",
+        "timelineSubview": "gantt",
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "legacy-table",
+      "input": { "kind": "legacy", "view": "table" },
+      "expected": {
+        "surface": "plan",
+        "mode": "table",
+        "legacyView": "table",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "legacy-milestones",
+      "input": { "kind": "legacy", "view": "milestones" },
+      "expected": {
+        "surface": "plan",
+        "mode": "milestones",
+        "legacyView": "milestones",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "legacy-files",
+      "input": { "kind": "legacy", "view": "files" },
+      "expected": {
+        "surface": "admin",
+        "mode": "files",
+        "legacyView": "files",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "legacy-manage",
+      "input": { "kind": "legacy", "view": "manage" },
+      "expected": {
+        "surface": "admin",
+        "mode": "settings",
+        "legacyView": "manage",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "link-plan-timeline-no-hint",
+      "input": { "kind": "query", "query": "surface=plan&mode=timeline" },
+      "expected": {
+        "surface": "plan",
+        "mode": "timeline",
+        "legacyView": "calendar",
+        "timelineSubview": "calendar",
+        "lossy": true,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "link-plan-timeline-with-hint",
+      "input": { "kind": "query", "query": "surface=plan&mode=timeline&view=gantt" },
+      "expected": {
+        "surface": "plan",
+        "mode": "timeline",
+        "legacyView": "gantt",
+        "timelineSubview": "gantt",
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "link-plan-milestones",
+      "input": { "kind": "query", "query": "surface=plan&mode=milestones" },
+      "expected": {
+        "surface": "plan",
+        "mode": "milestones",
+        "legacyView": "milestones",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "link-plan-default-mode",
+      "input": { "kind": "query", "query": "surface=plan" },
+      "expected": {
+        "surface": "plan",
+        "mode": "timeline",
+        "legacyView": "calendar",
+        "timelineSubview": "calendar",
+        "lossy": true,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "link-work-default-mode",
+      "input": { "kind": "query", "query": "surface=work" },
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "fallback-invalid-combination",
+      "input": { "kind": "query", "query": "surface=work&mode=table" },
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "fallback-unknown-surface",
+      "input": { "kind": "query", "query": "surface=nope&mode=board" },
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "fallback-unknown-legacy-view",
+      "input": { "kind": "legacy", "view": "not-a-view" },
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    }
+  ]
+}

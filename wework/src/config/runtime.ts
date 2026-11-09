@@ -1,6 +1,12 @@
+import {
+  projectSurfacesFeatureFlag,
+  type ProjectSurfaceFeatureFlags,
+} from '@wegent/collaboration/project-shell/projectSurfaceRouting'
+
 export type RuntimeMode = 'local-first' | 'backend'
 
 export interface RuntimeConfig {
+  featureFlags: ProjectSurfaceFeatureFlags
   appBasePath: string
   desktopHost: 'browser' | 'electron'
   desktopWindowLabel: string
@@ -155,6 +161,9 @@ export function getRuntimeConfig(): RuntimeConfig {
     runtimeString(overrides, 'socketPath') || joinAppPath(appBasePath, '/socket.io')
 
   return {
+    featureFlags: overrides.featureFlags ?? {
+      [projectSurfacesFeatureFlag]: import.meta.env.VITE_COLLAB_PROJECT_SURFACES_V1 === 'true',
+    },
     appBasePath,
     desktopWindowLabel: runtimeString(overrides, 'desktopWindowLabel') || 'main',
     desktopHost: runtimeString(overrides, 'desktopHost') === 'electron' ? 'electron' : 'browser',

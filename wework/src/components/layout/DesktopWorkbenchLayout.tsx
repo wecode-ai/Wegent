@@ -50,12 +50,14 @@ import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { TaskBoardView } from '@/features/todo/TaskBoardView'
 import { PersonalStandInWorkspace } from '@/features/todo/PersonalStandInWorkspace'
 import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
+import { getRuntimeConfig } from '@/config/runtime'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
 import {
   defaultProjectSpaceContentRoute,
   projectSpaceContentRoute,
+  projectSpaceNavigationRoute,
   projectSpaceRefFromRoute,
   projectSpaceRouteParam,
   projectSpaceRouteRequestsDefaultProject,
@@ -1285,6 +1287,10 @@ export function DesktopWorkbenchLayout({
                 />
               ) : (
                 <WeworkCollaborationPlatform
+                  projectSurfaceQuery={ownedWorkspaceTab?.contentRoute
+                    .split('?')
+                    .slice(1)
+                    .join('?')}
                   user={workItemUser}
                   devices={state.devices}
                   localProjects={localTodoProjects}
@@ -1463,7 +1469,11 @@ export function DesktopWorkbenchLayout({
                     }
                     workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                       title: project.name,
-                      contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
+                      contentRoute: projectSpaceNavigationRoute(
+                        projectSpaceRef(project),
+                        ownedWorkspaceTab.contentRoute,
+                        getRuntimeConfig().featureFlags
+                      ),
                     })
                   }}
                 />

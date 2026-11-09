@@ -14,6 +14,18 @@ import { CollaborationTemplateStore, templateIdentity } from '@wegent/collaborat
 import { CollaborationPage } from '@/features/collaboration/CollaborationPage'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
 import { apiClient } from '@/apis/client'
+import * as surfaces from '@wegent/collaboration/project-shell/projectSurfaces'
+
+const surfaceFlag = 'collab.projectSurfaces.v1'
+
+jest.mock('@wegent/collaboration/project-shell/projectSurfaces', () => {
+  const actual = jest.requireActual('@wegent/collaboration/project-shell/projectSurfaces')
+  return {
+    ...actual,
+    parseProjectSurfaceQuery: jest.fn(actual.parseProjectSurfaceQuery),
+    resolveProjectSurface: jest.fn(actual.resolveProjectSurface),
+  }
+})
 
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
@@ -110,6 +122,8 @@ jest.mock('sonner', () => ({
 
 describe('CollaborationPage platform routing', () => {
   beforeEach(() => {
+    jest.mocked(surfaces.parseProjectSurfaceQuery).mockClear()
+    jest.mocked(surfaces.resolveProjectSurface).mockClear()
     mockUserLoading = false
     mockAccountScope = 'backend:auth-generation-1'
     mockUser = { id: 7, user_name: 'current-user' }
@@ -292,6 +306,71 @@ describe('CollaborationPage platform routing', () => {
       projectView: 'table',
       issueId: 'issue%3',
     })
+  })
+
+  it.each(['board', 'calendar', 'gantt', 'table', 'milestones', 'files', 'manage'])(
+    'bypasses surface parsing for the existing %s deep link by default',
+    view => {
+      mockPathname = '/collaboration/workspaces/w/projects/p'
+      mockSearchParams = new URLSearchParams(`view=${view}`)
+      render(<CollaborationPage />)
+      expect(capturedHost?.location.projectView).toBe(view)
+      expect(surfaces.parseProjectSurfaceQuery).not.toHaveBeenCalled()
+      expect(surfaces.resolveProjectSurface).not.toHaveBeenCalled()
+      expect(mockSearchParams.toString()).toBe(`view=${view}`)
+      expect(mockPush).not.toHaveBeenCalled()
+      expect(mockReplace).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['surface=plan&mode=timeline', 'calendar'],
+    ['surface=plan&mode=timeline&view=gantt', 'gantt'],
+    ['surface=admin&mode=settings', 'manage'],
+    ['view=not-a-view', 'board'],
+    ['surface=work&mode=table', 'board'],
+  ])('renders the enabled surface route %s without navigating', (query, view) => {
+    mockPathname = '/collaboration/workspaces/w/projects/p'
+    mockSearchParams = new URLSearchParams(query)
+    render(<CollaborationPage featureFlags={{ [surfaceFlag]: true }} />)
+    expect(capturedHost?.location.projectView).toBe(view)
+    expect(mockSearchParams.toString()).toBe(query)
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  it('returns to the existing route immediately when the flag is disabled', () => {
+    mockPathname = '/collaboration/workspaces/w/projects/p'
+    mockSearchParams = new URLSearchParams('surface=plan&mode=timeline')
+    const { rerender } = render(<CollaborationPage featureFlags={{ [surfaceFlag]: true }} />)
+    expect(capturedHost?.location.projectView).toBe('calendar')
+    rerender(<CollaborationPage featureFlags={{ [surfaceFlag]: false }} />)
+    expect(capturedHost?.location.projectView).toBe('board')
+    expect(mockSearchParams.toString()).toBe('surface=plan&mode=timeline')
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  it('preserves all six resolution fields when the rendered theme changes', async () => {
+    mockPathname = '/collaboration/workspaces/w/projects/p'
+    mockSearchParams = new URLSearchParams('surface=plan&mode=timeline&view=gantt')
+    render(<CollaborationPage featureFlags={{ [surfaceFlag]: true }} />)
+    const lightResult = jest.mocked(surfaces.parseProjectSurfaceQuery).mock.results.at(-1)?.value
+    try {
+      document.documentElement.classList.add('dark')
+      await waitFor(() =>
+        expect(
+          screen.getByTestId('collaboration-page-main').closest('.collaboration-theme')
+        ).toHaveAttribute('data-theme', 'dark')
+      )
+      expect(jest.mocked(surfaces.parseProjectSurfaceQuery).mock.results.at(-1)?.value).toEqual(
+        lightResult
+      )
+      expect(Object.keys(lightResult)).toHaveLength(6)
+      expect(capturedHost?.location.projectView).toBe('gantt')
+    } finally {
+      document.documentElement.classList.remove('dark')
+    }
   })
 
   it('maps the Workspace collaboration participants URL into the shared location', () => {

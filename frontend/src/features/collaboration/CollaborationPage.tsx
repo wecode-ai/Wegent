@@ -22,6 +22,11 @@ import {
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
 import { CollaborationTheme, useDocumentTheme } from '@wegent/collaboration/theme'
+import {
+  projectSurfacesFeatureFlag,
+  resolveEnabledProjectSurface,
+  type ProjectSurfaceFeatureFlags,
+} from '@wegent/collaboration/project-shell/projectSurfaceRouting'
 
 import {
   createProjectChatClient,
@@ -128,7 +133,15 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
   )
 }
 
-export function CollaborationPage() {
+const defaultSurfaceFlags: ProjectSurfaceFeatureFlags = {
+  [projectSurfacesFeatureFlag]: process.env.NEXT_PUBLIC_COLLAB_PROJECT_SURFACES_V1 === 'true',
+}
+
+export function CollaborationPage({
+  featureFlags = defaultSurfaceFlags,
+}: {
+  featureFlags?: ProjectSurfaceFeatureFlags
+} = {}) {
   const theme = useDocumentTheme()
   const { user, isLoading: userLoading } = useUser()
   const accountScope = String(apiClient.getCacheScope())
@@ -283,7 +296,10 @@ export function CollaborationPage() {
     legacyProjectId && segments[2] === 'issues' && segments[3]
       ? decodeURIComponent(segments[3])
       : null
-  const projectView = (searchParams.get('view') || 'board') as CollaborationView
+  const resolvedSurface =
+    projectId || legacyProjectId ? resolveEnabledProjectSurface(searchParams, featureFlags) : null
+  const projectView =
+    resolvedSurface?.legacyView ?? ((searchParams.get('view') || 'board') as CollaborationView)
   const section = searchParams.get('section')
   const projectSettingsSection =
     projectView === 'manage' &&
