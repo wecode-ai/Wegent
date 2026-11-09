@@ -9,7 +9,7 @@ import {
   CloudConnectionContext,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
-import '@/i18n'
+import i18n from '@/i18n'
 import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import * as migration from './migrateStandIn'
@@ -233,6 +233,27 @@ it('honors an explicit project link only while establishing the first instance b
     backendUrl: '',
   })
 })
+
+it.each(['zh-CN', 'en'])(
+  'preserves the localized stop-before-rebinding guidance in %s',
+  async language => {
+    const originalLanguage = i18n.language
+    try {
+      await i18n.changeLanguage(language)
+      const f = fixture()
+      render(f.workspace())
+      await userEvent.click(await screen.findByTestId('legacy-change-device'))
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        i18n.t('common:standIn.instance.stop_before_rebind')
+      )
+      expect(screen.queryByTestId('stand-in-view-devices')).not.toBeInTheDocument()
+      expect(f.binding).toHaveBeenCalledOnce()
+    } finally {
+      cleanup()
+      await i18n.changeLanguage(originalLanguage)
+    }
+  }
+)
 
 it('never stops a different binding that changed while its confirmation was open', async () => {
   const f = fixture()

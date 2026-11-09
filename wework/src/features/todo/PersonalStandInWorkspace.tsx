@@ -77,7 +77,7 @@ function AccountStandInWorkspace({
     (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? ''))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
-  const [error, setError] = useState<unknown>(null)
+  const [error, setError] = useState<{ message: string; cause?: unknown } | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
@@ -115,7 +115,7 @@ function AccountStandInWorkspace({
       cause => {
         if (current) {
           reportStandInError('load_projects', cause)
-          setError(cause)
+          setError({ message: getStandInErrorMessage(cause, 'load_projects_failed'), cause })
         }
       }
     )
@@ -140,9 +140,10 @@ function AccountStandInWorkspace({
       {t(binding?.status === 'stopping' ? 'standIn.instance.retry_stop' : 'standIn.instance.stop')}
     </button>
   )
-  const failure =
-    instance.error || (error ? getStandInErrorMessage(error, 'load_projects_failed') : null)
-  const upgradeRequired = requiresStandInUpgrade(instance.error ? instance.errorCause : error)
+  const failure = instance.error || error?.message
+  const upgradeRequired = requiresStandInUpgrade(
+    instance.error ? instance.errorCause : error?.cause
+  )
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="personal-stand-in-workspace">
       {failure && (
@@ -275,7 +276,7 @@ function AccountStandInWorkspace({
             }
             initialWorkView={query.get('view') === 'scheduled' ? 'scheduled' : 'work'}
             onSelectLocation={next => {
-              if (next !== deviceId) setError(t('standIn.instance.stop_before_rebind'))
+              if (next !== deviceId) setError({ message: t('standIn.instance.stop_before_rebind') })
             }}
             api={api}
             projects={projects}
