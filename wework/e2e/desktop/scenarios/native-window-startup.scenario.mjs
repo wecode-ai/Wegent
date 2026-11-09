@@ -53,6 +53,13 @@ export async function createDesktopScenario({ resultDir }) {
     appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
 
     async prepareApp() {
+      // This checkpoint exercises first-launch geometry without a saved window state.
+      const preferencesPath = join(userDataDirectory, 'app-preferences.json')
+      const preferences = JSON.parse(await readFile(preferencesPath, 'utf8'))
+      delete preferences.mainWindowState
+      await writeFile(preferencesPath, `${JSON.stringify(preferences, null, 2)}\n`, {
+        mode: 0o600,
+      })
       lightThemeSeed = await seedStoppedStartupTheme({
         resultDir,
         userDataDirectory,
@@ -73,6 +80,12 @@ export async function createDesktopScenario({ resultDir }) {
       })
       const snapshot = await waitForClosedStartupSplash(control)
       await verifyStartupSplashHandoff({ snapshot, resultDir })
+      const initialWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(
+        initialWindow.maximized,
+        false,
+        'A fresh launch unexpectedly maximized the window'
+      )
       assert.ok(
         snapshot.theme === 'light' || snapshot.theme === 'dark',
         `The Electron startup splash did not resolve a valid theme: ${snapshot.theme}`
