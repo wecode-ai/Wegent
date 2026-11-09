@@ -1,0 +1,41 @@
+name: Set up ORAS with download retries
+description: Install the pinned ORAS CLI, retrying GitHub release downloads that answer 504.
+
+inputs:
+  version:
+    description: ORAS CLI version to install.
+    default: "1.3.1"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up ORAS
+      id: attempt-1
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+      with:
+        version: ${{ inputs.version }}
+      continue-on-error: true
+
+    - name: Wait before retrying ORAS setup
+      if: steps.attempt-1.outcome == 'failure'
+      shell: bash
+      run: sleep 45
+
+    - name: Retry ORAS setup
+      id: attempt-2
+      if: steps.attempt-1.outcome == 'failure'
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+      with:
+        version: ${{ inputs.version }}
+      continue-on-error: true
+
+    - name: Wait before the last ORAS setup attempt
+      if: steps.attempt-1.outcome == 'failure' && steps.attempt-2.outcome == 'failure'
+      shell: bash
+      run: sleep 90
+
+    - name: Final ORAS setup attempt
+      if: steps.attempt-1.outcome == 'failure' && steps.attempt-2.outcome == 'failure'
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+      with:
+        version: ${{ inputs.version }}
