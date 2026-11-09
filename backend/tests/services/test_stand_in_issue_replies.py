@@ -135,6 +135,62 @@ def test_public_reply_advances_issue_unread_once_without_marking_its_owner_read(
     assert issue.version == version
 
 
+def test_delayed_read_acknowledges_only_the_observed_public_content(
+    test_db, test_user, scope, monkeypatch
+):
+    issue = scope[1]
+    issue.metadata_json = initialize_content_revision(issue.metadata_json, test_user.id)
+    test_db.commit()
+    observed = content_revision(issue.metadata_json)
+    publish(test_db, test_user, scope)
+    notify_read = MagicMock()
+    monkeypatch.setattr(
+        "app.services.wework_notifications.mark_issue_notifications_read", notify_read
+    )
+    updated = loop_item_service.mark_read(
+        test_db,
+        issue.id,
+        test_user.id,
+        activity_sequence=0,
+        observed_content_revision=observed,
+    )
+    assert is_unread(updated.metadata_json, test_user.id)
+    notify_read.assert_not_called()
+    current = content_revision(updated.metadata_json)
+    updated = loop_item_service.mark_read(
+        test_db, issue.id, test_user.id, observed_content_revision=current
+    )
+    assert not is_unread(updated.metadata_json, test_user.id)
+    notify_read.assert_called_once()
+    notify_read.reset_mock()
+    updated = loop_item_service.mark_read(
+        test_db, issue.id, test_user.id, observed_content_revision=observed
+    )
+    assert updated.metadata_json["read_revisions"][str(test_user.id)] == current
+    notify_read.assert_not_called()
+
+
+def test_future_read_revision_cannot_acknowledge_later_public_results(
+    test_db, test_user, scope
+):
+    publish(test_db, test_user, scope)
+    issue = scope[1]
+    current = content_revision(issue.metadata_json)
+    updated = loop_item_service.mark_read(
+        test_db, issue.id, test_user.id, observed_content_revision=current + 100
+    )
+    assert updated.metadata_json["read_revisions"][str(test_user.id)] == current
+    publish(
+        test_db,
+        test_user,
+        scope,
+        identity=scope[-1].model_copy(update={"message_id": "later-result"}),
+        text="Later",
+    )
+    test_db.refresh(issue)
+    assert is_unread(issue.metadata_json, test_user.id)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

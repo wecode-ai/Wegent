@@ -537,7 +537,11 @@ export function TaskActivityView({
       const scope = readScope.current
       if (!projectDeliveryApi || !scope) return
       try {
-        const updated = await projectDeliveryApi.markLoopItemRead(task.id, sequence)
+        const updated = await projectDeliveryApi.markLoopItemRead(
+          task.id,
+          sequence,
+          task.content_revision
+        )
         if (readScope.current !== scope) {
           throw new DOMException('Activity read scope changed', 'AbortError')
         }
@@ -550,7 +554,7 @@ export function TaskActivityView({
         throw cause
       }
     },
-    [onTaskRead, projectDeliveryApi, t, task.id]
+    [onTaskRead, projectDeliveryApi, t, task.id, task.content_revision]
   )
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({

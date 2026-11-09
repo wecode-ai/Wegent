@@ -4,6 +4,8 @@ sidebar_position: 36
 
 # 协作权限架构与不可破坏的规则
 
+已读确认仍先验证当前 Issue 访问，仅推进当前用户游标，不改 Issue 版本或时间。自动确认携带已观测内容版本，云端单次原子更新限制到 `min(当前版本, 观测版本)` 并保持游标单调，本地以相同观测版本限制清除未读；旧请求不清除后来内容及提醒。`test_delayed_read_acknowledges_only_the_observed_public_content`、API 游标回归和真实 MySQL 桌面场景保护该事务，CP 不变量不变。
+
 显式手动委托与自动接收条件分开：已有角色的接收开关、项目订阅和标签不替代一次手动执行授权。启动前将来源、指派和提及身份与持久会话记录逐项比较，不能用请求字段伪造手动来源；执行及公开仍验证当前角色存在、Issue 访问、负责人和原指派。角色未明确选择时仍要求项目连接，自动唤醒及跟进仍检查完整接收条件。`paused_issue_intake_allows_only_trusted_manual_requests` 和既有分身通知、工作区桌面场景覆盖该边界；CP 不变量不变。
 
 同一分身的 Issue 会话预留使用独立于指派的持久标识。现有任务绑定写入在 Issue 行锁下重读本人、当前活跃设备与有效绑定，另一设备或不同原生任务不能重复占用同一标识；提及和指派共用相同路由检查。标识仅用于路由，不授予执行、来源或私人会话访问权限。两设备真实 MySQL 并发验收与 `test_issue_conversation_reservation_is_device_independent_and_idempotent` 覆盖该事务，CP 不变量不变。

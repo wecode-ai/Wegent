@@ -134,6 +134,7 @@ class LoopItemPermissions(BaseModel):
 
 class LoopItemRead(BaseModel):
     activity_sequence: int | None = Field(default=None, ge=0)
+    content_revision: int | None = Field(default=None, ge=0)
 
 
 class IssueBadge(BaseModel):

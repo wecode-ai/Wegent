@@ -334,7 +334,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         'The child must still be running when the follow-up is accepted'
       )
       await control.command('click', '[data-testid="cloud-todo-detail-close"]')
-      await request(`/v1/loop-items/${issue.id}/read`, {})
+      const observedRead = await request(`/v1/loop-items/${issue.id}/read`, {})
       assert.equal((await request(`/v1/loop-items/${issue.id}`)).is_unread, false)
       childReleased = true
       reply(heldChild, [assistantMessage(RAW_CHILD)])
@@ -352,6 +352,15 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       assert.ok(
         !JSON.stringify(completed).includes(RAW_CHILD),
         'Raw child output must remain private'
+      )
+      const delayedRead = await request(`/v1/loop-items/${issue.id}/read`, {
+        content_revision: observedRead.content_revision,
+        activity_sequence: observedRead.activity_read_sequence ?? 0,
+      })
+      assert.equal(
+        delayedRead.is_unread,
+        true,
+        'A delayed read may acknowledge only observed content'
       )
       assert.equal(
         (await request(`/v1/loop-items/${issue.id}`)).is_unread,

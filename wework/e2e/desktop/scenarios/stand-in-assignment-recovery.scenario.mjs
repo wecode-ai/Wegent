@@ -12,6 +12,9 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
+const RESULT = 'Reassignment work completed.'
+const ROLE_NAME = 'Reassignment reviewer'
+
 export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
@@ -28,7 +31,10 @@ export function createDesktopScenario({
       signal: AbortSignal.timeout(uiTimeoutMs),
     })
     const text = await response.text()
-    assert.ok(response.ok, `${path}: ${response.status} ${text}`)
+    assert.ok(
+      response.ok,
+      `${path}: ${response.status} ${text}; requestVersion=${body?.version ?? 'none'}`
+    )
     return text ? JSON.parse(text) : null
   }
   async function until(load, accept, message) {
@@ -48,6 +54,7 @@ export function createDesktopScenario({
     const row = {
       stage,
       issueId: issue.id,
+      version: detail.version,
       assignee: detail.assignee_user_id,
       identity: detail.human_task_binding,
       assignments,
@@ -60,6 +67,13 @@ export function createDesktopScenario({
     )
     console.log('[stand-in-assignment-recovery]', JSON.stringify(row))
     return detail
+  }
+  async function expectPublicResults(issue, count) {
+    await until(
+      () => request(`/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`),
+      rows => rows.filter(row => row.body === RESULT && row.author === ROLE_NAME).length === count,
+      `Expected ${count} persisted public result(s) before continuing the assignment flow`
+    )
   }
   return {
     requiresCloudEnvironment: true,
@@ -102,11 +116,7 @@ export function createDesktopScenario({
       const id = `reassignment-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(
-        createSse([
-          responseCreated(id),
-          assistantMessage('Reassignment work completed.'),
-          responseCompleted(id),
-        ])
+        createSse([responseCreated(id), assistantMessage(RESULT), responseCompleted(id)])
       )
       return true
     },
@@ -124,6 +134,7 @@ export function createDesktopScenario({
             {
               ...initial,
               id: 'recovery-reviewer',
+              name: ROLE_NAME,
               enabled: true,
               prompt: 'Handle this reassigned Issue.',
               collaboration: {
@@ -195,6 +206,8 @@ export function createDesktopScenario({
         firstConversation.task.threadId,
         'Initial work must have a real native conversation'
       )
+      // Native completion precedes the separate public-comment transaction.
+      await expectPublicResults(issue, 1)
       issue = await record('first-completed', issue)
       const firstIdentity = issue.human_task_binding
       await rpc('runtime.stand_in.personal.save', {
@@ -210,6 +223,7 @@ export function createDesktopScenario({
           })),
         },
       })
+      issue = await request(`/v1/loop-items/${issue.id}`)
       issue = await request(`/v1/cloud-projects/${project.id}/loop-items/${issue.id}/assign`, {
         version: issue.version,
         assigneeType: 'user',
@@ -265,6 +279,7 @@ export function createDesktopScenario({
       )
       assert.ok(firstConversation.task.executionState?.latestTurnId)
       assert.ok(secondConversation.task.executionState?.latestTurnId)
+      await expectPublicResults(issue, 2)
       const manual = await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
       assert.equal(
         manual.taskId,

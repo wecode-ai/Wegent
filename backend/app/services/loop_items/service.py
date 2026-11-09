@@ -2073,6 +2073,7 @@ class LoopItemService:
         item_id: str,
         user_id: int,
         activity_sequence: int | None = None,
+        observed_content_revision: int | None = None,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         mark_loop_item_read(
@@ -2080,10 +2081,17 @@ class LoopItemService:
             item_id=item.id,
             user_id=user_id,
             activity_sequence=activity_sequence,
+            observed_content_revision=observed_content_revision,
         )
         from app.services.wework_notifications import mark_issue_notifications_read
 
-        mark_issue_notifications_read(db, item_id=item.id, user_id=user_id)
+        db.expire(item)
+        db.refresh(item)
+        if not is_unread(item.metadata_json, user_id) and (
+            observed_content_revision is None
+            or observed_content_revision >= content_revision(item.metadata_json)
+        ):
+            mark_issue_notifications_read(db, item_id=item.id, user_id=user_id)
         db.commit()
         db.expire(item)
         db.refresh(item)

@@ -16,6 +16,7 @@ Manual launches and publication still validate the current role, Issue access an
 
 Mentions use assignment selection: enabled roles connected to the project, matching Issue tags and allowing automatic handling.
 Self mentions wake eligible roles without a human self-reminder.
+Automatic read receipts carry the displayed `content_revision`. Cloud cursors advance atomically and monotonically only up to that observation, without consuming newer content or notifications. Local receipts are bounded by the observed Issue version. Explicit mark-read requests may omit the bound. Native completion and public-result commit are separate boundaries: publication-dependent tests confirm the persisted comment before reading the current Issue version and performing one assignment, retaining optimistic locking without conflict retries.
 Replying to a public stand-in comment without other mentions wakes only the original role.
 Ordinary task top-level/reply session boundaries remain unchanged.
 
