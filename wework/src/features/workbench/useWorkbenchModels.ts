@@ -301,6 +301,7 @@ export function useWorkbenchModels({
             model = null
           }
         } catch (error) {
+          if (isCancelled?.()) return false
           if (isDefinitiveModelLookupError(error)) {
             model = null
           } else {
@@ -455,11 +456,15 @@ export function useWorkbenchModels({
       if (!cancelled) void loadModels()
     })
     window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
+    // A transient lookup can fail while the desktop is offline. Retry when
+    // connectivity returns instead of leaving readiness pending forever.
+    window.addEventListener('online', loadModels)
     return () => {
       cancelled = true
       modelLoadRevisionRef.current += 1
       unsubscribe?.()
       window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
+      window.removeEventListener('online', loadModels)
     }
   }, [api, enabled, loadModels])
 

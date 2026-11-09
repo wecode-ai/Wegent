@@ -230,9 +230,53 @@ test('does not restore an unrelated selection when the configured model changed 
     resourceUserId: 0,
   }
   api.getModel.mockResolvedValue(hiddenModel)
-  act(() => hook.result.current.refreshModels())
+  act(() => {
+    window.dispatchEvent(new Event('online'))
+  })
   await waitFor(() => expect(hook.result.current.selectedModel).toEqual(hiddenModel))
   expect(hook.result.current.isSelectionReady).toBe(true)
+})
+
+test('does not clear a newer selection when a cancelled lookup fails', async () => {
+  let rejectLookup: (error: unknown) => void = () => undefined
+  const pending = new Promise<UnifiedModel>((_, reject) => {
+    rejectLookup = reject
+  })
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: models }),
+    getModel: vi.fn(() => pending),
+  }
+  const hiddenConfig: ModelSelectionConfig = {
+    modelName: 'hidden-model',
+    modelType: 'public',
+    options: {},
+  }
+  const hook = renderHook(
+    ({ selectionConfig }: { selectionConfig: ModelSelectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey: scopeA,
+        selectionConfig,
+        persistSelection: false,
+        fallbackWhenConfiguredModelUnavailable: false,
+      }),
+    { initialProps: { selectionConfig: hiddenConfig } }
+  )
+  await waitFor(() => expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public'))
+
+  hook.rerender({ selectionConfig: taskA })
+  await waitFor(() => expect(hook.result.current.selectedModel?.name).toBe('model-a'))
+  expect(hook.result.current.isSelectionReady).toBe(true)
+
+  await act(async () => {
+    rejectLookup(new ApiError('offline', 503))
+    await pending.catch(() => undefined)
+  })
+
+  expect(hook.result.current.selectedModel?.name).toBe('model-a')
+  expect(hook.result.current.isSelectionReady).toBe(true)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
 })
 
 test('rejects a same-named model from another group identity', async () => {
