@@ -5445,6 +5445,15 @@
     "im_target": "Choose IM notification conversation"
   },
   "standIn": {
+    "native_input_pending": "Resolve the current question or permission card before sending another message.",
+    "desktop_notifications": {
+      "title": "Turn on stand-in desktop notifications",
+      "description": "Get notified about new messages or decisions. Allow notifications in both system and Wework settings.",
+      "enable": "Notification settings",
+      "never": "Don't show again",
+      "dismiss": "Dismiss for now",
+      "error": "Couldn't open or save notification settings. Try again."
+    },
     "project_coordinator": {
       "open": "Talk to lead",
       "title": "{{project}} · Lead",
