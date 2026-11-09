@@ -64,6 +64,9 @@ mod async_question_tests;
 #[path = "issue_question_hint_tests.rs"]
 mod issue_question_hint_tests;
 
+#[path = "inventory_read_tests.rs"]
+mod inventory_read_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
