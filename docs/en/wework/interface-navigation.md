@@ -54,6 +54,8 @@ Pending business questions offer **Talk it through** on the task question card o
 
 When a question is already handled but a notification reply was not sent, **Needs your input → above the left list → Unsent replies** retains selectable text and offers **Discard this draft**. See [Handle AI questions](./workbench.md#ai-questions).
 
+From **Projects → New project → Cloud project** in the sidebar, you can add a device while choosing the remote host. See [Projects and workspaces](./projects.md#add-device-from-project).
+
 ## Sidebar feature entries
 
 ### Jump to individual feature controls

@@ -44,6 +44,14 @@ Executor merges three Codex project representations:
 
 Thread grouping applies this precedence: exclusion through `projectless-thread-ids`, explicit `thread-project-assignments`, `thread-workspace-root-hints`, then longest-root path matching. Explicit metadata always wins over path inference.
 
+## Adding devices for remote projects
+
+Cloud connection settings and remote project creation share device onboarding. Wegent provisions and manages cloud devices; users run and manage remote Docker containers using generated commands. Commands are requested only after selecting Generate command. Neither entry offers a host installer script. The project device picker also allows adding another device when usable devices already exist.
+
+Remote project creation tracks the newly added device and selects it once it is usable and version compatible. Users can then open a directory, create an empty project, or clone a repository when Git support is available. Offline and incompatible devices remain visible but cannot be selected. Connection failures and version mismatches offer a status refresh. Returning to project selection after an accepted cloud creation does not allow duplicate creation.
+
+Closing device setup stops connection polling. Account or Backend changes clear commands and discovered devices; refreshing the same account's token preserves its generated command. The desktop `remote-device-onboarding` checkpoint covers command generation and copying through both entries, followed by real device registration and remote project creation.
+
 ## Project editing across devices
 
 Local, cloud, and remote project menus and in-conversation project actions use the same editor. Users can change the project name, add or remove source folders, choose the primary folder, and configure project instructions, the default model, quick phrases, and plugins. The default project space remains controlled by the experimental feature flag.

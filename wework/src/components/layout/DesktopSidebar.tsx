@@ -150,7 +150,6 @@ import type {
   UnifiedModel,
   User as UserProfile,
 } from '@/types/api'
-import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { CloudWorkStatus, RuntimeWorkLoadState } from '@/types/workbench'
 import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
 import type {
@@ -297,7 +296,6 @@ interface DesktopSidebarProps {
     name: string
   }) => Promise<void>
   onSelectStandaloneDevice?: (deviceId: string | null) => void
-  onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onUpdateLocalRuntimeProject?: (data: {
     deviceId: string
@@ -2966,7 +2964,6 @@ export function DesktopSidebar({
   onOpenStandaloneWorkspace,
   onCreatePermanentWorktree,
   onSelectStandaloneDevice,
-  onGetRemoteDeviceStartupCommand,
   onUpdateProjectName,
   onUpdateLocalRuntimeProject,
   onRemoveProject,
@@ -4953,7 +4950,6 @@ export function DesktopSidebar({
             onCloneGitRepository={onCloneGitRepository}
             onStartGitCloneProject={onStartGitCloneProject}
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-            onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
             onRefreshDevices={onRefreshDevices}
           />
           <ArchiveConversationsConfirmDialog
