@@ -752,6 +752,9 @@ jobs:
           $redisServerPath = Join-Path $redisRoot "redis-server.exe"
           "WEWORK_E2E_REDIS_SERVER_BIN=$redisServerPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # E2E helpers also invoke bare `redis-cli`; pin it to the downloaded
+          # tools instead of depending on whatever the runner image ships.
+          $redisRoot | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Configure Windows MySQL E2E tools
         shell: pwsh
