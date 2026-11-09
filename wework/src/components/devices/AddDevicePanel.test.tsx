@@ -10,6 +10,7 @@ import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog
 import { StandaloneFolderProjectDialog } from '@/components/projects/StandaloneProjectDialogs'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 
 vi.mock('@/api/devices', () => ({ createDeviceApi: vi.fn() }))
 vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: vi.fn().mockResolvedValue(undefined) }))
@@ -46,13 +47,19 @@ const api = {
   getAllDevices: vi.fn(),
 }
 const onConnected = vi.fn()
+const getHome = vi.fn(async (deviceId: string) => `/home/${deviceId}`)
+const listDirectories = vi.fn().mockResolvedValue([])
 
 function ConnectedProject({
   devices = [],
   accountId = 1,
+  onStartGitCloneProject,
 }: {
   devices?: DeviceInfo[]
   accountId?: number
+  onStartGitCloneProject?: React.ComponentProps<
+    typeof StandaloneFolderProjectDialog
+  >['onStartGitCloneProject']
 }) {
   const context = useOptionalCloudConnection()
   return (
@@ -68,9 +75,10 @@ function ConnectedProject({
         mode="remote"
         devices={devices}
         onClose={vi.fn()}
-        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/new-device')}
-        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onGetDeviceHomeDirectory={getHome}
+        onListDeviceDirectories={listDirectories}
         onCreateDeviceDirectory={vi.fn()}
+        onStartGitCloneProject={onStartGitCloneProject}
       />
     </CloudConnectionContext.Provider>
   )
@@ -307,6 +315,69 @@ describe('shared device onboarding', () => {
       expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('new-remote')
     )
     expect(screen.getByTestId('standalone-remote-device-option-new-remote')).toBeEnabled()
+  })
+
+  test('uses the published catalog after discovery, including offline and deleted devices', async () => {
+    const original = device({ device_id: 'existing', status: 'offline' })
+    api.getAllDevices.mockResolvedValue([{ ...original, status: 'online' }, device()])
+    const view = render(<ConnectedProject devices={[original]} />)
+
+    fireEvent.click(screen.getByTestId('add-remote-docker-button'))
+    const select = await screen.findByTestId('standalone-remote-device-select')
+    await waitFor(() => expect(select).toHaveValue('new-remote'))
+    expect(screen.getByTestId('standalone-remote-device-option-existing')).toBeDisabled()
+
+    view.rerender(<ConnectedProject devices={[original, device()]} />)
+    expect(select).toHaveValue('new-remote')
+
+    view.rerender(<ConnectedProject devices={[original, device({ status: 'offline' })]} />)
+    expect(select).toHaveValue('')
+    expect(screen.getByTestId('standalone-remote-device-option-new-remote')).toBeDisabled()
+    expect(screen.queryByTestId('remote-project-source-existing')).not.toBeInTheDocument()
+
+    view.rerender(<ConnectedProject devices={[]} />)
+    expect(
+      screen.queryByTestId('standalone-remote-device-option-new-remote')
+    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
+  })
+
+  test('resets the Git directory and folder picker when a new device is selected', async () => {
+    await installGitUiTestContributions()
+    const original = device({ device_id: 'existing' })
+    const onStartGitCloneProject = vi.fn()
+    api.getAllDevices.mockResolvedValue([original, device()])
+    render(
+      <ConnectedProject devices={[original]} onStartGitCloneProject={onStartGitCloneProject} />
+    )
+
+    fireEvent.click(screen.getByTestId('remote-project-source-git'))
+    const parent = screen.getByTestId('remote-project-git-parent-input')
+    await waitFor(() => expect(parent).toHaveValue('/home/existing'))
+    const url = 'https://example.com/team/repository.git'
+    fireEvent.change(screen.getByTestId('remote-project-git-url-input'), { target: { value: url } })
+    fireEvent.change(parent, { target: { value: '/old-device/projects' } })
+    fireEvent.click(screen.getByTestId('remote-project-git-parent-browse'))
+    expect(await screen.findByTestId('device-folder-path-input')).toHaveValue(
+      '/old-device/projects'
+    )
+
+    fireEvent.click(screen.getByTestId('remote-project-add-device'))
+    fireEvent.click(screen.getByTestId('add-remote-docker-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('new-remote')
+    )
+    expect(screen.queryByTestId('device-folder-path-input')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue('/home/new-remote')
+    )
+    expect(screen.getByTestId('remote-project-git-url-input')).toHaveValue(url)
+    fireEvent.click(screen.getByTestId('remote-project-git-submit'))
+    expect(onStartGitCloneProject).toHaveBeenCalledWith('new-remote', {
+      url,
+      targetPath: '/home/new-remote/repository',
+    })
   })
 
   test('settings closes and publishes only the connected target', async () => {

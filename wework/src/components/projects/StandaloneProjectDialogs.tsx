@@ -123,7 +123,10 @@ function StandaloneFolderProjectDialogContent({
   )
   const cloudConnection = useOptionalCloudConnection()
   const deviceSelectId = useId()
-  const [discoveredDevices, setDiscoveredDevices] = useState<DeviceInfo[]>([])
+  const [pendingDevice, setPendingDevice] = useState<{
+    device: DeviceInfo
+    catalog: DeviceInfo[]
+  } | null>(null)
   const [onboardingBusy, setOnboardingBusy] = useState(false)
   const [cloudDeviceCreating, setCloudDeviceCreating] = useState(false)
   const [addingProjectDevice, setAddingProjectDevice] = useState(false)
@@ -132,15 +135,17 @@ function StandaloneFolderProjectDialogContent({
     setOnboardingBusy(busy)
     if (busy) setAddingProjectDevice(true)
   }, [])
-  const availableDevices = useMemo(
-    () => [
-      ...devices.filter(
-        device => !discoveredDevices.some(item => item.device_id === device.device_id)
-      ),
-      ...discoveredDevices,
-    ],
-    [devices, discoveredDevices]
-  )
+  // Discovery bridges the current catalog until the workbench publishes its next result.
+  if (pendingDevice && pendingDevice.catalog !== devices) {
+    setPendingDevice(null)
+  }
+  const availableDevices = useMemo(() => {
+    if (!pendingDevice || pendingDevice.catalog !== devices) return devices
+    return [
+      ...devices.filter(device => device.device_id !== pendingDevice.device.device_id),
+      pendingDevice.device,
+    ]
+  }, [devices, pendingDevice])
   const [nativePickerError, setNativePickerError] = useState<string | null>(null)
   const [nativePickerFallback, setNativePickerFallback] = useState(false)
   const [selectedLocalRoots, setSelectedLocalRoots] = useState<string[]>([])
@@ -150,16 +155,16 @@ function StandaloneFolderProjectDialogContent({
   )
   const [gitUrl, setGitUrl] = useState(initialGitClone?.url ?? '')
   const [gitBranch, setGitBranch] = useState(initialGitClone?.branch ?? '')
-  const [gitParentPath, setGitParentPath] = useState(
-    initialGitClone ? getParentPath(initialGitClone.targetPath) : ''
+  const [selectedGitParentPath, setSelectedGitParentPath] = useState<string | null>(
+    initialGitClone ? getParentPath(initialGitClone.targetPath) : null
   )
+  const gitParentPath = selectedGitParentPath ?? ''
   const [gitParentPickerOpen, setGitParentPickerOpen] = useState(false)
   const [gitAdvancedOpen, setGitAdvancedOpen] = useState(Boolean(initialGitClone?.branch))
   const [gitSubmitting, setGitSubmitting] = useState(false)
   const [gitError, setGitError] = useState<string | null>(null)
   const nativePickerStartedRef = useRef(false)
-  const gitParentDefaultDeviceIdRef = useRef<string | null>(null)
-  const currentRemoteDeviceOptions = useMemo(
+  const remoteDeviceOptions = useMemo(
     () =>
       mode === 'remote' && !fixedDeviceId
         ? getStandaloneDeviceOptions(availableDevices, mode).sort((left, right) =>
@@ -167,30 +172,6 @@ function StandaloneFolderProjectDialogContent({
           )
         : [],
     [availableDevices, fixedDeviceId, mode]
-  )
-  const [retainedRemoteDeviceOptions, setRetainedRemoteDeviceOptions] = useState<DeviceInfo[]>(
-    open ? currentRemoteDeviceOptions : []
-  )
-  useEffect(() => {
-    if (open && currentRemoteDeviceOptions.length === 0) return
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setRetainedRemoteDeviceOptions(open ? currentRemoteDeviceOptions : [])
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [currentRemoteDeviceOptions, open])
-  const remoteDeviceOptions = useMemo(
-    () =>
-      mode === 'remote' && !fixedDeviceId
-        ? currentRemoteDeviceOptions.length > 0
-          ? currentRemoteDeviceOptions
-          : retainedRemoteDeviceOptions
-        : [],
-    [currentRemoteDeviceOptions, fixedDeviceId, mode, retainedRemoteDeviceOptions]
   )
   const selectableDevices = useMemo(() => {
     if (!fixedDeviceId) {
@@ -225,6 +206,17 @@ function StandaloneFolderProjectDialogContent({
     selectableDevices.find(device => device.device_id === activeDeviceId) ??
     selectableDevices[0] ??
     null
+  const effectiveDeviceId = activeDevice?.device_id ?? null
+  const [gitTargetDeviceId, setGitTargetDeviceId] = useState(effectiveDeviceId)
+  const resetGitTarget = useCallback(() => {
+    setSelectedGitParentPath(null)
+    setGitParentPickerOpen(false)
+    setGitError(null)
+  }, [])
+  if (gitTargetDeviceId !== effectiveDeviceId) {
+    setGitTargetDeviceId(effectiveDeviceId)
+    resetGitTarget()
+  }
   const addingRemoteDevice = mode === 'remote' && remoteIntent === 'add-device'
   const choosingProjectSource =
     (mode === 'remote' || chooseProjectSource) &&
@@ -240,7 +232,7 @@ function StandaloneFolderProjectDialogContent({
   const closeDialog = useCallback(() => {
     if (onboardingBusy) return
     nativePickerStartedRef.current = false
-    setDiscoveredDevices([])
+    setPendingDevice(null)
     setAddingProjectDevice(false)
     setOnboardingPending(false)
     setNativePickerError(null)
@@ -250,14 +242,11 @@ function StandaloneFolderProjectDialogContent({
     setRemoteProjectSource(null)
     setGitUrl('')
     setGitBranch('')
-    setGitParentPath('')
-    setGitParentPickerOpen(false)
+    resetGitTarget()
     setGitAdvancedOpen(false)
     setGitSubmitting(false)
-    setGitError(null)
-    gitParentDefaultDeviceIdRef.current = null
     onClose()
-  }, [onClose, onboardingBusy])
+  }, [onClose, onboardingBusy, resetGitTarget])
 
   useEscapeKey(closeDialog, open)
 
@@ -304,21 +293,19 @@ function StandaloneFolderProjectDialogContent({
   const nativePickerDeviceId = activeDevice?.device_id ?? null
 
   useEffect(() => {
-    const deviceId = activeDevice?.device_id
     if (
       !open ||
       remoteProjectSource !== 'git' ||
-      !deviceId ||
-      gitParentDefaultDeviceIdRef.current === deviceId
+      !effectiveDeviceId ||
+      selectedGitParentPath !== null
     ) {
       return undefined
     }
-    gitParentDefaultDeviceIdRef.current = deviceId
     let cancelled = false
-    onGetDeviceHomeDirectory(deviceId)
+    onGetDeviceHomeDirectory(effectiveDeviceId)
       .then(path => {
         if (!cancelled) {
-          setGitParentPath(currentPath => currentPath || path)
+          setSelectedGitParentPath(currentPath => currentPath ?? path)
         }
       })
       .catch(error => {
@@ -333,7 +320,14 @@ function StandaloneFolderProjectDialogContent({
     return () => {
       cancelled = true
     }
-  }, [activeDevice?.device_id, onGetDeviceHomeDirectory, open, remoteProjectSource, t])
+  }, [
+    effectiveDeviceId,
+    onGetDeviceHomeDirectory,
+    open,
+    remoteProjectSource,
+    selectedGitParentPath,
+    t,
+  ])
 
   useEffect(() => {
     if (!open) {
@@ -573,13 +567,7 @@ function StandaloneFolderProjectDialogContent({
                   id={deviceSelectId}
                   data-testid="standalone-remote-device-select"
                   value={activeDevice?.device_id ?? ''}
-                  onChange={event => {
-                    setActiveDeviceId(event.target.value)
-                    gitParentDefaultDeviceIdRef.current = null
-                    setGitParentPath('')
-                    setGitParentPickerOpen(false)
-                    setGitError(null)
-                  }}
+                  onChange={event => setActiveDeviceId(event.target.value)}
                   className="wework-native-select min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none"
                 >
                   {!activeDevice && (
@@ -675,10 +663,15 @@ function StandaloneFolderProjectDialogContent({
                 onCreatingChange={setCloudDeviceCreating}
                 onBusyChange={handleOnboardingBusyChange}
                 onPendingChange={setOnboardingPending}
-                onConnected={async (connectedDevices, device) => {
+                onConnected={async (_, device) => {
                   setAddingProjectDevice(false)
                   setOnboardingPending(false)
-                  setDiscoveredDevices(connectedDevices)
+                  const listedDevice = devices.find(item => item.device_id === device.device_id)
+                  setPendingDevice(
+                    listedDevice && canUseForRemoteProjectCreation(listedDevice)
+                      ? null
+                      : { device, catalog: devices }
+                  )
                   setActiveDeviceId(device.device_id)
                   if (addingRemoteDevice) closeDialog()
                   await onRefreshDevices?.()
@@ -740,12 +733,8 @@ function StandaloneFolderProjectDialogContent({
                   data-testid={`remote-project-source-${option.source}`}
                   onClick={() => {
                     setRemoteProjectSource(option.source)
-                    if (option.source === 'git') {
-                      gitParentDefaultDeviceIdRef.current = null
-                      setGitParentPath('')
-                      setGitParentPickerOpen(false)
-                    }
-                    setGitError(null)
+                    if (option.source === 'git') resetGitTarget()
+                    else setGitError(null)
                   }}
                   className="flex w-full items-start gap-3 rounded-xl border border-border bg-background p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
                 >
@@ -793,7 +782,7 @@ function StandaloneFolderProjectDialogContent({
                   onCreateDeviceDirectory={onCreateDeviceDirectory}
                   onCancel={() => setGitParentPickerOpen(false)}
                   onConfirm={result => {
-                    setGitParentPath(result.path)
+                    setSelectedGitParentPath(result.path)
                     setGitParentPickerOpen(false)
                     setGitError(null)
                   }}
@@ -832,7 +821,7 @@ function StandaloneFolderProjectDialogContent({
                       value={gitParentPath}
                       disabled={gitSubmitting}
                       onChange={event => {
-                        setGitParentPath(event.target.value)
+                        setSelectedGitParentPath(event.target.value)
                         setGitError(null)
                       }}
                       className="h-11 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60 sm:h-10"
