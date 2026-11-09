@@ -622,6 +622,31 @@ describe('useModelSelection', () => {
     })
   })
 
+  it('keeps a persisted task model that is hidden from the model catalog', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([mockModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 100,
+        taskModelId: 'hidden-public-model',
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(
+        expect.objectContaining({ name: 'hidden-public-model' })
+      )
+    })
+
+    expect(result.current.selectedModel?.displayName).toBe('hidden-public-model')
+    expect(result.current.isModelRequired).toBe(false)
+  })
+
   it('shows advanced models when every compatible model is advanced', async () => {
     ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(['openai'])
     ;(modelApis.getUnifiedModels as jest.Mock).mockReset()

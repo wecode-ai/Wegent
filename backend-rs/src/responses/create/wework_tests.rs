@@ -100,6 +100,39 @@ fn encodes_response_and_conversation_identity() {
 }
 
 #[test]
+fn parses_persisted_model_identifiers_without_splitting_the_name() {
+    assert_eq!(
+        parse_model_identifier("public:default:0:example:model"),
+        Some(("public", "default", 0, "example:model"))
+    );
+    assert_eq!(
+        parse_model_identifier("group:team-a:42:team-model"),
+        Some(("group", "team-a", 42, "team-model"))
+    );
+    assert_eq!(parse_model_identifier("runtime:default:0:model"), None);
+    assert_eq!(parse_model_identifier("public:default:owner:model"), None);
+    assert_eq!(parse_model_identifier("model-without-identifier"), None);
+}
+
+#[test]
+fn derives_model_type_from_the_persisted_owner_and_namespace() {
+    let row = |user_id: i64, namespace: &str| crate::responses::create::resolution::KindRow {
+        id: 1,
+        user_id,
+        kind: "Model".into(),
+        name: "m".into(),
+        namespace: namespace.into(),
+        json: brz_mysql::Json(serde_json::json!({})),
+        is_active: 1,
+        created_at: None,
+        updated_at: None,
+    };
+    assert_eq!(model_type_from_row(&row(0, "default")), "public");
+    assert_eq!(model_type_from_row(&row(7, "default")), "user");
+    assert_eq!(model_type_from_row(&row(7, "team-a")), "group");
+}
+
+#[test]
 fn model_identifier_matches_the_source_join() {
     let model = crate::models_unified::models::UnifiedModel {
         name: "example-claude".into(),

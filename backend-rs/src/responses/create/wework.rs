@@ -1168,7 +1168,10 @@ pub(crate) async fn create_response(
     let selection = crate::transaction_outcome::run(
         &state.mysql,
         async |_transaction| {
-            let selection = model_selection(state, &user, &body).await?;
+            // Continuing a conversation keeps its recorded model even after an
+            // admin hides that model from new selections.
+            let allow_hidden = body.conversation.is_some() || body.previous_response_id.is_some();
+            let selection = model_selection(state, &user, &body, allow_hidden).await?;
             Ok(crate::transaction_outcome::Completion::Rollback(selection))
         },
         FastApiError::internal,

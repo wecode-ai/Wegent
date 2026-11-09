@@ -12,7 +12,10 @@ from app.services.adapters.public_model import (
     is_public_model_visible,
     public_model_service,
 )
-from app.services.chat.config.model_resolver import _find_model_with_namespace
+from app.services.chat.config.model_resolver import (
+    _find_model_with_namespace,
+    get_model_config_for_bot,
+)
 from app.services.model_aggregation_service import ModelType, model_aggregation_service
 
 
@@ -94,6 +97,40 @@ def test_hidden_public_model_is_not_listed_but_remains_runtime_resolvable(
 
     assert aggregated_model is not None
     assert aggregated_model["name"] == "hidden-public-model"
+
+
+def test_hidden_public_model_still_resolves_for_task_execution(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    hidden_model = _public_model("hidden-execution-model", is_visible=False)
+    bot = Kind(
+        user_id=test_user.id,
+        kind="Bot",
+        name="execution-bot",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": "execution-bot", "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": "ghost", "namespace": "default"},
+                "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+                "modelRef": {
+                    "name": "hidden-execution-model",
+                    "namespace": "default",
+                },
+            },
+        },
+    )
+    test_db.add_all([hidden_model, bot])
+    test_db.commit()
+
+    config = get_model_config_for_bot(test_db, bot, test_user.id)
+
+    assert config["model_id"] == "hidden-execution-model"
+    assert config["model_name"] == "hidden-execution-model"
 
 
 def test_hidden_public_model_outside_listing_limit_remains_resolvable(

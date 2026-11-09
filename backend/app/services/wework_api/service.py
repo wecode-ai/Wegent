@@ -132,7 +132,15 @@ async def _dispatch(
 async def create_response(
     db: Session, user: User, body: WeworkResponseCreate
 ) -> LiveResponse:
-    selection = models.selection(db, user, body)
+    selection = models.selection(
+        db,
+        user,
+        body,
+        # Continuing a conversation keeps its recorded model even when the
+        # admin has hidden it from new selections.
+        allow_hidden=body.conversation is not None
+        or body.previous_response_id is not None,
+    )
     user_id = user.id
     address, is_new = await _target(db, user_id, body)
     identity = ResponseIdentity(

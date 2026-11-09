@@ -47,6 +47,7 @@ interface UseWorkbenchModelsOptions {
 
 const DEFAULT_MODEL_SCOPE_KEY = 'default'
 const EMPTY_MODEL_OPTIONS: ModelOptions = Object.freeze({})
+const PERSISTED_CLOUD_MODEL_TYPES = new Set(['public', 'user', 'group'])
 
 function toSelectionConfig(model: UnifiedModel, options: ModelOptions): ModelSelectionConfig {
   return {
@@ -143,8 +144,17 @@ export function useWorkbenchModels({
   const configuredModelAvailable = Boolean(
     effectiveSelectionConfig?.modelName && findModelForSelection(models, effectiveSelectionConfig)
   )
+  const persistedCloudModelSelected = Boolean(
+    !fallbackWhenConfiguredModelUnavailable &&
+    selectedModel &&
+    effectiveSelectionConfig?.modelName === selectedModel.name &&
+    effectiveSelectionConfig?.modelType === selectedModel.type &&
+    PERSISTED_CLOUD_MODEL_TYPES.has(selectedModel.type)
+  )
   const selectedModelAvailable = Boolean(
-    selectedModel && models.some(model => isSameModelSelection(model, selectedModel))
+    selectedModel &&
+    (models.some(model => isSameModelSelection(model, selectedModel)) ||
+      persistedCloudModelSelected)
   )
   const hasLocallySelectedReplacement = Boolean(
     !persistSelection &&
@@ -159,7 +169,8 @@ export function useWorkbenchModels({
   const configuredModelUnavailable = Boolean(
     effectiveSelectionConfig?.modelName &&
     !configuredModelAvailable &&
-    !hasLocallySelectedReplacement
+    !hasLocallySelectedReplacement &&
+    !persistedCloudModelSelected
   )
   const isSelectionReady = useMemo(
     () =>
@@ -217,8 +228,30 @@ export function useWorkbenchModels({
   }, [traceId, isSelectionReady, selectedModelAvailable, models.length])
 
   const restoreSelection = useCallback(
-    (availableModels: UnifiedModel[], nextSelectionConfig?: ModelSelectionConfig | null) => {
-      const model = findModelForSelection(availableModels, nextSelectionConfig)
+    async (
+      availableModels: UnifiedModel[],
+      nextSelectionConfig?: ModelSelectionConfig | null,
+      isCancelled?: () => boolean
+    ) => {
+      let model = findModelForSelection(availableModels, nextSelectionConfig)
+      if (
+        !model &&
+        !fallbackWhenConfiguredModelUnavailable &&
+        nextSelectionConfig?.modelName &&
+        nextSelectionConfig.modelType &&
+        PERSISTED_CLOUD_MODEL_TYPES.has(nextSelectionConfig.modelType) &&
+        api.getModel
+      ) {
+        // A configured cloud model can be absent from the selector catalog
+        // because an admin hid it. The single-model endpoint still resolves it;
+        // a deleted model answers 404 and keeps the existing replacement flow.
+        try {
+          model = await api.getModel(nextSelectionConfig.modelName, nextSelectionConfig.modelType)
+        } catch {
+          model = null
+        }
+        if (isCancelled?.()) return
+      }
       const nextOptions = model
         ? normalizeModelOptions(model, nextSelectionConfig?.options ?? {})
         : (nextSelectionConfig?.options ?? {})
@@ -247,7 +280,7 @@ export function useWorkbenchModels({
         current[scopeKey] ? { ...current, [scopeKey]: false } : current
       )
     },
-    [configuredModelFingerprint, scopeKey, traceId]
+    [api, configuredModelFingerprint, fallbackWhenConfiguredModelUnavailable, scopeKey, traceId]
   )
 
   const reconcileSelectedModels = useCallback((nextModels: UnifiedModel[]) => {
@@ -363,7 +396,8 @@ export function useWorkbenchModels({
           !scopeSelectionAlreadyRestored ||
           (configuredModelAvailable && !selectedModelRef.current[scopeKey])
         ) {
-          restoreSelection(models, effectiveSelectionConfig)
+          await restoreSelection(models, effectiveSelectionConfig, () => cancelled)
+          if (cancelled) return
         }
         setRestoredSelectionKeyByScope(current =>
           current[scopeKey] === selectionKey ? current : { ...current, [scopeKey]: selectionKey }
