@@ -595,12 +595,9 @@ function RuntimeInteractionsState({
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
   }, [cacheKey, pending])
 
-  const markHandled = useCallback(
+  const clearReplyDraft = useCallback(
     (id: string) => {
-      submittedRef.current = new Set(submittedRef.current).add(id)
-      setSubmitted(submittedRef.current)
       setDraft(id, '')
-      setNoticeIds(current => current.filter(value => value !== id))
       setErrors(current => {
         const next = { ...current }
         delete next[id]
@@ -609,13 +606,20 @@ function RuntimeInteractionsState({
     },
     [setDraft]
   )
+  const markHandled = useCallback((id: string) => {
+    submittedRef.current = new Set(submittedRef.current).add(id)
+    setSubmitted(submittedRef.current)
+    setNoticeIds(current => current.filter(value => value !== id))
+  }, [])
   const settleFromConversation = useCallback(
-    async (item: RuntimeInteraction) => {
-      await archive(item, Date.now())
-      saveInteractionState(acceptancePrefix + item.id, true)
-      if (mounted.current) markHandled(item.id)
-    },
-    [acceptancePrefix, archive, markHandled]
+    (item: RuntimeInteraction) =>
+      navigator.locks.request(historyKey + ':' + item.id, async () => {
+        await archive(item, Date.now())
+        saveInteractionState(acceptancePrefix + item.id, true)
+        // A task answer settles the question, not another sender's unsent text.
+        if (mounted.current) markHandled(item.id)
+      }),
+    [acceptancePrefix, archive, historyKey, markHandled]
   )
   useRuntimeInteractionSettlements(pending, settleFromConversation)
   const dismiss = useCallback(
@@ -629,13 +633,14 @@ function RuntimeInteractionsState({
           saveInteractionState(acceptancePrefix + item.id, true)
           if (!mounted.current) return
           markHandled(item.id)
+          clearReplyDraft(item.id)
         })
       } finally {
         inFlight.current.delete(item.id)
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [acceptancePrefix, archive, historyKey, markHandled]
+    [acceptancePrefix, archive, clearReplyDraft, historyKey, markHandled]
   )
   const respond = useCallback(
     async (
@@ -659,19 +664,8 @@ function RuntimeInteractionsState({
           row =>
             row.resolvedIssueQuestion && matchesIssueResolution(item, row.resolvedIssueQuestion)
         )
-      const clearHandledDraft = () => {
-        setDraft(item.id, '')
-        setErrors(current => {
-          const next = { ...current }
-          delete next[item.id]
-          return next
-        })
-      }
       try {
-        if (confirmedResolved()) {
-          clearHandledDraft()
-          return false
-        }
+        if (confirmedResolved()) return false
         if (item.sharedRequest) {
           const services = sourceRef.current?.services
           if (!services) return false
@@ -694,10 +688,7 @@ function RuntimeInteractionsState({
         if (!api) return false
         return await navigator.locks.request(historyKey + ':' + item.id, async () => {
           if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
-          if (confirmedResolved()) {
-            clearHandledDraft()
-            return false
-          }
+          if (confirmedResolved()) return false
           // The request lock and persisted acceptance are shared by every workbench window.
           if (
             submittedRef.current.has(item.id) ||
@@ -708,7 +699,6 @@ function RuntimeInteractionsState({
           ) {
             submittedRef.current = new Set(submittedRef.current).add(item.id)
             setSubmitted(submittedRef.current)
-            clearHandledDraft()
             return false
           }
           // Revalidate the exact request before answering; old notifications are not authority.
@@ -774,6 +764,7 @@ function RuntimeInteractionsState({
           await archive(item, Date.now())
           if (!mounted.current) return true
           markHandled(item.id)
+          clearReplyDraft(item.id)
           setReplyNotice(t('interactions.reply_success'))
           // Refresh failure must never turn an accepted answer into a failed send.
           void sourceRef.current?.refresh?.().catch(console.error)
@@ -805,6 +796,7 @@ function RuntimeInteractionsState({
     [
       acceptancePrefix,
       archive,
+      clearReplyDraft,
       historyKey,
       markHandled,
       refresh,
@@ -881,6 +873,13 @@ function RuntimeInteractionsState({
       return
     let active = true
     let draining = false
+    const acknowledge = async (id: string) => {
+      handledNativeReplies.write({
+        ...handledNativeReplies.getSnapshot(),
+        [id]: { version: 'handled', savedAt: Date.now() },
+      })
+      await invokeDesktopHost('notification.acknowledgeReply', { id, accountKey })
+    }
     const drain = async () => {
       if (draining) return
       draining = true
@@ -894,7 +893,9 @@ function RuntimeInteractionsState({
             handledNativeReplies.getSnapshot()[reply.id] ||
             submittedRef.current.has(reply.interactionId)
           ) {
-            await invokeDesktopHost('notification.acknowledgeReply', { id: reply.id, accountKey })
+            if (!handledNativeReplies.getSnapshot()[reply.id])
+              setDraft(reply.interactionId, reply.text)
+            await acknowledge(reply.id)
             continue
           }
           const item = [
@@ -906,14 +907,8 @@ function RuntimeInteractionsState({
           setDraft(item.id, reply.text)
           const accepted = await respond(item, reply.text, { clientMessageId: reply.id })
           // Accepted sends must be acknowledged even if a refresh replaced this effect.
-          // Failed sends remain editable drafts, unless their account has unmounted.
-          if (accepted || mounted.current) {
-            handledNativeReplies.write({
-              ...handledNativeReplies.getSnapshot(),
-              [reply.id]: { version: 'handled', savedAt: Date.now() },
-            })
-            await invokeDesktopHost('notification.acknowledgeReply', { id: reply.id, accountKey })
-          }
+          // Unsent text remains recoverable, unless its account has unmounted.
+          if (accepted || mounted.current) await acknowledge(reply.id)
           if (!active) return
         }
       } catch (error) {

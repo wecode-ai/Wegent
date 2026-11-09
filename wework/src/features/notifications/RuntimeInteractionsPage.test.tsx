@@ -184,6 +184,42 @@ it('hosts the original entity instead of building a separate approval or reply f
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
 })
 
+it.each([true, false])(
+  'recovers unsent text without reviving a handled question (desktop: %s)',
+  desktop => {
+    viewport.twoPanes = desktop
+    const setDraft = vi.fn()
+    view(
+      undefined,
+      { [approval.id]: 'interactions.failed' },
+      {
+        pending: [],
+        history: [
+          {
+            id: approval.id,
+            title: interactionTask.task.title,
+            question: approval.question,
+            address: interactionTask.address,
+            answeredAt: Date.now(),
+          },
+        ],
+        drafts: { [approval.id]: 'Unsent native reply', unrelated: 'Another task draft' },
+        setDraft,
+      }
+    )
+    expect(screen.getByTestId('interactions-pending-count')).toHaveTextContent('0')
+    expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('test-original-entity')).not.toBeInTheDocument()
+    const draft = screen.getByTestId('interaction-unsent-text')
+    expect(draft).toHaveValue('Unsent native reply')
+    expect(draft).toHaveAttribute('readonly')
+    expect(screen.queryByText('Another task draft')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('interaction-discard-unsent'))
+    expect(setDraft).toHaveBeenCalledWith(approval.id, '')
+  }
+)
+
 it.each([true, false])('shows request time in the list and detail (desktop: %s)', desktop => {
   viewport.twoPanes = desktop
   const date = new Date()

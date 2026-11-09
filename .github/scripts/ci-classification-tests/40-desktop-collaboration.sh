@@ -242,13 +242,32 @@ for reconciliation_path in \
   fi
 done
 
-assert_desktop_case "Runtime input answer persistence scenario selects its checkpoint" \
-  'wework_desktop_e2e=true
+for runtime_input_path in \
+  "wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs" \
+  "wework/e2e/desktop/scenarios/consecutive-questions.scenario.mjs" \
+  "wework/e2e/desktop/modules/pending-interactions-tab.mjs"; do
+  assert_desktop_case "Runtime input answer scenario dependency selects only its checkpoint: $runtime_input_path" \
+    'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"runtime-input-answer-persistence"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs"
+    "$runtime_input_path"
+done
+
+for pending_answer_path in \
+  "wework/src/features/notifications/RuntimeInteractionsProvider.tsx" \
+  "wework/src/features/notifications/RuntimeInteractionsProvider.liveSettlement.test.tsx" \
+  "wework/src/features/notifications/runtimeInteractions.ts" \
+  "wework/src/features/notifications/useRuntimeInteractionSettlements.ts" \
+  "wework/src/features/notifications/RuntimeInteractionsPage.tsx" \
+  "wework/src/features/notifications/InteractionDraftRecovery.tsx"; do
+  pending_answer_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$pending_answer_path")"
+  if [[ "$pending_answer_output" != *runtime-input-answer-persistence* ]]; then
+    printf 'Pending answer regression missing from CI selection: %s\n' "$pending_answer_path" >&2
+    exit 1
+  fi
+done
 
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true

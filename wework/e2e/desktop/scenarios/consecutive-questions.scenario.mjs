@@ -213,6 +213,25 @@ export function createDesktopScenario({
           'Answered questions must remain settled after reloading'
         )
         await verifyPendingInteractionsTab(control, 0)
+        await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
+        const pendingPage = '[data-testid="runtime-interactions-page"]'
+        await control.command(
+          'waitFor',
+          `${pendingPage} [data-testid="interactions-pending-count"]`,
+          {
+            text: '0',
+            visible: true,
+          }
+        )
+        for (const testId of ['interaction-list-item', 'request-user-input-card']) {
+          assert.equal(
+            Number(
+              await control.command('getElementCount', `${pendingPage} [data-testid="${testId}"]`)
+            ),
+            0,
+            'Reopening pending work must not restore an answered question'
+          )
+        }
       } finally {
         active = false
         releaseSecond()

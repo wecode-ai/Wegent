@@ -17,7 +17,7 @@ export function useRuntimeInteractionSettlements(
     const tasks = new Map<string, RuntimeInteraction[]>()
     for (const item of pending) {
       // Issue questions remain owned by their versioned, authoritative inbox.
-      if (item.sharedRequest || item.cached) continue
+      if (item.sharedRequest) continue
       const key = runtimeConversationKey(item.task.address)
       const items = tasks.get(key) ?? []
       items.push(item)

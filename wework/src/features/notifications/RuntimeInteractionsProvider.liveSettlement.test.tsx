@@ -1,5 +1,5 @@
 import { context, harness, view } from './runtimeInteractionsProvider.fixtures'
-import { act, waitFor } from '@testing-library/react'
+import { act, fireEvent, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   applyRequestUserInputResponseToBlock,
@@ -21,6 +21,16 @@ import {
 } from './runtimeInteractions.fixtures'
 import { interactionResponse } from './runtimeInteractions'
 import * as diagnostics from './interactionDiagnostics'
+import { issueHumanInteraction } from './issueHumanInteractions'
+import { useRuntimeInteractionSettlements } from './useRuntimeInteractionSettlements'
+
+const historyKey = 'wework.interactions:test:1:history'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(complete => (resolve = complete))
+  return { promise, resolve }
+}
 
 beforeEach(() => clearRuntimeConversationCacheForTests())
 afterEach(() => clearRuntimeConversationCacheForTests())
@@ -154,4 +164,157 @@ it('retains the question on archive failure and recovers on a subsequent cache u
   await waitFor(() => expect(context!.pending).toHaveLength(0))
   expect(context!.history).toHaveLength(1)
   expect(harness.send).not.toHaveBeenCalled()
+})
+
+it('serializes settlement and stale replies while the history lock is held', async () => {
+  view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const item = context!.pending[0]
+  const historyGate = deferred<void>()
+  const transcriptGate = deferred<ReturnType<typeof interactionTranscript>>()
+  harness.locks.set(historyKey, historyGate.promise)
+  const lock = vi.spyOn(navigator.locks, 'request')
+  await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
+  await waitFor(() => expect(lock).toHaveBeenCalledWith(historyKey, expect.any(Function)))
+  const reads = harness.transcript.mock.calls.length
+  harness.transcript.mockReturnValueOnce(transcriptGate.promise)
+  let response!: Promise<boolean>
+  act(() => {
+    response = context!.respond(item, 'Late duplicate')
+  })
+  await act(async () => historyGate.resolve())
+  await waitFor(() => expect(context!.history).toHaveLength(1))
+  await act(async () => {
+    transcriptGate.resolve(interactionTranscript())
+    expect(await response).toBe(false)
+  })
+  expect(harness.transcript).toHaveBeenCalledTimes(reads)
+  expect(harness.send).not.toHaveBeenCalled()
+  expect(harness.guide).not.toHaveBeenCalled()
+  expect(context!.pending).toHaveLength(0)
+})
+
+it('preserves a failed native reply visibly after concurrent task settlement and reload', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  harness.desktop = true
+  const delivery = deferred<{ accepted: boolean; error: string }>()
+  harness.send.mockReturnValueOnce(delivery.promise)
+  let replies = [{ id: 'native-concurrent', interactionId: '', text: 'Do not lose this reply' }]
+  harness.host.mockImplementation(async (command: string) => {
+    if (command === 'notification.pendingReplies') return replies[0]?.interactionId ? replies : []
+    if (command === 'notification.acknowledgeReply') replies = []
+  })
+  const rendered = view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const item = context!.pending[0]
+  replies[0].interactionId = item.id
+  act(() => harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' })))
+  await waitFor(() => expect(harness.send).toHaveBeenCalledOnce())
+  await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
+  await act(async () => delivery.resolve({ accepted: false, error: 'Offline' }))
+  await waitFor(() => expect(replies).toEqual([]))
+  await waitFor(() => expect(context!.pending).toHaveLength(0))
+  expect(context!.history).toEqual([expect.objectContaining({ id: item.id })])
+  expect(context!.drafts[item.id]).toBe('Do not lose this reply')
+  expect(context!.errors[item.id]).toBe('interactions.failed')
+  expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('Do not lose this reply')
+  rendered.unmount()
+  clearRuntimeConversationCacheForTests()
+  view()
+  await waitFor(() => expect(context!.loading).toBe(false))
+  expect(context!.pending).toHaveLength(0)
+  expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('Do not lose this reply')
+  fireEvent.click(screen.getByTestId('interaction-discard-unsent'))
+  await waitFor(() => expect(context!.drafts[item.id]).toBeUndefined())
+  expect(screen.queryByTestId('interaction-unsent-text')).not.toBeInTheDocument()
+  expect(harness.send).toHaveBeenCalledOnce()
+})
+
+it.each(['before', 'after'])(
+  'preserves a native reply queued %s task settlement without resending',
+  async timing => {
+    harness.desktop = true
+    let replies = [{ id: 'native-settled', interactionId: '', text: 'A late native reply' }]
+    harness.host.mockImplementation(async (command: string) => {
+      if (command === 'notification.pendingReplies') return replies[0]?.interactionId ? replies : []
+      if (command === 'notification.acknowledgeReply') replies = []
+    })
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    const historyGate = deferred<void>()
+    if (timing === 'before') harness.locks.set(historyKey, historyGate.promise)
+    await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
+    if (timing === 'after') await waitFor(() => expect(context!.pending).toHaveLength(0))
+    replies[0].interactionId = item.id
+    act(() => harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' })))
+    if (timing === 'before') {
+      await waitFor(() => expect(context!.busy.has(item.id)).toBe(true))
+      await act(async () => historyGate.resolve())
+    }
+    await waitFor(() => expect(replies).toEqual([]))
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    expect(context!.drafts[item.id]).toBe('A late native reply')
+    expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('A late native reply')
+    expect(harness.send).not.toHaveBeenCalled()
+  }
+)
+
+it.each(['inventory', 'transcript'])(
+  'settles a restored native cache from conversation evidence when %s discovery fails',
+  async failure => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const first = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    first.unmount()
+    harness.transcript.mockClear()
+    if (failure === 'inventory') harness.list.mockRejectedValue(new Error('Inventory offline'))
+    else
+      harness.list.mockResolvedValue({
+        projects: [],
+        chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+        totalTasks: 1,
+      })
+    view(interactionQuestion, interactionTask, false, new Error('Transcript offline'), false)
+    await waitFor(() => expect(context!.loading).toBe(false))
+    expect(context!.pending[0]).toMatchObject({ id: item.id, cached: true })
+    await act(async () => expect(await context!.respond(context!.pending[0], 'keep')).toBe(false))
+    expect(harness.send).not.toHaveBeenCalled()
+    const reads = harness.transcript.mock.calls.length
+    await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    expect(context!.history).toEqual([expect.objectContaining({ id: item.id })])
+    expect(harness.transcript).toHaveBeenCalledTimes(reads)
+    expect(harness.send).not.toHaveBeenCalled()
+  }
+)
+
+it.each([true, false])('keeps shared Issue settlement authoritative (cached=%s)', async cached => {
+  const item = {
+    ...issueHumanInteraction(
+      {
+        id: 'shared-question',
+        project_id: 'project',
+        issue_id: 'ISSUE-1',
+        root_comment_id: 'root',
+        runtime_device_id: interactionTask.address.deviceId,
+        runtime_task_id: interactionTask.address.taskId,
+        item_id: interactionQuestion.itemId!,
+        question: 'Choose scope',
+        recipient_user_id: 7,
+        status: 'pending',
+        version: 1,
+        blocks_progress: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      'backend'
+    ),
+    cached,
+  }
+  const settle = vi.fn().mockResolvedValue(undefined)
+  renderHook(() => useRuntimeInteractionSettlements([item], settle))
+  await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
+  expect(settle).not.toHaveBeenCalled()
 })

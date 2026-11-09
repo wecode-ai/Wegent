@@ -293,7 +293,7 @@ describe('unified human response', () => {
     }
   )
 
-  it('settles a stale response without an error after its acceptance marker has been cleaned', async () => {
+  it('rejects a stale response without discarding its unsent text after its acceptance marker has been cleaned', async () => {
     view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
     const item = context!.pending[0]
@@ -309,7 +309,7 @@ describe('unified human response', () => {
     })
     expect(harness.send).toHaveBeenCalledTimes(1)
     expect(context!.errors).toEqual({})
-    expect(context!.drafts[item.id]).toBeUndefined()
+    expect(context!.drafts[item.id]).toBe('stale second answer')
   })
 
   it('bounds unchanged history scans while forcing explicit refresh and summary changes', async () => {
