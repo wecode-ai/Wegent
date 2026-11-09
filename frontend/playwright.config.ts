@@ -66,6 +66,13 @@ export default defineConfig({
 
     /* Navigation timeout */
     navigationTimeout: 30000,
+
+    // Keep localhost origins while reaching runner services from an isolated network.
+    launchOptions: process.env.E2E_BROWSER_HOST_GATEWAY
+      ? {
+          args: [`--host-resolver-rules=MAP localhost ${process.env.E2E_BROWSER_HOST_GATEWAY}`],
+        }
+      : {},
   },
 
   /* Configure projects for major browsers */

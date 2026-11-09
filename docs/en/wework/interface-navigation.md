@@ -38,6 +38,7 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 | Configure project devices, repositories, initialization | Project space → Project settings → Execution environment            | Not the global execution-environment settings; AI execution requires an initialized online device                                                                                                                                                                                    |
 | Project AI / project manager                            | Project settings → AI team / Automatic processing                   | See [Project AI manager](./project-ai-manager.md) for current equivalents; do not look for the old bottom-of-board button                                                                                                                                                            |
 | Personal stand-in                                       | Left sidebar → My Stand-in                                          | Beta feature. See [Personal stand-in](./personal-stand-in.md)                                                                                                                                                                                                                        |
+| Confirm stand-in configuration | My stand-in → Confirmation card in the current conversation → Confirm and apply | Review affected roles and sources; the conversation shows actual changes after success. See [Conversational configuration](./personal-stand-in.md#conversational-configuration) |
 | Restore archived stand-in source work | My Stand-in → Stand-in details → arrow beside Recent activity → the work → Unarchive | Visible only for archived work; restoration does not execute it. See [Source session policy](./personal-stand-in.md#stand-in-source-session-policy) |
 | Stop stand-in / change binding | Left sidebar → My Stand-in → Stand-in details → Manage stand-in → Stop stand-in at the bottom left of settings | Rebinding choices appear only after stopping the entire stand-in and cancelling its tasks. See [Instance binding and stopping](./personal-stand-in.md#instance-binding-and-stopping) |
 | Change model / reasoning level                          | Task composer → model selector                                      | Add a model in settings if none is available. See [Model settings](./user-guide/model-settings.md)                                                                                                                                                                                   |
@@ -50,6 +51,8 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 | Version / check for updates                             | Bottom-left account menu → About / Check for updates                | Separate actions. See [Settings and data](./settings.md)                                                                                                                                                                                                                             |
 
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
+
+From **Projects → New project → Cloud project** in the sidebar, you can add a device while choosing the remote host. See [Projects and workspaces](./projects.md#add-device-from-project).
 
 ## Sidebar feature entries
 
@@ -82,6 +85,7 @@ Model selection during template import: [Collaboration templates and configurati
 | Search terms                                                                      | Detailed steps                                                             |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls) |
+| Collaboration → Devices → Delete offline device | [Offline device cleanup](./projects.md#offline-device-cleanup) |
 | Stand-in memory, source evidence, scope, editing, forgetting and forgetting rules | [Memory controls](./personal-stand-in.md#stand-in-memory-controls)         |
 | Experimental lead conversation, takeover, stop, publish to Issue                  | [Project lead controls](./personal-stand-in.md#project-lead-controls)      |
 | Site PV/UV, visit dates and analytics                                             | [Site visit data](./plugins-and-skills.md#site-analytics-controls)         |

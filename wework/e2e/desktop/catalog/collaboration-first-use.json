@@ -8,5 +8,11 @@
       "shard": 8,
       "position": 14000
     }
-  }
+  },
+  "paths": [
+    "packages/collaboration/src/theme/*",
+    "wework/src/features/appearance/*",
+    "wework/src/styles/*",
+    "wework/e2e/desktop/modules/appearance-theme.mjs"
+  ]
 }

@@ -117,7 +117,7 @@ export function CloudModelCatalogSyncDialogHost() {
           <p
             role="alert"
             data-testid="cloud-model-catalog-sync-error"
-            className="mt-3 text-sm text-red-500"
+            className="mt-3 text-sm text-destructive"
           >
             {error}
           </p>
