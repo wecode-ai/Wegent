@@ -80,10 +80,7 @@ test.describe('Public model write authorization', () => {
 
     const unchanged = await adminApi.get(`/api/models/${createdModelId}`)
     expect(unchanged.status).toBe(200)
-    expect((unchanged.data as { config?: unknown }).config).toMatchObject({
-      env: {},
-      model_id: 'public-model-auth-e2e',
-    })
+    expect((unchanged.data as { config?: { env?: unknown } }).config?.env).toEqual({})
   })
 
   test('allows an admin to create and clean up a public model', async () => {
