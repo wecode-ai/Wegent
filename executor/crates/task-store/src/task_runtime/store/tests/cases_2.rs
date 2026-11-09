@@ -184,10 +184,14 @@ fn local_direct_execution_completion_moves_issue_to_review() {
     assert_eq!(updated.status.as_deref(), Some("in_review"));
     assert_eq!(updated.execution_state.as_deref(), Some("succeeded"));
     assert_eq!(updated.metadata["is_unread"], json!(true));
-    let delayed_read = store.mark_task_read(&project.id, &task.id, Some(0), Some(task.version)).unwrap();
+    let delayed_read = store
+        .mark_task_read(&project.id, &task.id, Some(0), Some(task.version))
+        .unwrap();
     assert_eq!(delayed_read.metadata["is_unread"], json!(true));
     assert_eq!(delayed_read.version, updated.version);
-    store.mark_task_read(&project.id, &task.id, None, None).unwrap();
+    store
+        .mark_task_read(&project.id, &task.id, None, None)
+        .unwrap();
     store
         .complete_execution(claimed.id, Some("duplicate"))
         .unwrap();
@@ -240,7 +244,9 @@ fn local_direct_execution_completion_moves_issue_to_review() {
         .claim_next_local_execution(&claim)
         .unwrap()
         .expect("second run must be claimable");
-    store.mark_task_read(&project.id, &second.id, None, None).unwrap();
+    store
+        .mark_task_read(&project.id, &second.id, None, None)
+        .unwrap();
     store.complete_execution(claimed_second.id, None).unwrap();
     let second_after = store.get_task(&project.id, &second.id).unwrap();
     assert_eq!(second_after.status.as_deref(), Some("in_review"));
