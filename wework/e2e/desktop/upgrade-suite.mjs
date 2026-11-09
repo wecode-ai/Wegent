@@ -1,6 +1,6 @@
 // Increment when the upgrade/rollback acceptance contract changes. Release proof
 // from an older suite cannot authorize a new edge under the current contract.
-export const UPGRADE_SUITE_VERSION = 17
+export const UPGRADE_SUITE_VERSION = 18
 export { RELEASE_PREPARATION_PHASE_TIMEOUT_MS as UPGRADE_PREPARATION_PHASE_TIMEOUT_MS } from '../../electron/src/runtime/release-preparation-progress.mjs'
 export const UPGRADE_CHECKPOINTS = ['app-rollback', 'app-rollback-recovery', 'app-upgrade-recovery']
 export const UPGRADE_PACKAGE_CHECKPOINTS = UPGRADE_CHECKPOINTS
@@ -11,6 +11,28 @@ export const UPGRADE_DIAGNOSTIC_CHECKPOINTS = [
   ...UPGRADE_SOURCE_DIAGNOSTICS,
 ]
 export const UPGRADE_CHECKPOINT_GROUP = 'upgrade-and-rollback'
+
+export function credentialRoundTripPassed(evidence) {
+  const expected = ['source', 'upgraded', 'rolled-back', 're-upgraded']
+  let format = 2
+  return (
+    evidence.reupgrade === 'passed' &&
+    Array.isArray(evidence.credentials) &&
+    evidence.credentials.length === expected.length &&
+    evidence.credentials.every((entry, index) => {
+      if (
+        entry.stage !== expected[index] ||
+        ![2, 3].includes(entry.format) ||
+        entry.format < format ||
+        entry.modelAuthenticated !== true ||
+        entry.cloudDeviceSignature !== true
+      )
+        return false
+      format = entry.format
+      return true
+    })
+  )
+}
 
 /** Windows certifies the core round trip; macOS also exercises fault recovery. */
 export function upgradeVerificationCheckpoint(platform) {

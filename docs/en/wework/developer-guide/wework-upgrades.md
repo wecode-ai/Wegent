@@ -59,6 +59,16 @@ Legacy clients ignore the new fields and continue updating directly to their adv
 
 A minimum version never proves compatibility. The client follows tested edges to the newest reachable version, minimizing hops and confirming each hop separately. A fixed test pair A → B requires B to be newer than A, not globally newest. Recheck revocation immediately before installation. Missing paths must never cause unrestricted updating.
 
+## Credential migration through a compatible bridge
+
+Credentials are excluded from migration snapshots. Release a bridge that reads v2/v3 before releasing the security update that migrates to v3. The bridge preserves the current format and never migrates v2 on read. After rollback encounters v3 it continues writing v3, including after clearing values or signing out; encrypted empty records prevent a later downgrade.
+
+The bridge declares `weworkCredentialStorageVersion: 2` and `weworkReadableCredentialStorageVersions: [2, 3]` in its signed package metadata. The security target declares write version 3. Target preparation reads the actual rollback package's declaration and rejects a source without v3 support. The planned releases are bridge 0.6.7 followed by security update 0.6.8. Successful exact-package evidence determines the security target’s minimum source; an actual v3-compatible bridge must exist first. Preparation fails for an older reader. A version floor grants no upgrade permission: both stages require CI evidence for exact delivered packages, and the bridge archives remain available.
+
+Suite v18 extends the shared `app-rollback` checkpoint with source, upgraded, rolled-back and re-upgraded credential assertions. A real model HTTP request authenticates with the saved secret. Cloud device credentials must decrypt and their retained private key must produce a verifiable signature; this storage regression does not certify server-side cloud login or refresh. Rollback also writes a new model secret and re-upgrade must preserve it. Personal credentials remain outside snapshots, adjacent legacy decryption keys are removed by the security target, and historical packages remain unchanged.
+
+`upgrade-edge-result.json` records all four stages and `reupgrade: passed`. Missing stages, failed authentication/signatures or a format downgrade block production edges. Windows uses the same `app-rollback` checkpoint; macOS arm64 keeps the complete recovery group and x64 retains architecture equivalence.
+
 ## Release lifecycle
 
 ### macOS installation and Dock identity

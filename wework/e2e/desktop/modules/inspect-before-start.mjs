@@ -70,20 +70,24 @@ export async function inspectRunningApp(port, expectedPid, expression, log = con
   const target = new URL(socketUrl)
   if (target.protocol !== 'ws:' || target.hostname !== '127.0.0.1' || target.port !== String(port))
     throw new Error('The isolated inspector escaped its loopback endpoint')
-  await withInspector(
+  return withInspector(
     socketUrl,
     async command => {
       const pid = await evaluate(command, 'process.pid')
       if (pid !== expectedPid)
         throw new Error('The inspector is connected to another release process')
-      await evaluate(command, expression)
+      return evaluate(command, expression, true)
     },
     log
   )
 }
 
-async function evaluate(command, expression) {
-  const result = await command('Runtime.evaluate', { expression, returnByValue: true })
+async function evaluate(command, expression, awaitPromise = false) {
+  const result = await command('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise,
+  })
   if (result.exceptionDetails)
     throw new Error(`Inspector setup failed: ${result.exceptionDetails.text}`)
   return result.result?.value
@@ -126,7 +130,7 @@ async function withInspector(socketUrl, operation, log) {
       socket.send(JSON.stringify({ id: requestId, method, params }))
       return response
     }
-    await operation(command, socket)
+    return await operation(command, socket)
   } catch (error) {
     setupError = error
     throw error

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudCredentialError, CloudCredentialService } from './cloud-credential-service.js'
+import { createTestSecretProtection } from '../../test/secret-protection.js'
 
 const roots: string[] = []
 
@@ -15,6 +16,56 @@ afterEach(async () => {
 })
 
 describe('CloudCredentialService', () => {
+  test('preserves protected credentials through rollback, sign-out and a new authorization', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-credential-bridge-'))
+    roots.push(root)
+    const protection = createTestSecretProtection()
+    const path = join(root, 'cloud-credentials.json')
+    const legacy = {
+      version: 2,
+      apiBaseUrl: 'https://cloud.example.com/api',
+      publicKey: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+      privateKey: 'target-private-key',
+      refreshToken: 'target-refresh',
+      ownerUserId: 7,
+    }
+    await writeFile(
+      path,
+      JSON.stringify({ version: 3, ciphertext: await protection.encrypt(JSON.stringify(legacy)) })
+    )
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'success',
+          access_token: 'new-access',
+          refresh_token: 'new-refresh',
+        })
+      )
+    )
+    const service = new CloudCredentialService(root, request, protection)
+    const prepared = await service.prepareAuthorization(legacy.apiBaseUrl)
+    expect(prepared.publicKey).toEqual(legacy.publicKey)
+    await service.clear()
+    expect(
+      JSON.parse(await protection.decrypt(JSON.parse(await readFile(path, 'utf8')).ciphertext))
+    ).toBeNull()
+    const restarted = new CloudCredentialService(root, request, protection)
+    const next = await restarted.prepareAuthorization(legacy.apiBaseUrl)
+    await restarted.claimAuthorization({
+      authorizationId: next.authorizationId,
+      sessionId: 'next',
+      pollToken: 'poll',
+    })
+    await restarted.commitAuthorization(next.authorizationId, 7)
+    const raw = await readFile(path, 'utf8')
+    expect(raw).not.toContain('new-refresh')
+    const envelope = JSON.parse(raw)
+    expect(envelope.version).toBe(3)
+    expect(JSON.parse(await protection.decrypt(envelope.ciphertext)).refreshToken).toBe(
+      'new-refresh'
+    )
+  })
+
   beforeEach(() => {
     electronMocks.netFetch.mockReset()
   })

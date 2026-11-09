@@ -81,6 +81,13 @@ function fixture(required = []) {
       channel,
       upgrade: 'passed',
       rollback: 'passed',
+      reupgrade: 'passed',
+      credentials: ['source', 'upgraded', 'rolled-back', 're-upgraded'].map((stage, index) => ({
+        stage,
+        format: index === 0 ? 2 : 3,
+        modelAuthenticated: true,
+        cloudDeviceSignature: true,
+      })),
     }),
   }))
   return { options, frozen, shards }

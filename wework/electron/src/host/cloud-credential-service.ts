@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { systemSecretProtection, type SecretProtection } from './secret-protection.js'
 
 const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS = 30_000
 
@@ -77,7 +78,8 @@ export class CloudCredentialService {
 
   constructor(
     private readonly dataDirectory: string,
-    private readonly request?: typeof fetch
+    private readonly request?: typeof fetch,
+    private readonly protection: SecretProtection = systemSecretProtection
   ) {}
 
   /**
@@ -183,7 +185,7 @@ export class CloudCredentialService {
       } else {
         this.candidate = null
         this.activeRevision += 1
-        await rm(this.path(), { force: true })
+        await this.removeCredential()
       }
     })
   }
@@ -254,7 +256,7 @@ export class CloudCredentialService {
     this.candidate = null
     this.activeRevision += 1
     return this.serial(async () => {
-      await rm(this.path(), { force: true })
+      await this.removeCredential()
     })
   }
 
@@ -273,7 +275,11 @@ export class CloudCredentialService {
 
   private async readCredential(): Promise<StoredCloudCredential | null> {
     try {
-      const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
+      const envelope = await this.readEnvelope()
+      const value =
+        envelope?.version === 3
+          ? JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
+          : envelope
       return normalizeStoredCredential(value)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -282,18 +288,52 @@ export class CloudCredentialService {
   }
 
   private async writeCredential(
-    credential: StoredCloudCredential,
+    credential: StoredCloudCredential | null,
     beforeRename: () => void
   ): Promise<void> {
     const path = this.path()
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const temporary = `${path}.${process.pid}.tmp`
     try {
-      await writeFile(temporary, `${JSON.stringify(credential, null, 2)}\n`, { mode: 0o600 })
+      // A rolled-back bridge must preserve v3, including after signing out.
+      const envelope = await this.readEnvelope()
+      const stored =
+        envelope?.version === 3
+          ? { version: 3, ciphertext: await this.protection.encrypt(JSON.stringify(credential)) }
+          : credential
+      await writeFile(temporary, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 })
       beforeRename()
       await rename(temporary, path)
     } finally {
       await rm(temporary, { force: true })
+    }
+  }
+
+  private async readEnvelope(): Promise<{ version?: number; ciphertext?: string } | null> {
+    try {
+      const envelope = JSON.parse(await readFile(this.path(), 'utf8'))
+      if (
+        !envelope ||
+        ![2, 3].includes(envelope.version) ||
+        (envelope.version === 3 && typeof envelope.ciphertext !== 'string')
+      ) {
+        throw new CloudCredentialError(
+          'credentials_unavailable',
+          'Cloud credential format is invalid'
+        )
+      }
+      return envelope
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+  }
+
+  private async removeCredential(): Promise<void> {
+    if ((await this.readEnvelope())?.version === 3) {
+      await this.writeCredential(null, () => {})
+    } else {
+      await rm(this.path(), { force: true })
     }
   }
 

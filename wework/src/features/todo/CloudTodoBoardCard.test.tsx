@@ -3,7 +3,7 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { clearRuntimeConversationCacheForTests } from '@/features/workbench/runtimeConversationCache'
 import '@/i18n'
 import { installDshUiTestContributions } from '@/test/setup.dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CloudTodoBoardCard, CloudTodoCardContent } from './CloudTodoBoardCard'
@@ -99,7 +99,14 @@ describe('CloudTodoBoardCard', () => {
     expect(actor.parentElement).not.toHaveTextContent(item.title)
     expect(screen.queryByText('AI 处理中')).not.toBeInTheDocument()
   })
-  afterEach(() => {
+  afterEach(async () => {
+    // Finish Radix's deferred focus restoration before jsdom disposes this realm.
+    vi.useFakeTimers()
+    cleanup()
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync()
+    })
+    expect(vi.getTimerCount()).toBe(0)
     clearRuntimeConversationCacheForTests()
     vi.useRealTimers()
   })

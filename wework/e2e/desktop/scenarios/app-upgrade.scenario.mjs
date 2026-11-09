@@ -30,6 +30,10 @@ import {
 } from '../modules/upgrade-request-route.mjs'
 import { assertInstalledStartupWithStaleHistory } from '../modules/installed-startup-history.mjs'
 import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
+import { assertReleaseComposition } from '../modules/release-composition.mjs'
+import { waitForInterruptedRollback } from '../modules/interrupted-rollback.mjs'
+import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
+import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -64,30 +68,6 @@ import {
 const PROMPT = 'WEWORK_UPGRADE_PERSISTENCE'
 const ANSWER = 'WEWORK_UPGRADE_REAL_RUNTIME_OK'
 const STORAGE_KEY = 'wework:upgrade-regression-marker'
-
-async function waitForInterruptedRollback(root) {
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    let marker
-    try {
-      marker = await readFile(join(root, 'rollback-interrupted'), 'utf8')
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-    }
-    if (marker) {
-      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
-      assert.ok(pid > 0)
-      try {
-        process.kill(pid, 0)
-      } catch (error) {
-        if (error.code === 'ESRCH') return
-        throw error
-      }
-    }
-    await new Promise(accept => setTimeout(accept, 50))
-  }
-  assert.fail('The real target did not terminate after recording manual rollback')
-}
 
 /** One reusable flow for fixed A -> B pairs. Version numbers never select assertions. */
 export async function createDesktopScenario(options) {
@@ -251,29 +231,18 @@ export async function createDesktopScenario(options) {
   const installedVersion = async () =>
     JSON.parse(await control.command('getInstalledAppVersion', 'body')).version
   const compositions = []
+  const credentials = upgradeCredentials()
+  const verifyCredentials = (stage, options) =>
+    credentials.verify(
+      control,
+      inspectorPort,
+      stage,
+      [electronUserDataDirectory, legacyDataDirectory].filter(Boolean),
+      options
+    )
   let macosIdentity
   const assertSelectedComposition = async version => {
-    const id = (await readFile(join(root, 'active'), 'utf8')).trim()
-    const slot = join(root, 'slots', id)
-    const release = JSON.parse(await readFile(join(slot, 'release.json'), 'utf8'))
-    const { components } = JSON.parse(await readFile(join(slot, 'prepared.json'), 'utf8'))
-    const { release: actual } = JSON.parse(
-      await control.command('getDesktopRuntimeDiagnostics', 'body')
-    )
-    assert.equal(release.version, version)
-    assert.equal(actual.id, id)
-    for (const [key, expected] of Object.entries({
-      hostExecutable: release.executable,
-      runtimeRoot: release.runtimeRoot,
-      coreDshPath: components.coreDsh,
-      corePluginsPath: components.weworkCorePlugins,
-      executorPath: components.executor,
-      codexPath: components.codex,
-      dwsPath: components.dws,
-    })) {
-      assert.equal(resolve(actual[key]), resolve(expected), `Selected release ${key} differs`)
-    }
-    compositions.push({ version, ...actual, coreDsh: components.coreDsh })
+    await assertReleaseComposition(control, root, version, compositions)
     await assertMacosUpgradeIdentity(macosIdentity, root, resultDir, version)
     if (process.platform === 'darwin') {
       const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
@@ -433,6 +402,7 @@ export async function createDesktopScenario(options) {
       }
     },
     async prepareUserDataLaunch() {
+      await credentials.seed(electronUserDataDirectory)
       if (usesDefaultUserData) {
         // Start from the real default application-data location. The shipped
         // migration, bootstrap and updater must agree on the resulting userData.
@@ -446,6 +416,7 @@ export async function createDesktopScenario(options) {
       }
     },
     async handleHttp(request, response, url) {
+      if (credentials.handleHttp(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
@@ -478,6 +449,7 @@ export async function createDesktopScenario(options) {
         `${JSON.stringify({ version: pair.from.version, ...sourceRuntime }, null, 2)}\n`
       )
       console.log(`[upgrade-e2e] Source ${pair.from.version} is ready`)
+      await verifyCredentials('source')
       const workspace = join(workspacePath, 'upgrade-source-project')
       await mkdir(workspace, { recursive: true })
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -676,6 +648,7 @@ export async function createDesktopScenario(options) {
       assert.equal(await installedVersion(), pair.to.version)
       const targetReleaseId = (await readFile(join(root, 'active'), 'utf8')).trim()
       console.log(`[upgrade-e2e] Running target ${pair.to.version}`)
+      await verifyCredentials('upgraded')
       await control.command(
         'waitFor',
         '[data-testid="new-chat-button"], [data-testid="settings-back-button"]',
@@ -765,6 +738,7 @@ export async function createDesktopScenario(options) {
         await control.awaitReadyAfter(beforeRollback, workbenchReadyTimeoutMs)
         assert.equal(await installedVersion(), pair.from.version)
         console.log(`[upgrade-e2e] Rolled back to ${pair.from.version}`)
+        await verifyCredentials('rolled-back', { write: true })
         await assert.rejects(
           readFile(join(root, 'previousHealthy')),
           { code: 'ENOENT' },
@@ -832,6 +806,18 @@ export async function createDesktopScenario(options) {
             'Rollback did not preserve the newer local data'
           )
         }
+        if (checkpoint === 'app-rollback') {
+          await reupgradeAfterRollback({
+            control,
+            about,
+            version: pair.to.version,
+            installedVersion,
+            assertSelectedComposition,
+            send,
+            verifyCredentials: () => verifyCredentials('re-upgraded'),
+            timeoutMs: workbenchReadyTimeoutMs,
+          })
+        }
       }
       const evidence = JSON.stringify({
         schemaVersion: 1,
@@ -856,6 +842,10 @@ export async function createDesktopScenario(options) {
             : 'not-run',
         requests,
         compositions,
+        credentials: credentials.stages,
+        reupgrade: credentials.stages.some(stage => stage.stage === 're-upgraded')
+          ? 'passed'
+          : 'not-run',
       })
       await writeFile(join(resultDir, 'upgrade-edge-result.json'), evidence)
       if (

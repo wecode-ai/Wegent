@@ -2,9 +2,10 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { HostCapabilityError } from './capability-router.js'
+import { systemSecretProtection, type SecretProtection } from './secret-protection.js'
 
 interface StoredValues {
-  version: 2
+  version: 2 | 3
   values: Record<string, string>
 }
 
@@ -18,37 +19,54 @@ export class SecureValueStore {
   private operation = Promise.resolve()
   private keyPromise: Promise<Buffer> | null = null
 
-  constructor(private readonly dataDirectory: string) {}
+  constructor(
+    private readonly dataDirectory: string,
+    private readonly protection: SecretProtection = systemSecretProtection
+  ) {}
 
   get(key: string): Promise<string | null> {
     validateKey(key)
     return this.serial(async () => {
-      const values = await this.read()
-      const encrypted = values[key]
-      return encrypted ? this.decrypt(encrypted, await this.encryptionKey()) : null
+      const stored = await this.read()
+      if (!Object.hasOwn(stored.values, key)) return null
+      return stored.version === 3
+        ? this.protection.decrypt(stored.values[key])
+        : this.decrypt(
+            stored.values[key],
+            await readFile(join(this.dataDirectory, 'secure-values.key'))
+          )
     })
   }
 
   set(key: string, value: string): Promise<void> {
     validateKey(key)
     return this.serial(async () => {
-      const values = await this.read()
-      values[key] = this.encrypt(value, await this.encryptionKey())
-      await this.write(values)
+      const stored = await this.read()
+      stored.values[key] =
+        stored.version === 3
+          ? await this.protection.encrypt(value)
+          : this.encrypt(
+              value,
+              Object.keys(stored.values).length
+                ? await readFile(join(this.dataDirectory, 'secure-values.key'))
+                : await this.encryptionKey()
+            )
+      await this.write(stored)
     })
   }
 
   delete(key: string): Promise<void> {
     validateKey(key)
     return this.serial(async () => {
-      const values = await this.read()
-      if (!Object.hasOwn(values, key)) return
-      delete values[key]
-      if (Object.keys(values).length === 0) {
+      const stored = await this.read()
+      if (!Object.hasOwn(stored.values, key)) return
+      delete stored.values[key]
+      if (stored.version === 2 && Object.keys(stored.values).length === 0) {
         await rm(this.path(), { force: true })
         return
       }
-      await this.write(values)
+      // Keep an empty v3 store so rollback cannot downgrade subsequent writes.
+      await this.write(stored)
     })
   }
 
@@ -88,27 +106,35 @@ export class SecureValueStore {
     }
   }
 
-  private async read(): Promise<Record<string, string>> {
+  private async read(): Promise<StoredValues> {
     try {
       const stored = JSON.parse(await readFile(this.path(), 'utf8')) as StoredValues
-      return stored.version === 2 && stored.values && typeof stored.values === 'object'
-        ? stored.values
-        : {}
+      if (
+        ![2, 3].includes(stored.version) ||
+        !stored.values ||
+        typeof stored.values !== 'object' ||
+        Array.isArray(stored.values) ||
+        Object.values(stored.values).some(value => typeof value !== 'string')
+      ) {
+        throw new HostCapabilityError('secure_storage_corrupted', 'Invalid encrypted storage')
+      }
+      if (stored.version === 3) {
+        await rm(join(this.dataDirectory, 'secure-values.key'), { force: true })
+      }
+      return { ...stored, values: Object.assign(Object.create(null), stored.values) }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { version: 2, values: Object.create(null) }
+      }
       throw error
     }
   }
 
-  private async write(values: Record<string, string>): Promise<void> {
+  private async write(stored: StoredValues): Promise<void> {
     const path = this.path()
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const temporary = `${path}.${process.pid}.tmp`
-    await writeFile(
-      temporary,
-      `${JSON.stringify({ version: 2, values } satisfies StoredValues, null, 2)}\n`,
-      { mode: 0o600 }
-    )
+    await writeFile(temporary, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 })
     await rename(temporary, path)
     await chmod(path, 0o600)
   }
