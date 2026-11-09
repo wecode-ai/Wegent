@@ -159,7 +159,7 @@ export function PluginShareDialog({
                 type="checkbox"
                 checked={allowCopy}
                 data-testid="plugin-share-allow-copy"
-                className="h-4 w-4 accent-neutral-900"
+                className="h-4 w-4 accent-[rgb(var(--color-text-primary))]"
                 onChange={event => setAllowCopy(event.target.checked)}
               />
             </label>
@@ -173,7 +173,7 @@ export function PluginShareDialog({
           )}
         </p>
         {error && (
-          <p role="alert" className="mt-3 text-sm text-red-600">
+          <p role="alert" className="mt-3 text-sm text-destructive">
             {error}
           </p>
         )}

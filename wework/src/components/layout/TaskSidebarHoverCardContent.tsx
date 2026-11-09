@@ -107,7 +107,7 @@ export function TaskSidebarHoverCardContent({
         )}
       </div>
       {branchWarning && (
-        <div className="flex items-start gap-2 text-sm leading-5 text-orange-500">
+        <div className="flex items-start gap-2 text-sm leading-5 text-warning">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{t('workbench.runtime_task_branch_warning')}</span>
         </div>
