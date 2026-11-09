@@ -1,0 +1,117 @@
+// @vitest-environment node
+
+import { Readable } from 'node:stream'
+import { expect, test, vi } from 'vitest'
+import { createDesktopScenario } from '../../e2e/desktop/scenarios/connector-oauth.scenario.mjs'
+
+const prompt = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_CALL'
+const completion = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_TOOL_COMPLETED'
+const callId = 'connector-oauth-real-echo'
+const url = new URL('http://model.test/v1/responses')
+const execDeclaration = {
+  type: 'additional_tools',
+  tools: [
+    {
+      type: 'namespace',
+      name: 'functions',
+      tools: [
+        {
+          type: 'custom',
+          name: 'exec',
+          description: 'Run Code Mode.',
+        },
+      ],
+    },
+  ],
+}
+
+function request(body: unknown) {
+  return Object.assign(Readable.from([JSON.stringify(body)]), { method: 'POST' })
+}
+
+function response() {
+  return { writeHead: vi.fn(), end: vi.fn() }
+}
+
+function events(value: { end: (input: string) => void }) {
+  return value.end.mock.calls[0][0]
+    .split('\n')
+    .filter(line => line.startsWith('data: {'))
+    .map(line => JSON.parse(line.slice(6)))
+}
+
+function itemWithType(events: Array<{ item?: { type?: string } }>, type: string) {
+  return events.find(event => event.item?.type === type)?.item
+}
+
+function codeModeBody(input: string, output: string, callId: string, includeExec = true) {
+  return {
+    input: [
+      ...(includeExec ? [execDeclaration] : []),
+      { role: 'user', content: prompt },
+      {
+        type: 'custom_tool_call_output',
+        call_id: callId,
+        output: [
+          { type: 'input_text', text: 'Script completed\nWall time 0.0 seconds\nOutput:\n' },
+          { type: 'input_text', text: output },
+        ],
+      },
+    ],
+    tools: [],
+  }
+}
+
+test('the first connector tool request emits native discovery instead of falling through', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+  expect(
+    await scenario.handleHttp(
+      request({
+        tools: [],
+        input: [execDeclaration, { role: 'user', content: prompt }],
+      }),
+      modelResponse,
+      url
+    )
+  ).toBe(true)
+
+  const discovery = itemWithType(events(modelResponse), 'custom_tool_call')
+  expect(discovery).toMatchObject({ call_id: `${callId}-search`, name: 'exec' })
+  expect(discovery?.input).toContain('ALL_TOOLS')
+  expect(events(modelResponse).some(event => event.item?.call_id === callId)).toBe(false)
+})
+
+test('the searched connector tool is invoked before completing the real call', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+  const discovered = {
+    name: 'mcp__wegent_apps__desktop-connector-oauth__echo',
+    description:
+      'Echo the caller payload.\n\nexec tool declaration:\necho(args: { value: string }): Promise<unknown>',
+  }
+  const body = codeModeBody(
+    'unused search script',
+    JSON.stringify({ tools: [discovered] }),
+    `${callId}-search`
+  )
+
+  expect(await scenario.handleHttp(request(body), modelResponse, url)).toBe(true)
+
+  const invocation = itemWithType(events(modelResponse), 'custom_tool_call')
+  expect(invocation).toMatchObject({ call_id: callId, name: 'exec' })
+  expect(invocation?.input).toContain(discovered.name)
+  expect(invocation?.input).toContain(prompt)
+  expect(events(modelResponse).some(event => event.item?.type === 'message')).toBe(false)
+})
+
+test('the real connector tool result completes the checkpoint', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+  const body = codeModeBody('unused invocation script', 'CONNECTOR-OAUTH-ECHO-OK', callId, false)
+
+  expect(await scenario.handleHttp(request(body), modelResponse, url)).toBe(true)
+
+  const message = itemWithType(events(modelResponse), 'message')
+  expect(message?.content).toEqual([{ type: 'output_text', text: completion, annotations: [] }])
+})

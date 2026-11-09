@@ -144,24 +144,22 @@ export function createDesktopScenario({
           writeReply(response, `connector-oauth-tool-${replySequence}`, TOOL_COMPLETION)
           return true
         }
-        if (requestContainsToolOutput(body, `${TOOL_CALL_ID}-search`)) {
-          const responseId = `connector-oauth-tool-${replySequence}`
-          response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-          response.end(
-            sse([
-              responseCreated(responseId),
-              ...mcpToolRequestEvents(body, {
-                toolName: `${CONNECTOR_OAUTH_SLUG}__echo`,
-                argumentsValue: { value: TOOL_PROMPT },
-                directToolName: `mcp__wegent_apps__${CONNECTOR_OAUTH_SLUG}__echo`,
-                searchCallId: `${TOOL_CALL_ID}-search`,
-                toolCallId: TOOL_CALL_ID,
-              }).events,
-              responseCompleted(responseId),
-            ])
-          )
-          return true
-        }
+        const responseId = `connector-oauth-tool-${replySequence}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            ...mcpToolRequestEvents(body, {
+              toolName: 'echo',
+              argumentsValue: { value: TOOL_PROMPT },
+              directToolName: `mcp__wegent_apps__${CONNECTOR_OAUTH_SLUG}__echo`,
+              searchCallId: `${TOOL_CALL_ID}-search`,
+              toolCallId: TOOL_CALL_ID,
+            }).events,
+            responseCompleted(responseId),
+          ])
+        )
+        return true
       }
       if (isResumeRequest(body)) {
         // Ordering evidence: by the time the blocked step resumes, the backend
