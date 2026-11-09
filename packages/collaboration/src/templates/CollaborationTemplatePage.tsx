@@ -25,6 +25,7 @@ type Card = {
   record?: TemplateRecord
   id: number | null
   ownerId: number
+  namespace: string
   installed?: boolean
 }
 
@@ -110,6 +111,7 @@ function ScopedCollaborationTemplatePage({
       record,
       id: record.id,
       ownerId: record.ownerId,
+      namespace: record.document.metadata.namespace,
       name: record.document.spec.displayName,
       description: record.document.spec.description,
       version: record.document.spec.version,
@@ -133,6 +135,7 @@ function ScopedCollaborationTemplatePage({
           cached?.document.spec.version === version ? { ...cached, id: listing.id } : undefined,
         id: listing.id,
         ownerId: cached?.ownerId ?? listing.publisher_user_id,
+        namespace: cached?.document.metadata.namespace ?? listing.publisher_namespace,
         name: listing.display_name,
         description: listing.description ?? '',
         version,
@@ -150,6 +153,7 @@ function ScopedCollaborationTemplatePage({
           key,
           id: summary.id,
           ownerId: summary.ownerId,
+          namespace: summary.namespace,
           name: summary.displayName,
           description: summary.description,
           version: summary.version,
@@ -297,6 +301,7 @@ function ScopedCollaborationTemplatePage({
                 {m.version} {card.version}
               </span>
               {card.ownerId === store.library.ownerId &&
+                card.namespace === 'default' &&
                 (!card.record || card.record.source === 'personal') && (
                   <button
                     type="button"

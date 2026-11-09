@@ -141,6 +141,16 @@ it('deletes account-only templates and invalidates their list metadata', async (
       version: '1.0.0',
       revision: '1',
     },
+    {
+      id: 43,
+      ownerId: 7,
+      namespace: 'shared-space',
+      name: 'shared-workflow',
+      displayName: 'Shared workflow',
+      description: '',
+      version: '1.0.0',
+      revision: '1',
+    },
   ])
   const store = new CollaborationTemplateStore({
     scope: 'backend:7',
@@ -153,6 +163,7 @@ it('deletes account-only templates and invalidates their list metadata', async (
     await new Promise(resolve => setTimeout(resolve, 250))
   })
   await click('template-tab-mine')
+  expect(container.querySelector('[data-testid="template-delete-43"]')).toBeNull()
   await click('template-delete-42')
   vi.mocked(backend.list).mockResolvedValue([])
   await click('template-delete-confirm')
