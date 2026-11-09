@@ -366,7 +366,14 @@ def _resolve_routing(
     if model.source == "cloud":
         from app.services.runner_cloud_models import require_cloud_model
 
-        require_cloud_model(db, user_id, model)
+        # A fixed agent model is a persisted choice: it stays callable after
+        # an admin hides the model from new selections.
+        require_cloud_model(
+            db,
+            user_id,
+            model,
+            allow_hidden=model_policy.mode == "fixed",
+        )
     elif model.source == "native" and config["execution_policy"]["mode"] != "fixed":
         raise routing_error(
             "RUNNER_MODEL_UNAVAILABLE", "Local models require a fixed environment"
@@ -603,7 +610,11 @@ def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
             if model.source == "cloud":
                 from app.services.runner_cloud_models import require_cloud_model
 
-                require_cloud_model(db, execution.assigner_user_id, model)
+                # The route is a persisted execution snapshot, not a fresh
+                # selection.
+                require_cloud_model(
+                    db, execution.assigner_user_id, model, allow_hidden=True
+                )
             if device.id not in {item.id for item in members} or not supports_model(
                 device, model
             ):
@@ -798,7 +809,8 @@ def validate_agent_policies(
         if model_policy.model.source == "cloud":
             from app.services.runner_cloud_models import require_cloud_model
 
-            require_cloud_model(db, user_id, model_policy.model)
+            # The agent's fixed model policy is a persisted choice.
+            require_cloud_model(db, user_id, model_policy.model, allow_hidden=True)
             if policy.mode != "fixed":
                 return
         if model_policy.model.source == "native" and policy.mode != "fixed":

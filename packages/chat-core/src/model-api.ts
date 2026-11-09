@@ -61,5 +61,28 @@ export function createModelApi(client: {
         void request.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
       })
     },
+    getModel(modelName: string, modelType?: string): Promise<UnifiedModel> {
+      // The single-model endpoint still resolves public models hidden from the
+      // selector, which lets an existing conversation keep its recorded model.
+      const query = new URLSearchParams()
+      if (modelType) query.set('model_type', modelType)
+      const suffix = query.toString()
+      const controller = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          const error = new DOMException('Cloud model request timed out', 'TimeoutError')
+          reject(error)
+          controller.abort(error)
+        }, REQUEST_TIMEOUT_MS)
+      })
+      return Promise.race([
+        client.get<UnifiedModel>(
+          `/models/unified/${encodeURIComponent(modelName)}${suffix ? `?${suffix}` : ''}`,
+          { signal: controller.signal }
+        ),
+        deadline,
+      ]).finally(() => clearTimeout(timer))
+    },
   }
 }

@@ -115,6 +115,59 @@ test('distinguishes defaulting from an unavailable saved model', async () => {
   hook.unmount()
 })
 
+test('keeps a hidden cloud task model when the single-model endpoint resolves it', async () => {
+  const hiddenTask = selection('hidden-model')
+  const hiddenModel: UnifiedModel = {
+    name: 'hidden-model',
+    type: 'public',
+    namespace: 'default',
+    resourceUserId: 0,
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockResolvedValue(hiddenModel),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: hiddenTask,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(hiddenModel))
+  expect(hook.result.current.isSelectionReady).toBe(true)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+  expect(hook.result.current.selectedModelAvailable).toBe(true)
+  expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public')
+})
+
+test('keeps the replacement flow when the persisted cloud model no longer resolves', async () => {
+  const deletedTask = selection('deleted-model')
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockRejectedValue(new Error('not found')),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: deletedTask,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+
+  await waitFor(() => expect(hook.result.current.isConfiguredModelUnavailable).toBe(true))
+  expect(hook.result.current.selectedModel).toBeNull()
+  expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(api.getModel).toHaveBeenCalledWith('deleted-model', 'public')
+})
+
 test('correlates composer changes and background seeds without logging private options', async () => {
   const api = { listModels: vi.fn().mockResolvedValue({ data: models }) }
   const onSelectionChange = vi.fn()

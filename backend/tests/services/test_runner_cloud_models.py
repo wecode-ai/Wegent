@@ -95,6 +95,112 @@ def test_same_name_cannot_substitute_another_resource_owner(
     resolve.assert_not_called()
 
 
+def test_persisted_cloud_model_remains_usable_after_being_hidden(
+    test_db, test_user, cloud_model, mocker
+):
+    from app.models.kind import Kind
+
+    test_db.add(
+        Kind(
+            user_id=0,
+            kind="Model",
+            name="cloud-model",
+            namespace="default",
+            is_active=True,
+            json={
+                "kind": "Model",
+                "metadata": {"name": "cloud-model", "namespace": "default"},
+                "spec": {
+                    "isVisible": False,
+                    "isWeworkAvailable": True,
+                    "modelType": "llm",
+                    "modelConfig": {"env": {"model": "openai", "model_id": "upstream"}},
+                },
+            },
+        )
+    )
+    test_db.commit()
+    mocker.patch(
+        "app.services.runner_cloud_models.cloud_model_catalog", return_value=[]
+    )
+    mocker.patch(
+        "app.services.llm_proxy_service.resolve_llm_proxy_model_config",
+        return_value={"protocol": "openai-responses"},
+    )
+
+    options = require_cloud_model(test_db, test_user.id, cloud_model, allow_hidden=True)
+
+    assert options["weworkCloudModelNamespace"] == "default"
+
+
+def test_hidden_cloud_model_is_still_rejected_for_a_new_selection(
+    test_db, test_user, cloud_model, mocker
+):
+    from app.models.kind import Kind
+
+    test_db.add(
+        Kind(
+            user_id=0,
+            kind="Model",
+            name="cloud-model",
+            namespace="default",
+            is_active=True,
+            json={
+                "kind": "Model",
+                "metadata": {"name": "cloud-model", "namespace": "default"},
+                "spec": {"isVisible": False},
+            },
+        )
+    )
+    test_db.commit()
+    mocker.patch(
+        "app.services.runner_cloud_models.cloud_model_catalog", return_value=[]
+    )
+
+    with pytest.raises(HTTPException) as error:
+        require_cloud_model(test_db, test_user.id, cloud_model)
+
+    assert error.value.detail["error_code"] == "RUNNER_MODEL_UNAVAILABLE"
+
+
+def test_persisted_cloud_model_keeps_the_public_user_whitelist(
+    test_db, test_user, cloud_model, mocker
+):
+    from app.models.kind import Kind
+
+    test_db.add(
+        Kind(
+            user_id=0,
+            kind="Model",
+            name="cloud-model",
+            namespace="default",
+            is_active=True,
+            json={
+                "kind": "Model",
+                "metadata": {"name": "cloud-model", "namespace": "default"},
+                "spec": {
+                    "isVisible": False,
+                    "allowedUsersEnabled": True,
+                    "allowedUsers": ["another-user"],
+                },
+            },
+        )
+    )
+    test_db.commit()
+    mocker.patch(
+        "app.services.runner_cloud_models.cloud_model_catalog", return_value=[]
+    )
+    mocker.patch(
+        "app.services.llm_proxy_service.resolve_llm_proxy_model_config",
+        return_value={"protocol": "openai-responses"},
+    )
+
+    with pytest.raises(HTTPException) as error:
+        require_cloud_model(test_db, test_user.id, cloud_model, allow_hidden=True)
+
+    assert error.value.detail["error_code"] == "RUNNER_MODEL_UNAVAILABLE"
+
+
 @pytest.mark.parametrize(
     "protocol", ["openai-responses", "openai-chat-completions", "anthropic-messages"]
 )

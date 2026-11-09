@@ -437,13 +437,23 @@ export function useModelSelection({
       let restoredForceOverride: boolean | undefined
 
       // Priority 1: Use taskModelId from API (if exists and not default)
-      // Search in ALL models, not just filtered ones, since task already has a recorded model
+      // Search in ALL models, not just filtered ones, since task already has a recorded model.
+      // A persisted task model may have been hidden from new selections by an
+      // admin. Keep it selected so the existing task can continue; the backend
+      // still resolves persisted references by name.
       if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
         const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
         if (foundModel) {
           restoredModel = foundModel
-          restoredForceOverride = true
+        } else {
+          restoredModel = {
+            name: taskModelId,
+            displayName: taskModelId,
+            provider: '',
+            modelId: '',
+          }
         }
+        restoredForceOverride = true
       }
 
       // Priority 2: Use global preference (for new chat only, i.e. no taskId)

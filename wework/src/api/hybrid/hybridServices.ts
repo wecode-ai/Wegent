@@ -1778,6 +1778,7 @@ export function createHybridWorkbenchServices(
     modelApi: {
       subscribe: cloudModels.subscribe,
       refresh: cloudModels.refresh,
+      getModel: cloudServices.modelApi.getModel,
       async listModels(): Promise<UnifiedModelListResponse> {
         cloudModels.loadIfNeeded()
         // Start the cloud catalog before awaiting the local one: the local

@@ -44,8 +44,69 @@ def cloud_model_catalog(db: Session, user_id: int) -> list[dict]:
     ]
 
 
+def _persisted_cloud_model_kind(
+    db: Session, user: User, model: ModelIdentity
+) -> Kind | None:
+    """Load a persisted model reference without applying catalog visibility.
+
+    Hiding a public model (``spec.isVisible=false``) removes it from new
+    selections, but an agent or task configured earlier keeps its reference.
+    The reference still has to name an active Model the user may access.
+    """
+    from app.services.adapters.public_model import is_public_model_allowed_for_user
+
+    ref = model.cloud_model
+    kind = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == ref.resource_user_id,
+            Kind.kind == "Model",
+            Kind.namespace == ref.namespace,
+            Kind.name == ref.name,
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )
+    if kind is None:
+        return None
+    if ref.type == "public" and not is_public_model_allowed_for_user(
+        kind.json, user.user_name
+    ):
+        return None
+    # Hidden is the only state a persisted reference survives. The Wework
+    # availability and model-category filters still describe whether this
+    # reference can serve a Wework LLM run at all.
+    from app.schemas.kind import Model as ModelCRD
+    from app.schemas.kind import resolve_model_category
+
+    try:
+        crd = ModelCRD.model_validate(kind.json)
+    except Exception:
+        return None
+    if (
+        not bool(crd.spec.isWeworkAvailable)
+        or resolve_model_category(kind.json.get("spec") or {}) != "llm"
+    ):
+        return None
+    return kind
+
+
 @execution_resource_scope()
-def require_cloud_model(db: Session, user_id: int, model: ModelIdentity) -> dict:
+def require_cloud_model(
+    db: Session,
+    user_id: int,
+    model: ModelIdentity,
+    *,
+    allow_hidden: bool = False,
+) -> dict:
+    """Authorize one cloud model reference for execution.
+
+    ``allow_hidden`` is for references persisted in agent policies and runtime
+    snapshots: the admin "offline" state only hides a model from new
+    selections, so a previously configured reference must still resolve. New
+    user selections keep ``allow_hidden=False`` and must come from the visible
+    catalog.
+    """
     from app.services.llm_proxy_service import (
         resolve_llm_proxy_model_config,
         resolve_llm_proxy_protocol,
@@ -65,9 +126,12 @@ def require_cloud_model(db: Session, user_id: int, model: ModelIdentity) -> dict
         and item.get("resourceUserId") == ref.resource_user_id
         for item in cloud_model_catalog(db, user_id)
     )
-    if not available:
+    if not available and (
+        not allow_hidden or _persisted_cloud_model_kind(db, user, model) is None
+    ):
         raise routing_error(
-            "RUNNER_MODEL_UNAVAILABLE", "The cloud model is not available to this user"
+            "RUNNER_MODEL_UNAVAILABLE",
+            "The cloud model is not available to this user",
         )
     try:
         config = resolve_llm_proxy_model_config(
@@ -82,7 +146,8 @@ def require_cloud_model(db: Session, user_id: int, model: ModelIdentity) -> dict
     except HTTPException as error:
         raise routing_error(
             "RUNNER_MODEL_UNAVAILABLE",
-            "The cloud model is unavailable, misconfigured, or no longer authorized for this user",
+            "The cloud model is unavailable, misconfigured, or no longer "
+            "authorized for this user",
         ) from error
     return {
         "weworkCloudModelNamespace": ref.namespace,
@@ -97,7 +162,7 @@ def execution_model_values(
     from app.services.runner_routing import matching_model, routing_error
 
     if model.source == "cloud":
-        options = require_cloud_model(db, user_id, model)
+        options = require_cloud_model(db, user_id, model, allow_hidden=True)
         ref = model.cloud_model
         return ref.name, ref.type, options, f"cloud_gateway:user:{user_id}"
     native = matching_model(device, model)
@@ -120,7 +185,7 @@ def fixed_model_config(db: Session, user_id: int, model: ModelIdentity) -> dict:
 
     from app.services.runtime_work_service import _runtime_model_override_values
 
-    options = require_cloud_model(db, user_id, model)
+    options = require_cloud_model(db, user_id, model, allow_hidden=True)
     ref = model.cloud_model
     config, _, _ = _runtime_model_override_values(
         db=db,

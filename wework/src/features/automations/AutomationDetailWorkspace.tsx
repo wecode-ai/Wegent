@@ -145,11 +145,40 @@ export function AutomationDetailWorkspace({
       : !isCloudDevice(device) && !isRemoteDevice(device)
   )
   const reasoning = draft.modelOptions.reasoningEffort ?? 'medium'
-  const selectedModel = models.find(
+  const catalogModel = models.find(
     model =>
       model.type === draft.modelType &&
       (model.name === draft.modelId || (model.modelId ?? model.name) === draft.modelId)
   )
+  // A saved automation keeps its model reference after the admin hides that
+  // model from new selections. Show the persisted identity instead of
+  // pretending the automation is on "automatic".
+  const selectedModel =
+    catalogModel ??
+    (draft.modelId
+      ? ({
+          name: draft.modelId,
+          modelId: draft.modelId,
+          displayName: draft.modelId,
+          type: draft.modelType as UnifiedModel['type'],
+        } as UnifiedModel)
+      : undefined)
+  const selectedModelValue = selectedModel
+    ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
+    : ''
+  const modelSelectOptions = models.map(model => {
+    const modelId = model.modelId ?? model.name
+    return {
+      value: `${model.type}:${modelId}`,
+      label: model.displayName ?? model.name,
+    }
+  })
+  if (!catalogModel && selectedModel) {
+    modelSelectOptions.unshift({
+      value: selectedModelValue,
+      label: selectedModel.displayName ?? selectedModel.name,
+    })
+  }
   const projectOptions = buildAutomationProjectOptions(projects, draft.deviceId)
   const selectedProject =
     projectOptions.find(option => option.workspacePath === draft.workspacePath) ?? null
@@ -445,30 +474,20 @@ export function AutomationDetailWorkspace({
                   <SettingsRow label={t('workbench.model', '模型')}>
                     <InlineSelect
                       dataTestId="automation-model-select"
-                      value={
-                        selectedModel
-                          ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
-                          : ''
-                      }
+                      value={selectedModelValue}
                       onChange={value => {
                         const [modelType, ...modelIdParts] = value.split(':')
                         const modelId = modelIdParts.join(':')
-                        onModelChange(
+                        const nextModel =
                           models.find(
                             model =>
                               model.type === modelType && (model.modelId ?? model.name) === modelId
-                          ) ?? null
-                        )
+                          ) ?? (value === selectedModelValue ? selectedModel : undefined)
+                        onModelChange(nextModel ?? null)
                       }}
                       options={[
                         { value: '', label: t('todo.automatic', '自动') },
-                        ...models.map(model => {
-                          const modelId = model.modelId ?? model.name
-                          return {
-                            value: `${model.type}:${modelId}`,
-                            label: model.displayName ?? model.name,
-                          }
-                        }),
+                        ...modelSelectOptions,
                       ]}
                     />
                   </SettingsRow>

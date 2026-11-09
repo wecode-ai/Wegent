@@ -46,10 +46,15 @@ pub(super) fn model_identifier(model: &crate::models_unified::models::UnifiedMod
 }
 
 /// `models.selection`: the one authorized catalog entry the request names.
+///
+/// `allow_hidden` is for a request that continues an existing conversation:
+/// the recorded model keeps working after an admin hides it from new
+/// selections. New conversations keep the visible catalog.
 pub(super) async fn model_selection(
     state: &AppState,
     user: &crate::models_unified::mysql::UserRow,
     body: &WeworkResponseCreate,
+    allow_hidden: bool,
 ) -> Result<ModelSelection, FastApiError> {
     let query = crate::models_unified::models::UnifiedQuery {
         shell_type: None,
@@ -82,18 +87,29 @@ pub(super) async fn model_selection(
         (body.model == model_identifier(model) || body.model == model.name)
             && model_type_filter.is_none_or(|kind| kind == model.model_type)
     });
-    let Some((model, _)) = matches.next() else {
-        return Err(FastApiError::detail(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Model unavailable or ambiguous; use an id from GET /models",
-        ));
-    };
-    if matches.next().is_some() {
-        return Err(FastApiError::detail(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Model unavailable or ambiguous; use an id from GET /models",
-        ));
+    if let Some((model, _)) = matches.next() {
+        if matches.next().is_some() {
+            return Err(unavailable());
+        }
+        return Ok(selection_from_catalog(&model, body));
     }
+    if !allow_hidden {
+        return Err(unavailable());
+    }
+    persisted_selection(state, user, body).await
+}
+
+fn unavailable() -> FastApiError {
+    FastApiError::detail(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "Model unavailable or ambiguous; use an id from GET /models",
+    )
+}
+
+fn selection_from_catalog(
+    model: &crate::models_unified::models::UnifiedModel,
+    body: &WeworkResponseCreate,
+) -> ModelSelection {
     let mut options = body
         .execution
         .as_ref()
@@ -107,9 +123,160 @@ pub(super) async fn model_selection(
         "weworkCloudModelResourceUserId".to_string(),
         json!(model.resource_user_id.unwrap_or(0)),
     );
-    Ok(ModelSelection {
+    ModelSelection {
         model_name: model.name.clone(),
         model_type: model.model_type.to_string(),
+        options,
+    }
+}
+
+/// `type:namespace:resourceUserId:name` (`models.model_identifier`).
+pub(super) fn parse_model_identifier(value: &str) -> Option<(&str, &str, i64, &str)> {
+    let mut parts = value.splitn(4, ':');
+    let model_type = parts.next()?;
+    let namespace = parts.next()?;
+    let owner = parts.next()?.parse::<i64>().ok()?;
+    let name = parts.next()?;
+    if !matches!(model_type, "public" | "user" | "group") || namespace.is_empty() || name.is_empty()
+    {
+        return None;
+    }
+    Some((model_type, namespace, owner, name))
+}
+
+pub(super) fn model_type_from_row(
+    row: &crate::responses::create::resolution::KindRow,
+) -> &'static str {
+    if row.user_id == 0 {
+        "public"
+    } else if row.namespace != "default" {
+        "group"
+    } else {
+        "user"
+    }
+}
+
+/// Resolve one exact persisted identity, bypassing only the catalog's
+/// `isVisible` filter. Activation, group membership and the public-model user
+/// whitelist remain execution requirements.
+async fn exact_persisted_model(
+    state: &AppState,
+    user: &crate::models_unified::mysql::UserRow,
+    model_type: &str,
+    namespace: &str,
+    owner: i64,
+    name: &str,
+) -> Result<Option<crate::responses::create::resolution::KindRow>, FastApiError> {
+    use wegent_resource_store::kind_rows::KIND_COLUMNS;
+
+    let user_id = i64::from(user.id);
+    match model_type {
+        "public" if namespace == "default" && owner == 0 => {}
+        "user" if namespace == "default" && owner == user_id => {}
+        "group" if namespace != "default" => {
+            let groups = crate::permissions::user_groups(
+                &state.mysql,
+                &state.entity_resolvers,
+                state.redis.as_ref(),
+                user_id,
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, "wework persisted model group read failed");
+                FastApiError::internal()
+            })?;
+            if !groups.iter().any(|group| group == namespace) {
+                return Ok(None);
+            }
+        }
+        _ => return Ok(None),
+    }
+    let sql = format!(
+        "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? \
+         AND kinds.kind = 'Model' AND kinds.namespace = ? AND kinds.name = ? \
+         AND kinds.is_active = true LIMIT 1"
+    );
+    let row: Option<crate::responses::create::resolution::KindRow> = state
+        .mysql
+        .fetch_optional(sql.as_str(), (owner, namespace, name))
+        .await
+        .map_err(|error| {
+            tracing::error!(?error, "wework persisted model read failed");
+            FastApiError::internal()
+        })?;
+    if model_type == "public"
+        && row.as_ref().is_some_and(|row| {
+            !wegent_access::public_models::allowed_for_user_name(
+                &brz_json::OpaqueJson::from(row.json.0.clone()),
+                Some(user.user_name.as_str()),
+            )
+        })
+    {
+        return Ok(None);
+    }
+    Ok(row)
+}
+
+async fn persisted_selection(
+    state: &AppState,
+    user: &crate::models_unified::mysql::UserRow,
+    body: &WeworkResponseCreate,
+) -> Result<ModelSelection, FastApiError> {
+    let identity = parse_model_identifier(&body.model);
+    let row = if let Some((model_type, namespace, owner, name)) = identity {
+        exact_persisted_model(state, user, model_type, namespace, owner, name).await?
+    } else {
+        crate::responses::create::resolution::resolve_model_for_bot(
+            &state.mysql,
+            &state.entity_resolvers,
+            state.redis.as_ref(),
+            i64::from(user.id),
+            &body.model,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(?error, "wework persisted model resolution failed");
+            FastApiError::internal()
+        })?
+    };
+    let Some(row) = row else {
+        return Err(unavailable());
+    };
+    let actual_type = model_type_from_row(&row);
+    if let Some((model_type, namespace, owner, _)) = identity
+        && (model_type != actual_type || namespace != row.namespace || owner != row.user_id)
+    {
+        return Err(unavailable());
+    }
+    let requested_type = body
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.model_type.as_deref());
+    if requested_type.is_some_and(|value| value != actual_type) {
+        return Err(unavailable());
+    }
+    let json = &row.json.0;
+    if crate::responses::create::model_selection::model_category(json.get("spec")) != "llm"
+        || !crate::models_unified::models::is_wework_available(json)
+    {
+        return Err(unavailable());
+    }
+    let mut options = body
+        .execution
+        .as_ref()
+        .map(|execution| execution.model_options.clone())
+        .unwrap_or_default();
+    options.insert(
+        "weworkCloudModelNamespace".to_string(),
+        Value::String(row.namespace.clone()),
+    );
+    options.insert(
+        "weworkCloudModelResourceUserId".to_string(),
+        json!(row.user_id),
+    );
+    Ok(ModelSelection {
+        model_name: row.name,
+        model_type: actual_type.to_string(),
         options,
     })
 }
