@@ -70,14 +70,26 @@ export function validatePythonRuntimeDownloads(
   return { uvUrl: data!.uvUrl!, pythonUrl: data!.pythonUrl! }
 }
 
+type MetadataRequestPhase = 'headers' | 'body' | 'backend-check'
+
 async function metadataRequest(
-  load: (signal: AbortSignal) => Promise<PythonRuntimeDownloads>
+  load: (
+    signal: AbortSignal,
+    enterPhase: (phase: MetadataRequestPhase) => void
+  ) => Promise<PythonRuntimeDownloads>
 ): Promise<PythonRuntimeDownloads> {
   const controller = new AbortController()
-  const deadline = performance.now() + PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS
+  const startedAt = performance.now()
+  const deadline = startedAt + PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS
+  let phase: MetadataRequestPhase = 'headers'
+  let phaseStartedAt = startedAt
+  const enterPhase = (next: MetadataRequestPhase) => {
+    phase = next
+    phaseStartedAt = performance.now()
+  }
   const error = () =>
     new Error(
-      `Python download configuration timed out after ${PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS}ms`
+      `Python download configuration timed out after ${PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS}ms; phase=${phase}, elapsedMs=${Math.round(performance.now() - startedAt)}, phaseElapsedMs=${Math.round(performance.now() - phaseStartedAt)}`
     )
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_resolve, reject) => {
@@ -87,7 +99,7 @@ async function metadataRequest(
     }, PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS)
   })
   try {
-    const result = await Promise.race([load(controller.signal), timeout])
+    const result = await Promise.race([load(controller.signal, enterPhase), timeout])
     if (performance.now() >= deadline) {
       controller.abort()
       throw error()
@@ -110,7 +122,7 @@ export async function fetchPythonRuntimeDownloads(
     throw new Error('Python download configuration: Backend changed during request')
   const platform = options.platform ?? process.platform
   const arch = options.arch ?? process.arch
-  return metadataRequest(async signal => {
+  return metadataRequest(async (signal, enterPhase) => {
     const response = await options.fetch(`${api}/wework/runtime-downloads`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -119,6 +131,7 @@ export async function fetchPythonRuntimeDownloads(
     })
     if (response.status === 401) throw new PythonRuntimeLoginRequiredError()
     if (!response.ok) throw new Error(`Python download configuration: HTTP ${response.status}`)
+    enterPhase('body')
     const payload = await response.json().catch(() => {
       throw new Error('Python download configuration: invalid response')
     })
@@ -135,6 +148,7 @@ export async function fetchPythonRuntimeDownloads(
       platform as NodeJS.Platform,
       arch
     )
+    enterPhase('backend-check')
     if (apiUrl(await options.connection()) !== api)
       throw new Error('Python download configuration: Backend changed during request')
     signal.throwIfAborted()
