@@ -1141,10 +1141,19 @@ async function main() {
     mkdir(codexSqliteHome, { recursive: true }),
     mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  // Desktop scenarios own their viewport instead of inheriting first-launch defaults.
+  // The host clamps these bounds to each runner's available display, as before.
   // Exercise consent explicitly; the product default already marks it as asked.
   await writeFile(
     join(electronUserDataDirectory, 'app-preferences.json'),
-    `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    `${JSON.stringify({
+      telemetryConsentAsked: false,
+      telemetryEnabled: false,
+      mainWindowState: {
+        bounds: { x: 0, y: 0, width: 1440, height: 960 },
+        maximized: true,
+      },
+    })}\n`,
     { flag: 'wx', mode: 0o600 }
   )
   // Background update dialogs steal focus from unrelated keyboard scenarios.
