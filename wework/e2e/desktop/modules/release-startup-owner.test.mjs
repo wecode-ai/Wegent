@@ -33,7 +33,7 @@ test(
       entry,
       `
     const {app} = require('electron')
-    const {appendFileSync,readFileSync,mkdirSync} = require('node:fs')
+    const {appendFileSync,existsSync,readFileSync,mkdirSync,watchFile,unwatchFile} = require('node:fs')
     const trace = phase => {
       const event = JSON.stringify({phase,pid:process.pid})
       appendFileSync(require('node:path').join(${JSON.stringify(root)}, 'trace-' + process.pid + '.jsonl'), event + '\\n')
@@ -55,14 +55,20 @@ test(
       await app.whenReady()
       trace('ready')
       console.log(JSON.stringify({owned:true,pid:process.pid}))
-      process.stdin.on('end', () => trace('stdin-ended'))
-      process.stdin.once('data', async () => {
-        trace('releasing')
-        await release()
-        trace('released')
-        app.exit(0)
+      // Windows Electron's GUI entry closes stdin; use an explicit test command file.
+      const command = require('node:path').join(${JSON.stringify(root)}, 'release-' + process.pid)
+      let releasing = false
+      watchFile(command, {interval:25}, () => {
+        if (releasing || !existsSync(command)) return
+        releasing = true
+        unwatchFile(command)
+        void (async () => {
+          trace('releasing')
+          await release()
+          trace('released')
+          app.exit(0)
+        })().catch(error => {console.error(error);app.exit(1)})
       })
-      setInterval(() => {}, 1000)
     }).catch(error => {console.error(error);app.exit(1)})
   `
     )
@@ -70,15 +76,12 @@ test(
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
       delete env.NODE_OPTIONS
-      const child = spawn(electron, [entry, identity], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+      const child = spawn(electron, [entry, identity], { env, stdio: ['ignore', 'pipe', 'pipe'] })
       const exited = once(child, 'exit')
       const host = { child, exited, stderr: '', owned: false }
       hosts.push(host)
       child.stderr.on('data', chunk => {
         host.stderr += chunk
-      })
-      child.stdin.on('error', error => {
-        host.stderr += `stdin: ${error.message}\n`
       })
       const lines = createInterface({ input: child.stdout, signal: AbortSignal.timeout(15_000) })
       const reported = (async () => {
@@ -99,6 +102,19 @@ test(
       ])
       void host.ready.catch(() => {})
       return host
+    }
+    async function releaseAndExit(host, name) {
+      await writeFile(join(root, `release-${host.child.pid}`), 'release')
+      assert.deepEqual(await phase(name, host.exited, host), [0, null], host.stderr)
+      const trace = await readFile(join(root, `trace-${host.child.pid}.jsonl`), 'utf8')
+      assert.ok(
+        trace
+          .trim()
+          .split('\n')
+          .map(line => JSON.parse(line))
+          .some(event => event.phase === 'released' && event.pid === host.child.pid),
+        trace
+      )
     }
     async function phase(name, operation, host, signal = context.signal) {
       console.log(`[native-startup] ${name}: start${host ? ` pid=${host.child.pid}` : ''}`)
@@ -143,16 +159,10 @@ test(
       first.child.kill('SIGKILL')
       await phase('crashed owner exit', first.exited, first)
       await phase('ownership after crash', next.ready, next)
-      next.child.stdin.end('release')
-      assert.deepEqual(await phase('normal owner exit', next.exited, next), [0, null], next.stderr)
+      await releaseAndExit(next, 'normal owner exit')
       const afterRelease = launch(root)
       await phase('ownership after release', afterRelease.ready, afterRelease)
-      afterRelease.child.stdin.end('release')
-      assert.deepEqual(
-        await phase('final owner exit', afterRelease.exited, afterRelease),
-        [0, null],
-        afterRelease.stderr
-      )
+      await releaseAndExit(afterRelease, 'final owner exit')
     } finally {
       for (const host of hosts) {
         if (host.child.exitCode === null && host.child.signalCode === null)
@@ -160,7 +170,6 @@ test(
         try {
           await phase('cleanup owner', host.exited, host, new AbortController().signal)
         } finally {
-          host.child.stdin.destroy()
           host.child.stdout.destroy()
           host.child.stderr.destroy()
         }
