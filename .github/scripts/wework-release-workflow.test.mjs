@@ -20,6 +20,12 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test('non-publishing artifact builds cannot be cancelled by another release branch queue', () => {
+  assert.match(workflow.concurrency.group, /inputs.build_only && !inputs.publish_release/);
+  assert.match(workflow.concurrency.group, /github.ref/);
+  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+});
+
 function sparseCheckout(t, checkout, trackedOnly = false) {
   const root = mkdtempSync(join(tmpdir(), "wework-upgrade-resolver-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
