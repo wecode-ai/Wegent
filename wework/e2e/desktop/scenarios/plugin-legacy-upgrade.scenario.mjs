@@ -300,7 +300,7 @@ export async function createDesktopScenario({
       prompt: `WEWORK_LEGACY_PLUGIN ${id}`,
       output: null,
       // Keep the prepared Corepack ahead of host tools after native login-shell hydration.
-      command: `node -e ${quote("Object.assign(process.env,JSON.parse(process.argv[1])); const script=process.argv[2]; process.argv=[process.execPath,script,'doctor']; import(require('node:url').pathToFileURL(script).href)")} ${quote(JSON.stringify(pluginTools))} ${quote(join(record.runtime.codex_link, 'scripts/smart-app-tool.mjs'))}`,
+      command: `node -e ${quote('Object.assign(process.env,JSON.parse(Buffer.from(process.argv[1],`base64`).toString())); const script=process.argv[2]; process.argv=[process.execPath,script,`doctor`]; import(require(`node:url`).pathToFileURL(script).href)')} ${quote(Buffer.from(JSON.stringify(pluginTools)).toString('base64'))} ${quote(join(record.runtime.codex_link, 'scripts/smart-app-tool.mjs'))}`,
       expected: '"pnpmAvailable": true',
       skillPath: join(record.runtime.codex_link, 'skills', fixture.skillName, 'SKILL.md'),
       skillName: fixture.skillName,
