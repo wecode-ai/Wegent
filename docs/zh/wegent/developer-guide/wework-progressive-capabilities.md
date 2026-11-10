@@ -14,6 +14,8 @@ Goal 功能可用与创建 Goal 是不同的状态。普通会话不因此创建
 
 原生 Responses Lite 保留 `input.additional_tools`。兼容 Responses、Chat Completions 和 Anthropic Messages 使用对应协议的工具声明与调用格式。适配层保留命名空间和 custom 工具的原始字符串输入；增量目录按顺序应用新增、重定义和原生撤销通知。当前顶层工具目录不能因历史 `additional_tools` 被重新引入已撤销定义。
 
+custom 工具的上游线格式按模型配置 `custom_tool_conversion` 决定，可取 `none`、`all` 或 `except_apply_patch`，适配层不会根据请求 URL 或代理路由推断。未配置时采用工具模式的默认值：Function tools 转换对应 `all`，原生 Custom tools 对应 `none`。DeepSeek 供应商预设使用 `except_apply_patch`，将 `exec` 等 custom 工具包装为函数，同时保留原生 `apply_patch`；适配层会把函数响应还原为 custom 调用，并转换后续请求中的调用历史与结果。其他拒绝 custom 工具的 Responses 端点可在模型高级设置中选择同一模式，无需关闭 Code Mode 的工具发现。
+
 宿主规则由原生 developer instructions 统一承载。每轮提供有界版本引用；策略更新或上下文恢复时加载对应不可变策略文件，不复用旧版本，也不替代独立应用上下文或原生权限。
 
 独立 Backend Task 保留原有产物声明约定内联，通过与任务环境相同的 Backend 身份判断区分；Wework 会话继续通过 artifact skill 按需读取。纯文本辅助请求不加载这类操作指令，且会移除顶层及 Lite 历史中的工具定义。
