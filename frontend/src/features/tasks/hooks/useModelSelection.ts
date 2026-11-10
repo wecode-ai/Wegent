@@ -543,9 +543,10 @@ export function useModelSelection({
       }
 
       // The recorded task model may still be absent from the refreshed
-      // catalog. Keep its placeholder while this task remains selected.
-      const isRecordedTaskModel =
-        Boolean(taskModelId) && selectedModel.name === taskModelId && !selectedModel.type
+      // catalog. Keep the selected model while this task remains selected,
+      // whether it still carries catalog metadata or is a placeholder; the
+      // backend resolves persisted references after the model is hidden.
+      const isRecordedTaskModel = Boolean(taskModelId) && selectedModel.name === taskModelId
       const isStillCompatible =
         isRecordedTaskModel ||
         selectableModels.some(m => {
