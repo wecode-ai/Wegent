@@ -31,8 +31,13 @@ def test_mysql_migration_adds_hash_revokes_legacy_and_skips_redundant_index() ->
 
     migration.upgrade()
     upgrade_sql = output.getvalue()
-    assert "ALTER TABLE share_links ADD COLUMN token_hash VARCHAR(64) NOT NULL" in (
-        upgrade_sql
+    assert "ALTER TABLE share_links ADD COLUMN token_hash VARCHAR(64)" in upgrade_sql
+    assert (
+        "UPDATE share_links SET token_hash = SHA2(share_token, 256) WHERE token_hash IS NULL"
+        in upgrade_sql
+    )
+    assert (
+        "ALTER TABLE share_links MODIFY token_hash VARCHAR(64) NOT NULL" in upgrade_sql
     )
     assert "UPDATE share_links SET is_active=%s, updated_at=now()" in upgrade_sql
     assert "ALTER TABLE share_links ADD CONSTRAINT uniq_share_links_token_hash" in (
