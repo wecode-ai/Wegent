@@ -253,9 +253,6 @@ async def try_direct_injection(
             "source": "original_documents",
         },
     )
-    from app.services.rag.reporting import report_document_usage_for_result
-
-    report_document_usage_for_result(direct_records)
     return {
         "mode": "direct_injection",
         "records": direct_records,

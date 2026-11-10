@@ -224,6 +224,13 @@ async def report_retrieval_request(
     error = None
     try:
         result = await execute()
+        if parent_usage is None:
+            try:
+                records = loaded_scalar(result, "records")
+                if isinstance(records, (list, tuple)):
+                    report_document_usage_for_result(records)
+            except Exception:
+                pass
         return result
     except (Exception, asyncio.CancelledError) as exc:
         error = exc

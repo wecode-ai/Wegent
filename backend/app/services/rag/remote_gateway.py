@@ -16,7 +16,6 @@ from app.models.subtask_context import ContextType
 from app.services.context import context_service
 from app.services.rag.content_refs import build_content_ref_for_attachment
 from app.services.rag.reporting import (
-    report_document_usage_for_result,
     report_index_execution,
     report_query_execution,
 )
@@ -185,7 +184,6 @@ class RemoteRagGateway:
                 "mode": "rag_retrieval",
                 **response.model_dump(),
             }
-            report_document_usage_for_result(result["records"])
             return result
 
         return await report_query_execution(

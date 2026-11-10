@@ -16,6 +16,48 @@ async def _result(value):
     return value
 
 
+@pytest.mark.asyncio
+async def test_document_usage_records_only_final_returned_documents(mocker, facts):
+    report = mocker.patch("app.services.rag.reporting.report_document_usage")
+    selected = [{"knowledge_base_id": 2, "document_id": 22}]
+    await report_retrieval_request(
+        entrypoint="chat",
+        requested_kb_ids=[1, 2],
+        effective_kb_ids=[1, 2],
+        route_mode="rag_retrieval",
+        invocation_id="inv-1",
+        execute=lambda: _result({"records": selected, "total": 1}),
+    )
+    assert report.call_count == 1
+    assert report.call_args.args[0] is selected
+    assert report.call_args.kwargs["invocation_id"] == "inv-1"
+
+
+@pytest.mark.asyncio
+async def test_failed_or_restricted_request_does_not_report_raw_documents(
+    mocker, facts
+):
+    report = mocker.patch("app.services.rag.reporting.report_document_usage")
+
+    async def failed():
+        raise RuntimeError("retrieval failed")
+
+    arguments = dict(
+        entrypoint="chat",
+        requested_kb_ids=[1],
+        effective_kb_ids=[1],
+        route_mode="rag_retrieval",
+    )
+    with pytest.raises(RuntimeError, match="retrieval failed"):
+        await report_retrieval_request(**arguments, execute=failed)
+    await report_retrieval_request(
+        **arguments,
+        restricted_mode=True,
+        execute=lambda: _result({"restricted_safe_summary": "safe", "total": 1}),
+    )
+    report.assert_not_called()
+
+
 @pytest.fixture
 def facts(mocker):
     events = []

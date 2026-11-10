@@ -374,7 +374,7 @@ class TestTryDirectInjection:
         )
 
     @pytest.mark.asyncio
-    async def test_reports_selected_documents_with_current_usage_identity(self):
+    async def test_does_not_report_documents_before_final_selection(self):
         records = [_injection_record(), _injection_record("second chunk")]
 
         with (
@@ -396,7 +396,7 @@ class TestTryDirectInjection:
                 max_direct_chunks=500,
             )
 
-        report_usage.assert_called_once_with(records)
+        report_usage.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_rejects_when_document_cap_exceeded(self):
