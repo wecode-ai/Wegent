@@ -1085,6 +1085,14 @@ export function WeworkSharedProject({
             project: projectRef,
             type: 'bound',
           })
+          // Finish UI-owned writes before the runtime can mutate the same Issue version.
+          const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
+            scopedApi.issues,
+            taskComposer.issue.id
+          )
+          if (statusUpdateError !== null) {
+            notify(statusUpdateError || t('task_board_status_update_failed'), 'error')
+          }
           return async () => {
             await runtimePort.unbindTask(taskComposer.issue.id, sharedTask)
             publishProjectSpaceTaskBindingChanged({
@@ -1107,13 +1115,6 @@ export function WeworkSharedProject({
                 deviceWorkspaceId,
               }
             )
-          }
-          const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
-            scopedApi.issues,
-            taskComposer.issue.id
-          )
-          if (statusUpdateError !== null) {
-            notify(statusUpdateError || t('task_board_status_update_failed'), 'error')
           }
           setTaskComposer(current =>
             current?.conversationKey === taskComposer.conversationKey
