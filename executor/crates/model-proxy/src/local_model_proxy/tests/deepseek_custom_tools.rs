@@ -15,6 +15,20 @@ fn upstream(endpoint: &str, mode: &str) -> LocalModelProxyUpstream {
 }
 
 #[test]
+fn deepseek_without_a_legacy_profile_uses_the_shared_function_default() {
+    let upstream = upstream_from_model_config(&json!({
+        "base_url":"https://api.deepseek.com/v1",
+        "api_key":"synthetic-key"
+    }))
+    .unwrap()
+    .unwrap();
+    let capabilities = upstream.responses_tool_capabilities();
+    assert_eq!(capabilities.custom_tools, chat::CustomToolConversion::All);
+    assert!(!capabilities.native_namespace_tools);
+    assert!(!capabilities.native_tool_search);
+}
+
+#[test]
 fn deepseek_custom_tool_policy_is_endpoint_bound_and_respects_explicit_modes() {
     use chat::CustomToolConversion::{All, ExceptApplyPatch, None};
     for (endpoint, mode, expected) in [

@@ -158,7 +158,11 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 - `frameId`、`selector` 或其它调试定位信息：仅用于诊断，不应要求模型依赖脆弱 selector。
 - `warnings`：说明遮挡、不可见、敏感输入、跨 frame 限制等风险。
 
+同源 iframe 会递归进入检查。节点的 `rect` 使用顶层视口 CSS 像素，已包含 iframe 边框和父级 transform 的缩放；动作结果的 `target.rect` 使用同一坐标空间，`localRect` 才是元素所在文档的坐标。坐标点击会按同样规则逐级进入 iframe，并且不会为了居中目标而滚动页面，避免 preview 和实际点击之间坐标失效。跨源 iframe 仍不可检查，旋转或斜切等非轴对齐 transform 只能近似换算，并返回 `frame_transform_approximate` 警告。
+
 动作工具优先使用 `inspect` 产生的 `ref`。当页面重排导致 `ref` 失效时，应返回可恢复错误，引导模型重新 `inspect`，不要静默猜测 selector。动作结果应描述观测到的效果，例如值变化、DOM 变化、URL 变化或只派发了事件但未观察到效果。
+
+失败结果会带回请求使用的 `inspectId`、`index`、`ref` 和当前可用的 inspect 列表。索引属于旧 inspect 时返回 `stale_inspect`，节点存在但不可操作时返回 `element_not_actionable`，避免把所有定位失败都归为 `element_not_found`。
 
 ## 任务绑定
 

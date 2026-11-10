@@ -36,14 +36,6 @@ entry is selected only when no matching entry exists.
 
 ### Protocol and Endpoint Resolution
 
-When a local provider has an endpoint and resolvable static or environment-variable credentials, the executor uses the same model route for provider-ID-only requests and user-configuration requests. Initial execution, follow-up comments and native thread control operations share that resolution logic so different entry points cannot drift to different provider identities. Configuration is read only from the task's Codex Home: a missing provider in a named agent Home never selects a same-named provider from the application's default Home. An explicit task endpoint takes precedence and is never replaced by a local provider with the same name. Providers requiring native authentication remain owned by Codex.
-
-Sessions share the logical Wework router identity (persisted as `~` to preserve history byte offsets), not authentication. API-key sessions use the
-local proxy; OpenAI account sessions retain native Codex authentication and endpoints. Each
-thread replaces its complete provider definition. Unscoped account and catalog requests never
-borrow a task's API-key route. See [upgrade and rollback](./wework-upgrades.md#codex-session-provider-migration)
-for legacy conversion and Goal recovery ordering.
-
 The proxy gateway supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. The Model CRD's `protocol`, `apiFormat`, and `wire_api` select the upstream wire protocol. Conflicting or ambiguous configuration returns an explicit backend error instead of silently falling back to another protocol.
 
 The provider `base_url` may be a service root, a versioned API base, or a complete protocol endpoint. The gateway merges endpoint path segments and removes overlap. For example:
@@ -60,7 +52,7 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 
 | Value             | Behavior                                                                                                                                                                                                                                  |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto` or omitted | Keep the existing protocol adaptation. Existing switches can still configure individual native Responses tool capabilities.                                                                                                               |
+| `auto` or omitted | Bridge custom tools, namespaces and `tool_search` to ordinary functions by default. Native capabilities require explicit configuration; provider IDs, model names and the Responses protocol do not imply support.                        |
 | `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
 | `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
 
@@ -91,13 +83,25 @@ Passthrough preserves the original bytes of normal upstream chunks. A read error
 
 `standard` mode advertises only client-executable function tools. It omits provider-hosted tools such as `web_search` and `image_generation`. If `tool_choice` forces a hosted tool, the proxy returns HTTP 400. `auto` and `passthrough` continue to preserve these tools.
 
-#### DeepSeek Responses Tool Compatibility
+#### Portable Responses Tools
 
-When the executor calls the Responses endpoint on `api.deepseek.com` directly in `auto` mode, the proxy follows the [official DeepSeek tool protocol](https://api-docs.deepseek.com/api/create-response/): it preserves native custom `apply_patch`, converts other custom tools such as `exec` into function tools with a string `input` parameter, translates historical calls and outputs, and restores original tool names, namespaces and raw inputs on the return path to Codex. Namespaces and client-side `tool_search` reuse the existing reversible adapters. Provider-hosted `web_search` is not removed by this adaptation; its availability remains model-dependent.
+Local model interfaces, cloud models, stand-ins, and configured Codex providers default to `tool_profile: "function"`, with native `tool_search` and namespaces disabled. Existing configurations without profile or capability fields use the same defaults without recreating models. An explicit `tool_profile: "custom"` preserves native custom tools. Local `codex_tool_compatibility: "native"` or cloud capability switches enable native namespaces and tool search. Cloud `codex_request_mode: "passthrough"` preserves the complete native request; `standard` always bridges tools to functions. Defaults do not depend on provider IDs, model names, or a Responses endpoint claiming Codex-specific capabilities.
 
-This rule matches the actual request endpoint, not a guessed model name or a retry after an upstream failure. Explicit `standard` and `passthrough` modes retain their semantics. Gateways on other domains do not automatically inherit the DeepSeek rule.
+`tool_profile: "function"` also applies to custom tools inside native namespaces. With `native_namespace_tools` enabled, the proxy preserves the namespace and its description while converting custom tools such as `exec` into function tools with a string `input` parameter. Historical calls, outputs, and forced tool choices use the same protocol. When native namespaces are disabled, the proxy flattens namespaces and keeps the same input wrapper for their custom tools. SSE responses restore the original tool name, namespace, and raw input so tools sharing a name remain distinct.
 
-Regression coverage uses a local HTTP protocol simulator that rejects custom tools other than `apply_patch`. It verifies rejection of the original request, acceptance of the adapted request, and SSE tool-identity restoration. This is protocol integration coverage, not verification against the real DeepSeek service, and requires no real API key.
+Built-in tool types inside namespaces return a request validation error instead of crashing the proxy. Existing function definitions with an omitted type retain their previous conversion behavior.
+
+The `responses-tool-compatibility` desktop E2E checkpoint runs real Electron, Backend, executor, and Codex components with only the model service simulated. The simulator rejects unconverted custom `exec`, checks function arguments, and requires local and cloud models to execute real commands, read a file after reload, and preserve tool history. It also verifies explicit native configuration. This is model protocol regression coverage; compatibility with real provider services remains unverified.
+
+#### Legacy DeepSeek configurations
+
+Changing defaults alone cannot fix rejected `exec` calls when a legacy configuration already
+stores `tool_profile: "custom"`. Direct `api.deepseek.com` Responses requests in `auto` mode
+still follow its supported tool capabilities: preserve native `apply_patch` and reversibly adapt
+other custom tools, namespaces, and client tool search to function tools. Configurations without
+a legacy profile use the shared function default above. Match the actual endpoint, without
+guessing model names or retrying failed requests. Explicit `standard` and `passthrough` modes
+retain precedence; other gateways use the shared policy.
 
 #### Kimi K3 Chat Completions Compatibility
 

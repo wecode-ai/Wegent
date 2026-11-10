@@ -5,6 +5,7 @@ import { createWriteStream } from 'node:fs'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { reservePort } from '../port-reservation.mjs'
 import { recordBrowserStartup } from './external-browser-diagnostics.mjs'
 import { preReadBrowserRuntime } from './external-browser-preread.mjs'
 
@@ -172,10 +173,11 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
       let stopDiagnostics
       try {
         await record('start-chromedriver')
+        const port = await reservePort(undefined, { dualStack: true })
         child = spawn(
           CHROMEDRIVER_BINARY,
           [
-            '--port=0',
+            `--port=${port}`,
             '--verbose',
             `--log-path=${join(resultDir, 'external-browser-chromedriver.log')}`,
           ],

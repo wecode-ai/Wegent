@@ -37,6 +37,7 @@ const FOLLOW_UP =
 const PROGRESS = 'WEWORK_FOLLOW_UP_WORKING'
 const CALL_ID = 'follow-up-held-command'
 const HISTORY_ROUNDS = 12
+const FOLLOW_UP_WINDOW_SIZE = { width: 1152, height: 648 }
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -70,6 +71,8 @@ async function waitForReadableFollowUp(control, description, marker = FOLLOW_UP.
       user &&
       viewport &&
       composer &&
+      viewport.viewportWidth === FOLLOW_UP_WINDOW_SIZE.width &&
+      viewport.viewportHeight === FOLLOW_UP_WINDOW_SIZE.height &&
       user.top >= viewport.top - 2 &&
       user.bottom <= composer.top + 2
     )
@@ -297,6 +300,7 @@ export function createDesktopScenario(options) {
     async verify(control) {
       let address
       let otherAddress
+      let previousWindowSize
       const send = async text => {
         await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: text })
         await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
@@ -320,6 +324,12 @@ export function createDesktopScenario(options) {
         return state.workbench.currentRuntimeTask
       }
       try {
+        // Keep the first-launch-size regression independent of the shared large-window fixture.
+        previousWindowSize = JSON.parse(
+          await control.command('setMainWindowSize', 'body', {
+            value: JSON.stringify(FOLLOW_UP_WINDOW_SIZE),
+          })
+        )
         await createSingleRootLocalProject(control, options.workspacePath, 'follow-up-task-switch')
         await selectE2EModel(control)
         const { models } = await requestExecutor(
@@ -644,6 +654,10 @@ export function createDesktopScenario(options) {
           releaseModel()
           releaseOtherProgress()
           releaseOther()
+          if (previousWindowSize)
+            await control.command('setMainWindowSize', 'body', {
+              value: JSON.stringify(previousWindowSize),
+            })
         }
       }
     },

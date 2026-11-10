@@ -178,11 +178,9 @@ fn normalizes_provider_api_format_aliases_before_proxy_registration() {
             upstream.resolved_request_url(),
             format!("https://example.com{path}")
         );
-        assert_eq!(upstream.native_tool_search, expected == "openai-responses");
-        assert_eq!(
-            upstream.native_namespace_tools,
-            expected == "openai-responses"
-        );
+        assert!(!upstream.native_tool_search);
+        assert!(!upstream.native_namespace_tools);
+        assert!(upstream.convert_custom_tools);
     }
 }
 

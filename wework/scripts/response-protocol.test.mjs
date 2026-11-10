@@ -15,7 +15,76 @@ import {
   selectMcpTool,
   selectMcpToolRequest,
   selectProgrammaticExec,
+  selectTool,
 } from '../e2e/desktop/modules/response-protocol.mjs'
+
+describe('native function selection', () => {
+  test.each([
+    [{ type: 'function', name: 'request_user_input' }, 'request_user_input', undefined],
+    [
+      {
+        type: 'namespace',
+        name: 'functions',
+        tools: [{ type: 'function', name: 'request_user_input' }],
+      },
+      'request_user_input',
+      'functions',
+    ],
+    [
+      { type: 'function', name: 'functions__request_user_input' },
+      'functions__request_user_input',
+      undefined,
+    ],
+  ])(
+    'selects the advertised native question tool before Code Mode: %j',
+    (tool, name, namespace) => {
+      const request = {
+        tools: [
+          {
+            type: 'function',
+            name: 'functions__exec',
+            parameters: { properties: { input: { type: 'string' } } },
+          },
+          tool,
+        ],
+      }
+      const args = { questions: [{ id: 'direction', question: 'Which direction?' }] }
+      expect(selectTool(request, 'request_user_input', args)).toEqual({
+        name,
+        arguments: args,
+        ...(namespace ? { namespace } : {}),
+      })
+    }
+  )
+
+  test('rejects ambiguous native function declarations', () => {
+    expect(() =>
+      selectTool(
+        {
+          tools: [
+            { type: 'function', name: 'request_user_input' },
+            { type: 'function', name: 'functions__request_user_input' },
+          ],
+        },
+        'request_user_input',
+        {}
+      )
+    ).toThrow(/exactly one/)
+  })
+
+  test('selects the flattened asynchronous question tool directly', () => {
+    const body = {
+      tools: [
+        { type: 'custom', name: 'exec' },
+        { type: 'function', name: 'functions__request_user_input_async' },
+      ],
+    }
+    expect(selectTool(body, 'request_user_input_async', { questions: [] })).toEqual({
+      name: 'functions__request_user_input_async',
+      arguments: { questions: [] },
+    })
+  })
+})
 import {
   longCodeStreamingEvents,
   textDeltaEvents,

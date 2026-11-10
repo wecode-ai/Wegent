@@ -70,6 +70,7 @@ pub(super) fn responses_tools(
                         false,
                     )
                     .remove(0);
+                    flattened["type"] = Value::String("function".to_owned());
                     flattened["name"] = Value::String(wire_name.to_owned());
                     converted.push(flattened);
                 }
@@ -190,12 +191,25 @@ pub(super) fn responses_tool_choice(
 /// are bridged only when the model configuration requests it.
 pub(crate) fn responses_to_responses(
     body: &Value,
-    convert_custom_tools: CustomToolConversion,
+    convert_custom_tools: impl Into<CustomToolConversion>,
     native_tool_search: bool,
     native_namespace_tools: bool,
 ) -> Result<(Value, ToolContext), String> {
     let mut result = body.clone();
+    let convert_custom_tools = convert_custom_tools.into();
     let effective_tools = effective_tools(&result);
+    for namespace in effective_tools
+        .iter()
+        .filter(|tool| tool["type"] == "namespace")
+    {
+        for child in namespace["tools"].as_array().into_iter().flatten() {
+            if let Some(kind) = child["type"].as_str() {
+                if !matches!(kind, "function" | "custom") {
+                    return Err(format!("Unsupported tool type in namespace: {kind}"));
+                }
+            }
+        }
+    }
     let context = build_tool_context(&effective_tools, true);
     let bridge_tool_search = !native_tool_search;
     let bridge_namespace_tools = !native_namespace_tools;

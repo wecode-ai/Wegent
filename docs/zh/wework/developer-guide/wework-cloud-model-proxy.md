@@ -34,13 +34,6 @@ Model CRD 的 `spec.modelConfig.ui.defaultModel: true` 标记默认模型，
 
 ### 协议与端点解析
 
-本地 provider 配置包含端点和可解析的静态或环境变量凭证时，executor 对“只传 provider ID”和“使用用户配置”的任务使用同一模型路由；首次执行、后续评论及原生线程控制操作复用同一解析逻辑，避免入口不同导致 provider 身份漂移。配置只能从任务所属的 Codex Home 读取；命名智能体 Home 缺少配置时，不读取应用默认 Home 中的同名 provider。任务显式携带端点时优先使用任务配置，不会被本地同名 provider 替换。需要原生鉴权流程的 provider 仍由 Codex 处理。
-
-会话统一使用 Wework router 逻辑身份（持久化 ID 为 `~`，避免迁移时改变历史字节偏移），但不会统一实际鉴权。API-key 会话经本地代理，
-OpenAI 账号会话保留 Codex 原生鉴权和端点；各线程以完整 provider 定义隔离凭证，
-公共账号和模型目录请求不借用某个任务的 API-key 路由。
-旧会话转换和 Goal 恢复时序见[升级与回退](./wework-upgrades.md#codex-会话-provider-迁移)。
-
 代理网关支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。Model CRD 的 `protocol`、`apiFormat` 和 `wire_api` 决定实际请求协议；配置互相冲突或无法确定协议时，backend 会直接返回配置错误，不会静默回退到其他协议。
 
 provider `base_url` 可以是服务根地址、带版本前缀的 API base，或已经包含协议端点的完整地址。网关按路径段合并协议端点并去除重叠部分，例如：
@@ -57,7 +50,7 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 | 值              | 行为                                                                                                                                                                |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto` 或未配置 | 保持现有按协议适配行为；Responses 的原生工具能力仍可用已有开关单独设置。                                                                                            |
+| `auto` 或未配置 | 默认将 custom、namespace 和 `tool_search` 转换为普通 function 工具；原生能力须通过已有开关显式开启，不根据厂商、模型名或 Responses 协议推断。                       |
 | `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
 | `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
 
@@ -88,13 +81,24 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 `standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。
 
-#### DeepSeek Responses 工具兼容
+#### 通用 Responses 工具兼容
 
-当 executor 直接请求 `api.deepseek.com` 的 Responses 接口，且请求模式为 `auto` 时，代理遵循 [DeepSeek 官方工具协议](https://api-docs.deepseek.com/api/create-response/)：保留原生 `apply_patch` custom 工具，将 `exec` 等其他 custom 工具转换为带有字符串 `input` 参数的 function 工具，同时转换历史调用和结果，并在返回给 Codex 时恢复原始工具名称、namespace 与原始输入。namespace 和客户端 `tool_search` 复用已有可逆转换；服务端 `web_search` 不会因此被移除，其可用性仍由上游模型决定。
+本机模型接口、云端模型、分身和配置的 Codex provider 使用相同默认策略：`tool_profile: "function"`，原生 `tool_search` 和 namespace 默认关闭。没有 profile 或工具能力字段的已有配置同样生效，无需重建模型。显式 `tool_profile: "custom"` 保留原生 custom 工具；本机 `codex_tool_compatibility: "native"` 或云端单项能力开关开启原生 namespace 和工具搜索。云端 `codex_request_mode: "passthrough"` 保留完整原生请求，`standard` 始终转换为 function 工具。
 
-此规则按实际请求端点匹配，不根据模型名称猜测，也不通过失败后重试选择协议。显式 `standard` 和 `passthrough` 模式仍保持各自语义；其他域名的网关不会自动套用 DeepSeek 规则。
+`tool_profile: "function"` 同样适用于原生 namespace 内的 custom 工具。开启 `native_namespace_tools` 时，代理保留 namespace 及其描述，将内部的 `exec` 等 custom 工具转换为带字符串 `input` 参数的 function 工具；历史调用、工具结果和强制工具选择使用同一协议。关闭原生 namespace 时，代理展开 namespace，并为其中的 custom 工具保留相同的输入包装。返回给 Codex 的 SSE 恢复原始工具名、namespace 和原始输入，避免同名工具串线。
 
-回归验证使用会拒绝非 `apply_patch` custom 工具的本地 HTTP 协议模拟服务，检查原始请求被拒绝、代理转换后的请求被接受，以及 SSE 工具身份恢复。这是协议集成验证，不代表已经验证真实 DeepSeek 服务兼容性；不需要真实 API Key。
+namespace 内的内置工具类型会返回请求校验错误，避免错误定义导致代理崩溃；省略类型的既有 function 定义仍按原有规则转换。
+
+`responses-tool-compatibility` 桌面 E2E 使用真实 Electron、Backend、executor 和 Codex，只模拟模型服务。模拟服务拒绝未转换的 custom `exec`，校验 function 参数，并要求本机和云端模型真实执行命令、重载后读取文件以及保留工具历史，同时验证显式原生配置。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
+
+#### 旧 DeepSeek 配置
+
+旧配置已保存 `tool_profile: "custom"` 时，仅更改默认值不能修复 `exec` 被拒绝的问题。
+直接调用 `api.deepseek.com` Responses 且模式为 `auto` 时，仍遵循其实际工具能力：
+保留原生 `apply_patch`，将其他 custom 工具、namespace 和客户端工具搜索转换为可逆
+function 协议。没有旧 profile 的配置使用上述通用 function 默认策略。
+规则按实际端点匹配，不猜测模型名称，也不失败后重试。显式 `standard` 和 `passthrough`
+模式仍各自优先；其他网关使用通用策略。
 
 #### Kimi K3 Chat Completions 兼容
 
@@ -177,7 +181,7 @@ Codex 向 OpenAI Responses API 发送工具时，可以使用 `type: "namespace"
 
 Wework 不应在新会话的第一次模型请求中注入所有 App 和浏览器子工具的完整 schema。Codex 启动配置只启用 Remote Apps 和 `tool_search`，由模型先搜索需要的 namespace，再把搜索结果中的子工具加入后续模型请求：
 
-- 原生支持 Codex `tool_search` 和 namespace tools 的 Responses 模型直接使用原协议，executor 不重复转换。
+- 显式启用原生 Codex `tool_search` 和 namespace tools 的 Responses 模型使用原协议，executor 不重复转换。
 - OpenAI Chat Completions、Anthropic Messages 等不支持 namespace tools 的模型由 executor 在协议边界展开本次 `tool_search` 已命中的 namespace。未命中的 App 工具不能出现在请求中。
 - executor 必须同时转换当前工具列表、历史 tool call、tool result 和显式 `tool_choice`，并在返回 Codex 前恢复原 namespace 身份。
 - 普通消息只携带精简的 `tool_search` 入口；新增 App 或浏览器工具时，不得让首次请求大小随全部工具 schema 线性增长。
