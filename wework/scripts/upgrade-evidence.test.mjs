@@ -385,8 +385,10 @@ function input() {
     credentials: ['source', 'upgraded', 'rolled-back', 're-upgraded'].map((stage, index) => ({
       stage,
       format: index === 0 ? 2 : 3,
+      storageVersion: index % 2 === 0 ? 2 : 3,
       modelAuthenticated: true,
       cloudDeviceSignature: true,
+      ...(stage === 'rolled-back' ? { writeAuthenticated: true } : {}),
     })),
   }
   return {
@@ -430,6 +432,25 @@ test('only exact artifacts and a successful rollback grant a release edge', () =
 test('locally generated regression fixtures cannot become production release evidence', () => {
   const value = input()
   value.to.fixture = true
+  assert.throws(() => verifiedUpgradeEdge(value), /exact-package/)
+})
+test('a format-preserving package needs exact quarantine proof instead of a protected-format round trip', () => {
+  const value = input()
+  value.evidence.reupgrade = 'not-run'
+  value.evidence.credentials.pop()
+  for (const stage of value.evidence.credentials) {
+    stage.format = 2
+    stage.storageVersion = 2
+  }
+  value.evidence.rollbackProtection = {
+    version: value.to.version,
+    packageSha256: value.to.sha256,
+    kind: 'blocked',
+    historyPreserved: true,
+    downloadPrevented: true,
+  }
+  assert.equal(verifiedUpgradeEdge(value).to, value.to.version)
+  value.evidence.rollbackProtection.packageSha256 = 'c'.repeat(64)
   assert.throws(() => verifiedUpgradeEdge(value), /exact-package/)
 })
 test('a new baseline with no incoming edges does not invent historical compatibility', () => {

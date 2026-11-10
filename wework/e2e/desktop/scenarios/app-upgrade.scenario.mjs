@@ -16,7 +16,7 @@ import { dirname, join, resolve } from 'node:path'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
 import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
-import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
+import { credentialsRequireReupgrade, UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
 import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
@@ -34,6 +34,7 @@ import { assertReleaseComposition } from '../modules/release-composition.mjs'
 import { waitForInterruptedRollback } from '../modules/interrupted-rollback.mjs'
 import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
 import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
+import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -232,6 +233,7 @@ export async function createDesktopScenario(options) {
     JSON.parse(await control.command('getInstalledAppVersion', 'body')).version
   const compositions = []
   const credentials = upgradeCredentials()
+  let rollbackProtection
   const verifyCredentials = (stage, options) =>
     credentials.verify(
       control,
@@ -806,7 +808,7 @@ export async function createDesktopScenario(options) {
             'Rollback did not preserve the newer local data'
           )
         }
-        if (checkpoint === 'app-rollback') {
+        if (checkpoint === 'app-rollback' && credentialsRequireReupgrade(credentials.stages)) {
           await reupgradeAfterRollback({
             control,
             routeCurrentUpdateRequests: () =>
@@ -818,6 +820,15 @@ export async function createDesktopScenario(options) {
             send,
             verifyCredentials: () => verifyCredentials('re-upgraded'),
             timeoutMs: workbenchReadyTimeoutMs,
+          })
+        } else if (checkpoint === 'app-rollback') {
+          rollbackProtection = await verifyRollbackProtection({
+            control,
+            root,
+            target: pair.to,
+            requests,
+            about,
+            route: () => routeRunningUpgradeRequests(inspectorPort, control, origin),
           })
         }
       }
@@ -845,6 +856,7 @@ export async function createDesktopScenario(options) {
         requests,
         compositions,
         credentials: credentials.stages,
+        ...(rollbackProtection ? { rollbackProtection } : {}),
         reupgrade: credentials.stages.some(stage => stage.stage === 're-upgraded')
           ? 'passed'
           : 'not-run',
