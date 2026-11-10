@@ -13,6 +13,7 @@
  */
 
 import * as http from 'http'
+import { resolveEvidenceResponseContent } from './mock-answer-evidence'
 import { writePhaseChangingMessage, type PhaseChangingMessage } from './mock-responses-phase'
 import { handlePreviewFileSource } from './preview-file-source'
 import { startMockServer } from './mock-server-lifecycle'
@@ -711,7 +712,7 @@ const server = http.createServer((req, res) => {
         }
       }
       const responseContent =
-        scenarioStep?.responseContent ||
+        resolveEvidenceResponseContent(scenarioStep?.responseContent, parsedBody) ||
         streamRule?.responseContent ||
         buildContextAwareResponseContent(parsedBody)
       const model = parsedBody?.model || 'mock-codex'
@@ -742,7 +743,7 @@ const server = http.createServer((req, res) => {
         }
       }
       const responseContent =
-        scenarioStep?.responseContent ||
+        resolveEvidenceResponseContent(scenarioStep?.responseContent, parsedBody) ||
         streamRule?.responseContent ||
         buildContextAwareResponseContent(parsedBody)
       console.log(`Mock response content: ${truncateForLog(responseContent)}`)
@@ -818,7 +819,7 @@ const server = http.createServer((req, res) => {
         }
       }
       const responseContent =
-        scenarioStep?.responseContent ||
+        resolveEvidenceResponseContent(scenarioStep?.responseContent, parsedBody) ||
         streamRule?.responseContent ||
         buildContextAwareResponseContent(parsedBody)
       const model = parsedBody?.model || 'mock-claude'

@@ -45,6 +45,7 @@ interface EnhancedMarkdownProps {
   components?: Record<string, React.ComponentType<any>>
   /** Optional feature-local transforms; default Markdown rendering is unchanged. */
   rehypePlugins?: Options['rehypePlugins']
+  remarkPlugins?: Options['remarkPlugins']
 }
 
 type ContentPart =
@@ -609,6 +610,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   theme,
   components,
   rehypePlugins: extraRehypePlugins,
+  remarkPlugins: extraRemarkPlugins,
 }: EnhancedMarkdownProps) {
   // Extract frontmatter before processing
   const { frontmatter, body } = useMemo(() => extractFrontmatter(source), [source])
@@ -709,8 +711,9 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
       // Enable singleDollarTextMath to support $...$ inline math
       plugins.push([remarkMath, { singleDollarTextMath: true }])
     }
+    if (extraRemarkPlugins) plugins.push(...extraRemarkPlugins)
     return plugins
-  }, [hasMath])
+  }, [hasMath, extraRemarkPlugins])
 
   const rehypePlugins = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

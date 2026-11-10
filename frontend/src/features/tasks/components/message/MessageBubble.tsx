@@ -30,7 +30,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import EnhancedMarkdown, { type AnswerCitation } from './evidence/AnswerEvidenceMarkdown'
 import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
 import ThinkingDisplay from './thinking/ThinkingDisplay'
@@ -75,6 +75,8 @@ export interface Message {
     workbench?: Record<string, unknown>
     shell_type?: string // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[] // RAG knowledge base sources
+    answer_generation_id?: string
+    answer_citations?: AnswerCitation[]
     retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
     blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
@@ -735,6 +737,12 @@ const MessageBubble = memo(
 
       const markdownContent = (
         <EnhancedMarkdown
+          evidence={{
+            answerId: msg.subtaskId,
+            generationId: msg.result?.answer_generation_id,
+            citations: msg.result?.answer_citations,
+            committed: !isStreaming && msg.subtaskStatus === 'COMPLETED',
+          }}
           source={normalizedResult}
           theme={theme}
           components={
@@ -1243,6 +1251,12 @@ const MessageBubble = memo(
                   ) : !isUserTypeMessage && msg.result?.blocks && mixedContentBlocks.length > 0 ? (
                     <>
                       <MixedContentView
+                        evidence={{
+                          answerId: msg.subtaskId,
+                          generationId: msg.result?.answer_generation_id,
+                          citations: msg.result?.answer_citations,
+                          committed: !isStreaming && msg.subtaskStatus === 'COMPLETED',
+                        }}
                         thinking={msg.thinking ?? null}
                         content={msg.recoveredContent || msg.content || ''}
                         taskStatus={msg.subtaskStatus}

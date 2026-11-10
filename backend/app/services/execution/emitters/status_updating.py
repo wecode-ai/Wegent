@@ -497,7 +497,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         await self._flush_stream_storage()
         await self._cancel_pending_storage_flush_task()
         if not self._status_updated:
-            await self._update_status_completed(result)
+            result = await self._update_status_completed(result)
         if await self._terminal_can_publish():
             await self._wrapped.emit_done(task_id, subtask_id, result, **kwargs)
 

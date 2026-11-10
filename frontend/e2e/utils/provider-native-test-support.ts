@@ -234,7 +234,7 @@ export async function configureDingTalkService(
 
 export async function openProviderNativeChat(
   page: Page,
-  resources: ProviderNativeResources
+  resources: Pick<ProviderNativeResources, 'teamId' | 'teamName'>
 ): Promise<void> {
   await page.addInitScript(selectedTeamId => {
     localStorage.setItem('user_onboarding_completed', 'true')

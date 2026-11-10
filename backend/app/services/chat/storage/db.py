@@ -155,7 +155,30 @@ class DatabaseHandler:
                     return None
 
                 db.refresh(subtask, with_for_update=True)
+                if expected_status and subtask.status != SubtaskStatus(expected_status):
+                    return AnswerSaveResult.REJECTED
+                if subtask.answer_generation_id != generation_id or (
+                    generation_id is not None
+                    and subtask.status
+                    not in (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
+                ):
+                    return AnswerSaveResult.REJECTED
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
+                original_result = result
+                if result is not None:
+                    from app.services.knowledge.answer_evidence import (
+                        bind_answer_evidence,
+                        public_result,
+                    )
+
+                    result = (
+                        bind_answer_evidence(db, subtask, result)
+                        if status == "COMPLETED"
+                        and (
+                            "_answer_evidence" in result or subtask.answer_generation_id
+                        )
+                        else public_result(result)
+                    )
 
                 if result is not None:
                     # Preserve silent_exit fields if they were set by MCP tool
@@ -236,8 +259,12 @@ class DatabaseHandler:
                     from_statuses=allowed,
                     **fields,
                 ):
+                    db.rollback()
                     return AnswerSaveResult.REJECTED
                 task_id = subtask.task_id
+            if original_result is not None and result is not None:
+                original_result.clear()
+                original_result.update(result)
             # Context manager commits here, then update task status
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
         except Exception as exc:

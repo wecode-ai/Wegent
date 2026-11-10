@@ -385,7 +385,7 @@ jobs:
         working-directory: backend
         env:
           ANSWER_ATTEMPT_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
-        run: uv run pytest integration_checks/test_answer_attempt_mysql.py -n 0
+        run: uv run pytest integration_checks/test_answer_attempt_mysql.py integration_checks/test_answer_evidence_mysql.py -n 0
       - name: Verify real Redis and InnoDB plugin write races
         working-directory: backend
         env:

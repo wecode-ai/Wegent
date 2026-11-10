@@ -18,7 +18,7 @@ import { SubagentBlock } from './components/SubagentBlock'
 import { SubagentGroupBlock } from './components/SubagentGroupBlock'
 import { GuidanceBlock } from './components/GuidanceBlock'
 import ReasoningDisplay from './ReasoningDisplay'
-import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import EnhancedMarkdown, { type EvidenceScope } from '../evidence/AnswerEvidenceMarkdown'
 import { useTranslation } from '@/hooks/useTranslation'
 import { processCitePatterns } from '../../../utils/processCitePatterns'
 import type { GeminiAnnotation } from '@/types/socket'
@@ -110,6 +110,7 @@ const getRenderableInteractiveFormPayload = (
 }
 
 interface MixedContentViewProps {
+  evidence?: EvidenceScope
   thinking: ThinkingStep[] | null
   content: string
   taskStatus?: string
@@ -205,6 +206,7 @@ function ImageGenerationPlaceholder({
  * 2. Thinking-based (legacy): Extracts tools from thinking array
  */
 const MixedContentView = memo(function MixedContentView({
+  evidence,
   thinking,
   content,
   taskStatus,
@@ -678,7 +680,7 @@ const MixedContentView = memo(function MixedContentView({
               : item.content
           return (
             <div key={key} className="text-sm">
-              <EnhancedMarkdown source={textContent} theme={theme} />
+              <EnhancedMarkdown evidence={evidence} source={textContent} theme={theme} />
             </div>
           )
         } else if (item.type === 'video') {

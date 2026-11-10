@@ -390,6 +390,25 @@ async def _dispatch_chat_shell_sse(
                     )
 
                     if parsed_event:
+                        if (
+                            event_type
+                            == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value
+                        ):
+                            from app.services.knowledge.answer_evidence import (
+                                TrustedEvidence,
+                            )
+
+                            payload = event_data.get("response", {})
+                            if (
+                                "_answer_evidence" in payload
+                                and parsed_event.result is not None
+                            ):
+                                parsed_event.result["_answer_evidence"] = (
+                                    TrustedEvidence(
+                                        payload["_answer_evidence"],
+                                        user_id=request.user_id,
+                                    )
+                                )
                         log_fn = (
                             logger.debug
                             if parsed_event.type == EventType.TOOL_ARGUMENT_DELTA.value

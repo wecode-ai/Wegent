@@ -569,7 +569,15 @@ mod tests {
         ] {
             assert!(registered.contains(path), "Rust handler lost: GET {path}");
         }
-        for path in registered.iter().map(String::as_str).chain(PREFIXES) {
+        for path in registered
+            .iter()
+            .map(String::as_str)
+            .chain(PREFIXES)
+            .chain([
+                "/api/knowledge-bases/citations/42",
+                "/api/knowledge-documents/11",
+            ])
+        {
             let concrete = path
                 .split('/')
                 .map(|part| if part.starts_with(':') { "123" } else { part })

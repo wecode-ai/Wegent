@@ -495,3 +495,62 @@ async def test_terminal_cleanup_preserves_completion(
         session.unregister_stream.assert_has_awaits(
             [call(request.subtask_id), call(next_request.subtask_id)]
         )
+
+
+@pytest.mark.asyncio
+async def test_completion_evidence_uses_captured_dispatch_user_not_payload_user():
+    from app.services.knowledge.answer_evidence import TrustedEvidence
+
+    payload = {
+        "type": "response.completed",
+        "response": {
+            "output": [],
+            "_answer_evidence": [{"evidence_id": "b" * 32, "content": "unit"}],
+            "user_id": 999,
+        },
+    }
+    content = f"data: {json.dumps(payload)}\n\n".encode()
+    emitter = AsyncMock()
+    async with _environment(
+        lambda request: httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=content
+        )
+    ) as (dispatcher, request, target, _client, _session):
+        request.user_id = 12
+        await dispatcher._dispatch_sse(request, target, emitter)
+    done = next(
+        call.args[0]
+        for call in emitter.emit.call_args_list
+        if call.args[0].type == EventType.DONE.value
+    )
+    trusted = done.result["_answer_evidence"]
+    assert isinstance(trusted, TrustedEvidence)
+    assert trusted.user_id == 12
+    assert trusted.units[0]["content"] == "unit"
+
+
+@pytest.mark.asyncio
+async def test_inprocess_completion_evidence_uses_captured_dispatch_user():
+    from app.services.execution.inprocess_chat import ChatShellBridgeTransport
+    from app.services.execution.response_parser import ResponsesAPIEventParser
+    from app.services.knowledge.answer_evidence import TrustedEvidence
+
+    emitter = AsyncMock()
+    transport = ChatShellBridgeTransport(
+        emitter, ResponsesAPIEventParser(), 7, 12, user_id=3
+    )
+    await transport.send(
+        "response.completed",
+        7,
+        12,
+        {
+            "response": {
+                "output": [],
+                "_answer_evidence": [{"content": "unit"}],
+                "user_id": 999,
+            }
+        },
+    )
+    trusted = emitter.emit.call_args.args[0].result["_answer_evidence"]
+    assert isinstance(trusted, TrustedEvidence)
+    assert trusted.user_id == 3

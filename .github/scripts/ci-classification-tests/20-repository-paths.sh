@@ -208,3 +208,9 @@ assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
 shared_rust_expected="${backend_rs_expected/executor=false/executor=true}"
 assert_case "shared Rust libraries run both consumers" "$shared_rust_expected" \
   "shared/rust/crypto/src/lib.rs"
+
+answer_evidence_expected="${platform_e2e_expected/backend=false/backend=true}"
+answer_evidence_expected="${answer_evidence_expected/wegent_cli=false/wegent_cli=true}"
+assert_case "answer evidence Python transport and reads run platform checks" "$answer_evidence_expected" \
+  "backend/app/services/knowledge/answer_evidence.py" \
+  "chat_shell/chat_shell/services/answer_evidence.py"

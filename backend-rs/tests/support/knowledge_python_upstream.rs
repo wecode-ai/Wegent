@@ -18,6 +18,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub const KNOWLEDGE_PATHS: &[&str] = &[
+    "/api/knowledge-bases/citations/42?answer_id=12&generation_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "/api/knowledge-documents/11",
     "/api/knowledge/documents/11/content",
     "/api/knowledge/documents?knowledge_base_id=7&offset=2&limit=3",
     "/api/knowledge-bases/7/document-protection",
