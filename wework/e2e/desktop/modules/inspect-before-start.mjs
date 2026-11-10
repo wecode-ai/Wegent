@@ -71,7 +71,9 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
 
 /** Reconnect only to the current host belonging to this isolated release store. */
 export async function inspectRunningApp(port, expectedPid, expression, log = console.log) {
+  log('[desktop-e2e-inspector] identify host', { expectedPid, ports: port })
   if (Array.isArray(port)) port = await currentInspectorPort(port, expectedPid, log)
+  log('[desktop-e2e-inspector] selected host', { expectedPid, port })
   const socketUrl = await inspectorTarget(port)
   return withInspector(
     socketUrl,
@@ -79,6 +81,7 @@ export async function inspectRunningApp(port, expectedPid, expression, log = con
       const pid = await evaluate(command, 'process.pid')
       if (pid !== expectedPid)
         throw new Error('The inspector is connected to another release process')
+      log('[desktop-e2e-inspector] execute assertion', { expectedPid, port })
       return evaluate(
         command,
         typeof expression === 'function' ? expression(port) : expression,
@@ -96,6 +99,7 @@ async function currentInspectorPort(ports, expectedPid, log) {
     const target = await inspectorTarget(port, true)
     if (!target) continue
     const pid = await withInspector(target, command => evaluate(command, 'process.pid'), log)
+    log('[desktop-e2e-inspector] endpoint identity', { port, pid, expectedPid })
     if (pid === expectedPid) matches.push(port)
   }
   if (matches.length !== 1)
@@ -138,6 +142,7 @@ async function evaluate(command, expression, awaitPromise = false) {
 }
 
 async function withInspector(socketUrl, operation, log) {
+  log('[desktop-e2e-inspector] connecting', socketUrl)
   const socket = new WebSocket(socketUrl)
   socket.addEventListener('close', () => log('[desktop-e2e-inspector] disconnected'))
   socket.addEventListener('message', event => {
