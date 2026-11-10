@@ -118,7 +118,7 @@ pub(super) async fn recipients(
                 "Mentioned user is not a project member",
             ));
         }
-        if user == actor || !seen.insert(user) {
+        if !seen.insert(user) {
             continue;
         }
         if let Some(task) = task {
