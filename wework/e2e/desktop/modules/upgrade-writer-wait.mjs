@@ -29,9 +29,9 @@ export function createUpgradeWriterWait(pair, checkpoint, options) {
           timeoutMs: options.workbenchReadyTimeoutMs,
         })
     },
-    async afterRestart(root) {
+    async afterRestart(root, assertStopped) {
       if (!writer) return
-      await writer.holdActivation(root, pair.to, seconds)
+      await writer.holdActivation(root, pair.to, seconds, assertStopped)
       await writer.stop()
       writer = undefined
     },
@@ -130,7 +130,7 @@ export async function startUpgradeWriter({ binary, home, workspace, timeoutMs })
     const originalHeader = (await readFile(rollout, 'utf8')).split('\n')[0]
     return {
       stop,
-      async holdActivation(root, target, seconds) {
+      async holdActivation(root, target, seconds, assertStopped) {
         const deadline = Date.now() + timeoutMs
         let activation
         while (Date.now() < deadline) {
@@ -158,6 +158,7 @@ export async function startUpgradeWriter({ binary, home, workspace, timeoutMs })
         assert.equal(await optional(join(root, 'data-opened')), activation.token)
         const started = Date.now()
         while (Date.now() - started < seconds * 1000) {
+          assertStopped?.()
           assert.equal(child.exitCode, null)
           assert.equal(child.signalCode, null)
           assert.equal(

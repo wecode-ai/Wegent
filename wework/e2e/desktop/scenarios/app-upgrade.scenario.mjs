@@ -62,7 +62,6 @@ import {
   handleEmptyReplyPrediction,
   readRequestBody,
   responseCreated,
-  responseCompleted,
 } from '../modules/response-protocol.mjs'
 
 const PROMPT = 'WEWORK_UPGRADE_PERSISTENCE'
@@ -410,7 +409,7 @@ export async function createDesktopScenario(options) {
         createSse([
           responseCreated(id),
           assistantMessage(`${ANSWER} ${modelRequests}`),
-          responseCompleted(id),
+          goalContinuity.completedModelResponse(id),
         ])
       )
       return true
@@ -438,7 +437,8 @@ export async function createDesktopScenario(options) {
       await send(PROMPT)
       await continuity.assertThread()
       await auxiliaryHistory.seed(continuity.nativeThread())
-      await goalContinuity.arm()
+      await goalContinuity.arm({ send, prompt: PROMPT, answer: `${ANSWER} ${modelRequests + 1}` })
+      await continuity.assertThread()
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: STORAGE_KEY, value: 'before-update' }),
       })
@@ -580,7 +580,7 @@ export async function createDesktopScenario(options) {
       await writerWait.beforeRestart(workspace)
       goalContinuity.beforeRestart()
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
-      await writerWait.afterRestart(root)
+      await writerWait.afterRestart(root, () => goalContinuity.assertStopped())
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,

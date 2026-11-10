@@ -121,7 +121,7 @@ fn acquire_writers(
 }
 
 fn busy_writer(directory: &Path) -> Result<Option<File>, String> {
-    for entry in fs::read_dir(&directory).map_err(error)? {
+    for entry in fs::read_dir(directory).map_err(error)? {
         let path = entry.map_err(error)?.path();
         if path.file_name().and_then(|s| s.to_str()) == Some(".coordination.lock") {
             continue;

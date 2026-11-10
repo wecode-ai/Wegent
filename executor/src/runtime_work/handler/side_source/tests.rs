@@ -16,6 +16,11 @@ fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog(
                 .collect();
             let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
             install_native_history(&mut handler, root.path(), vec![], None);
+            handler
+                .codex_app_server
+                .ensure_started()
+                .await
+                .expect("The native fixture must finish its protocol handshake before the metadata-read deadline");
             let path = root.path().join("source.jsonl");
             fs::write(&path, metadata("source")).unwrap();
             fs::write(

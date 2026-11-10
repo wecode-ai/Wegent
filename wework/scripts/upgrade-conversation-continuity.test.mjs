@@ -37,6 +37,37 @@ test('a failed send does not fabricate a completed history prerequisite', async 
   continuity.observeModel({ input: ['a different first request'] })
 })
 
+test('the active pane owns continuation identity even when the shell selection is empty', async () => {
+  const address = { taskId: 'original-task', workspacePath: '/fixture/workspace' }
+  let nativeThread = 'original-native-thread'
+  const continuity = createUpgradeConversationContinuity(
+    () => ({
+      command: async (method, _selector, options) => {
+        if (method === 'getWorkbenchDebugSnapshot')
+          return JSON.stringify({
+            pane: { currentRuntimeTask: address },
+            workbench: { currentRuntimeTask: null },
+          })
+        if (method === 'getLocationOrigin') return 'http://127.0.0.1:1234'
+        assert.equal(method, 'fetchLocalRuntime')
+        const request = JSON.parse(JSON.parse(options.value).body)
+        assert.equal(request.method, 'runtime.tasks.get')
+        assert.deepEqual(request.params.address, address)
+        return JSON.stringify({
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ok: true, result: { task: { threadId: nativeThread } } }),
+        })
+      },
+    }),
+    10_000
+  )
+  await continuity.assertThread()
+  await continuity.assertThread()
+  nativeThread = 'replacement-thread'
+  await assert.rejects(continuity.assertThread(), /must not replace or replay/)
+})
+
 test('tool history requires an actual successful artifact and retains call identity at inference', async () => {
   const fixtureRoot = await mkdtemp(join(tmpdir(), 'wework-tool-continuity-'))
   try {

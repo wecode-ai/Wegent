@@ -51,6 +51,9 @@ Suite 19 adds real tool history, active Goals, native forks, compaction, and arc
 history for targets declaring stopped preparation. Tools must successfully write workspace
 artifacts, and later inference must retain call identity. After upgrade and rollback, observe
 automatic Goal inference before reading its state, retaining identity and nonzero accounting.
+A paused Goal reactivated after its local execution finishes must regain recovery ownership
+using the task's saved execution profile. Persist that ownership before acknowledging activation,
+without resubmitting the old user input.
 Create forks through Codex's own fork, compaction, archive, and cold-compression operations.
 History bodies must remain byte-identical across transitions, with the same fork ID and ancestry,
 and must support additional native turns.

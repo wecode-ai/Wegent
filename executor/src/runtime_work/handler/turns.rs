@@ -604,13 +604,31 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         active_turn: Option<&ActiveCodexTurn>,
     ) {
-        let Some(request) = self
+        let request = self
             .active_local_executions
             .lock()
             .expect("active local execution map lock should not be poisoned")
             .get(local_task_id)
-            .and_then(|execution| execution.request.clone())
-        else {
+            .and_then(|execution| execution.request.clone());
+        let Some(request) = request.or_else(|| {
+            let link = self.local_task_link(local_task_id)?;
+            // A paused native Goal can be reactivated after its local send
+            // has finished. Reuse its saved execution profile, never replay
+            // the old user command or invent a profile for an unowned thread.
+            execution_request(&link.runtime_handle)?;
+            let mut request = runtime_event_request_from_link(&link);
+            if let Some(config) = self.runtime_model_config(local_task_id) {
+                request.model_config = config;
+            }
+            request.subtask_id = format!("{local_task_id}-goal-recovery");
+            request.prompt = Value::String(String::new());
+            request.extra.remove("runtime_command_id");
+            request.extra.remove("runtime_command_input");
+            request
+                .extra
+                .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
+            Some(request)
+        }) else {
             return;
         };
         let thread_id = active_turn.map(|turn| turn.thread_id.clone()).or_else(|| {
@@ -729,7 +747,7 @@ impl RuntimeWorkRpcHandler {
         Ok(true)
     }
 
-    async fn persist_current_turn_state(&self) -> Result<(), AppIpcError> {
+    pub(super) async fn persist_current_turn_state(&self) -> Result<(), AppIpcError> {
         let _operation = self.turn_queue_operation.lock().await;
         let queued_turns = self
             .turn_scheduler

@@ -83,7 +83,7 @@ export function createUpgradeConversationContinuity(control, timeoutMs) {
     async assertThread() {
       const client = control()
       const snapshot = JSON.parse(await client.command('getWorkbenchDebugSnapshot', 'body'))
-      const address = snapshot.workbench?.currentRuntimeTask
+      const address = snapshot.pane?.currentRuntimeTask
       assert.ok(address?.taskId, 'Upgrade continuation requires the original runtime task')
       const { task } = await requestExecutor(client, 'runtime.tasks.get', { address }, timeoutMs)
       assert.ok(task.threadId, 'Upgrade continuation requires the original native thread')
