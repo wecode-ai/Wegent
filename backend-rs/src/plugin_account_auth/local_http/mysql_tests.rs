@@ -366,6 +366,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         .call(token, "plugin.auth.oauth.begin", execution, 409)
         .await;
     assert_eq!(blocked["detail"], "plugin_auth_reconnect_required");
+    verify_unicode_account(&api, token, mysql).await?;
     verify_transfer(&api, token, mysql).await?;
     #[derive(brz_mysql::FromMysqlRow)]
     struct Count {
@@ -443,5 +444,22 @@ async fn verify_transfer(
         .await;
     assert_eq!(complete, replay);
     api.call(token, "plugin.auth.execute", request, 200).await;
+    Ok(())
+}
+
+// Legacy schemas count Unicode characters, not UTF-8 bytes. This exercises
+// both request acceptance and the persisted account ID used by refresh.
+async fn verify_unicode_account(
+    api: &Api,
+    token: &str,
+    mysql: &brz_mysql::MysqlService,
+) -> anyhow::Result<()> {
+    let id=seed(mysql,"unicode-account",json!({"protocolVersion":1,"credentialType":"oauth2","adapter":"auth.py","oauth2":["refresh"]})).await?;
+    let account = "账".repeat(128);
+    let migration = intent(api, token, id, "unicode-account").await;
+    let connection=api.call(token,"plugin.auth.enroll",json!({"migration_id":migration,"account_id":account,"account_label":"名".repeat(128),"credential":json!({"access_token":"expired","refresh_token":"unicode-refresh","expires_at":1}).to_string()}),200).await;
+    assert_eq!(connection["connection"]["account_id"], account);
+    let refresh=api.call(token,"plugin.auth.oauth.begin",json!({"installed_plugin_id":id,"connector_slug":"unicode-account","account_id":account}),200).await;
+    assert_eq!(refresh["state"], "claimed");
     Ok(())
 }

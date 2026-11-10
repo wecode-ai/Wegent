@@ -89,8 +89,8 @@ pub(super) async fn exchange(
     ) {
         let input: Enrollment = parse(data)?;
         if input.account_id.is_empty()
-            || input.account_id.len() > 256
-            || input.account_label.len() > 256
+            || input.account_id.chars().count() > 256
+            || input.account_label.chars().count() > 256
             || input.credential.is_empty()
             || input.credential.len() > 65536
         {
@@ -275,12 +275,11 @@ async fn create_intent(
                 && s["connector_slug"] == pkg.slug
                 && s["localPrincipal"] == p.thumbprint
         });
-    if let Some(row) = &slot {
-        if row.json["spec"]["loginGeneration"] == generation
-            && validated(tx, p, row, false).await.is_ok()
-        {
-            return Ok(row.name.clone());
-        }
+    if let Some(row) = &slot
+        && row.json["spec"]["loginGeneration"] == generation
+        && validated(tx, p, row, false).await.is_ok()
+    {
+        return Ok(row.name.clone());
     }
     let name = nonce()?;
     let spec = json!({"installed_plugin_id":pkg.id,"connector_slug":pkg.slug,"source_identity":pkg.source(),"auth_definition":pkg.definition,"localPrincipal":p.thumbprint,"expires_at":now()+300,"automatic":generation.is_null(),"operation":"export","loginGeneration":generation});

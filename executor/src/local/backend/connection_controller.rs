@@ -821,8 +821,10 @@ mod tests {
 
     #[test]
     fn plugin_broker_inherits_the_configured_cloud_mode_without_an_ipc_override() {
-        let mut base = DeviceConfig::default();
-        base.device_type = "cloud".into();
+        let base = DeviceConfig {
+            device_type: "cloud".into(),
+            ..Default::default()
+        };
         let mut profile = super::LocalBackendConnectionProfile {
             connection: Default::default(),
             registration_device_type: None,

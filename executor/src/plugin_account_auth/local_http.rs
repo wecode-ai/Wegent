@@ -68,10 +68,7 @@ impl LocalAuthContext {
         if input.configuration_revision <= state.configuration_revision {
             return Err(unavailable());
         }
-        let session = if input.session.is_none() {
-            None
-        } else {
-            let mut session = input.session.expect("present session");
+        let session = if let Some(mut session) = input.session {
             let url = reqwest::Url::parse(&session.backend_url).map_err(|_| unavailable())?;
             if !matches!(url.scheme(), "http" | "https")
                 || !url.username().is_empty()
@@ -86,6 +83,8 @@ impl LocalAuthContext {
             }
             session.backend_url = session.backend_url.trim_end_matches('/').into();
             Some(session)
+        } else {
+            None
         };
         state.generation += 1;
         state.configuration_revision = input.configuration_revision;

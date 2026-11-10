@@ -32,7 +32,7 @@ fn parse<T: DeserializeOwned>(data: &Value) -> MysqlResult<T> {
 fn text<'a>(data: &'a Value, key: &str) -> MysqlResult<&'a str> {
     data[key]
         .as_str()
-        .filter(|v| !v.is_empty() && v.len() <= 256)
+        .filter(|v| !v.is_empty() && v.chars().count() <= 256)
         .ok_or_else(invalid)
 }
 fn connector(value: &str) -> bool {
