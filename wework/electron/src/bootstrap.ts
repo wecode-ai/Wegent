@@ -2,7 +2,10 @@ import { app, dialog } from 'electron'
 import { existsSync } from 'node:fs'
 import { readFile, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { resolveWorkbenchPaths } from './runtime/workbench-environment.js'
+import {
+  resolveWorkbenchCodexHome,
+  resolveWorkbenchPaths,
+} from './runtime/workbench-environment.js'
 import { optionalText, ReleaseStore } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
 import { currentCoreProfile, selectReleaseProfile } from './runtime/release-profile.js'
@@ -277,14 +280,15 @@ async function launchSelectedRelease(
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
   try {
-    const paths = resolveWorkbenchPaths({
+    const homeOptions = {
       environment: process.env,
       metadata,
       homeDirectory: app.getPath('home'),
-    })
+    }
+    const paths = resolveWorkbenchPaths(homeOptions)
     await prepareReleaseAfterStop(store, active, dataDirectory, {
       workbenchRoot: paths.root,
-      codexHome: process.env.WEGENT_CODEX_HOME?.trim() || paths.codexHome,
+      codexHome: resolveWorkbenchCodexHome(homeOptions),
     })
   } catch (error) {
     const pending = await store.activation()
