@@ -17,7 +17,7 @@ impl Fixture {
         let binary = directory.path().join("codex");
         fs::write(
             &binary,
-            r#"#!/bin/sh
+            LaunchEnvironment::with_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$CODEX_HOME/requests.jsonl"
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -38,7 +38,7 @@ while IFS= read -r line; do
       esac ;;
   esac
 done
-"#,
+"#),
         )
         .unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();

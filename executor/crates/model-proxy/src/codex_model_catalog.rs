@@ -32,6 +32,9 @@ use tokio::{
 };
 use toml_edit::DocumentMut;
 
+mod snapshot;
+pub use snapshot::{prepare_process_catalog, ProcessCatalog};
+
 use crate::logging::log_executor_event;
 
 pub const ROUTE: &str = "/v1/codex-router/models";
@@ -415,17 +418,7 @@ fn normalize_compatibility_fields(mut entry: Value) -> Value {
 }
 
 fn write_custom_models_to(path: &Path, entries: &[Value]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "custom model catalog path has no parent".to_owned())?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let temporary = parent.join(format!(
-        ".{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy()
-    ));
-    let bytes = serde_json::to_vec_pretty(entries).map_err(|error| error.to_string())?;
-    fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, path).map_err(|error| error.to_string())
+    snapshot::write_json(path, entries)
 }
 
 fn read_catalog_overrides() -> Vec<CatalogOverride> {
@@ -455,17 +448,7 @@ fn read_catalog_overrides_from(path: &Path) -> Result<Vec<CatalogOverride>, Stri
 }
 
 fn write_catalog_overrides_to(path: &Path, overrides: &[CatalogOverride]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "model catalog overrides path has no parent".to_owned())?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let temporary = parent.join(format!(
-        ".{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy()
-    ));
-    let bytes = serde_json::to_vec_pretty(overrides).map_err(|error| error.to_string())?;
-    fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, path).map_err(|error| error.to_string())
+    snapshot::write_json(path, overrides)
 }
 
 #[allow(dead_code)]
@@ -550,6 +533,7 @@ async fn upstream_catalog(client_version: Option<&str>) -> Result<Option<Value>,
     }
     let mut request = reqwest::Client::new()
         .get(format!("{upstream_id}/models"))
+        .timeout(Duration::from_secs(5))
         .bearer_auth(api_key);
     if let Some(client_version) = client_version {
         request = request.query(&[("client_version", client_version)]);
@@ -678,18 +662,31 @@ fn configured_catalog_upstream() -> Option<(String, String)> {
 }
 
 async fn load_baseline_catalog(client_version: Option<&str>) -> Result<Value, String> {
+    load_baseline_catalog_with_native(client_version, None).await
+}
+
+async fn load_baseline_catalog_with_native(
+    client_version: Option<&str>,
+    native: Option<&Value>,
+) -> Result<Value, String> {
     let mut catalog = match upstream_catalog(client_version).await {
         Ok(Some(catalog)) => catalog,
-        Ok(None) => bundled_catalog().await?.clone(),
+        Ok(None) => match native {
+            Some(native) => native.clone(),
+            None => bundled_catalog().await?.clone(),
+        },
         Err(error) => {
             log_executor_event(
                 "codex router upstream model catalog unavailable",
                 &[("error", error)],
             );
-            bundled_catalog().await?.clone()
+            match native {
+                Some(native) => native.clone(),
+                None => bundled_catalog().await?.clone(),
+            }
         }
     };
-    merge_base_models(&mut catalog, None).await?;
+    merge_base_models(&mut catalog, native).await?;
     Ok(catalog)
 }
 

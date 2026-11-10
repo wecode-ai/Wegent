@@ -1837,8 +1837,18 @@ async fn start_persistent_codex_app_server(
     auth_mode: CodexAuthMode,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 ) -> Result<(CodexAppServerProcess, u64), String> {
-    let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
-    let mut child = spawn_codex_app_server(binary, &launch_config, Some(auth_mode))?;
+    let mut launch_config = persistent_codex_app_server_launch_config(request_launch_config);
+    let (home, auth_lease) = acquire_codex_app_server_home(&launch_config, Some(auth_mode))?;
+    let catalog =
+        codex_model_catalog::prepare_process_catalog(&resolve_codex_binary(binary), &home).await?;
+    if let Some(catalog) = &catalog {
+        launch_config.config_overrides.push(format!(
+            "model_catalog_json={}",
+            toml_json_value(&json!(catalog.path()))
+        ));
+    }
+    let mut child = spawn_codex_app_server_with_home(binary, &launch_config, &home, auth_lease)?;
+    child.hold_catalog(catalog);
     let process_id = child.id().map(|id| id.to_string()).unwrap_or_default();
     log_executor_event(
         "codex shared app-server process starting",
@@ -4077,6 +4087,33 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
     auth_mode: Option<CodexAuthMode>,
 ) -> Result<CodexAppServerChild, String> {
+    let (home, auth_lease) = acquire_codex_app_server_home(launch_config, auth_mode)?;
+    spawn_codex_app_server_with_home(binary, launch_config, &home, auth_lease)
+}
+
+fn acquire_codex_app_server_home(
+    launch_config: &CodexLaunchConfig,
+    auth_mode: Option<CodexAuthMode>,
+) -> Result<(PathBuf, Option<crate::file_lease::FileLease>), String> {
+    let codex_home = launch_config
+        .env
+        .get(CODEX_HOME_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(wework_codex_home);
+    let auth_lease = if launch_config.env.contains_key(CODEX_HOME_ENV) {
+        Some(home::acquire_named_home(&codex_home)?)
+    } else {
+        Some(home::acquire_shared_auth(&codex_home, auth_mode)?)
+    };
+    Ok((codex_home, auth_lease))
+}
+
+fn spawn_codex_app_server_with_home(
+    binary: &str,
+    launch_config: &CodexLaunchConfig,
+    codex_home: &Path,
+    auth_lease: Option<crate::file_lease::FileLease>,
+) -> Result<CodexAppServerChild, String> {
     let resolved_binary = resolve_codex_binary(binary);
     // Preserve the extended-length Windows path for binaries in component caches.
     #[cfg(windows)]
@@ -4086,19 +4123,7 @@ fn spawn_codex_app_server(
         })?
         .to_string_lossy()
         .into_owned();
-    let codex_home = launch_config
-        .env
-        .get(CODEX_HOME_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(wework_codex_home);
-    let auth_lease = if launch_config.env.contains_key(CODEX_HOME_ENV) {
-        // First ownership migrates offline. Auxiliary readers share the lifetime
-        // lease instead of trying to rewrite a Home with an active native writer.
-        Some(home::acquire_named_home(&codex_home)?)
-    } else {
-        Some(home::acquire_shared_auth(&codex_home, auth_mode)?)
-    };
-    codex_app_server_command(&resolved_binary, &codex_home, launch_config)
+    codex_app_server_command(&resolved_binary, codex_home, launch_config)
         .spawn()
         .map(|child| CodexAppServerChild::new(child, auth_lease))
         .map_err(|error| {

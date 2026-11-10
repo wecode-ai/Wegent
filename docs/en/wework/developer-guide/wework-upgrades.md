@@ -55,6 +55,13 @@ The local router serves the merged catalog using a non-secret catalog credential
 token or task API key. Threads must not inherit that credential or another route's bearer command.
 Local catalog discovery has process-owned settings. Native threads retain an explicit Home
 `features.api_key_model_discovery` value; local discovery must not enable external API-key discovery.
+Before starting the shared process, acquire Home ownership and complete offline migration. Atomically
+write the complete merged catalog to a process-owned file and load it through native
+`model_catalog_json`, avoiding the custom HTTP catalog's 1 MB limit without stripping native
+instructions or permission templates. Retain the file until the native process actually exits.
+Catalog edits use the existing idle restart and active-work confirmation flow. Explicit native
+catalog configuration in the Home remains authoritative. Local discovery adds no resident process
+and does not serialize model requests from separate threads.
 Paused Goals must remain paused across ordinary restarts. Reactivation uses the original task's
 persisted execution configuration and existing admission flow. Repeated activation cannot enqueue
 duplicate recovery or change queued recovery to running. Native `goal/set` on an unloaded thread

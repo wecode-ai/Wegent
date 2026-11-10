@@ -11,12 +11,14 @@ use tokio::process::Child;
 
 use super::signal_codex_app_server_child;
 use crate::file_lease::FileLease;
+use crate::server::codex_model_catalog::ProcessCatalog;
 
 /// Keeps a Home's authentication ownership until its native process exits,
 /// including when startup or a running turn is cancelled by dropping its future.
 pub(super) struct CodexAppServerChild {
     child: Option<Child>,
     auth_lease: Option<FileLease>,
+    catalog: Option<ProcessCatalog>,
 }
 
 impl CodexAppServerChild {
@@ -24,7 +26,12 @@ impl CodexAppServerChild {
         Self {
             child: Some(child),
             auth_lease,
+            catalog: None,
         }
+    }
+
+    pub(super) fn hold_catalog(&mut self, catalog: Option<ProcessCatalog>) {
+        self.catalog = catalog;
     }
 }
 
@@ -52,13 +59,19 @@ impl Drop for CodexAppServerChild {
             return;
         };
         signal_codex_app_server_child(&mut child);
-        let Some(lease) = self.auth_lease.take() else {
-            return;
-        };
+        let lease = self.auth_lease.take();
+        let catalog = self.catalog.take();
         if matches!(child.try_wait(), Ok(Some(_))) {
             return;
         }
-        let cleanup = Arc::new(Mutex::new(Some((child, lease))));
+        if lease.is_none() && catalog.is_none() {
+            return;
+        }
+        let cleanup = Arc::new(Mutex::new(Some(ReapResources {
+            child,
+            _auth_lease: lease,
+            _catalog: catalog,
+        })));
         let worker = Arc::clone(&cleanup);
         // A separate reaper remains valid while the Tokio runtime is shutting
         // down. Normal awaited teardown has already reaped the child above.
@@ -72,13 +85,19 @@ impl Drop for CodexAppServerChild {
     }
 }
 
-type ReapState = Arc<Mutex<Option<(Child, FileLease)>>>;
+struct ReapResources {
+    child: Child,
+    _auth_lease: Option<FileLease>,
+    _catalog: Option<ProcessCatalog>,
+}
+
+type ReapState = Arc<Mutex<Option<ReapResources>>>;
 
 fn reap(state: ReapState) {
-    let Some((mut child, _lease)) = state.lock().unwrap().take() else {
+    let Some(mut resources) = state.lock().unwrap().take() else {
         return;
     };
-    while !matches!(child.try_wait(), Ok(Some(_))) {
+    while !matches!(resources.child.try_wait(), Ok(Some(_))) {
         std::thread::sleep(Duration::from_millis(10));
     }
 }

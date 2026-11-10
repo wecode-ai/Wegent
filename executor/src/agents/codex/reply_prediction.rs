@@ -418,7 +418,7 @@ done
 "#;
             fs::write(
                 &binary,
-                script
+                LaunchEnvironment::with_bundled_catalog(script)
                     .replace("__LOG__", &log.to_string_lossy())
                     .replace("__MODE__", mode),
             )
