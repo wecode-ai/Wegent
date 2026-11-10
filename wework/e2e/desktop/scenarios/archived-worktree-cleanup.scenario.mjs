@@ -219,7 +219,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         '[data-testid="archived-delete-confirm-dialog-confirm-button"]'
       )
 
-      const residualDeadline = Date.now() + uiTimeoutMs
+      // Windows can keep the archived workspace locked while the previous
+      // runtime releases it; the executor retries removal for a bounded time.
+      const residualDeadline = Date.now() + Math.max(uiTimeoutMs, 30_000)
       let residualRemoved = false
       while (Date.now() < residualDeadline) {
         try {

@@ -6,14 +6,14 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     fs::OpenOptions,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, Weak,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
@@ -37,6 +37,8 @@ mod persistence_tests;
 const STATE_VERSION: u64 = 5;
 const DEFAULT_KEEP_COUNT: usize = 15;
 const AUTO_PRUNE_BATCH_SIZE: usize = 1;
+const ORPHANED_RESIDUE_REMOVAL_BUDGET: Duration = Duration::from_secs(20);
+const ORPHANED_RESIDUE_RETRY_DELAY: Duration = Duration::from_millis(200);
 pub(crate) const RUNTIME_WORKTREES_VERSION: u64 = 1;
 static WORKTREE_WRITE_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1136,21 +1138,78 @@ fn remove_orphaned_worktree_path(path: &Path) -> Result<(), String> {
             path.display()
         ));
     }
-    if metadata.is_dir() {
-        fs::remove_dir_all(path).map_err(|error| {
-            format!(
-                "Failed to remove orphaned worktree path {}: {error}",
-                path.display()
-            )
-        })
-    } else {
-        fs::remove_file(path).map_err(|error| {
-            format!(
-                "Failed to remove orphaned worktree path {}: {error}",
-                path.display()
-            )
-        })
+    let is_directory = metadata.is_dir();
+    let started_at = Instant::now();
+    let attempts = retry_transient_removal(
+        || {
+            if is_directory {
+                fs::remove_dir_all(path)
+            } else {
+                fs::remove_file(path)
+            }
+        },
+        || !path.exists(),
+    )
+    .map_err(|error| {
+        format!(
+            "Failed to remove orphaned worktree path {} after {}ms: {error}",
+            path.display(),
+            started_at.elapsed().as_millis()
+        )
+    })?;
+    if attempts > 1 {
+        log_executor_event(
+            "runtime worktree orphaned residue removed after retry",
+            &[
+                ("path", path.display().to_string()),
+                ("attempts", attempts.to_string()),
+                ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+            ],
+        );
     }
+    Ok(())
+}
+
+// Windows briefly reports sharing violations while another process releases a
+// just-archived workspace. Retry the same removal instead of leaving an empty
+// directory behind until the next application start.
+fn retry_transient_removal<F, G>(mut remove: F, is_gone: G) -> io::Result<u32>
+where
+    F: FnMut() -> io::Result<()>,
+    G: Fn() -> bool,
+{
+    let deadline = Instant::now() + ORPHANED_RESIDUE_REMOVAL_BUDGET;
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match remove() {
+            Ok(()) => return Ok(attempts),
+            Err(error) if is_transient_removal_error(&error) => {
+                if is_gone() {
+                    return Ok(attempts);
+                }
+                if Instant::now() >= deadline {
+                    return Err(error);
+                }
+                std::thread::sleep(ORPHANED_RESIDUE_RETRY_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_transient_removal_error(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::Interrupted | io::ErrorKind::PermissionDenied | io::ErrorKind::WouldBlock
+    ) {
+        return true;
+    }
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(32) | Some(33)) {
+        return true;
+    }
+    false
 }
 
 fn remove_empty_worktree_container(path: &Path) -> Result<(), String> {
