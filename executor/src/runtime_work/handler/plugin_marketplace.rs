@@ -23,6 +23,9 @@ impl RuntimeWorkRpcHandler {
         let source = string_field(&payload, "source")
             .ok_or_else(|| AppIpcError::new("bad_request", "source is required"))?;
         let _guard = self.bundled_plugin_marketplace_reconciliation.lock().await;
+        // Native marketplace edits truncate config.toml before writing it back.
+        // Inventory readers must observe the complete registration transaction.
+        let _activation = crate::services::capability_activation::activate().await;
         let available = self
             .codex_app_server
             .request(

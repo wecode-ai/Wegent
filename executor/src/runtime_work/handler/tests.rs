@@ -6,6 +6,10 @@ use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_se
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
+#[cfg(unix)]
+#[path = "marketplace_python_demand_tests.rs"]
+mod marketplace_python_demand_tests;
+
 #[path = "superseded_turn_tests.rs"]
 mod superseded_turn_tests;
 

@@ -456,6 +456,8 @@ export function CollaborationApp({
           projectId={project.id}
           value={currentMilestoneFilter}
           onChange={milestoneFilter.select}
+          onClear={milestoneFilter.clear}
+          clearLabel={milestoneLabels.clearFilter}
           label={milestoneLabels.title}
           searchLabel={milestoneLabels.search}
           emptyLabel={milestoneLabels.noMatches}
@@ -711,6 +713,8 @@ export function CollaborationApp({
                         project={project}
                         issues={issues}
                         locale={locale}
+                        filter={milestoneFilter.filter}
+                        onFilterChange={milestoneFilter.select}
                         onOpenArchive={
                           issueArchiveAvailable ? openArchiveDrawer : undefined
                         }
@@ -729,7 +733,10 @@ export function CollaborationApp({
                             linkedIssues,
                             "milestones",
                             linkedAssignments,
-                            { emptyLabel, milestoneId },
+                            {
+                              emptyLabel,
+                              milestoneId: milestoneId ?? undefined,
+                            },
                           )
                         }
                       />

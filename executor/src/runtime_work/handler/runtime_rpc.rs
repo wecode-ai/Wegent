@@ -86,7 +86,16 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     ],
                 );
             }
-            let _activation = if method == "skills/config/write" {
+            let activation = if matches!(
+                method.as_str(),
+                "skills/config/write"
+                    | "marketplace/add"
+                    | "marketplace/remove"
+                    | "marketplace/upgrade"
+                    | "plugin/install"
+                    | "plugin/uninstall"
+                    | "config/value/write"
+            ) {
                 Some(crate::services::capability_activation::activate().await)
             } else {
                 None
@@ -96,9 +105,14 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     super::super::connection_host::assert_dependency_unused(id)?;
                 }
             }
-            let response = if let Some(activation) = &_activation {
+            let response = if method == "skills/config/write" {
                 self.codex_app_server
-                    .write_skill_configuration(params, activation)
+                    .write_skill_configuration(
+                        params,
+                        activation
+                            .as_ref()
+                            .expect("Skill writes hold the activation writer"),
+                    )
                     .await
             } else {
                 self.codex_app_server.request(&method, params).await

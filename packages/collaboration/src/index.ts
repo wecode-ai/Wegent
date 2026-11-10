@@ -54,4 +54,5 @@ export type {
   MilestoneInput,
   MilestonesApi,
 } from "./milestones/types";
+export type { MilestoneFilterValue } from "./milestones/useMilestoneFilter";
 export * from "./issueParticipation";

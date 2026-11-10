@@ -1,4 +1,4 @@
-import { Flag, ChevronDown } from 'lucide-react'
+import { Flag, ChevronDown, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { MilestonesApi } from './types'
 import { useMilestones } from './useMilestones'
@@ -11,6 +11,8 @@ export function MilestonePicker({
   query: providedQuery,
   placeholder,
   onMissingValue,
+  onClear,
+  clearLabel,
   projectId,
   value,
   onChange,
@@ -30,6 +32,8 @@ export function MilestonePicker({
   query?: ReturnType<typeof useMilestones>
   placeholder?: string
   onMissingValue?(): void
+  onClear?(): void
+  clearLabel?: string
   projectId: string
   value: string | null | undefined
   onChange(value: string | null): Promise<void> | void
@@ -68,6 +72,19 @@ export function MilestonePicker({
     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-sm leading-normal">
       {!compact && appearance !== 'property' && !allLabel ? (
         <span className="shrink-0 text-text-secondary">{label}</span>
+      ) : null}
+      {onClear && value !== 'all' ? (
+        <button
+          type="button"
+          data-testid={`${testId}-clear`}
+          aria-label={clearLabel}
+          title={clearLabel}
+          disabled={disabled || busy}
+          className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 max-md:min-h-11 max-md:min-w-11"
+          onClick={onClear}
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
       ) : null}
       <Tooltip label={selectedTitle} side="bottom" className="min-w-0 max-w-full shrink">
         <IssueDetailSearchableSelect
