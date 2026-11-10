@@ -264,6 +264,30 @@ test('the bridge waits for stopped preparation before granting a launcher any he
   await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalledOnce())
 })
 
+test.each([false, true])(
+  'stopped preparation uses the runtime Home with explicit Codex override=%s',
+  async explicitCodex => {
+    startup.bridge = process.execPath
+    startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+    startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+    startup.ready.mockResolvedValue(undefined)
+    const executorHome = join(startup.home, 'custom-executor')
+    const codexHome = explicitCodex
+      ? join(startup.home, 'explicit-codex')
+      : join(executorHome, 'codex')
+    vi.stubEnv('WEGENT_EXECUTOR_HOME', executorHome)
+    vi.stubEnv('WEGENT_CODEX_HOME', explicitCodex ? codexHome : '')
+    await import('./bootstrap.js')
+    await vi.waitFor(() => expect(startup.afterStopPrepare).toHaveBeenCalledOnce())
+    expect(startup.afterStopPrepare).toHaveBeenCalledWith(
+      expect.anything(),
+      startup.activeRelease,
+      startup.legacyUserData,
+      expect.objectContaining({ codexHome })
+    )
+  }
+)
+
 test('a supervised target cannot open data or recover Goals without its stopped-preparation receipt', async () => {
   startup.activeRelease = { id: 'target', version: '1.1.0', executable: process.execPath }
   startup.metadata.version = '1.1.0'
