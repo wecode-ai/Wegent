@@ -77,6 +77,16 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 模型目录遇到不合法的 `codex_request_mode` 时会忽略该字段，保留模型的其他有效信息，避免一个错误配置导致整个模型列表不可用。目录读取不会修改存储的 Model CRD；实际调用仍校验原始配置，本机和云端执行都会在请求发送至模型服务前返回 HTTP 400。
 
+`modelConfig.custom_tool_conversion` 独立于请求模式，控制 custom 工具的上游线格式：
+
+| 值                   | 行为                                                                                                                                      |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `none` 或未配置      | 保持 custom 工具原生格式。未配置时按工具模式取默认值：Function tools 转换对应 `all`，原生 Custom tools 对应 `none`。                       |
+| `all`                | 将所有 custom 工具（包括 `apply_patch`）声明为带字符串 `input` 参数的 function。                                                          |
+| `except_apply_patch` | 将 `exec` 等 custom 工具声明为 function，同时保留原生 `apply_patch`。DeepSeek 供应商预设使用该模式。                                      |
+
+适配层不会根据请求 URL 或代理路由推断该配置，因此自定义端点也可使用。`standard` 请求模式仍强制 `all`，`passthrough` 仍原样转发请求。适配层会把函数响应还原为 Codex custom 调用，并转换后续请求中的调用历史与结果。模型目录会忽略不合法的值；实际调用返回 HTTP 400。
+
 透传响应保留上游正常数据块的原始字节。若发生读取错误或流在 Responses 终态之前结束，仅追加 `response.failed`；已有 `response.completed`、`response.failed` 或 `response.incomplete` 后不会重复追加。独立的 `[DONE]` 不能代替 Responses 终态。
 
 `standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。

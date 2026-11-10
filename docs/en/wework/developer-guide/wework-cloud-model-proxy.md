@@ -79,6 +79,16 @@ Responses services that fully support Codex requests can set this field to `"pas
 
 The model catalog omits invalid `codex_request_mode` values while preserving other valid model metadata, so one misconfigured model cannot break the entire list. Catalog reads do not modify the stored Model CRD. Actual calls still validate the original configuration: both local and cloud execution return HTTP 400 before sending a request to the model provider.
 
+`modelConfig.custom_tool_conversion` controls the upstream wire format for custom tools independently of the request mode:
+
+| Value                | Behavior                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `none` or omitted    | Keep native custom tools. When omitted, the tool mode supplies the default: function tool conversion resolves to `all`, and native custom tools resolve to `none`.          |
+| `all`                | Declare every custom tool, including `apply_patch`, as a function with a string `input` parameter.                                                                         |
+| `except_apply_patch` | Declare `exec` and other custom tools as functions while keeping native `apply_patch`. The DeepSeek provider preset uses this mode.                                       |
+
+The adapter never infers this setting from the request URL or proxy routing, so it also applies to custom endpoints. The `standard` request mode still forces `all`, and `passthrough` still forwards requests unchanged. The adapter restores Codex custom tool calls from function responses and translates tool history and results in later requests. Catalog reads omit invalid values; actual calls return HTTP 400.
+
 Passthrough preserves the original bytes of normal upstream chunks. A read error or EOF before a Responses terminal event only appends `response.failed`; no additional failure is emitted after `response.completed`, `response.failed`, or `response.incomplete`. A standalone `[DONE]` marker does not replace a Responses terminal event.
 
 `standard` mode advertises only client-executable function tools. It omits provider-hosted tools such as `web_search` and `image_generation`. If `tool_choice` forces a hosted tool, the proxy returns HTTP 400. `auto` and `passthrough` continue to preserve these tools.
