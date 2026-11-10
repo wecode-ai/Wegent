@@ -55,10 +55,6 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
   let restartDesktopApp
 
   return {
-    // The signed-in workbench loads project inventory from Backend, independently
-    // of the synthetic Codex model/configuration service.
-    requiresCloudEnvironment: true,
-    requiresRemoteExecutor: false,
     prepareApp: model.prepareApp,
     attachServer: model.attachServer,
     handleHttp: model.handleHttp,
