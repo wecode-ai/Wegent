@@ -310,8 +310,8 @@ pub(super) async fn handle_for_token(
         ),
         ("body_bytes", request_body.len().to_string()),
         (
-            "convert_custom_tools",
-            tool_capabilities.convert_custom_tools.to_string(),
+            "custom_tool_conversion",
+            tool_capabilities.custom_tool_conversion.label().to_owned(),
         ),
         (
             "native_tool_search",

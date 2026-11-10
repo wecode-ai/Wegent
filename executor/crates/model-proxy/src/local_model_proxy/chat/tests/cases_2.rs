@@ -286,7 +286,8 @@ fn responses_to_responses_converts_custom_apply_patch_tool() {
     });
 
     let (converted, context) =
-        responses_to_responses(&input, true, false, false).expect("request should convert");
+        responses_to_responses(&input, CustomToolConversion::All, false, false)
+            .expect("request should convert");
     assert!(context.is_custom("apply_patch"));
     assert_eq!(converted["tools"][0]["type"], "function");
     assert_eq!(converted["tools"][0]["name"], "exec_command");
@@ -342,8 +343,8 @@ fn responses_to_responses_moves_tool_images_after_all_tool_results() {
         ]
     });
 
-    let (converted, _) =
-        responses_to_responses(&input, false, true, true).expect("request should convert");
+    let (converted, _) = responses_to_responses(&input, CustomToolConversion::None, true, true)
+        .expect("request should convert");
     let converted_input = converted["input"].as_array().expect("input");
 
     assert_eq!(converted_input.len(), 6);
@@ -424,7 +425,8 @@ fn responses_to_responses_bridges_tool_search_and_loaded_app_tools() {
     });
 
     let (converted, context) =
-        responses_to_responses(&input, false, false, false).expect("request should convert");
+        responses_to_responses(&input, CustomToolConversion::None, false, false)
+            .expect("request should convert");
 
     assert_eq!(converted["tools"].as_array().unwrap().len(), 2);
     assert_eq!(converted["tools"][0]["type"], "function");
@@ -483,8 +485,8 @@ fn responses_bridge_removes_defer_loading_without_native_tool_search() {
         }]
     });
 
-    let (converted, _) =
-        responses_to_responses(&input, false, false, true).expect("request should convert");
+    let (converted, _) = responses_to_responses(&input, CustomToolConversion::None, false, true)
+        .expect("request should convert");
 
     assert_eq!(converted["tools"][0]["type"], "function");
     assert_eq!(
@@ -573,7 +575,8 @@ fn responses_to_responses_preserves_native_tool_search_and_namespaces() {
     });
 
     let (converted, bridge_context) =
-        responses_to_responses(&input, false, true, true).expect("request should convert");
+        responses_to_responses(&input, CustomToolConversion::None, true, true)
+            .expect("request should convert");
 
     assert_eq!(converted, input);
     assert!(bridge_context.is_empty());
@@ -669,8 +672,8 @@ async fn responses_sse_to_responses_restores_tool_search_and_app_namespace() {
             }
         ]
     });
-    let (_, context) =
-        responses_to_responses(&request, false, false, false).expect("request should convert");
+    let (_, context) = responses_to_responses(&request, CustomToolConversion::None, false, false)
+        .expect("request should convert");
     let output = convert_responses_stream(
         concat!(
             "event: response.output_item.added\n",
@@ -804,8 +807,8 @@ async fn responses_sse_to_responses_leaves_regular_function_calls_unchanged() {
     assert!(!output.contains("custom_tool_call"), "output: {output}");
 }
 
-#[test]
-fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
+#[tokio::test]
+async fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
     let script = "text('中文');\ntext(42)";
     let declaration = json!({"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec","description":"Native code execution"}]});
     let body = json!({"input":[
@@ -826,15 +829,72 @@ fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
     )
     .unwrap();
     assert_eq!(arguments["input"], script);
-    let (standard, context) = responses_to_responses(&body, true, false, false).unwrap();
+    let (standard, context) =
+        responses_to_responses(&body, CustomToolConversion::All, false, false).unwrap();
     assert!(context.is_custom("functions__exec"));
     assert_eq!(standard["tools"][0]["name"], "functions__exec");
+    assert_eq!(
+        standard["tools"][0]["parameters"]["required"],
+        json!(["input"]),
+        "A converted namespaced custom tool must declare its raw string input"
+    );
+    assert_eq!(
+        standard["tools"][0]["parameters"]["properties"]["input"]["type"],
+        "string"
+    );
     assert!(!standard["input"]
         .as_array()
         .unwrap()
         .iter()
         .any(|item| item["type"] == "additional_tools"));
-    let (native, _) = responses_to_responses(&body, false, true, true).unwrap();
+    let converted_input = standard["input"].as_array().unwrap();
+    assert_eq!(converted_input[0]["type"], "function_call");
+    assert_eq!(converted_input[0]["name"], "functions__exec");
+    assert!(converted_input[0].get("namespace").is_none());
+    assert_eq!(
+        serde_json::from_str::<Value>(converted_input[0]["arguments"].as_str().unwrap()).unwrap(),
+        json!({"input": script})
+    );
+    assert_eq!(converted_input[1]["type"], "function_call_output");
+    assert_eq!(converted_input[1]["call_id"], "cell-1");
+    let mut choice_body = body.clone();
+    choice_body["tool_choice"] =
+        json!({"type": "custom", "namespace": "functions", "name": "exec"});
+    let (with_choice, _) =
+        responses_to_responses(&choice_body, CustomToolConversion::All, false, false).unwrap();
+    assert_eq!(
+        with_choice["tool_choice"],
+        json!({"type": "function", "name": "functions__exec"})
+    );
+    let response_event = json!({
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": {
+            "id": "fc_exec",
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call_exec",
+            "name": "functions__exec",
+            "arguments": serde_json::to_string(&json!({"input": script})).unwrap()
+        }
+    });
+    let output = convert_responses_stream(
+        &format!("event: response.output_item.done\ndata: {response_event}\n\n"),
+        context,
+    )
+    .await;
+    let restored = output
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .find_map(|event| event.get("item").cloned())
+        .filter(|item| item["type"] == "custom_tool_call")
+        .expect("The stream must restore the namespaced custom call");
+    assert_eq!(restored["name"], "exec");
+    assert_eq!(restored["namespace"], "functions");
+    assert_eq!(restored["input"], script);
+    let (native, _) =
+        responses_to_responses(&body, CustomToolConversion::None, true, true).unwrap();
     assert_eq!(native["input"], body["input"]);
     assert!(native.get("tools").is_none());
     let (anthropic, _) =

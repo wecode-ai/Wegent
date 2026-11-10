@@ -109,7 +109,8 @@ pub struct LocalModelProxyUpstream {
     pub base_url: String,
     pub request_url: Option<String>,
     pub api_format: String,
-    pub convert_custom_tools: bool,
+    #[serde(default)]
+    pub custom_tool_conversion: CustomToolConversion,
     pub native_tool_search: bool,
     pub native_namespace_tools: bool,
     #[serde(default)]
@@ -187,9 +188,49 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
     token
 }
 
+/// How Codex custom tools are represented on the upstream wire.
+///
+/// Configured per model with `custom_tool_conversion`; the resolved value is
+/// independent of the request URL and proxy routing.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomToolConversion {
+    #[default]
+    None,
+    All,
+    ExceptApplyPatch,
+}
+
+impl CustomToolConversion {
+    fn is_enabled(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::All => "all",
+            Self::ExceptApplyPatch => "except_apply_patch",
+        }
+    }
+
+    fn converts(self, name: &str) -> bool {
+        match self {
+            Self::None => false,
+            Self::All => true,
+            Self::ExceptApplyPatch => name != "apply_patch",
+        }
+    }
+
+    fn converts_history(self, name: &str, declared_custom: bool) -> bool {
+        self.converts(name)
+            && (declared_custom || (matches!(self, Self::ExceptApplyPatch) && !name.is_empty()))
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ResponsesToolCapabilities {
-    convert_custom_tools: bool,
+    custom_tool_conversion: CustomToolConversion,
     native_tool_search: bool,
     native_namespace_tools: bool,
     function_tools_only: bool,
@@ -210,7 +251,7 @@ impl LocalModelProxyUpstream {
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
         if self.codex_request_mode == CodexRequestMode::Standard {
             return ResponsesToolCapabilities {
-                convert_custom_tools: true,
+                custom_tool_conversion: CustomToolConversion::All,
                 native_tool_search: false,
                 native_namespace_tools: false,
                 function_tools_only: true,
@@ -218,14 +259,14 @@ impl LocalModelProxyUpstream {
         }
         if self.codex_request_mode == CodexRequestMode::Passthrough {
             return ResponsesToolCapabilities {
-                convert_custom_tools: false,
+                custom_tool_conversion: CustomToolConversion::None,
                 native_tool_search: true,
                 native_namespace_tools: true,
                 function_tools_only: false,
             };
         }
         ResponsesToolCapabilities {
-            convert_custom_tools: self.convert_custom_tools,
+            custom_tool_conversion: self.custom_tool_conversion,
             native_tool_search: self.native_tool_search,
             native_namespace_tools: self.native_namespace_tools,
             function_tools_only: false,
@@ -264,6 +305,7 @@ pub fn upstream_from_model_config(
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
     let native_by_default = api_format == "openai-responses";
+    let custom_tool_conversion = custom_tool_conversion(model_config)?;
     Ok(Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
@@ -272,9 +314,7 @@ pub fn upstream_from_model_config(
             .or_else(|| non_empty_string(model_config, "requestUrl")),
         api_format,
         codex_request_mode,
-        convert_custom_tools: non_empty_string(model_config, "tool_profile")
-            .or_else(|| non_empty_string(model_config, "toolProfile"))
-            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
+        custom_tool_conversion,
         native_tool_search: boolean_value(model_config, "native_tool_search")
             .or_else(|| boolean_value(model_config, "nativeToolSearch"))
             .unwrap_or(native_by_default),
@@ -309,6 +349,30 @@ fn model_upstream_api_format(model_config: &Value) -> String {
             .or_else(|| non_empty_string(model_config, "api_format"))
             .unwrap_or_else(|| "openai-responses".to_owned()),
     )
+}
+
+/// Resolve the configured custom-tool wire format without inspecting the endpoint.
+///
+/// An explicit `custom_tool_conversion` always wins. Otherwise the legacy tool
+/// profile supplies the model default: function-based providers convert every
+/// custom tool, native providers keep them unchanged.
+fn custom_tool_conversion(model_config: &Value) -> Result<CustomToolConversion, String> {
+    if let Some(value) = model_config
+        .get("custom_tool_conversion")
+        .or_else(|| model_config.get("customToolConversion"))
+    {
+        return serde_json::from_value::<CustomToolConversion>(value.clone()).map_err(|_| {
+            "custom_tool_conversion must be none, all or except_apply_patch".to_owned()
+        });
+    }
+    let function_profile = non_empty_string(model_config, "tool_profile")
+        .or_else(|| non_empty_string(model_config, "toolProfile"))
+        .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+    Ok(if function_profile {
+        CustomToolConversion::All
+    } else {
+        CustomToolConversion::None
+    })
 }
 
 /// Use the same output reservation for proxy requests and Codex compaction.

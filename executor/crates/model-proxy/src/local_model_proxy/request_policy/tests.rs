@@ -14,6 +14,236 @@ use axum::{
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
+#[tokio::test]
+async fn configured_except_apply_patch_bridges_exec_through_the_complete_tool_round_trip() {
+    let config = super::super::upstream_from_model_config(&json!({
+        "base_url": "https://responses.example.com",
+        "model_id": "deepseek-v4.1-flash",
+        "tool_profile": "custom",
+        "custom_tool_conversion": "except_apply_patch"
+    }))
+    .unwrap()
+    .unwrap();
+    let history = Default::default();
+    let mut request = json!({
+        "model": "wework-deepseek-v4-1-flash",
+        "stream": true,
+        "tool_choice": "auto",
+        "input": [{"role": "user", "content": "Run a script"}],
+        "tools": [
+            {"type": "custom", "name": "exec", "format": {"type": "text"}},
+            {"type": "function", "name": "wait", "parameters": {"type": "object"}},
+            {"type": "custom", "name": "apply_patch", "format": {"type": "text"}},
+            {"type": "web_search"}
+        ]
+    });
+    let prepared = prepare(
+        &config,
+        &serde_json::to_vec(&request).unwrap(),
+        None,
+        &history,
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let upstream_body: Value = serde_json::from_slice(&prepared.body).unwrap();
+    assert_eq!(upstream_body["model"], "deepseek-v4.1-flash");
+    assert_eq!(upstream_body["tools"][0]["type"], "function");
+    assert_eq!(upstream_body["tools"][0]["name"], "exec");
+    assert_eq!(
+        upstream_body["tools"][0]["parameters"]["required"],
+        json!(["input"])
+    );
+    assert_eq!(
+        upstream_body["tools"].as_array().unwrap()[1..],
+        request["tools"].as_array().unwrap()[1..]
+    );
+
+    let Some(Conversion::Responses(context)) = prepared.conversion else {
+        panic!("exec requires a reverse Responses conversion");
+    };
+    let script = "text(\"你好\")\ntext(2)";
+    let arguments = json!({"input": script}).to_string();
+    let upstream_event = json!({
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": {"id": "fc_exec", "call_id": "call_exec", "type": "function_call",
+                 "name": "exec", "arguments": arguments, "status": "completed"}
+    });
+    let stream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(format!(
+        "event: response.output_item.done\ndata: {upstream_event}\n\n"
+    )))]);
+    let response = axum::body::to_bytes(
+        axum::body::Body::from_stream(super::super::chat::responses_sse_to_responses(
+            stream, context,
+        )),
+        16_384,
+    )
+    .await
+    .unwrap();
+    let codex_call = String::from_utf8_lossy(&response)
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|data| serde_json::from_str::<Value>(data).unwrap())
+        .find(|event| event["type"] == "response.output_item.done")
+        .unwrap()["item"]
+        .clone();
+    assert_eq!(codex_call["type"], "custom_tool_call");
+    assert_eq!(codex_call["call_id"], "call_exec");
+    assert_eq!(codex_call["name"], "exec");
+    assert_eq!(codex_call["input"], script);
+
+    // The tool may disappear from the active catalog on a later turn.
+    request["tools"].as_array_mut().unwrap().remove(0);
+    request["tool_choice"] = json!({"type": "custom", "name": "apply_patch"});
+    let output =
+        json!({"type": "custom_tool_call_output", "call_id": "call_exec", "output": "你好\n2"});
+    request["input"].as_array_mut().unwrap().extend([
+        codex_call,
+        output,
+        json!({"type": "custom_tool_call", "call_id": "call_patch", "name": "apply_patch", "input": "*** Begin Patch\n*** End Patch"}),
+        json!({"type": "custom_tool_call_output", "call_id": "call_patch", "output": "Done"}),
+    ]);
+    let prepared = prepare(
+        &config,
+        &serde_json::to_vec(&request).unwrap(),
+        None,
+        &history,
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let upstream_body: Value = serde_json::from_slice(&prepared.body).unwrap();
+    assert_eq!(upstream_body["input"][1]["type"], "function_call");
+    assert_eq!(upstream_body["input"][1]["call_id"], "call_exec");
+    assert_eq!(upstream_body["input"][1]["arguments"], arguments);
+    assert_eq!(
+        upstream_body["input"][2],
+        json!({
+            "type": "function_call_output", "call_id": "call_exec", "output": "你好\n2"
+        })
+    );
+    assert_eq!(upstream_body["input"][3], request["input"][3]);
+    assert_eq!(upstream_body["input"][4], request["input"][4]);
+    assert_eq!(upstream_body["tool_choice"], request["tool_choice"]);
+}
+
+#[tokio::test]
+async fn custom_tool_conversion_respects_explicit_modes_and_model_defaults() {
+    let request = serde_json::to_vec(&json!({
+        "model": "deepseek-v4.1-flash",
+        "input": [],
+        "tools": [
+            {"type": "custom", "name": "exec"},
+            {"type": "custom", "name": "apply_patch"}
+        ],
+        "tool_choice": {"type": "custom", "name": "exec"}
+    }))
+    .unwrap();
+    for (base_url, mode, profile, conversion, exec_type, patch_type) in [
+        // The endpoint never selects a conversion policy on its own.
+        (
+            "https://api.deepseek.com",
+            "auto",
+            "custom",
+            None,
+            "custom",
+            "custom",
+        ),
+        (
+            "https://api.deepseek.com",
+            "auto",
+            "function",
+            None,
+            "function",
+            "function",
+        ),
+        (
+            "https://proxy.example.com",
+            "auto",
+            "custom",
+            Some("all"),
+            "function",
+            "function",
+        ),
+        (
+            "https://proxy.example.com",
+            "auto",
+            "function",
+            Some("none"),
+            "custom",
+            "custom",
+        ),
+        (
+            "https://proxy.example.com",
+            "auto",
+            "custom",
+            Some("except_apply_patch"),
+            "function",
+            "custom",
+        ),
+        (
+            "https://api.deepseek.com",
+            "passthrough",
+            "custom",
+            Some("all"),
+            "custom",
+            "custom",
+        ),
+        (
+            "https://api.deepseek.com",
+            "standard",
+            "custom",
+            Some("none"),
+            "function",
+            "function",
+        ),
+    ] {
+        let mut config = json!({
+            "base_url": base_url,
+            "codex_request_mode": mode,
+            "tool_profile": profile
+        });
+        if let Some(conversion) = conversion {
+            config["custom_tool_conversion"] = json!(conversion);
+        }
+        let config = super::super::upstream_from_model_config(&config)
+            .unwrap()
+            .unwrap();
+        let prepared = prepare(&config, &request, None, &Default::default(), false, false)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(
+            body["tools"][0]["type"], exec_type,
+            "{base_url} {mode} {profile} {conversion:?}"
+        );
+        assert_eq!(
+            body["tools"][1]["type"], patch_type,
+            "{base_url} {mode} {profile} {conversion:?}"
+        );
+        assert_eq!(
+            body["tool_choice"]["type"], exec_type,
+            "{base_url} {mode} {profile} {conversion:?}"
+        );
+    }
+}
+
+#[test]
+fn invalid_custom_tool_conversion_is_rejected_before_registration() {
+    let error = super::super::upstream_from_model_config(&json!({
+        "base_url": "http://localhost",
+        "custom_tool_conversion": "sometimes"
+    }))
+    .unwrap_err();
+    assert_eq!(
+        error,
+        "custom_tool_conversion must be none, all or except_apply_patch"
+    );
+}
+
 fn upstream(mode: &str) -> LocalModelProxyUpstream {
     super::super::upstream_from_model_config(&json!({
         "base_url": "http://127.0.0.1:1",

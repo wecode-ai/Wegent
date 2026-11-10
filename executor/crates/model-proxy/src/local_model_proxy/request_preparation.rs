@@ -120,7 +120,11 @@ pub(super) fn prepare_request(
     prepare_request_with_model_hint(
         api_format,
         ResponsesToolCapabilities {
-            convert_custom_tools,
+            custom_tool_conversion: if convert_custom_tools {
+                CustomToolConversion::All
+            } else {
+                CustomToolConversion::None
+            },
             native_tool_search: true,
             native_namespace_tools: true,
             function_tools_only: false,
@@ -150,7 +154,7 @@ pub(super) fn prepare_request_with_model_hint(
         apply_configured_max_output_tokens(&mut responses_body, max_output_tokens);
         let (converted, context) = chat::responses_to_responses(
             &responses_body,
-            tool_capabilities.convert_custom_tools,
+            tool_capabilities.custom_tool_conversion,
             tool_capabilities.native_tool_search,
             tool_capabilities.native_namespace_tools,
         )

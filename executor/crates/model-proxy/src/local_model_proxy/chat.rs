@@ -19,6 +19,8 @@ use serde_json::{json, Map, Value};
 
 use crate::logging::log_executor_event;
 
+use super::CustomToolConversion;
+
 #[path = "tool_catalog.rs"]
 mod tool_catalog;
 use tool_catalog::effective_tools;

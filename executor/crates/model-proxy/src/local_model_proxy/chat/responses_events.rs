@@ -20,6 +20,10 @@ pub(super) fn restore_responses_tool_item(
     match identity.kind {
         ToolKind::Custom => {
             item["type"] = Value::String("custom_tool_call".to_owned());
+            item["name"] = Value::String(identity.name.clone());
+            if let Some(namespace) = &identity.namespace {
+                item["namespace"] = Value::String(namespace.clone());
+            }
             let input = arguments.and_then(extract_custom_tool_input).or_else(|| {
                 item.get("arguments")
                     .and_then(Value::as_str)

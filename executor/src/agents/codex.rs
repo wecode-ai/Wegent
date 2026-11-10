@@ -5134,12 +5134,25 @@ fn configured_codex_provider(
         .unwrap_or("openai-responses")
         .to_owned();
     let native_by_default = api_format == "openai-responses";
-    let convert_custom_tools = api_format != "openai-responses"
-        || provider_config
-            .get("tool_profile")
-            .or_else(|| provider_config.get("toolProfile"))
-            .and_then(|value| value.as_str())
-            .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+    let custom_tool_conversion = provider_config
+        .get("custom_tool_conversion")
+        .or_else(|| provider_config.get("customToolConversion"))
+        .and_then(|value| value.as_str())
+        .and_then(|value| {
+            serde_json::from_value::<local_model_proxy::CustomToolConversion>(json!(value)).ok()
+        })
+        .unwrap_or_else(|| {
+            let function_profile = provider_config
+                .get("tool_profile")
+                .or_else(|| provider_config.get("toolProfile"))
+                .and_then(|value| value.as_str())
+                .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+            if api_format != "openai-responses" || function_profile {
+                local_model_proxy::CustomToolConversion::All
+            } else {
+                local_model_proxy::CustomToolConversion::None
+            }
+        });
     let native_tool_search = provider_config
         .get("native_tool_search")
         .or_else(|| provider_config.get("nativeToolSearch"))
@@ -5161,7 +5174,7 @@ fn configured_codex_provider(
         request_url: Some(format!("{base_url}{request_path}")),
         base_url,
         api_format,
-        convert_custom_tools,
+        custom_tool_conversion,
         native_tool_search,
         native_namespace_tools,
         api_key,

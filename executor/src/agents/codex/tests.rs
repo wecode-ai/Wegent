@@ -2248,7 +2248,10 @@ fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
         "secret",
     );
 
-    assert!(!upstream.convert_custom_tools);
+    assert_eq!(
+        upstream.custom_tool_conversion,
+        local_model_proxy::CustomToolConversion::None
+    );
     assert!(upstream.native_tool_search);
     assert!(upstream.native_namespace_tools);
 }
@@ -2282,7 +2285,10 @@ fn function_tool_profile_enables_responses_tool_conversion() {
         "secret",
     );
 
-    assert!(upstream.convert_custom_tools);
+    assert_eq!(
+        upstream.custom_tool_conversion,
+        local_model_proxy::CustomToolConversion::All
+    );
 }
 
 #[test]
@@ -2745,7 +2751,10 @@ fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
         Some("http://127.0.0.1:3456/v1/responses")
     );
     assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
-    assert!(!upstream.convert_custom_tools);
+    assert_eq!(
+        upstream.custom_tool_conversion,
+        local_model_proxy::CustomToolConversion::None
+    );
     assert!(upstream.native_tool_search);
     assert!(upstream.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
@@ -2796,7 +2805,10 @@ fn user_configured_provider_converts_tools_for_non_responses_upstreams() {
         upstream.request_url.as_deref(),
         Some("http://127.0.0.1:3456/v1/messages")
     );
-    assert!(upstream.convert_custom_tools);
+    assert_eq!(
+        upstream.custom_tool_conversion,
+        local_model_proxy::CustomToolConversion::All
+    );
     let _ = fs::remove_dir_all(root);
 }
 
