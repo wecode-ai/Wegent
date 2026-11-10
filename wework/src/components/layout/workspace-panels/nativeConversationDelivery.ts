@@ -17,12 +17,11 @@ export async function deliverNativeConversationMessage({
   guide(): Promise<DeliveryResult>
   isBusyError(error: string | null): boolean
 }): Promise<DeliveryResult & { delivery: 'message' | 'guidance' }> {
-  if (busy) {
-    const result = await guide()
-    if (result.sent || result.code !== 'no_active_turn') return { ...result, delivery: 'guidance' }
-    return { ...(await send()), delivery: 'message' }
+  if (!busy) {
+    const result = await send()
+    if (result.sent || !isBusyError(result.error ?? null)) return { ...result, delivery: 'message' }
   }
-  const result = await send()
-  if (result.sent || !isBusyError(result.error ?? null)) return { ...result, delivery: 'message' }
-  return { ...(await guide()), delivery: 'guidance' }
+  const result = await guide()
+  if (result.sent || result.code !== 'no_active_turn') return { ...result, delivery: 'guidance' }
+  return { ...(await send()), delivery: 'message' }
 }

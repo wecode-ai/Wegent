@@ -116,6 +116,8 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   recordScenarioRequest,
   workspacePath,
+  beforeSubagentOutput,
+  subagentTextRelease,
 }) {
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
@@ -263,6 +265,7 @@ export function createDesktopScenario({
     subagentToolRenderTimeoutMs,
     subagentPartialWritten,
     releaseSubagentCompletion,
+    beforeSubagentOutput,
     releasePhaseFlipCompletion,
     toolFollowUpReceived,
     releaseToolCompletion,
@@ -416,6 +419,7 @@ export function createDesktopScenario({
           'The child tool output was not returned to the subagent'
         )
         subagentChildStage = 'streaming-text'
+        await subagentTextRelease
         const stream = streamingEvents(responseId, SUBAGENT_CHILD_COMPLETION, 'final_answer')
         response.writeHead(200, {
           'Cache-Control': 'no-cache',

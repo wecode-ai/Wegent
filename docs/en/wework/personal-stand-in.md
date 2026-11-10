@@ -21,6 +21,8 @@ Reply directly to a stand-in comment without another mention to continue with th
 
 ## Stand-in chat and desktop notifications
 
+Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
+
 This presentation applies only to primary and role conversations on the **My Stand-in** page. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
 Only stand-in identity conversations enable native subagent v2 for mailbox waits that wake on new user input. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents, including when resuming an existing v2 conversation. Native permission, source-scope and approval constraints remain unchanged.
