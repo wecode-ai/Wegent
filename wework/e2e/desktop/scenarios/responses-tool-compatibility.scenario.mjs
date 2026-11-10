@@ -189,7 +189,29 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       return true
     },
     async verify(control) {
+      const errors = []
       try {
+        await control.command('navigate', 'body', { value: '/settings/personal/models' })
+        await control.command('waitFor', `[data-testid="provider-row-${MODEL_ID}"]`)
+        await control.command('click', `[data-testid="provider-row-${MODEL_ID}"] > summary`)
+        await control.command('click', `[data-testid="provider-model-edit-${MODEL_ID}"]`)
+        const editor = `[data-testid="provider-model-editor-${MODEL_ID}"]`
+        const compatibility = `[data-testid="provider-model-compatibility-${MODEL_ID}"]`
+        await control.command('click', `${editor} details:has(${compatibility}) > summary`)
+        await control.command('waitFor', compatibility)
+        assert.equal(await control.command('getValue', compatibility), 'standard')
+        await control.command('click', '[data-testid="local-model-advanced-capabilities-toggle"]')
+        await control.command('waitFor', '[data-testid="local-model-advanced-capabilities-dialog"]')
+        assert.equal(
+          await control.command(
+            'getValue',
+            '[data-testid="local-model-codex-tool-compatibility-select"]'
+          ),
+          'standard'
+        )
+        await control.command('click', '[data-testid="local-model-advanced-capabilities-close"]')
+        await control.command('click', '[data-testid="provider-editor-cancel"]')
+        await control.command('navigate', 'body', { value: '/' })
         await createSingleRootLocalProject(control, workspacePath, 'Responses compatibility')
         await selectE2EModel(control, `local-model:${MODEL_ID}`, MODEL)
         for (round = 1; round <= 3; round += 1) {
@@ -213,16 +235,27 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         }
         assert.ok(requests.length >= 6, 'Local, cloud and native turns must execute real tools')
         assert.ok(requests.every(request => !request.rejected))
+      } catch (error) {
+        errors.push(error)
       } finally {
-        const deleted = await fetch(
-          `${cloudEnvironment.backendUrl}/api/admin/public-models/${cloudModelId}`,
-          {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${cloudEnvironment.authToken}` },
+        if (cloudEnvironment && cloudModelId != null) {
+          try {
+            const deleted = await fetch(
+              `${cloudEnvironment.backendUrl}/api/admin/public-models/${cloudModelId}`,
+              {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${cloudEnvironment.authToken}` },
+              }
+            )
+            assert.equal(deleted.status, 204)
+          } catch (error) {
+            errors.push(error)
           }
-        )
-        assert.equal(deleted.status, 204)
+        }
       }
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1)
+        throw new AggregateError(errors, 'Responses verification and cleanup failed')
     },
     diagnostics() {
       return { requests }

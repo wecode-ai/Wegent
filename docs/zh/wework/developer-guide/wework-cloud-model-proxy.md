@@ -87,6 +87,8 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 `tool_profile: "function"` 同样适用于原生 namespace 内的 custom 工具。开启 `native_namespace_tools` 时，代理保留 namespace 及其描述，将内部的 `exec` 等 custom 工具转换为带字符串 `input` 参数的 function 工具；历史调用、工具结果和强制工具选择使用同一协议。关闭原生 namespace 时，代理展开 namespace，并为其中的 custom 工具保留相同的输入包装。返回给 Codex 的 SSE 恢复原始工具名、namespace 和原始输入，避免同名工具串线。
 
+namespace 内的内置工具类型会返回请求校验错误，避免错误定义导致代理崩溃；省略类型的既有 function 定义仍按原有规则转换。
+
 `responses-tool-compatibility` 桌面 E2E 使用真实 Electron、Backend、executor 和 Codex，只模拟模型服务。模拟服务拒绝未转换的 custom `exec`，校验 function 参数，并要求本机和云端模型真实执行命令、重载后读取文件以及保留工具历史，同时验证显式原生配置。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
 
 #### Kimi K3 Chat Completions 兼容

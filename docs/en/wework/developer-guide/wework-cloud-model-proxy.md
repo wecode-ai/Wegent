@@ -89,6 +89,8 @@ Local model interfaces, cloud models, stand-ins, and configured Codex providers 
 
 `tool_profile: "function"` also applies to custom tools inside native namespaces. With `native_namespace_tools` enabled, the proxy preserves the namespace and its description while converting custom tools such as `exec` into function tools with a string `input` parameter. Historical calls, outputs, and forced tool choices use the same protocol. When native namespaces are disabled, the proxy flattens namespaces and keeps the same input wrapper for their custom tools. SSE responses restore the original tool name, namespace, and raw input so tools sharing a name remain distinct.
 
+Built-in tool types inside namespaces return a request validation error instead of crashing the proxy. Existing function definitions with an omitted type retain their previous conversion behavior.
+
 The `responses-tool-compatibility` desktop E2E checkpoint runs real Electron, Backend, executor, and Codex components with only the model service simulated. The simulator rejects unconverted custom `exec`, checks function arguments, and requires local and cloud models to execute real commands, read a file after reload, and preserve tool history. It also verifies explicit native configuration. This is model protocol regression coverage; compatibility with real provider services remains unverified.
 
 #### Kimi K3 Chat Completions Compatibility

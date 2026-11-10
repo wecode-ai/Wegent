@@ -97,3 +97,25 @@ fn native_custom_namespace_without_conversion_is_unchanged() {
     assert_eq!(converted, original);
     assert!(context.is_empty());
 }
+
+#[test]
+fn namespace_builtin_tools_return_a_validation_error_instead_of_panicking() {
+    let input = json!({"tools":[{"type":"namespace","name":"functions","tools":[
+        {"type":"tool_search","name":"search","execution":"client"}
+    ]}]});
+    for native_namespace in [false, true] {
+        let error = responses_to_responses(&input, true, false, native_namespace)
+            .expect_err("built-in tools are not valid namespace children");
+        assert!(error.contains("namespace"), "{error}");
+    }
+}
+
+#[test]
+fn flattened_namespace_keeps_implicit_function_definitions() {
+    let input = json!({"tools":[{"type":"namespace","name":"functions","tools":[
+        {"name":"read","parameters":{"type":"object"}}
+    ]}]});
+    let (converted, _) = responses_to_responses(&input, true, false, false).unwrap();
+    assert_eq!(converted["tools"][0]["type"], "function");
+    assert_eq!(converted["tools"][0]["name"], "functions__read");
+}
