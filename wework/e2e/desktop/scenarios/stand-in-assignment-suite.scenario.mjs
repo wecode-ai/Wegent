@@ -53,7 +53,7 @@ export function createDesktopScenario(options) {
       }
     },
     cleanup() {
-      conversations.cleanup()
+      return conversations.cleanup()
     },
   }
 }
