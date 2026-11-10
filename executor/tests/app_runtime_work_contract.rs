@@ -1319,7 +1319,11 @@ done
 "#,
         log_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1406,7 +1410,11 @@ done
         shell_single_quote(&read_response.to_string()),
         shell_single_quote(&turns_response.to_string()),
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1535,7 +1543,11 @@ done
 "#,
         log_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1568,7 +1580,11 @@ done
 "#,
         log_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();

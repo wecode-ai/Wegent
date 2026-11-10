@@ -59,6 +59,21 @@ pub fn zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
     writer.finish().unwrap().into_inner()
 }
 
+/// Minimal native model metadata shared by Codex CLI fixtures.
+pub const CODEX_BUNDLED_CATALOG: &str = r#"{"models":[{"slug":"gpt-test","visibility":"list","priority":0,"base_instructions":"Native fixture"}]}"#;
+
+/// Add the bundled model export command without changing app-server traffic.
+pub fn with_codex_bundled_catalog(script: &str) -> String {
+    script.replacen(
+        "#!/bin/sh\n",
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = debug ]; then\n  printf '%s\\n' '{}'\n  exit 0\nfi\n",
+            CODEX_BUNDLED_CATALOG
+        ),
+        1,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

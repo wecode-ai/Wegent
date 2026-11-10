@@ -469,7 +469,7 @@ mod session_tests {
                     {"name":"broken","toolsError":"disconnected"}
                 ]});
                 let binary = root.path().join("codex-app.sh");
-                fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
+                fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   [ -n "$id" ] || continue
@@ -530,7 +530,7 @@ done
                     }).collect();
                 let binary = root.path().join("codex-app.sh");
                 let log = root.path().join("requests.jsonl");
-                fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
+                fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')

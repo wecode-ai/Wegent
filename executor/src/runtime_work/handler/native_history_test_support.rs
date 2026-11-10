@@ -12,7 +12,7 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     fs::create_dir_all(root).unwrap();
     fs::write(
         root.join("bundled_models.json"),
-        crate::agents::CodexLaunchEnvironment::BUNDLED_CATALOG,
+        crate::test_env::CODEX_BUNDLED_CATALOG,
     )
     .unwrap();
     let terminal_boundary = |turn: &Value| {

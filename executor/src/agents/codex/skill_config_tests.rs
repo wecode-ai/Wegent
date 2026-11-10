@@ -17,7 +17,7 @@ impl Fixture {
         let binary = directory.path().join("codex");
         fs::write(
             &binary,
-            LaunchEnvironment::with_bundled_catalog(r#"#!/bin/sh
+            crate::test_env::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$CODEX_HOME/requests.jsonl"
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')

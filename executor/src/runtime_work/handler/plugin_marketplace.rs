@@ -305,7 +305,7 @@ mod tests {
         let native = root.path().join("codex.sh");
         fs::write(
             &native,
-            crate::agents::CodexLaunchEnvironment::with_bundled_catalog(
+            crate::test_env::with_codex_bundled_catalog(
                 r#"#!/bin/sh
 while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')

@@ -11,20 +11,6 @@ pub(crate) struct LaunchEnvironment {
 }
 
 impl LaunchEnvironment {
-    pub(crate) const BUNDLED_CATALOG: &str = r#"{"models":[{"slug":"gpt-test","visibility":"list","priority":0,"base_instructions":"Native fixture"}]}"#;
-
-    #[cfg(unix)]
-    pub(crate) fn with_bundled_catalog(script: &str) -> String {
-        script.replacen(
-            "#!/bin/sh\n",
-            &format!(
-                "#!/bin/sh\nif [ \"$1\" = debug ]; then\n  printf '%s\\n' '{}'\n  exit 0\nfi\n",
-                Self::BUNDLED_CATALOG
-            ),
-            1,
-        )
-    }
-
     pub(crate) fn new() -> Self {
         let lock = crate::test_env::lock();
         let root = tempfile::tempdir().unwrap();

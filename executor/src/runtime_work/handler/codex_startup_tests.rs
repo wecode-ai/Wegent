@@ -18,7 +18,7 @@ fn background_account_usage_waits_for_initial_runtime_proxy_configuration() {
     .map(|key| ScalarEnv::set(key, home.path().to_str().unwrap()))
     .collect();
     let binary = home.path().join("codex-fixture");
-    fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(r#"#!/bin/sh
+    fs::write(&binary, crate::test_env::with_codex_bundled_catalog(r#"#!/bin/sh
 touch "$(dirname "$0")/native-started"
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')

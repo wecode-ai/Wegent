@@ -33,7 +33,7 @@ fn run_native_control(cloud_bound: bool) {
             .collect();
             let log = root.path().join("native-calls.jsonl");
             let binary = root.path().join("codex-test.sh");
-            fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
+            fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
         active_thread=thread-target
         while IFS= read -r line; do
           printf '%s\n' "$line" >> '{}'

@@ -192,7 +192,7 @@ done
         let environment = LaunchEnvironment::new();
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("codex");
-        let script = LaunchEnvironment::with_bundled_catalog(script);
+        let script = crate::test_env::with_codex_bundled_catalog(script);
         fs::write(&binary, script).unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         let client = CodexAppServerClient::isolated_for_test(

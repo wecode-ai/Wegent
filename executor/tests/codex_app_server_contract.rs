@@ -1566,7 +1566,11 @@ done
 "#,
         log_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1608,7 +1612,11 @@ done
         provider,
         provider
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1673,7 +1681,11 @@ done
         log_path.display(),
         process_count_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1798,7 +1810,11 @@ done
         process_count_path.display(),
         failing_method
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1846,7 +1862,11 @@ done
 "#,
         log_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1879,7 +1899,11 @@ while IFS= read -r line; do
 done
 "#
     .replace("__REQUEST_MARKER__", &shell_quote(request_marker));
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1956,7 +1980,11 @@ done
         log_path.display(),
         env_log_commands
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1974,11 +2002,13 @@ fn write_fake_codex_hang() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(
+            r#"#!/bin/sh
 while IFS= read -r _line; do
   sleep 30
 done
 "#,
+        ),
     )
     .unwrap();
     #[cfg(unix)]
@@ -1998,7 +2028,7 @@ fn write_fake_codex_slow_turn() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
@@ -2019,7 +2049,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2072,7 +2102,11 @@ done
 "#
     .replace("__MARKER_PATH__", &marker_path.display().to_string())
     .replace("__LOG_PATH__", &log_path.display().to_string());
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -2090,7 +2124,7 @@ fn write_fake_codex_cross_thread_burst() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 thread_count=0
 turn_count=0
 while IFS= read -r line; do
@@ -2124,7 +2158,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2171,7 +2205,7 @@ fn write_fake_codex_compaction_turn_correction() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   method=${line#*'"method":"'}
   method=${method%%'"'*}
@@ -2203,7 +2237,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2223,7 +2257,7 @@ fn write_fake_codex_nested_turn_error() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
@@ -2241,7 +2275,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2261,7 +2295,7 @@ fn write_fake_codex_retryable_turn_error() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
@@ -2281,7 +2315,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]

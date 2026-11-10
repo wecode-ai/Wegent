@@ -4738,7 +4738,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -4797,7 +4800,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -4847,7 +4853,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -4910,7 +4919,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -4957,7 +4969,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5004,7 +5019,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5061,7 +5079,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5187,7 +5208,10 @@ done
         notification_count,
         completion_request_id
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5257,7 +5281,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5337,7 +5364,10 @@ done
         log_path.display(),
         steer_release_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5394,7 +5424,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5483,7 +5516,10 @@ done
         log_path.display(),
         steer_mismatch
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5499,7 +5535,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5537,7 +5576,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5579,7 +5621,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5623,7 +5668,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 

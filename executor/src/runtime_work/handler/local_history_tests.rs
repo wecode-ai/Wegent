@@ -25,7 +25,7 @@ fn history_resume_restores_task_shell_identity_before_the_next_turn() {
             );
             let binary = root.path().join("codex-history.sh");
             let log = root.path().join("requests.jsonl");
-            fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
+            fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -194,7 +194,7 @@ fn named_home_transcript_refresh_does_not_acquire_a_writer() {
     .collect();
     let binary = root.path().join("codex-reader.sh");
     let log = root.path().join("requests.jsonl");
-    fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
+    fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
