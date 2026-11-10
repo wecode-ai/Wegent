@@ -86,6 +86,10 @@ packaged resources and fails when any executable imports `vcruntime*`,
 `WEWORK_EXECUTOR_PATH`, so a future native component cannot silently restore the
 machine-wide runtime dependency.
 
+Security fixes for the statically linked runtime arrive by rebuilding these
+components with an updated MSVC toolchain; there is no separate redistributable
+to install, service, or remove.
+
 Clean Windows sandbox acceptance must still cover first installation and
 startup without a machine-wide VC++ runtime, one cloud-model text conversation,
 and component upgrade and rollback. A hosted runner with the runtime installed
