@@ -939,7 +939,7 @@ export interface Project {
   color: string | null
   sort_order: number
   is_expanded: boolean
-  task_count: number
+  task_count: number | null
   config?: ProjectConfig | null
   created_at: string
   updated_at: string
@@ -958,7 +958,7 @@ export interface ProjectListResponse {
 
 /** Paginated tasks in a project */
 export interface ProjectTaskListResponse {
-  total: number
+  total: number | null
   items: ProjectTask[]
   has_more: boolean
   next_cursor: string | null

@@ -16,7 +16,6 @@ import type {
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
-import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
@@ -957,15 +956,6 @@ export function useWorkbenchDataRefresh({
     [dispatch]
   )
 
-  const getRemoteDeviceStartupCommand =
-    useCallback(async (): Promise<DockerRemoteDeviceCommandResponse> => {
-      const createCommand = services.deviceApi.createDockerRemoteDeviceCommand
-      if (!createCommand) {
-        throw new Error('当前连接不支持生成云设备启动脚本')
-      }
-      return createCommand()
-    }, [services.deviceApi])
-
   const updateRuntimeProject = useCallback(
     (update: RuntimeProjectUpdate) => {
       if (cachedRemoteRuntimeWorkRef.current.ownershipKey !== cacheScope) return
@@ -1014,6 +1004,5 @@ export function useWorkbenchDataRefresh({
     updateLocalRuntimeTaskPinned,
     rollbackLocalRuntimeTaskPinned,
     updateLocalRuntimeTaskTitle,
-    getRemoteDeviceStartupCommand,
   }
 }

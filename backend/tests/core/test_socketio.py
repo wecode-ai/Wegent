@@ -6,15 +6,19 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 import socketio
 from engineio.async_socket import AsyncSocket
+from fastapi import Response
 from socketio.async_pubsub_manager import AsyncPubSubManager
 
+from app.api.endpoints.health import shutdown_status
 from app.core import socketio as socketio_core
+from app.core import socketio_redis
 
 
 class MemoryPubSubManager(AsyncPubSubManager):
@@ -129,3 +133,66 @@ async def test_repeated_startup_and_first_connection_keep_one_listener(
     finally:
         listener.cancel()
         await asyncio.gather(listener, return_exceptions=True)
+
+
+async def test_ack_probe_drives_readiness_through_the_callback_listener(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    incoming: asyncio.Queue[str] = asyncio.Queue()
+    published: list[dict[str, Any]] = []
+    deliver = True
+
+    async def publish(
+        _manager: socketio.AsyncRedisManager, data: dict[str, Any]
+    ) -> int:
+        published.append(data)
+        if deliver:
+            await incoming.put(json.dumps(data))
+        return 1
+
+    async def listen(_manager: socketio.AsyncRedisManager) -> AsyncIterator[str]:
+        while True:
+            yield await incoming.get()
+
+    monkeypatch.setattr(socketio.AsyncRedisManager, "_publish", publish)
+    monkeypatch.setattr(socketio.AsyncRedisManager, "_listen", listen)
+    monkeypatch.setattr(socketio_redis, "ACK_PROBE_TIMEOUT_SECONDS", 0.05)
+    caplog.set_level(logging.DEBUG, logger=socketio_redis.__name__)
+    server = socketio_core.create_socketio_server()
+    manager = server.manager
+    monkeypatch.setattr(socketio_core, "_sio_instance", server)
+    socketio_core.initialize_socketio_server()
+    try:
+        await manager.check_ack()
+        first_probe = published[-1]
+        correlation = (
+            f"host_id={first_probe['host_id']} sid={first_probe['sid']} "
+            f"callback_id={first_probe['id']}"
+        )
+        assert f"stage=publish {correlation} outcome=published" in caplog.text
+        assert f"stage=receive {correlation} outcome=received" in caplog.text
+        assert f"stage=match {correlation} outcome=matched" in caplog.text
+
+        deliver = False
+        for _ in range(socketio_redis.ACK_PROBE_FAILURE_THRESHOLD - 1):
+            await manager.check_ack()
+        assert shutdown_status(Response()) == {"is_shutting_down": False}
+
+        await manager.check_ack()
+        late_probe = published[-1]
+        assert set(manager.callbacks[late_probe["sid"]]) == {0}
+        response = Response()
+        assert shutdown_status(response)["status"] == "socketio_ack_unavailable"
+        assert response.status_code == 503
+        assert "ACK probe unhealthy" in caplog.text
+
+        await incoming.put(json.dumps(late_probe))
+        deliver = True
+        await manager.check_ack()
+        assert published[-1]["id"] > late_probe["id"]
+        assert "outcome=missing" in caplog.text
+        assert shutdown_status(Response()) == {"is_shutting_down": False}
+        assert "ACK probe recovered" in caplog.text
+    finally:
+        manager.thread.cancel()
+        await asyncio.gather(manager.thread, return_exceptions=True)

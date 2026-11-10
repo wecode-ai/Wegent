@@ -2,9 +2,90 @@
 
 import { describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from './devices'
-import type { HttpClient } from './http'
+import { ApiError, type HttpClient } from './http'
+
+const deviceCommands = [
+  ['home directory', (api: ReturnType<typeof createDeviceApi>) => api.getHomeDirectory('device/1')],
+  [
+    'project root',
+    (api: ReturnType<typeof createDeviceApi>) => api.getProjectWorkspaceRoot('device/1'),
+  ],
+  [
+    'directories',
+    (api: ReturnType<typeof createDeviceApi>) => api.listDirectories('device/1', '/'),
+  ],
+  ['skills', (api: ReturnType<typeof createDeviceApi>) => api.listSkills('device/1')],
+  [
+    'workspace tree',
+    (api: ReturnType<typeof createDeviceApi>) => api.listWorkspaceEntries('device/1', '/repo'),
+  ],
+  [
+    'workspace text',
+    (api: ReturnType<typeof createDeviceApi>) =>
+      api.readWorkspaceTextFile('device/1', '/repo/a.txt'),
+  ],
+  [
+    'workspace chunk',
+    (api: ReturnType<typeof createDeviceApi>) =>
+      api.readWorkspaceFileChunk('device/1', '/repo/a.txt', 0),
+  ],
+  ['shared skills', (api: ReturnType<typeof createDeviceApi>) => api.setupSharedSkills('device/1')],
+  [
+    'directory creation',
+    (api: ReturnType<typeof createDeviceApi>) => api.createDirectory('device/1', '/repo'),
+  ],
+  [
+    'Git clone',
+    (api: ReturnType<typeof createDeviceApi>) =>
+      api.executeCommand('device/1', { command_key: 'git_clone' }),
+  ],
+  [
+    'local terminal',
+    (api: ReturnType<typeof createDeviceApi>) => api.openLocalTerminal('device/1', '/repo'),
+  ],
+] as const
 
 describe('createDeviceApi', () => {
+  test.each(deviceCommands)(
+    'maps an unavailable device consistently for %s',
+    async (_name, run) => {
+      const error = new ApiError('Device not found or access denied', 404)
+      const post = vi.fn().mockRejectedValue(error)
+      const api = createDeviceApi({ post } as never)
+
+      await expect(run(api)).rejects.toMatchObject({
+        message: 'executor-not-found:device/1',
+        cause: error,
+      })
+      expect(post.mock.calls[0][0]).toBe('/devices/device%2F1/commands')
+    }
+  )
+
+  test.each(deviceCommands)('preserves non-404 transport errors for %s', async (_name, run) => {
+    for (const status of [401, 403, 400, 500]) {
+      const error = new ApiError('Device not found or access denied', status)
+      const api = createDeviceApi({ post: vi.fn().mockRejectedValue(error) } as never)
+
+      await expect(run(api)).rejects.toBe(error)
+    }
+  })
+
+  test('does not classify a command or file failure as an unavailable device', async () => {
+    const response = {
+      success: false,
+      error: 'File not found',
+      exit_code: 1,
+      stdout: '',
+      stderr: '',
+    }
+    const api = createDeviceApi({ post: vi.fn().mockResolvedValue(response) } as never)
+
+    await expect(api.executeCommand('device/1', { command_key: 'git_clone' })).resolves.toBe(
+      response
+    )
+    await expect(api.createDirectory('device/1', '/repo')).rejects.toThrow('File not found')
+  })
+
   test('uses cloud device endpoints for restart and delete actions', async () => {
     const client = {
       delete: vi.fn().mockResolvedValue({ message: 'deleted' }),

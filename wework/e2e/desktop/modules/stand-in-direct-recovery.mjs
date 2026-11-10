@@ -29,7 +29,9 @@ import {
 const USER = 9001
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 const COORDINATOR = `stand-in-coordinator-${USER}`
+const PRIMARY = `stand-in-chat-${USER}-primary`
 const MARKER = 'DIRECT_RECOVERY'
+const BATCH_RESULT = `${MARKER}_BATCH_DONE`
 
 /** Protocol integration: real Electron, Executor, Codex, storage and native tool calls. */
 export function createDirectRecoveryVerification(options) {
@@ -188,7 +190,7 @@ export function createDirectRecoveryVerification(options) {
           )
         }
         workCalls++
-        events = [assistantMessage(`${MARKER}_DONE`)]
+        events = [assistantMessage(dispatchBatch ? BATCH_RESULT : `${MARKER}_DONE`)]
       }
       if (!events) return false
       const id = `${MARKER}-${Date.now()}`
@@ -352,6 +354,17 @@ export function createDirectRecoveryVerification(options) {
         )
         assert.equal(workCalls, 3)
         dispatchBatch = false
+        await storyUntil(
+          () => rpc(control, 'runtime.tasks.transcript', { taskId: PRIMARY, limit: 100 }),
+          value =>
+            value.messages?.some(
+              message =>
+                message.role === 'assistant' &&
+                message.content?.includes(`任务 ${direct.taskId}（done）：${BATCH_RESULT}`)
+            ),
+          options.modelResponseTimeoutMs,
+          'The primary conversation must report the selected batch result before archiving its source'
+        )
         await rpc(control, 'runtime.tasks.archive', { taskId: direct.taskId })
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await openStandInActivity(control)

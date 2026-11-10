@@ -337,7 +337,11 @@ export function CollaborationFilesView({
       filename: entry.display_name,
       contentType: entry.content_type,
       sizeBytes: entry.size_bytes,
-      load: () => api.previewTaskAttachment!(entry.id),
+      load: () =>
+        api.previewTaskAttachment!(entry.id, {
+          projectId: String(project.id),
+          issueId: entry.loop_item_id,
+        }),
     });
   }
 
@@ -345,7 +349,10 @@ export function CollaborationFilesView({
     if (!api.openTaskAttachment) return;
     setError(null);
     try {
-      await api.openTaskAttachment(entry.id, entry.display_name);
+      await api.openTaskAttachment(entry.id, entry.display_name, {
+        projectId: String(project.id),
+        issueId: entry.loop_item_id,
+      });
       telemetry?.completed("open");
     } catch (cause) {
       setError(

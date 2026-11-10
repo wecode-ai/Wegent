@@ -1,5 +1,14 @@
 import type { RuntimeTaskAddress } from '@/types/api'
 
+export function isStandInMemoryReviewTask(
+  task: Pick<RuntimeTaskAddress, 'runtimeHandle'>
+): boolean {
+  const origin = task.runtimeHandle?.origin
+  if (!origin || typeof origin !== 'object' || Array.isArray(origin)) return false
+  const identity = origin as Record<string, unknown>
+  return identity.type === 'stand_in_schedule' && identity.memoryReview === true
+}
+
 export function isPrimaryStandInConversation(
   task: Pick<RuntimeTaskAddress, 'taskId' | 'runtimeHandle'>
 ): boolean {

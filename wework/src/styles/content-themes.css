@@ -1,10 +1,11 @@
-/* Only desktop-owned documents opt into these renderer adapters. */
-html[data-appearance-theme] {
+/* Renderer adapters belong to opt-in named desktop palettes, not original Wework. */
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework'])) {
   --file-change-error-bg: var(--color-diff-removed) / 0.08;
   --file-change-error: var(--color-diff-removed);
 }
 
-html[data-appearance-theme] :is(.bn-container, .bn-root) {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  :is(.bn-container, .bn-root) {
   --bn-colors-editor-text: rgb(var(--color-text-primary));
   --bn-colors-editor-background: rgb(var(--color-bg-base));
   --bn-colors-menu-text: rgb(var(--color-text-primary));
@@ -33,7 +34,7 @@ html[data-appearance-theme] :is(.bn-container, .bn-root) {
   --mantine-color-anchor: rgb(var(--color-link));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .bn-editor
   :is(
     [data-content-type='quote'] blockquote,
@@ -44,19 +45,26 @@ html[data-appearance-theme]
   border-color: rgb(var(--color-border));
 }
 
-html[data-appearance-theme] .bn-editor [data-content-type='quote'] blockquote {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .bn-editor
+  [data-content-type='quote']
+  blockquote {
   color: rgb(var(--color-text-secondary));
 }
 
-html[data-appearance-theme] .bn-editor :is(.column-resize-handle, .bn-table-drop-cursor) {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .bn-editor
+  :is(.column-resize-handle, .bn-table-drop-cursor) {
   background: rgb(var(--color-focus));
 }
 
-html[data-appearance-theme] .bn-editor .selectedCell::after {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .bn-editor
+  .selectedCell::after {
   background: rgb(var(--color-primary) / 0.2);
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .bn-editor
   :is(
     .bn-block-content.ProseMirror-selectednode > *,
@@ -65,12 +73,14 @@ html[data-appearance-theme]
   outline-color: rgb(var(--color-focus));
 }
 
-html[data-appearance-theme] .bn-editor .bn-block-content[data-content-type='codeBlock'] {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .bn-editor
+  .bn-block-content[data-content-type='codeBlock'] {
   background: rgb(var(--color-code-bg));
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .bn-editor
   .bn-block-content[data-content-type='codeBlock']
   > div
@@ -78,7 +88,7 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-secondary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .bn-editor
   .bn-block-content[data-content-type='codeBlock']
   > div
@@ -88,19 +98,20 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme] :is(.wework-workspace-file-viewer, .wework-diagram-preview) {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  :is(.wework-workspace-file-viewer, .wework-diagram-preview) {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-base));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   :is(.wework-workspace-file-viewer, .wework-diagram-preview)
   :is(.image-viewer, .drawing-viewer, .drawing-diagram-shell) {
   background: rgb(var(--color-bg-base));
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   :is(.wework-workspace-file-viewer, .wework-diagram-preview)
   :is(.drawing-toolbar, .image-lightbox button) {
   background: rgb(var(--color-bg-surface));
@@ -108,22 +119,31 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme] .wework-diagram-preview .drawing-actions button {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-diagram-preview
+  .drawing-actions
+  button {
   background: rgb(var(--color-bg-base));
   border-color: rgb(var(--color-border));
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme] .wework-diagram-preview .drawing-title strong {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-diagram-preview
+  .drawing-title
+  strong {
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme] .wework-diagram-preview .drawing-actions span {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-diagram-preview
+  .drawing-actions
+  span {
   color: rgb(var(--color-text-secondary));
 }
 
 /* Theme viewer controls, while document pages, cells, images and canvases keep their content colors. */
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .pdf-shell,
@@ -155,12 +175,15 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .docx-fit-viewer .docx-wrapper {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .docx-fit-viewer
+  .docx-wrapper {
   /* The renderer marks its page-surrounding canvas important. */
   background: rgb(var(--color-bg-base)) !important;
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .pdf-toolbar,
@@ -233,7 +256,7 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .pdf-icon-button,
@@ -277,7 +300,7 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .excel-wrapper .summary,
@@ -337,7 +360,7 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-secondary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .data-header,
@@ -357,12 +380,16 @@ html[data-appearance-theme]
   border-color: rgb(var(--color-border));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .data-summary,
-html[data-appearance-theme] .wework-workspace-file-viewer .fv-midi-stats {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .data-summary,
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .fv-midi-stats {
   background: rgb(var(--color-border));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .archive-search,
@@ -383,7 +410,7 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .pdf-icon-button:hover:not(:disabled),
@@ -425,11 +452,14 @@ html[data-appearance-theme]
   color: rgb(var(--color-primary));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .excel-wrapper .sheet-tab {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .excel-wrapper
+  .sheet-tab {
   color: rgb(var(--color-text-secondary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .archive-preview-toolbar .archive-download-button,
@@ -442,7 +472,7 @@ html[data-appearance-theme]
   color: rgb(var(--color-primary-contrast));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .data-header span,
@@ -463,7 +493,7 @@ html[data-appearance-theme]
   color: rgb(var(--color-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .entry-ext,
@@ -482,30 +512,32 @@ html[data-appearance-theme]
   color: rgb(var(--color-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(.excel-wrapper .sheet-loading-dot, .fv-audio-art, .fv-audio-progress i, .pptx-loading-dot) {
   background: rgb(var(--color-primary));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .fv-audio-progress {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .fv-audio-progress {
   background: rgb(var(--color-primary) / 0.15);
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(.archive-spinner, .excel-wrapper .loading-spinner, .typst-loading span, .eda-state span) {
   border-color: rgb(var(--color-primary) / 0.2);
   border-top-color: rgb(var(--color-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(.archive-state, .excel-wrapper .loading, .ofd-state, .eda-state, .xmind-state) {
   background: rgb(var(--color-bg-base) / 0.9);
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .archive-warning,
@@ -520,17 +552,21 @@ html[data-appearance-theme]
   color: rgb(var(--color-warning));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .archive-info {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .archive-info {
   background: rgb(var(--color-info) / 0.1);
   color: rgb(var(--color-info));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .archive-error {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .archive-error {
   background: rgb(var(--color-destructive) / 0.1);
   color: rgb(var(--color-destructive));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .pdf-state--error,
@@ -546,16 +582,23 @@ html[data-appearance-theme]
   color: rgb(var(--color-destructive));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .archive-password-error {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .archive-password-error {
   color: rgb(var(--color-destructive)) !important;
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .archive-password-card input:focus {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .archive-password-card
+  input:focus {
   border-color: rgb(var(--color-focus));
   box-shadow: 0 0 0 3px rgb(var(--color-focus) / 0.15);
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .markdown-body {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .markdown-body {
   --bgColor-default: rgb(var(--color-bg-surface));
   --bgColor-muted: rgb(var(--color-code-bg));
   --bgColor-neutral-muted: rgb(var(--color-muted));
@@ -568,7 +611,9 @@ html[data-appearance-theme] .wework-workspace-file-viewer .markdown-body {
   border-color: rgb(var(--color-border));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .code-viewer {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .code-viewer {
   --code-bg: rgb(var(--color-code-bg));
   --code-toolbar-bg: rgb(var(--color-bg-surface));
   --code-border: rgb(var(--color-border));
@@ -583,7 +628,9 @@ html[data-appearance-theme] .wework-workspace-file-viewer .code-viewer {
   --code-built-in: rgb(var(--color-syntax-type));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .patch-viewer {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .patch-viewer {
   --patch-bg: rgb(var(--color-bg-base));
   --patch-surface: rgb(var(--color-bg-surface));
   --patch-border: rgb(var(--color-border));
@@ -594,43 +641,57 @@ html[data-appearance-theme] .wework-workspace-file-viewer .patch-viewer {
   --patch-info: rgb(var(--color-info) / 0.12);
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(.patch-toolbar, .patch-body .d2h-file-header) {
   background: rgb(var(--color-bg-surface));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(.patch-fallback, .asset-text, .eda-panel pre) {
   background: rgb(var(--color-code-bg));
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .code-virtual-line--match {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .code-virtual-line--match {
   background: rgb(var(--color-warning) / 0.15);
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .code-virtual-content mark {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .code-virtual-content
+  mark {
   background: rgb(var(--color-primary));
   color: rgb(var(--color-primary-contrast));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer :is(.typst-error pre, .eda-error) {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  :is(.typst-error pre, .eda-error) {
   background: rgb(var(--color-destructive) / 0.1);
   color: rgb(var(--color-destructive));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .file-viewer-missing-renderer {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .file-viewer-missing-renderer {
   /* The unsupported-renderer state uses inline colors. */
   color: rgb(var(--color-text-secondary)) !important;
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .file-viewer-missing-renderer strong {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .file-viewer-missing-renderer
+  strong {
   color: rgb(var(--color-text-primary)) !important;
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .psd-viewer {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .psd-viewer {
   --psd-bg: rgb(var(--color-bg-base));
   --psd-surface: rgb(var(--color-bg-surface));
   --psd-border: rgb(var(--color-border));
@@ -639,7 +700,7 @@ html[data-appearance-theme] .wework-workspace-file-viewer .psd-viewer {
   --psd-accent: rgb(var(--color-primary));
 }
 
-html[data-appearance-theme]
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   .wework-workspace-file-viewer
   :is(
     .psd-toolbar,
@@ -654,7 +715,9 @@ html[data-appearance-theme]
   color: rgb(var(--color-text-primary));
 }
 
-html[data-appearance-theme] .wework-workspace-file-viewer .git-bundle-viewer {
+html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
+  .wework-workspace-file-viewer
+  .git-bundle-viewer {
   --bundle-bg: rgb(var(--color-bg-base));
   --bundle-surface: rgb(var(--color-bg-surface));
   --bundle-border: rgb(var(--color-border));

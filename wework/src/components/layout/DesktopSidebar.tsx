@@ -51,7 +51,6 @@ import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
-import { isGitCloneDeviceMissing } from '@/components/projects/gitCloneProjectRecovery'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
@@ -132,7 +131,6 @@ import {
 import type {
   CloneGitRepositoryInput,
   DeviceInfo,
-  GitCloneProjectOperation,
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
@@ -150,7 +148,6 @@ import type {
   UnifiedModel,
   User as UserProfile,
 } from '@/types/api'
-import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { CloudWorkStatus, RuntimeWorkLoadState } from '@/types/workbench'
 import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
 import type {
@@ -226,13 +223,13 @@ interface DesktopSidebarProps {
   runtimeWork?: RuntimeWorkListResponse | null
   runtimeWorkLoad?: RuntimeWorkLoadState
   onRetryRuntimeWork?: () => Promise<void>
-  gitCloneOperations?: GitCloneProjectOperation[]
   currentRuntimeTask?: RuntimeTaskAddress | null
   splitGroupMemberships?: Readonly<Record<string, WorkbenchSplitGroupMembership>>
   standaloneDeviceId?: string | null
   standaloneWorkspacePath?: string | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
+  standInUnreadCount?: number
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation' | 'stand-in'
   taskView?: 'workbench' | 'default-work-items'
@@ -297,7 +294,6 @@ interface DesktopSidebarProps {
     name: string
   }) => Promise<void>
   onSelectStandaloneDevice?: (deviceId: string | null) => void
-  onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onUpdateLocalRuntimeProject?: (data: {
     deviceId: string
@@ -316,10 +312,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onCloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
-  onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
-  onRetryGitCloneOperation?: (operation: GitCloneProjectOperation) => void
-  onDismissGitCloneOperation?: (operationId: string) => void
+  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   projectDevicePluginApi?: (deviceId: string) => ProjectDevicePluginApi
   projectSpaceApis?: ProjectSpaceApi[]
   models?: UnifiedModel[]
@@ -652,7 +645,7 @@ function ArchiveConversationsConfirmDialog({
             data-testid={`${testId}-confirm-button`}
             onClick={() => void onConfirm()}
             disabled={submitting}
-            className="inline-flex h-8 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-destructive/15 px-4 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-8 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-destructive/15 px-4 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60 wework:bg-red-500/15 wework:text-red-500 wework:hover:bg-red-500/20"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}
@@ -1154,7 +1147,7 @@ function SidebarReleaseNotesCard({
         type="button"
         data-testid="sidebar-release-notes-open"
         onClick={onOpen}
-        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus"
+        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus wework:keyboard:focus-visible:ring-blue-500"
       >
         <span className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
@@ -1219,7 +1212,11 @@ function ProjectDeviceInlineStatus({
           'h-2 w-2 shrink-0 rounded-full',
           !online && 'bg-[rgb(var(--color-sidebar-text-muted))] opacity-55'
         )}
-        style={online ? { backgroundColor: 'rgb(var(--color-success))' } : undefined}
+        style={
+          online
+            ? { backgroundColor: 'rgb(var(--color-device-online, var(--color-success)))' }
+            : undefined
+        }
       />
     </span>
   )
@@ -2933,13 +2930,13 @@ export function DesktopSidebar({
   runtimeWork,
   runtimeWorkLoad,
   onRetryRuntimeWork,
-  gitCloneOperations = [],
   currentRuntimeTask,
   splitGroupMemberships = EMPTY_SPLIT_GROUP_MEMBERSHIPS,
   standaloneDeviceId,
   standaloneWorkspacePath,
   imNotificationSettings,
   unreadRuntimeTaskKeys,
+  standInUnreadCount = 0,
   preferredDeviceId,
   activeItem = 'chat',
   taskView = 'workbench',
@@ -2966,7 +2963,6 @@ export function DesktopSidebar({
   onOpenStandaloneWorkspace,
   onCreatePermanentWorktree,
   onSelectStandaloneDevice,
-  onGetRemoteDeviceStartupCommand,
   onUpdateProjectName,
   onUpdateLocalRuntimeProject,
   onRemoveProject,
@@ -2979,9 +2975,6 @@ export function DesktopSidebar({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onCloneGitRepository,
-  onStartGitCloneProject,
-  onRetryGitCloneOperation,
-  onDismissGitCloneOperation,
   projectSpaceApis,
   projectDevicePluginApi,
   models = [],
@@ -4026,7 +4019,8 @@ export function DesktopSidebar({
       onPointerLeave={onPointerLeave}
       className={cn(
         'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
-        !collapsed && 'border-r border-border/70',
+        !collapsed &&
+          'border-r border-border/70 wework:border-black/[0.08] wework:dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
@@ -4084,7 +4078,7 @@ export function DesktopSidebar({
                       type="button"
                       data-testid="runtime-search-button"
                       onClick={onOpenSearch}
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-focus"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-focus wework:keyboard:focus-visible:ring-blue-500"
                       aria-label={t('workbench.search')}
                     >
                       <Search className="h-4 w-4" />
@@ -4125,7 +4119,20 @@ export function DesktopSidebar({
                 icon={UserRound}
                 label={t('standIn.title')}
                 testId="personal-stand-in-button"
-                badge={<BetaBadge testId="personal-stand-in-beta" />}
+                badge={
+                  <>
+                    <BetaBadge testId="personal-stand-in-beta" />
+                    {standInUnreadCount > 0 && (
+                      <span
+                        data-testid="personal-stand-in-unread-count"
+                        aria-label={t('notifications.total_unread', { count: standInUnreadCount })}
+                        className="ml-auto min-w-5 rounded-full bg-text-primary px-1.5 text-center text-xs tabular-nums text-background"
+                      >
+                        {standInUnreadCount > 99 ? '99+' : standInUnreadCount}
+                      </span>
+                    )}
+                  </>
+                }
                 selected={activeItem === 'stand-in'}
                 onClick={onOpenStandIn}
               />
@@ -4442,7 +4449,7 @@ export function DesktopSidebar({
                     <DesktopSidebarSectionHeader
                       title={t('workbench.sidebar_project_spaces', '项目空间')}
                       expanded={displayedProjectsExpanded}
-                      hasContent={sidebarProjects.length > 0 || gitCloneOperations.length > 0}
+                      hasContent={sidebarProjects.length > 0}
                       toggleTestId="projects-section-toggle"
                       iconTestId="projects-section-chevron-right"
                       onToggle={() => setProjectsExpanded(expanded => !expanded)}
@@ -4597,94 +4604,13 @@ export function DesktopSidebar({
                     )}
                   {displayedProjectsExpanded && (
                     <>
-                      {showEmptyProjectCreateAction && gitCloneOperations.length === 0 && (
+                      {showEmptyProjectCreateAction && (
                         <DesktopSidebarNavItem
                           icon={Plus}
                           label={t('workbench.new_project', '新建项目')}
                           testId="projects-empty-create-button"
                           onClick={openProjectCreateDialog}
                         />
-                      )}
-                      {gitCloneOperations.length > 0 && (
-                        <div
-                          data-testid="git-clone-project-operations"
-                          className="mb-1 space-y-0.5"
-                        >
-                          {gitCloneOperations.map(operation => (
-                            <div
-                              key={operation.id}
-                              data-testid={`git-clone-project-operation-${operation.id}`}
-                              className="flex min-h-[30px] items-center gap-2 rounded-[10px] px-2.5 text-sm text-[rgb(var(--color-sidebar-text-primary))]"
-                              title={operation.error || operation.targetPath}
-                            >
-                              {operation.status !== 'failed' ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                              ) : (
-                                <span className="h-2 w-2 shrink-0 rounded-full bg-destructive" />
-                              )}
-                              <span className="min-w-0 flex-1 truncate">{operation.name}</span>
-                              <span className="shrink-0 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
-                                {operation.status === 'cloning'
-                                  ? t('workbench.remote_project_git_cloning', '克隆中')
-                                  : operation.status === 'opening'
-                                    ? t('workbench.remote_project_git_opening', '添加中')
-                                    : isGitCloneDeviceMissing(operation)
-                                      ? t(
-                                          'workbench.remote_project_device_unavailable',
-                                          '设备不可用'
-                                        )
-                                      : operation.failureReason === 'executor-offline'
-                                        ? t('workbench.remote_project_device_offline', '设备离线')
-                                        : operation.failureStage === 'open'
-                                          ? t(
-                                              'workbench.remote_project_git_open_failed',
-                                              '添加失败'
-                                            )
-                                          : t('workbench.remote_project_git_failed', '克隆失败')}
-                              </span>
-                              {operation.status === 'failed' && (
-                                <>
-                                  <Tooltip
-                                    label={
-                                      isGitCloneDeviceMissing(operation)
-                                        ? t('workbench.reselect_device', '重新选择设备')
-                                        : t('workbench.retry', '重试')
-                                    }
-                                    testId={`retry-git-clone-project-${operation.id}-tooltip`}
-                                  >
-                                    <button
-                                      type="button"
-                                      data-testid={`retry-git-clone-project-${operation.id}`}
-                                      onClick={() => onRetryGitCloneOperation?.(operation)}
-                                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                      aria-label={
-                                        isGitCloneDeviceMissing(operation)
-                                          ? t('workbench.reselect_device', '重新选择设备')
-                                          : t('workbench.retry', '重试')
-                                      }
-                                    >
-                                      <RotateCw className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                  <Tooltip
-                                    label={t('workbench.remove', '移除')}
-                                    testId={`dismiss-git-clone-project-${operation.id}-tooltip`}
-                                  >
-                                    <button
-                                      type="button"
-                                      data-testid={`dismiss-git-clone-project-${operation.id}`}
-                                      onClick={() => onDismissGitCloneOperation?.(operation.id)}
-                                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                      aria-label={t('workbench.remove', '移除')}
-                                    >
-                                      <X className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                </>
-                              )}
-                            </div>
-                          ))}
-                        </div>
                       )}
                       {sidebarProjects.length > 0 && (
                         <SidebarSortableList
@@ -4951,9 +4877,7 @@ export function DesktopSidebar({
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
             onCloneGitRepository={onCloneGitRepository}
-            onStartGitCloneProject={onStartGitCloneProject}
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-            onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
             onRefreshDevices={onRefreshDevices}
           />
           <ArchiveConversationsConfirmDialog

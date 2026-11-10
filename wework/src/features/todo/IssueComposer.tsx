@@ -885,7 +885,7 @@ export function IssueComposer({
                       </select>
                     </label>
                     <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-                      <span className="h-2 w-2 rounded-full bg-text-muted" />
+                      <span className="h-2 w-2 rounded-full bg-text-muted wework:bg-zinc-400" />
                       <span className="font-medium text-text-primary">
                         {statusOptions.find(option => option.id === status)?.name ?? status}
                       </span>

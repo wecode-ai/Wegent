@@ -20,6 +20,7 @@ import {
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MARKER = `RUNTIME_RECONCILIATION_${process.pid}`
 const ORDERS = ['snapshot-first', 'event-first', 'terminal-interleaved']
+const RECONNECT = 'reconnect-without-activity'
 const TERMINAL = new Set(['done', 'completed', 'succeeded'])
 
 function jsonValue(value) {
@@ -95,8 +96,9 @@ export async function createDesktopScenario({
   resultDir,
 }) {
   const executionSnapshot = await loadSnapshotProjector()
-  const model = createRuntimeReconciliationModel({ marker: MARKER, orders: ORDERS })
-  const { cases } = model
+  const model = createRuntimeReconciliationModel({ marker: MARKER, orders: [...ORDERS, RECONNECT] })
+  const cases = model.cases.filter(testCase => testCase.order !== RECONNECT)
+  const reconnectCase = model.cases.find(testCase => testCase.order === RECONNECT)
   const heldTasks = new Set()
   const evidence = []
   let cloud
@@ -329,8 +331,9 @@ export async function createDesktopScenario({
       value =>
         value.executions[0]?.status === 'completed' &&
         value.activities.find(row => row.message_id === testCase.activityId)?.content ===
-          testCase.text,
-      'A terminal outcome lost the complete final activity text',
+          testCase.text &&
+        value.issue.metadata.badges?.some(badge => badge.url === testCase.changeRequest),
+      'A terminal outcome lost the final activity text or the Issue change-request index',
       uiTimeoutMs
     )
     const activity = state.activities.find(row => row.message_id === testCase.activityId)
@@ -347,6 +350,78 @@ export async function createDesktopScenario({
     )
     assert.equal(persisted.status, 'completed')
     return state
+  }
+
+  async function verifyReconnect(testCase) {
+    await beginCase(testCase)
+    await readSnapshot(testCase)
+    await cloud.executeDatabase('DELETE FROM project_chat_messages WHERE message_id = %s', [
+      testCase.activityId,
+    ])
+    assert.equal((await rows(testCase)).activities.length, 0)
+    await emit('wework:project_chat:subscribe', {
+      projectId: String(project.id),
+      taskId: testCase.issue.id,
+      afterSequence: 0,
+    })
+    const activityEvents = []
+    const issueEvents = []
+    const onActivity = event => activityEvents.push(event)
+    const onIssue = event => issueEvents.push(event)
+    socket.on('wework:project_chat:message:created', onActivity)
+    socket.on('wework:loop_item:changed', onIssue)
+    const previousSockets = new Set(proxy.websockets)
+    assert.ok(previousSockets.size, 'The remote Executor had no connection to interrupt')
+    for (const connection of previousSockets) connection.destroy()
+    await until(
+      async () => [...proxy.websockets],
+      connections => connections.some(connection => !previousSockets.has(connection)),
+      'The real remote Executor did not reconnect',
+      workbenchReadyTimeoutMs
+    )
+    const completed = await until(
+      () => rows(testCase),
+      state =>
+        state.executions[0]?.status === 'completed' &&
+        state.activities.length === 1 &&
+        state.activities[0].status === 'completed',
+      'Device registration did not recover the terminal execution and missing activity',
+      modelResponseTimeoutMs
+    )
+    assert.notEqual(completed.activities[0].message_id, testCase.activityId)
+    assert.ok(completed.activities[0].metadata.runtime_completed_at)
+    assert.equal(completed.issue.metadata.ai_state.status, 'completed')
+    assert.equal(testCase.terminal.deliveries, 0)
+    await until(
+      () =>
+        cloud.queryDatabase(
+          "SELECT id FROM wework_notifications WHERE kind='execution' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.executionId')) = %s AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.status')) = 'completed'",
+          [String(testCase.execution.id)]
+        ),
+      notifications => notifications.length === 1,
+      'The reconciled completion did not produce exactly one lifecycle notification',
+      uiTimeoutMs
+    )
+    await until(
+      async () => ({ activities: activityEvents, issues: issueEvents }),
+      events =>
+        events.activities.some(
+          event =>
+            event.messageId === completed.activities[0].message_id && event.status === 'completed'
+        ) && events.issues.some(event => event.itemId === testCase.issue.id),
+      'The reconciled activity and Issue were not broadcast after commit',
+      uiTimeoutMs
+    )
+    socket.off('wework:project_chat:message:created', onActivity)
+    socket.off('wework:loop_item:changed', onIssue)
+    const persisted = await messages(testCase)
+    assert.ok(
+      persisted.some(
+        message =>
+          message.messageId === completed.activities[0].message_id && message.status === 'completed'
+      )
+    )
+    evidence.push({ order: RECONNECT, droppedTerminalEvent: true, activityRecreated: true })
   }
 
   async function openIssue(control, testCase) {
@@ -581,6 +656,10 @@ export async function createDesktopScenario({
         })
         for (const testCase of cases) await verifyRefresh(control, testCase)
         await verifyStaleTerminals(control, cases.at(-1))
+        // The stale-event replay needs the original socket. Reconnect only after it finishes.
+        await control.command('navigate', 'body', { value: '/system-drag' })
+        await control.command('waitFor', '[data-testid="system-drag-panel"]')
+        await verifyReconnect(reconnectCase)
       } finally {
         model.release()
         await writeFile(

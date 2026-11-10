@@ -283,6 +283,17 @@ pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
 
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
+    if let Some(fields) = config.as_object_mut() {
+        for key in [
+            "manual",
+            "intakeRouted",
+            "recoveringDispatch",
+            "triggerCommentId",
+            "triggerMessage",
+        ] {
+            fields.remove(key);
+        }
+    }
     config["projectId"] = json!(project);
     config["projectStore"] = json!(store);
     config["userId"] = json!(user);

@@ -97,6 +97,7 @@ pub(super) async fn resolve_knowledge(
     // never reads the organization names or the caller's group roles.
     let acl = AclContextSource::new(&state.mysql, &state.entity_resolvers, state.redis.as_ref());
 
+    let external_refs = task_external_knowledge_refs(task_json);
     // Source unit 1: a provider-native shell builds the inherited refs, which
     // resolves the task's agent defaults (`selected_knowledge.py:235`).
     let inherited = if supports_provider_native_shell(shell_type) {
@@ -106,7 +107,7 @@ pub(super) async fn resolve_knowledge(
             input.task_id,
             task_json,
             input.user_id,
-            &[],
+            external_refs.as_array().map_or(&[], Vec::as_slice),
         )
         .await
         .map_err(knowledge_access_error)?
@@ -116,7 +117,16 @@ pub(super) async fn resolve_knowledge(
     // `build_selected_knowledge_context`'s explicit refs
     // (`chat/selected_knowledge.py:456-470`): the current subtask's ready
     // knowledge-base / selected-document contexts overlay the inherited refs.
-    let explicit = contexts::ready_wegent_refs(current_contexts);
+    let mut explicit = contexts::ready_wegent_refs(&state.mysql, current_contexts)
+        .await
+        .map_err(dependency)?;
+    let explicit_external: Vec<Value> = current_contexts
+        .iter()
+        .filter(|context| context.context_type == "external_knowledge" && context.status == "ready")
+        .map(|context| context.type_data.0.clone())
+        .collect();
+    explicit
+        .extend(super::task_default_knowledge_bases::external_refs_from_values(&explicit_external));
     let context = resolve_selected_knowledge_context(&inherited, &explicit);
     // `build_selected_knowledge_context` resolves the effective access mode over
     // the context's own `wegent` refs and filters the native refs *before* the
@@ -197,7 +207,10 @@ pub(super) async fn resolve_knowledge(
         };
     if knowledge_base_ids.is_empty() {
         return Ok(ResolvedKnowledge {
-            external_knowledge_refs: task_external_knowledge_refs(task_json),
+            external_knowledge_refs: external_refs,
+            selected_knowledge_prompt: applied.selected_knowledge_prompt,
+            provider_native_knowledge: provider_native,
+            provider_skills: applied.provider_skills,
             ..ResolvedKnowledge::empty()
         });
     }
@@ -238,7 +251,7 @@ pub(super) async fn resolve_knowledge(
     Ok(ResolvedKnowledge {
         knowledge_base_ids: Some(serde_json::json!(knowledge_base_ids)),
         knowledge_base_scopes,
-        external_knowledge_refs: task_external_knowledge_refs(task_json),
+        external_knowledge_refs: external_refs,
         is_user_selected_kb,
         selected_knowledge_prompt: applied.selected_knowledge_prompt.clone(),
         provider_native_knowledge: provider_native,

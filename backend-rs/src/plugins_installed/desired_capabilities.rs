@@ -20,11 +20,12 @@ use serde_json::{Map, Value};
 
 use crate::config::env_or_dotenv;
 use crate::device_identity::{
-    PluginDeviceInstallationRow, coalesce_plugin_device_rows, plugin_device_id,
+    PluginDeviceInstallationRow, coalesce_plugin_device_rows_on, plugin_device_id_on,
 };
 use crate::plugins_marketplace::db::{
     DEVICE_COLUMNS, InstalledKindRow, KIND_COLUMNS, PluginReleaseRow, RELEASE_COLUMNS,
 };
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::workspace_archive::s3_presign;
 
 /// `PLUGIN_AUTO_UPDATE_FAILURE_LIMIT` (`app/core/constants.py`).
@@ -32,7 +33,7 @@ const AUTO_UPDATE_FAILURE_LIMIT: i64 = 3;
 /// `settings.PLUGIN_PACKAGE_URL_EXPIRES_SECONDS`.
 const PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: u64 = 600;
 /// `settings.PLUGIN_STORAGE_BUCKET`.
-const DEFAULT_PLUGIN_BUCKET: &str = "wegent";
+const DEFAULT_PLUGIN_BUCKET: &str = "plugins";
 
 /// `db.query(PluginDeviceInstallation).filter(user_id=...)`.
 const USER_DEVICE_ROWS_QUERY: &str = "SELECT {cols} FROM plugin_device_installations WHERE \
@@ -83,9 +84,23 @@ pub async fn build_desired_capabilities<M>(
 where
     M: Mysql,
 {
-    let skills = load_installed_skills(mysql, user_id).await?;
-    let plugins = load_installed_plugins(mysql, user_id, device_id).await?;
-    let mcps = load_installed_mcps(mysql, user_id).await?;
+    let mut query = mysql;
+    build_desired_capabilities_on(&mut query, user_id, device_id, mode).await
+}
+
+/// [`build_desired_capabilities`] over a pool or an open transaction.
+pub(crate) async fn build_desired_capabilities_on<Q>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    mode: &str,
+) -> Result<Value, BuildError>
+where
+    Q: PluginQuery,
+{
+    let skills = load_installed_skills(query, user_id).await?;
+    let plugins = load_installed_plugins(query, user_id, device_id).await?;
+    let mcps = load_installed_mcps(query, user_id).await?;
     let mut payload = Map::new();
     payload.insert("mode".to_string(), Value::String(mode.to_string()));
     payload.insert("skills".to_string(), Value::Array(skills));
@@ -109,13 +124,30 @@ pub async fn build_desired_capabilities_for_registration<M>(
 where
     M: Mysql,
 {
-    let skills = load_installed_skills(mysql, user_id).await?;
+    let mut query = mysql;
+    build_desired_capabilities_for_registration_on(&mut query, user_id, device_id, include_plugins)
+        .await
+}
+
+/// [`build_desired_capabilities_for_registration`] over a pool or an open
+/// transaction. The plugin-sync protocol loads the snapshot inside its own
+/// transaction, so this variant must share the caller's connection.
+pub(crate) async fn build_desired_capabilities_for_registration_on<Q>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    include_plugins: bool,
+) -> Result<Value, BuildError>
+where
+    Q: PluginQuery,
+{
+    let skills = load_installed_skills(query, user_id).await?;
     let plugins = if include_plugins {
-        load_installed_plugins(mysql, user_id, device_id).await?
+        load_installed_plugins(query, user_id, device_id).await?
     } else {
         Vec::new()
     };
-    let mcps = load_installed_mcps(mysql, user_id).await?;
+    let mcps = load_installed_mcps(query, user_id).await?;
     let mut payload = Map::new();
     payload.insert(
         "mode".to_string(),
@@ -139,7 +171,20 @@ pub async fn build_desired_plugins<M>(
 where
     M: Mysql,
 {
-    let plugins = load_installed_plugins(mysql, user_id, device_id).await?;
+    let mut query = mysql;
+    build_desired_plugins_on(&mut query, user_id, device_id).await
+}
+
+/// [`build_desired_plugins`] over a pool or an open transaction.
+pub(crate) async fn build_desired_plugins_on<Q>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+) -> Result<Value, BuildError>
+where
+    Q: PluginQuery,
+{
+    let plugins = load_installed_plugins(query, user_id, device_id).await?;
     let mut payload = Map::new();
     payload.insert("mode".to_string(), Value::String("merge".to_string()));
     payload.insert("scope".to_string(), Value::String("plugins".to_string()));
@@ -224,8 +269,8 @@ fn python_text(value: &Value) -> String {
 }
 
 /// One `db.query(Kind).filter(user_id, kind, namespace='default')` read.
-async fn installed_kind_rows<M: Mysql>(
-    mysql: &M,
+async fn installed_kind_rows<Q: PluginQuery>(
+    query: &mut Q,
     user_id: i64,
     kind: &str,
 ) -> MysqlResult<Vec<InstalledKindRow>> {
@@ -233,12 +278,30 @@ async fn installed_kind_rows<M: Mysql>(
         "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = '{kind}' \
          AND kinds.namespace = 'default'"
     );
-    mysql.fetch_all(&sql, (user_id,)).await
+    query.fetch_all(&sql, (user_id,)).await
+}
+
+/// One `db.query(Kind).filter(user_id, kind, namespace='default', id IN ids)`
+/// read, with SQLAlchemy's empty-list guard.
+async fn installed_kind_rows_for_ids<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    kind: &str,
+    only_ids: &[i64],
+) -> MysqlResult<Vec<InstalledKindRow>> {
+    let (filter, id_arguments) = crate::sql_support::id_in_clause("kinds.id", only_ids);
+    let sql = format!(
+        "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = '{kind}' \
+         AND kinds.namespace = 'default' AND {filter}"
+    );
+    let mut arguments = vec![crate::sql_support::StatementArg::Int(user_id)];
+    arguments.extend(id_arguments);
+    query.fetch_all(&sql, arguments).await
 }
 
 /// `_get_user_kind`: one active install row the caller owns.
-async fn get_user_kind<M: Mysql>(
-    mysql: &M,
+async fn get_user_kind<Q: PluginQuery>(
+    query: &mut Q,
     user_id: i64,
     kind: &str,
     kind_id: i64,
@@ -247,32 +310,35 @@ async fn get_user_kind<M: Mysql>(
         "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.id = ? AND kinds.user_id = ? AND \
          kinds.kind = '{kind}' AND kinds.is_active = true LIMIT 1"
     );
-    mysql.fetch_optional(&sql, (kind_id, user_id)).await
+    query.fetch_optional(&sql, (kind_id, user_id)).await
 }
 
 /// `db.get(PluginRelease, id)`.
-async fn get_release<M: Mysql>(mysql: &M, id: i64) -> MysqlResult<Option<PluginReleaseRow>> {
+async fn get_release<Q: PluginQuery>(
+    query: &mut Q,
+    id: i64,
+) -> MysqlResult<Option<PluginReleaseRow>> {
     let sql = format!("SELECT {RELEASE_COLUMNS} FROM plugin_releases WHERE plugin_releases.id = ?");
-    mysql.fetch_optional(&sql, (id,)).await
+    query.fetch_optional(&sql, (id,)).await
 }
 
 /// Source `_load_enabled_installed_skills`.
-async fn load_installed_skills<M: Mysql>(
-    mysql: &M,
+async fn load_installed_skills<Q: PluginQuery>(
+    query: &mut Q,
     user_id: i64,
 ) -> Result<Vec<Value>, BuildError> {
-    let rows = installed_kind_rows(mysql, user_id, "InstalledSkill").await?;
+    let rows = installed_kind_rows(query, user_id, "InstalledSkill").await?;
     let enabled: Vec<i64> = rows
         .iter()
         .filter(|row| row.is_active && is_enabled_install(&row.json.0.to_value()))
         .map(|row| row.id)
         .collect();
-    resolve_installed_skills(mysql, user_id, &enabled).await
+    resolve_installed_skills(query, user_id, &enabled).await
 }
 
 /// `_resolve_skill_payloads`'s installed-id branch (`strict=False`).
-async fn resolve_installed_skills<M: Mysql>(
-    mysql: &M,
+async fn resolve_installed_skills<Q: PluginQuery>(
+    query: &mut Q,
     user_id: i64,
     installed_ids: &[i64],
 ) -> Result<Vec<Value>, BuildError> {
@@ -280,11 +346,11 @@ async fn resolve_installed_skills<M: Mysql>(
     let mut seen = Vec::new();
     for installed_id in installed_ids {
         let Some(installed) =
-            get_user_kind(mysql, user_id, "InstalledSkill", *installed_id).await?
+            get_user_kind(query, user_id, "InstalledSkill", *installed_id).await?
         else {
             continue;
         };
-        let Some(skill) = resolve_installed_skill_ref(mysql, user_id, &installed).await? else {
+        let Some(skill) = resolve_installed_skill_ref(query, user_id, &installed).await? else {
             continue;
         };
         if seen.contains(&skill.id) {
@@ -297,8 +363,8 @@ async fn resolve_installed_skills<M: Mysql>(
 }
 
 /// `_resolve_installed_skill_ref`: the `Skill` Kind named by `spec.skillRef`.
-async fn resolve_installed_skill_ref<M: Mysql>(
-    mysql: &M,
+async fn resolve_installed_skill_ref<Q: PluginQuery>(
+    query: &mut Q,
     user_id: i64,
     installed: &InstalledKindRow,
 ) -> MysqlResult<Option<InstalledKindRow>> {
@@ -322,7 +388,7 @@ async fn resolve_installed_skill_ref<M: Mysql>(
     );
     let name = name.and_then(Value::as_str).unwrap_or_default();
     let namespace = namespace.as_str().unwrap_or("default");
-    mysql.fetch_optional(&sql, (name, namespace, owner)).await
+    query.fetch_optional(&sql, (name, namespace, owner)).await
 }
 
 /// `_skill_payload`.
@@ -355,6 +421,18 @@ fn skill_payload(skill: &InstalledKindRow, installed_skill_id: Option<i64>) -> V
     );
     payload.insert("is_public".to_string(), Value::Bool(skill.user_id == 0));
     payload.insert(
+        "bind_shells".to_string(),
+        crate::responses::create::skills::project_runtime_skill_shells(
+            &json,
+            skill.user_id,
+            &skill.namespace,
+            &skill.name,
+        )
+        .map_or(Value::Null, |shells| {
+            Value::Array(shells.into_iter().map(Value::String).collect())
+        }),
+    );
+    payload.insert(
         "content_hash".to_string(),
         file_hash.map_or(Value::Null, |hash| Value::String(format!("sha256:{hash}"))),
     );
@@ -369,24 +447,42 @@ fn skill_payload(skill: &InstalledKindRow, installed_skill_id: Option<i64>) -> V
 }
 
 /// Source `_load_installed_plugins`.
-async fn load_installed_plugins<M: Mysql>(
-    mysql: &M,
+async fn load_installed_plugins<Q: PluginQuery>(
+    query: &mut Q,
     user_id: i64,
     device_id: &str,
 ) -> Result<Vec<Value>, BuildError> {
-    let rows = installed_kind_rows(mysql, user_id, "InstalledPlugin").await?;
+    let rows = installed_kind_rows(query, user_id, "InstalledPlugin").await?;
     let installed_ids: Vec<i64> = rows
         .iter()
         .filter(|row| row.is_active && is_synced_install(&row.json.0.to_value()))
         .map(|row| row.id)
         .collect();
-    let overrides = device_release_overrides(mysql, user_id, device_id, &rows).await?;
-    resolve_plugin_payloads(mysql, user_id, &installed_ids, &overrides).await
+    let overrides = device_release_overrides(query, user_id, device_id, &rows).await?;
+    resolve_plugin_payloads(query, user_id, &installed_ids, &overrides).await
+}
+
+/// `_load_installed_plugins(only_ids=...)`: the same desired-plugin payloads
+/// restricted to one id list, used by the versioned recording.
+pub(crate) async fn load_installed_plugins_for_ids<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    only_ids: &[i64],
+) -> Result<Vec<Value>, BuildError> {
+    let rows = installed_kind_rows_for_ids(query, user_id, "InstalledPlugin", only_ids).await?;
+    let installed_ids: Vec<i64> = rows
+        .iter()
+        .filter(|row| row.is_active && is_synced_install(&row.json.0.to_value()))
+        .map(|row| row.id)
+        .collect();
+    let overrides = device_release_overrides(query, user_id, device_id, &rows).await?;
+    resolve_plugin_payloads(query, user_id, &installed_ids, &overrides).await
 }
 
 /// `_device_release_overrides`: preserve an exhausted retry's actual release.
-async fn device_release_overrides<M: Mysql>(
-    mysql: &M,
+async fn device_release_overrides<Q: PluginQuery>(
+    query: &mut Q,
     user_id: i64,
     device_id: &str,
     installed_rows: &[InstalledKindRow],
@@ -394,14 +490,14 @@ async fn device_release_overrides<M: Mysql>(
     if device_id.is_empty() || installed_rows.is_empty() {
         return Ok(HashMap::new());
     }
-    let canonical_id = plugin_device_id(mysql, user_id, device_id).await?;
-    let rows: Vec<PluginDeviceInstallationRow> = mysql
+    let canonical_id = plugin_device_id_on(query, user_id, device_id).await?;
+    let rows: Vec<PluginDeviceInstallationRow> = query
         .fetch_all(
             USER_DEVICE_ROWS_QUERY.replace("{cols}", DEVICE_COLUMNS),
             (user_id,),
         )
         .await?;
-    let selected = coalesce_plugin_device_rows(mysql, rows).await?;
+    let selected = coalesce_plugin_device_rows_on(query, rows).await?;
     let rows_by_installed: HashMap<i64, PluginDeviceInstallationRow> = selected
         .into_iter()
         .filter(|((_, canonical), _)| canonical == &canonical_id)
@@ -422,8 +518,8 @@ async fn device_release_overrides<M: Mysql>(
 }
 
 /// `_resolve_plugin_payloads` (`strict=True`, but unresolved ids only skip).
-async fn resolve_plugin_payloads<M: Mysql>(
-    mysql: &M,
+async fn resolve_plugin_payloads<Q: PluginQuery>(
+    query: &mut Q,
     user_id: i64,
     installed_ids: &[i64],
     overrides: &HashMap<i64, i64>,
@@ -432,7 +528,7 @@ async fn resolve_plugin_payloads<M: Mysql>(
     let mut seen = Vec::new();
     for installed_id in installed_ids {
         let Some(installed) =
-            get_user_kind(mysql, user_id, "InstalledPlugin", *installed_id).await?
+            get_user_kind(query, user_id, "InstalledPlugin", *installed_id).await?
         else {
             continue;
         };
@@ -440,15 +536,15 @@ async fn resolve_plugin_payloads<M: Mysql>(
             continue;
         }
         payloads
-            .push(plugin_payload(mysql, &installed, overrides.get(&installed.id).copied()).await?);
+            .push(plugin_payload(query, &installed, overrides.get(&installed.id).copied()).await?);
         seen.push(installed.id);
     }
     Ok(payloads)
 }
 
 /// `_plugin_payload`.
-async fn plugin_payload<M: Mysql>(
-    mysql: &M,
+async fn plugin_payload<Q: PluginQuery>(
+    query: &mut Q,
     installed: &InstalledKindRow,
     release_id_override: Option<i64>,
 ) -> Result<Value, BuildError> {
@@ -509,7 +605,7 @@ async fn plugin_payload<M: Mysql>(
         let release_id =
             release_id_override.or_else(|| spec.get("releaseId").and_then(Value::as_i64));
         let release = match release_id {
-            Some(release_id) => get_release(mysql, release_id).await?,
+            Some(release_id) => get_release(query, release_id).await?,
             None => None,
         };
         let ready = release
@@ -628,8 +724,11 @@ fn plugin_payload_name(
 }
 
 /// `_load_enabled_installed_mcps`.
-async fn load_installed_mcps<M: Mysql>(mysql: &M, user_id: i64) -> Result<Vec<Value>, BuildError> {
-    let rows = installed_kind_rows(mysql, user_id, "InstalledMCP").await?;
+async fn load_installed_mcps<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+) -> Result<Vec<Value>, BuildError> {
+    let rows = installed_kind_rows(query, user_id, "InstalledMCP").await?;
     let enabled: Vec<i64> = rows
         .iter()
         .filter(|row| row.is_active && is_enabled_install(&row.json.0.to_value()))
@@ -637,7 +736,7 @@ async fn load_installed_mcps<M: Mysql>(mysql: &M, user_id: i64) -> Result<Vec<Va
         .collect();
     let mut payloads = Vec::new();
     for installed_id in enabled {
-        let Some(installed) = get_user_kind(mysql, user_id, "InstalledMCP", installed_id).await?
+        let Some(installed) = get_user_kind(query, user_id, "InstalledMCP", installed_id).await?
         else {
             continue;
         };
@@ -868,6 +967,37 @@ mod tests {
         assert_eq!(capability_snapshot(&first), capability_snapshot(&second));
         let changed = json!({"mode": "replace", "plugins": [{"installed_plugin_id": 3}]});
         assert_ne!(capability_snapshot(&first), capability_snapshot(&changed));
+    }
+
+    #[test]
+    fn skill_payload_writes_runtime_bind_shells() {
+        // Source `_skill_payload` (`capability_payloads.py:348`) always writes
+        // `bind_shells` from `get_runtime_skill_shells`, null when the package
+        // declares none. The recorded `device:sync_capabilities` payload proves
+        // `"bind_shells": ["ClaudeCode"]` for the installed `projects` skill.
+        let skill_row = |json: Value| InstalledKindRow {
+            id: 253867,
+            user_id: 157,
+            kind: "Skill".to_string(),
+            name: "projects".to_string(),
+            namespace: "default".to_string(),
+            json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(json)),
+            is_active: true,
+            created_at: chrono::NaiveDateTime::default(),
+            updated_at: chrono::NaiveDateTime::default(),
+        };
+        let declared = skill_payload(
+            &skill_row(json!({"spec": {"bindShells": ["ClaudeCode"]}})),
+            Some(253869),
+        );
+        assert_eq!(declared["bind_shells"], json!(["ClaudeCode"]));
+        let undeclared = skill_payload(&skill_row(json!({"spec": {}})), None);
+        assert_eq!(undeclared["bind_shells"], Value::Null);
+        assert!(undeclared.get("bind_shells").is_some());
+        // An explicit empty list stays `[]`; only an absent key becomes null.
+        let empty = skill_payload(&skill_row(json!({"spec": {"bindShells": []}})), None);
+        assert_eq!(empty["bind_shells"], json!([]));
+        assert!(empty.get("bind_shells").is_some());
     }
 
     #[test]

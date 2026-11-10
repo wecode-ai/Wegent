@@ -228,6 +228,27 @@ for parent_board_path in \
   fi
 done
 
+for path in .github/scripts/prime-ci-electron-installer-cache.mjs \
+  .github/actions/prepare-electron-installer-cache/action.yml \
+  wework/scripts/lib/electron-installer-cache.mjs; do
+  assert_desktop_case "Electron installer cache selects its native Core consumers: $path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"workbench-mode,native-window-startup"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' "$path"
+done
+
+assert_desktop_case "E2E dependency installer selects only its desktop consumers" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"stand-in-email"},{"id":"core-5","name":"Core / shard 5","segments":"native-window-startup"},{"id":"core-10","name":"Core / shard 10","segments":"plugin-development"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-account-auth-coordination"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  ".github/scripts/install-e2e-apt-packages.sh"
+
 for email_path in \
   "wework/e2e/desktop/scenarios/stand-in-email.scenario.mjs" \
   "wework/e2e/desktop/modules/real-mail-server.mjs" \

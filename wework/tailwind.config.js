@@ -71,5 +71,8 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // Wework keeps its original recipes; named themes retain semantic colors.
+    ({ addVariant }) => addVariant('wework', 'html[data-appearance-theme="wework"] &'),
+  ],
 }

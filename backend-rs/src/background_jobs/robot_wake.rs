@@ -12,7 +12,7 @@ use super::super::project::{
 };
 use super::{
     authority,
-    model::{COLUMNS, Execution},
+    model::{COLUMNS, Execution, runner_routes},
 };
 use crate::{
     AppState,
@@ -97,11 +97,22 @@ pub(super) async fn notify(app: &AppState) -> Result<usize> {
         .as_ref()
         .context("Robot queue notification requires Redis")?;
     for (owner, device) in targets {
+        let room = format!("execution-target:{owner}:{device}");
+        // The Redis subscriber ignores its own adapter echo. Wake sockets
+        // attached to this process before publishing to the other workers.
+        crate::socketio::runtime::deliver_local_emit(
+            "/local-executor",
+            "runtime.tasks.available",
+            &room,
+            None,
+            &json!({}),
+        )
+        .await;
         let message = crate::socketio_emit::emit_message(
             "runtime.tasks.available",
             "[{}]",
             "/local-executor",
-            &format!("execution-target:{owner}:{device}"),
+            &room,
         );
         redis
             .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message)
@@ -112,12 +123,8 @@ pub(super) async fn notify(app: &AppState) -> Result<usize> {
 
 async fn routed_candidates(app: &AppState, row: &Execution) -> Result<BTreeSet<i64>> {
     let selection = row.selection();
-    let mut routes = vec![(row.agent_id.as_str(), &selection["runner_routing"])];
-    if let Some(group) = selection["group_runner_requirements"].as_object() {
-        routes.extend(group.iter().map(|(agent, route)| (agent.as_str(), route)));
-    }
     let mut result: Option<BTreeSet<i64>> = None;
-    for (agent, route) in routes {
+    for (agent, route) in runner_routes(&row.agent_id, &selection) {
         if route["model"]["source"] == "cloud" {
             routing::require_cloud_model(app, row.assigner_user_id, &route["model"]).await?;
         }

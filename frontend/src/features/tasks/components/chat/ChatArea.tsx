@@ -1138,7 +1138,7 @@ function ChatAreaContent({
   )
   const loadMentionProjectTasks = useCallback(() => {
     projects.forEach(project => {
-      if (project.task_count > 0) void loadAllProjectTasks(project.id)
+      if (project.task_count !== 0) void loadAllProjectTasks(project.id)
     })
   }, [loadAllProjectTasks, projects])
 

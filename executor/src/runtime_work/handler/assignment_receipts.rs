@@ -22,9 +22,22 @@ impl RuntimeWorkRpcHandler {
         };
         let mut binding = binding.clone();
         binding["deviceId"] = json!(self.device_id);
-        binding["taskId"] = json!(self.stand_in_task_id(config, &binding));
+        binding["taskId"] = json!(self.stand_in_task_id(config, issue));
         binding["taskTitle"] = issue["title"].clone();
+        binding["standInConversationId"] =
+            json!(super::stand_in::stand_in_issue_identity(config, issue));
         let issue_id = issue["id"].as_str().unwrap_or_default();
+        if binding["triggerCommentId"].is_string() {
+            self.runtime_http(
+                reqwest::Method::POST,
+                &format!("/v1/loop-items/{issue_id}/tasks"),
+                Some(&json!({
+                    "deviceId":self.device_id,"taskId":binding["taskId"],"taskTitle":issue["title"],"standInConversationId":binding["standInConversationId"]
+                })),
+            )
+            .await?;
+            return Ok(binding);
+        }
         if local {
             LocalTaskStore::open(self.task_store_path.as_ref())
                 .map_err(settings_error)?
@@ -44,6 +57,12 @@ impl RuntimeWorkRpcHandler {
                 Some(&binding),
             )
             .await?;
+        }
+        if config["manual"] == true
+            && (issue["assignee_user_id"] != config["userId"]
+                || !binding["humanAssignmentId"].is_string())
+        {
+            return Ok(binding);
         }
         // Receipt authority still comes from the recipient-owned binding. Model
         // preparation and execution are independent of accepting the assignment.
@@ -248,6 +267,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manual_stand_in_work_receipts_only_acknowledge_the_current_recipient() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Manual receipts"})).unwrap())
+            .unwrap();
+        let config = json!({"id":"review","projectId":project.id,"projectStore":"local","userId":7,"manual":true});
+        for assignee in [Value::Null, json!(8), json!(7)] {
+            let issue = store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({"title":"Review","assignee_user_id":assignee}))
+                        .unwrap(),
+                )
+                .unwrap();
+            let value = serde_json::to_value(&issue).unwrap();
+            let binding = super::super::stand_in::stand_in_issue_receipt_binding(&config, &value);
+            handler
+                .accept_stand_in_assignment(&config, &value, &binding)
+                .await
+                .unwrap();
+            assert_eq!(store.list_task_bindings(&issue.id).unwrap().len(), 1);
+            assert_eq!(
+                store
+                    .get_task(&project.id, &issue.id)
+                    .unwrap()
+                    .assignee_user_id,
+                issue.assignee_user_id
+            );
+            let receipts = store.assignment_receipts(&project.id, &issue.id).unwrap();
+            assert_eq!(
+                receipts
+                    .iter()
+                    .any(|row| row["stand_in_received_at"].is_string()),
+                assignee == 7
+            );
+            assert!(receipts.iter().all(|row| row["human_read_at"].is_null()));
+        }
+    }
+
+    #[tokio::test]
     async fn cloud_background_intake_binds_and_acknowledges_without_starting_execution() {
         let root = tempfile::tempdir().unwrap();
         let received_binding = Arc::new(Mutex::new(Value::Null));
@@ -285,7 +348,11 @@ mod tests {
         let binding = received_binding.lock().unwrap().clone();
         assert_eq!(binding["deviceId"], "mac");
         assert_eq!(binding["assignmentId"], "event");
-        assert_eq!(binding["taskId"], "stand-in-human-review");
+        assert_eq!(
+            binding["taskId"],
+            "stand-in-issue-abf6e07390e1647c67dad92c7f6306dadc4b461f0830e780536856cf500b2db6"
+        );
+        assert_eq!(binding["standInConversationId"], binding["taskId"]);
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         assert!(store.pending_assignment_receipts().unwrap().is_empty());
         assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
@@ -333,7 +400,10 @@ mod tests {
         );
         assert_eq!(
             reservations[0].task_id,
-            format!("stand-in-{assignment}-review")
+            super::super::stand_in::stand_in_issue_identity(
+                &json!({"id":"review","projectId":project.id,"projectStore":"local","userId":7}),
+                &serde_json::to_value(&issue).unwrap(),
+            )
         );
     }
 

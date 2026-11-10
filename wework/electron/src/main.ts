@@ -102,6 +102,7 @@ import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializ
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { captureProcessExplorerWindowSnapshot } from './host/process-explorer-window-snapshot.js'
 import { desktopWindowFrameOptions, startupWindowLayout } from './host/window-layout.js'
+import { MainWindowStateController } from './host/main-window-state.js'
 import { prepareStartupMainWindow } from './host/startup-window-handoff.js'
 import {
   POPOUT_WINDOW_SIZES,
@@ -149,6 +150,7 @@ import { ReleaseStore } from './runtime/release-store.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { cloudFetch } from './host/cloud-http.js'
+import { installE2eDshReleaseRedirect } from './host/e2e-dsh-release-redirect.js'
 import {
   cleanupStaleTemporaryImages,
   createNativeContextMenuActions,
@@ -362,6 +364,7 @@ hasSingleInstanceLock = desktopInstanceMayStart(
 )
 
 let mainWindow: BrowserWindow | null = null
+let mainWindowState: MainWindowStateController | null = null
 let startupSplashWindow: BrowserWindow | null = null
 await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log')).catch(error => {
   console.warn('[logs] failed to open main process log', error)
@@ -941,6 +944,15 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 }
 
 function installDshWindowLabelHeaders(): void {
+  const releaseRedirect = process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
+  delete process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
+  if (
+    releaseRedirect &&
+    process.env.VITE_WEWORK_E2E === 'true' &&
+    process.env.WEWORK_E2E_CONTROL_URL
+  ) {
+    installE2eDshReleaseRedirect(session.defaultSession.webRequest, releaseRedirect)
+  }
   session.defaultSession.webRequest.onErrorOccurred(
     { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
     details => {
@@ -1466,9 +1478,16 @@ async function updateDesktopPreferences(
   return updated
 }
 
-async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
+async function createWindow(
+  startupTheme: StartupSplashTheme,
+  savedWindowState: unknown
+): Promise<void> {
   const startupDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-  const startupLayout = startupWindowLayout(startupDisplay.workArea)
+  const startupLayout = startupWindowLayout(
+    startupDisplay.workArea,
+    savedWindowState,
+    screen.getAllDisplays().map(display => display.workArea)
+  )
   logStartupStep('windows-create', 'started', { theme: startupTheme, layout: startupLayout })
   const developmentTitle = process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim()
   const windowTitle =
@@ -1750,7 +1769,9 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
       if (splashWindow && !splashWindow.isDestroyed()) splashWindow.destroy()
     })
   }
+  if (!canPresent()) return
   logStartupStep('startup-splash-close', 'completed')
+  mainWindowState?.start(target)
   if (!keepE2EWindowInBackground) {
     target.focus()
     target.webContents.focus()
@@ -2159,6 +2180,9 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  await traceShutdownStep('main-window-state', () => mainWindowState?.stop()).catch(error => {
+    console.error('[window-state] Failed to save main window geometry during shutdown', error)
+  })
   pluginDevelopmentChildRuntime?.stopWatcher()
   await traceShutdownStep('child-runtime-stopping', () =>
     pluginDevelopmentChildRuntime?.writeState('stopping')
@@ -2867,6 +2891,9 @@ if (hasSingleInstanceLock) {
         dockVisible = false
       }
       preferences = new PreferencesStore(app.getPath('userData'))
+      mainWindowState = new MainWindowStateController(preferences, error =>
+        console.error('[window-state] Failed to save main window geometry', error)
+      )
       desktopPreferences = new DesktopPreferencesController(preferences, {
         isShuttingDown: () => quitting,
         configurePopoutShortcut: shortcut => popoutShortcut?.configure(shortcut),
@@ -2984,7 +3011,8 @@ if (hasSingleInstanceLock) {
         resolveStartupSplashTheme(
           startupPreferences.appearanceMode,
           nativeTheme.shouldUseDarkColors
-        )
+        ),
+        startupPreferences.mainWindowState
       )
       void startDesktopRuntime()
     })

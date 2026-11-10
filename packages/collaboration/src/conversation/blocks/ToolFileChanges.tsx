@@ -194,7 +194,7 @@ function FileChangeLineStats({
       className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums"
       data-testid="file-change-line-stats"
     >
-      <span className="inline-flex items-center text-[rgb(var(--color-diff-added,22_163_74))]">
+      <span className="inline-flex items-center text-[rgb(var(--color-diff-added,22_163_74))] wework:text-green-600">
         +
         <AnimatedChangeNumber
           key={`${streamId}:additions`}
@@ -202,7 +202,7 @@ function FileChangeLineStats({
           deltaPrefix="+"
         />
       </span>
-      <span className="inline-flex items-center text-[rgb(var(--color-diff-removed,239_68_68))]">
+      <span className="inline-flex items-center text-[rgb(var(--color-diff-removed,239_68_68))] wework:text-red-500">
         -
         <AnimatedChangeNumber
           key={`${streamId}:deletions`}
@@ -356,11 +356,11 @@ export function ToolDurationText({
   fallbackEndAt,
   isRunning,
 }: {
-  startedAt: number
-  fallbackEndAt: number | undefined
-  isRunning: boolean
+  startedAt: number;
+  fallbackEndAt: number | undefined;
+  isRunning: boolean;
 }) {
-  return useToolDuration(startedAt, fallbackEndAt, isRunning)
+  return useToolDuration(startedAt, fallbackEndAt, isRunning);
 }
 
 function useToolDuration(

@@ -127,8 +127,8 @@ pub(crate) fn update_kind_json() -> &'static str {
 
 /// `create_pet`: insert a new Pet Kind row for a user.
 pub(crate) fn insert_pet_kind() -> &'static str {
-    "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active) \
-     VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at) \
+     VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())"
 }
 
 /// `add_chat_experience`'s `db.refresh(pet)`

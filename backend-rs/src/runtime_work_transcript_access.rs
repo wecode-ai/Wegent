@@ -233,6 +233,74 @@ async fn require_project_scope<M: Mysql>(
     Ok(project_id)
 }
 
+/// `ProjectChatService._require_scope` with an explicit required role: the
+/// snapshot reconcile re-checks `Developer` for every candidate activity.
+/// Failures carry the source's status code and detail text.
+pub(crate) async fn require_project_chat_scope<M: Mysql>(
+    mysql: &M,
+    user_id: i64,
+    project_id: &str,
+    task_id: Option<&str>,
+    required_role: &str,
+) -> Result<(), (i64, String)> {
+    let internal = || (500, "Internal Server Error".to_string());
+    let not_found = || (404, "Project task not found".to_string());
+    let forbidden = || (403, "Insufficient permission".to_string());
+    let numeric_project_id = project_id.parse::<i64>().map_err(|_| internal())?;
+    let numeric_user_id = i32::try_from(user_id).unwrap_or(i32::MAX);
+    let Some(access) = project_access_details(mysql, numeric_project_id, numeric_user_id)
+        .await
+        .map_err(|_| internal())?
+    else {
+        return Err((404, "Cloud project not found".to_string()));
+    };
+    let Some(role) = role_for_priority(access.priority) else {
+        return Err(internal());
+    };
+    let Some(task_id) = task_id.filter(|value| !value.is_empty()) else {
+        return if has_permission(role, required_role) {
+            Ok(())
+        } else {
+            Err(forbidden())
+        };
+    };
+    let entity = project_entity(mysql, numeric_project_id)
+        .await
+        .map_err(|_| internal())?;
+    let task = task_item(mysql, task_id, numeric_project_id)
+        .await
+        .map_err(|_| internal())?;
+    let Some(task) = task else {
+        let Some(entity) = entity.as_ref() else {
+            return Err(internal());
+        };
+        let provider = entity
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.0.value.as_ref())
+            .and_then(|metadata| metadata.task_provider.as_deref())
+            .unwrap_or("local");
+        if matches!(provider, "github" | "gitlab") {
+            return if has_permission(role, required_role) {
+                Ok(())
+            } else {
+                Err(forbidden())
+            };
+        }
+        return Err(not_found());
+    };
+    if !can_view_item(mysql, role, entity.as_ref(), &task, user_id)
+        .await
+        .map_err(|_| internal())?
+    {
+        return Err(not_found());
+    }
+    if !has_permission(role, required_role) {
+        return Err(forbidden());
+    }
+    Ok(())
+}
+
 /// `can_view_item`: `Maintainer` and above see every Issue; lower roles need an
 /// `open` Issue or a related-item grant.
 async fn can_view_item<M: Mysql>(
@@ -540,7 +608,7 @@ async fn collaboration_member_assignment<M: Mysql>(
     dispatch: &ExecutionRow,
     activity: &ActivityRow,
     metadata: &Value,
-) -> Result<(), FastApiError> {
+) -> Result<Value, FastApiError> {
     let Some(dispatch_id) = metadata_string(metadata, "dispatch_id") else {
         return Err(incomplete_member_identity());
     };
@@ -599,9 +667,36 @@ async fn collaboration_member_assignment<M: Mysql>(
     .await
     .map_err(mysql_failure)?;
     match (manager_device, member_device) {
-        (Some(manager), Some(member)) if manager.id == member.id => Ok(()),
+        (Some(manager), Some(member)) if manager.id == member.id => Ok(assignment),
         _ => Err(member_assignment_mismatch()),
     }
+}
+
+pub(crate) async fn comment_member_assignment<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    issue_id: &str,
+    agent_id: &str,
+    runtime_device_id: &str,
+    runtime_task_id: &str,
+    metadata: &Value,
+) -> Result<Option<(i64, Value)>, FastApiError> {
+    let Some(dispatch) =
+        collaboration_dispatch_for_activity(mysql, project_id, issue_id, metadata).await?
+    else {
+        return Ok(None);
+    };
+    let activity = ActivityRow {
+        agent_id: Some(agent_id.to_owned()),
+        runtime_device_id: Some(runtime_device_id.to_owned()),
+        runtime_task_id: Some(runtime_task_id.to_owned()),
+        metadata: None,
+    };
+    let assignment = collaboration_member_assignment(
+        mysql, project_id, issue_id, &dispatch, &activity, metadata,
+    )
+    .await?;
+    Ok(Some((dispatch.id, assignment)))
 }
 
 /// `_manager_assignment`: the recorded manager card carrying one assignment.

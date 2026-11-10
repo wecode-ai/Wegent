@@ -1,8 +1,17 @@
 @import './content-themes.css';
+@import './wework-theme.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* A transparent native auto outline can mask a focused field's border.
+     Disable that outline for pointer input; component/error outlines still win. */
+  :where(html[data-input-modality='pointer']) :where(input, textarea, select):focus-visible {
+    outline-style: none;
+  }
+}
 
 /* DSH paints text-field outlines too; pointer focus uses its dedicated token. */
 html[data-input-modality='pointer'] body :focus-visible {
@@ -214,7 +223,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 }
 
 .task-description-editor .bn-editor a:not([href^='wegent://attachments/']) {
-  color: rgb(var(--color-link, var(--color-focus)));
+  color: var(--wework-description-link, rgb(var(--color-link, var(--color-focus))));
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -331,13 +340,13 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: rgb(var(--color-popover));
-  color: rgb(var(--color-text-primary));
+  background: var(--wework-lightbox-close-bg, rgb(var(--color-popover)));
+  color: var(--wework-lightbox-close-text, rgb(var(--color-text-primary)));
   cursor: pointer;
 }
 
 .task-description-attachment-image-lightbox-close:hover {
-  background: rgb(var(--color-muted));
+  background: var(--wework-lightbox-close-hover, rgb(var(--color-muted)));
 }
 
 /* Compact description editors do not reserve BlockNote's default side gutter. */
@@ -479,7 +488,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
     transparent,
     rgb(var(--color-focus) / 0.12),
     rgb(var(--color-focus) / 0.42),
-    rgb(var(--color-text-primary) / 0.34),
+    var(--wework-task-shimmer-highlight, rgb(var(--color-text-primary) / 0.34)),
     rgb(var(--color-focus) / 0.12),
     transparent
   );
@@ -748,28 +757,31 @@ button:disabled {
   }
 
   .plugin-management-pill-official {
-    background: rgb(var(--color-focus) / 0.12);
-    color: rgb(var(--color-focus));
+    background: var(--wework-source-official-bg, rgb(var(--color-focus) / 0.12));
+    color: var(--wework-source-official-text, rgb(var(--color-focus)));
   }
 
   .plugin-management-pill-workspace {
-    background: rgb(var(--color-success) / 0.12);
-    color: rgb(var(--color-success));
+    background: var(--wework-source-workspace-bg, rgb(var(--color-success) / 0.12));
+    color: var(--wework-source-workspace-text, rgb(var(--color-success)));
   }
 
   .plugin-management-pill-personal {
-    background: rgb(var(--color-reasoning-ultra-text) / 0.12);
-    color: rgb(var(--color-reasoning-ultra-text));
+    background: var(--wework-source-personal-bg, rgb(var(--color-reasoning-ultra-text) / 0.12));
+    color: var(--wework-source-personal-text, rgb(var(--color-reasoning-ultra-text)));
   }
 
   .plugin-management-pill-external {
-    background: rgb(var(--color-muted));
-    color: rgb(var(--color-text-secondary));
+    background: var(--wework-source-external-bg, rgb(var(--color-muted)));
+    color: var(--wework-source-external-text, rgb(var(--color-text-secondary)));
   }
 
   .plugin-management-pill-public {
-    background: rgb(var(--color-warning, var(--color-focus)) / 0.12);
-    color: rgb(var(--color-warning, var(--color-focus)));
+    background: var(
+      --wework-source-public-bg,
+      rgb(var(--color-warning, var(--color-focus)) / 0.12)
+    );
+    color: var(--wework-source-public-text, rgb(var(--color-warning, var(--color-focus))));
   }
 
   .plugin-management-row:hover {
@@ -786,7 +798,7 @@ button:disabled {
     overflow: hidden;
     border: 1px solid rgb(var(--color-border) / 0.3);
     border-radius: 11px;
-    background: rgb(var(--color-bg-surface));
+    background: var(--wework-plugin-logo-bg, rgb(var(--color-bg-surface)));
     padding: 8px;
   }
 
@@ -944,8 +956,8 @@ button:disabled {
 }
 
 .plugin-operation-notice-error {
-  border-color: rgb(var(--color-destructive) / 0.2);
-  background: rgb(var(--color-destructive) / 0.07);
+  border-color: var(--wework-plugin-error-border, rgb(var(--color-destructive) / 0.2));
+  background: var(--wework-plugin-error-bg, rgb(var(--color-destructive) / 0.07));
 }
 
 .plugin-operation-notice-icon {
@@ -1515,7 +1527,7 @@ button.plugin-installed-strip-item:focus-visible::after {
   overflow: hidden;
   border: 1px solid rgb(var(--color-border) / 0.35);
   border-radius: 10px;
-  background-color: rgb(var(--color-bg-surface));
+  background-color: var(--wework-plugin-logo-bg, rgb(var(--color-bg-surface)));
   padding: 5px;
 }
 
@@ -1570,8 +1582,8 @@ button.plugin-installed-strip-item:focus-visible::after {
   flex-shrink: 0;
   overflow: hidden;
   border: 1px solid rgb(var(--color-border) / 0.35);
-  background-color: rgb(var(--color-bg-surface));
-  color: rgb(var(--color-focus));
+  background-color: var(--wework-plugin-logo-bg, rgb(var(--color-bg-surface)));
+  color: var(--wework-plugin-placeholder, rgb(var(--color-focus)));
 }
 
 .plugin-detail-header-logo {
@@ -2120,7 +2132,7 @@ button.plugin-market-reveal-button:hover {
   margin-left: -6px;
   border: 1px solid rgb(var(--color-border) / 0.48);
   border-radius: 7px;
-  background-color: rgb(var(--color-bg-surface));
+  background-color: var(--wework-plugin-logo-bg, rgb(var(--color-bg-surface)));
   padding: 2px;
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.04);
 }
@@ -2163,7 +2175,7 @@ button.plugin-market-card-install:active:not(:disabled) {
 }
 
 button.plugin-market-card-install.is-failed {
-  color: rgb(var(--color-destructive));
+  color: var(--wework-plugin-error-text, rgb(var(--color-destructive)));
 }
 
 button.plugin-market-card-menu {
@@ -2177,7 +2189,7 @@ button.plugin-market-card-menu {
   border-radius: 8px;
   background: transparent;
   padding: 0;
-  color: rgb(var(--color-text-secondary));
+  color: var(--wework-plugin-menu-text, rgb(var(--color-text-secondary)));
   transition:
     background-color 0.12s,
     color 0.12s,
@@ -2200,8 +2212,8 @@ button.plugin-market-card-menu {
 }
 
 button.plugin-market-card-menu:hover {
-  background-color: rgb(var(--color-muted));
-  color: rgb(var(--color-text-primary));
+  background-color: var(--wework-plugin-menu-hover-bg, rgb(var(--color-muted)));
+  color: var(--wework-plugin-menu-hover-text, rgb(var(--color-text-primary)));
   transform: scale(1.04);
 }
 

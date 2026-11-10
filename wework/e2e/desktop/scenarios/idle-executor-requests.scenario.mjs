@@ -7,6 +7,7 @@ import {
   writeDiagnosticFile,
 } from '../../../scripts/ai-verify-devtools.mjs'
 import { waitForWindowState } from '../modules/native-window-state.mjs'
+import { verifyRuntimeWorkRefreshBurst } from '../modules/runtime-work-refresh-burst.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import {
   assertIdleExecutorTraffic,
@@ -99,6 +100,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         await observe('background')
         await waitForWorkbenchDebugState(control, empty, 'Idle observation changed task membership')
         assertIdleExecutorTraffic(rows, windows)
+        await verifyRuntimeWorkRefreshBurst(control, read)
         return { idleExecutorRequests: true, observationMs: OBSERVATION_MS, windows }
       } finally {
         await client({ action: 'detach', target })

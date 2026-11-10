@@ -97,7 +97,7 @@ export async function createDesktopScenario({
     ? createGithubAuthBoundaries({
         protocol: githubProtocol,
         ghConfigDir,
-        homePath,
+        executorHome,
         resultDir,
         uiTimeoutMs,
         modelResponseTimeoutMs,

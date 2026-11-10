@@ -7,7 +7,7 @@ settings:
 overrides:
   '@file-viewer/renderer-word@2.1.27>@file-viewer/docx': 0.3.34
 
-packageExtensionsChecksum: sha256-WE38AAKnRy6d54cL6yvi0cklx5r0uwplT5PiqrcuqYE=
+packageExtensionsChecksum: sha256-3GPW0RD2OEoa+ghjgZDxiKOdOuYbfpGKnEfG8cSqwz0=
 
 patchedDependencies:
   '@file-viewer/renderer-drawing@2.1.26': 96f8d20757dde512edb9d888a64aee9a18ab063435284f5e2cba69ef422f1e0c
@@ -19001,6 +19001,7 @@ snapshots:
 
   streamdown@2.5.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:
+      '@types/hast': 3.0.5
       clsx: 2.1.1
       hast-util-to-jsx-runtime: 2.3.6
       html-url-attributes: 3.0.1

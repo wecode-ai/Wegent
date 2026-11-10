@@ -762,7 +762,7 @@ export function WorkspacePanelCards({
         <p
           data-testid={testId('workspace-tool-error')}
           role="alert"
-          className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-destructive/10 px-3 py-1.5 text-sm leading-[18px] text-destructive shadow-sm"
+          className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-destructive/10 px-3 py-1.5 text-sm leading-[18px] text-destructive shadow-sm wework:bg-red-50 wework:text-red-600 wework:dark:bg-red-950/80 wework:dark:text-red-300"
         >
           {error}
         </p>
@@ -778,7 +778,10 @@ export function WorkspacePanelCards({
             </p>
           )}
           {error && (
-            <p className="text-center text-sm leading-[18px] text-destructive" role="alert">
+            <p
+              className="text-center text-sm leading-[18px] text-destructive wework:text-red-500"
+              role="alert"
+            >
               {error}
             </p>
           )}

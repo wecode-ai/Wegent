@@ -29,10 +29,12 @@ async fn rejected_local_creation_preserves_the_issue_reservation() {
         .await
         .unwrap_err();
     assert_eq!(error.code, "unsupported_schema_version");
-    assert!(store
-        .find_user_task_binding("mac", "stand-in-human-default")
-        .is_ok());
-    assert!(handler.local_task_link("stand-in-human-default").is_none());
+    let task_id = handler.stand_in_task_id(
+        &json!({"id":"default","projectId":project.id,"projectStore":"local"}),
+        &serde_json::to_value(&issue).unwrap(),
+    );
+    assert!(store.find_user_task_binding("mac", &task_id).is_ok());
+    assert!(handler.local_task_link(&task_id).is_none());
 }
 
 #[tokio::test]
@@ -99,7 +101,7 @@ async fn deleted_stand_in_is_not_replayed_during_or_after_background_cleanup() {
     let mut config = json!({"id":"review","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
     let issue = json!({"id":"issue"});
     let binding = json!({"humanAssignmentId":"human"});
-    let task_id = handler.stand_in_task_id(&config, &binding);
+    let task_id = handler.stand_in_task_id(&config, &issue);
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: task_id.clone(),
         status: "archived".into(),
@@ -107,7 +109,8 @@ async fn deleted_stand_in_is_not_replayed_during_or_after_background_cleanup() {
     });
     handler
         .store
-        .mark_deleted_archived_task_ids([task_id.clone()]);
+        .mark_deleted_archived_task_ids([task_id.clone()])
+        .unwrap();
     for cleanup_finished in [false, true] {
         if cleanup_finished {
             handler.store.delete_task(&task_id);
@@ -127,15 +130,12 @@ async fn deleted_stand_in_is_not_replayed_during_or_after_background_cleanup() {
     }
     config["manual"] = json!(false);
     let reassigned = json!({"humanAssignmentId":"new-human-assignment"});
-    assert_ne!(handler.stand_in_task_id(&config, &reassigned), task_id);
-    let error = handler
+    assert_eq!(handler.stand_in_task_id(&config, &issue), task_id);
+    handler
         .execute_stand_in_task(&config, &issue, &reassigned)
         .await
-        .unwrap_err();
-    assert_eq!(
-        error.code, "workspace_unavailable",
-        "A new assignment must reach execution preparation"
-    );
+        .unwrap();
+    assert!(handler.local_task_link(&task_id).is_none());
 }
 
 #[tokio::test]
@@ -167,9 +167,129 @@ async fn manual_delegation_does_not_report_a_deleted_task_as_running() {
         status: "archived".into(),
         ..RuntimeTaskLink::default()
     });
-    handler.store.mark_deleted_archived_task_ids([task_id]);
+    handler
+        .store
+        .mark_deleted_archived_task_ids([task_id])
+        .unwrap();
     let error = handler.run_stand_in(json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local","standInId":"review"})).await.unwrap_err();
     assert_eq!(error.code, "assignment_already_handled");
+    assert_eq!(
+        error.message,
+        "This assignment has already been handled or is no longer active"
+    );
+}
+
+#[tokio::test]
+async fn deleted_issue_preserves_old_wakes_but_allows_new_grants_after_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let index_path = root.path().join("runtime-index.json");
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Deleted Issue"})).unwrap())
+        .unwrap();
+    let issue = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Deleted Issue"})).unwrap(),
+        )
+        .unwrap();
+    let config = json!({"id":"review","projectId":project.id,"projectStore":"local","userId":7});
+    let issue = serde_json::to_value(issue).unwrap();
+    let task_id = handler.stand_in_task_id(&config, &issue);
+    handler
+        .store
+        .bind_issue_conversation(&task_id, &task_id)
+        .unwrap();
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: task_id.clone(), thread_id: Some("deleted-thread".into()), status: "archived".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","humanAssignmentId":"human"},"standInIssueWakeups":["human","mention:old"]}),
+        ..RuntimeTaskLink::default()
+    });
+    handler
+        .mark_archived_link_deleted(&handler.local_task_link(&task_id).unwrap())
+        .unwrap();
+    for old in ["human", "mention:old"] {
+        assert!(handler.stand_in_assignment_is_handled(
+            &config,
+            &task_id,
+            &json!({"humanAssignmentId":old})
+        ));
+    }
+    let new = json!({"humanAssignmentId":"mention:new"});
+    assert!(!handler.stand_in_assignment_is_handled(&config, &task_id, &new));
+    let error = handler
+        .create_stand_in_task(&config, &issue, &new, json!({"schemaVersion":99}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "stand_in_busy");
+    assert!(handler.store.is_deleted_archived_task_id(&task_id));
+    handler.store.delete_task(&task_id);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    assert_eq!(handler.stand_in_task_id(&config, &issue), task_id);
+    let error = handler
+        .create_stand_in_task(&config, &issue, &new, json!({"schemaVersion":99}))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code, "unsupported_schema_version",
+        "New wake must reach normal task creation after cleanup"
+    );
+    assert!(!handler.store.is_deleted_archived_task_id(&task_id));
+    assert!(handler.store.is_deleted_archived_task_id("deleted-thread"));
+    handler.store = RuntimeWorkStore::new(index_path);
+    for old in ["human", "mention:old"] {
+        assert!(handler.stand_in_assignment_is_handled(
+            &config,
+            &task_id,
+            &json!({"humanAssignmentId":old})
+        ));
+    }
+    assert!(!handler.stand_in_assignment_is_handled(&config, &task_id, &new));
+    assert!(!handler.stand_in_assignment_is_handled(
+        &config,
+        &task_id,
+        &json!({"humanAssignmentId":"new-assignment"})
+    ));
+}
+
+#[tokio::test]
+async fn issue_deletion_stops_when_wakeup_snapshot_cannot_be_persisted() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("runtime-index.json");
+    let backup = root.path().join("saved-index.json");
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(path.clone());
+    let task = RuntimeTaskLink {
+        local_task_id: "issue-conversation".into(),
+        thread_id: Some("native-thread".into()),
+        status: "archived".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","humanAssignmentId":"accepted"}}),
+        ..RuntimeTaskLink::default()
+    };
+    handler.upsert_local_task(task.clone());
+    std::fs::rename(&path, &backup).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let result = handler.delete_archived_link(task.clone()).await;
+    assert_eq!(result["accepted"], false);
+    assert_ne!(result["deleted"], true);
+    assert!(handler.local_task_link(&task.local_task_id).is_some());
+    assert!(!handler
+        .store
+        .is_deleted_archived_task_id(&task.local_task_id));
+    assert_eq!(
+        handler
+            .store
+            .deleted_issue_wakeup(&task.local_task_id, "accepted"),
+        None
+    );
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::rename(&backup, &path).unwrap();
+    let reopened = RuntimeWorkStore::new(path);
+    assert!(reopened.get_task(&task.local_task_id).is_some());
+    assert!(!reopened.is_deleted_archived_task_id(&task.local_task_id));
 }
 
 #[tokio::test]

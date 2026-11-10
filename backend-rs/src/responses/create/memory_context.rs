@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use crate::task_store::TaskStore;
 
 /// `settings.MEMORY_CONTEXT_MESSAGES` (source default `3`).
-fn context_limit() -> usize {
+pub(crate) fn context_limit() -> usize {
     crate::config::env_or_dotenv("MEMORY_CONTEXT_MESSAGES")
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(3)

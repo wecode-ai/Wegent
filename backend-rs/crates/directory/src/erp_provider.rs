@@ -5,7 +5,7 @@
 //! Application extension for optional employee identities and group membership.
 use async_trait::async_trait;
 
-use crate::erp_types::EmployeeInfo;
+use crate::erp_types::{EmployeeInfo, EmployeeSearchOutcome};
 
 /// Provider contract for an optional employee directory.
 ///
@@ -62,6 +62,18 @@ pub trait ErpProvider<R: brz_redis::Redis = brz_redis::RedisService>: Send + Syn
 
     /// Search for an employee by keyword. The default returns `None`.
     async fn search_employee(&self, keyword: &str) -> Option<EmployeeInfo>;
+
+    /// Search for an employee, preserving whether the directory answered
+    /// successfully. Implementations that can tell "no match" apart from a
+    /// transport failure override this; the default collapses a `None` from
+    /// [`Self::search_employee`] to [`EmployeeSearchOutcome::Unavailable`],
+    /// which never writes the negative cache.
+    async fn search_employee_outcome(&self, keyword: &str) -> EmployeeSearchOutcome {
+        match self.search_employee(keyword).await {
+            Some(employee) => EmployeeSearchOutcome::Found(employee),
+            None => EmployeeSearchOutcome::Unavailable,
+        }
+    }
 
     /// Entity type exposed by this directory provider. Open-source builds
     /// return `None`; private deployments register their concrete entity type

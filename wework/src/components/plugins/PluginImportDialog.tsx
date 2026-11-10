@@ -318,7 +318,7 @@ export function PluginImportDialog({
           {savedExamplePath && (
             <div
               data-testid="plugin-import-example-saved"
-              className="mt-4 flex items-start gap-2 rounded-xl bg-success/8 px-3 py-3 text-sm text-success"
+              className="mt-4 flex items-start gap-2 rounded-xl bg-success/8 px-3 py-3 text-sm text-success wework:bg-green-500/8 wework:text-green-700"
             >
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
@@ -334,9 +334,9 @@ export function PluginImportDialog({
               {preview.issues.map((issue, index) => (
                 <div
                   key={`${issue.code}-${index}`}
-                  className="rounded-xl bg-destructive/8 px-3 py-3"
+                  className="rounded-xl bg-destructive/8 px-3 py-3 wework:bg-red-500/8"
                 >
-                  <div className="flex items-start gap-2 text-sm font-medium text-destructive">
+                  <div className="flex items-start gap-2 text-sm font-medium text-destructive wework:text-red-600">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>{issueGuidance(issue, t)}</span>
                   </div>
@@ -377,7 +377,7 @@ export function PluginImportDialog({
               </div>
 
               {preview.existing && (
-                <div className="rounded-xl bg-warning/8 px-3 py-3 text-sm text-warning">
+                <div className="rounded-xl bg-warning/8 px-3 py-3 text-sm text-warning wework:bg-orange-500/8 wework:text-orange-700">
                   {t(
                     'workbench.plugins_import_existing',
                     '个人市场中已有 {{name}}（{{version}}）。继续后将覆盖并重新安装。',
@@ -412,7 +412,7 @@ export function PluginImportDialog({
           {error && (
             <div
               role="alert"
-              className="mt-4 flex items-start gap-2 rounded-xl bg-destructive/8 px-3 py-3 text-sm text-destructive"
+              className="mt-4 flex items-start gap-2 rounded-xl bg-destructive/8 px-3 py-3 text-sm text-destructive wework:bg-red-500/8 wework:text-red-600"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>

@@ -5,6 +5,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/devices'
 import type { DeviceGitAccountSyncResult, GitAccountSyncSummary } from '@/types/gitCredentials'
 import { createSettingsDeviceApi } from './settings-cloud-api'
+import { Button } from '@/components/ui/button'
+import { gitAccountSettingsUrl } from '@/lib/git-access'
+import { openExternalUrl } from '@/lib/external-links'
 
 interface DeviceGitSyncSectionProps {
   devices?: DeviceInfo[]
@@ -44,6 +47,7 @@ export function DeviceGitSyncSection({
 }: DeviceGitSyncSectionProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const settingsUrl = gitAccountSettingsUrl(cloudConnection)
   const refreshCloudUser = cloudConnection.refreshUser
   const syncConnection = useMemo(
     () => ({
@@ -150,7 +154,6 @@ export function DeviceGitSyncSection({
 
   const requestSync = () => {
     if ((syncSummary?.effective_count ?? 0) === 0) {
-      setConfirmClear(true)
       return
     }
     void performSync(false)
@@ -172,9 +175,21 @@ export function DeviceGitSyncSection({
               <p className="mt-1 text-xs leading-5 text-text-secondary">
                 {t(
                   'workbench.git_device_sync_description',
-                  '把云端 Git 账户同步到一台在线的 ClaudeCode 云端或远程设备。只有点击同步后才会写入设备。'
+                  '把云端 Git 账户同步到在线的 ClaudeCode 云端或远程设备。克隆或环境准备遇到认证失败时也会同步已配置账户，不修改本机原生 Git 配置。'
                 )}
               </p>
+              {settingsUrl && cloudConnection.isConnected && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  data-testid="git-device-sync-configure"
+                  onClick={() =>
+                    void openExternalUrl(settingsUrl, { source: 'device-git-settings' })
+                  }
+                >
+                  {t('workbench.git_access_configure')}
+                </Button>
+              )}
             </div>
           </div>
           <button
@@ -207,7 +222,10 @@ export function DeviceGitSyncSection({
           </div>
         ) : !syncSummary ? (
           syncError ? (
-            <p data-testid="git-device-sync-error" className="mt-4 text-xs text-destructive">
+            <p
+              data-testid="git-device-sync-error"
+              className="mt-4 text-xs text-destructive wework:text-red-500"
+            >
               {syncError}
             </p>
           ) : null
@@ -215,7 +233,7 @@ export function DeviceGitSyncSection({
           <div className="mt-4 space-y-4">
             <div data-testid="git-device-sync-accounts">
               <div className="flex items-center gap-2 text-xs font-medium text-text-primary">
-                <ShieldCheck className="h-4 w-4 text-success" />
+                <ShieldCheck className="h-4 w-4 text-success wework:text-green-500" />
                 {t('workbench.git_device_sync_account_count', {
                   count: syncSummary.effective_count,
                   defaultValue: `将同步 ${syncSummary.effective_count} 个域`,
@@ -242,7 +260,7 @@ export function DeviceGitSyncSection({
               {syncSummary.duplicate_count > 0 ? (
                 <p
                   data-testid="git-device-sync-duplicate-warning"
-                  className="mt-2 flex items-center gap-1.5 text-xs text-warning"
+                  className="mt-2 flex items-center gap-1.5 text-xs text-warning wework:text-yellow-500"
                 >
                   <AlertTriangle className="h-3.5 w-3.5" />
                   {t(
@@ -277,18 +295,27 @@ export function DeviceGitSyncSection({
             </label>
 
             <div className="flex flex-wrap items-center gap-3">
-              <button
+              <Button
                 type="button"
                 data-testid="git-device-sync-submit"
                 onClick={requestSync}
-                disabled={!activeSelectedDeviceId || syncing}
-                className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm text-primary-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                size="sm"
+                disabled={!activeSelectedDeviceId || syncing || syncSummary.effective_count === 0}
               >
                 {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {syncSummary.effective_count > 0
-                  ? t('workbench.git_device_sync_submit', '同步 Git 配置')
-                  : t('workbench.git_device_sync_clear', '清理 Wegent Git 配置')}
-              </button>
+                {t('workbench.git_device_sync_submit', '同步 Git 配置')}
+              </Button>
+              {syncSummary.effective_count === 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="git-device-sync-clear"
+                  disabled={!activeSelectedDeviceId || syncing}
+                  onClick={() => setConfirmClear(true)}
+                >
+                  {t('workbench.git_device_sync_clear', '清理 Wegent Git 配置')}
+                </Button>
+              )}
               <span className="text-xs text-text-muted">
                 {t(
                   'workbench.git_device_sync_security_hint',
@@ -302,8 +329,8 @@ export function DeviceGitSyncSection({
                 data-testid="git-device-sync-result"
                 className={`rounded-lg px-3 py-2 text-xs ${
                   syncResult.status === 'synced'
-                    ? 'bg-success/10 text-success'
-                    : 'bg-warning/10 text-warning'
+                    ? 'bg-success/10 text-success wework:bg-green-500/10 wework:text-green-500'
+                    : 'bg-warning/10 text-warning wework:bg-yellow-500/10 wework:text-yellow-500'
                 }`}
               >
                 <p>
@@ -361,7 +388,10 @@ export function DeviceGitSyncSection({
         )}
 
         {syncError && syncSummary ? (
-          <p data-testid="git-device-sync-error" className="mt-4 text-xs text-destructive">
+          <p
+            data-testid="git-device-sync-error"
+            className="mt-4 text-xs text-destructive wework:text-red-500"
+          >
             {syncError}
           </p>
         ) : null}
@@ -398,7 +428,7 @@ export function DeviceGitSyncSection({
                 type="button"
                 data-testid="git-device-sync-clear-confirm"
                 onClick={() => void performSync(true)}
-                className="h-8 rounded-lg bg-destructive px-3 text-sm text-destructive-contrast hover:bg-destructive"
+                className="h-8 rounded-lg bg-destructive px-3 text-sm text-destructive-contrast hover:bg-destructive wework:bg-red-500 wework:text-white wework:hover:bg-red-600"
               >
                 {t('workbench.git_device_sync_clear_confirm', '确认清理')}
               </button>

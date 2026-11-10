@@ -208,7 +208,7 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
                   <button
                     type="button"
                     data-testid={`plugin-marketplace-uninstall-${item.id}`}
-                    className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-destructive transition-colors hover:bg-destructive/10"
+                    className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-destructive transition-colors hover:bg-destructive/10 wework:text-red-600 wework:hover:bg-red-50"
                     onClick={() => onAction('uninstall', item)}
                   >
                     {labels.uninstall}

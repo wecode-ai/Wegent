@@ -80,6 +80,7 @@ let toastTimer = 0
 let progressTimer = 0
 let progressFrame = null
 let displayedProgress = 0
+let progressRenderedAt = performance.now()
 let completionPromise = null
 let completionController = null
 let disposed = false
@@ -127,7 +128,7 @@ function shortenPath(path, maxLength = 48) {
   return `…/${shortened}`
 }
 
-function activityText() {
+function activityText(maxLength = 48) {
   const activity = currentUpdate.activity
   if (activity && typeof activity.path === 'string' && activity.path.trim()) {
     const verb =
@@ -146,7 +147,7 @@ function activityText() {
             : isChinese
               ? '扫描'
               : 'Scanning'
-    return `${verb} ${shortenPath(activity.path)}`
+    return `${verb} ${shortenPath(activity.path, maxLength)}`
   }
   return localized(currentUpdate.stage.detail)
 }
@@ -251,10 +252,20 @@ function renderMeta(now) {
 
 function renderActivity() {
   setText(activityElement, activityText())
+  activityElement.title = activityText(Number.POSITIVE_INFINITY)
 }
 
 function renderProgress(now) {
-  if (!completionPromise) displayedProgress = computeProgress(now)
+  const renderedAt = performance.now()
+  if (!completionPromise && !startupFailed) {
+    const target = Math.max(displayedProgress, computeProgress(now))
+    const elapsed = Math.max(0, renderedAt - progressRenderedAt)
+    const fraction = motionPreference.matches ? 1 : 1 - Math.exp(-elapsed / 100)
+    const next = displayedProgress + (target - displayedProgress) * fraction
+    // Settle subpixel differences so an integer target also settles its visible percentage.
+    displayedProgress = target - next < 0.001 ? target : next
+  }
+  progressRenderedAt = renderedAt
   paintProgress()
   progressElement.classList.toggle('is-running', !startupFailed)
   progressElement.classList.toggle('is-failed', startupFailed)
@@ -262,10 +273,12 @@ function renderProgress(now) {
 
 function paintProgress() {
   const width = progressSvg.clientWidth
-  if (width > 2) {
-    progressTrackElement.setAttribute('x2', String(width - 1))
-    progressFillElement.setAttribute('x2', String(1 + ((width - 2) * displayedProgress) / 100))
-    progressGradient.setAttribute('x2', String(width - 1))
+  if (width > 0) {
+    const fillEnd = (width * displayedProgress) / 100
+    progressTrackElement.setAttribute('x2', String(width))
+    progressFillElement.setAttribute('x2', String(fillEnd))
+    progressFillElement.setAttribute('visibility', displayedProgress > 0 ? 'visible' : 'hidden')
+    progressGradient.setAttribute('x2', String(fillEnd))
   }
   progressElement.setAttribute('aria-valuenow', String(Math.round(displayedProgress)))
   setText(percentageElement, `${Math.floor(displayedProgress)}%`)
@@ -397,6 +410,7 @@ async function finishStartup(signal) {
     signal.throwIfAborted()
     setText(titleElement, isChinese ? '准备完成' : 'Ready')
     setText(activityElement, isChinese ? '工作台已就绪' : 'Your workbench is ready.')
+    activityElement.title = activityElement.textContent
     progressElement.classList.remove('is-running')
     await waitForCompletionStep(signal)
     await waitForCompletionStep(signal)

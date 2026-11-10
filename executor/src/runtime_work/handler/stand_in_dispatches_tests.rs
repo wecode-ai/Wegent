@@ -125,12 +125,11 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     store.save_stand_in_settings("project", 7, json!({"id":"review","projectStore":"cloud","executionDeviceId":"mac","version":0,"enabled":true,"prompt":"Review","workspace":{"projectKey":"not-registered","workspacePath":root.path(),"executionMode":"current_workspace"}})).unwrap();
     let settings = store.personal_stand_in(7, "mac").unwrap();
-    let mut config = handler
+    let config = handler
         .stand_in_project_configs(&[settings], "project", "cloud")
         .into_iter()
         .find(|config| config["id"] == "review")
         .unwrap();
-    config["manual"] = json!(true);
     let initial_issue = issue.lock().unwrap().clone();
     let error = handler
         .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &initial_issue)
@@ -199,6 +198,7 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     restarted.upsert_local_task(RuntimeTaskLink {
         local_task_id: "stand-in-human-review".into(),
         status: "failed".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"cloud","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
         ..Default::default()
     });
     restarted
@@ -210,6 +210,81 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
         calls.load(Ordering::SeqCst),
         2,
         "An accepted failed task needs explicit retry, not intent replay"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn manual_issue_startup_intent_survives_restart_without_assignment_or_intake() {
+    let root = tempfile::tempdir().unwrap();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let count = reads.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/loop-items/issue", get(|| async {
+            Json(json!({"id":"issue","cloud_project_id":"project","assignee_user_id":null,"permissions":{"execute":true}}))
+        }))
+        .route("/api/v1/loop-items/issue/tasks", get(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let make_handler = || RuntimeWorkRpcHandler {
+        store: RuntimeWorkStore::new(root.path().join("runtime.json")),
+        task_store_path: Arc::new(root.path().join("tasks.sqlite")),
+        backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: url.clone(),
+            auth_token: "test".into(),
+            ..Default::default()
+        }))),
+        ..RuntimeWorkRpcHandler::new("mac", "unused")
+    };
+    let handler = make_handler();
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let error = handler
+        .run_stand_in(json!({
+            "projectId":"project","issueId":"issue","userId":7,"projectStore":"cloud"
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "cloud_request_failed");
+    let pending = store.pending_stand_in_dispatches().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].1["manual"], true);
+    assert_eq!(pending[0].1["retryCount"], 1);
+    drop(handler);
+    let restarted = make_handler();
+    restarted
+        .flush_stand_in_dispatches_at(chrono::Utc::now().timestamp() + 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        2,
+        "Paused intake and absent project subscriptions cannot discard an accepted manual request"
+    );
+    assert_eq!(
+        store.pending_stand_in_dispatches().unwrap()[0].1["retryCount"],
+        2
+    );
+    let config = json!({"id":"default","userId":7,"projectId":"project","projectStore":"cloud"});
+    let task = restarted.stand_in_task_id(&config, &json!({"id":"issue"}));
+    restarted.upsert_local_task(RuntimeTaskLink {
+        local_task_id: task,
+        status: "failed".into(),
+        ..Default::default()
+    });
+    restarted
+        .flush_stand_in_dispatches_at(chrono::Utc::now().timestamp() + 30)
+        .await
+        .unwrap();
+    assert!(store.pending_stand_in_dispatches().unwrap().is_empty());
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        2,
+        "Accepted work must never be replayed by startup recovery"
     );
     server.abort();
 }
@@ -227,6 +302,7 @@ async fn stand_in_dispatch_does_not_replay_accepted_or_deleted_work() {
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "stand-in-human-review".into(),
             status: status.into(),
+            runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","humanAssignmentId":"human"}}),
             ..Default::default()
         });
         assert!(handler
@@ -253,7 +329,8 @@ async fn stand_in_dispatch_does_not_replay_accepted_or_deleted_work() {
     }
     handler
         .store
-        .mark_deleted_archived_task_ids(["stand-in-human-review".into()]);
+        .mark_deleted_archived_task_ids(["stand-in-human-review".into()])
+        .unwrap();
     handler.store.delete_task("stand-in-human-review");
     assert!(handler
         .queue_stand_in_dispatches(&[config], &issue)
