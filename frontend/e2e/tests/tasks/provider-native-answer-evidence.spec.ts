@@ -177,6 +177,9 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       storageState: buildStorageState(baseURL!, recipientToken, getJwtExpiryMs(recipientToken)),
     })
     try {
+      await context.addInitScript(() => {
+        localStorage.setItem('user_onboarding_completed', 'true')
+      })
       const viewer = await context.newPage()
       await viewer.goto(page.url())
       const viewerCitation = viewer.getByTestId(id!).first()
